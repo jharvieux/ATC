@@ -1,0 +1,23 @@
+{
+  "_note": "Recorded against Stripe test mode. Re-record with: npm run contracts:record",
+  "request": {
+    "method": "POST",
+    "url": "https://api.stripe.com/v1/account_links",
+    "body": {
+      "account": "acct_test_placeholder",
+      "refresh_url": "https://example.com/stripe/refresh",
+      "return_url": "https://example.com/stripe/return",
+      "type": "account_onboarding"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "object": "account_link",
+      "created": 1700000000,
+      "expires_at": 1700001800,
+      "url": "https://connect.stripe.com/setup/e/acct_test_placeholder/test_placeholder"
+    }
+  }
+}

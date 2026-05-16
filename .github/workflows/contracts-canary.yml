@@ -1,0 +1,108 @@
+name: contracts-canary
+
+on:
+  schedule:
+    - cron: "0 9 * * *" # 9am UTC, before working hours
+  workflow_dispatch: # allow manual trigger for testing
+
+jobs:
+  canary:
+    name: Re-record and diff contracts
+    runs-on: ubuntu-latest
+    env:
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      ANTHROPIC_API_KEY_TEST: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Save current fixtures as baseline
+        run: cp -r tests/contracts/fixtures tests/contracts/fixtures-baseline
+
+      - name: Re-record fixtures against real APIs
+        # TODO: Remove continue-on-error after rollout period — see MEMORY.md
+        continue-on-error: true
+        run: npm run contracts:record
+
+      - name: Diff new recordings against baseline (schema-level)
+        id: diff
+        # TODO: Remove continue-on-error after rollout period — see MEMORY.md
+        continue-on-error: true
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+
+            function getKeys(obj, prefix = '') {
+              if (typeof obj !== 'object' || obj === null) return [prefix + ':' + typeof obj];
+              return Object.entries(obj).flatMap(([k, v]) => getKeys(v, prefix ? prefix + '.' + k : k));
+            }
+
+            function diffSchema(baseDir, newDir) {
+              const diffs = [];
+              const files = fs.readdirSync(baseDir, { recursive: true })
+                .filter(f => f.endsWith('.json'));
+              for (const file of files) {
+                const basePath = path.join(baseDir, file);
+                const newPath = path.join(newDir, file);
+                if (!fs.existsSync(newPath)) {
+                  diffs.push(file + ': MISSING in new recording');
+                  continue;
+                }
+                const base = JSON.parse(fs.readFileSync(basePath, 'utf8'));
+                const curr = JSON.parse(fs.readFileSync(newPath, 'utf8'));
+                const baseKeys = new Set(getKeys(base.response?.body));
+                const newKeys = new Set(getKeys(curr.response?.body));
+                const removed = [...baseKeys].filter(k => !newKeys.has(k));
+                const added = [...newKeys].filter(k => !baseKeys.has(k));
+                if (removed.length || added.length) {
+                  diffs.push(file + ': schema changed');
+                  if (removed.length) diffs.push('  removed: ' + removed.join(', '));
+                  if (added.length) diffs.push('  added: ' + added.join(', '));
+                }
+              }
+              return diffs;
+            }
+
+            const diffs = diffSchema('tests/contracts/fixtures-baseline', 'tests/contracts/fixtures');
+            if (diffs.length) {
+              console.log('SCHEMA DRIFT DETECTED:\n' + diffs.join('\n'));
+              fs.writeFileSync('contract-drift.txt', diffs.join('\n'));
+              process.exit(1);
+            } else {
+              console.log('No schema drift detected.');
+            }
+          "
+
+      - name: Open GitHub issue on schema drift
+        if: steps.diff.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DRIFT=$(cat contract-drift.txt 2>/dev/null || echo "See workflow logs")
+          gh issue create \
+            --title "Contract schema drift detected $(date -u +%Y-%m-%d)" \
+            --label "contract-drift" \
+            --body "$(cat <<'BODY'
+          ## Contract schema drift detected
+
+          The nightly canary re-recorded Stripe and Anthropic fixtures and found schema changes.
+
+          **Action required:** Review the diff below, update application code if needed, re-record fixtures, and commit.
+
+          \`\`\`
+          ${DRIFT}
+          \`\`\`
+
+          See [docs/testing/contract-tests.md](docs/testing/contract-tests.md) for how to handle a legitimate API schema change.
+          BODY
+          )"

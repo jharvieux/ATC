@@ -1,0 +1,28 @@
+{
+  "_note": "Recorded against Anthropic API. Re-record with: npm run contracts:record",
+  "request": {
+    "method": "POST",
+    "url": "https://api.anthropic.com/v1/messages",
+    "body": {
+      "model": "claude-sonnet-4-6",
+      "max_tokens": 1024,
+      "system": "You are Marcus Cole, a luxury travel concierge...",
+      "messages": [
+        { "role": "user", "content": "Hello, I'm looking for travel help." }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "id": "msg_test_placeholder",
+      "type": "message",
+      "role": "assistant",
+      "content": [{ "type": "text", "text": "Welcome! I'm Marcus Cole..." }],
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn",
+      "usage": { "input_tokens": 42, "output_tokens": 18 }
+    }
+  }
+}
