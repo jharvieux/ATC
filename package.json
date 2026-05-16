@@ -11,7 +11,8 @@
     "test": "vitest run --coverage --passWithNoTests",
     "test:watch": "vitest",
     "rls:snapshot": "tsx scripts/rls-snapshot.ts > db/rls-snapshot.sql",
-    "rls:check": "tsx scripts/rls-snapshot-diff.ts"
+    "rls:check": "tsx scripts/rls-snapshot-diff.ts",
+    "test:cross-tenant": "vitest run tests/security/cross-tenant-probe"
   },
   "dependencies": {
     "next": "14.2.35",

@@ -1,0 +1,10 @@
+[
+  {
+    "_schema": "Each entry: { route, method, reason } — routes here are exempt from the cross-tenant probe.",
+    "_example": {
+      "route": "/api/admin/tenants",
+      "method": "GET",
+      "reason": "Platform-admin route; intentionally cross-tenant. Requires platform-admin role, not tenant user."
+    }
+  }
+]
