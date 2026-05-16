@@ -130,6 +130,32 @@ jobs:
               });
             " || true
 
+  rls-snapshot-diff:
+    name: RLS Snapshot Diff
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check RLS drift (fail on PR and release/*)
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+        run: npm run rls:check
+
+      - name: Check RLS drift (warn on dev push)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        run: npm run rls:check || echo "::warning::RLS drift detected on dev — run npm run rls:snapshot and commit db/rls-snapshot.sql"
+
   # ============================================================
   # db-copy block — production → staging clone (job 5)
   # Runs only on push to release/* branches
@@ -139,7 +165,7 @@ jobs:
     name: Copy Prod DB to Staging
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-    needs: [typecheck, lint, test, secret-scan, cve-scan]
+    needs: [typecheck, lint, test, secret-scan, cve-scan, rls-snapshot-diff]
     environment: staging
     env:
       PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
