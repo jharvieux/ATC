@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function checkSupabase(): Promise<{ ok: boolean; latencyMs?: number; error?: string }> {
+async function checkSupabase(): Promise<{
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -19,7 +23,10 @@ async function checkSupabase(): Promise<{ ok: boolean; latencyMs?: number; error
     });
     return { ok: res.ok, latencyMs: Date.now() - start };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "unknown error" };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "unknown error",
+    };
   }
 }
 
@@ -36,6 +43,6 @@ export async function GET() {
         supabase,
       },
     },
-    { status: allOk ? 200 : 503 }
+    { status: allOk ? 200 : 503 },
   );
 }
