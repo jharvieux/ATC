@@ -1,0 +1,232 @@
+# Build Prompt — Populate Help Docs into RAG (v1)
+
+**Target:** Claude Code, working in the AI Travel Concierge monorepo.
+
+**Source specs:**
+
+- `AI_Travel_Concierge_Spec_v6_Full.docx` — §6 (RAG service), §22 (ingestion pipeline) are required reading.
+- `Self_Service_Help_Addendum_v1.docx` — §3.4 (platform-docs scope) defines the target.
+- `MEMORY.md` — read before starting.
+
+If any spec disagrees with this prompt, the spec wins. Flag the disagreement and stop for clarification.
+
+**Prerequisite:** the 12 admin help docs must already exist in `apps/main/content/help/`. If they don’t, run the “Generate Tenant Admin Help Documentation” build prompt first.
+
+-----
+
+## Model usage instructions — read first
+
+**Use Claude Sonnet for this entire task.** No Opus needed — this is a well-scoped integration task with clear inputs (Markdown files) and clear outputs (RAG chunks with metadata).
+
+-----
+
+## What you’re producing
+
+A pipeline that takes the Markdown files in `apps/main/content/help/` and ingests them into the RAG service under a new RAG scope `platform-docs`. The Help AI (per addendum §4) retrieves from this scope when answering “I need help” queries.
+
+Specifically, you’re delivering:
+
+1. A new RAG scope value `platform-docs` (a small extension to the v6 §6.9 two-scope model — already authorized by addendum §3.4).
+1. An ingestion script (`scripts/ingest-help-docs.ts`) that processes the Markdown files into chunks.
+1. Integration with the existing ingestion pipeline (v6 §22.4) for PII redaction (defensive — the docs shouldn’t contain PII but the pipeline runs anyway).
+1. A GitHub Actions workflow that re-ingests on every release that touches `apps/main/content/help/**`.
+1. Tests that confirm retrieval works against the new scope.
+
+-----
+
+## Pre-work — before you write any code
+
+1. Read v6 §6 in full, especially §6.9 (scope model), §6.10 (authority feedback), §6.11 (PII), §6.12 (retention).
+1. Read v6 §22 in full, especially §22.4 (normalization pipeline) and §22.6 (revised global review).
+1. Read addendum §3.4 (platform-docs scope authorization).
+1. Inspect the existing RAG service code at `apps/rag/` (per CI/CD doc) — specifically:
+- The `tenant_registry` table and its scope handling.
+- The `/api/retrieve` endpoint and how it filters by scope.
+- The `/api/ingest` endpoint and the chunk-creation flow.
+1. Produce a written plan in chat covering:
+- Schema changes needed (CHECK constraints, indexes).
+- Code changes to retrieval to support `scope='platform-docs'`.
+- Chunking strategy (see below).
+- Embedding model (use whatever §6 specifies; do not change it).
+- Workflow design.
+
+**Do not start coding until the user approves the plan.**
+
+-----
+
+## Scope (what’s in this build)
+
+### A. Schema changes
+
+The `knowledge_chunks` table (per v6 §6) currently has a `scope` column accepting `'global'` and `'tenant'`. Add `'platform-docs'` as a valid value:
+
+```sql
+-- supabase/migrations/YYYYMMDDHHMMSS_add_platform_docs_scope.sql
+ALTER TABLE public.knowledge_chunks
+  DROP CONSTRAINT IF EXISTS knowledge_chunks_scope_check;
+
+ALTER TABLE public.knowledge_chunks
+  ADD CONSTRAINT knowledge_chunks_scope_check
+  CHECK (scope IN ('global', 'tenant', 'platform-docs'));
+```
+
+(Adapt the exact constraint name to match what exists; check the current migration history.)
+
+Also: add an index on `(scope, category)` if not already present, since the Help AI will retrieve with scope filter.
+
+### B. Retrieval changes
+
+The retrieval query in `apps/rag/` currently filters something like:
+
+```sql
+WHERE scope = 'global'
+   OR (scope = 'tenant' AND tenant_id = $caller_tenant_id)
+```
+
+Add the platform-docs scope as a separate, opt-in filter. The Help AI passes a flag in its retrieve request (e.g., `target_scope: 'platform-docs'`). When set, the query becomes:
+
+```sql
+WHERE scope = 'platform-docs'
+```
+
+That is, the Help AI does NOT mix platform-docs with global or tenant content — its retrieval is scoped strictly to platform-docs. The customer-facing concierge AI continues to retrieve only from `global` + `tenant`, never from `platform-docs`. This matches the addendum decision that the concierge does not have access to admin documentation.
+
+Update the `POST /api/retrieve` request schema (v6 §8.4) to accept the new `target_scope` parameter. Backward-compatible default: if absent, behaves exactly as today.
+
+### C. Chunking strategy
+
+Each Markdown file becomes 1–N chunks. Rules:
+
+- Split on H2 (`##`) boundaries. Each H2 section is a chunk.
+- If an H2 section is shorter than 200 tokens, merge with the next section (or the file’s introduction).
+- If an H2 section is longer than 800 tokens, split at H3 (`###`) boundaries.
+- Hard maximum chunk size: 1,200 tokens. If a single H3 section exceeds this, fall back to paragraph-boundary splitting.
+- Each chunk retains:
+  - The file’s frontmatter as metadata (`title`, `description`, `tags`, `slug`).
+  - The H2 section heading as `section_title` in chunk metadata.
+  - The relative position of the chunk in the file (`chunk_index`, `total_chunks`).
+  - A constructed `source_url` of the form `/admin/help/{slug}#{section_anchor}` so the Help AI can cite back to the docs viewer.
+
+Tags from frontmatter feed the chunk’s `category` field where they map cleanly (e.g., `tags: [onboarding]` → `category: 'onboarding'`); otherwise use `category: 'platform-docs'` as a generic fallback.
+
+### D. Authority scoring
+
+Per v6 §6, chunks have authority scores. Platform-docs chunks are:
+
+- `authority: 1.00` — they ARE the source of truth for platform behavior.
+- `authority_tier: 'platform-official'` — add this as a new authority tier value if needed; otherwise reuse `'official'`.
+- Authority feedback loop (v6 §6.10) is DISABLED for platform-docs chunks. Thumbs-down on a Help AI response that cited a platform-docs chunk means the doc is wrong — that’s an engineering task, not an authority signal. Add a check in the feedback handler that skips authority nudges for `scope = 'platform-docs'`.
+
+### E. PII redaction
+
+Defensive: pass content through the v6 §22.4 pipeline anyway. The docs shouldn’t contain PII (they’re written by engineers about platform features), but the pipeline is cheap and catches mistakes.
+
+If PII is detected in a doc file during ingestion, the ingestion run fails loudly and posts a comment on the triggering PR or commit. Do NOT silently redact and proceed — a doc author needs to fix the source.
+
+### F. Ingestion script
+
+Create `scripts/ingest-help-docs.ts`. Behavior:
+
+1. Read all `.md` files in `apps/main/content/help/`.
+1. Parse frontmatter.
+1. Chunk per the strategy above.
+1. Run each chunk through PII redaction (fail loud on detection).
+1. Generate embeddings (use the same embedding model v6 §6 specifies).
+1. Upsert chunks into `knowledge_chunks` keyed by `(scope, source_url, chunk_index)`. Upsert, not insert, so re-running the script on updated docs replaces existing chunks rather than duplicating.
+1. After upsert, delete any platform-docs chunks whose `source_url` no longer corresponds to a file in the docs directory (handles deleted docs).
+1. Log a summary: files processed, chunks created, chunks updated, chunks deleted.
+
+The script must be runnable both locally (against `atc-dev` or `atc-test`) and in CI.
+
+### G. GitHub Actions workflow
+
+Create `.github/workflows/ingest-help-docs.yml`. Triggers:
+
+- Push to `dev` branch that touches `apps/main/content/help/**`.
+- Push to `release/*` branch that touches `apps/main/content/help/**` (so production gets the update on next release).
+- Manual `workflow_dispatch`.
+
+Environment: matches the branch (per CI/CD §3). `dev` → ingest into atc-dev’s RAG project. `release/*` → ingest into atc-test (staging), then on production approval, ingest into atc-prod.
+
+Steps:
+
+1. Checkout.
+1. Install dependencies.
+1. Run the ingest script against the appropriate environment’s RAG service.
+1. Report summary as workflow output.
+1. On failure: surface the error in the Action summary AND open a GitHub issue tagged `help-docs-ingestion-failed` so it doesn’t get silently missed.
+
+### H. Tests
+
+- Unit test: chunking strategy. Given a known input file, produce the expected chunks. Use snapshot tests for chunk boundaries.
+- Unit test: PII detection fails the run when a fake SSN is present in a fixture file.
+- Integration test: ingest a small fixture set, retrieve via `/api/retrieve` with `target_scope: 'platform-docs'`, confirm results come back with the correct metadata and `authority_tier`.
+- Integration test: retrieve via `/api/retrieve` with default scope (`global` + `tenant`) and confirm platform-docs chunks are NOT returned.
+
+### I. Documentation for engineering
+
+Create `apps/main/content/help/CONTRIBUTING.md` (NOT a tenant-facing help doc — this is for engineers):
+
+- How to add or edit a doc.
+- The frontmatter contract.
+- How chunking works (briefly) so authors understand why H2 boundaries matter.
+- How to test locally.
+- What happens on push (the workflow).
+
+-----
+
+## Out of scope (do NOT build in this pass)
+
+- Indexing customer-facing help content (no such content yet; deferred per addendum).
+- A separate Help AI eval suite — that’s handled in the main Self-Service Help build prompt’s quality work.
+- Versioning of help docs separate from code (per addendum §3.1, docs ship with code).
+- Authority feedback loop for platform-docs (explicitly disabled — §D above).
+- Surfacing chunks to tenant admins for review (platform-docs is NOT in the tenant review queue per v6 §22.5).
+
+-----
+
+## Standards to follow
+
+- TypeScript strict mode.
+- Migrations are additive only (v6 §29.6).
+- Idempotent ingestion — running the script twice in a row produces the same DB state.
+- No secrets in `NEXT_PUBLIC_*` env vars.
+- All embedding API calls log to cost-attribution (v6 §27.12) under a synthetic `platform-docs-ingestion` identifier.
+
+-----
+
+## New env vars
+
+|Variable                  |Required|Secret|Description                                         |
+|--------------------------|--------|------|----------------------------------------------------|
+|`RAG_INGEST_URL_DEV`      |Yes     |No    |Dev RAG service URL for ingestion                   |
+|`RAG_INGEST_URL_STAGING`  |Yes     |No    |Staging RAG service URL                             |
+|`RAG_INGEST_URL_PROD`     |Yes     |No    |Production RAG service URL                          |
+|`RAG_INGEST_SERVICE_TOKEN`|Yes     |Yes   |Service-to-service JWT for ingest auth (per v6 §8.3)|
+
+If existing env vars cover these, reuse rather than adding new ones. Flag any naming conflicts.
+
+-----
+
+## Hand-off checklist (you complete this before declaring done)
+
+- [ ] Plan approved by user before any code was written.
+- [ ] Migration applied successfully and reversible.
+- [ ] Retrieval changes do not break existing global+tenant retrieval (regression test passes).
+- [ ] Ingestion script runs cleanly against atc-dev with the actual help docs.
+- [ ] Chunk count and size distribution looks sane (no 5-token chunks, no 5,000-token chunks).
+- [ ] PII detection fixture test passes (script fails loudly on PII).
+- [ ] GitHub Action runs successfully on a test commit to `apps/main/content/help/**`.
+- [ ] Help AI retrieval returns relevant chunks for at least 3 sample admin questions (write the questions yourself and try them).
+- [ ] Confirmed: customer-facing concierge retrieve calls do NOT return platform-docs chunks.
+- [ ] CONTRIBUTING.md is clear enough that another engineer could add a new doc without help.
+
+-----
+
+## End-of-build deliverables (in chat, not files)
+
+- One-line summary of what was built.
+- Sample retrieval results for 3 admin queries (e.g., “How do I add a custom domain?” → which chunks came back with what scores).
+- List of any decisions made not covered by this prompt.
+- Suggested MEMORY.md entries for those decisions.
+- Open items for follow-up (e.g., when to enable Help AI doc-citation rendering in the chat UI).
