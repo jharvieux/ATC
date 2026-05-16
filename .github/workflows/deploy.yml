@@ -97,6 +97,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  cve-scan:
+    name: CVE Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fail on critical CVEs
+        run: npm audit --production --audit-level=critical
+
+      - name: Warn on high CVEs
+        run: |
+          npm audit --production --audit-level=high \
+            --json 2>/dev/null | \
+            node -e "
+              const data = require('fs').readFileSync('/dev/stdin','utf8');
+              const report = JSON.parse(data);
+              const highs = Object.values(report.vulnerabilities || {})
+                .filter(v => v.severity === 'high');
+              highs.forEach(v => {
+                console.log('::warning::High CVE in ' + v.name + ': ' + (v.via?.[0]?.url || 'see npm audit'));
+              });
+            " || true
+
   # ============================================================
   # db-copy block — production → staging clone (job 5)
   # Runs only on push to release/* branches
@@ -106,7 +139,7 @@ jobs:
     name: Copy Prod DB to Staging
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
-    needs: [typecheck, lint, test, secret-scan]
+    needs: [typecheck, lint, test, secret-scan, cve-scan]
     environment: staging
     env:
       PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
