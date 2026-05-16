@@ -327,6 +327,28 @@ If not reproducible OR low-confidence: human review queue; no auto-PR.
 
 -----
 
+## 2026-05-16 — CI/CD Pipeline Bootstrap
+
+### D-022 — Production environment required-reviewer gate: added after repo went public
+
+**Decision:** `production` GitHub Environment has jharvieux as required reviewer. Pipeline pauses for manual approval before deploying to production.
+
+**Why:** Initially unavailable — required reviewers only work on public repos or paid plans. Repo was made public during §4 setup, enabling the gate. Added immediately.
+
+**Related:** §2 of ATC CICD Implementation — Build Prompts for Claude Code.md
+
+### D-023 — Scaffold runs before CI/CD pipeline (Option A chosen)
+
+**Decision:** Ran the full Next.js 14 scaffold before starting CI/CD sections, because the repo had no application code.
+
+**Why:** CI/CD sections presuppose an existing app with package.json and src/. Without the scaffold, typecheck/lint/test/build have no target.
+
+**Rejected:** Option B (stub directories only) — cleaner to have a real working app before wiring the pipeline.
+
+**Related:** feature/scaffold branch; merged to dev as PR #1 before §2.
+
+-----
+
 ## Open Items (resolve before they go stale)
 
 - **Confidence/clarity threshold value (bug auto-fix)** — the addendum specifies a threshold exists, but the actual number (e.g., 0.7) will be tuned empirically once real bug submissions arrive. Initial value to be set during Phase 1 implementation; recalibrate after 30 days of real data.
