@@ -1,0 +1,276 @@
+name: deploy
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - "release/*"
+  push:
+    branches:
+      - dev
+      - "release/*"
+
+jobs:
+  # ============================================================
+  # CI block — runs on every PR and push (jobs 1-4)
+  # ============================================================
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript compiler
+        run: npx tsc --noEmit
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npx eslint . --max-warnings 0
+
+      - name: Run Prettier
+        run: npx prettier --check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Vitest with coverage
+        run: npx vitest run --coverage --passWithNoTests
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # db-copy block — production → staging clone (job 5)
+  # Runs only on push to release/* branches
+  # ============================================================
+
+  db-copy:
+    name: Copy Prod DB to Staging
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    needs: [typecheck, lint, test, secret-scan]
+    environment: staging
+    env:
+      PROD_DB_URL: ${{ secrets.PROD_DB_URL }}
+      DB_URL: ${{ secrets.DB_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Dump production database
+        run: |
+          pg_dump "$PROD_DB_URL" \
+            --no-owner \
+            --no-acl \
+            --format=custom \
+            --file=prod_dump.pgdump
+
+      - name: Terminate staging connections and restore
+        run: |
+          psql "$DB_URL" -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();"
+          pg_restore \
+            --no-owner \
+            --no-acl \
+            --clean \
+            --if-exists \
+            --dbname="$DB_URL" \
+            prod_dump.pgdump
+
+      - name: Apply staging fixups
+        run: |
+          psql "$DB_URL" -f scripts/staging-fixups.sql
+
+  # ============================================================
+  # Staging block — deploy + E2E + smoke (job 6)
+  # Runs only on push to release/* branches
+  # ============================================================
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    needs: [db-copy]
+    environment:
+      name: staging
+      url: https://staging.ai-travelconcierge.com
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      TEST_OVERRIDE_EMAIL: ${{ secrets.TEST_OVERRIDE_EMAIL }}
+      TEST_OVERRIDE_PHONE: ${{ secrets.TEST_OVERRIDE_PHONE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply Supabase migrations
+        run: |
+          npx supabase db push --db-url "$DB_URL"
+
+      - name: Vercel deploy (preview)
+        run: |
+          vercel pull --environment=preview --yes --token=$VERCEL_TOKEN
+          vercel build --token=$VERCEL_TOKEN
+          vercel deploy --prebuilt --target=preview --token=$VERCEL_TOKEN
+
+      - name: Run Playwright E2E tests
+        env:
+          BASE_URL: https://staging.ai-travelconcierge.com
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+        run: |
+          npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 14
+
+      - name: Smoke test staging
+        run: |
+          sleep 20
+          curl -f https://staging.ai-travelconcierge.com/api/health
+
+  # ============================================================
+  # Production block — deploy + smoke + tag + auto-merge (job 7)
+  # Runs only on push to release/* branches
+  # ============================================================
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    needs: [deploy-staging]
+    environment:
+      name: production
+      url: https://ai-travelconcierge.com
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply Supabase migrations to production
+        run: |
+          npx supabase db push --db-url "$DB_URL"
+
+      - name: Vercel deploy (production)
+        run: |
+          vercel pull --environment=production --yes --token=$VERCEL_TOKEN
+          vercel build --prod --token=$VERCEL_TOKEN
+          vercel deploy --prebuilt --target=production --token=$VERCEL_TOKEN
+
+      - name: Smoke test production
+        run: |
+          sleep 30
+          curl -f https://ai-travelconcierge.com/api/health
+
+      - name: Create release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#release/}"
+          TAG="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Auto-merge release branch back to dev
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base dev \
+            --head "$GITHUB_REF_NAME" \
+            --title "chore: merge $GITHUB_REF_NAME back to dev" \
+            --label "release-merge" \
+            --body "Automated post-release merge."
+          gh pr merge --merge --auto || { echo "Auto-merge failed or conflict — resolve manually. PR URL above."; exit 0; }

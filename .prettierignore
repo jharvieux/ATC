@@ -1,0 +1,6 @@
+specs/
+CLAUDE.md
+*.docx
+node_modules/
+.next/
+coverage/
