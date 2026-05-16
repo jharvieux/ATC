@@ -1,0 +1,33 @@
+{
+  "_note": "Recorded against Stripe test mode. Re-record with: npm run contracts:record",
+  "request": {
+    "method": "POST",
+    "url": "https://api.stripe.com/v1/subscriptions",
+    "body": {
+      "customer": "cus_test_placeholder",
+      "items": [{ "price": "price_test_placeholder" }]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": {
+      "id": "sub_test_placeholder",
+      "object": "subscription",
+      "customer": "cus_test_placeholder",
+      "status": "active",
+      "current_period_start": 1700000000,
+      "current_period_end": 1702678400,
+      "items": {
+        "object": "list",
+        "data": [
+          {
+            "id": "si_test_placeholder",
+            "price": { "id": "price_test_placeholder" }
+          }
+        ]
+      },
+      "livemode": false
+    }
+  }
+}

@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "rls:snapshot": "tsx scripts/rls-snapshot.ts > db/rls-snapshot.sql",
     "rls:check": "tsx scripts/rls-snapshot-diff.ts",
-    "test:cross-tenant": "vitest run tests/security/cross-tenant-probe"
+    "test:cross-tenant": "vitest run tests/security/cross-tenant-probe",
+    "test:contracts": "vitest run tests/contracts",
+    "contracts:record": "tsx scripts/record-contracts.ts"
   },
   "dependencies": {
     "next": "14.2.35",
@@ -31,6 +33,7 @@
     "@vitest/coverage-v8": "^1.6.0",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
+    "msw": "^2.14.6",
     "postcss": "^8",
     "postgres": "^3.4.9",
     "tailwindcss": "^3.4.1",
