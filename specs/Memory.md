@@ -10,6 +10,37 @@ This file is the working decision log for the AI Travel Concierge platform. It c
 
 -----
 
+## 2026-05-16 — §12 AI Behavior Evaluation Harness deferred (design-only)
+
+### D-024 — Ship eval-harness design doc, defer implementation until app exists
+
+**Decision:** §12 (AI behavior evaluation harness) ships as design-only this round. Commit `docs/evals/design.md` covering scoring strategy, judge prompt design, eval-set hygiene, regression threshold, sampling strategy, cost projection, and storage schema. Do NOT build the runner, SQL migration, CI job, or eval snapshots yet.
+
+**Why:** The application has no persona prompts (`src/prompts/`), no tool definitions (`src/tools/`), and no production conversations. There is literally nothing to evaluate or sample. Building the harness infrastructure now would create code that sits idle and rots before it runs once. The design work itself is the part that needed Opus; the build can wait for Sonnet when the app is built.
+
+**Decisions captured for future implementation (do not redo when picking back up):**
+
+- **Result storage:** Supabase atc-test, three new tables (`eval_runs`, `eval_results`, `drift_stats`). Not an external eval platform.
+- **Daily 1% production sampling:** Deferred until production has meaningful conversation volume. Re-evaluate when there are 100+ conversations/day.
+- **Gate strictness:** Warn-only for the first 30 days after the harness goes live, then flip to blocking. Threshold revisit logged as a follow-up.
+- **Scoring strategy:** Hybrid — single Sonnet judge (temperature=0) for standard evals, 3-judge ensemble for safety-critical, single Haiku judge for the 1% sampling once that exists.
+- **Self-preference mitigation:** Structured per-criterion verdicts, anonymized response in judge prompt, forced chain-of-thought.
+- **Eval hygiene:** Separate Anthropic API key + project for evals; `X-Eval-Suite: true` request header; eval inputs never enter production conversation storage.
+- **Regression threshold:** ≥5% OR ≥10 absolute pass→fail flips on standard evals; any single flip on safety-critical. Baseline = median verdict across last 5 main runs.
+- **Sampling:** Stratified by persona with floor of 5/day. Only aggregated counts stored — no conversation content in `drift_stats`.
+- **Cost target:** ~$240/month assuming 20 PRs/month and Sonnet judge. Switch judge to Haiku for non-safety evals if cost is an issue (cuts to ~$60/month).
+
+**Rejected:**
+
+- Building the harness now with stub responses (like §10, §11) — those stubs gate CI legitimately (a route enumerator works without app code; contract fixtures encode schema). An eval harness with no evals is just empty machinery. No CI value, just maintenance burden.
+- External eval platform (Braintrust, LangSmith) — would add $50-200/month vendor cost on top of Anthropic costs, and adds a vendor dependency for a feature that hasn't shipped yet.
+
+**Related artifacts:**
+- `docs/evals/design.md` — full design (this PR)
+- Future build prompt or §12 redo will reference this when the application code exists
+
+-----
+
 ## 2026-05-15 — Auto-updating docs + audience accessibility (v1.1 of help-doc prompts)
 
 ### D-014 — Auto-update of docs: AI writes, two-track routing (low-risk auto-merge, structural to human)
