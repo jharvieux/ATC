@@ -6,13 +6,14 @@ Per spec §4.1.5 and §30.6. This document captures the design decisions for the
 
 **Recommended approach: hybrid.**
 
-| Eval category | Strategy | Reason |
-|---|---|---|
-| Standard regression evals (PR-track) | Single Sonnet 4.6 judge, temperature=0 | Reproducibility matters more than noise reduction for regression detection. Same input → same verdict on rerun. |
-| Safety-critical evals (refusal, PII, hallucination) | 3-judge ensemble, majority vote | Higher stakes, worth the 3× cost. Disagreement among judges is itself a useful signal (eval is ambiguous → revise the criteria). |
-| 1% production sampling | Single Haiku 4.5 judge | Volume × cost; Haiku is cheaper. Cross-validate quarterly against a Sonnet sample. |
+| Eval category                                       | Strategy                               | Reason                                                                                                                           |
+| --------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Standard regression evals (PR-track)                | Single Sonnet 4.6 judge, temperature=0 | Reproducibility matters more than noise reduction for regression detection. Same input → same verdict on rerun.                  |
+| Safety-critical evals (refusal, PII, hallucination) | 3-judge ensemble, majority vote        | Higher stakes, worth the 3× cost. Disagreement among judges is itself a useful signal (eval is ambiguous → revise the criteria). |
+| 1% production sampling                              | Single Haiku 4.5 judge                 | Volume × cost; Haiku is cheaper. Cross-validate quarterly against a Sonnet sample.                                               |
 
 Trade-offs considered:
+
 - Pure single-judge: cheapest, but flaky on borderline cases. Bad for safety-critical.
 - Pure 5-judge ensemble: most reliable, but 5× cost on every eval. Overkill for non-safety.
 - Cross-model ensemble (Claude + GPT-4 judge): best at detecting self-preference, but operationally complex. Defer to v2.
@@ -67,12 +68,12 @@ Anthropic's API policy is that customer prompts are not used for model training 
 
 The spec says "5% of evals change verdict from pass to fail OR any safety-critical eval flips". Refinements:
 
-| Trigger | Threshold | Rationale |
-|---|---|---|
-| Standard evals: pass→fail flips | ≥5% **OR** ≥10 absolute | Percentage alone misleads when eval set is small. Absolute floor catches "5 critical evals flipped but it's only 4%" cases. |
-| Safety-critical evals: pass→fail flips | Any single flip | No safe percentage here. |
-| Comparison baseline | Median verdict per eval across last 5 main-branch runs | Single-run baselines are flaky; rolling median absorbs ~1-2 random flip-flops. |
-| pass→fail vs fail→pass | Track both, only fail on pass→fail | A regression is the only thing that blocks. Improvements are logged but don't gate. |
+| Trigger                                | Threshold                                              | Rationale                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Standard evals: pass→fail flips        | ≥5% **OR** ≥10 absolute                                | Percentage alone misleads when eval set is small. Absolute floor catches "5 critical evals flipped but it's only 4%" cases. |
+| Safety-critical evals: pass→fail flips | Any single flip                                        | No safe percentage here.                                                                                                    |
+| Comparison baseline                    | Median verdict per eval across last 5 main-branch runs | Single-run baselines are flaky; rolling median absorbs ~1-2 random flip-flops.                                              |
+| pass→fail vs fail→pass                 | Track both, only fail on pass→fail                     | A regression is the only thing that blocks. Improvements are logged but don't gate.                                         |
 
 The 5-run rolling median requires building up 5 main runs before the gate is meaningful. During the first 5 runs the gate runs in informational mode (logs verdicts, no PR block).
 
@@ -98,18 +99,19 @@ The 5-run rolling median requires building up 5 main runs before the gate is mea
 
 Rough per-month estimate, current assumptions:
 
-| Component | Estimate |
-|---|---|
-| PR-track regression run, ~350 evals × 2 calls (response + judge) | ~$9.50 per PR run |
-| Safety-critical ensemble, ~50 evals × 4 calls (response + 3 judges) | ~$2.70 per PR run |
-| **Per PR run total** | **~$12** |
-| ~20 PRs/month | $240 |
-| 1% daily sampling, ~10 convos/day × 2 calls | ~$0.27/day → ~$8/month |
-| **Monthly total at current assumptions** | **~$250/month** |
+| Component                                                           | Estimate               |
+| ------------------------------------------------------------------- | ---------------------- |
+| PR-track regression run, ~350 evals × 2 calls (response + judge)    | ~$9.50 per PR run      |
+| Safety-critical ensemble, ~50 evals × 4 calls (response + 3 judges) | ~$2.70 per PR run      |
+| **Per PR run total**                                                | **~$12**               |
+| ~20 PRs/month                                                       | $240                   |
+| 1% daily sampling, ~10 convos/day × 2 calls                         | ~$0.27/day → ~$8/month |
+| **Monthly total at current assumptions**                            | **~$250/month**        |
 
 Assumptions: ~2K input + 500 output tokens per call, Sonnet 4.6 pricing ($3/M input, $15/M output), Haiku 4.5 for sampling judge (~5× cheaper).
 
 Cost-reduction levers if needed:
+
 - Skip evals on docs-only PRs (CI condition).
 - Move judge to Haiku for non-safety evals (5× saving).
 - Cache eval response replays — same eval ID + same git SHA = reuse stored response. Don't re-call the API on duplicate runs.
@@ -187,7 +189,10 @@ Each eval lives at `evals/snapshots/<category>/<id>.json`:
   "category": "persona-marcus",
   "is_safety_critical": false,
   "input_messages": [
-    { "role": "user", "content": "I want a 5-star hotel in Paris for next weekend." }
+    {
+      "role": "user",
+      "content": "I want a 5-star hotel in Paris for next weekend."
+    }
   ],
   "expected_behavior": "Marcus should ask clarifying questions about budget and preferences before recommending properties, and should not invent specific hotel names or prices.",
   "evaluation_criteria": [
@@ -202,6 +207,7 @@ Each eval lives at `evals/snapshots/<category>/<id>.json`:
 ## Phased delivery
 
 This PR ships:
+
 1. The design doc (this file).
 2. Eval snapshot directory structure with 2 example evals per category (placeholders).
 3. Runner skeleton — compiles, but the "replay against current model + prompts" step is stubbed pending `src/prompts/` and `src/tools/`.
@@ -211,6 +217,7 @@ This PR ships:
 7. Continuous-sampling script skeleton.
 
 Future PRs (after application code lands):
+
 - Real persona response replay (replace the runner stub).
 - Real eval snapshots for each persona (replace placeholders).
 - Cross-tenant adversarial evals.
