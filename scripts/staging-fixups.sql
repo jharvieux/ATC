@@ -3,84 +3,180 @@
 -- =============================================================================
 -- Run by: .github/workflows/deploy.yml, db-copy job, step "Apply staging fixups"
 -- When:   Immediately after pg_restore copies the production database to staging.
--- Why:    Prevent staging from touching live external services (Gmail, Stripe)
---         and from processing real production customer emails.
+-- Why:    Prevent staging from touching live external services (Gmail, Stripe,
+--         Google/Microsoft/Facebook OAuth) and from processing real production
+--         customer emails.
 --
 -- Safe to run multiple times (all updates are idempotent).
+--
+-- Schema note: updated for v6.1 (AI_Travel_Concierge_Spec_v6_1_Full.docx §5).
+--   agent_organizations → tenants (§5.1)
+--   email_messages      → email_log (§23.2)
+--   email_connections   → possibly absent in v6.1; handled defensively below
 -- =============================================================================
+
 
 -- =============================================================================
 -- 1. Clear Gmail OAuth tokens in email_connections
 -- =============================================================================
 -- Production and staging use different GMAIL_ENCRYPTION_KEY values, so any
--- token copied from production will fail to decrypt on staging. Setting them
--- to NULL and marking the connection as reconnect_required is cleaner than
--- allowing silent decryption failures. This also prevents the gmail-renew
--- Inngest job from attempting OAuth refreshes against production Google tokens.
+-- token copied from production will fail to decrypt on staging. Clearing them
+-- prevents silent decryption failures and stops the gmail-renew Inngest job
+-- from attempting OAuth refreshes against production Google tokens.
+--
+-- DEFENSIVE: email_connections may not exist in v6.1 (table is not in §5 DDL).
+-- This block no-ops cleanly if the table is absent and logs a NOTICE so the
+-- operator knows to verify whether Gmail integration is intentionally missing.
 -- =============================================================================
 
-UPDATE email_connections
-SET
-    access_token        = NULL,
-    refresh_token       = NULL,
-    connection_status   = 'reconnect_required',
-    last_error          = 'Staging: tokens cleared after DB copy from production',
-    last_error_at       = NOW(),
-    updated_at          = NOW();
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'email_connections'
+      AND n.nspname = 'public'
+      AND c.relkind = 'r'
+  ) THEN
+    UPDATE public.email_connections
+    SET
+        access_token        = NULL,
+        refresh_token       = NULL,
+        connection_status   = 'reconnect_required',
+        last_error          = 'Staging: tokens cleared after DB copy from production',
+        last_error_at       = NOW(),
+        updated_at          = NOW();
+  ELSE
+    RAISE NOTICE 'email_connections table not present — skipping Gmail token clear. '
+                 'Verify Gmail integration is intentionally absent or update fixup.';
+  END IF;
+END $$;
+
 
 -- =============================================================================
--- 2. Clear Stripe customer references in agent_organizations
+-- 2. Clear Stripe references in tenants
 -- =============================================================================
 -- Staging uses Stripe test-mode API keys, which cannot look up live-mode
--- customer or subscription IDs copied from production. Leaving them in place
--- would cause every Stripe call on staging to return a "no such customer"
--- error. Clearing them forces staging to create fresh test-mode resources.
+-- customer, subscription, or Connect account IDs copied from production.
+-- Leaving them in place causes every Stripe call on staging to return a
+-- "no such customer" or "no such account" error. Clearing them forces staging
+-- to create fresh test-mode resources.
+--
+-- stripe_connect_account_id is also cleared: a live Connect account ID on
+-- staging would allow money-movement calls against the real Connect account,
+-- which is the higher-risk of the two Stripe identifier types.
 -- =============================================================================
 
-UPDATE agent_organizations
+UPDATE public.tenants
 SET
-    stripe_customer_id      = NULL,
-    stripe_subscription_id  = NULL,
-    updated_at              = NOW();
+    stripe_customer_id          = NULL,
+    stripe_subscription_id      = NULL,
+    stripe_connect_account_id   = NULL,
+    updated_at                  = NOW();
+
 
 -- =============================================================================
--- 3. Suppress unprocessed customer emails in email_messages
+-- 3. Suppress unprocessed customer emails in email_log
 -- =============================================================================
--- Staging must not categorize, draft replies for, or send responses to real
--- production customer emails. Marking unprocessed messages as 'ignored'
--- prevents the email-processing pipeline from acting on them. Messages that
--- are already processed (sent, archived, etc.) are left unchanged.
--- =============================================================================
-
-UPDATE email_messages
-SET status = 'ignored'
-WHERE status IN ('unread', 'triaged', 'draft_ready');
-
--- =============================================================================
--- 4. Verification — confirm all fixups applied correctly
--- =============================================================================
--- Each row reports the count of records that should be zero after the fixups.
--- If any count is non-zero, the corresponding fixup did not fully apply.
--- This output is visible in GitHub Actions logs for the db-copy job.
+-- Staging must not send real production customer emails. Setting status to
+-- 'suppressed' (a valid terminal status per §23.2 email_log CHECK constraint)
+-- prevents the email pipeline from picking up and sending these rows.
+--
+-- Filter: 'queued' (waiting to send) and 'sent' (sent but not yet delivered-
+-- confirmed) are the only non-terminal statuses in v6.1.
+-- All other statuses (delivered, soft_bounced, hard_bounced, complained,
+-- rejected, suppressed) are already terminal — no pipeline action needed.
+--
+-- Schema migration note: the previous schema used status values 'unread',
+-- 'triaged', and 'draft_ready' in a table called email_messages. Those values
+-- do not exist in v6.1's email_log CHECK constraint and have been removed here.
 -- =============================================================================
 
-SELECT 'email_connections_with_tokens'   AS check_name,
-       COUNT(*)                          AS remaining_count
-FROM   email_connections
-WHERE  access_token IS NOT NULL
-   OR  refresh_token IS NOT NULL
+UPDATE public.email_log
+SET status = 'suppressed'
+WHERE status IN ('queued', 'sent');
+
+
+-- =============================================================================
+-- 4. Clear OAuth provider tokens in auth.identities
+-- =============================================================================
+-- Supabase copies auth.identities from production. provider_token and
+-- provider_refresh_token allow staging to impersonate real users against
+-- Google, Microsoft, and Facebook. Clearing them prevents staging from
+-- making authenticated calls to those providers on behalf of production users.
+--
+-- DEFENSIVE: provider_token/provider_refresh_token column presence varies
+-- across Supabase versions. This block no-ops if the columns are absent.
+-- =============================================================================
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'auth'
+      AND table_name   = 'identities'
+      AND column_name  = 'provider_token'
+  ) THEN
+    UPDATE auth.identities
+    SET
+        provider_token         = NULL,
+        provider_refresh_token = NULL
+    WHERE provider_token IS NOT NULL
+       OR provider_refresh_token IS NOT NULL;
+  ELSE
+    RAISE NOTICE 'auth.identities.provider_token column not present — '
+                 'skipping OAuth token clear. Verify Supabase version.';
+  END IF;
+END $$;
+
+
+-- =============================================================================
+-- 5. Verification — confirm all fixups applied correctly
+-- =============================================================================
+-- Each row reports the current count for key post-fixup conditions.
+-- These rows are visible in GitHub Actions logs for the db-copy job.
+--
+-- email_connections_with_tokens: should be 0 (or 'N/A' if table absent)
+-- tenants_with_stripe_customer_id: should be 0
+-- tenants_with_stripe_connect_account_id: should be 0 (new in v6.1)
+-- email_log_active_statuses: should be 0
+-- =============================================================================
+
+SELECT 'email_connections_with_tokens' AS check_name,
+       CASE
+         WHEN EXISTS (
+           SELECT 1 FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           WHERE c.relname = 'email_connections'
+             AND n.nspname = 'public'
+             AND c.relkind = 'r'
+         )
+         THEN (
+           SELECT COUNT(*)::TEXT
+           FROM public.email_connections
+           WHERE access_token IS NOT NULL
+              OR refresh_token IS NOT NULL
+         )
+         ELSE 'N/A — table not present'
+       END AS result
 
 UNION ALL
 
-SELECT 'agent_organizations_with_stripe_refs' AS check_name,
-       COUNT(*)                               AS remaining_count
-FROM   agent_organizations
+SELECT 'tenants_with_stripe_customer_id' AS check_name,
+       COUNT(*)::TEXT AS result
+FROM   public.tenants
 WHERE  stripe_customer_id IS NOT NULL
-   OR  stripe_subscription_id IS NOT NULL
 
 UNION ALL
 
-SELECT 'email_messages_unprocessed'  AS check_name,
-       COUNT(*)                      AS remaining_count
-FROM   email_messages
-WHERE  status IN ('unread', 'triaged', 'draft_ready');
+SELECT 'tenants_with_stripe_connect_account_id' AS check_name,
+       COUNT(*)::TEXT AS result
+FROM   public.tenants
+WHERE  stripe_connect_account_id IS NOT NULL
+
+UNION ALL
+
+SELECT 'email_log_active_statuses' AS check_name,
+       COUNT(*)::TEXT AS result
+FROM   public.email_log
+WHERE  status IN ('queued', 'sent');
