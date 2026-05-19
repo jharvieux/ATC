@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-026 — 2026-05-18 — CI/CD Day 0 hardening (S-1, CR-1, CR-3a, HI-6, ME-15)
+
+**Decision:** Applied all Day 0 items from CI/CD Pipeline Fix Prompts (red team remediation).
+
+- **S-1:** `scripts/staging-fixups.sql` updated for v6.1 schema: `agent_organizations` → `tenants` (adds `stripe_connect_account_id` nulling), `email_messages` → `email_log` (status `ignored` → `suppressed`, filter updated to v6.1 active statuses `queued`/`sent`), `email_connections` block wrapped in defensive DO block, new section 4 clears `auth.identities` OAuth tokens.
+- **CR-1:** `release/*` branch protection enabled on GitHub (PR required, status checks, stale dismissal, conversation resolution). Push restriction not available on Free plan — accepted gap, noted for Pro upgrade.
+- **CR-3a:** `.github/CODEOWNERS` created; `@jharvieux` required reviewer for `.github/workflows/`, `CODEOWNERS` itself, and `scripts/staging-fixups.sql`.
+- **HI-6:** Backup production approver added to `production` GitHub Environment.
+- **ME-15:** All 12 required GitHub labels pre-created.
+
+**Why:** Red team review (Part B) identified these as Day 0 prerequisites blocking all subsequent CI/CD hardening work.
+
+**Rejected:** Push restriction on `release/*` — not available on GitHub Free for private repos.
+
+**Artifacts:** `scripts/staging-fixups.sql`, `.github/CODEOWNERS`. PR #18 merged to dev.
+
+---
+
 ## D-025 — 2026-05-16 — §13 rollback runbooks shipped as documentation only
 
 **Decision:** All three rollback runbooks and `check-production-version.sh` are docs/scripts only — no CI gate, no automation. The database rollback runbook recommends compensating migrations over point-in-time restore; point-in-time is documented as last resort with an explicit data-loss warning.
