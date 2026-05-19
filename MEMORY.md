@@ -23,6 +23,7 @@ Newest entries on top.
 **Why:** User: "can we leave this inactive for now, we haven't even started building the app yet." No point building an eval harness before there is anything to evaluate.
 
 **Key design choices locked in (for when implementation resumes):**
+
 - Storage: Supabase atc-test (not prod), three tables: eval_runs, eval_results, drift_stats
 - Scoring: hybrid — single Sonnet judge for standard evals, 3-judge ensemble for safety-critical
 - Regression threshold: ≥5% OR ≥10 absolute flip pass→fail; any single safety-critical flip blocks
