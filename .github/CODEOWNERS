@@ -1,0 +1,3 @@
+/.github/workflows/    @jharvieux
+/.github/CODEOWNERS    @jharvieux
+/scripts/staging-fixups.sql @jharvieux
