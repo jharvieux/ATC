@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Travel Concierge
 
-## Getting Started
+pnpm monorepo — two Next.js 14 apps sharing a TypeScript/ESLint/Prettier config.
 
-First, run the development server:
+## Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 24.x (via nvm: `nvm use 24`)
+- pnpm 11.x (`brew install pnpm`)
+- Supabase CLI (`brew install supabase/tap/supabase`)
+- Stripe CLI (`brew install stripe/stripe-cli/stripe`)
+
+## Repo structure
+
+```
+apps/
+  main/     — customer-facing platform (Next.js 14, shadcn/ui)
+  rag/      — RAG ingestion and retrieval service (Next.js 14, no UI)
+packages/
+  config/         — shared tsconfig, eslint, prettier
+  shared-types/   — types used across both apps
+scripts/          — one-shot operational scripts
+tests/            — cross-cutting security and contract tests
+docs/             — runbooks, design docs, eval harness design
+db/               — RLS policy snapshot
+.github/workflows/ — CI/CD pipeline
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Running locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm install
+cp .env.example .env.local   # fill in values
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Run both apps (separate terminals)
+cd apps/main && pnpm dev     # http://localhost:3000
+cd apps/rag  && pnpm dev     # http://localhost:3001
+```
 
-## Learn More
+## Adding a new environment variable
 
-To learn more about Next.js, take a look at the following resources:
+1. Add the variable to `.env.example` with a comment.
+2. Add it to the relevant app's `src/lib/env.ts` Zod schema.
+3. Run `pnpm typecheck` to verify.
+4. See spec §28 for the full env-var policy.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## CI
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Every PR into `dev` or `release/*` runs lint, typecheck, and build via `.github/workflows/ci.yml`.
