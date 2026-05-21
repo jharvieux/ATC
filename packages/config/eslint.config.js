@@ -1,9 +1,7 @@
-const { FlatCompat } = require("@eslint/eslintrc");
 const tsPlugin = require("@typescript-eslint/eslint-plugin");
 const tsParser = require("@typescript-eslint/parser");
 const importPlugin = require("eslint-plugin-import");
-
-const compat = new FlatCompat();
+const atcPlugin = require("./eslint-plugin");
 
 /** @type {import("eslint").Linter.FlatConfig[]} */
 const config = [
@@ -15,6 +13,7 @@ const config = [
     plugins: {
       "@typescript-eslint": tsPlugin,
       import: importPlugin,
+      atc: atcPlugin,
     },
     languageOptions: {
       parser: tsParser,
@@ -24,15 +23,10 @@ const config = [
     },
     rules: {
       ...tsPlugin.configs["recommended"].rules,
-      // Path restrictions — specific rules added per Build Prompt 03
-      "import/no-restricted-paths": [
-        "error",
-        {
-          zones: [
-            // Populated in Build Prompt 03 with service-role import restrictions
-          ],
-        },
-      ],
+      // Spec §5.4.4 — service-role-client.ts may only be imported by the
+      // two named files; platformAdmin* functions must use the audit wrapper.
+      "atc/no-direct-service-role-import": "error",
+      "atc/platform-admin-functions-must-use-audit-wrapper": "error",
     },
   },
 ];
