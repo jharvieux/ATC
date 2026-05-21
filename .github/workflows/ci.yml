@@ -50,6 +50,7 @@ jobs:
         run: pnpm -r build
         env:
           PLATFORM_PRIMARY_DOMAIN: ci.example.com
+          PLATFORM_DOMAIN_REGEX: ^([a-z0-9-]+)\.ci\.example\.com$
           NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
           SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key

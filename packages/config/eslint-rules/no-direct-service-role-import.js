@@ -11,15 +11,19 @@
 // `withPlatformAdminAudit(...)`. A raw service-role client bypasses RLS,
 // so an unaudited import silently defeats tenant isolation.
 
-const ALLOWED_FILES = [
-  "tenant-client.ts",
-  "platform-admin-client.ts",
+// Full path suffixes for allowed callers. Using path suffixes (not bare
+// filenames) avoids false positives if a future file happens to share a name.
+const ALLOWED_PATH_SUFFIXES = [
+  "/lib/db/tenant-client.ts",
+  "/lib/db/platform-admin-client.ts",
+  // Middleware tenant resolver: runs before any user context exists, so
+  // service-role is the only viable client. See BP04 / spec §1.4.
+  "/lib/tenancy/resolve-tenant.ts",
 ];
 
 function endsWithAllowed(filename) {
-  return ALLOWED_FILES.some((allowed) =>
-    filename.replace(/\\/g, "/").endsWith(`/lib/db/${allowed}`),
-  );
+  const normalized = filename.replace(/\\/g, "/");
+  return ALLOWED_PATH_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
 function isServiceRoleClientImport(source) {

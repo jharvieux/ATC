@@ -4,6 +4,38 @@ Newest entries on top.
 
 ---
 
+## D-039 — 2026-05-21 — service_role requires explicit table grants on atc-main (same provisioning gap as D-032)
+
+**Decision:** Migration `20260521140000_service_role_grants.sql` grants `SELECT, INSERT, UPDATE, DELETE` on `public.tenants` and `public.users`, and `SELECT` on `public.tier_definitions` to the `service_role` PostgreSQL role.
+
+**Why:** `service_role` has `BYPASSRLS` but is NOT a PostgreSQL superuser. It still needs table-level GRANTs. The atc-main project was provisioned without `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO service_role`, so every PostgREST query using the service-role JWT returned "permission denied for table X". Discovered while wiring up the BP04 tenant resolver. Analogous to D-032's fix for the `authenticated` role.
+
+**How to apply:** Every future migration that creates a table accessible via service-role paths (webhook handlers, middleware resolvers, platform-admin tools) must include `GRANT SELECT, INSERT, UPDATE, DELETE ON public.<table> TO service_role`. This is in addition to the `authenticated` grants required by D-032. The migration lint gate does not yet enforce this.
+
+---
+
+## D-038 — 2026-05-21 — Middleware runs default runtime; vitest @/ alias wired via vitest.config.ts
+
+**Decision:** `apps/main/src/middleware.ts` uses the Next.js default runtime (no explicit `runtime = 'nodejs'`). `@supabase/supabase-js` v2 is edge-compatible, and on Vercel the middleware runs under Fluid Compute (Node.js). No `runtime` export is needed. `vitest.config.ts` has a `resolve.alias` mapping `@/*` → `apps/main/src/*` so test files that import source via `@/` work without Next.js's own module resolver.
+
+**Why:** Spec §29.2 says "Default: Edge runtime for middleware." Vercel's current recommendation is Fluid Compute (Node.js), which the default achieves on Vercel. An explicit `runtime = 'nodejs'` export would force Node in local dev too, which could mask edge-compatibility issues in the library. Keeping the default lets Supabase JS v2 run in edge locally (where it's compatible) and in Fluid Compute on Vercel.
+
+**Rejected:** `export const runtime = 'nodejs'` in middleware — adds local/Vercel parity at the cost of locking out future edge optimization.
+
+---
+
+## D-037 — 2026-05-21 — BP04 tenant middleware: custom_domain added in migration 0004; service-role explicit Authorization header required
+
+**Decision:** 
+- `custom_domain TEXT UNIQUE` added to `tenants` via migration `20260521130000_add_custom_domain.sql`. The column was not specified in BP02 but is required for BP04's `getTenantByCustomDomain` function. This is not a spec deviation — §1.4/§3.6 imply custom domain routing exists; the column just wasn't explicitly DDL'd in §5.1.
+- `createServiceRoleClient()` in `service-role-client.ts` now sets `global.headers.Authorization: Bearer ${serviceRoleKey}` explicitly. Without this, Supabase JS v2 with `auth.persistSession: false` does not include the `Authorization` header, causing PostgREST to authenticate as `anon` instead of `service_role`.
+
+**Why:** PostgREST uses `Authorization: Bearer <jwt>` to determine the PostgreSQL role. The `apikey` header alone is not sufficient for PostgREST role switching. Supabase JS v2 only injects the Authorization header from an active auth session; without one, only `apikey` is set.
+
+**Artifacts:** `apps/main/supabase/migrations/20260521130000_add_custom_domain.sql`, `apps/main/src/lib/db/service-role-client.ts`, `apps/main/src/lib/tenancy/resolve-tenant.ts`, `apps/main/src/middleware.ts`.
+
+---
+
 ## D-036 — 2026-05-21 — Audit-log writes stubbed to console.warn; switch to real INSERT in §26 work
 
 **Decision:** `withPlatformAdminAudit` writes audit rows as structured `console.warn("[audit-log:STUB] {...json}")` lines. The `audit_log` table does not exist yet (created in spec §26). The audit-row shape mirrors what the table will accept, so the swap to a real INSERT is a one-line body change in `writeAuditRow`.
