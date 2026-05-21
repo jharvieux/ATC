@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-028 — 2026-05-21 — BP01 monorepo scaffold complete (PR #22)
+
+**Decision:** Monorepo scaffold delivered as pnpm workspace with apps/main, apps/rag, packages/config, packages/shared-types.
+
+**Key deviations from BP01 spec:**
+- Node 24 (not 22) — per D-027
+- shadcn/ui components (button, card) written manually — no interactive CLI in CI
+- `autoprefixer`, `eslint`, `eslint-config-next` added as explicit devDeps in apps — required by pnpm strict hoisting
+- `unrs-resolver` build approved in pnpm-workspace.yaml (transitive dep from eslint-config-next)
+- Root-level `.eslintrc.json` removed — it was old scaffold, conflicted with app-level configs
+- Cross-tenant probe and route enumerator paths updated from `src/app/api` → `apps/main/src/app/api`
+- deploy.yml updated from npm+Node20 to pnpm+Node24
+
+**What's next:** BP01 definition of done met locally. Vercel check fails because the two Vercel projects (main-app, rag-service) have not been created yet — user action needed before Vercel deploys will work.
+
+---
+
 ## D-027 — 2026-05-20 — Node.js 24 chosen over spec's 22.x
 
 **Decision:** Use Node.js 24 LTS everywhere (local dev + Vercel) instead of 22.x as written in spec §29.2.
