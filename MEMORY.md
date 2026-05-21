@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-041 — 2026-05-21 — BP06 RAG schema: platform_settings replica in RAG project (option C)
+
+**Decision:** `compute_feedback_factor()` (plpgsql, lives in the RAG Supabase project) reads `platform_settings` knobs (`feedback_adjustment_limit`, `feedback_min_signal_count`, `feedback_period_days`, `feedback_decay_halflife_days`). Those values live canonically in the main app's Supabase project. Cross-database queries are impossible in Postgres. Three options were evaluated:
+
+- **Option A** — hardcode the knobs as constants in the plpgsql function. Simple, but knob changes require a migration.
+- **Option B** — pass knobs as function parameters. Correct, but every caller must supply them; leaks platform configuration into API layer.
+- **Option C (chosen)** — replicate `platform_settings` structure and seed values into the RAG project. `compute_feedback_factor()` reads from the local replica. Canonical values live in main app; replica kept current by a deferred sync mechanism.
+
+**Why:** Option C preserves the plpgsql function signature from §6.10 verbatim and keeps the sync responsibility in infrastructure (not in every API caller). The 4 feedback knobs are infrequently changed platform config — replication lag is acceptable.
+
+**Rejected:** Option A (schema migration required for every admin knob change); Option B (pushes platform config into API layer).
+
+**Deferred:** The sync mechanism (nightly job + on-change webhook from main app admin console) is not yet implemented. Replica is updated manually after any platform admin knob change until sync lands.
+
+**Artifacts:** `apps/rag/supabase/migrations/0006_platform_settings_replica.sql`, `apps/main/supabase/migrations/20260521180000_platform_settings.sql`, `apps/rag/README.md` (§ "platform_settings replication").
+
+---
+
 ## D-040 — 2026-05-21 — BP05 core domain schema: deferred FKs, payout_balances PK, stripe_webhook_events custom RLS
 
 **Decision:**
