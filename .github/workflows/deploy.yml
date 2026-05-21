@@ -25,14 +25,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run TypeScript compiler
-        run: npx tsc --noEmit
+        run: pnpm -r typecheck
 
   lint:
     name: Lint
@@ -44,17 +46,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run ESLint
-        run: npx eslint . --max-warnings 0
-
-      - name: Run Prettier
-        run: npx prettier --check .
+        run: pnpm -r lint
 
   test:
     name: Test
@@ -71,14 +72,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run Vitest with coverage
-        run: npx vitest run --coverage --passWithNoTests
+        run: pnpm test
 
   secret-scan:
     name: Secret Scan
@@ -107,26 +110,33 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Fail on critical CVEs
-        run: npm audit --production --audit-level=critical
+        run: pnpm audit --audit-level=critical
 
       - name: Warn on high CVEs
         run: |
-          npm audit --production --audit-level=high \
-            --json 2>/dev/null | \
+          pnpm audit --audit-level=high --json 2>/dev/null | \
             node -e "
-              const data = require('fs').readFileSync('/dev/stdin','utf8');
-              const report = JSON.parse(data);
-              const highs = Object.values(report.vulnerabilities || {})
-                .filter(v => v.severity === 'high');
-              highs.forEach(v => {
-                console.log('::warning::High CVE in ' + v.name + ': ' + (v.via?.[0]?.url || 'see npm audit'));
+              const chunks = [];
+              process.stdin.on('data', d => chunks.push(d));
+              process.stdin.on('end', () => {
+                try {
+                  const report = JSON.parse(Buffer.concat(chunks).toString());
+                  const vulns = report.vulnerabilities || {};
+                  Object.values(vulns)
+                    .filter(v => v.severity === 'high')
+                    .forEach(v => {
+                      console.log('::warning::High CVE in ' + v.name + ': ' + (v.via?.[0]?.url || 'see pnpm audit'));
+                    });
+                } catch (_) {}
               });
             " || true
 
@@ -142,19 +152,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Check RLS drift (fail on PR and release/*)
         if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
-        run: npm run rls:check
+        run: pnpm rls:check
 
       - name: Check RLS drift (warn on dev push)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-        run: npm run rls:check || echo "::warning::RLS drift detected on dev — run npm run rls:snapshot and commit db/rls-snapshot.sql"
+        run: pnpm rls:check || echo "::warning::RLS drift detected on dev — run pnpm rls:snapshot and commit db/rls-snapshot.sql"
 
   contract-tests:
     name: Contract Tests
@@ -167,14 +179,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run contract tests (MSW replay)
-        run: npm run test:contracts
+        run: pnpm test:contracts
 
   cross-tenant-probe:
     name: Cross-Tenant Probe
@@ -190,14 +204,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run cross-tenant probe
-        run: npm run test:cross-tenant
+        run: pnpm test:cross-tenant
 
   # ============================================================
   # db-copy block — production → staging clone (job 5)
@@ -282,11 +298,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Apply Supabase migrations
         run: |
@@ -345,11 +363,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Apply Supabase migrations to production
         run: |
