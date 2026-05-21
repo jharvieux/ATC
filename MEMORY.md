@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-042 — 2026-05-21 — BP07: Stripe key names verified; all event handlers are TODO stubs; Inngest v4 trigger API
+
+**Decision:**
+
+- **Stripe env var names confirmed stable (2026):** `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET` — no drift from spec §28.7. No changes needed.
+- **All Stripe event-type handlers are TODO stubs** in `apps/main/src/lib/stripe/webhook-handler.ts`. Real implementations needed when the following spec sections land:
+  - `§14` (subscription lifecycle): `customer.subscription.created/updated/deleted`, `invoice.payment_succeeded/failed`
+  - `§16` (Stripe Connect / payouts): `account.updated`, `account.application.deauthorized`, `transfer.created`, `payout.paid`
+- **Inngest reconcile job is registered but logs only** — `TODO(escalation)` comment in `stripe-webhook-incomplete-reconcile.ts`. Real alerts (PagerDuty/Slack) land when alerting infra is built.
+- **Inngest v4 API change:** `createFunction` takes 2 arguments (not 3 as in v2/v3). The trigger is specified inside `options.triggers` as an array: `{ id: "...", triggers: [{ cron: "*/15 * * * *" }] }`.
+
+**Why:** Build prompt §28.7 explicitly called out that Stripe key names might drift — verified they have not. Logging all decisions per BP07 instructions.
+
+**Artifacts:** `apps/main/src/lib/stripe/webhook-handler.ts`, `apps/main/src/inngest/stripe-webhook-incomplete-reconcile.ts`, `apps/main/src/inngest/client.ts`, `apps/main/src/app/api/inngest/route.ts`, `apps/main/src/lib/auth/assert-permission.ts`.
+
+---
+
 ## D-041 — 2026-05-21 — BP06 RAG schema: platform_settings replica in RAG project (option C)
 
 **Decision:** `compute_feedback_factor()` (plpgsql, lives in the RAG Supabase project) reads `platform_settings` knobs (`feedback_adjustment_limit`, `feedback_min_signal_count`, `feedback_period_days`, `feedback_decay_halflife_days`). Those values live canonically in the main app's Supabase project. Cross-database queries are impossible in Postgres. Three options were evaluated:
