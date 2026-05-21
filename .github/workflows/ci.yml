@@ -40,6 +40,9 @@ jobs:
       - name: Lint
         run: pnpm -r lint
 
+      - name: Lint migrations
+        run: pnpm lint:migrations
+
       - name: Typecheck
         run: pnpm -r typecheck
 
@@ -47,3 +50,6 @@ jobs:
         run: pnpm -r build
         env:
           PLATFORM_PRIMARY_DOMAIN: ci.example.com
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key

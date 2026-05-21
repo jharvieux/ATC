@@ -17,7 +17,10 @@
     "test:contracts": "vitest run tests/contracts",
     "contracts:record": "tsx scripts/record-contracts.ts",
     "rls:snapshot": "tsx scripts/rls-snapshot.ts > db/rls-snapshot.sql",
-    "rls:check": "tsx scripts/rls-snapshot-diff.ts"
+    "rls:check": "tsx scripts/rls-snapshot-diff.ts",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:reset": "tsx scripts/db-reset.ts",
+    "lint:migrations": "tsx scripts/lint-migrations.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
