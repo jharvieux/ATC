@@ -21,7 +21,7 @@ import {
 } from "../../scripts/enumerate-api-routes";
 import allowlist from "./cross-tenant-allowlist.json";
 
-const API_ROOT = join(process.cwd(), "src", "app", "api");
+const API_ROOT = join(process.cwd(), "apps", "main", "src", "app", "api");
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
