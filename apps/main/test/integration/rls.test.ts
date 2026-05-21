@@ -1,5 +1,7 @@
 // RLS integration tests
 // Spec refs: §5.1 (tenants, users), §5.1.X (hard-delete), §5.1.2 (policy coverage)
+//            §5.2 (conversations, messages), §5.3 (bookings, commissions, subcontractors,
+//            payout_balances, payout_records, stripe_webhook_events)
 //
 // Validates tenant-isolation invariants against the live Supabase project:
 //   1. Cross-tenant SELECT is denied by RLS.
@@ -7,6 +9,7 @@
 //   3. Hard-DELETE on a tenant raises without the override.
 //   4. Hard-DELETE with `SET LOCAL app.allow_tenant_hard_delete = 'true'`
 //      override succeeds.
+//   5. BP05 domain tables each enforce cross-tenant isolation.
 //
 // Each suite creates random-prefixed ephemeral tenants/users via service
 // role, then exercises authenticated-client behavior. afterAll tears
@@ -253,5 +256,226 @@ describeIf("RLS integration", () => {
       SELECT id FROM public.tenants WHERE id = ${t.id}
     `;
     expect(remaining.length).toBe(0);
+  });
+
+  // ── BP05 domain tables ────────────────────────────────────────────────────
+  // One cross-tenant isolation check per new table. Also verifies that
+  // suspended-tenant users can SELECT but cannot INSERT on conversations,
+  // bookings, and subcontractors.
+
+  describe("BP05 domain tables RLS", () => {
+    let convAId: string;
+    let convSuspId: string;
+    let bookingAId: string;
+
+    beforeAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, tenantSuspended } = fx;
+
+      // conversations (tenantA + tenantSuspended for read test)
+      const [convA] = await sql<{ id: string }[]>`
+        INSERT INTO public.conversations (tenant_id, title, status)
+        VALUES (${tenantA.id}, 'RLS test conv A', 'active')
+        RETURNING id
+      `;
+      if (!convA) throw new Error("conv A insert failed");
+      convAId = convA.id;
+
+      const [convS] = await sql<{ id: string }[]>`
+        INSERT INTO public.conversations (tenant_id, title, status)
+        VALUES (${tenantSuspended.id}, 'RLS test conv susp', 'active')
+        RETURNING id
+      `;
+      if (!convS) throw new Error("conv susp insert failed");
+      convSuspId = convS.id;
+
+      // messages — seeded under convA (tenantA)
+      await sql`
+        INSERT INTO public.messages (tenant_id, conversation_id, role, content)
+        VALUES (${tenantA.id}, ${convAId}, 'user', 'hello from RLS test')
+      `;
+
+      // bookings (tenantA)
+      const [bookingA] = await sql<{ id: string }[]>`
+        INSERT INTO public.bookings (tenant_id, booking_type, status)
+        VALUES (${tenantA.id}, 'cruise', 'draft')
+        RETURNING id
+      `;
+      if (!bookingA) throw new Error("booking A insert failed");
+      bookingAId = bookingA.id;
+
+      // commissions (tenantA, references bookingAId)
+      await sql`
+        INSERT INTO public.commissions (
+          tenant_id, booking_id,
+          commissionable_fare_cents, commission_rate, platform_split_rate,
+          gross_commission_cents, host_booking_fee_cents,
+          net_commission_cents, platform_retained_cents, subhost_payable_cents
+        ) VALUES (
+          ${tenantA.id}, ${bookingAId},
+          100000, 0.10, 0.20,
+          10000, 0,
+          8000, 2000, 8000
+        )
+      `;
+
+      // subcontractors (tenantA)
+      await sql`
+        INSERT INTO public.subcontractors (tenant_id, name, payout_percent)
+        VALUES (${tenantA.id}, 'RLS Test Sub', 10.00)
+      `;
+
+      // payout_balances (one row per tenant, using tenantA)
+      await sql`
+        INSERT INTO public.payout_balances (tenant_id, hold_period_days)
+        VALUES (${tenantA.id}, 7)
+        ON CONFLICT (tenant_id) DO NOTHING
+      `;
+
+      // payout_records (tenantA)
+      await sql`
+        INSERT INTO public.payout_records (tenant_id, amount_cents, status)
+        VALUES (${tenantA.id}, 5000, 'processing')
+      `;
+
+      // stripe_webhook_events — one with tenantA, one platform-level (null)
+      await sql`
+        INSERT INTO public.stripe_webhook_events
+          (stripe_event_id, event_type, endpoint, tenant_id, raw_event)
+        VALUES
+          (${RUN_TAG + '-evt-tenant'}, 'charge.succeeded', 'connect', ${tenantA.id}, '{}'),
+          (${RUN_TAG + '-evt-platform'}, 'account.updated', 'platform', NULL, '{}')
+      `;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, tenantSuspended } = fx;
+      const tids = [tenantA.id, tenantSuspended.id];
+      // Delete in FK-dependency order (most-dependent first).
+      await sql`DELETE FROM public.stripe_webhook_events WHERE stripe_event_id LIKE ${RUN_TAG + '%'}`;
+      await sql`DELETE FROM public.payout_records WHERE tenant_id = ANY(${tids})`;
+      await sql`DELETE FROM public.payout_balances WHERE tenant_id = ANY(${tids})`;
+      await sql`DELETE FROM public.subcontractors WHERE tenant_id = ANY(${tids})`;
+      await sql`DELETE FROM public.commissions WHERE tenant_id = ANY(${tids})`;
+      await sql`DELETE FROM public.bookings WHERE tenant_id = ANY(${tids})`;
+      await sql`DELETE FROM public.messages WHERE tenant_id = ANY(${tids})`;
+      await sql`DELETE FROM public.conversations WHERE tenant_id = ANY(${tids})`;
+    }, 30000);
+
+    it("conversations: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("conversations")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("conversations: suspended user CAN SELECT but CANNOT INSERT", async () => {
+      const client = await authedClient(fx.userSuspended.email, fx.userSuspended.password);
+      const sel = await client
+        .from("conversations")
+        .select("id")
+        .eq("id", convSuspId);
+      expect(sel.error).toBeNull();
+      expect(sel.data?.length).toBe(1);
+
+      const ins = await client
+        .from("conversations")
+        .insert({ tenant_id: fx.tenantSuspended.id, title: "blocked", status: "active" });
+      expect(ins.error).not.toBeNull();
+    });
+
+    it("messages: userB cannot SELECT tenantA messages", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("messages")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("bookings: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("bookings")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("bookings: userA CAN SELECT own tenant row", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("bookings")
+        .select("id")
+        .eq("id", bookingAId);
+      expect(error).toBeNull();
+      expect(data?.length).toBe(1);
+    });
+
+    it("commissions: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("commissions")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("subcontractors: userB cannot SELECT tenantA rows", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("subcontractors")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("payout_balances: userB cannot SELECT tenantA balance", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("payout_balances")
+        .select("tenant_id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("payout_records: userB cannot SELECT tenantA records", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("payout_records")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("stripe_webhook_events: userA can SELECT own-tenant events", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("stripe_webhook_events")
+        .select("stripe_event_id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data?.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("stripe_webhook_events: authenticated users CANNOT SELECT null-tenant (platform) events", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("stripe_webhook_events")
+        .select("stripe_event_id")
+        .is("tenant_id", null);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
   });
 });
