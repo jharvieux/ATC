@@ -19,6 +19,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // Middleware tenant resolver: runs before any user context exists, so
   // service-role is the only viable client. See BP04 / spec §1.4.
   "/lib/tenancy/resolve-tenant.ts",
+  // Stripe webhook handler: operates before any user session; service-role
+  // required for the idempotency insert into stripe_webhook_events. §7.9a.
+  "/lib/stripe/webhook-handler.ts",
+  // Inngest reconciliation job: background job running outside any user
+  // session; service-role required to scan stripe_webhook_events. §7.9a.
+  "/inngest/stripe-webhook-incomplete-reconcile.ts",
 ];
 
 function endsWithAllowed(filename) {

@@ -54,3 +54,9 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
           SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+          STRIPE_SECRET_KEY: sk_test_ci-placeholder
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci-placeholder
+          STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
+          STRIPE_CONNECT_WEBHOOK_SECRET: whsec_ci-placeholder-connect
+          INNGEST_SIGNING_KEY: signkey-ci-placeholder
+          INNGEST_EVENT_KEY: eventkey-ci-placeholder
