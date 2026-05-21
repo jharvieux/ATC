@@ -24,13 +24,13 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@supabase/supabase-js": "^2.105.4",
-    "@vitejs/plugin-react": "^4.3.0",
-    "@vitest/coverage-v8": "^1.6.0",
+    "@supabase/supabase-js": "^2.106.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/coverage-v8": "^4.1.7",
     "msw": "^2.14.6",
     "postgres": "^3.4.9",
     "tsx": "^4.22.0",
-    "typescript": "^5.7.3",
-    "vitest": "^1.6.0"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
   }
 }
