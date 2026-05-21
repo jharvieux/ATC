@@ -1,13 +1,14 @@
-# Session state — last updated 2026-05-18 TZ
+# Session state — last updated 2026-05-21 TZ
 
 ## Just completed
 
-- Day 0 CI/CD hardening (PR #18 merged to dev):
-  - S-1: staging-fixups.sql updated for v6.1 schema
-  - CR-1: release/\* branch protection enabled (manual, GitHub UI)
-  - CR-3a: .github/CODEOWNERS created
-  - HI-6: backup production approver added (manual, GitHub UI)
-  - ME-15: all 12 GitHub labels pre-created
+- BP01: pnpm monorepo scaffold (PR #22 merged to dev)
+  - apps/main: Next.js 14, Tailwind, shadcn/ui (button/card), /api/health, Zod env schema
+  - apps/rag: Next.js 14, /api/health, Zod env schema
+  - packages/config, packages/shared-types created
+  - .github/workflows/ci.yml: new pnpm CI (lint/typecheck/build on Node 24)
+  - deploy.yml updated from npm+Node20 to pnpm+Node24
+  - All GitHub CI checks pass; Vercel check fails (projects not yet created)
 
 ## In flight
 
@@ -15,21 +16,24 @@
 
 ## Next step
 
-- Week 1 Critical hardening, in order:
-  1. CR-2 — Hostname guard before destructive DB operations (Opus design → Sonnet implementation)
-  2. CR-3 Part B — Dedicated migration role (Opus design → Sonnet implementation)
-  3. CR-4 — Auto-merge-back-to-dev enforcement (Sonnet)
-  4. CR-5 — Staging Vercel target clarification (manual confirm + Sonnet)
-  5. CR-6 — Post-restore sanity check (Sonnet)
+1. **User action required:** Create two Vercel projects pointing at this repo:
+   - `main-app` → root directory: `apps/main`
+   - `rag-service` → root directory: `apps/rag`
+   Add `PLATFORM_PRIMARY_DOMAIN=ai-travelconcierge.com` as an env var in both projects.
+   Then add `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (main-app) as GitHub secrets.
+
+2. **Next build prompt:** BP02 — Database foundations (tenants, users, RLS helpers, migration gate)
+   - Requires: Two Supabase projects exist and connection strings are available
+   - Model: claude-opus-4-7 (switch back to Sonnet at end)
 
 ## Blocked on user
 
-- STRIPE_TEST_SECRET_KEY repo secret — still needed for contracts-canary nightly re-record
-- CR-5 requires operator to confirm Vercel staging domain alias config before prompt runs
+- Vercel project creation (main-app + rag-service) — needed before Vercel CI check passes
+- Supabase: Two separate projects needed (main-app and rag-service) before BP02 can run
+- STRIPE_TEST_SECRET_KEY repo secret — still needed for contracts-canary nightly re-record (carry-over)
 
 ## Open questions
 
-- email_connections table status in v6.1 schema is unresolved — defensive block in staging-fixups.sql raises NOTICE if absent; needs verification against actual production schema when it exists
-- CODEOWNERS backup reviewer is currently only @jharvieux — add a second person when available
-- Screenshot placeholders in rollback runbooks need real screenshots once production is deployed
-- §12 eval harness implementation deferred until src/prompts/ and src/tools/ exist
+- Vercel check will remain red until user creates the projects and wires up VERCEL_PROJECT_ID secret
+- deploy.yml still references singular VERCEL_PROJECT_ID — will need separate IDs for main-app vs rag-service when both deploy; flag this before BP07 Vercel deploy work
+- All prior open questions from last session remain (email_connections schema, CODEOWNERS backup reviewer, rollback runbook screenshots, §12 eval harness deferral)
