@@ -13,12 +13,11 @@
 
 ## In flight
 
-- PR `feature/bp02-database-foundations` → `dev`: 9 new files (3 migrations, lint script, db-migrate/db-reset scripts, integration tests, rls-exceptions.txt, env schema update) plus regenerated snapshot
+- Nothing in flight — clean checkpoint. BP02 PR #26 merged to `dev`.
 
 ## Next step
 
-1. Open PR, watch CI, merge once green
-2. **Next build prompt:** BP03 — Database access layer (TenantContext, three clients, audit wrapper)
+1. **Next build prompt:** BP03 — Database access layer (TenantContext, three clients, audit wrapper)
    - Model: `claude-opus-4-7` (switch back to Sonnet at end)
    - Read `specs/BuildPrompts/build-prompts-parts-1-and-2.md` BP03 section before starting
 
