@@ -13,4 +13,4 @@
 #   host_adapters # platform-admin table, not tenant-scoped despite carrying tenant_id
 #   audit_log_partitions # append-only, INSERT-only by service role
 
-# (none yet)
+stripe_webhook_events # tenant_id is nullable (NULL for platform-level events, non-null for Connect tenant events). INSERT/UPDATE/DELETE are exclusively via service_role webhook handlers, which bypass RLS by design per §5.4.1. User-facing SELECT policy restricts visibility to tenant_id IS NOT NULL rows only.
