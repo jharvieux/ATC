@@ -4,6 +4,48 @@ Newest entries on top.
 
 ---
 
+## D-036 — 2026-05-21 — Audit-log writes stubbed to console.warn; switch to real INSERT in §26 work
+
+**Decision:** `withPlatformAdminAudit` writes audit rows as structured `console.warn("[audit-log:STUB] {...json}")` lines. The `audit_log` table does not exist yet (created in spec §26). The audit-row shape mirrors what the table will accept, so the swap to a real INSERT is a one-line body change in `writeAuditRow`.
+
+**Why:** The build prompt explicitly calls for this stub: "the audit_log table doesn't exist yet — write to a console.warn(...) with a structured JSON payload AND a TODO(audit-log) comment."
+
+**Follow-up:** When §26 lands the `audit_log` table, update `apps/main/src/lib/db/platform-admin-client.ts:writeAuditRow` to use a separate dedicated service-role client (NOT the wrapped function's `db`, so audit row commits independently of any rolled-back transaction).
+
+**Also stubbed:** Three factory functions throw "not implemented": `tenantContextFromStripeEvent` (lands in BP07), `tenantContextFromInngestEvent` (future Inngest work), `tenantContextForPlatformAdmin` (lands with audit_log in §26).
+
+---
+
+## D-035 — 2026-05-21 — correlation_id uses crypto.randomUUID(), not ULID
+
+**Decision:** `withPlatformAdminAudit` uses `crypto.randomUUID()` for the `correlation_id` field instead of ULID as the spec suggests.
+
+**Why:** Audit rows are stubbed to `console.warn` for now (no DB sort needed). Avoiding the `ulid` npm dependency keeps the lockfile smaller. When `audit_log` lands (D-036), the sortable property of ULIDs becomes useful for time-based audit queries.
+
+**How to apply:** When swapping the audit stub to a real DB insert, also swap `randomUUID()` to a ULID generator. Both changes happen together.
+
+---
+
+## D-034 — 2026-05-21 — tenantClient Proxy deviates from spec §5.4.3 verbatim code
+
+**Decision:** `apps/main/src/lib/db/tenant-client.ts` implements the spec's stated *intent* ("every query is automatically scoped") with a per-operation-method wrapping pattern rather than the spec's literal one-line code.
+
+**Why:** The spec writes `return target.from(table).eq('tenant_id', ctx.tenant_id);` but `.eq()` does not exist on `PostgrestQueryBuilder` (returned by `.from()`) in `@supabase/supabase-js` v2 — it only exists on `PostgrestFilterBuilder` returned after `.select/.update/.delete`. The spec's pattern would fail at runtime with a TypeError. Verified by direct inspection of the Supabase JS proto chain.
+
+**Rejected:** Casting types to make the spec's literal code compile — would produce runtime errors.
+
+**Implementation:** The proxy intercepts `.from(table)` and for tenant-scoped tables returns a wrapped query builder where:
+- `.select(...)` / `.update(...)` / `.delete()` → result has `.eq('tenant_id', ctx.tenant_id)` appended automatically
+- `.insert(rows)` / `.upsert(rows)` → `tenant_id` injected into payload(s) before delegation
+
+Behavior matches §5.4.3's stated promise; the literal code does not.
+
+**Open follow-up:** §5.4.7 already warns that `.rpc()` and other future query patterns must be added to the proxy. When such patterns get used, extend the wrapper's method intercepts accordingly.
+
+**Artifacts:** `apps/main/src/lib/db/tenant-client.ts`, `apps/main/test/unit/db/tenant-client.test.ts` (6 tests covering both filter-based and payload-injection operations + passthrough).
+
+---
+
 ## D-033 — 2026-05-21 — RLS snapshot scope is RLS-tables-and-policies only; SECURITY DEFINER + grants coverage deferred
 
 **Decision:** `scripts/rls-snapshot.ts` captures RLS-enabled state and policy bodies. It does NOT capture SECURITY DEFINER function bodies, search_path settings, or GRANT/REVOKE EXECUTE — those are required by §30.8 but not implemented.
