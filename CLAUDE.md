@@ -9,10 +9,10 @@ Working instructions for Claude Code sessions in this repo. Read this first, eve
 Every session, in this order:
 
 1. Read `/MEMORY.md` in full.
-1. Read `/SESSION.md` in full.
-1. If a build prompt is being executed, read it.
-1. State in one short paragraph: what you understand the current state to be, and what you’re about to do.
-1. Wait for the user to confirm or correct before acting.
+2. Read `/SESSION.md` in full.
+3. If a build prompt is being executed, read it.
+4 State in one short paragraph: what you understand the current state to be, and what you’re about to do.
+5. Wait for the user to confirm or correct before acting.
 
 Step 4 is cheap and prevents expensive misreads of context.
 
@@ -101,6 +101,50 @@ Do ask the user about:
 
 -----
 
+ — Think Before Coding
+State assumptions explicitly. If uncertain, ask rather than guess.
+Present multiple interpretations when ambiguity exists.
+Push back when a simpler approach exists.
+Stop when confused. Name what's unclear.
+
+— Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+No features beyond what was asked. No abstractions for single-use code.
+Test: would a senior engineer say this is overcomplicated? If yes, simplify.
+
+ — Surgical Changes
+Touch only what you must. Clean up only your own mess.
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor what isn't broken. Match existing style.
+
+ — Goal-Driven Execution
+Define success criteria. Loop until verified.
+Don't follow steps. Define success and iterate.
+Strong success criteria let you loop independently.
+
+ — Use the model only for judgment calls
+Use me for: classification, drafting, summarization, extraction.
+Do NOT use me for: routing, retries, deterministic transforms.
+If code can answer, code answers.
+
+— Tests verify intent, not just behavior
+Tests must encode WHY behavior matters, not just WHAT it does.
+A test that can't fail when business logic changes is wrong.
+
+ — Checkpoint after every significant step
+Summarize what was done, what's verified, what's left.
+Don't continue from a state you can't describe back.
+If you lose track, stop and restate.
+
+ — Match the codebase's conventions, even if you disagree
+Conformance > taste inside the codebase.
+If you genuinely think a convention is harmful, surface it. Don't fork silently.
+
+— Fail loud
+"Completed" is wrong if anything was skipped silently.
+"Tests pass" is wrong if any were skipped.
+Default to surfacing uncertainty, not hiding it.
+
 ## Honesty about uncertainty
 
 **Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.
@@ -111,7 +155,7 @@ Applies especially to:
 
 - Library/API behavior you haven’t verified in this session
 - Version-specific syntax (Next.js, Supabase, Vercel CLI, GitHub Actions)
-- What’s in spec files you haven’t read in this session — read them, don’t guess
+- What’s in spec files you haven’t read or only skimmed in this session — read them, don’t guess
 - Anything where being wrong would cost the user real time or money
 
 -----
@@ -135,32 +179,11 @@ When in doubt, ask. The user prefers an extra question over an unwanted change.
 
 -----
 
-## Don’t change what the user didn’t ask you to change
 
-This is the single most important rule for this project.
-
-**Only modify what the user specifically requested.** Do not rewrite, rephrase, reformat, or “improve” anything else — even if you think the result would be better. Applies to:
-
-- Prose the user has written (spec text, build prompt text, MEMORY entries)
-- File structures and naming conventions already in place
-- Adjacent code or config in the same file as a requested change
-
-If you notice something worth improving outside the scope of the request, **mention it at the end of your response** as a separate observation. Do not act on it. Wait for the user to explicitly say “yes, do that.”
-
-### Before making changes that significantly alter user-authored content
-
-**Stop completely.** Describe exactly what you’re about to change and why. Wait for explicit confirmation. “I think this would be better” is not permission.
-
-Significant means: more than a typo fix or a literal find/replace the user requested. If you’re regenerating a section, restructuring a file, changing terminology consistently across a doc, or rewriting prose — that’s significant. Confirm first.
 
 -----
 
-## Match response length to task
 
-- Simple question → short, direct answer. No preamble, no restatement.
-- Complex task → full detailed response, no padding.
-- **Never** end with a paragraph that restates what you just said.
-- **Never** open with “Great question!” or similar filler.
 
 -----
 
@@ -168,18 +191,13 @@ Significant means: more than a typo fix or a literal find/replace the user reque
 
 Default model is **Sonnet 4.6** (`claude-sonnet-4-6`). Most work — TypeScript, SQL, YAML, Vitest, config, scripted runbooks, contract tests, Dependabot config, RLS work, doc writing — runs on Sonnet.
 
-Use **Opus 4.7** (`claude-opus-4-7`) only when a build prompt explicitly calls for it. In the CI/CD build, Opus is used in two places:
-
-1. `§4` — composing `.github/workflows/deploy.yml` (chains seven jobs with conditional gates).
-1. `§12` — designing the AI behavior evaluation harness (open-ended design decisions).
-
-Use **Haiku 4.5** (`claude-haiku-4-5`) for narrow verification or lookup where no judgment is required — listing files, comparing secret names against a list, scanning for a pattern. The CI/CD build uses Haiku for verification one-shots via `claude -p`.
+Use **Opus 4.7** (`claude-opus-4-7`) only when a build prompt explicitly calls for it. 
 
 ### Switching rules
 
 - Every build prompt indicates which model to use at the top.
 - If a section uses Opus or Haiku, **switch back to Sonnet at the end** with `/model claude-sonnet-4-6`. Standing rule — apply it even if the build prompt forgets to say so.
-- If asked to “use the right model” without specification: Sonnet. Escalate to Opus only for open-ended design with significant trade-offs.
+
 
 -----
 

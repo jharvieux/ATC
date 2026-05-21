@@ -93,7 +93,7 @@ export function enumerateRoutes(apiRoot: string): RouteEntry[] {
 
 // When run directly, print JSON manifest
 if (process.argv[1] === import.meta.filename) {
-  const apiRoot = join(process.cwd(), "src", "app", "api");
+  const apiRoot = join(process.cwd(), "apps", "main", "src", "app", "api");
   const routes = enumerateRoutes(apiRoot);
   console.log(JSON.stringify(routes, null, 2));
 }

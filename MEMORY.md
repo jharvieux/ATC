@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-027 — 2026-05-20 — Node.js 24 chosen over spec's 22.x
+
+**Decision:** Use Node.js 24 LTS everywhere (local dev + Vercel) instead of 22.x as written in spec §29.2.
+
+**Why:** Vercel's current default is Node 24 LTS. No breaking changes between Node 22 and 24 for Next.js 14. Using the same version locally and on Vercel avoids subtle build divergence.
+
+**Rejected:** Node 22 (spec-exact but older LTS); mismatched versions (local 22 / Vercel 24).
+
+**Impact:** `package.json` `engines.node` will be set to `"24.x"` instead of `"22.x"`.
+
+---
+
 ## D-026 — 2026-05-18 — CI/CD Day 0 hardening (S-1, CR-1, CR-3a, HI-6, ME-15)
 
 **Decision:** Applied all Day 0 items from CI/CD Pipeline Fix Prompts (red team remediation).
