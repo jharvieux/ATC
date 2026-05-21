@@ -4,6 +4,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   GIT_COMMIT_SHA: z.string().optional(),
   PLATFORM_PRIMARY_DOMAIN: z.string().min(1),
+  // Regex matching subdomains of PLATFORM_PRIMARY_DOMAIN. Capture group 1
+  // must be the slug. Example: ^([a-z0-9-]+)\.aitravelconcierge\.com$
+  PLATFORM_DOMAIN_REGEX: z.string().min(1),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),

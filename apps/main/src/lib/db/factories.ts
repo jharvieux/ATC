@@ -39,6 +39,15 @@ export async function tenantContextFromRequest(
         `header. Middleware (BP04) should set this before route handlers run.`,
     );
   }
+  // Platform routes (host === PLATFORM_PRIMARY_DOMAIN) resolve to "platform"
+  // rather than a UUID. These routes must use withPlatformAdminAudit, not
+  // tenantClient — they do not have a single scoped tenant.
+  if (tenantId === "platform") {
+    throw new Error(
+      "tenantContextFromRequest: x-resolved-tenant-id is 'platform'. " +
+        "Platform admin routes must use withPlatformAdminAudit instead of tenantClient.",
+    );
+  }
 
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {

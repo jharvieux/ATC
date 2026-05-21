@@ -23,7 +23,12 @@ export function createServiceRoleClient(): SupabaseClient {
     );
   }
 
+  // Explicitly set Authorization so PostgREST receives the service-role JWT
+  // as the Bearer token. Without this, Supabase JS v2 may omit the header
+  // when there is no active auth session, causing PostgREST to fall back to
+  // the anon role.
   return createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${serviceKey}` } },
   });
 }
