@@ -9,6 +9,7 @@
 -- public.messages (rls_enabled)
 -- public.payout_balances (rls_enabled)
 -- public.payout_records (rls_enabled)
+-- public.platform_settings (rls_enabled)
 -- public.stripe_webhook_events (rls_enabled)
 -- public.subcontractors (rls_enabled)
 -- public.tenants (rls_enabled)
@@ -108,6 +109,11 @@ CREATE POLICY "payout_records_update_policy" ON public.payout_records
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.platform_settings
+CREATE POLICY "platform_settings_select_policy" ON public.platform_settings
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
 
 -- TABLE: public.stripe_webhook_events
 CREATE POLICY "stripe_webhook_events_select_policy" ON public.stripe_webhook_events

@@ -13,7 +13,8 @@ if (!dbUrl) {
   process.exit(1);
 }
 
-const MIGRATIONS_DIR = path.join("apps", "main", "supabase", "migrations");
+const MIGRATIONS_DIR =
+  process.env.MIGRATIONS_DIR ?? path.join("apps", "main", "supabase", "migrations");
 
 async function main(): Promise<void> {
   const sql = postgres(dbUrl!, { max: 1, idle_timeout: 10, onnotice: () => {} });
