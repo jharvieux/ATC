@@ -4,6 +4,31 @@ Newest entries on top.
 
 ---
 
+## D-030 — 2026-05-21 — Singular VERCEL_PROJECT_ID points at atc-main; rag deploy deferred to BP07
+
+**Decision:** GitHub secret `VERCEL_PROJECT_ID` is set to the `atc-main` project ID (`prj_UoveDAIzVqWYkDGLkLnAG2HM9V7L`). The `atc-rag` project ID (`prj_VM8Fu2flXwtQAIOdCKbJlnwTUmRq`) is captured in this entry for later but not yet wired into `deploy.yml`.
+
+**Why:** `deploy.yml` was written assuming one Vercel project. Right now only `atc-main` deploys — `atc-rag` doesn't yet have anything to deploy. Splitting into `VERCEL_PROJECT_ID_MAIN` / `VERCEL_PROJECT_ID_RAG` and updating deploy.yml is BP07-territory.
+
+**Rejected:** Pre-emptively splitting the secret names and rewriting deploy.yml now — would create churn for no current benefit.
+
+**Both org/project IDs (Vercel team `jharvieux-1491s-projects`):**
+- `VERCEL_ORG_ID`: `team_MIXzwKpnQSfuj3hd9ZyWVPPh`
+- `atc-main` project ID: `prj_UoveDAIzVqWYkDGLkLnAG2HM9V7L`
+- `atc-rag` project ID: `prj_VM8Fu2flXwtQAIOdCKbJlnwTUmRq`
+
+**Artifacts:** GitHub secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` set on `jharvieux-gh/ATC` (2026-05-21). `.vercel/repo.json` produced by `vercel link --cwd apps/{main,rag}` (gitignored).
+
+---
+
+## D-029 — 2026-05-21 — Vercel project names: atc-main and atc-rag
+
+**Decision:** Vercel projects named `atc-main` (root: `apps/main`) and `atc-rag` (root: `apps/rag`).
+
+**Why:** User preference. Spec §1.2 said `main-app` / `rag-service` but names don't affect any code — deploy.yml uses VERCEL_PROJECT_ID env vars, not project names.
+
+---
+
 ## D-028 — 2026-05-21 — BP01 monorepo scaffold complete (PR #22)
 
 **Decision:** Monorepo scaffold delivered as pnpm workspace with apps/main, apps/rag, packages/config, packages/shared-types.
