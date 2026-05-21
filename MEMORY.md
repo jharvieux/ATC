@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-040 — 2026-05-21 — BP05 core domain schema: deferred FKs, payout_balances PK, stripe_webhook_events custom RLS
+
+**Decision:**
+- `contact_id`, `active_persona_id`, `persona_id` (on conversations/messages), `primary_contact_id`, `group_booking_id` (on bookings) declared as bare `UUID` columns with `TODO(contacts-fk)` / `TODO(personas-fk)` / `TODO(group-bookings-fk)` SQL comments. FK constraints to be added when the referenced tables (`contacts`, `personas`, `group_bookings`) land in future migrations.
+- `payout_balances` uses `tenant_id UUID PRIMARY KEY` — no separate `id` column — matching the spec exactly. Standard four-policy RLS still applies.
+- `stripe_webhook_events`: `tenant_id` is nullable (NULL for platform-level Stripe events). Custom RLS: SELECT policy is `auth_user_in_tenant(tenant_id) AND tenant_id IS NOT NULL`. INSERT/UPDATE/DELETE are service_role only (bypasses RLS by design, per §5.4.1). Table documented in `db/rls-exceptions.txt`.
+- Migration naming follows the existing timestamp convention (`20260521150000_...`, etc.) not the `0004_...` shorthand in the build prompt header.
+
+**Why:** Referenced tables (`contacts`, `personas`, `group_bookings`) are in §5.3's "schema continues with…" list but outside BP05 scope. Adding bare UUID columns now avoids migration failures and allows the FK constraints to be added surgically when those tables arrive.
+
+**Open TODOs from BP05:**
+- `contacts` table (and FK wires to conversations, bookings) — listed in §5.3 "schema continues with…"
+- `personas` table (and FK wires to conversations, messages) — same
+- `group_bookings` table (and FK wire to bookings) — same
+- Full list of remaining unspecified §5.3 tables: contacts, contact_relationships, quotes, group_bookings, group_members, group_invitations, group_chat_threads, group_chat_messages, personas, tenant_persona_overrides, tenant_branding, host_adapters, tenant_host_configs, host_adapter_calls, escalation_topics, supervisor_alerts, audit_log, email_log, email_suppressions, legal_documents, legal_consents, platform_revenue, customer_memories, news_articles, destination_images, generated_images, pre_cruise_email_content.
+
+---
+
 ## D-039 — 2026-05-21 — service_role requires explicit table grants on atc-main (same provisioning gap as D-032)
 
 **Decision:** Migration `20260521140000_service_role_grants.sql` grants `SELECT, INSERT, UPDATE, DELETE` on `public.tenants` and `public.users`, and `SELECT` on `public.tier_definitions` to the `service_role` PostgreSQL role.
