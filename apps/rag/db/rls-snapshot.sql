@@ -1,0 +1,18 @@
+-- AUTO-GENERATED RLS SNAPSHOT — RAG Supabase project
+-- Regenerate with: SUPABASE_DB_URL=$SUPABASE_RAG_DB_URL npx tsx scripts/rls-snapshot.ts > apps/rag/db/rls-snapshot.sql
+--
+-- The RAG service uses service-role exclusively for all database access.
+-- Tenant isolation is enforced in application code via the scope filter (§6.9):
+--   WHERE scope = 'global' OR (scope = 'tenant' AND tenant_id = caller_tenant_id)
+-- Row-level security at the database layer is therefore not enabled on RAG tables.
+-- This is a documented, intentional exception — not an oversight.
+--
+-- Tables without RLS (all RAG tables):
+--   public.tenant_registry
+--   public.knowledge_chunks
+--   public.knowledge_ingestion_queue
+--   public.rag_retrieval_log
+--   public.knowledge_chunk_feedback_events
+--   public.platform_settings
+--
+-- Policies: (none — service-role access only)
