@@ -1,0 +1,16 @@
+# RLS coverage exceptions
+#
+# Format: one entry per line as `table_name # reason`
+#
+# Tables listed here are exempt from the migration lint gate's requirement
+# that every tenant_id-bearing table have RLS enabled plus a policy for
+# each of SELECT, INSERT, UPDATE, DELETE (per spec §5.1.2 and §30.8).
+#
+# Only add a table here when the deviation is intentional and reviewed.
+# Each entry MUST include a reason.
+#
+# Examples (illustrative, not active):
+#   host_adapters # platform-admin table, not tenant-scoped despite carrying tenant_id
+#   audit_log_partitions # append-only, INSERT-only by service role
+
+# (none yet)

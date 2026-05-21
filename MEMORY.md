@@ -4,6 +4,47 @@ Newest entries on top.
 
 ---
 
+## D-033 — 2026-05-21 — RLS snapshot scope is RLS-tables-and-policies only; SECURITY DEFINER + grants coverage deferred
+
+**Decision:** `scripts/rls-snapshot.ts` captures RLS-enabled state and policy bodies. It does NOT capture SECURITY DEFINER function bodies, search_path settings, or GRANT/REVOKE EXECUTE — those are required by §30.8 but not implemented.
+
+**Why:** The existing rls-snapshot.ts (from §9 / D-021) was scoped narrowly. BP02's `lint:migrations` script provides static-time enforcement of the SECURITY DEFINER convention (§5.1.1) and the no-`USING(true)` rule (§5.1.2), so the snapshot diff is not the only line of defense. Expanding the snapshot to full §30.8 coverage is a separate task.
+
+**Rejected:** Expanding rls-snapshot.ts in BP02 — outside the scope of the build prompt; risks scope creep.
+
+**Follow-up:** When the next round of security hardening lands, extend rls-snapshot.ts to include: (1) pg_proc rows for SECURITY DEFINER functions with body hash + search_path, (2) pg_proc_acl rows for GRANT/REVOKE EXECUTE, (3) information_schema.role_table_grants for explicit table grants.
+
+---
+
+## D-032 — 2026-05-21 — Explicit table grants required for authenticated role on atc-main Supabase
+
+**Decision:** Migration `20260521120003_grants.sql` explicitly grants `SELECT, INSERT, UPDATE, DELETE` on `public.tenants` and `public.users` to the `authenticated` role, and `SELECT` on `public.tier_definitions` to `authenticated` and `anon`.
+
+**Why:** Postgres permission model is two-stage — RLS only applies after the role has the base table privilege. The atc-main Supabase project was provisioned in a state where the standard `ALTER DEFAULT PRIVILEGES` for `authenticated`/`anon` only included metadata grants (REFERENCES, TRIGGER, TRUNCATE), not the data access ones (SELECT/INSERT/UPDATE/DELETE). Without explicit grants, RLS policies were unreachable — every query returned PostgREST error 42501.
+
+**Rejected:** Relying on Supabase's default grants — they were missing on this project for unknown reasons (possibly an older provisioning template).
+
+**How to apply:** Every future migration that creates a tenant-scoped public table must include a matching `GRANT SELECT, INSERT, UPDATE, DELETE ... TO authenticated` statement. The migration lint gate does not yet enforce this — flagged as follow-up.
+
+---
+
+## D-031 — 2026-05-21 — BP02 monorepo + RLS foundations complete
+
+**Decision:** Tenants/users tables with full RLS, two SECURITY DEFINER helper functions, hard-delete trigger, and migration lint gate landed. Deviations from spec:
+
+- **`tier_definitions` is a stub.** Schema is `(id, code, display_name, created_at)` seeded with the six tier codes from §3.3 (`byo_research`, `byo_professional`, `byo_agency`, `sub_starter`, `sub_pro`, `sub_agency`). Spec §5.3 says "Full DDL in repository" but never gives it — will be expanded when Section 14 pricing logic lands.
+- **`tenants` RLS has SELECT + UPDATE only** for authenticated role. INSERT runs under service role (signup/admin paths); DELETE is structurally blocked by the §5.1.X trigger. Deviation is documented in the migration file and in the `tenants` table comment per §30.8.
+- **Slug regex** was extracted from the spec PDF as `'1[a-z0-9-]{1,28}[a-z0-9]$'`. The leading `1` was treated as a PDF artifact for `^` (start anchor) — actual SQL uses `'^[a-z0-9-]{1,28}[a-z0-9]$'`. User confirmed.
+- **Migration runner is a custom TS script** (`scripts/db-migrate.ts`), not the Supabase CLI. Uses the existing `postgres` lib + `SUPABASE_DB_URL` pattern from §9 (D-021), tracks applied versions in `public.schema_migrations`. Rejected: Supabase CLI (would add a second auth surface and conflict with the existing pooler-based connection).
+- **`pnpm db:reset` is guarded by `ALLOW_DB_RESET=true`** env flag — refuses to run otherwise. Protects against accidental wipe of the shared atc-main Supabase.
+- **Integration tests run live against atc-main Supabase** with random-prefixed ephemeral data (per session decision). 4 tests pass: cross-tenant SELECT denied, suspended-tenant INSERT blocked while SELECT allowed, hard-DELETE raises without override, hard-DELETE succeeds with override.
+
+**Artifacts:** `apps/main/supabase/migrations/{0,1,2,3}*.sql`, `apps/main/test/integration/rls.test.ts`, `scripts/{db-migrate,db-reset,lint-migrations}.ts`, `db/rls-exceptions.txt`, `db/rls-snapshot.sql` regenerated.
+
+**Spec/build-prompt discrepancy noted:** Build prompt says `db/rls-exceptions.txt`; §30.8 says `db/rls-exceptions.sql`. Followed build prompt.
+
+---
+
 ## D-030 — 2026-05-21 — Singular VERCEL_PROJECT_ID points at atc-main; rag deploy deferred to BP07
 
 **Decision:** GitHub secret `VERCEL_PROJECT_ID` is set to the `atc-main` project ID (`prj_UoveDAIzVqWYkDGLkLnAG2HM9V7L`). The `atc-rag` project ID (`prj_VM8Fu2flXwtQAIOdCKbJlnwTUmRq`) is captured in this entry for later but not yet wired into `deploy.yml`.
