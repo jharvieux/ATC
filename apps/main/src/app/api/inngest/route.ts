@@ -39,6 +39,11 @@ import { forumModerationRetry } from "@/inngest/forum-moderation-retry";
 import { forumModerationTimeoutSweep } from "@/inngest/forum-moderation-timeout-sweep";
 // BP21: Quote pricing discipline (§21.10.1)
 import { quoteEstimateExpirySweep } from "@/inngest/quote-estimate-expiry-sweep";
+// BP22: RAG ingestion pipeline (§22)
+import { ragExtractContent } from "@/inngest/rag-extract-content";
+import { ragPiiRedact } from "@/inngest/rag-pii-redact";
+import { ragNormalize } from "@/inngest/rag-normalize";
+import { ragTenantApprovalRateNightly } from "@/inngest/rag-tenant-approval-rate-nightly";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -81,5 +86,10 @@ export const { GET, POST, PUT } = serve({
     forumModerationTimeoutSweep,
     // BP21: Quote pricing discipline (§21.10.1)
     quoteEstimateExpirySweep,
+    // BP22: RAG ingestion pipeline (§22)
+    ragExtractContent,
+    ragPiiRedact,
+    ragNormalize,
+    ragTenantApprovalRateNightly,
   ],
 });

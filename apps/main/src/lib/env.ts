@@ -110,6 +110,22 @@ const envSchema = z.object({
   QUOTE_DEFAULT_VARIANCE_CENTS: z.coerce.number().int().nonnegative().optional().default(5000),
   // Anthropic API key — Haiku for entity extraction & claim grounding checks.
   ANTHROPIC_API_KEY: z.string().optional(),
+  // RAG ingestion — §22
+  RAG_INGEST_PII_REDACTION_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  RAG_INGEST_NORMALIZATION_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  // Threshold above which a normalized chunk auto-flags for global-review consideration (§22.6).
+  RAG_INGEST_GLOBAL_RELEVANCE_AUTOFLAG_THRESHOLD: z.coerce.number().min(0).max(1).optional().default(0.6),
+  // Aggregation window for PII quarantine alerts (§22.4a).
+  RAG_INGEST_AGGREGATION_WINDOW_HOURS: z.coerce.number().int().positive().optional().default(24),
+  // Consecutive-day count that trips the 'recurring pattern' abuse signal (§22.4a).
+  RAG_INGEST_RECURRING_PATTERN_DAYS: z.coerce.number().int().positive().optional().default(3),
+  // Max file upload size in bytes (§22.3). Default 50MB.
+  RAG_INGEST_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().optional().default(52428800),
+  // OCR provider for scanned PDFs and image submissions (§22.3). Operator choice.
+  // 'none' = OCR disabled; binary/image files without text layer fail at extraction.
+  RAG_INGEST_OCR_PROVIDER: z.enum(["tesseract", "gcv", "none"]).optional().default("none"),
+  // Google Cloud Vision API key — only required if RAG_INGEST_OCR_PROVIDER='gcv'.
+  GCV_API_KEY: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;

@@ -174,6 +174,12 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/quotes/[id]/accept/route.ts",
   // BP21: Quote estimate expiry sweep — daily cross-tenant scan. §21.10.1.
   "/inngest/quote-estimate-expiry-sweep.ts",
+  // BP22: RAG ingestion pipeline Inngest functions — background jobs, no user session. §22.4.
+  "/inngest/rag-extract-content.ts",
+  "/inngest/rag-pii-redact.ts",
+  "/inngest/rag-normalize.ts",
+  // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
+  "/inngest/rag-tenant-approval-rate-nightly.ts",
 ];
 
 function endsWithAllowed(filename) {
