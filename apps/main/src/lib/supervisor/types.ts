@@ -27,4 +27,21 @@ export type SupervisorOutcome = {
 export type CheckInput = {
   candidate_response: string;
   retrieved_chunks?: unknown[] | undefined;
+  // §21.10 extras — populated by the chat handler when available.
+  // Checks that don't need these fields simply ignore them.
+  entities?: {
+    intent?: "research" | "compare" | "book" | "support" | string;
+    categories_hint?: string[];
+  } | undefined;
+  // True if the persona has offered human escalation in the last N turns
+  // (§21.10 layer 8: suppress repeated escalation prompts).
+  recent_escalation_offered?: boolean | undefined;
+  // True if the persona system prompt instructed the model to specialize on
+  // medical / accessibility / dietary topics (rare; usually false).
+  persona_specializes_in_sensitive?: boolean | undefined;
+  // §21.10 persona-drift: optional reference text used by checkPersonaDrift.
+  persona_base_summary?: string | undefined;
 };
+
+export type AsyncCheck = (input: CheckInput) => Promise<SupervisorFinding>;
+export type SyncCheck = (input: CheckInput) => SupervisorFinding;

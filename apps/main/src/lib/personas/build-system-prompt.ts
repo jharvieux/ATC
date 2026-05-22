@@ -74,6 +74,10 @@ type BuildSystemPromptOpts = {
   // tenantScopedDb: tenantClient(ctx) from the caller — used to read overrides.
   // Must be passed by the route handler; lib does not construct its own DB client.
   db: SupabaseClient;
+  // §21.4 — KNOWLEDGE CONTEXT block from retrieveForChat(). The embedded
+  // INSTRUCTIONS block carries §21.5 citation rules and (in the empty form)
+  // the §21.9 no-result don't-fabricate guard.
+  knowledge_block?: string;
 };
 
 export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<SystemPromptResult> {
@@ -84,6 +88,7 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     tone_level = 3,
     customer_context,
     db,
+    knowledge_block,
   } = opts;
 
   const base = BASE_BLOCKS.get(persona_slug);
@@ -124,6 +129,14 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
       layers.push(buildAddendumWrapping(data.content as string));
       addendumVersion = new Date(data.updated_at as string).getTime();
     }
+  }
+
+  // §21.4 — knowledge block injected after platform constraints + tenant
+  // addendum so the persona sees facts BEFORE the tone instruction shapes
+  // the response. The block's embedded INSTRUCTIONS carry §21.5 (citation)
+  // and §21.9 (no-result fabrication guard) so no extra prose is needed here.
+  if (knowledge_block) {
+    layers.push(`\n\n${knowledge_block}`);
   }
 
   // Tone calibration (already substituted in layer 1, also append as a reminder)

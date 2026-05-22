@@ -35,6 +35,10 @@ export interface HostCapabilities {
   supports_modification: boolean;
   supports_cancellation: boolean;
   supports_commission_api: boolean;
+  // §21.10.1 — when true, submitBooking/getCurrentPrice may return a
+  // price_lock_token that locks the quote at the moment of pricing.
+  // Used by quote-kind-resolver to decide ESTIMATE vs CONFIRMED.
+  supports_price_lock: boolean;
   booking_types: BookingType[];
   cruise_lines_supported: string[];
   commission_currency: string;
@@ -110,6 +114,11 @@ export interface HostAgencyClient {
 
   searchInventory(req: InventorySearchRequest, ctx: HostCallContext): Promise<Result<unknown, HostAdapterError>>;
   submitBooking(req: BookingSubmissionRequest, ctx: HostCallContext): Promise<Result<{ provider_booking_ref: string; [key: string]: unknown }, HostAdapterError>>;
+  // §21.10.1 — optional: fetch the current host price for a candidate booking,
+  // used by the booking-submit handler to enforce ESTIMATE-quote variance.
+  // Adapters that lack a live-price endpoint may omit this method; the handler
+  // then proceeds without a variance check (i.e., trusts the quote price).
+  getCurrentPrice?(req: BookingSubmissionRequest, ctx: HostCallContext): Promise<Result<{ total_cents: number; currency: string; price_lock_token?: string; price_lock_expires_at?: string }, HostAdapterError>>;
   fetchBookingStatus(ref: string, ctx: HostCallContext): Promise<Result<unknown, HostAdapterError>>;
   cancelBooking(ref: string, req: CancellationRequest, ctx: HostCallContext): Promise<Result<void, HostAdapterError>>;
   modifyBooking(ref: string, req: ModificationRequest, ctx: HostCallContext): Promise<Result<unknown, HostAdapterError>>;

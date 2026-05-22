@@ -281,8 +281,21 @@ export async function POST(
       tenant_id: ctx.tenant_id,
     });
 
-    // Submit to host adapter
-    const submitReq: BookingSubmissionRequest = {
+    // §21.10.1 — Quote pricing discipline.
+    //
+    // Look up the underlying accepted quote (if any). For ESTIMATE quotes,
+    // call adapter.getCurrentPrice() and compare against the customer-accepted
+    // variance. Outside variance → pending_customer_reconfirmation (no host
+    // submission). CONFIRMED quotes proceed at the locked price.
+    const { data: quoteData } = await db
+      .from("quotes")
+      .select(
+        "id, price_kind, price_lock_token, price_lock_expires_at, locked_price_cents, estimate_price_cents, customer_accepted_variance_cents, customer_accepted_audit_id",
+      )
+      .eq("converted_to_booking_id", bookingId)
+      .maybeSingle();
+
+    const submitReqBase: BookingSubmissionRequest = {
       contact_id: booking.primary_contact_id ?? "unknown",
       cruise_line: booking.cruise_line ?? "",
       ship_name: booking.ship_name ?? "",
@@ -294,6 +307,76 @@ export async function POST(
       total_amount_cents: Number(booking.total_amount_cents ?? 0),
       currency: booking.currency,
     };
+    let submitReq: BookingSubmissionRequest = submitReqBase;
+
+    if (quoteData) {
+      const quote = quoteData as {
+        id: string;
+        price_kind: "estimate" | "confirmed" | null;
+        price_lock_token: string | null;
+        price_lock_expires_at: string | null;
+        locked_price_cents: number | null;
+        estimate_price_cents: number | null;
+        customer_accepted_variance_cents: number | null;
+        customer_accepted_audit_id: string | null;
+      };
+
+      if (quote.price_kind === "confirmed"
+        && quote.price_lock_expires_at
+        && new Date(quote.price_lock_expires_at) >= new Date()
+        && quote.locked_price_cents != null
+      ) {
+        // CONFIRMED quote: submit at locked price.
+        submitReq = { ...submitReqBase, total_amount_cents: quote.locked_price_cents };
+      } else if (quote.price_kind === "estimate" && adapter.getCurrentPrice) {
+        const priceResult = await adapter.getCurrentPrice(submitReqBase, {
+          tenant_id: ctx.tenant_id,
+          user_id: null,
+          correlation_id: crypto.randomUUID(),
+        });
+        if (priceResult.ok) {
+          const hostCents = priceResult.value.total_cents;
+          const estimateCents = quote.estimate_price_cents ?? submitReqBase.total_amount_cents;
+          const allowedVariance = quote.customer_accepted_variance_cents ?? 0;
+          const variance = Math.abs(hostCents - estimateCents);
+          if (variance > allowedVariance) {
+            // Pause for customer reconfirmation; do NOT submit to host.
+            await db
+              .from("bookings")
+              .update({
+                status: "pending_customer_reconfirmation",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", bookingId);
+            logAuditStub({
+              action: "quote.reconfirmation_requested",
+              quote_id: quote.id,
+              booking_id: bookingId,
+              tenant_id: ctx.tenant_id,
+              estimate_cents: estimateCents,
+              host_cents: hostCents,
+              variance_cents: variance,
+              allowed_variance_cents: allowedVariance,
+              prior_audit_id: quote.customer_accepted_audit_id,
+            });
+            return Response.json(
+              {
+                status: "pending_customer_reconfirmation",
+                estimate_cents: estimateCents,
+                host_cents: hostCents,
+                variance_cents: variance,
+                allowed_variance_cents: allowedVariance,
+              },
+              { status: 409 },
+            );
+          }
+          // Within variance: submit at host price.
+          submitReq = { ...submitReqBase, total_amount_cents: hostCents };
+        }
+        // If adapter.getCurrentPrice failed, fall through with the estimate
+        // price as-is. The reconciliation cron catches drift after submit.
+      }
+    }
 
     const submitResult = await adapter.submitBooking(submitReq, {
       tenant_id: ctx.tenant_id,

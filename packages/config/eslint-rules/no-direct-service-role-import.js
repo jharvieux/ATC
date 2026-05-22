@@ -169,6 +169,11 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/bookings/[id]/modify/route.ts",
   // BP20: DOB gate — reads booking_passengers across the booking. §20.5.
   "/lib/booking/dob-gate.ts",
+  // BP21: Quote acceptance — reads tenants.name + platform_settings.host_agency_legal_name
+  // for the audit PDF snapshot; tenant_settings read goes through tenantClient. §21.10.1.
+  "/app/api/quotes/[id]/accept/route.ts",
+  // BP21: Quote estimate expiry sweep — daily cross-tenant scan. §21.10.1.
+  "/inngest/quote-estimate-expiry-sweep.ts",
 ];
 
 function endsWithAllowed(filename) {
