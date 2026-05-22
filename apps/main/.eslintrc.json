@@ -3,6 +3,7 @@
   "plugins": ["atc"],
   "rules": {
     "atc/no-direct-service-role-import": "error",
-    "atc/platform-admin-functions-must-use-audit-wrapper": "error"
+    "atc/platform-admin-functions-must-use-audit-wrapper": "error",
+    "atc/no-money-math": "error"
   }
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Buffer } from "node:buffer";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -35,6 +36,34 @@ const envSchema = z.object({
   MEMORY_EXTRACTION_MESSAGE_WINDOW: z.coerce.number().int().positive().optional().default(50),
   // Delay in ms before re-enqueue on optimistic-lock conflict (§11.2.4)
   MEMORY_EXTRACTION_RETRY_DELAY_MS: z.coerce.number().int().positive().optional().default(5000),
+  // Credential encryption (§13.5.1) — 256-bit keys, base64-encoded
+  APP_ENCRYPTION_KEY_CURRENT: z.string().min(1),
+  APP_ENCRYPTION_KEY_ID_CURRENT: z.string().min(1),
+  APP_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
+  APP_ENCRYPTION_KEY_ID_PREVIOUS: z.string().optional(),
+  // Stripe Connect (§14.7 / §15.9)
+  STRIPE_CONNECT_CLIENT_ID: z.string().optional(),
+  // Stripe Price IDs (§14.x / §15.8) — optional so missing IDs fail at call time, not boot
+  STRIPE_PRICE_SUBHOST_STARTER_MONTHLY:  z.string().optional(),
+  STRIPE_PRICE_SUBHOST_STARTER_ANNUAL:   z.string().optional(),
+  STRIPE_PRICE_SUBHOST_PRO_MONTHLY:      z.string().optional(),
+  STRIPE_PRICE_SUBHOST_PRO_ANNUAL:       z.string().optional(),
+  STRIPE_PRICE_SUBHOST_AGENCY_MONTHLY:   z.string().optional(),
+  STRIPE_PRICE_SUBHOST_AGENCY_ANNUAL:    z.string().optional(),
+  STRIPE_PRICE_SUBHOST_AGENCY_SEATS_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_SUBHOST_AGENCY_SEATS_ANNUAL:  z.string().optional(),
+  STRIPE_PRICE_BYO_RESEARCH_MONTHLY:     z.string().optional(),
+  STRIPE_PRICE_BYO_RESEARCH_ANNUAL:      z.string().optional(),
+  STRIPE_PRICE_BYO_PROFESSIONAL_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_BYO_PROFESSIONAL_ANNUAL:  z.string().optional(),
+  STRIPE_PRICE_BYO_AGENCY_MONTHLY:       z.string().optional(),
+  STRIPE_PRICE_BYO_AGENCY_ANNUAL:        z.string().optional(),
+  STRIPE_PRICE_BYO_AGENCY_SEATS_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_BYO_AGENCY_SEATS_ANNUAL:  z.string().optional(),
+  // Fallback email adapter (§13.6)
+  HOST_ADAPTER_FALLBACK_EMAIL_TO: z.string().email().optional(),
+  HOST_ADAPTER_FALLBACK_EMAIL_FROM: z.string().email().optional(),
+  RESEND_API_KEY: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -50,7 +79,33 @@ export function verifyEnvAtBoot(): Env {
       .join("\n");
     throw new Error(`Missing or invalid environment variables:\n${missing}`);
   }
-  _env = result.data;
+  const data = result.data;
+  // §13.5.3 boot-time encryption key validation
+  const currentKeyBytes = Buffer.from(data.APP_ENCRYPTION_KEY_CURRENT, "base64");
+  if (currentKeyBytes.length !== 32) {
+    throw new Error(
+      `APP_ENCRYPTION_KEY_CURRENT must decode to exactly 32 bytes (got ${currentKeyBytes.length}). ` +
+        `Key material is not logged.`,
+    );
+  }
+  if (!data.APP_ENCRYPTION_KEY_ID_CURRENT) {
+    throw new Error("APP_ENCRYPTION_KEY_ID_CURRENT must be non-empty.");
+  }
+  if (data.APP_ENCRYPTION_KEY_PREVIOUS !== undefined) {
+    const prevKeyBytes = Buffer.from(data.APP_ENCRYPTION_KEY_PREVIOUS, "base64");
+    if (prevKeyBytes.length !== 32) {
+      throw new Error(
+        `APP_ENCRYPTION_KEY_PREVIOUS must decode to exactly 32 bytes (got ${prevKeyBytes.length}). ` +
+          `Key material is not logged.`,
+      );
+    }
+    if (!data.APP_ENCRYPTION_KEY_ID_PREVIOUS) {
+      throw new Error(
+        "APP_ENCRYPTION_KEY_ID_PREVIOUS must be non-empty when APP_ENCRYPTION_KEY_PREVIOUS is set.",
+      );
+    }
+  }
+  _env = data;
   return _env;
 }
 
