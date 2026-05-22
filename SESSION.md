@@ -1,8 +1,8 @@
-# Session state — last updated 2026-05-22 12:00 UTC
+# Session state — last updated 2026-05-22 18:00 UTC
 
 ## Just completed
 
-- BP12 — Customer Memory (§11): schema, extraction job, DOB lifecycle, anon→auth transfer (PR #48, open, CI running)
+- BP12 — Customer Memory (§11): PR #48 merged to dev (all CI checks green, squash merge)
   - 2 migrations: customer_memories (full RLS, awaiting_dob_reprompt, UNIQUE tenant+user) + anonymous_sessions stub + transfer columns
   - tenantContextFromInngestEvent: implemented (was a stub throwing "not implemented")
   - inngest/events.ts: 3 event types created
@@ -20,15 +20,13 @@
 
 ## In flight
 
-- PR #48 open — CI running. Merge when green.
+- Nothing in flight — clean checkpoint
 
 ## Next step
 
-1. Merge PR #48 when CI passes.
-2. Update SESSION.md + MEMORY.md post-merge via chore PR (same pattern as BP11).
-3. Next: BP13 — CRM (§12): contacts, relationships, pipeline stages, quotes, host-booking-fee configs, commission worked-example fixtures.
-   - Model: Sonnet 4.6 (no Opus required for BP13)
-   - Read the BP13 section of `specs/BuildPrompts/build-prompts-part-3.md` before starting.
+1. Begin BP13 — CRM (§12): contacts, relationships, pipeline stages, quotes, host-booking-fee configs, commission worked-example fixtures.
+   - Model: Sonnet 4.6
+   - Read `specs/BuildPrompts/build-prompts-part-3.md` (BP13 section) before starting.
 
 ## Blocked on user
 
