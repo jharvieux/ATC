@@ -71,3 +71,6 @@ jobs:
           REDIS_URL: redis://localhost:6379
           MAIN_APP_URL: https://ci.example.com
           MAIN_APP_ADMIN_API_KEY: ci-placeholder-admin-api-key
+          OPENAI_API_KEY: ci-placeholder-openai-api-key
+          OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+          SUPABASE_RAG_ANON_KEY: ci-placeholder-rag-anon-key

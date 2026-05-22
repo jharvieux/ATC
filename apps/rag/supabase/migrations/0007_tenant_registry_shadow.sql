@@ -9,8 +9,10 @@
 -- No RLS — RAG service uses service-role exclusively (see apps/rag/db/rls-snapshot.sql).
 -- This is a documented, intentional exception per the BP06 decision.
 
--- Drop old empty table
-DROP TABLE IF EXISTS public.tenant_registry;
+-- Drop old empty table. CASCADE removes the FK constraint on knowledge_chunks.tenant_id
+-- that was declared in migration 0002. Tenant isolation is enforced in application code
+-- (scope filter per §6.9), not by FK, so the unconstrained column is correct.
+DROP TABLE IF EXISTS public.tenant_registry CASCADE;
 
 CREATE TABLE public.tenant_registry_shadow (
   tenant_id               UUID        PRIMARY KEY,
