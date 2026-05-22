@@ -4,6 +4,35 @@ Newest entries on top.
 
 ---
 
+## D-052 — 2026-05-22 — BP20: Forum moderation, booking flow scaffolding — key decisions
+
+**Decision:**
+
+1. **Optimistic-locking strategy for forum moderation retry:** `moderation_attempt_count` is the version column. The update uses `WHERE id = ? AND moderation_attempt_count = N`. The first worker increments it to N+1; subsequent workers with the same N get 0 rows back (`won = false`). This is a no-op — they do not retry or re-emit the event. Tested by a parallel-workers simulation in `test/unit/forums/moderation-retry-idempotency.test.ts`.
+
+2. **`sailing_date` is the column name for the §18.10 read-only check.** The `groups` table (added in BP19) uses `sailing_date`, not `travel_start_date` as §18.10 uses in prose. Group-edit endpoints check `groups.sailing_date <= NOW()` for the sailed read-only enforcement. The coordinator portal tab pages use the API-level check, not a UI-level one.
+
+3. **Photo support deferred to v7 per spec §19.11.** Forum messages accept plain-text URLs which render as links; image upload is not implemented. Document: the forum message editor should not offer an image upload button in any Phase 1 UI.
+
+4. **Booking-flow stub UI deployed as `/booking/flow/[id]/[stage]`.** This is the platform-native fallback reference design per §20.2 with 4 stages. When a launch host is chosen, these pages either get replaced with an iframe wrapper (for a host-widget approach) or fleshed out (for platform-native). Document the decision in the PR that makes the switch. The stub is a client component ("use client") because §20.8's no-anon guard needs `document.cookie` access.
+
+5. **AI co-pilot panel left as `// TODO(prompt-24)` slot in booking flow layout (§20.4).** The `<aside>` is in place in the booking flow page; the chat component is not wired. BP24 (chat UI) fills this in.
+
+6. **No-anonymous-bookings (§20.8) implemented as client-side redirect in `NoAnonGuard`, not middleware.** Per D-050, middleware cannot read Supabase auth cookies without `@supabase/ssr`. The guard uses a heuristic (`document.cookie.includes("sb-")`) and preserves the booking draft in `localStorage` under key `booking-draft-{bookingId}`. When `@supabase/ssr` is installed (BP24 or later), this should be promoted to middleware. The `TODO(supabase-ssr)` comment is in the page file.
+
+7. **Coordinator portal tabs at `/groups/[id]/coordinate/[tab]`** with 5 tabs: Overview, Invitees, Edit, Preview Email, Forum. Each tab is a server component under a shared layout that renders the tab nav. The Forum tab embeds a `// TODO(prompt-24)` placeholder; the Preview Email tab renders the `TenantOfRecordDisclosure` component as part of the email preview. Full invitee data loading is `// TODO(prompt-24)`.
+
+8. **`modify/route.ts` rewritten to match `HostAgencyClient.modifyBooking(ref, req, ctx)` 3-argument signature.** The original stub passed `(booking, changes)` (2 args). The correct call passes `(provider_booking_ref, ModificationRequest, HostCallContext)`. The capability check now uses `adapter.capabilities.supports_modification` (not a non-existent `supportedModifications()` method).
+
+**What was rejected:**
+- `supportedModifications()` as a method on `HostAgencyClient` — does not exist in the interface; capability gating uses `adapter.capabilities.supports_modification` boolean.
+- True middleware for no-anon guard — requires `@supabase/ssr` which is not yet installed (D-050).
+- `.catch(() => null)` chaining on Supabase query builders — `PostgrestFilterBuilder` does not have `.catch()`; use `try/catch` instead.
+
+**Artifacts:** `20260530000000_forums.sql`, `20260530000001_booking_flow.sql`, `lib/forums/{permissions,anonymity,strikes}.ts`, `api/forums/**`, `inngest/forum-moderation-retry.ts`, `inngest/forum-moderation-timeout-sweep.ts`, `lib/booking/{dob-gate,validation}.ts`, `api/bookings/[id]/{submit,modify,cancel}/route.ts`, `components/booking/TenantOfRecordDisclosure.tsx`, `app/groups/[id]/coordinate/[tab]/page.tsx`, `app/booking/flow/[id]/[stage]/page.tsx`, 7 new test files.
+
+---
+
 ## D-051 — 2026-05-22 — BP18: White-label visual brand, custom domains, persona addendums
 
 **Decision:**

@@ -40,4 +40,13 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   // BP19: Group bookings (§18)
   "groups",
   "invitations",
+  // BP20: Forum (§19) + booking flow (§20)
+  "forums",
+  "forum_threads",
+  "forum_messages",
+  "forum_reactions",
+  "forum_user_state",
+  "forum_strikes",
+  "booking_passengers",
+  "booking_options",
 ]);
