@@ -74,12 +74,12 @@ export async function handleStripeWebhook(
 
   try {
     // Step 3: Dispatch to event-type handler
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    switch (event.type as any) {
+    // transfer.paid is a valid Stripe event but absent from some SDK type unions.
+    // Cast to string to allow matching it alongside the known exhaustive union.
+    switch (event.type as string) {
       case "transfer.paid": {
         // §14.7 — Stripe transfer paid: transition payout_records 'processing' → 'paid'
-        // transfer.paid is a valid Stripe event but absent from some SDK type unions.
-        const transfer = event.data.object as Stripe.Transfer;
+        const transfer = (event as { data: { object: Stripe.Transfer } }).data.object;
         const { data: payoutRows } = await db
           .from("payout_records")
           .select("id")

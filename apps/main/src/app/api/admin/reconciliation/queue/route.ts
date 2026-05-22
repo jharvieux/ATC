@@ -10,7 +10,6 @@
 // Requires x-admin-user-id header (platform-admin trusted header — TODO §26 replace).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export async function GET(req: Request): Promise<Response> {
   const adminUserId = req.headers.get("x-admin-user-id");
@@ -89,8 +88,7 @@ export async function POST(req: Request): Promise<Response> {
           throw Object.assign(new Error("Item has already been reviewed"), { status: 422 });
         }
 
-        const db2 = createServiceRoleClient();
-        const { error: updateError } = await db2
+        const { error: updateError } = await db
           .from("reconciliation_review_queue")
           .update({
             status: action,
