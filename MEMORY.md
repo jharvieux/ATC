@@ -4,6 +4,33 @@ Newest entries on top.
 
 ---
 
+## D-049 — 2026-05-22 — BP16: Tenant onboarding — key decisions
+
+**Decision:**
+
+1. **USPS address validation deferred**: §15.3 recommends USPS API or third-party validator. Phase 1 ships with accept-as-is + a `// TODO(usps-validator)` comment. Addresses are validated for non-emptiness only. Rationale: no operator decision on validator vendor yet; deferring avoids a hard dependency on a service not yet procured.
+
+2. **ICA chunk-license-survival clause is `// TODO(legal-attorney)`**: The ICA page renders placeholder Markdown per §15.14.6. The perpetual/irrevocable license wording must be finalized by an attorney before Phase 2 onboarding opens. Consents are recorded against the stub document. The document version is real; the language is not legally final.
+
+3. **180-day inactivity → suspend shipped; auto-downgrade deferred**: §15.13 mentions both suspend and auto-downgrade as options. Shipped suspend at 180 days. Auto-downgrade variant deferred to Phase 1 follow-up. The `compliance-nightly` Inngest cron handles this.
+
+4. **`pending_billing_period_change_effective_at` cron**: Annual-to-monthly switch is deferred to next renewal. The `effective_at` is computed from Stripe's `current_period_end`. A cron to apply deferred billing period changes is registered in the Inngest cron registry as a Phase 1 TODO — the column exists and the webhook path is wired, but the execution cron is not yet shipped.
+
+5. **Tax form + Connect setup share the same Stripe Express flow**: §15.6 says "tax form via Stripe" and §15.9 says "Connect Express setup" are separate stages, but Stripe Express onboarding combines both into one flow. Implementation: both stages generate/reuse the same Connect account. The `account.updated` webhook distinguishes stage advancement by checking which fields are now satisfied (`details_submitted` → stage 6; `payouts_enabled` → stage 10).
+
+6. **Legal/ICA stages use `// TODO(prompt-17)` stubs**: `legal_documents` and `legal_consents` tables don't exist until BP17. Stubs record the intent (console.info log) and advance the stage. When §17 ships, replace the console.info with actual DB writes.
+
+7. **Sandbox mode column is `is_sandbox` not `sandbox_mode`**: The existing BP01 schema has `tenants.is_sandbox`. §15.12 calls it `sandbox_mode`. All code uses `is_sandbox`. The migration comment documents this distinction.
+
+**What was rejected:**
+- Shipping USPS validation at Phase 1: rejected — no vendor selected.
+- Auto-downgrade at 180d: rejected in favor of suspend (simpler, lower risk of unintended data loss).
+- Separate Stripe Connect accounts for tax vs connect stages: rejected — one Express account serves both; confirmed by Stripe's own onboarding flow design.
+
+**Artifacts:** `20260526000000_onboarding.sql`, `lib/onboarding/state-machine.ts`, `lib/timezones.ts`, 12 onboarding API routes, 11 onboarding pages, `admin/tenants/review-queue` (API + page), `api/admin/tenants/[id]/review`, `api/tenant/sandbox`, `api/tenant/billing`, `inngest/compliance-nightly.ts`, `settings/billing/page.tsx`. PR #56 merged to dev.
+
+---
+
 ## D-048 — 2026-05-22 — BP15: Commissions, splits, payouts — key decisions
 
 **Decision:**
