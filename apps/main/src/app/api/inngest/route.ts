@@ -37,6 +37,8 @@ import { groupReminderCadence } from "@/inngest/group-reminder-cadence";
 // BP20: Forum moderation (§19)
 import { forumModerationRetry } from "@/inngest/forum-moderation-retry";
 import { forumModerationTimeoutSweep } from "@/inngest/forum-moderation-timeout-sweep";
+// BP21: Quote pricing discipline (§21.10.1)
+import { quoteEstimateExpirySweep } from "@/inngest/quote-estimate-expiry-sweep";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -77,5 +79,7 @@ export const { GET, POST, PUT } = serve({
     // BP20: Forum moderation (§19)
     forumModerationRetry,
     forumModerationTimeoutSweep,
+    // BP21: Quote pricing discipline (§21.10.1)
+    quoteEstimateExpirySweep,
   ],
 });

@@ -4,6 +4,48 @@ Newest entries on top.
 
 ---
 
+## D-053 — 2026-05-22 — BP21: RAG consumer, 8-layer hallucination defense, quote pricing — key decisions
+
+**Decision:**
+
+1. **Quote PDF renderer choice: `react-pdf` (env default).** `QUOTE_PDF_RENDERER` defaults to `react-pdf` because (a) puppeteer's Chromium dependency blows past Vercel function size limits without careful tree-shaking, (b) the bulk of quote PDFs are simple tabular layouts that react-pdf handles fine, and (c) the actual binary renderer is wired in a follow-up — until then, `renderQuotePdfHtml()` produces an HTML serialization that IS the audit snapshot. Operators who need richer layout can switch via env without code changes.
+
+2. **All five BP11 supervisor preflight stubs filled** (per BP21 task 21):
+   - `hallucination_risk` → Haiku-extracts claims, validates against retrieved chunks via keyword-overlap (≥50% threshold). Skips if `ANTHROPIC_API_KEY` unset.
+   - `arithmetic_check` → deterministic regex parser + LTR evaluator with precedence, tolerances: $0.01 money, 0.1% percentages, exact whole numbers.
+   - `topic_escalation` (= §21.10 layer 8 "escalation safety net") → fires when sensitive intent (medical|accessibility|legal|dietary|contractual) + low max chunk confidence (<0.5) + no recent escalation offered + persona doesn't specialize.
+   - `persona_drift` → v1 deterministic detector for model self-references, persona refusals, and unknown self-introduction names. Richer voice-comparison via Haiku deferred — current impl catches the high-confidence drift patterns.
+   - `compliance_keyword` → deterministic regex patterns for medical/legal/financial advice phrasings; critical severity → escalate (no regen).
+
+3. **`supports_price_lock` capability added to `HostCapabilities`** and defaulted to `false` on the two existing in-code adapters (fallback-email, credential-failed). Adapter authors must opt in.
+
+4. **`getCurrentPrice` added as optional on `HostAgencyClient`.** Adapters without a live-price endpoint omit it; the booking-submit handler then trusts the quote price and the reconciliation cron catches drift post-submit. This avoids breaking every existing adapter (only fallback-email exists today).
+
+5. **Arithmetic check tolerance: $0.01 for money expressions.** Spec §21.10 says "$0.01 for money". The check identifies a money expression by ANY currency marker ($, €, £) in any operand, not by claim type. False-positive rate is the trade-off; the regex is conservative (requires `= <result>` form).
+
+6. **`tenant_settings` is a NEW general-purpose table.** BP21 needed `quote_variance_cents` per §21.10.1 and `show_chat_sources` per §21.6. Rather than tack two more columns onto `tenants` (already wide from BP18 custom-domain state machine), introduced `tenant_settings (tenant_id PK)` for these and future per-tenant knobs. RLS via the standard four-policy pattern.
+
+7. **`customer_accepted_audit_id` is a bare UUID (no FK)** in `quotes`, because `audit_log` doesn't exist yet (D-036 — still stubbed to console.warn). The column is populated with a fresh `randomUUID()` at acceptance time so the snapshot can be linked when §26 ships the audit_log table.
+
+8. **Knowledge block format: persona-prompt instructions live INSIDE `formatKnowledgeBlock()`.** The §21.5 citation rules and §21.9 no-result anti-fabrication guard are embedded in the block's INSTRUCTIONS footer (or in the entirety of the no-result block). `buildSystemPrompt()` simply injects the block — no extra prose needed. This couples the format to the rules cleanly.
+
+9. **No-result chat turns inject the don't-fabricate instructions automatically.** When `filterChunks()` returns zero chunks, `formatKnowledgeBlock([])` returns the NO_RESULT_BLOCK constant directly. Both paths go through the same persona-prompt injection point, so the instructions ALWAYS reach the model when chunks are absent.
+
+10. **Entity-extraction cache is in-process Map.** 1-hour TTL. Fine for single-instance Vercel functions; needs Redis when multi-instance traffic warrants it. Cache key is `sha256(message).slice(0,16)`.
+
+11. **Layer 7 (customer feedback) confirmed wired in BP09.** The §6.10 feedback factor + authority-loop nudges live in the RAG service; no new code here. The thumbs-down button is BP24 chat UI work.
+
+**What was rejected:**
+- Cross-DB FK from `quotes.customer_accepted_audit_id` to a not-yet-existing `audit_log`. Bare UUID + future migration is cleaner.
+- Embedding-similarity claim grounding via a separate model call — uses the already-retrieved chunks in context (per spec) with keyword-overlap heuristic instead.
+- Puppeteer as PDF renderer default — Vercel function size penalty too high for the typical use case.
+- A new `escalation_safety_net` check distinct from the existing `topic_escalation` stub — they describe the same behavior; reusing the slot keeps `CHECKS_RUN` stable.
+- Making `getCurrentPrice` mandatory on `HostAgencyClient` — would break every existing adapter for no current benefit (fallback-email can't do live pricing anyway).
+
+**Artifacts:** `20260531000000_quote_pricing.sql`, `lib/rag/{entity-extraction,filter-chunks,format-block,retrieve-for-chat,chunk-types}.ts`, `components/chat/MessageSources.tsx`, `lib/personas/build-system-prompt.ts` (knowledge_block injection), `lib/supervisor/checks/{hallucination-risk,arithmetic-check,topic-escalation,persona-drift,compliance-keyword}.ts` (all 5 stubs filled), `lib/supervisor/run-supervisor.ts` (async + extras), `lib/supervisor/metrics.ts`, `lib/quotes/{kind-resolver,render-pdf}.ts`, `app/api/quotes/[id]/accept/route.ts` (variance + audit snapshot), `app/api/bookings/[id]/submit/route.ts` (§21.10.1 variance branch + reconfirmation), `inngest/quote-estimate-expiry-sweep.ts`, `packages/shared-types/index.ts` (supports_price_lock, getCurrentPrice). 8 new test files, 63 new unit tests (397 passing, 42 skipped).
+
+---
+
 ## D-052 — 2026-05-22 — BP20: Forum moderation, booking flow scaffolding — key decisions
 
 **Decision:**

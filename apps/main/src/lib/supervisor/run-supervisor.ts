@@ -50,6 +50,13 @@ export type RunSupervisorInput = {
   candidate_response: string;
   retrieved_chunks?: unknown[];
   db: SupabaseClient;
+  // §21.10 extras — optional, passed through to checks that use them.
+  entities?: {
+    intent?: "research" | "compare" | "book" | "support" | string;
+    categories_hint?: string[];
+  };
+  recent_escalation_offered?: boolean;
+  persona_specializes_in_sensitive?: boolean;
 };
 
 export async function runSupervisor(input: RunSupervisorInput): Promise<SupervisorOutcome> {
@@ -126,18 +133,27 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     ? (slurSetting.value as string[])
     : [];
 
-  // Step 4: Run all seven preflight checks
-  const checkInput = { candidate_response, retrieved_chunks };
+  // Step 4: Run all seven preflight checks.
+  // hallucination_risk is async (Haiku call); the rest are synchronous.
+  // Pass-through extras (entities, recent_escalation_offered, ...) belong on
+  // RunSupervisorInput and flow through to the check input verbatim.
+  const checkInput = {
+    candidate_response,
+    retrieved_chunks,
+    entities: input.entities,
+    recent_escalation_offered: input.recent_escalation_offered,
+    persona_specializes_in_sensitive: input.persona_specializes_in_sensitive,
+  };
 
-  const findings: SupervisorFinding[] = [
+  const findings: SupervisorFinding[] = await Promise.all([
     checkHallucinationRisk(checkInput),
-    checkPersonaDrift(checkInput),
-    checkPromiseDetection(checkInput),
-    checkArithmetic(checkInput),
-    checkComplianceKeyword(checkInput),
-    checkToneDrift({ ...checkInput, slurDenyList }),
-    checkTopicEscalation(checkInput),
-  ];
+    Promise.resolve(checkPersonaDrift(checkInput)),
+    Promise.resolve(checkPromiseDetection(checkInput)),
+    Promise.resolve(checkArithmetic(checkInput)),
+    Promise.resolve(checkComplianceKeyword(checkInput)),
+    Promise.resolve(checkToneDrift({ ...checkInput, slurDenyList })),
+    Promise.resolve(checkTopicEscalation(checkInput)),
+  ]);
 
   // Step 5: Decide action
   const hasCritical = findings.some((f) => f.severity === "critical");

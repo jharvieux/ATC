@@ -42,6 +42,7 @@ function makeCredentialFailedAdapter(adapterDisplayName: string): HostAgencyClie
     supports_modification: false,
     supports_cancellation: false,
     supports_commission_api: false,
+    supports_price_lock: false,
     booking_types: [],
     cruise_lines_supported: [],
     commission_currency: "USD",

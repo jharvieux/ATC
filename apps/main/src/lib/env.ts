@@ -93,6 +93,23 @@ const envSchema = z.object({
   FORUM_MODERATION_HAIKU_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2000),
   // Hours before a stuck pending_moderation message auto-escalates to flagged_review (§19.3).
   FORUM_MODERATION_RETRY_TIMEOUT_HOURS: z.coerce.number().int().positive().optional().default(24),
+  // RAG consumer & hallucination defense — §21
+  // Haiku model used for entity extraction from chat messages (§21.2).
+  ENTITY_EXTRACTION_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  // Drop any retrieved chunk below this composite confidence (§21.3).
+  RAG_CHUNK_CONFIDENCE_FLOOR: z.coerce.number().min(0).max(1).optional().default(0.35),
+  // Cosine similarity above which two chunks are considered duplicates for dedup (§21.3).
+  RAG_CHUNK_DEDUP_SIMILARITY_THRESHOLD: z.coerce.number().min(0).max(1).optional().default(0.8),
+  // Final cap on number of chunks injected into the knowledge block (§21.3).
+  RAG_CHUNK_TOP_N_DEFAULT: z.coerce.number().int().min(3).max(5).optional().default(4),
+  // Quote PDF rendering library (§21.10.1). Operator choice — see MEMORY for rationale.
+  QUOTE_PDF_RENDERER: z.enum(["puppeteer", "react-pdf"]).optional().default("react-pdf"),
+  // Days an ESTIMATE quote remains valid before auto-expiry (§21.10.1).
+  QUOTE_ESTIMATE_VALIDITY_DAYS: z.coerce.number().int().positive().optional().default(7),
+  // Default per-tenant variance threshold in cents (§21.10.1) — operator can override per-tenant.
+  QUOTE_DEFAULT_VARIANCE_CENTS: z.coerce.number().int().nonnegative().optional().default(5000),
+  // Anthropic API key — Haiku for entity extraction & claim grounding checks.
+  ANTHROPIC_API_KEY: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
