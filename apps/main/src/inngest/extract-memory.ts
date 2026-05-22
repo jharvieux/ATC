@@ -53,8 +53,9 @@ const ExtractedMemorySchema = z.object({
 // ── Step interface (matches Inngest step, mockable in tests) ──────────────────
 
 export interface ExtractionStep {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  run<T = any>(id: string, fn: () => Promise<T>): Promise<T>;
+  // T = any matches Inngest's step.run generic — safe because Inngest guarantees
+  // the return type matches the fn return type at runtime.
+  run<T = unknown>(id: string, fn: () => Promise<T>): Promise<T>;
   sleep(id: string, ms: number): Promise<unknown>;
   sendEvent(id: string, events: unknown): Promise<unknown>;
 }
