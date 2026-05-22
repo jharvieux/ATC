@@ -24,6 +24,11 @@ const envSchema = z.object({
   // RAG service sync (§8.7)
   RAG_SERVICE_URL: z.string().url(),
   RAG_WEBHOOK_SECRET: z.string().min(1),
+  // Supervisor regen budget (§10.1a) — EITHER threshold trips exhaustion
+  // Absolute regen-attempt cap per conversation (default 6)
+  SUPERVISOR_REGEN_MAX_PER_CONVERSATION: z.coerce.number().int().positive().optional().default(6),
+  // Cumulative token cap across all regen attempts per conversation (default 25000)
+  SUPERVISOR_REGEN_MAX_TOKENS_PER_CONVERSATION: z.coerce.number().int().positive().optional().default(25000),
 });
 
 type Env = z.infer<typeof envSchema>;
