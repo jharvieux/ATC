@@ -13,6 +13,7 @@ import { payoutsMarkAvailable } from "@/inngest/payouts-mark-available";
 import { payoutsExecuteTransfer } from "@/inngest/payouts-execute-transfer";
 import { payoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
 import { reconcileStatementAutomated } from "@/inngest/reconcile-statement-automated";
+import { complianceNightly } from "@/inngest/compliance-nightly";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -30,5 +31,6 @@ export const { GET, POST, PUT } = serve({
     payoutsExecuteTransfer,
     payoutsReconcileProcessing,
     reconcileStatementAutomated,
+    complianceNightly,
   ],
 });

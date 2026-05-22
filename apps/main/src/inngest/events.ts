@@ -19,6 +19,26 @@ export interface AnonymousSessionTransferFinalizePayload {
 // dob_reprompt.eligible_check carries no payload — it's cron-driven.
 export interface DobRepromptEligibleCheckPayload {}
 
+// §15.10 — Tenant submitted for admin review.
+export interface TenantSubmittedForReviewPayload {
+  tenant_id: string;
+}
+
+// §15.11 — Tenant approved and activated.
+export interface TenantActivatedPayload {
+  tenant_id: string;
+  admin_user_id: string;
+}
+
+// §15.15 — Subscription changed (tier, seats, or billing period).
+export interface TenantSubscriptionChangedPayload {
+  tenant_id: string;
+  change: "tier" | "seats" | "billing_period";
+  new_tier?: string;
+  new_seat_count?: number;
+  new_billing_period?: string;
+}
+
 export type InngestEvents = {
   "conversation.memory_extract_requested": {
     data: ConversationMemoryExtractRequestedPayload;
@@ -28,5 +48,14 @@ export type InngestEvents = {
   };
   "dob_reprompt.eligible_check": {
     data: DobRepromptEligibleCheckPayload;
+  };
+  "tenant.submitted_for_review": {
+    data: TenantSubmittedForReviewPayload;
+  };
+  "tenant.activated": {
+    data: TenantActivatedPayload;
+  };
+  "tenant.subscription_changed": {
+    data: TenantSubscriptionChangedPayload;
   };
 };

@@ -69,6 +69,34 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/subcontractors/route.ts",
   // BP15: Reconciliation upload — processLineItem writes to reconciliation_review_queue. §14.8.
   "/app/api/admin/reconciliation/upload/route.ts",
+  // BP16: Onboarding state machine — progressTo/revertTo do cross-tenant stage writes. §15.2.
+  "/lib/onboarding/state-machine.ts",
+  // BP16: Slug check — reads across tenants for uniqueness check. §15.3.
+  "/app/api/tenants/slug-check/route.ts",
+  // BP16: Tier selection — reads tier_definitions across tenants. §15.8.
+  "/app/api/onboarding/tier/route.ts",
+  // BP16: ICA acceptance — reads tenant row to compare legal_name. §15.5.
+  "/app/api/onboarding/ica/route.ts",
+  // BP16: Profile submission — cross-tenant slug uniqueness check. §15.3.
+  "/app/api/onboarding/profile/route.ts",
+  // BP16: Sandbox toggle — reads tenant stripe subscription ID. §15.12.
+  "/app/api/tenant/sandbox/route.ts",
+  // BP16: Billing management — reads tier_definitions and subscription IDs. §15.15.
+  "/app/api/tenant/billing/route.ts",
+  // BP16: Admin review action — reads tenant for Stripe calls, updates status. §15.11.
+  "/app/api/admin/tenants/[id]/review/route.ts",
+  // BP16: Compliance nightly cron — cross-tenant inactivity scan. §15.13.
+  "/inngest/compliance-nightly.ts",
+  // BP16: Tax-form Stripe link — creates Connect account, needs cross-tenant write. §15.6.
+  "/app/api/onboarding/tax-form/stripe-link/route.ts",
+  // BP16: Connect link — reads Connect account ID for account link creation. §15.9.
+  "/app/api/onboarding/connect/link/route.ts",
+  // BP16: Subscription Checkout — reads tier/seat/billing_period for Checkout session. §15.8.
+  "/app/api/onboarding/subscription/checkout/route.ts",
+  // BP16: Platform settings host-agency-name — reads platform_settings. §15.7.
+  "/app/api/platform/settings/host-agency-name/route.ts",
+  // BP16: Admin review queue — paginated cross-tenant read. §15.11.
+  "/app/api/admin/tenants/review-queue/route.ts",
 ];
 
 function endsWithAllowed(filename) {

@@ -63,6 +63,12 @@ export const PLATFORM_ADMIN_REASONS = [
   "ai_kill_switch_tenant_pause",
   "ai_kill_switch_tenant_resume",
 
+  // Onboarding review actions (§15.11)
+  "onboarding_review_action",
+
+  // Cross-tenant administrative queries (§15.11 review queue)
+  "cross_tenant_admin",
+
   // Catch-all for emergencies (use sparingly — must be paired with
   // an audit_log.changes.reason_detail string and a MEMORY.md entry)
   "manual_emergency_intervention",
