@@ -3,6 +3,7 @@
 // Promotes a pending_review item to a global knowledge_chunks row.
 // Requires service_identifier === 'platform-admin'. Any tenant's pending
 // content can be promoted to global by a platform admin.
+export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";

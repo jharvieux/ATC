@@ -1,4 +1,5 @@
 /** RAG service Inngest serve endpoint */
+export const dynamic = "force-dynamic";
 
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";

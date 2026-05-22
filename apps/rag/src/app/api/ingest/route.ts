@@ -6,6 +6,7 @@
 //
 // PII gate (§6.11 / §22.4): zero-tolerance patterns are quarantined immediately.
 // The Haiku redaction pass for tolerable PII is a later step — TODO(§22.4-haiku-redaction).
+export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";

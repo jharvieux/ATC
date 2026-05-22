@@ -1,5 +1,6 @@
 // §15.14.4 — Apply a review action to a post-termination chunk.
 // Actions: retain | demote | hard_delete
+export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
