@@ -1,5 +1,9 @@
 "use client";
 
+// Force dynamic rendering — this page reads URL search params and user
+// session state; prerendering would always produce an incorrect result.
+export const dynamic = "force-dynamic";
+
 // §11.6 — Transfer consent page.
 // Shown after OAuth completion when an anonymous session is detected.
 // The user chooses to keep their conversation history or start fresh.
