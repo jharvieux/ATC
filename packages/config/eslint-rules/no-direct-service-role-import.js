@@ -137,6 +137,14 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/persona-addendum-screen.ts",
   // BP18: Persona addendum nightly re-screen — cross-tenant scan. §16.6.
   "/inngest/persona-addendum-rescreen-nightly.ts",
+  // BP19: Invitation token natural-expiry sweep — cross-tenant cron. §18.9.
+  "/inngest/invitation-tokens-natural-expiry-sweep.ts",
+  // BP19: Groups mark-sailed cron — cross-tenant status update. §18.10.
+  "/inngest/groups-mark-sailed.ts",
+  // BP19: Group reminder cadence — cross-tenant send + email_log write. §18.8.
+  "/inngest/group-reminder-cadence.ts",
+  // BP19: Hero image — reads destination_images and writes cache. §18.3.
+  "/lib/groups/hero-image.ts",
 ];
 
 function endsWithAllowed(filename) {

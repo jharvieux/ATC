@@ -30,6 +30,10 @@ import {
 import { crownJewelAnnualAudit } from "@/inngest/crown-jewel-annual-audit";
 import { personaAddendumScreen } from "@/inngest/persona-addendum-screen";
 import { personaAddendumRescreenNightly } from "@/inngest/persona-addendum-rescreen-nightly";
+// BP19: Group bookings (§18)
+import { invitationTokensNaturalExpirySweep } from "@/inngest/invitation-tokens-natural-expiry-sweep";
+import { groupsMarkSailed } from "@/inngest/groups-mark-sailed";
+import { groupReminderCadence } from "@/inngest/group-reminder-cadence";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -63,5 +67,9 @@ export const { GET, POST, PUT } = serve({
     crownJewelAnnualAudit,
     personaAddendumScreen,
     personaAddendumRescreenNightly,
+    // BP19: Group bookings (§18)
+    invitationTokensNaturalExpirySweep,
+    groupsMarkSailed,
+    groupReminderCadence,
   ],
 });

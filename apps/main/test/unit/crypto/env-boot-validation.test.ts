@@ -40,6 +40,7 @@ describe("verifyEnvAtBoot — encryption key validation (§13.5.3)", () => {
       RAG_WEBHOOK_SECRET: "rag-secret",
       APP_ENCRYPTION_KEY_CURRENT: shortKey,
       APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
+      INVITATION_TOKEN_HMAC_KEY: VALID_KEY_B64,
     };
 
     const { verifyEnvAtBoot } = await import("@/lib/env");
@@ -67,6 +68,7 @@ describe("verifyEnvAtBoot — encryption key validation (§13.5.3)", () => {
       RAG_WEBHOOK_SECRET: "rag-secret",
       APP_ENCRYPTION_KEY_CURRENT: VALID_KEY_B64,
       APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
+      INVITATION_TOKEN_HMAC_KEY: VALID_KEY_B64,
     };
 
     const { verifyEnvAtBoot } = await import("@/lib/env");
