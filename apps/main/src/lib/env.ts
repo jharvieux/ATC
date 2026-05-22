@@ -75,6 +75,18 @@ const envSchema = z.object({
   // The canonical reserved parent domain (§16.3.4). Crown-jewel guard refuses
   // to bind this in non-production environments.
   RESERVED_PARENT_DOMAIN: z.string().optional().default("tenants.ai-travelconcierge.com"),
+  // Group bookings — §18.5 / §18.2
+  // 256-bit key, base64-encoded. Required. Generate: openssl rand -base64 32
+  INVITATION_TOKEN_HMAC_KEY: z.string().min(1),
+  // Microsoft Graph tenant ID for no-email fallback (§17.2). Default 'common'
+  // handles personal + work accounts; override with your tenant GUID to restrict.
+  MICROSOFT_GRAPH_TENANT_ID: z.string().optional().default("common"),
+  // Image generation for group hero images (§18.3). Provider: 'openai' | 'none'.
+  IMAGE_GEN_PROVIDER: z.enum(["openai", "none"]).optional().default("openai"),
+  // OpenAI API key — used for DALL-E 3 hero image generation.
+  OPENAI_API_KEY: z.string().optional(),
+  // Per-tenant daily AI image generation cap (§18.3).
+  IMAGE_GEN_RATE_LIMIT_DAILY: z.coerce.number().int().positive().optional().default(20),
 });
 
 type Env = z.infer<typeof envSchema>;

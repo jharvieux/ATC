@@ -37,4 +37,7 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "sub_host_subcontractors",
   "tenant_branding",
   "persona_addendums",
+  // BP19: Group bookings (§18)
+  "groups",
+  "invitations",
 ]);
