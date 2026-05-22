@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-043 — 2026-05-22 — BP08: tenant_registry renamed to tenant_registry_shadow; Redis fail-closed; ioredis test strategy
+
+**Decision:**
+
+- **`tenant_registry` → `tenant_registry_shadow`**: BP06's `tenant_registry` table had the wrong shape (`synced_at`, missing `display_name`/`source_revision`/`last_reconcile_sync_at`) and was never populated (nightly sync never ran). Migration `0007_tenant_registry_shadow.sql` drops the old table and recreates it as `tenant_registry_shadow` with the §8.3 schema. Safe because the table was always empty.
+- **Redis fail-closed**: The ioredis client uses `lazyConnect: true`, `maxRetriesPerRequest: 1`. The JWT verifier wraps the `redis.set(jti)` call in a try/catch that re-throws `ServiceAuthError("redis_unreachable", 503)` on ANY error that is not itself a `ServiceAuthError`. This makes the request fail hard if Redis is down — no pass-through.
+- **Vitest test strategy for doMock**: `vi.mock()` calls in Vitest test bodies are hoisted to the top of the file, making per-test mock factories impossible. All inline mocks in the JWT test suite use `vi.doMock()` (NOT hoisted) combined with `vi.resetModules()` + dynamic import. Each mock-dependent test calls `vi.resetModules()` first, then `vi.doMock(...)`, then `await import(...)`. The ioredis fail test mocks the `ioredis` module directly (not a real TCP port) for deterministic speed.
+- **Keypair lifecycle in tests**: `beforeAll` (not `beforeEach`) generates the RS256 keypair. The module-level `keyCache` in `verify-service-jwt.ts` is populated on first use and reused. Using `beforeEach` would rotate the keypair every test, leaving a stale public key in the cache and causing signature failures on the expired-iat test.
+- **`.gitleaks.toml` created**: Gitleaks was flagging PEM-format CI placeholder strings in `ci.yml` (even non-PEM strings; it scans the full PR commit range). Added `.gitleaks.toml` with a path-based allowlist for `.github/workflows/**`. CI placeholders must NOT use PEM-style headers.
+
+**Why:** The shadow table rename needed a migration because the old table had been created by BP06 but never backfilled. The Redis fail-closed contract is a security requirement from §8.3 — an unreachable Redis means we cannot enforce jti replay protection, so the request must be rejected.
+
+**Artifacts:** `apps/rag/supabase/migrations/0007_tenant_registry_shadow.sql`, `apps/rag/src/lib/auth/verify-service-jwt.ts`, `apps/rag/src/lib/auth/with-service-auth.ts`, `apps/rag/src/lib/redis/client.ts`, `apps/rag/test/unit/auth/verify-service-jwt.test.ts`, `apps/rag/vitest.config.ts`, `.gitleaks.toml`. PR #39 merged to dev.
+
+---
+
 ## D-042 — 2026-05-21 — BP07: Stripe key names verified; all event handlers are TODO stubs; Inngest v4 trigger API
 
 **Decision:**
