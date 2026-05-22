@@ -19,6 +19,17 @@ import { ragTenantScopedPurgeOnTermination } from "@/inngest/rag-tenant-scoped-p
 import { userDataExportBuild } from "@/inngest/user-data-export-build";
 import { userDataPurgeAfterGrace } from "@/inngest/user-data-purge-after-grace";
 import { ccpaStagingPropagationMonitor } from "@/inngest/ccpa-staging-propagation-monitor";
+import { customDomainReverify } from "@/inngest/custom-domain-reverify";
+import { customDomainTxtGraceSweep } from "@/inngest/custom-domain-txt-grace-sweep";
+import {
+  customDomainCleanupOnSuspend,
+  customDomainCleanupOnTerminated,
+  customDomainCleanupOnDowngrade,
+  customDomainCleanupOnTenantRemoval,
+} from "@/inngest/custom-domain-cleanup-on-lifecycle";
+import { crownJewelAnnualAudit } from "@/inngest/crown-jewel-annual-audit";
+import { personaAddendumScreen } from "@/inngest/persona-addendum-screen";
+import { personaAddendumRescreenNightly } from "@/inngest/persona-addendum-rescreen-nightly";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -43,5 +54,14 @@ export const { GET, POST, PUT } = serve({
     userDataExportBuild,
     userDataPurgeAfterGrace,
     ccpaStagingPropagationMonitor,
+    customDomainReverify,
+    customDomainTxtGraceSweep,
+    customDomainCleanupOnSuspend,
+    customDomainCleanupOnTerminated,
+    customDomainCleanupOnDowngrade,
+    customDomainCleanupOnTenantRemoval,
+    crownJewelAnnualAudit,
+    personaAddendumScreen,
+    personaAddendumRescreenNightly,
   ],
 });

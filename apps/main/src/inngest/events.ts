@@ -101,4 +101,18 @@ export type InngestEvents = {
   "user.data_purge_scheduled": {
     data: UserDataPurgeScheduledPayload;
   };
+  // §15.14.2 / §16.3.3 — lifecycle events that trigger custom-domain unbind.
+  "tenant.suspended": {
+    data: { tenant_id: string };
+  };
+  "tenant.downgraded_from_agency": {
+    data: { tenant_id: string };
+  };
+  "tenant.custom_domain_removed_by_tenant": {
+    data: { tenant_id: string };
+  };
+  // §16.6 — persona addendum submitted (initial or edit), triggers Haiku screen.
+  "persona_addendum.submitted": {
+    data: { tenant_id: string; persona_slug: string; addendum_id: string };
+  };
 };

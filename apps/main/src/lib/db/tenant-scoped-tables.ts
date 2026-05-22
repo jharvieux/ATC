@@ -35,4 +35,6 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "tenant_host_configs",
   "platform_revenue",
   "sub_host_subcontractors",
+  "tenant_branding",
+  "persona_addendums",
 ]);

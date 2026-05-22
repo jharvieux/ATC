@@ -64,6 +64,17 @@ const envSchema = z.object({
   HOST_ADAPTER_FALLBACK_EMAIL_TO: z.string().email().optional(),
   HOST_ADAPTER_FALLBACK_EMAIL_FROM: z.string().email().optional(),
   RESEND_API_KEY: z.string().optional(),
+  // White-label (§16) — BP18
+  VERCEL_API_TOKEN: z.string().optional(),
+  VERCEL_PROJECT_ID: z.string().optional(),
+  VERCEL_TEAM_ID: z.string().optional(),
+  PLATFORM_PARENT_DOMAIN: z.string().optional(),
+  PLATFORM_ENV: z.enum(["production", "staging", "preview", "development"]).optional().default("development"),
+  DNS_RESOLVER_URL: z.string().url().optional().default("https://cloudflare-dns.com/dns-query"),
+  PERSONA_ADDENDUM_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  // The canonical reserved parent domain (§16.3.4). Crown-jewel guard refuses
+  // to bind this in non-production environments.
+  RESERVED_PARENT_DOMAIN: z.string().optional().default("tenants.ai-travelconcierge.com"),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -105,6 +116,24 @@ export function verifyEnvAtBoot(): Env {
       );
     }
   }
+  // §16.3.4 reserved-parent-domain boot guard. If PLATFORM_PARENT_DOMAIN equals
+  // the reserved value AND we are NOT in production, refuse to boot — binding
+  // the reserved domain in any non-production project would route every
+  // custom-domain tenant's traffic to the wrong project. This guard is one of
+  // three layers (boot, before-Vercel-call, annual operator audit).
+  if (
+    data.PLATFORM_PARENT_DOMAIN &&
+    data.PLATFORM_PARENT_DOMAIN === data.RESERVED_PARENT_DOMAIN &&
+    data.PLATFORM_ENV !== "production"
+  ) {
+    throw new Error(
+      `[crown-jewel-guard] PLATFORM_PARENT_DOMAIN is set to the reserved value ` +
+        `'${data.RESERVED_PARENT_DOMAIN}' but PLATFORM_ENV='${data.PLATFORM_ENV}' is not 'production'. ` +
+        `The reserved parent domain MUST only be bound in the production Vercel project (§16.3.4). ` +
+        `Refusing to boot.`,
+    );
+  }
+
   _env = data;
   return _env;
 }
