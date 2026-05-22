@@ -7,6 +7,7 @@ import { ragSyncRetry, ragSyncCleanup } from "@/inngest/rag-sync-retry";
 import { extractMemory } from "@/inngest/extract-memory";
 import { dobEstimateRepromptEligible } from "@/inngest/dob-estimate-reprompt-eligible";
 import { transferFinalize } from "@/inngest/transfer-finalize";
+import { reEncryptOldRecords, backupVerificationReminder } from "@/inngest/re-encrypt-old-records";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -17,5 +18,7 @@ export const { GET, POST, PUT } = serve({
     extractMemory,
     dobEstimateRepromptEligible,
     transferFinalize,
+    reEncryptOldRecords,
+    backupVerificationReminder,
   ],
 });

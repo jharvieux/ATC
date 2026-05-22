@@ -32,4 +32,5 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "pipeline_stages",
   "quotes",
   "tenant_host_fee_overrides",
+  "tenant_host_configs",
 ]);
