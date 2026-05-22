@@ -1,9 +1,9 @@
-# Session state — last updated 2026-05-22 18:20 UTC
+# Session state — last updated 2026-05-22 18:45 UTC
 
 ## Just completed
 
-- BP21 — RAG consumer side, eight-layer hallucination defense, quote pricing discipline (§21)
-  - Branch: feature/bp21-rag-consumer-hallucination-quotes
+- BP21 — RAG consumer side, eight-layer hallucination defense, quote pricing discipline (§21) — MERGED to dev as PR #64 (commit 3ece605)
+  - Branch: feature/bp21-rag-consumer-hallucination-quotes (deleted post-merge)
   - Migration 20260531000000_quote_pricing.sql:
     - quotes: price_kind, price_lock_token, price_lock_expires_at, customer_accepted_variance_cents, customer_accepted_at, customer_accepted_audit_id, priced_at, estimate_price_cents, locked_price_cents
     - NEW tenant_settings table (quote_variance_cents, show_chat_sources)
@@ -37,14 +37,11 @@
 
 ## In flight
 
-- Nothing in flight — BP21 ready to commit and open PR
+- Nothing in flight — clean checkpoint
 
 ## Next step
 
-- Commit BP21 work on feature/bp21-rag-consumer-hallucination-quotes
-- Push and open PR from feature/bp21-rag-consumer-hallucination-quotes → dev
-- Wait for CI; merge if green
-- Then proceed to BP22 — RAG ingestion: normalization, PII zero-tolerance, four-tab global review (§22)
+- Proceed to BP22 — RAG ingestion: normalization, PII zero-tolerance, four-tab global review (§22). Uses Opus per build prompt.
 
 ## Blocked on user
 
