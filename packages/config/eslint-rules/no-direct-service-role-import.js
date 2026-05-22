@@ -25,6 +25,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // Inngest reconciliation job: background job running outside any user
   // session; service-role required to scan stripe_webhook_events. §7.9a.
   "/inngest/stripe-webhook-incomplete-reconcile.ts",
+  // RAG sync retry cron: background job, no user session. §8.7a.
+  "/inngest/rag-sync-retry.ts",
+  // RAG sync publisher: fires after DB write commits, outside user request scope. §8.7.
+  "/lib/rag-sync/publish-tenant-event.ts",
+  // Platform-internal admin endpoint: bearer-token auth, no user JWT. §8.3.
+  "/api/admin/tenants/route.ts",
 ];
 
 function endsWithAllowed(filename) {

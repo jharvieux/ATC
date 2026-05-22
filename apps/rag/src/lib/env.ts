@@ -14,6 +14,16 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   OPENAI_EMBEDDING_DIMENSIONS: z.coerce.number().int().default(1536),
+  // Service-to-service JWT verification (§8.3)
+  SERVICE_JWT_PUBLIC_KEY: z.string().min(1),
+  SERVICE_JWT_ACCEPTED_KEY_IDS: z.string().min(1),
+  // Redis — jti replay cache (§8.3 fail-closed contract)
+  REDIS_URL: z.string().url(),
+  // Nightly reconcile callback to main app (§8.3)
+  MAIN_APP_URL: z.string().url(),
+  MAIN_APP_ADMIN_API_KEY: z.string().min(1),
+  // Inbound tenant-events webhook secret (§8.7)
+  RAG_WEBHOOK_SECRET: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;
