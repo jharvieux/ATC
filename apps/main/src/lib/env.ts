@@ -18,6 +18,12 @@ const envSchema = z.object({
   // Inngest
   INNGEST_SIGNING_KEY: z.string().min(1),
   INNGEST_EVENT_KEY: z.string().min(1),
+  // Service-to-service JWT signing (§8.3)
+  SERVICE_JWT_PRIVATE_KEY: z.string().min(1),
+  SERVICE_JWT_KEY_ID: z.string().min(1),
+  // RAG service sync (§8.7)
+  RAG_SERVICE_URL: z.string().url(),
+  RAG_WEBHOOK_SECRET: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;

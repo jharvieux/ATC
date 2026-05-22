@@ -8,7 +8,7 @@
 -- This is a documented, intentional exception — not an oversight.
 --
 -- Tables without RLS (all RAG tables):
---   public.tenant_registry
+--   public.tenant_registry_shadow  (replaces tenant_registry from BP06 — see D-043)
 --   public.knowledge_chunks
 --   public.knowledge_ingestion_queue
 --   public.rag_retrieval_log
