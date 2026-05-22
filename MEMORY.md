@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-044 — 2026-05-22 — BP09: pgvector retrieval via RPC, PII separator backreference, submitted_by_user_id nullable
+
+**Decision:**
+
+- **pgvector retrieval via Supabase RPC**: The Supabase JS PostgREST interface doesn't support arbitrary SQL or pgvector operators natively. All vector similarity queries go through a `match_knowledge_chunks()` stored function (migration 0008), called via `supabase.rpc()`. This avoids needing a direct DB URL from the app and keeps the vector math inside the DB where indexes can be used.
+- **Scoring formula is a placeholder**: `composite = (match × authority × recency) + feedback_factor` with a `// TODO(§6-weighting-formula)` comment. The §6 weighting spec wasn't unambiguous enough to hard-code at this stage.
+- **SSN regex uses backreference for separator**: `\d{3}([-\s])\d{2}\1\d{4}` — requires BOTH separators to be the same character. Without this, "12345-6789" (zip+4) matches as "123" + no-sep + "45" + "-" + "6789". Backreference `\1` prevents that. No-separator SSN form (9 raw digits) deliberately excluded — too many false positives from order IDs.
+- **`submitted_by_user_id` made nullable** (migration 0008): Service-to-service JWT calls carry `user_id: null` when there's no user session. The original migration 0003 had it NOT NULL, which broke service ingest paths.
+- **`contact_id` added to `knowledge_chunks`** (migration 0008): Required by §6.9 closed-promo override (`include_closed_promos_for_contact`). Was missing from the BP06 schema.
+- **`knowledge_chunks → tenant_registry` FK dropped via CASCADE**: Migration 0007 updated to `DROP TABLE IF EXISTS public.tenant_registry CASCADE`. Tenant isolation is enforced in application code (scope filter per §6.9), not by FK. `tenant_registry_shadow` is a replica — using it as an FK target would create referential integrity problems if shadow rows lag or are cleaned up.
+- **Haiku PII redaction deferred**: `// TODO(§22.4-haiku-redaction)` in `/api/ingest`. Only the zero-tolerance regex pass is implemented. Tolerable PII (names, emails, phones) requires the Haiku pass in a future prompt.
+
+**Artifacts:** `apps/rag/supabase/migrations/0008_retrieval_function_and_schema_fixes.sql`, `apps/rag/src/lib/pii/regex-prefilter.ts`, `apps/rag/src/lib/embeddings/openai.ts`, `apps/rag/src/lib/db/supabase.ts`, four updated routes. PR #42 merged to dev.
+
+---
+
 ## D-043 — 2026-05-22 — BP08: tenant_registry renamed to tenant_registry_shadow; Redis fail-closed; ioredis test strategy
 
 **Decision:**
