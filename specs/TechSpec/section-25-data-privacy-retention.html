@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 25 — Data Privacy & Retention — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 25</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s25">Section 25 — Data Privacy &amp; Retention</h1>
+<p>US-only launch; CCPA-aligned. Architecture supports GDPR additions later.</p>
+<h2 id="s25-1">25.1 Data Classifications <a class="anchor-link" href="#s25-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Class</strong></th><th><strong>Examples</strong></th><th><strong>Treatment</strong></th></tr></thead><tbody><tr><td>PII — Identity</td><td>Name, email, phone, DOB, address</td><td>Encrypted at rest by Supabase; access logged</td></tr><tr><td>PII — Financial</td><td>Payment methods (token only), bank info (Stripe-held)</td><td>Platform never stores card numbers; Stripe-held</td></tr><tr><td>PII — Sensitive</td><td>Accessibility needs, dietary restrictions</td><td>Encrypted; access tightly scoped</td></tr><tr><td>Conversation data</td><td>Chat messages, memory</td><td>Tenant-scoped; customer can view, edit, delete</td></tr><tr><td>Behavioral</td><td>Click events, page views, response feedback</td><td>Aggregated for product analytics; per-user trace retained 90 days</td></tr></tbody></table></div>
+<h2 id="s25-2">25.2 Retention Schedule <a class="anchor-link" href="#s25-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Data</strong></th><th><strong>Retention</strong></th><th><strong>Reason</strong></th></tr></thead><tbody><tr><td>Booking records</td><td>7 years post-sailing</td><td>Tax, liability, host agency obligations</td></tr><tr><td>Commission records</td><td>7 years</td><td>Financial; matches IRS retention</td></tr><tr><td>Audit logs</td><td>7 years</td><td>Regulatory and disputes</td></tr><tr><td>Conversation messages (active customer)</td><td>Indefinite while tenant active</td><td>Customer service continuity; memory</td></tr><tr><td>Conversation messages (terminated customer)</td><td>Bodies deleted after deletion grace period; metadata retained per <a class="xref" href="#s25-4a">§25.4a</a></td><td>Per CCPA</td></tr><tr><td>Anonymous session data</td><td>60 days</td><td>Cleanup of unattached data</td></tr><tr><td>RAG queue rejected items</td><td>90 days</td><td>Pattern analysis</td></tr><tr><td>Retrieval logs (detailed)</td><td>90 days, then aggregated</td><td>Performance and feedback signal</td></tr><tr><td>Marketing engagement events</td><td>13 months</td><td>Year-over-year comparison</td></tr></tbody></table></div>
+<h2 id="s25-3">25.3 CCPA Rights <a class="anchor-link" href="#s25-3" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Right</strong></th><th><strong>Mechanism</strong></th><th><strong>SLA</strong></th></tr></thead><tbody><tr><td>Right to know</td><td>GET /api/user/data → emailed download link</td><td>Within 45 days; usually &lt;24h</td></tr><tr><td>Right to delete</td><td>DELETE /api/user/data → 30-day grace → purge</td><td>30 days</td></tr><tr><td>Right to correct</td><td>Self-edit in /settings/profile and /settings/memory</td><td>Immediate</td></tr><tr><td>Right to opt out of sale</td><td>N/A; platform does not sell data</td><td>N/A</td></tr><tr><td>Right to non-discrimination</td><td>No service degradation for exercising rights</td><td>Always</td></tr></tbody></table></div>
+<h2 id="s25-4">25.4 Anonymization of Required-Retention Data <a class="anchor-link" href="#s25-4" aria-label="Permalink">¶</a></h2>
+<p>Booking and commission records are subject to 7-year retention; they survive customer deletion via anonymization:</p>
+<ul>
+<li>Customer name replaced with hash-derived placeholder</li>
+<li>Customer email cleared; reference to deleted user only</li>
+<li>Customer DOB cleared (no longer needed post-sailing for retention purpose)</li>
+<li>Booking financial and audit details preserved</li>
+</ul>
+<h2 id="s25-4a">25.4a Free-Text Anonymization Strategy <a class="anchor-link" href="#s25-4a" aria-label="Permalink">¶</a></h2>
+<p>Free-text fields (chat messages, conversation notes, AI-generated narratives) cannot be reliably anonymized in place — PII redaction on years-old free-text via LLM is expensive, slow, and produces false negatives. The platform takes a different approach for the two categories of free-text data:</p>
+<h3>Category 1: Conversation messages (<code>messages.content</code>)</h3>
+<p>On customer deletion after the 30-day grace period:</p>
+<ul>
+<li><strong><code>messages.content</code> set to NULL.</strong> The free-text body is removed entirely.</li>
+<li><strong>Message metadata retained.</strong> <code>id</code>, <code>conversation_id</code>, <code>sender_role</code>, <code>created_at</code>, token counts, <code>supervisor_findings</code> JSONB (with any PII fields within it nulled separately) all stay.</li>
+<li><strong>Conversation continuity preserved for the tenant.</strong> The tenant can still see "conversation existed with N messages of which K were customer-sent" for their own historical analytics, but cannot read the customer's words.</li>
+</ul>
+<p>This is deletion, not anonymization. The body is gone.</p>
+<p>If a tenant needs to preserve conversation content for legal-hold purposes (active dispute), the forensics log per <a class="xref" href="section-26-security.html#s26-5a">§26.5a</a> captures a snapshot BEFORE the deletion. The snapshot is encrypted and access-controlled per that section; it is NOT in the tenant's normal operational view.</p>
+<h3>Category 2: AI-generated narratives in other tables</h3>
+<p>Some tables contain AI-generated free-text:</p>
+<ul>
+<li><code>quotes.narrative</code> — generated quote description</li>
+<li><code>bookings.notes</code> — generated booking summary</li>
+<li><code>customer_memories.notes_freeform</code> — extracted free-form notes</li>
+</ul>
+<p>On customer deletion:</p>
+<ul>
+<li><code>customer_memories</code> row is hard-deleted entirely (the row exists to track customer state; if there's no customer, there's no row).</li>
+<li><code>quotes.narrative</code> and <code>bookings.notes</code>: NULLed for the affected customer's records. The booking record itself is retained per <a class="xref" href="#s25-4">§25.4</a> (financial retention) but the narrative is gone.</li>
+</ul>
+<h3>Category 3: Tenant-owned content referencing the customer</h3>
+<p>Tenant-authored notes (CRM notes typed by a tenant agent about a customer) are tenant-owned. On customer deletion:</p>
+<ul>
+<li>The notes are NOT auto-deleted. The tenant agent wrote them; the tenant retains them as part of their business records.</li>
+<li>The notes' references to the customer (foreign keys) are replaced with the same hash-derived placeholder from <a class="xref" href="#s25-4">§25.4</a>.</li>
+<li>The text body of the notes is retained but the tenant is encouraged (via UI) to review and redact any PII manually.</li>
+</ul>
+<h3>Why deletion (not redaction) for <code>messages.content</code></h3>
+<p>Three reasons:</p>
+<ol>
+<li><strong>Reliable PII redaction on years-old free-text is hard.</strong> Names, addresses, phone numbers, casual references — an LLM pass produces false negatives. Deletion is reliable.</li>
+<li><strong>The customer's intent on deletion is clear.</strong> They want their data gone. Retaining redacted versions of their messages doesn't serve them.</li>
+<li><strong>Cost.</strong> Running an LLM redaction pass over the message history of every CCPA-deleted customer is real Anthropic spend.</li>
+</ol>
+<p>The trade-off: the tenant loses the ability to read historical conversations with terminated customers. This is the right default for CCPA compliance.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Forensics-log snapshot before deletion is the recovery path for active disputes.</strong> A customer who is mid-dispute deletes their account, then resumes the dispute later: the snapshot lets the platform reconstruct what was said. The snapshot is gated by active-dispute status; it is not taken on every deletion.</li>
+<li><strong>Tenant-owned notes are deliberately handled differently.</strong> CCPA gives the customer rights to their own data, not to data the tenant authored about them in a business-records capacity. <strong><code>OPERATOR CONFIRM</code>:</strong> This stance should be reviewed with legal counsel before launch.</li>
+<li><strong>The <a class="xref" href="section-17-authentication-signup-consent.html#s17-10">§17.10</a> deletion grace period (30 days)</strong> currently doesn't distinguish "soft delete that can be reversed" from "deletion in progress." During the 30-day grace, messages.content is still readable; only after grace does the NULL-out happen.</li>
+</ul>
+<h2 id="s25-5">25.5 Sub-Processors <a class="anchor-link" href="#s25-5" aria-label="Permalink">¶</a></h2>
+<p>Disclosed in privacy policy; updated annually:</p>
+<ul>
+<li>Anthropic (AI inference)</li>
+<li>OpenAI (embeddings only; no chat content)</li>
+<li>Supabase (database, auth, storage)</li>
+<li>Vercel (hosting, edge functions)</li>
+<li>Stripe (payments, Connect, 1099 reporting)</li>
+<li>Resend (email delivery)</li>
+<li>Inngest (background job processing)</li>
+<li>Sentry (error tracking, PII-scrubbed)</li>
+</ul>
+<h2 id="s25-6">25.6 Data Residency <a class="anchor-link" href="#s25-6" aria-label="Permalink">¶</a></h2>
+<p>US-only at launch. All data centers in US. Architecture supports EU residency for GDPR additions later (separate Supabase regions, regional routing in main app).</p>
+<h2 id="s25-7">25.7 Consent Granularity <a class="anchor-link" href="#s25-7" aria-label="Permalink">¶</a></h2>
+<p>Distinct consents per data use:</p>
+<ul>
+<li>Account creation: required (per ToU)</li>
+<li>AI conversation processing: required (per AI Disclaimer)</li>
+<li>Memory extraction: opt-out (default on; users.memory_opt_out flag disables)</li>
+<li>Marketing email: opt-in (default off; users.marketing_email_opt_in)</li>
+<li>Travel news email: opt-in (default off; users.travel_news_opt_in)</li>
+<li>Performance analytics: opt-out (default on)</li>
+</ul>
+<h2 id="s25-8">25.8 Cookie Policy <a class="anchor-link" href="#s25-8" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Essential: session, security, basic preferences (always on)</li>
+<li>Performance: analytics (opt-out)</li>
+<li>Marketing: cross-site retargeting (opt-in; off by default)</li>
+<li>Cookie consent banner on first visit; preferences persisted</li>
+</ul>
+<h2 id="s25-9">25.9 Data Breach Response <a class="anchor-link" href="#s25-9" aria-label="Permalink">¶</a></h2>
+<p>Per <a class="xref" href="section-26-security.html#s26-10">§26.10</a>. Notification SLAs:</p>
+<ul>
+<li>Affected users: within 72 hours of confirmed breach</li>
+<li>Tenant admins: within 24 hours of confirmed breach affecting their tenant</li>
+<li>California AG: per state law requirements</li>
+<li>Public disclosure: when applicable per state law</li>
+</ul>
+<h2 id="s25-10">25.10 Production Data on Staging — Privacy Posture <a class="anchor-link" href="#s25-10" aria-label="Permalink">¶</a></h2>
+<p>The staging environment receives a copy of the production database at the start of every release pipeline. PII is not anonymized in the staging copy. This is a deliberate trade-off documented in <a class="xref" href="section-30-testing-requirements.html#s30-9-1">§30.9.1</a>; it sacrifices a portion of the standard “test data is synthetic only” posture in exchange for E2E test fidelity against real data shapes and volumes.</p>
+<p>Customer-facing implications:</p>
+<ul>
+<li>Staging data is subject to the same retention schedule as production for the purpose of customer deletion requests. A CCPA deletion request must purge the customer from staging on the next release cycle (the prod copy that occurs after deletion will no longer contain the record).</li>
+<li>Staging is included in breach response scope per <a class="xref" href="section-26-security.html#s26-10">§26.10</a>. A breach affecting the staging database is reportable to the same extent as a breach of production.</li>
+<li>Sub-processor disclosure (<a class="xref" href="#s25-5">§25.5</a>) accurately reflects staging data exposure: the same vendors hold or process staging data as hold or process production.</li>
+</ul>
+<p>The controls preventing customer impact from staging activity are listed in <a class="xref" href="section-30-testing-requirements.html#s30-9-1">§30.9.1</a> and <a class="xref" href="section-26-security.html#s26-13">§26.13</a>.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-24-chat-ui.html">← §24: Chat UI</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-26-security.html">§26: Security →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

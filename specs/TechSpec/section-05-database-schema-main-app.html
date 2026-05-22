@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 5 — Database Schema (Main App) — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 5</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s5">Section 5 — Database Schema (Main App)</h1>
+<p>PostgreSQL schema for the main application database (Supabase). The RAG service has its own separate schema covered in <a class="xref" href="section-06-rag-service-schema.html">§6</a>.</p>
+<p>All tenant-scoped tables include tenant_id with RLS policies. Foreign keys cascade where appropriate. Indexes documented per table.</p>
+<h2 id="s5-1">5.1 Tenancy &amp; Identity <a class="anchor-link" href="#s5-1" aria-label="Permalink">¶</a></h2>
+<h3>tenants</h3>
+<p>CREATE TABLE public.tenants (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>slug TEXT UNIQUE NOT NULL   CHECK (slug = LOWER(slug) AND slug ~ '^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$'),</p>
+<p>display_name TEXT NOT NULL,</p>
+<p>legal_name TEXT NOT NULL,</p>
+<p>tenant_type TEXT NOT NULL</p>
+<p>                      CHECK (tenant_type IN ('platform','byo_host','sub_host')),</p>
+<p>status TEXT NOT NULL DEFAULT ‘onboarding’</p>
+<p>                      CHECK (status IN ('onboarding','pending_review','active','suspended','terminated')),</p>
+<p>– Tier and billing</p>
+<p>tier_id UUID REFERENCES public.tier_definitions(id),</p>
+<p>seat_count INTEGER NOT NULL DEFAULT 1 CHECK (seat_count &gt;= 1),</p>
+<p>billing_period TEXT NOT NULL DEFAULT ‘monthly’ CHECK (billing_period IN (‘monthly’,‘annual’)),</p>
+<p>stripe_customer_id TEXT,</p>
+<p>stripe_subscription_id TEXT,</p>
+<p>stripe_connect_account_id TEXT,</p>
+<p>– Contact info</p>
+<p>support_email TEXT,</p>
+<p>support_phone TEXT,</p>
+<p>mailing_address JSONB,</p>
+<p>timezone TEXT DEFAULT ‘America/New_York’,</p>
+<p>– Configuration</p>
+<p>ai_mode TEXT NOT NULL DEFAULT ‘autonomous’</p>
+<p>                      CHECK (ai_mode IN ('autonomous','draft_only','disabled')),</p>
+<p>is_sandbox BOOLEAN DEFAULT FALSE,</p>
+<p>– Onboarding stage</p>
+<p>onboarding_stage TEXT,</p>
+<p>signup_completed_at TIMESTAMPTZ,</p>
+<p>review_started_at TIMESTAMPTZ,</p>
+<p>activated_at TIMESTAMPTZ,</p>
+<p>suspended_at TIMESTAMPTZ,</p>
+<p>suspended_reason TEXT,</p>
+<p>terminated_at TIMESTAMPTZ,</p>
+<p>terminated_reason TEXT,</p>
+<p>– Legal acceptance</p>
+<p>ica_accepted_at TIMESTAMPTZ,</p>
+<p>w9_received_at TIMESTAMPTZ,</p>
+<p>– Audit</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX tenants_status_idx ON public.tenants(status);</p>
+<p>CREATE INDEX tenants_type_idx ON public.tenants(tenant_type);</p>
+<p>ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;</p>
+<p>– Policies vary by role; see implementation</p>
+<h3>users</h3>
+<p>CREATE TABLE public.users (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>auth_user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>email TEXT NOT NULL,</p>
+<p>display_name TEXT,</p>
+<p>first_name TEXT,</p>
+<p>last_name TEXT,</p>
+<p>auth_provider TEXT CHECK (auth_provider IN (‘google’,‘microsoft’,‘facebook’)),</p>
+<p>– Preferences</p>
+<p>preferred_persona_slug TEXT,</p>
+<p>marketing_email_opt_in BOOLEAN DEFAULT FALSE,</p>
+<p>travel_news_opt_in BOOLEAN DEFAULT FALSE,</p>
+<p>memory_opt_out BOOLEAN DEFAULT FALSE,</p>
+<p>notif_preferences JSONB DEFAULT ‘{}’::jsonb,</p>
+<p>– Status</p>
+<p>status TEXT NOT NULL DEFAULT ‘active’</p>
+<p>                      CHECK (status IN ('active','suspended','deleted')),</p>
+<p>email_status TEXT DEFAULT ‘active’</p>
+<p>                      CHECK (email_status IN ('active','invalid','soft_failing','complained','unsubscribed_all')),</p>
+<p>deleted_at TIMESTAMPTZ,</p>
+<p>– Audit</p>
+<p>last_signed_in_at TIMESTAMPTZ,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>UNIQUE (tenant_id, auth_user_id)</p>
+<p>);</p>
+<p>CREATE UNIQUE INDEX users_tenant_email_unique_idx</p>
+<p>ON public.users(tenant_id, email) WHERE email IS NOT NULL;</p>
+<p>CREATE INDEX users_status_idx ON public.users(status);</p>
+<h3 id="s5-1">5.1.X Hard-delete protection for tenants <a class="anchor-link" href="#s5-1" aria-label="Permalink">¶</a></h3>
+<p>Tenants are soft-terminated, not deleted. The combination of FK <code>ON DELETE RESTRICT</code> (above) and a hard-delete prevention trigger makes accidental hard delete structurally difficult.</p>
+<pre class="codeblock" data-lang="sql"><code>-- Prevent accidental hard DELETE on tenants. Tenant termination
+-- uses status = 'terminated' (per §15.14), not row deletion.
+-- Hard delete requires explicit override via a session-level flag.
+
+CREATE OR REPLACE FUNCTION public.prevent_tenant_hard_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  IF current_setting('app.allow_tenant_hard_delete', true) = 'true' THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'Hard delete of tenants is not permitted. Use status = ''terminated'' instead. To override (e.g., for compliance hard-delete after data retention period), execute SET app.allow_tenant_hard_delete = ''true'' in the same transaction.';
+END;
+$$;
+
+CREATE TRIGGER tenant_prevent_delete_trigger
+  BEFORE DELETE ON public.tenants
+  FOR EACH ROW
+  EXECUTE FUNCTION public.prevent_tenant_hard_delete();</code></pre>
+<p><strong>Override pattern for legitimate hard delete</strong> (GDPR Right-to-be-Forgotten after retention period, or compliance with regulatory order):</p>
+<pre class="codeblock" data-lang="sql"><code>BEGIN;
+SET LOCAL app.allow_tenant_hard_delete = 'true';
+DELETE FROM public.tenants WHERE id = '&lt;uuid&gt;';
+COMMIT;</code></pre>
+<p>The <code>SET LOCAL</code> ensures the override is transaction-scoped — it does NOT persist to subsequent transactions or other sessions.</p>
+<p>Operators performing legitimate hard delete:</p>
+<ol>
+<li>Verify retention obligations have been met (audit log review).</li>
+<li>Document the delete in MEMORY.md with reason and timestamp.</li>
+<li>Execute with the override pattern shown above.</li>
+<li>Verify cascading cleanup of related rows (commissions, bookings, etc. — these have <code>ON DELETE RESTRICT</code> so the DELETE will fail until those rows are individually removed or also overridden).</li>
+</ol>
+<p>This is intentionally friction-heavy. Hard-delete of a tenant should require deliberate action, not be a side effect of a script or admin tool.</p>
+<h3>RLS Helper Functions</h3>
+<p>The platform uses two helper functions in RLS policies. Both are <code>SECURITY DEFINER</code> with a locked <code>search_path</code> to prevent the canonical Postgres privilege-escalation pattern (an attacker creating a same-named table/function in a schema the function might resolve against). Every <code>SECURITY DEFINER</code> function in the platform follows this convention — see <a class="xref" href="#s5-1-1">§5.1.1</a> below.</p>
+<h4><code>auth_user_in_tenant(target_tenant_id UUID)</code></h4>
+<p>Returns TRUE if the authenticated user has an active row in the named tenant. Used in row-level policies that scope SELECT/UPDATE/DELETE to the caller's tenant.</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE OR REPLACE FUNCTION public.auth_user_in_tenant(target_tenant_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users
+    WHERE auth_user_id = auth.uid()
+      AND tenant_id   = target_tenant_id
+      AND status      = 'active'
+  );
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.auth_user_in_tenant(UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.auth_user_in_tenant(UUID) TO authenticated;</code></pre>
+<p>This function does NOT check tenant status. It answers only the question "is this user a member of this tenant?" Use <code>tenant_is_active</code> (below) when the policy also needs the tenant to be operational.</p>
+<h4><code>tenant_is_active(target_tenant_id UUID)</code></h4>
+<p>Returns TRUE if the named tenant is in a state that permits user-initiated writes. Used in tandem with <code>auth_user_in_tenant</code> on write policies.</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE OR REPLACE FUNCTION public.tenant_is_active(target_tenant_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER
+STABLE
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.tenants
+    WHERE id     = target_tenant_id
+      AND status = 'active'
+  );
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.tenant_is_active(UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.tenant_is_active(UUID) TO authenticated;</code></pre>
+<p>Tenants in <code>suspended</code>, <code>terminated</code>, <code>pending_review</code>, or <code>onboarding</code> status return FALSE. This blocks user-initiated writes at the database layer even if the application-layer permission check is skipped or buggy.</p>
+<p>System-initiated writes (Stripe webhooks, Inngest jobs running under service-role context) do NOT go through these RLS policies — they bypass RLS by definition. The discipline for service-role usage is defined in <a class="xref" href="section-26-security.html#s26-3a">§26.3a</a>.</p>
+<h4>Policy authoring convention</h4>
+<p>Read policies (SELECT) use <code>auth_user_in_tenant</code> alone — a user can read their data from a suspended tenant (e.g., to download historical bookings before termination) but cannot write to it.</p>
+<p>Write policies (INSERT, UPDATE, DELETE) use BOTH:</p>
+<pre class="codeblock" data-lang="sql"><code>-- Example: bookings policy
+CREATE POLICY bookings_write_policy ON public.bookings
+  FOR ALL
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));</code></pre>
+<p>The <code>USING</code> clause governs visibility; the <code>WITH CHECK</code> clause governs writes. A user in a suspended tenant can SELECT their historical bookings but cannot INSERT new ones.</p>
+<h3 id="s5-1-1">5.1.1 Convention for all SECURITY DEFINER functions <a class="anchor-link" href="#s5-1-1" aria-label="Permalink">¶</a></h3>
+<p>Every <code>SECURITY DEFINER</code> function in the platform — including any helper added in future migrations — MUST:</p>
+<ol>
+<li>Set <code>SET search_path = ''</code> in the function definition.</li>
+<li>Fully qualify every table/function reference (<code>public.users</code>, not <code>users</code>).</li>
+<li>Be created in the <code>public</code> schema (so the security boundary is clear).</li>
+<li><code>REVOKE EXECUTE FROM public</code> after creation, then <code>GRANT EXECUTE</code> to the specific role that needs it (typically <code>authenticated</code>).</li>
+</ol>
+<p>Migrations that introduce a <code>SECURITY DEFINER</code> function without these four steps fail the migration lint gate per <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a>.</p>
+<h3 id="s5-1-2">5.1.2 Required RLS Policy Coverage <a class="anchor-link" href="#s5-1-2" aria-label="Permalink">¶</a></h3>
+<p>Every tenant-scoped table in this section MUST have RLS enabled AND policies covering all four operations (SELECT, INSERT, UPDATE, DELETE). A table with RLS enabled but missing policies for one or more operations is a tenant-isolation hole — Postgres denies the uncovered operation entirely (no rows visible, no writes possible), which engineering will be tempted to "fix" by disabling RLS.</p>
+<p>The minimum policy set for every tenant-scoped table:</p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.&lt;table_name&gt; ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY &lt;table&gt;_select_policy ON public.&lt;table_name&gt;
+  FOR SELECT
+  USING (auth_user_in_tenant(tenant_id));
+
+CREATE POLICY &lt;table&gt;_insert_policy ON public.&lt;table_name&gt;
+  FOR INSERT
+  WITH CHECK (
+    auth_user_in_tenant(tenant_id)
+    AND tenant_is_active(tenant_id)
+  );
+
+CREATE POLICY &lt;table&gt;_update_policy ON public.&lt;table_name&gt;
+  FOR UPDATE
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (
+    auth_user_in_tenant(tenant_id)
+    AND tenant_is_active(tenant_id)
+  );
+
+CREATE POLICY &lt;table&gt;_delete_policy ON public.&lt;table_name&gt;
+  FOR DELETE
+  USING (
+    auth_user_in_tenant(tenant_id)
+    AND tenant_is_active(tenant_id)
+  );</code></pre>
+<p>Tables that legitimately deviate from this pattern (e.g., platform-admin tables like <code>host_adapters</code>, <code>legal_documents</code>, <code>tier_definitions</code> that are not tenant-scoped) require explicit documentation in <code>db/rls-snapshot.sql</code> (per <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a>) with a comment explaining the exception.</p>
+<h3>Deviation: read-only-after-suspension behavior</h3>
+<p>The policy set above lets a user in a suspended tenant SELECT their data but blocks writes. This is the default. Tables that should block reads from suspended tenants too (e.g., active conversation context, where reading the suspended tenant's data is misleading rather than helpful) override with:</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE POLICY &lt;table&gt;_select_policy ON public.&lt;table_name&gt;
+  FOR SELECT
+  USING (
+    auth_user_in_tenant(tenant_id)
+    AND tenant_is_active(tenant_id)
+  );</code></pre>
+<p>The choice is per-table and documented in the table's DDL comment.</p>
+<h3>Enforcement</h3>
+<p><a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a>'s RLS policy snapshot diff is extended to also assert:</p>
+<ul>
+<li>Every table with a <code>tenant_id</code> column has RLS enabled.</li>
+<li>Every such table has at least one policy for each of SELECT, INSERT, UPDATE, DELETE (or is explicitly listed in the exception file).</li>
+<li>No policy uses <code>USING (true)</code> or <code>WITH CHECK (true)</code> — these are no-op policies that defeat RLS.</li>
+</ul>
+<p>Migrations that violate these rules fail the gate. See <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a>.</p>
+<h2 id="s5-2">5.2 Conversations &amp; Messages <a class="anchor-link" href="#s5-2" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.conversations (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>user_id UUID REFERENCES public.users(id),</p>
+<p>anonymous_session_id UUID,</p>
+<p>contact_id UUID REFERENCES public.contacts(id),</p>
+<p>active_persona_id UUID REFERENCES public.personas(id),</p>
+<p>title TEXT,</p>
+<p>status TEXT DEFAULT ‘active’</p>
+<p>              CHECK (status IN ('active','escalated','closed','archived')),</p>
+<p>summary TEXT,</p>
+<p>summary_updated_at TIMESTAMPTZ,</p>
+<p>first_message_at TIMESTAMPTZ,</p>
+<p>last_message_at TIMESTAMPTZ,</p>
+<p>message_count INTEGER DEFAULT 0,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE TABLE public.messages (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,</p>
+<p>role TEXT NOT NULL CHECK (role IN (‘user’,‘assistant’,‘system’,‘tool’)),</p>
+<p>content TEXT NOT NULL,</p>
+<p>persona_id UUID REFERENCES public.personas(id),</p>
+<p>tool_calls JSONB,</p>
+<p>rag_chunks_used JSONB,</p>
+<p>supervisor_findings JSONB,</p>
+<p>feedback_score INTEGER CHECK (feedback_score IN (-1, 0, 1)),</p>
+<p>feedback_reason TEXT,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX messages_conversation_idx ON public.messages(conversation_id, created_at);</p>
+<p>CREATE INDEX conversations_tenant_user_idx ON public.conversations(tenant_id, user_id);</p>
+<h2 id="s5-3">5.3 Bookings &amp; Commissions <a class="anchor-link" href="#s5-3" aria-label="Permalink">¶</a></h2>
+<p><strong>Money columns:</strong> Every money column in this section is <code>BIGINT</code> cents per <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0-1">§14.0.1</a>. Rates are <code>NUMERIC(5,4)</code> per <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0-2">§14.0.2</a>. Computation goes through the money utility per <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0-4">§14.0.4</a>.</p>
+<p>CREATE TYPE booking_status AS ENUM (</p>
+<p>‘draft’,‘submitted’,‘pending_host_review’,‘confirmed’,‘modified’,‘cancelled’,‘sailed’,‘completed’</p>
+<p>);</p>
+<p>CREATE TYPE commission_status AS ENUM (</p>
+<p>‘expected’,‘invoiced’,‘received’,‘partial’,‘overdue’,‘disputed’,‘waived’</p>
+<p>);</p>
+<p>CREATE TABLE public.bookings (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>user_id UUID REFERENCES public.users(id),</p>
+<p>primary_contact_id UUID REFERENCES public.contacts(id),</p>
+<p>group_booking_id UUID REFERENCES public.group_bookings(id),</p>
+<p>– Trip details</p>
+<p>booking_type TEXT NOT NULL DEFAULT ‘cruise’,</p>
+<p>cruise_line TEXT,</p>
+<p>ship_name TEXT,</p>
+<p>sailing_date DATE,</p>
+<p>return_date DATE,</p>
+<p>duration_nights INTEGER,</p>
+<p>departure_port TEXT,</p>
+<p>itinerary JSONB,</p>
+<p>cabin_category TEXT,</p>
+<p>cabin_assignment TEXT,</p>
+<p>– Host context</p>
+<p>host_adapter TEXT,</p>
+<p>provider_booking_ref TEXT,</p>
+<p>– Financial (see <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0">§14.0</a> for money representation rules)</p>
+<p>total_amount_cents BIGINT,</p>
+<p>commissionable_fare_cents BIGINT,</p>
+<p>currency TEXT NOT NULL DEFAULT ‘USD’,</p>
+<p>fare_breakdown JSONB,</p>
+<p>– Status</p>
+<p>status booking_status NOT NULL DEFAULT ‘draft’,</p>
+<p>draft_stage TEXT,</p>
+<p>submitted_at TIMESTAMPTZ,</p>
+<p>confirmed_at TIMESTAMPTZ,</p>
+<p>cancelled_at TIMESTAMPTZ,</p>
+<p>cancellation_reason TEXT,</p>
+<p>– Misc</p>
+<p>notes TEXT,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE TABLE public.commissions (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>booking_id UUID NOT NULL REFERENCES public.bookings(id),</p>
+<p>– Expected (locked at booking submission; see <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0">§14.0</a> for money rules and <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> for the locking rule)</p>
+<p>commissionable_fare_cents BIGINT NOT NULL,</p>
+<p>commission_rate NUMERIC(5,4) NOT NULL,</p>
+<p>platform_split_rate NUMERIC(5,4) NOT NULL,</p>
+<p>gross_commission_cents BIGINT NOT NULL,</p>
+<p>host_booking_fee_cents BIGINT NOT NULL DEFAULT 0,</p>
+<p>host_booking_fee_rule_ref TEXT,</p>
+<p>net_commission_cents BIGINT NOT NULL,</p>
+<p>platform_retained_cents BIGINT NOT NULL,</p>
+<p>subhost_payable_cents BIGINT NOT NULL,</p>
+<p>currency TEXT NOT NULL DEFAULT ‘USD’,</p>
+<p>expected_payment_date DATE,</p>
+<p>– Actual (after statement)</p>
+<p>received_commission_cents BIGINT,</p>
+<p>payment_received_date DATE,</p>
+<p>– Status</p>
+<p>status commission_status NOT NULL DEFAULT ‘expected’,</p>
+<p>statement_period DATERANGE,</p>
+<p>statement_line_ref TEXT,</p>
+<p>– Dispute</p>
+<p>dispute_initiated_by TEXT CHECK (dispute_initiated_by IN (‘tenant’,‘platform’,‘host’)),</p>
+<p>dispute_status TEXT,</p>
+<p>dispute_opened_at TIMESTAMPTZ,</p>
+<p>dispute_resolved_at TIMESTAMPTZ,</p>
+<p>dispute_resolution_notes TEXT,</p>
+<p>– Audit</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<h3>Subcontractors (Sub-Host Internal Tracking)</h3>
+<p>Sub-host tenants can record their own subcontractors for internal revenue forecasting. The platform has no relationship with these subcontractors — they’re not platform tenants, the platform doesn’t pay them, doesn’t validate their identities, and doesn’t generate tax forms for them. This is a private bookkeeping feature visible only inside the sub-host’s tenant.</p>
+<p>CREATE TABLE public.subcontractors (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>name TEXT NOT NULL,</p>
+<p>payout_percent NUMERIC(5,2) NOT NULL CHECK (payout_percent BETWEEN 0 AND 100),</p>
+<p>is_active BOOLEAN DEFAULT TRUE,</p>
+<p>notes TEXT,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX subcontractors_tenant_idx ON public.subcontractors(tenant_id);</p>
+<p>– Bookings get an optional reference to a subcontractor (set by the sub-host)</p>
+<p>ALTER TABLE public.bookings ADD COLUMN</p>
+<p>subcontractor_id UUID REFERENCES public.subcontractors(id);</p>
+<p>UI gating: the subcontractor feature only appears for tenants with tenant_type = ‘sub_host’. BYO-host tenants and the platform’s own agency don’t see it.</p>
+<h3>Payout Balances &amp; Records</h3>
+<p>CREATE TABLE public.payout_balances (</p>
+<p>tenant_id UUID PRIMARY KEY REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>pending_cents BIGINT NOT NULL DEFAULT 0,</p>
+<p>available_cents BIGINT NOT NULL DEFAULT 0,</p>
+<p>in_transit_cents BIGINT NOT NULL DEFAULT 0,</p>
+<p>hold_period_days INTEGER NOT NULL,</p>
+<p>payout_schedule TEXT CHECK (payout_schedule IN (‘weekly’,‘biweekly’,‘monthly’,‘on_demand’)),</p>
+<p>next_payout_at TIMESTAMPTZ,</p>
+<p>minimum_payout_cents BIGINT DEFAULT 5000,</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE TABLE public.payout_records (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>amount_cents BIGINT NOT NULL,</p>
+<p>stripe_transfer_id TEXT UNIQUE,</p>
+<p>status TEXT NOT NULL CHECK (status IN (‘processing’,‘paid’,‘failed’)),</p>
+<p>statement_period_start DATE,</p>
+<p>statement_period_end DATE,</p>
+<p>statement_pdf_url TEXT,</p>
+<p>settled_at TIMESTAMPTZ,</p>
+<p>failed_at TIMESTAMPTZ,</p>
+<p>failure_reason TEXT,</p>
+<p>attempt_generation INTEGER NOT NULL DEFAULT 1,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>-- Per H-6 / <a class="xref" href="section-07-api-routes.html#s7-9a">§7.9a</a>: every Stripe webhook handler MUST insert into this -- table BEFORE processing the event. ON CONFLICT (stripe_event_id) DO -- NOTHING ends processing — the event was already handled.</p>
+<p>CREATE TABLE public.stripe_webhook_events (   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),   stripe_event_id TEXT NOT NULL UNIQUE,   event_type TEXT NOT NULL,   endpoint TEXT NOT NULL CHECK (endpoint IN ('platform', 'connect')),   tenant_id UUID REFERENCES public.tenants(id),   -- tenant_id is nullable for platform-level events (no tenant context).   -- For Connect events, the resolved tenant goes here for audit.   raw_event JSONB NOT NULL,   signature_verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),   processing_started_at TIMESTAMPTZ,   processing_completed_at TIMESTAMPTZ,   processing_outcome TEXT CHECK (     processing_outcome IN ('success', 'duplicate', 'error', 'unhandled')   ),   error_detail TEXT,   -- Traces which Stripe-side idempotency key (if any) generated this   -- event. For transfer events, this links back to payout_records via   -- the key format 'payout-{payout_records.id}-gen{attempt_generation}'   -- per <a class="xref" href="section-14-commissions-splits-payouts.html#s14-7">§14.7</a>.   processed_idempotency_key TEXT,   created_at TIMESTAMPTZ DEFAULT NOW() );</p>
+<p>CREATE INDEX stripe_webhook_events_type_idx ON public.stripe_webhook_events   (event_type, created_at DESC);</p>
+<p>CREATE INDEX stripe_webhook_events_tenant_idx ON public.stripe_webhook_events   (tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL;</p>
+<p>-- Retention: 90 days for successful events, 1 year for errors. Nightly cron handles cleanup.</p>
+<p>Schema continues with: contacts, contact_relationships, quotes, group_bookings, group_members, group_invitations, group_chat_threads, group_chat_messages, personas, tenant_persona_overrides, tenant_branding, host_adapters, tenant_host_configs, host_adapter_calls, escalation_topics, supervisor_alerts, audit_log, notifications, email_log, email_suppressions, legal_documents, legal_consents, platform_revenue, customer_memories, news_articles, destination_images, generated_images, pre_cruise_email_content. Full DDL in repository.</p>
+<h2 id="s5-4">5.4 Database Access Patterns <a class="anchor-link" href="#s5-4" aria-label="Permalink">¶</a></h2>
+<p>The schema in <a class="xref" href="#s5-1">§5.1</a>–<a class="xref" href="#s5-3">§5.3</a> (and the RAG schema in <a class="xref" href="section-06-rag-service-schema.html">§6</a>) is multi-tenant. Tenant isolation is enforced at three layers — RLS, application-layer permission check, and a typed <code>TenantContext</code> boundary at the data-access layer. This subsection defines the third layer, which exists to keep the other two layers honest.</p>
+<p>Without this layer, every code path that uses the service-role key silently bypasses RLS, and tenant isolation reduces to "did the developer remember to put <code>tenant_id</code> in the WHERE clause." That has been a recurring bug shape in multi-tenant SaaS history. The <code>TenantContext</code> pattern below makes the boundary explicit in TypeScript types and makes raw service-role usage a clearly-named anti-pattern that lint can catch.</p>
+<h3 id="s5-4-1">5.4.1 The three database client kinds <a class="anchor-link" href="#s5-4-1" aria-label="Permalink">¶</a></h3>
+<p>The platform has exactly three database client patterns. Code at any level must pick one consciously.</p>
+<div class="table-wrap"><table><thead><tr><th>Client kind</th><th>Use case</th><th>Authority</th></tr></thead><tbody><tr><td><code>userClient(req)</code></td><td>Any code path serving an authenticated user request</td><td>Uses the user's JWT; subject to RLS</td></tr><tr><td><code>tenantClient(ctx: TenantContext)</code></td><td>Background jobs, webhook handlers, or admin paths that act on behalf of a specific tenant</td><td>Service role under the hood, but every query is filtered by <code>ctx.tenant_id</code> in a wrapper</td></tr><tr><td><code>platformAdminClient()</code></td><td>Strictly platform-admin operations crossing tenant boundaries (e.g., the global RAG promotion queue)</td><td>Raw service role with no scoping</td></tr></tbody></table></div>
+<p><code>userClient</code> is the default for HTTP handlers. <code>tenantClient</code> is the only correct client for Inngest jobs and webhook handlers acting on one tenant. <code>platformAdminClient</code> is rare, named, and audited.</p>
+<h3 id="s5-4-2">5.4.2 The <code>TenantContext</code> type <a class="anchor-link" href="#s5-4-2" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="ts"><code>// src/lib/db/tenant-context.ts (path indicative)
+
+export type TenantContext = {
+  tenant_id: string;
+  // Source of the context — recorded for audit. Cannot be derived in code.
+  source:
+    | { kind: 'http_request'; user_id: string }
+    | { kind: 'stripe_webhook'; stripe_event_id: string }
+    | { kind: 'inngest_job'; function_name: string; event_id: string }
+    | { kind: 'platform_admin'; admin_user_id: string; reason: string };
+};</code></pre>
+<p>A <code>TenantContext</code> carries <code>tenant_id</code> plus a <em>provenance</em> — where the context was constructed and under whose authority. The provenance is required, audited in the database client wrapper, and prevents "context laundering" (a function receiving a <code>TenantContext</code> from one source and using it in a way that doesn't belong to that source).</p>
+<h3 id="s5-4-3">5.4.3 The <code>tenantClient</code> wrapper <a class="anchor-link" href="#s5-4-3" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="ts"><code>// src/lib/db/tenant-client.ts (path indicative)
+
+export function tenantClient(ctx: TenantContext) {
+  const supabase = createServiceRoleClient();
+
+  // Wrap from() so every query is automatically scoped.
+  return new Proxy(supabase, {
+    get(target, prop) {
+      if (prop === 'from') {
+        return (table: string) =&gt; {
+          // Tables NOT in the tenant-scoped allowlist still go raw —
+          // explicit list in db/tenant-scoped-tables.ts.
+          if (!TENANT_SCOPED_TABLES.has(table)) {
+            return target.from(table);
+          }
+          // For tenant-scoped tables, transparently inject the filter.
+          return target.from(table).eq('tenant_id', ctx.tenant_id);
+        };
+      }
+      return Reflect.get(target, prop);
+    },
+  });
+}</code></pre>
+<p>What this gets us:</p>
+<ol>
+<li><strong>Every query against a tenant-scoped table is automatically filtered by <code>tenant_id</code>.</strong> A developer cannot forget the filter — the wrapper applies it before the query reaches Postgres.</li>
+<li><strong>Raw service-role usage is a separate, named function (<code>createServiceRoleClient()</code>).</strong> It exists but is rare and only invoked inside <code>tenantClient</code> or <code>platformAdminClient</code>. Direct calls from handler code are caught by the lint rule in <a class="xref" href="section-29-deployment-infrastructure.html">§29</a>.</li>
+</ol>
+<h3 id="s5-4-4">5.4.4 The lint rule <a class="anchor-link" href="#s5-4-4" aria-label="Permalink">¶</a></h3>
+<p>A CI lint rule (per <a class="xref" href="section-29-deployment-infrastructure.html">§29</a>) enforces:</p>
+<ul>
+<li><code>createServiceRoleClient</code> cannot be called outside <code>src/lib/db/tenant-client.ts</code> and <code>src/lib/db/platform-admin-client.ts</code>. Any other call site fails the build.</li>
+<li><code>tenantClient</code> requires a <code>TenantContext</code> argument typed exactly. Constructing a <code>TenantContext</code> requires going through one of four named factory functions, one per provenance kind (see <a class="xref" href="#s5-4-5">§5.4.5</a>).</li>
+<li>Raw Supabase URL usage is forbidden outside the three client factories.</li>
+</ul>
+<p>The lint runs in every PR. The gate is hard (red CI = no merge).</p>
+<h3 id="s5-4-5">5.4.5 <code>TenantContext</code> factory functions <a class="anchor-link" href="#s5-4-5" aria-label="Permalink">¶</a></h3>
+<p>Constructing a <code>TenantContext</code> is restricted to four named factories, one per provenance kind. This is where the provenance metadata gets attached and where the authority-to-act check happens.</p>
+<pre class="codeblock" data-lang="ts"><code>// HTTP request — derives tenant from middleware-resolved tenant +
+// validates user belongs to it. Called by assertPermission() per §26.3.
+export async function tenantContextFromRequest(req: Request): Promise&lt;TenantContext&gt;;
+
+// Stripe webhook — derives tenant from the event's metadata or by
+// looking up the stripe_customer_id. Validates the event is for a
+// known tenant.
+export async function tenantContextFromStripeEvent(event: Stripe.Event): Promise&lt;TenantContext&gt;;
+
+// Inngest job — derives tenant from the job's event payload, which
+// MUST include tenant_id. Jobs that don't have a tenant_id in their
+// event use platformAdminClient instead.
+export async function tenantContextFromInngestEvent(event: InngestEvent): Promise&lt;TenantContext&gt;;
+
+// Platform admin — explicit, requires admin user identity and a
+// reason string for audit. The reason is recorded in audit_log.
+export async function tenantContextForPlatformAdmin(
+  admin: { user_id: string },
+  target_tenant_id: string,
+  reason: string,
+): Promise&lt;TenantContext&gt;;</code></pre>
+<p>Each factory is responsible for:</p>
+<ul>
+<li>Verifying the caller has authority to construct a context for the named <code>tenant_id</code>.</li>
+<li>Attaching the right <code>source</code> discriminant.</li>
+<li>Recording the context construction to <code>audit_log</code> for the <code>stripe_webhook</code> and <code>platform_admin</code> cases (high-trust paths).</li>
+</ul>
+<h3 id="s5-4-6">5.4.6 What the application code looks like <a class="anchor-link" href="#s5-4-6" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="ts"><code>// HTTP handler
+export async function POST(req: Request) {
+  const { ctx, user } = await assertPermission(req, {
+    resource: 'booking',
+    action: 'submit',
+  });
+  // ctx is a TenantContext sourced from http_request.
+  const db = tenantClient(ctx);
+  // db.from('bookings') is automatically scoped by tenant_id.
+  await db.from('bookings').insert({ ... });
+}
+
+// Inngest job
+export const handleCommissionPayout = inngest.createFunction(
+  { id: 'commission-payout' },
+  { event: 'commission.payout.requested' },
+  async ({ event }) =&gt; {
+    const ctx = await tenantContextFromInngestEvent(event);
+    const db = tenantClient(ctx);
+    // Same scoping discipline as HTTP — same client surface, same safety.
+    const commissions = await db.from('commissions').select('*');
+    // ...
+  },
+);
+
+// Platform admin (rare)
+export async function GET(req: Request) {
+  const admin = await assertPlatformAdmin(req);
+  const db = platformAdminClient(); // No tenant scoping. Audited heavily.
+  const allTenants = await db.from('tenants').select('*');
+  // ...
+}</code></pre>
+<h3 id="s5-4-7">5.4.7 Calls Worth Flagging <a class="anchor-link" href="#s5-4-7" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>The <code>Proxy</code> trick in <code>tenantClient</code> is the architectural centerpiece.</strong> It works because every Supabase query goes through <code>.from(table)</code>. If the codebase later adds raw SQL execution paths (<code>.rpc()</code>, <code>.from('arbitrary_sql_function')</code>), those paths must either be added to the proxy's scoping logic or be moved to <code>platformAdminClient</code>.</li>
+<li><strong>The lint rule is non-optional.</strong> Without it, an engineer in a hurry imports <code>createServiceRoleClient</code> directly and the type-system protection is gone. The lint is the enforcement; the type is the design.</li>
+<li><strong>Provenance metadata is what makes audit useful.</strong> A bug investigation asking "who constructed a <code>TenantContext</code> for tenant X at time Y" needs the <code>source</code> field to answer. Skipping the audit on context construction breaks the forensic chain.</li>
+<li><strong><code>tenantClient</code> does not invoke RLS</strong> — it uses service role under the hood. Defense in depth: the <em>application</em> enforces scoping via the proxy AND the database has RLS as a backstop. Either layer alone is insufficient; both together are the design.</li>
+</ul>
+<h3 id="s5-4-8">5.4.8 Platform-Admin Audit Wrapper <a class="anchor-link" href="#s5-4-8" aria-label="Permalink">¶</a></h3>
+<p>The <code>withPlatformAdminAudit</code> utility is the single supported way to construct a <code>platformAdminClient</code>. It manages the per-job audit row that <a class="xref" href="section-26-security.html#s26-3a-3">§26.3a.3</a> requires.</p>
+<pre class="codeblock" data-lang="ts"><code>// src/lib/db/platform-admin-reasons.ts
+// The complete set of allowed reasons for platform-admin operations.
+// Adding a value to this enum is a deliberate act that affects audit
+// query patterns and forensic vocabulary. Reviewed quarterly per §26.11.
+export const PLATFORM_ADMIN_REASONS = [
+  // Tenant lifecycle
+  'tenant_listing_for_admin_dashboard',
+  'tenant_detail_lookup',
+  'tenant_status_change',
+  'tenant_termination_processing',
+  'tenant_suspension_processing',
+
+  // RAG content moderation
+  'rag_chunk_promotion_to_global',
+  'rag_chunk_demotion',
+  'rag_quarantined_content_review',
+
+  // Commission disputes &amp; overrides
+  'commission_dispute_review',
+  'commission_manual_override',
+  'commission_reconciliation_audit',
+
+  // Abuse monitoring
+  'abuse_threshold_breach_review',
+  'abuse_signal_aggregation',
+
+  // Bug submission triage
+  'bug_submission_review',
+  'auto_fix_pipeline_audit',
+
+  // Help docs ingestion
+  'help_doc_publishing',
+  'help_doc_rag_sync',
+
+  // Privacy &amp; compliance
+  'ccpa_export_processing',
+  'ccpa_deletion_processing',
+  'gdpr_export_processing',  // future use, reserved
+
+  // Health and monitoring
+  'cross_tenant_health_aggregation',
+  'platform_metrics_rollup',
+
+  // Forensics access
+  'forensics_log_review',
+
+  // Customer chat caps (per §24.9)
+  'customer_chat_cap_override',
+
+  // Feedback settings (per §6.10)
+  'feedback_settings_change',
+
+  // Catch-all for emergencies (use sparingly — must be paired with
+  // an audit_log.changes.reason_detail string and a MEMORY.md entry)
+  'manual_emergency_intervention',
+] as const;
+
+export type PlatformAdminReason = typeof PLATFORM_ADMIN_REASONS[number];
+
+// src/lib/db/platform-admin-client.ts (path indicative)
+
+type PlatformAdminAuditOptions = {
+  admin_user_id: string;
+  reason: PlatformAdminReason;  // Typed enum — see platform-admin-reasons.ts
+  operation: string;            // Function name, e.g., 'platformAdminListTenants'
+  request_context?: {           // Optional HTTP context for ip/user_agent recording
+    ip?: string;
+    user_agent?: string;
+    request_id?: string;
+  };
+  reason_detail?: string;       // Required ONLY when reason = 'manual_emergency_intervention'
+};
+
+type QueryRecord = {
+  op: 'select' | 'insert' | 'update' | 'delete' | 'rpc';
+  table: string;
+  columns?: string[];
+  row_count?: number;
+  rpc_name?: string;
+};
+
+export async function withPlatformAdminAudit&lt;T&gt;(
+  options: PlatformAdminAuditOptions,
+  fn: (
+    db: SupabaseClient,
+    recordQuery: (q: QueryRecord) =&gt; void,
+  ) =&gt; Promise&lt;T&gt;,
+): Promise&lt;T&gt; {
+  // Nested-call detection (per §26.3a.3 "What 'one job' means")
+  if (isInsidePlatformAdminAudit()) {
+    // Reuse outer context — same db client, same recordQuery
+    const outer = currentPlatformAdminAuditContext();
+    return fn(outer.db, outer.recordQuery);
+  }
+
+  const correlation_id = generateULID();
+  const start = performance.now();
+  const queries: QueryRecord[] = [];
+
+  const db = createServiceRoleClient();
+  const recordQuery = (q: QueryRecord) =&gt; queries.push(q);
+
+  let outcome: 'success' | 'error_thrown' = 'success';
+  let error_message: string | null = null;
+  let result: T;
+
+  // Enforce reason_detail for the emergency escape hatch
+  if (options.reason === 'manual_emergency_intervention' &amp;&amp; !options.reason_detail) {
+    throw new Error(
+      'withPlatformAdminAudit: reason_detail is required when reason is ' +
+      '"manual_emergency_intervention". This is a deliberate friction.',
+    );
+  }
+
+  try {
+    result = await runInsidePlatformAdminAudit(
+      { db, recordQuery, correlation_id },
+      () =&gt; fn(db, recordQuery),
+    );
+    return result;
+  } catch (err) {
+    outcome = 'error_thrown';
+    error_message = err instanceof Error ? err.message : String(err);
+    throw err;
+  } finally {
+    // Audit row commits regardless of success/failure
+    const duration_ms = Math.round(performance.now() - start);
+    await writeAuditRow({
+      tenant_id: null,
+      actor_user_id: options.admin_user_id,
+      actor_type: 'admin',
+      action: `platformAdmin.${options.reason}`,
+      resource_type: 'platform_admin_operation',
+      resource_id: null,
+      changes: {
+        correlation_id,
+        operation: options.operation,
+        reason: options.reason,
+        reason_detail: options.reason_detail ?? null,
+        outcome,
+        duration_ms,
+        queries,
+        error_message,
+      },
+      context: options.request_context ?? {},
+    });
+  }
+}</code></pre>
+<h4>Implementation notes</h4>
+<ul>
+<li><code>isInsidePlatformAdminAudit()</code> and <code>runInsidePlatformAdminAudit()</code> use Node's <code>AsyncLocalStorage</code> (or equivalent) to track whether the current async context is already inside an audit wrapper. This is what makes nesting safe and idempotent.</li>
+<li>The audit row write uses a separate, dedicated database client (NOT <code>db</code> from the wrapped function's scope) so an audit-row write doesn't participate in any transaction the wrapped function may have started. Audit row commits even if the wrapped function's database work was rolled back.</li>
+<li><code>recordQuery</code> is intentionally lightweight — it pushes a small object onto an in-memory array. It does NOT perform any database I/O of its own. Engineers can call it freely without worrying about audit latency dominating the operation.</li>
+<li><code>recordQuery</code> invocation is voluntary, NOT mandatory. A <code>platformAdmin*</code> function that uses <code>db</code> without recording any queries produces an audit row with <code>changes.queries = []</code>. This is a deliberate design choice: read-only check operations ("does this tenant exist?", "is this admin permission still valid?") should not be forced to inflate the audit row. The audit row itself — the fact that the function ran, with what <code>reason</code>, by which admin, at what time — is the primary forensic value. The query summary is a useful enrichment when present but is not required to make the audit row meaningful.</li>
+</ul>
+<p>  Future engineers may be tempted to make <code>recordQuery</code> mandatory via a runtime assertion at audit-write time ("the queries array is empty, throw an error"). DO NOT make this change. It creates friction for legitimate use cases and produces audit-write failures inside finally blocks, which is the worst failure ergonomics in the stack.</p>
+<ul>
+<li>The lint rule in <a class="xref" href="#s5-4-4">§5.4.4</a> is extended to forbid <code>platformAdminClient()</code> or <code>createServiceRoleClient()</code> calls outside this utility's body. The only way to get a <code>platformAdminClient</code> is through <code>withPlatformAdminAudit</code>. There is no escape hatch.</li>
+</ul>
+<h4>Reason values are a closed enum</h4>
+<p>The <code>reason</code> field on <code>withPlatformAdminAudit</code> is typed as <code>PlatformAdminReason</code>, a union of string literals defined in <code>src/lib/db/platform-admin-reasons.ts</code>. Adding a new reason requires:</p>
+<ol>
+<li>Edit <code>platform-admin-reasons.ts</code> to add the value to the enum.</li>
+<li>Document the new reason's intent in a comment alongside the enum value.</li>
+<li>Pass code review — see <a class="xref" href="section-26-security.html#s26-11">§26.11</a> quarterly review.</li>
+</ol>
+<p>The enum exists for three reasons:</p>
+<ul>
+<li><strong>Forensic vocabulary stays bounded.</strong> Investigations against <code>audit_log</code> filter on <code>action = 'platformAdmin.&lt;reason&gt;'</code>. A closed enum keeps that filter predictable.</li>
+<li><strong>Spelling drift is impossible.</strong> Free-text reasons inevitably produce <code>tenant_listing_for_admin_dashboard</code> AND <code>tenant_listing_for_dashboard</code> AND <code>tenant_listing</code> — three variants for one operation. The enum eliminates this.</li>
+<li><strong>New reasons get reviewed.</strong> Adding a new reason is a PR that a reviewer sees, not a string literal someone types into a handler. This is the discipline that keeps platform-admin operations visible.</li>
+</ul>
+<p>The <code>manual_emergency_intervention</code> value is a deliberate escape hatch for incident response. When used:</p>
+<ul>
+<li><code>reason_detail</code> is REQUIRED (the type enforces this at the call site — a future small refinement is a discriminated union; for now the runtime check in <code>withPlatformAdminAudit</code> enforces it).</li>
+<li>A <code>MEMORY.md</code> entry MUST be added in the same PR (or, for during-incident use, by the end of the incident).</li>
+<li>The incident postmortem references the audit row's <code>correlation_id</code>.</li>
+</ul>
+<p>This escape hatch exists so engineering can act in emergencies without first writing a new enum value. Its use should be rare — target zero in a healthy quarter.</p>
+<h4>Calling convention</h4>
+<p>Every <code>platformAdmin*</code> function:</p>
+<ol>
+<li>Calls <code>assertPlatformAdmin(req)</code> at entry to verify admin identity.</li>
+<li>Wraps the rest of the function body in <code>withPlatformAdminAudit(...)</code>.</li>
+<li>Inside the wrapped body, calls <code>recordQuery(...)</code> for each meaningful database operation.</li>
+</ol>
+<p>A <code>platformAdmin*</code> function that does NOT use <code>withPlatformAdminAudit</code> is a lint failure (the lint rule sees a function name matching <code>^platformAdmin</code> that doesn't contain a <code>withPlatformAdminAudit</code> call in its body).</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-04-detailed-feature-matrix.html">← §4: Detailed Feature Matrix</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-06-rag-service-schema.html">§6: RAG Service Schema →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

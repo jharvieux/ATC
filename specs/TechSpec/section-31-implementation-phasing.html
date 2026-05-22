@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 31 — Implementation Phasing — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 31</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s31">Section 31 — Implementation Phasing</h1>
+<p>This section sequences how the v6 spec gets built. It defines what ships in launch, what comes next, and what’s deferred to later phases. The goal is to minimize the time to ‘first real customer interaction on a real tenant generating a real commission’ while preserving optionality for the rest.</p>
+<h2 id="s31-1">31.1 Phasing Philosophy <a class="anchor-link" href="#s31-1" aria-label="Permalink">¶</a></h2>
+<p>Three principles drive sequencing:</p>
+<ul>
+<li>Money path first. The platform exists to facilitate bookings that generate commissions. Anything not on the money path can wait. Auth, chat, CRM, booking flow, commission tracking, payout — these block first revenue. Group bookings, forum, white-label branding, multi-prong tenant types — these don’t block first revenue.</li>
+<li>First-party before third-party. Build for the platform’s own automated agency (Prong 1) before opening to BYO-host (Prong 2) or sub-host (Prong 3) tenants. The platform itself is the safest first tenant — every bug is found by the founder, not a paying customer.</li>
+<li>Ship the minimum that exposes the design. Each phase should validate a meaningful chunk of the architecture against reality, not just cross items off a list. A phase that ships infrastructure with no observable customer value is a phase to compress or skip.</li>
+</ul>
+<h2 id="s31-2">31.2 Phase Overview <a class="anchor-link" href="#s31-2" aria-label="Permalink">¶</a></h2>
+<p>Phase 0 Phase 1 Phase 2 Phase 3</p>
+<p>“Foundation” “First Revenue” “Multi-Tenant” “Scale”</p>
+<p>(8-10 weeks) (8-10 weeks) (8-10 weeks) (8-12 weeks)</p>
+<p>│ │ │ │</p>
+<p>▼ ▼ ▼ ▼</p>
+<p>Infra + Prong 1 alive: Prong 2 + 3 open: Volume features:</p>
+<p>schema + own-agency BYO-host + sub-host group bookings,</p>
+<p>auth + automated, takes onboarding, full forum, deferred</p>
+<p>skeleton bookings, books tier matrix provider list,</p>
+<p>              paying customers                          performance work</p>
+<p>Estimated total to feature-complete v6: roughly 9-12 months of dedicated work for a small team (2-3 engineers). I’m offering this as a planning anchor, not a contract — the spec is large and integration unknowns (host agency selection, real-world Anthropic spend patterns) can extend any phase.</p>
+<h2 id="s31-3">31.3 Phase 0 — Foundation (8-10 weeks) <a class="anchor-link" href="#s31-3" aria-label="Permalink">¶</a></h2>
+<p>Goal: infrastructure in place, schema deployed, auth functional, skeleton app deployable. Nothing customer-facing yet.</p>
+<h3>Scope</h3>
+<ul>
+<li>Monorepo setup, two Vercel projects (main + RAG), CI pipeline per <a class="xref" href="section-29-deployment-infrastructure.html">§29</a></li>
+<li>Two Supabase projects (main + RAG) with initial schema from <a class="xref" href="section-05-database-schema-main-app.html">§5</a> and <a class="xref" href="section-06-rag-service-schema.html">§6</a></li>
+<li>RLS policies for all tenant-scoped tables — get this right early</li>
+<li>Supabase Auth configured for Google, Microsoft, Facebook (per <a class="xref" href="section-17-authentication-signup-consent.html#s17-1">§17.1</a>)</li>
+<li>Tenant resolver middleware (<a class="xref" href="section-03-multi-tenancy-tier-matrix.html#s3-6">§3.6</a>)</li>
+<li>Application-layer encryption setup for credentials (<a class="xref" href="section-13-host-agency-abstraction-layer.html#s13-5">§13.5</a>, <a class="xref" href="section-26-security.html#s26-6">§26.6</a>)</li>
+<li>Audit log table and write helper (<a class="xref" href="section-26-security.html#s26-7">§26.7</a>)</li>
+<li>assertPermission() pattern wired into a few sample routes (<a class="xref" href="section-26-security.html#s26-3">§26.3</a>)</li>
+<li>Stripe account in test mode; webhook handler skeleton verifies signatures</li>
+<li>Anthropic + OpenAI integration smoke test</li>
+<li>Inngest connected; one trivial scheduled job runs</li>
+<li>Resend connected; one transactional email template renders</li>
+<li>Sentry connected; errors are tracked</li>
+<li>Boot-time env verification (<a class="xref" href="section-28-environment-variables-reference.html#s28-19">§28.19</a>)</li>
+</ul>
+<h3>Explicit exclusions</h3>
+<ul>
+<li>No real customer features</li>
+<li>No persona system prompt design yet</li>
+<li>No RAG retrieval (RAG service schema exists but isn’t queried)</li>
+<li>No branding system</li>
+<li>No public landing page beyond a placeholder</li>
+</ul>
+<h3>Done definition</h3>
+<p>Engineering team can: sign in via OAuth, see their resolved tenant, hit a permission-gated endpoint that audit-logs, deploy a change end-to-end via the pipeline, observe errors in Sentry. Cross-tenant probe tests (<a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a>) pass.</p>
+<h2 id="s31-4">31.4 Phase 1 — First Revenue (8-10 weeks) <a class="anchor-link" href="#s31-4" aria-label="Permalink">¶</a></h2>
+<p>Goal: the platform’s own automated agency (Prong 1) can take a real customer through chat → quote → booking → commission tracking → first payout. One tenant. One persona. Bare functionality. Real money.</p>
+<h3>Scope</h3>
+<ul>
+<li>AI personas (<a class="xref" href="section-09-ai-personas.html">§9</a>): Marcus Cole only at first. Single persona, full prompt design, anti-instructions, tool-use wired up. Other 5 personas designed but not deployed.</li>
+<li>AI Supervisor (<a class="xref" href="section-10-ai-supervisor.html">§10</a>): all preflight checks live. Topic-level escalation table working. Kill switch operational.</li>
+<li>Chat UI (<a class="xref" href="section-24-chat-ui.html">§24</a>): customer-facing chat, streaming via SSE, AI disclosure banner, feedback buttons. Tone matching at default cap level 3 — full feature, no phasing.</li>
+<li>Memory (<a class="xref" href="section-11-customer-memory.html">§11</a>): extraction every 10 turns. Customer memory page. Opt-out functional.</li>
+<li>CRM (<a class="xref" href="section-12-crm.html">§12</a>): contacts, basic pipeline, quotes. Multi-traveler support.</li>
+<li>Host agency abstraction (<a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a>): fallback email adapter live. One real adapter scaffolded but possibly not connected to a real host yet.</li>
+<li>Booking flow (<a class="xref" href="section-20-booking-flow.html">§20</a>): native flow (since host selection may still be open). DOB-not-ages enforced. Pre-fill from CRM/memory.</li>
+<li>Commissions (<a class="xref" href="section-14-commissions-splits-payouts.html">§14</a>): lifecycle tracking, expected → received, manual statement reconciliation. Stripe Connect Express not yet required for Prong 1 (the platform pays itself).</li>
+<li>RAG consumer side (<a class="xref" href="section-21-rag-knowledge-base-consumer-side.html">§21</a>): retrieval working. RAG knowledge block in prompts. Source attribution in responses.</li>
+<li>RAG ingestion (<a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a>): platform admin can submit content via batch + manual. Browser extension nice-to-have but defer if it slows things down. Pipeline normalization functional.</li>
+<li>Email &amp; notifications (<a class="xref" href="section-23-email-notifications.html">§23</a>): transactional emails (signup, quote sent, booking confirmation). Pre-cruise email series scaffolded but only 1-day email enabled at first.</li>
+<li>Hallucination defense (<a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-10">§21.10</a>): all 8 layers active. AI eval suite running nightly.</li>
+<li>Versioned consent (<a class="xref" href="section-17-authentication-signup-consent.html#s17-4">§17.4</a>): all three platform-level documents (ToU, Privacy, AI Disclaimer) accepted by every user.</li>
+</ul>
+<h3>Explicit exclusions</h3>
+<ul>
+<li>No BYO-host or sub-host onboarding (Prong 2, 3 sit dormant)</li>
+<li>No tenant branding customization (platform’s own colors only)</li>
+<li>No custom domains</li>
+<li>No Pro/Agency tier features (single tier essentially)</li>
+<li>No group bookings</li>
+<li>No forum chat</li>
+<li>No Gmail integration</li>
+<li>No abuse monitoring enforcement (track but don’t throttle yet)</li>
+<li>5 personas designed but not deployed; Marcus only</li>
+</ul>
+<h3>Done definition</h3>
+<p>A real customer can: visit the platform, chat with Marcus, get a quote, book a real cruise, receive booking confirmation email, get a 1-day pre-cruise email, sail. The platform receives commission from host, reconciles it manually, and the founder takes home actual money.</p>
+<p>The platform also: catches AI hallucinations in the eval suite at acceptable rates, logs every audit event, recovers from a Vercel deploy rollback test, recovers from a Supabase PITR test.</p>
+<p>This phase ends with at least one paid booking — that’s the unambiguous success signal.</p>
+<h2 id="s31-5">31.5 Phase 2 — Multi-Tenant (8-10 weeks) <a class="anchor-link" href="#s31-5" aria-label="Permalink">¶</a></h2>
+<p>Goal: other tenants can onboard. BYO-host and sub-host paths both work. Full tier matrix enforced.</p>
+<h3>Scope</h3>
+<ul>
+<li>All 6 personas live (<a class="xref" href="section-09-ai-personas.html">§9</a>). Persona handoff working.</li>
+<li>Sub-host onboarding (<a class="xref" href="section-15-tenant-onboarding-compliance.html">§15</a>): full flow from signup through Stripe Connect Express setup through platform admin review to active. ICA acceptance live.</li>
+<li>BYO-host onboarding: similar flow without sub-host commission split.</li>
+<li>Stripe subscriptions: all tier prices set up in Stripe. Trial logic working. Billing webhook reliable.</li>
+<li>Commission split (<a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a>): two-party split (platform retains tier-defined percentage, sub-host receives remainder). Tier-rate lookup; missing tier flagged for admin.</li>
+<li>Subcontractor tracking (<a class="xref" href="section-14-commissions-splits-payouts.html#s14-3a">§14.3a</a>): sub-host can maintain named subcontractor list, tag bookings, see internal revenue forecast.</li>
+<li>Stripe Connect Express transfers: payouts working with hold periods per tier. Statement PDFs generated.</li>
+<li>White-label branding (<a class="xref" href="section-16-white-label-branding.html">§16</a>): colors, logos, slogans, all tiers. Persona overrides (Pro+ display name, Agency addendum with Haiku screen).</li>
+<li>Custom domains (<a class="xref" href="section-16-white-label-branding.html#s16-3">§16.3</a>): CNAME-based provisioning. Sub-Host Agency + BYO Agency only.</li>
+<li>Custom email-from domain (<a class="xref" href="section-16-white-label-branding.html#s16-4">§16.4</a>): Pattern A and Pattern B both supported.</li>
+<li>Group bookings (<a class="xref" href="section-18-group-bookings.html">§18</a>): full feature including invitation flow, hero images, RSVP system, reminder cadence.</li>
+<li>Forum chat (<a class="xref" href="section-19-forum-style-group-chat.html">§19</a>): AI moderation pipeline, threading, reactions, coordinator tools.</li>
+<li>Gmail integration (<a class="xref" href="section-23-email-notifications.html#s23-7">§23.7</a>): optional per-tenant; OAuth + Pub/Sub.</li>
+<li>All persona variants and tone levels open (already shipped in Phase 1 but now exercised across many tenants).</li>
+<li>Full pre-cruise email series live (all 4 emails enabled per <a class="xref" href="section-23-email-notifications.html#s23-6">§23.6</a>).</li>
+<li>AI co-pilot in booking flow (<a class="xref" href="section-20-booking-flow.html#s20-4">§20.4</a>) if not already in Phase 1.</li>
+<li>Abuse monitoring enforcement (<a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>): all dimensions tracking AND enforcing soft1/soft2/hard. Tenant-facing usage UI live.</li>
+</ul>
+<h3>Explicit exclusions</h3>
+<ul>
+<li>No multi-region (US-East only)</li>
+<li>No native mobile apps</li>
+<li>No Twilio SMS</li>
+<li>No photo uploads in forum (text only)</li>
+<li>No internationalization</li>
+<li>No Apple OAuth</li>
+</ul>
+<h3>Done definition</h3>
+<p>A real outside sub-host can: sign up, complete onboarding, pass platform admin review, receive their first paying customer’s commission, see a real Stripe payout land in their bank account. A real BYO-host tenant can do the same without the Connect Express piece.</p>
+<p>By end of Phase 2, the spec is feature-complete in everything customer-facing. Phase 3 is about scale, polish, and the explicitly-deferred items.</p>
+<h2 id="s31-6">31.6 Phase 3 — Scale &amp; Deferred (8-12 weeks) <a class="anchor-link" href="#s31-6" aria-label="Permalink">¶</a></h2>
+<p>Goal: the explicitly-deferred features ship, and the platform absorbs real-world load.</p>
+<h3>Scope</h3>
+<ul>
+<li>Twilio SMS for notifications (TCPA-compliant)</li>
+<li>Apple OAuth (requires $99/yr developer account; deferred per <a class="xref" href="section-17-authentication-signup-consent.html#s17-1">§17.1</a>)</li>
+<li>Email-in via forward-to address for RAG ingestion</li>
+<li>Forum photo uploads with EXIF stripping and moderation pipeline extension (deferred per <a class="xref" href="section-19-forum-style-group-chat.html#s19-11">§19.11</a>)</li>
+<li>Native mobile apps consideration: spec the API contract, evaluate React Native vs native vs PWA; build if business case is clear</li>
+<li>Internationalization scaffolding (locale resolution, content packs, but English-only content at launch)</li>
+<li>Multi-region infrastructure investigation — DR posture review, decide whether to invest</li>
+<li>Performance work informed by real production data: index tuning, query optimization, caching layer if needed</li>
+<li>Threshold recalibration (<a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>) based on first 90 days of usage</li>
+<li>AI eval expansion based on production conversation patterns</li>
+<li>Read replicas if DB load justifies</li>
+<li>Anthropic Tier 5 or higher if rate limits are being hit</li>
+</ul>
+<h3>Open Items From MEMORY (resolved in Phase 3 or earlier as needed)</h3>
+<ul>
+<li>ICA template SoT + E&amp;O coverage clause language (attorney — needed before any sub-host onboarding, so really Phase 2 blocker)</li>
+<li>ToU RAG content license clause for submissions (attorney — also Phase 2 blocker for ingestion ToU acceptance)</li>
+<li><a class="xref" href="section-20-booking-flow.html">§20</a> final design after host agency selected (Phase 1 or 2 trigger event)</li>
+<li>Persona avatar URLs (Phase 1 trigger)</li>
+<li>Port info chunks seeding for major North American departure ports (Phase 1 launch task)</li>
+<li>Tenant owner death/incapacitation handling (operational policy, can defer to Phase 3 unless event forces sooner)</li>
+<li>Generated image moderation latency (Phase 2 when used in groups)</li>
+<li>Native mobile API contract considerations (Phase 3 prep)</li>
+<li>Stripe Connect KYC failure UX flows (Phase 2 when sub-host onboarding lives)</li>
+</ul>
+<h3>Done definition</h3>
+<p>Spec is fully delivered. Platform operates at sustained tenant scale (target: 50+ active tenants, 500+ active customers). Operational runbooks are battle-tested. Engineering capacity shifts from build to maintain + grow.</p>
+<h2 id="s31-7">31.7 Cross-Phase Risks &amp; Decisions <a class="anchor-link" href="#s31-7" aria-label="Permalink">¶</a></h2>
+<p>A few items don’t fit neatly inside a phase and need explicit decision points:</p>
+<h3>Host agency selection</h3>
+<p>The host agency selection blocks the <a class="xref" href="section-20-booking-flow.html">§20</a> booking flow design. Two paths:</p>
+<ul>
+<li>Decide host before Phase 1 starts: ideal. Booking flow gets designed once. Higher confidence in Phase 1 timeline.</li>
+<li>Phase 1 ships with fallback email adapter only; host selection during Phase 1: acceptable for Prong 1 since the platform IS its own host operationally. Real bookings can be manually submitted to chosen host while integration is built.</li>
+</ul>
+<p>The decision affects whether real customer bookings in Phase 1 are end-to-end automated or have manual steps. Neither breaks the phase, but the user experience differs.</p>
+<h3>Pre-cruise email enablement</h3>
+<p>The 90-day, 30-day, and 7-day emails involve more dynamic content (destination teasers, packing checklists, ship highlights) than the 1-day port-info email. Enabling them all in Phase 1 is fine if content authoring keeps pace. Otherwise: 1-day first, others as content gets written.</p>
+<h3>Browser extension and iOS shortcut</h3>
+<p>These are tenant-facing tools for RAG submission. The platform admin can submit content without them. If platform admin is willing to use the manual / batch ingestion paths in Phase 1: defer extension and shortcut to Phase 2. If platform admin’s content workflow specifically needs browser-clip behavior: ship the extension in Phase 1.</p>
+<h3>Tenant-facing usage UI vs. enforcement timing</h3>
+<p>Abuse monitoring (<a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>) has two pieces: (a) track usage in real-time, (b) enforce soft/hard limits. Phase 1 does (a) but not (b) — too risky to enforce limits on the platform’s own tenant while the system is still being calibrated. Phase 2 turns enforcement on for all tenants.</p>
+<p>But: the platform’s own tenant doesn’t get rate-limited at any phase (it’s the platform). Other tenants face enforcement from the moment they onboard in Phase 2.</p>
+<h3>Legal documents</h3>
+<p>ToU, Privacy Policy, AI Liability Disclaimer must be lawyer-reviewed before any user (even Phase 1 customers) accepts them. ICA must be lawyer-reviewed before any sub-host signs.</p>
+<p>The reviewed-by-attorney lead time is a real risk to Phase 1 if not started early. Recommend: brief attorney during Phase 0; have drafts ready by mid-Phase 1.</p>
+<h3>Initial RAG seeding</h3>
+<p>Phase 1 needs enough RAG content for personas to actually be useful. Empty RAG → AI relies on training data alone → quality degrades, freshness suffers. Phase 0 should include a content-seeding effort (port info per departure city, major cruise line basics, common cabin categories).</p>
+<p>This isn’t full coverage; it’s enough that retrieval consistently returns at least 2-3 relevant chunks for typical queries.</p>
+<h2 id="s31-8">31.8 What Each Phase Validates <a class="anchor-link" href="#s31-8" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Phase</strong></th><th><strong>Validates</strong></th></tr></thead><tbody><tr><td>0</td><td>Architecture deployable. Cross-tenant isolation correct. Audit log captures meaningful events.</td></tr><tr><td>1</td><td>AI behavior is acceptably safe and useful for real customers. Commission tracking is accurate. Hallucination defense works. Per-customer AI cost is in plan.</td></tr><tr><td>2</td><td>Multi-tenancy holds under multiple real tenants. Branding and custom domains work. Stripe Connect Express handles real KYC and payouts. Tier matrix actually maps to tenant economics.</td></tr><tr><td>3</td><td>Platform operates at sustained scale. Cost-to-revenue ratio is acceptable. Operational discipline is real, not aspirational.</td></tr></tbody></table></div>
+<p>Each phase’s done-definition is ‘this thing genuinely works in production with real users and real money,’ not ‘the feature exists in the codebase.’</p>
+<h2 id="s31-9">31.9 Resource Assumptions <a class="anchor-link" href="#s31-9" aria-label="Permalink">¶</a></h2>
+<p>I’ve sized phases for a small dedicated team: 2-3 engineers, 1 platform operator wearing PM + design + ops hats. Larger teams compress; solo engineering extends. Real time-to-feature-complete depends heavily on:</p>
+<ul>
+<li>Whether the operator is the engineer (faster decisions, slower hands)</li>
+<li>Host agency integration complexity (the unknown)</li>
+<li>Attorney response times on legal docs</li>
+<li>Cumulative Anthropic spend during pre-launch eval iterations</li>
+<li>Stripe Connect onboarding-flow friction (sometimes Stripe support is in the loop)</li>
+</ul>
+<p>The phase estimates are planning anchors. Real-world iteration will diverge.</p>
+<h2 id="s31-10">31.10 What’s Explicitly Out Of v6 <a class="anchor-link" href="#s31-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Multi-region active-active deployment</li>
+<li>White-label of the platform itself (sub-licensing the SaaS to other operators)</li>
+<li>Per-tenant Stripe products / custom pricing UI</li>
+<li>Non-English customer content (quotes, emails, legal docs)</li>
+<li>Non-USD currency</li>
+<li>Air + hotel bookings beyond cruise</li>
+<li>Loyalty program integration beyond storing membership numbers</li>
+<li>Native mobile apps as a hard commitment (Phase 3 evaluates; may not build)</li>
+<li>Email-in for customer chat (separate concern from RAG ingestion email-in)</li>
+</ul>
+<h2 id="s31-11">31.11 Calls Worth Flagging <a class="anchor-link" href="#s31-11" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Phase 0 has no customer value.</strong><strong> </strong>It’s pure setup. Resist the urge to cut it short. Cross-tenant bugs found here cost minutes; cross-tenant bugs found in Phase 2 cost weeks.</li>
+<li><strong>Phase 1 success is binary: at least one paid booking.</strong><strong> </strong>Without that signal, the platform hasn’t validated its core business proposition. Optimize ruthlessly toward that outcome.</li>
+<li><strong>Host agency selection is the highest-leverage early decision.</strong><strong> </strong>It blocks <a class="xref" href="section-20-booking-flow.html">§20</a> and influences <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a>. Don’t let it drift into Phase 1 if possible.</li>
+<li><strong>Attorney time is the most common Phase 1 schedule slip.</strong><strong> </strong>Brief legal counsel during Phase 0. Send drafts early. Don’t wait for ‘feature-complete’ before sending; legal review can run in parallel.</li>
+<li><strong>The platform’s own Prong-1 tenant should keep operating throughout Phase 2 and 3</strong><strong> </strong>as a real-money proof of concept and as the canary for new features. New AI behavior, new email templates, new flows — try on Prong 1 first, then expose to tenants.</li>
+<li><strong>My phase estimates of 8-10 weeks each are conservative-optimistic, not pessimistic.</strong><strong> </strong>Engineering projects routinely overrun. If you need to commit dates to anyone external, double these estimates and treat the original as stretch.</li>
+<li><strong>No formal</strong><strong> </strong><strong>‘</strong><strong>v6.0 launch event.</strong><strong>’</strong><strong> </strong>The platform goes live with Phase 1 (Prong 1 only) and grows. There’s no big-bang launch — there’s ‘first booking’ then ‘first outside tenant onboarded’ then ‘tenth tenant active’ then ‘first month of profitable operation.’</li>
+<li><strong>Phase 3 length is the most uncertain.</strong><strong> </strong>Heavy production data informs scope. Could be 6 weeks if things go smoothly or 16 weeks if Anthropic pricing changes or scale exposes issues.</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-30-testing-requirements.html">← §30: Testing Requirements</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-32-self-service-help.html">§32: Self-Service Help →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

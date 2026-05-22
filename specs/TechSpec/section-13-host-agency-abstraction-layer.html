@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 13 — Host Agency Abstraction Layer — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 13</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s13">Section 13 — Host Agency Abstraction Layer</h1>
+<p>The platform must work without being tightly coupled to any specific host agency. v6 makes the host agency a pluggable adapter — adding a new host means writing an adapter, not rewriting the platform.</p>
+<h2 id="s13-1">13.1 Goals <a class="anchor-link" href="#s13-1" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Decouple application from host-specific API quirks</li>
+<li>Allow multiple host configurations simultaneously</li>
+<li>Support ‘no host configured’ state gracefully (via fallback email adapter)</li>
+</ul>
+<h2 id="s13-2">13.2 The HostAgencyClient Interface <a class="anchor-link" href="#s13-2" aria-label="Permalink">¶</a></h2>
+<p>export interface HostAgencyClient {</p>
+<p>readonly adapterId: string;</p>
+<p>readonly displayName: string;</p>
+<p>readonly capabilities: HostCapabilities;</p>
+<p>searchInventory(req: InventorySearchRequest, ctx: HostCallContext): Promise;</p>
+<p>submitBooking(req: BookingSubmissionRequest, ctx: HostCallContext): Promise;</p>
+<p>fetchBookingStatus(ref: string, ctx: HostCallContext): Promise;</p>
+<p>cancelBooking(ref: string, req: CancellationRequest, ctx: HostCallContext): Promise;</p>
+<p>modifyBooking(ref: string, req: ModificationRequest, ctx: HostCallContext): Promise;</p>
+<p>fetchCommissionStatement(req: StatementFetchRequest, ctx: HostCallContext): Promise;</p>
+<p>recordCommissionPayment(req: CommissionPaymentRequest, ctx: HostCallContext): Promise;</p>
+<p>healthCheck(): Promise;</p>
+<p>describeCapabilities(): HostCapabilities;</p>
+<p>}</p>
+<p>export interface HostCapabilities {</p>
+<p>supports_inventory_search: boolean;</p>
+<p>supports_real_time_booking: boolean;</p>
+<p>supports_modification: boolean;</p>
+<p>supports_cancellation: boolean;</p>
+<p>supports_commission_api: boolean;</p>
+<p>booking_types: BookingType[];</p>
+<p>cruise_lines_supported: string[];</p>
+<p>commission_currency: string;</p>
+<p>payment_lag_days_typical: number;</p>
+<p>}</p>
+<h2 id="s13-3">13.3 Adapter Registry <a class="anchor-link" href="#s13-3" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.host_adapters (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>adapter_id TEXT UNIQUE NOT NULL,</p>
+<p>display_name TEXT NOT NULL,</p>
+<p>implementation_path TEXT NOT NULL,</p>
+<p>config JSONB NOT NULL,</p>
+<p>capabilities JSONB NOT NULL,</p>
+<p>is_active BOOLEAN DEFAULT TRUE,</p>
+<p>is_default BOOLEAN DEFAULT FALSE,</p>
+<p>health_check_status TEXT CHECK (health_check_status IN (‘healthy’,‘degraded’,‘unhealthy’,‘unknown’)),</p>
+<p>health_check_last_at TIMESTAMPTZ,</p>
+<p>health_check_message TEXT,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE UNIQUE INDEX host_adapters_default_idx</p>
+<p>ON public.host_adapters(is_default) WHERE is_default = TRUE;</p>
+<h2 id="s13-4">13.4 Tenant Host Configuration <a class="anchor-link" href="#s13-4" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.tenant_host_configs (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>adapter_id TEXT NOT NULL REFERENCES public.host_adapters(adapter_id),</p>
+<p>credentials JSONB NOT NULL, – encrypted at rest (AES-256-GCM, KMS key in env)</p>
+<p>credential_status TEXT NOT NULL DEFAULT ‘pending’</p>
+<p>                      CHECK (credential_status IN ('pending','verified','rejected','expired','revoked')),</p>
+<p>credential_verified_at TIMESTAMPTZ,</p>
+<p>is_active BOOLEAN DEFAULT TRUE,</p>
+<p>UNIQUE (tenant_id, adapter_id)</p>
+<p>);</p>
+<h2 id="s13-5">13.5 Credential Storage Pattern <a class="anchor-link" href="#s13-5" aria-label="Permalink">¶</a></h2>
+<p>Tenant host credentials are encrypted at the application layer before being written to the DB. The encryption uses AES-256-GCM with a per-record IV. This protects against DB-level breach: an attacker who somehow gets read access to the DB sees only ciphertext.</p>
+<p>Per-tenant credentials cannot be in environment variables (would require deployment per onboarded tenant). DB storage with app-layer encryption is the right pattern for this cardinality.</p>
+<h3 id="s13-5-1">13.5.1 Key storage and rotation <a class="anchor-link" href="#s13-5-1" aria-label="Permalink">¶</a></h3>
+<p>The encryption key set is held in environment variables:</p>
+<ul>
+<li><code>APP_ENCRYPTION_KEY_CURRENT</code> — 256-bit key (base64 encoded), used for new writes.</li>
+<li><code>APP_ENCRYPTION_KEY_PREVIOUS</code> — set during key rotation; used for decrypting records written under the previous key. Read-path only.</li>
+<li><code>APP_ENCRYPTION_KEY_ID_CURRENT</code> — short identifier (e.g., <code>v3</code>) stamped onto every ciphertext so the decryption path knows which key to use.</li>
+</ul>
+<p>Rotation is annual per <a class="xref" href="section-28-environment-variables-reference.html#s28-20">§28.20</a>. The rotation flow:</p>
+<ol>
+<li>Generate new key. Set <code>APP_ENCRYPTION_KEY_PREVIOUS = &lt;current&gt;</code>, <code>APP_ENCRYPTION_KEY_CURRENT = &lt;new&gt;</code>, <code>APP_ENCRYPTION_KEY_ID_CURRENT = &lt;new id&gt;</code>. Deploy.</li>
+<li>All new writes use the new key.</li>
+<li>Decryption path: tries CURRENT first; on key-id mismatch, falls back to PREVIOUS.</li>
+<li>A background job (Inngest, <code>re-encrypt-old-records</code>) re-reads and re-writes records still ciphered under the previous key. Job runs until zero records remain at the old key id.</li>
+<li>Remove <code>APP_ENCRYPTION_KEY_PREVIOUS</code> from environment. Rotation complete.</li>
+</ol>
+<h3 id="s13-5-2">13.5.2 Disaster recovery — the failure modes <a class="anchor-link" href="#s13-5-2" aria-label="Permalink">¶</a></h3>
+<p>The encryption keys are operator-managed secrets. Three failure modes:</p>
+<ol>
+<li><strong>Both keys lost</strong> (env vars deleted in Vercel, no offsite backup): every encrypted record becomes unrecoverable. The data is intact in the database but cannot be decrypted. Effect: every tenant's host adapter credentials, every tenant's Resend API key, every tenant's encrypted secret is dead. Recovery requires every tenant to re-enter their credentials.</li>
+<li><strong>Decryption failure on a specific record</strong> (corrupt ciphertext, key-id mismatch with no matching key, GCM auth tag mismatch): a single tenant credential cannot be decrypted. Effect depends on which credential — if it's the tenant's host adapter, bookings for that tenant pause until resolved.</li>
+<li><strong>Key rotation gone wrong</strong> (CURRENT key incorrect, PREVIOUS key removed prematurely, key IDs mismatched): some records decrypt correctly, others don't. The system appears to work for some tenants and not others; diagnosis is harder than (1) or (2).</li>
+</ol>
+<h3 id="s13-5-3">13.5.3 Disaster recovery — controls <a class="anchor-link" href="#s13-5-3" aria-label="Permalink">¶</a></h3>
+<p>To prevent failure mode (1):</p>
+<ul>
+<li><strong>Offsite key backup is mandatory.</strong> At setup time and on every rotation, the current and previous keys are stored in a secondary location independent of Vercel env vars. Recommended: 1Password business vault, or AWS Secrets Manager in a separate AWS account, or a hardware-backed offline copy stored physically. The choice is operator preference; the discipline is non-negotiable.</li>
+<li><strong>Backup verification quarterly.</strong> Operator restores the key set from the backup to a sandbox environment and confirms decryption of a known-good test ciphertext. If the test fails, the backup is unreliable — fix immediately. Logged to MEMORY.md per §A.X (see cross-reference at the end of this section).</li>
+<li><strong>Vercel env var deletion is gated.</strong> Platform admin's Vercel account does NOT have permission to delete <code>APP_ENCRYPTION_KEY_*</code> env vars without 2FA challenge. (Vercel may or may not support this granularity natively; if not, a runbook step requires the deletion to be performed only after the backup is verified — enforced by operator discipline.)</li>
+</ul>
+<p>To handle failure mode (2):</p>
+<ul>
+<li>The decryption wrapper catches decryption failures and returns a structured error (NOT a thrown exception that crashes the request). The error includes the record's key id so investigation is fast.</li>
+<li>Code paths that consume credentials check for the structured-error result and pause the tenant's affected operations rather than silently retrying or returning incorrect data.</li>
+<li>Specifically: if a host adapter's credentials fail to decrypt, the booking submission path returns a tenant-facing error ("Your host adapter credentials need to be re-entered — please visit Settings &gt; Host Integration"). It does NOT silently fall back to the email adapter (per <a class="xref" href="#s13-6">§13.6</a>) — that would mask a security incident.</li>
+<li>Decryption failures are logged to <code>audit_log</code> with <code>action = 'credential.decryption_failed'</code> and a redacted ciphertext hash (NOT the ciphertext itself) for forensic correlation.</li>
+</ul>
+<p>To handle failure mode (3):</p>
+<ul>
+<li>A boot-time check (extending <a class="xref" href="section-28-environment-variables-reference.html#s28-19">§28.19</a>'s env validation) confirms that BOTH <code>APP_ENCRYPTION_KEY_CURRENT</code> and <code>APP_ENCRYPTION_KEY_ID_CURRENT</code> are present and that the keys are valid 256-bit base64 strings. If <code>APP_ENCRYPTION_KEY_PREVIOUS</code> is set, it must also be valid.</li>
+<li>The re-encrypt-old-records job has a monitoring metric: <code>credentials_at_previous_key_count</code>. Alert if this metric is non-zero for more than 7 days after a rotation — indicates the job is stuck or rotation is incomplete.</li>
+</ul>
+<h3 id="s13-5-4">13.5.4 Decryption-failure tenant operations <a class="anchor-link" href="#s13-5-4" aria-label="Permalink">¶</a></h3>
+<p>When a tenant's credential cannot be decrypted, the tenant's state transitions to a partial-degraded mode. The semantics:</p>
+<ul>
+<li><strong>Reads of historical data unaffected.</strong> Booking history, commission records, conversation messages — all still readable. The affected credential is specifically the host-adapter or external-service credential.</li>
+<li><strong>New operations requiring the failed credential are blocked.</strong> The tenant sees a clear in-app banner: "Your [host adapter / Resend account / etc.] credentials cannot be loaded. Please re-enter them in Settings to resume [bookings / outbound email / etc.]"</li>
+<li><strong>Tenant-facing operation that doesn't need the failed credential proceeds normally.</strong> A tenant whose host-adapter credential failed can still send and receive emails, view CRM, etc.</li>
+<li><strong>Platform admin alerted on first occurrence per tenant.</strong> Not on every retry — first decryption failure for a given credential per tenant per 24 hours opens a high-priority issue.</li>
+</ul>
+<h3 id="s13-5-5">13.5.5 Calls Worth Flagging <a class="anchor-link" href="#s13-5-5" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Offsite key backup is the single point of failure prevention.</strong> The cost is low (a few minutes to copy keys to 1Password); the cost of skipping it is unrecoverable data. Make backup verification a Phase-0 launch gate.</li>
+<li><strong>The decryption-failure tenant-facing error is deliberately specific.</strong> A generic "something went wrong" lets the tenant click Retry indefinitely; a specific "credentials need to be re-entered" gets the tenant to the right place quickly.</li>
+<li><strong>Re-encryption job timing matters during rotation.</strong> The job re-writes every encrypted record. For a tenant with many encrypted records (multiple host adapters, many API keys), the re-write produces audit log noise. Acceptable, but expect a spike in <code>credential.rotation_reencrypt</code> audit rows during the days following rotation.</li>
+<li>**The <code>APP_ENCRYPTION_KEY_*</code> env vars are NOT the same secret class as the Supabase service role key.** Service role key rotation per <a class="xref" href="section-28-environment-variables-reference.html#s28-20">§28.20</a> is "on compromise only"; encryption keys rotate annually. Different threat models, different cadences. Don't conflate.</li>
+</ul>
+<p>This subsection cross-references <a class="xref" href="section-28-environment-variables-reference.html#s28-13">§28.13</a> (env var definitions) and <a class="xref" href="section-28-environment-variables-reference.html#s28-20">§28.20</a> (rotation policy).</p>
+<h2 id="s13-6">13.6 The Fallback Email Adapter <a class="anchor-link" href="#s13-6" aria-label="Permalink">¶</a></h2>
+<p>Always-available adapter. Implements HostAgencyClient but does no integration — emails structured booking details to a configured destination. Used when:</p>
+<ul>
+<li>Platform is in early operation without a host integration</li>
+<li>A BYO-host tenant hasn’t configured their own host adapter</li>
+<li>A real adapter is degraded or down</li>
+</ul>
+<p>Returns synthetic provider_booking_ref like ‘EMAIL-{tenant_id}-{timestamp}’. Tenant admin manually updates with real reference once host confirms.</p>
+<h2 id="s13-7">13.7 Adapter Selection Flow <a class="anchor-link" href="#s13-7" aria-label="Permalink">¶</a></h2>
+<p>submitBooking(tenant, booking)</p>
+<p>│</p>
+<p>▼</p>
+<p>Tenant has verified host config? ──► Yes ──► use tenant’s adapter</p>
+<p>│ No</p>
+<p>▼</p>
+<p>Tenant is sub-host? ──► Yes ──► use platform default + sub-host credentials</p>
+<p>│ No</p>
+<p>▼</p>
+<p>Tenant is platform? ──► Yes ──► use platform default</p>
+<p>│ No</p>
+<p>▼</p>
+<p>BYO-host with no config ──► fallback email adapter</p>
+<h2 id="s13-8">13.8 Sub-Host Credential Patterns <a class="anchor-link" href="#s13-8" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Pattern A — Host-aware: host supports N sub-accounts under platform; each booking submitted with sub-host’s credentials</li>
+<li>Pattern B — Aggregated: platform submits all bookings under master credentials; tracks sub-host ownership internally</li>
+</ul>
+<p>Adapter declares which pattern it supports via capabilities. Both patterns supported in v6.</p>
+<h2 id="s13-9">13.9 Health Monitoring <a class="anchor-link" href="#s13-9" aria-label="Permalink">¶</a></h2>
+<p>Inngest cron runs every 5 minutes:</p>
+<p>{ id: ‘host-health-check’, cron: ’*/5** <em> </em> <em> </em>’ }</p>
+<p>// For each active adapter:</p>
+<p>// - Call adapter.healthCheck()</p>
+<p>// - Update host_adapters.health_check_status</p>
+<p>// - Alert platform admin on transitions to degraded/unhealthy</p>
+<h2 id="s13-10">13.10 Anti-Patterns <a class="anchor-link" href="#s13-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>No host-specific code outside apps/main/src/lib/host/adapters/</li>
+<li>No business logic in adapter implementations (translation only)</li>
+<li>No adapter calling another adapter</li>
+<li>No long-lived adapter state (cached credentials only)</li>
+<li>No silent adapter failures (structured HostError)</li>
+<li>No undocumented adapter capabilities</li>
+<li>No PII in host_adapter_calls audit log</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-12-crm.html">← §12: CRM</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-14-commissions-splits-payouts.html">§14: Commissions, Splits & Payouts →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

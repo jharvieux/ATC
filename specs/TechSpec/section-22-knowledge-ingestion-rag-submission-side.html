@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 22 — Knowledge Ingestion (RAG Submission Side) — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 22</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s22">Section 22 — Knowledge Ingestion (RAG Submission Side)</h1>
+<p>How content enters the knowledge base. Covers submission methods, the normalization pipeline, the tenant review queue, and the revised global review model.</p>
+<h2 id="s22-1">22.1 Submission Methods <a class="anchor-link" href="#s22-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Use Case</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Web UI single-item submit</td><td>Quick add from /knowledge/submit</td><td>Form with content, source URL, category hints</td></tr><tr><td>Browser extension</td><td>While browsing supplier sites</td><td>Right-click → ‘Add to knowledge’; captures URL, title, selection</td></tr><tr><td>iOS Shortcut</td><td>Share-sheet from mobile Safari/Mail/Files</td><td>Send selection or page to platform</td></tr><tr><td>File upload</td><td>PDFs, docs, spreadsheets, decks, images</td><td>Up to 50MB per file; supported: PDF, DOCX, XLSX/XLS, PPTX/PPT, TXT, MD, HTML, JPG, PNG</td></tr><tr><td>Manual entry</td><td>Free-form text in the web UI</td><td>For knowledge that doesn’t come from a source</td></tr><tr><td>Batch API</td><td>Programmatic bulk import</td><td>Up to 100 items per call; auth via service token</td></tr></tbody></table></div>
+<h2 id="s22-2">22.2 No Submission Limits <a class="anchor-link" href="#s22-2" aria-label="Permalink">¶</a></h2>
+<p><strong>DESIGN DECISION:</strong><strong> </strong>Earlier drafts had daily submission limits and per-tenant chunk caps. These created a perverse incentive (tenants hoarding rather than contributing). Removed in v6. Spam and abuse handled via quality screening, not quotas.</p>
+<p>rag_submit_daily_limit and rag_chunks_max in tenant_registry are nullable; null means unlimited. Abuse handled via <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> abuse monitoring (quality patterns, not volume).</p>
+<h2 id="s22-3">22.3 Supported File Types <a class="anchor-link" href="#s22-3" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Type</strong></th><th><strong>Extension(s)</strong></th><th><strong>Handler</strong></th></tr></thead><tbody><tr><td>PDF</td><td>.pdf</td><td>pdf-parse + OCR fallback for scanned</td></tr><tr><td>Word</td><td>.docx, .doc</td><td>mammoth for docx; LibreOffice convert for legacy doc</td></tr><tr><td>Excel</td><td>.xlsx, .xls</td><td>SheetJS; one chunk per sheet typically, with structure preservation</td></tr><tr><td>PowerPoint</td><td>.pptx, .ppt</td><td>Officegen or pptxgenjs reader; slide-by-slide chunking</td></tr><tr><td>Plain text</td><td>.txt, .md</td><td>Direct read</td></tr><tr><td>HTML</td><td>.html, .htm</td><td>Cheerio for content extraction; strip nav/footer</td></tr><tr><td>Images</td><td>.jpg, .jpeg, .png</td><td>Tesseract OCR; or Haiku vision for richer extraction</td></tr></tbody></table></div>
+<h2 id="s22-4">22.4 Normalization Pipeline <a class="anchor-link" href="#s22-4" aria-label="Permalink">¶</a></h2>
+<p>[Raw content arrives]</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 1: Content extraction (file type-specific parser)</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 2: PII redaction (regex + Haiku pass)</p>
+<p>│   ├── Zero-tolerance: SSN, credit card → quarantine + alert (aggregation per <a class="xref" href="#s22-4a">§22.4a</a> below)</p>
+<p>│   └── Tolerable: names, emails, phones → redact with [REDACTED]</p>
+<p>▼</p>
+<p>Stage 3: AI normalization (Haiku call)</p>
+<p>│   ├── Suggest category</p>
+<p>│   ├── Extract cruise line / ship / destination</p>
+<p>│   ├── Generate summary</p>
+<p>│   ├── Score quality (0-1)</p>
+<p>│   ├── Score authority (0-1)</p>
+<p>│   ├── Detect pricing</p>
+<p>│   ├── Detect promo dates</p>
+<p>│   └── Score relevance for global scope (0-1)</p>
+<p>▼</p>
+<p>Stage 4: Auto-flag for global review if score_global ≥ 0.6</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 5: Insert into knowledge_ingestion_queue (status=‘ready_for_review’)</p>
+<p>│</p>
+<p>▼</p>
+<p>[Tenant admin reviews]</p>
+<p>│</p>
+<p>▼</p>
+<p>Tenant approves → promote to knowledge_chunks (scope=‘tenant’)</p>
+<p>│</p>
+<p>▼ (if auto-flagged or platform admin manually promotes)</p>
+<p>Platform admin reviews global queue</p>
+<p>│</p>
+<p>▼</p>
+<p>Platform admin promotes → scope=‘global’ (in addition to tenant scope)</p>
+<h3 id="s22-4a">22.4a Quarantine Alert Aggregation <a class="anchor-link" href="#s22-4a" aria-label="Permalink">¶</a></h3>
+<p>The Stage 2 zero-tolerance PII quarantine alerts can burn out platform admin if a tenant repeatedly submits content with PII. Aggregation rules:</p>
+<h4>First instance per tenant: alert immediately</h4>
+<p>The first zero-tolerance match from a tenant produces an immediate alert. Content remains quarantined. Platform admin reviews.</p>
+<h4>Subsequent instances within 24 hours: aggregate</h4>
+<p>Subsequent matches from the same tenant within a 24-hour window do NOT produce individual alerts. Instead, they're aggregated into a single rolling "additional matches" summary that updates the original alert:</p>
+<ul>
+<li>Total count of additional matches in the window.</li>
+<li>Sample (first 3) of the quarantined content categories (NOT the content itself).</li>
+<li>Time range of the matches.</li>
+</ul>
+<p>The original alert is updated in-place; no new alert email/page.</p>
+<h4>After 24 hours</h4>
+<p>The aggregation window resets. The next match from this tenant produces a fresh alert (which itself may be the start of a new aggregation window).</p>
+<h4>Pattern detection feeds tenant abuse signal</h4>
+<p>If a tenant produces aggregated alerts on 3+ consecutive days, the pattern indicates either (a) a tenant systematically submitting PII-bearing content, or (b) a tenant whose content sources contain PII the tenant isn't aware of. Either way, the pattern triggers a <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> abuse signal of type <code>rag_pii_recurring</code> which:</p>
+<ul>
+<li>Surfaces to platform admin in the <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-10">§27.10</a> dashboard.</li>
+<li>Optionally throttles the tenant's RAG submission rate.</li>
+<li>Triggers an outreach email to the tenant explaining the pattern.</li>
+</ul>
+<h4>Schema</h4>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.tenants
+  ADD COLUMN pii_quarantine_alert_window_start TIMESTAMPTZ,
+  ADD COLUMN pii_quarantine_alert_count_in_window INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN pii_quarantine_recurring_days INTEGER NOT NULL DEFAULT 0;</code></pre>
+<p>The Inngest function <code>pii-quarantine-aggregate</code> updates these columns on each quarantine event and emits aggregated alerts.</p>
+<h4>Calls Worth Flagging</h4>
+<ul>
+<li><strong>The first alert is always immediate.</strong> Aggregation kicks in only for repeated matches.</li>
+<li><strong>Aggregation window is 24 hours, NOT calendar day.</strong></li>
+<li><strong>3-day recurring threshold for abuse signal is conservative.</strong> A tenant having one bad day shouldn't be throttled.</li>
+<li><strong>Quarantined content remains quarantined regardless of aggregation.</strong> The rule affects ALERT delivery only.</li>
+</ul>
+<h2 id="s22-5">22.5 Tenant Review Queue <a class="anchor-link" href="#s22-5" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>List view of pending items (filter: by source type, by category, by date)</li>
+<li>Side-by-side: original content + AI-normalized version + suggested metadata</li>
+<li>Edit affordances: content, category, authority override (with reason), expiry date</li>
+<li>Bulk approve (with safety prompt for &gt;10 items)</li>
+<li>Reject with reason (feeds tenant-specific abuse signals per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>)</li>
+</ul>
+<h2 id="s22-6">22.6 Revised Global Review Model <a class="anchor-link" href="#s22-6" aria-label="Permalink">¶</a></h2>
+<p><strong>DESIGN DECISION:</strong> Earlier drafts required tenant permission before any tenant chunk could be promoted to global. Revised: platform admin can promote ANY approved tenant chunk to global scope. Tenant retains use of the chunk (it remains in their scope too); platform gets license via ToU. Tenant cannot block promotion.</p>
+<p>Rationale: tenants benefit from shared knowledge collectively. A gatekeeping right by individual tenants creates fragmentation. ToU acknowledgment grants platform the license.</p>
+<p><strong>Survives termination:</strong> The license granted by ToU acceptance is perpetual and irrevocable. Globally-promoted chunks survive tenant termination per <a class="xref" href="section-15-tenant-onboarding-compliance.html#s15-14-3">§15.14.3</a>. Post-termination review handling for chunks whose origin tenant is gone is specified in <a class="xref" href="section-15-tenant-onboarding-compliance.html#s15-14-4">§15.14.4</a>. The ToU and ICA language requirements (<a class="xref" href="section-15-tenant-onboarding-compliance.html#s15-14-6">§15.14.6</a>) make this stance explicit to tenants at signup.</p>
+<h2 id="s22-7">22.7 Four-Tab Global Review Queue <a class="anchor-link" href="#s22-7" aria-label="Permalink">¶</a></h2>
+<p>Platform admin sees a queue with four tabs for triaging:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tab</strong></th><th><strong>Source</strong></th><th><strong>Volume</strong></th><th><strong>Action</strong></th></tr></thead><tbody><tr><td>1. Auto-flagged</td><td>AI scored global-relevance ≥ 0.6 at ingestion</td><td>Moderate</td><td>Review and promote / pass</td></tr><tr><td>2. Tenant-promoted</td><td>Tenant clicked ‘suggest for global’</td><td>Low</td><td>Quick review; was tenant-initiated</td></tr><tr><td>3. All approved chunks</td><td>Any tenant chunk with relevance 0.3-0.6</td><td>Large</td><td>Proactive browsing; promote selectively</td></tr><tr><td>4. Likely tenant-specific</td><td>Relevance &lt; 0.3</td><td>Largest</td><td>Search-first; not loaded by default; one-off promotion only</td></tr></tbody></table></div>
+<h2 id="s22-8">22.8 Promotion Mechanics <a class="anchor-link" href="#s22-8" aria-label="Permalink">¶</a></h2>
+<p>When platform admin promotes:</p>
+<ul>
+<li>Create new <code>knowledge_chunks</code> row with <code>scope = 'global'</code>. The promoted row records its <code>origin_tenant_id</code> for forensic traceability (kept even after the origin tenant terminates — see <a class="xref" href="section-15-tenant-onboarding-compliance.html#s15-14-3">§15.14.3</a>).</li>
+<li>Original tenant-scoped chunk remains intact (tenant continues to see it).</li>
+<li>If content is identical, both chunks reference each other via metadata (avoid double-retrieval of same content).</li>
+<li>Promotion is performed inside <code>withPlatformAdminAudit</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a> with <code>reason = 'rag_chunk_promotion_to_global'</code>. The audit record captures the admin user, the chunk IDs (original and promoted), and the platform admin's review notes.</li>
+<li>Reversible via demote action. Demote moves the global chunk back to tenant scope (or hard-deletes it for clear violations). Demote is also a <code>withPlatformAdminAudit</code> operation with <code>reason = 'rag_chunk_demotion'</code>.</li>
+</ul>
+<p>If the origin tenant is terminated at the time of demote:</p>
+<ul>
+<li>Demote-to-tenant-scope behavior: the chunk moves back to the terminated tenant's scope and is subject to the 90-day deletion per <a class="xref" href="section-25-data-privacy-retention.html#s25-2">§25.2</a>. Effectively a delayed deletion.</li>
+<li>Demote-to-hard-delete behavior: chunk is removed immediately from the corpus.</li>
+</ul>
+<p>The post-termination review queue (<a class="xref" href="section-15-tenant-onboarding-compliance.html#s15-14-4">§15.14.4</a>) is the primary surface for these decisions when the origin tenant has terminated.</p>
+<h2 id="s22-9">22.9 Suggested Browser Extension Capability <a class="anchor-link" href="#s22-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Floating button on supported sites (cruise line domains, partner sites)</li>
+<li>Right-click → ‘Add to knowledge base’</li>
+<li>Captures: URL, page title, selected text (or full page on demand)</li>
+<li>Tags page automatically with detected entities</li>
+<li>OAuth-based auth to platform; per-user, not per-extension-instance</li>
+</ul>
+<h2 id="s22-10">22.10 iOS Shortcut Capability <a class="anchor-link" href="#s22-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Installable via share-sheet shortcut link</li>
+<li>Accepts: text, URL, image, PDF</li>
+<li>Calls platform API with attachment + optional user note</li>
+<li>OAuth-based auth; token stored in Shortcuts app</li>
+</ul>
+<h2 id="s22-11">22.11 Quality Signals from Submissions <a class="anchor-link" href="#s22-11" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>AI quality score (Haiku-derived) — early filter</li>
+<li>Tenant approval rate (% approved vs rejected) — feeds reputation</li>
+<li>Customer feedback on responses citing chunks — per <a class="xref" href="section-06-rag-service-schema.html#s6-10">§6.10</a> authority loop</li>
+<li>Duplicate detection rate — flagged for review patterns</li>
+</ul>
+<h2 id="s22-12">22.12 Re-Ingestion <a class="anchor-link" href="#s22-12" aria-label="Permalink">¶</a></h2>
+<p>Tenant may re-submit updated content (e.g., a refreshed promo PDF). Pipeline detects duplicates via content_hash and offers:</p>
+<ul>
+<li>Replace existing chunk (preserves chunk ID, updates content)</li>
+<li>Add as new chunk with supersedes link</li>
+<li>Cancel re-submission</li>
+</ul>
+<h2 id="s22-13">22.13 Failure Modes <a class="anchor-link" href="#s22-13" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Failure</strong></th><th><strong>Behavior</strong></th></tr></thead><tbody><tr><td>File parse error</td><td>Item marked failed; tenant sees error message; can retry or submit text manually</td></tr><tr><td>AI normalization timeout</td><td>Retry with backoff; if persistent, queue for manual review without AI metadata</td></tr><tr><td>PII zero-tolerance trigger</td><td>Quarantine; alert platform admin; tenant sees friendly message</td></tr><tr><td>Duplicate detected</td><td>Surface for tenant decision (replace / add / cancel)</td></tr><tr><td>File too large</td><td>Reject at upload boundary; suggest splitting</td></tr></tbody></table></div>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-21-rag-knowledge-base-consumer-side.html">← §21: RAG Knowledge Base (Consumer Side)</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-23-email-notifications.html">§23: Email & Notifications →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

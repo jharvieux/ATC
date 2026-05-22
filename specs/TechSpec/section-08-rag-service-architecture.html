@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 8 — RAG Service Architecture — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 8</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s8">Section 8 — RAG Service Architecture</h1>
+<p>Architectural details for the standalone RAG service: deployment, authentication, API contracts, and inter-service patterns.</p>
+<h2 id="s8-1">8.1 Deployment <a class="anchor-link" href="#s8-1" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Separate Next.js project deployed on Vercel</li>
+<li>Own Supabase project (separate from main app)</li>
+<li>Endpoint pattern: rag.ai-travelconcierge.com or similar subdomain</li>
+<li>Independent versioning and deployment cadence</li>
+</ul>
+<h2 id="s8-2">8.2 Tenant Registry Sync <a class="anchor-link" href="#s8-2" aria-label="Permalink">¶</a></h2>
+<p>The RAG service maintains a <code>tenant_registry_shadow</code> table mirroring the main app's <code>tenants</code> table. The shadow is kept in sync via the webhook from <code>/api/tenant-events</code> (<a class="xref" href="#s8-7">§8.7</a>) plus a nightly reconciliation cron. See <a class="xref" href="#s8-3">§8.3</a> for the full shadow-table design and the fail-closed authentication contract.</p>
+<p><strong>Lazy auto-registration from JWT claims (earlier spec language) is REMOVED.</strong> It created a tenant-injection vector and has been replaced by the explicit shadow-table model. If a JWT arrives for a <code>tenant_id</code> not in the shadow, the request fails with 403; the tenant lifecycle event will sync via the main app's retry queue (per <a class="xref" href="#s8-7a">§8.7a</a>) and nightly reconcile.</p>
+<h2 id="s8-3">8.3 Service-to-Service Authentication <a class="anchor-link" href="#s8-3" aria-label="Permalink">¶</a></h2>
+<p>All inter-service calls use JWT signed by the main app, verified by the RAG service.</p>
+<ul>
+<li>Algorithm: RS256</li>
+<li>TTL: 5 minutes</li>
+<li>Claims: <code>tenant_id</code>, <code>user_id</code> (or service-identifier), <code>persona_id</code>, <code>scope</code> (read/write), <code>jti</code></li>
+<li>Replay protection: <code>jti</code> cache in RAG service Redis</li>
+<li>Signing key in environment variable; rotated every 90 days with overlap window (raised from "annually" per H-5 — RS256 keys protecting cross-service auth should rotate more frequently than app-data encryption keys)</li>
+</ul>
+<h3>Fail-closed contract</h3>
+<p>Every check in the JWT validation path fails CLOSED. There is no fallback or fail-open mode. Each potential failure mode and its behavior:</p>
+<div class="table-wrap"><table><thead><tr><th>Failure mode</th><th>Response</th><th>Why</th></tr></thead><tbody><tr><td>JWT signature invalid</td><td>401 reject</td><td>Forged or wrong key</td></tr><tr><td>JWT expired (&gt;5 min old)</td><td>401 reject</td><td>Replay window exceeded</td></tr><tr><td><code>jti</code> already seen (Redis cache)</td><td>401 reject</td><td>Replay attempted</td></tr><tr><td>Redis unreachable</td><td>503 reject</td><td>Cannot verify replay protection; FAIL CLOSED. Do NOT proceed with un-checked jti.</td></tr><tr><td><code>tenant_id</code> not in registry shadow</td><td>403 reject</td><td>Tenant unknown to RAG; lazy auto-registration removed per <a class="xref" href="#s8-2">§8.2</a></td></tr><tr><td><code>tenant_id</code> in registry shadow but status != 'active'</td><td>403 reject</td><td>Tenant suspended or terminated</td></tr><tr><td>Any other unexpected error</td><td>500 reject</td><td>Surface for investigation; never proceed with partial validation</td></tr></tbody></table></div>
+<p>The contract is: if any check cannot complete, the request fails. There is no "best effort" mode.</p>
+<h3>Shadow tenant table</h3>
+<p>Per H-5 and C-7, the previous "lazy auto-registration" pattern is REMOVED. The RAG service must independently know which tenants are valid; it cannot derive that information from a JWT alone.</p>
+<p>The RAG service maintains a <code>tenant_registry_shadow</code> table that mirrors the main app's <code>tenants</code> table, kept in sync via:</p>
+<ol>
+<li><strong>Webhook from main app on every tenant lifecycle event</strong> (create, status change, terminate) — <a class="xref" href="#s8-7">§8.7</a>.</li>
+<li><strong>Nightly full reconciliation cron</strong> that compares the shadow against <code>/api/admin/tenants</code> listing from the main app. Any drift produces an alert; the reconcile process corrects it.</li>
+</ol>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.tenant_registry_shadow (
+  tenant_id UUID PRIMARY KEY,
+  status TEXT NOT NULL CHECK (status IN (
+    'active', 'suspended', 'terminated',
+    'pending_review', 'onboarding'
+  )),
+  tenant_type TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  last_webhook_sync_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_reconcile_sync_at TIMESTAMPTZ,
+  source_revision INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX tenant_registry_shadow_status_idx
+  ON public.tenant_registry_shadow(status);</code></pre>
+<p>The <code>source_revision</code> increments on every change in the main app and is shipped with the webhook payload. The RAG service uses it to detect out-of-order webhook delivery (a <code>source_revision &lt; shadow.source_revision</code> webhook is ignored as stale).</p>
+<h3>Webhook delivery on failure</h3>
+<p>If the main app's webhook to RAG fails (network error, RAG service down), the main app:</p>
+<ol>
+<li>Retries 3 times with exponential backoff (1s, 5s, 30s).</li>
+<li>On final failure: writes to a <code>pending_rag_sync</code> table in the main app (per <a class="xref" href="#s8-7a">§8.7a</a>) and returns success to the originating handler. The tenant lifecycle event is NOT blocked on RAG sync.</li>
+<li>A periodic cron (<code>rag-sync-retry</code>, every 5 minutes) processes <code>pending_rag_sync</code> rows.</li>
+<li>The nightly reconciliation handles anything still stuck.</li>
+</ol>
+<p>A tenant lifecycle event that cannot reach RAG within 24 hours produces a platform admin alert. This bounds the worst-case inconsistency window.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Redis unavailability is treated as service failure, not a bypass condition.</strong> The alternative (allow the request when Redis is down) re-opens the replay-attack window. Operational cost: a Redis outage takes down RAG retrieval. Mitigation: Redis HA + monitoring.</li>
+<li><strong>The shadow table is part of the RAG service Supabase project, not the main app's.</strong> Maintaining a copy is a deliberate duplication for defense in depth — the RAG service should be able to authorize requests without round-tripping to the main app.</li>
+<li><strong>90-day key rotation is a tighter cadence than the encryption key rotation (<a class="xref" href="section-28-environment-variables-reference.html#s28-20">§28.20</a> annual).</strong> Different threat models: app encryption keys protect data at rest; JWT signing keys protect cross-service auth. A leaked signing key is a faster path to tenant impersonation.</li>
+<li><strong>The nightly reconcile is the safety net for the entire shadow system.</strong> Without it, a missed webhook becomes permanent. The reconcile catches both directions of drift (extra rows in shadow, missing rows in shadow, status mismatches).</li>
+</ul>
+<h2 id="s8-4">8.4 POST /api/retrieve <a class="anchor-link" href="#s8-4" aria-label="Permalink">¶</a></h2>
+<p>The primary retrieval endpoint. Called by main app on every chat turn that needs knowledge.</p>
+<h3>Request</h3>
+<p>{</p>
+<p>“query”: “What are the best balcony cabins on Symphony of the Seas?”,</p>
+<p>“tenant_id”: “uuid”,</p>
+<p>“user_id”: “uuid”,</p>
+<p>“conversation_id”: “uuid”,</p>
+<p>“persona_id”: “uuid”,</p>
+<p>“filters”: {</p>
+<p>“category”: “cabin_intel”,</p>
+<p>“cruise_line”: “Royal Caribbean”,</p>
+<p>“ship”: “Symphony of the Seas”,</p>
+<p>“destination”: null,</p>
+<p>“agent_slug”: “marcus”</p>
+<p>},</p>
+<p>“top_k”: 5,</p>
+<p>“include_closed_promos_for_contact”: “contact-uuid-if-applicable”</p>
+<p>}</p>
+<h3>Response</h3>
+<p>{</p>
+<p>“chunks”: [</p>
+<p>{</p>
+<p>“id”: “uuid”,</p>
+<p>“content”: “…”,</p>
+<p>“category”: “cabin_intel”,</p>
+<p>“source_url”: “…”,</p>
+<p>“source_domain”: “royalcaribbean.com”,</p>
+<p>“scoring”: {</p>
+<p>"match_score": 0.91,</p>
+<p>"authority": 0.92,</p>
+<p>"authority_tier": "official",</p>
+<p>"recency": 0.85,</p>
+<p>"composite_confidence": 0.89</p>
+<p>},</p>
+<p>“metadata”: {</p>
+<p>"ingested_at": "...",</p>
+<p>"expires_at": null,</p>
+<p>"is_promo": false</p>
+<p>}</p>
+<p>}</p>
+<p>// …more chunks</p>
+<p>],</p>
+<p>“retrieval_id”: “uuid”,</p>
+<p>“retrieval_latency_ms”: 124</p>
+<p>}</p>
+<h2 id="s8-5">8.5 POST /api/ingest <a class="anchor-link" href="#s8-5" aria-label="Permalink">¶</a></h2>
+<p>Submission endpoint. Accepts raw content for the normalization pipeline (<a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a>). Returns queue item ID for status tracking.</p>
+<h2 id="s8-6">8.6 POST /api/approve/tenant and /api/approve/global <a class="anchor-link" href="#s8-6" aria-label="Permalink">¶</a></h2>
+<p>Approval endpoints called by main app when a tenant admin (or platform admin for global) approves a queue item. Creates the chunk.</p>
+<h2 id="s8-7">8.7 POST /api/tenant-events <a class="anchor-link" href="#s8-7" aria-label="Permalink">¶</a></h2>
+<p>Webhook receiver for tenant lifecycle events from main app: create, update status, terminate. Keeps tenant_registry in sync.</p>
+<h2 id="s8-7a">8.7a Main-App Retry Queue for RAG Sync <a class="anchor-link" href="#s8-7a" aria-label="Permalink">¶</a></h2>
+<p>The main app retries failed webhook deliveries to the RAG service before falling back to the nightly reconcile (which is the safety net per <a class="xref" href="#s8-3">§8.3</a>). The retry queue is stored in <code>pending_rag_sync</code> table.</p>
+<h3>Schema</h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.pending_rag_sync (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'tenant.created', 'tenant.status_changed',
+    'tenant.terminated', 'tenant.metadata_updated'
+  )),
+  payload JSONB NOT NULL,
+  source_revision INTEGER NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_attempt_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  delivered_at TIMESTAMPTZ
+);
+
+CREATE INDEX pending_rag_sync_ready_idx
+  ON public.pending_rag_sync(next_retry_at)
+  WHERE delivered_at IS NULL;</code></pre>
+<h3>Flow</h3>
+<ol>
+<li>Tenant lifecycle event occurs in main app.</li>
+<li>Handler tries direct webhook delivery to RAG service.</li>
+<li>If delivery succeeds (HTTP 200): proceed normally; do NOT write to <code>pending_rag_sync</code>.</li>
+<li>If delivery fails: write a <code>pending_rag_sync</code> row with <code>next_retry_at = NOW() + 1 minute</code>.</li>
+<li>Inngest cron <code>rag-sync-retry</code> runs every 5 minutes:</li>
+</ol>
+<ul>
+<li>Selects rows where <code>delivered_at IS NULL</code> AND <code>next_retry_at &lt;= NOW()</code>.</li>
+<li>For each, attempts webhook delivery with the stored payload.</li>
+<li>On success: set <code>delivered_at = NOW()</code>. Row is hard-deleted in nightly cleanup.</li>
+<li>On failure: increment <code>attempt_count</code>; compute backoff; set <code>next_retry_at</code>. Log <code>last_error</code>. 6. If a row reaches <code>attempt_count &gt;= 10</code> (~20 hours of total retry time): alert platform admin.</li>
+</ul>
+<h3>Backoff schedule</h3>
+<div class="table-wrap"><table><thead><tr><th>Attempt</th><th>Delay before next retry</th></tr></thead><tbody><tr><td>1 (after initial failure)</td><td>1 minute</td></tr><tr><td>2</td><td>5 minutes</td></tr><tr><td>3</td><td>15 minutes</td></tr><tr><td>4</td><td>30 minutes</td></tr><tr><td>5</td><td>1 hour</td></tr><tr><td>6</td><td>2 hours</td></tr><tr><td>7+</td><td>4 hours (capped)</td></tr></tbody></table></div>
+<h3>Ordering and source_revision</h3>
+<p>The <code>source_revision</code> column (per Batch 4 B4-E5) is preserved on the retry queue. The RAG service's shadow-table sync logic uses <code>source_revision</code> to detect out-of-order delivery: a webhook with <code>source_revision &lt; shadow.source_revision</code> is acknowledged but ignored. The retry queue does NOT need to deliver events in order.</p>
+<h3>Relationship to nightly reconcile</h3>
+<p>The retry queue handles short-term recovery (minutes to hours). The nightly reconcile (per <a class="xref" href="#s8-3">§8.3</a>) is the safety net for cases the retry queue cannot fix (extended RAG service downtime, handler bugs, schema mismatches).</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong><code>pending_rag_sync</code> rows are deleted on success.</strong> No retention beyond active retry.</li>
+<li><strong>Idempotency on the RAG side matters.</strong> The <code>source_revision</code> filter is the primary defense against duplicate processing.</li>
+<li><strong>Platform admin alert at attempt_count &gt;= 10 is a real intervention trigger.</strong></li>
+<li><strong>Order independence enables aggressive parallelism.</strong></li>
+</ul>
+<h2 id="s8-8">8.8 PII Redaction at Ingestion <a class="anchor-link" href="#s8-8" aria-label="Permalink">¶</a></h2>
+<p>Per <a class="xref" href="section-06-rag-service-schema.html#s6-11">§6.11</a> and <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a>: regex pre-filter for obvious patterns, then Haiku pass for subtler cases. Quarantine zero-tolerance items (passport, credit card). Redact tolerable items (names, emails, phones) with placeholders.</p>
+<h2 id="s8-9">8.9 Scope Isolation <a class="anchor-link" href="#s8-9" aria-label="Permalink">¶</a></h2>
+<p>RAG scope is strictly two-level: global (visible to all tenants) and tenant (visible only to that tenant). There is no inheritance, no ancestor walk, no cross-tenant visibility. A tenant’s submitted content stays in that tenant unless platform admin explicitly promotes it to global per <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-8">§22.8</a>.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-07-api-routes.html">← §7: API Routes</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-09-ai-personas.html">§9: AI Personas →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

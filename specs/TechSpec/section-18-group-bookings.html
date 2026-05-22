@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 18 — Group Bookings — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 18</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s18">Section 18 — Group Bookings</h1>
+<h2 id="s18-1">18.1 Lifecycle <a class="anchor-link" href="#s18-1" aria-label="Permalink">¶</a></h2>
+<p>planning ──► active ──► closed ──► sailed</p>
+<p>│ │</p>
+<p>│ └──► cancelled</p>
+<p>▼</p>
+<p>cancelled</p>
+<h2 id="s18-2">18.2 Group Creation <a class="anchor-link" href="#s18-2" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Coordinator picks cruise (line, ship, sailing date, departure port)</li>
+<li>Sets group preferences (max cabins, target group rate reference)</li>
+<li>Writes coordinator message (free text appearing prominently in invites)</li>
+<li>Configures visibility (invitee names visible vs anonymous default)</li>
+<li>Selects hero image (destination-relevant)</li>
+<li>Adds invitees (individually or bulk up to 50)</li>
+<li>Optional per-invitee personal notes</li>
+<li>Preview invitation email</li>
+<li>Send → transitions to active</li>
+</ul>
+<h2 id="s18-3">18.3 Destination-Relevant Hero Images <a class="anchor-link" href="#s18-3" aria-label="Permalink">¶</a></h2>
+<p>Hero image selection:</p>
+<ul>
+<li>Coordinator override (if uploaded)</li>
+<li>Match against destination_images library by tags</li>
+<li>AI generation fallback (Stable Diffusion XL or DALL-E 3)</li>
+<li>Cruise line default (last resort)</li>
+</ul>
+<p>Library is platform-curated with licensed imagery. AI generation gated by tenant tier and rate-limited per tenant for cost control. Generated images cached by (destination, cruise_line) for reuse.</p>
+<h2 id="s18-4">18.4 Invitation Email Components <a class="anchor-link" href="#s18-4" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Tenant branding (logo, colors)</li>
+<li>Destination-relevant hero image</li>
+<li>Personal greeting</li>
+<li>Coordinator’s message (prominent, styled like ‘a letter from a friend’)</li>
+<li>Cruise details and itinerary</li>
+<li>Group context (who’s RSVP’d, respecting anonymity)</li>
+<li>CTA → token-gated landing page</li>
+<li>Group rate reference and deadline</li>
+<li>CAN-SPAM compliant footer</li>
+</ul>
+<h2 id="s18-5">18.5 Invitee Landing Page <a class="anchor-link" href="#s18-5" aria-label="Permalink">¶</a></h2>
+<p>URL: <code>/group/invite/{token}</code> — HMAC-signed. Single canonical page; role-aware rendering.</p>
+<h3>Token validation contract</h3>
+<p>Every request to the invite URL validates the token through these checks, in order. ANY failure produces a clear tenant-facing error page (not a 404 — invitees need to understand what happened).</p>
+<ol>
+<li><strong>HMAC signature valid.</strong> Confirms the token was issued by the platform. Failure: "This invitation link is invalid. Please contact the trip coordinator for a new one."</li>
+<li><strong>Token exists in <code>invitations</code> table.</strong> A valid HMAC for a deleted row is treated as invalid. Failure: same message as (1).</li>
+<li><strong>Token not revoked.</strong> Check <code>invitations.token_revoked_at IS NULL</code>. If revoked, render with revocation reason:</li>
+</ol>
+<ul>
+<li><code>invitee_removed</code>: "You're no longer on the invitation list for this trip. Contact the coordinator if this is unexpected."</li>
+<li><code>coordinator_revoked</code>: "This invitation has been withdrawn. Contact the coordinator with questions."</li>
+<li><code>suspected_compromise</code>: same as <code>coordinator_revoked</code>.</li>
+<li><code>expired_natural</code>: see check (4).</li>
+</ul>
+<ol>
+<li><strong>Token not naturally expired.</strong> Per <a class="xref" href="#s18-9">§18.9</a>, tokens expire at <code>sailing_date + 30 days</code>. After expiry, set <code>token_revoked_at = NOW()</code>, <code>token_revoked_reason = 'expired_natural'</code> (lazy revocation — only marks expired on access; a cron also sweeps but the access-time check is the authoritative gate).</li>
+<li><strong>First-use binding (if applicable).</strong> If <code>invitations.token_first_used_at IS NOT NULL</code>:</li>
+</ol>
+<ul>
+<li>The first use was anonymous (no session): the token is now "warm" and any session can use it (rare path; covers an invitee who clicked through, browsed, and later returned).</li>
+<li>The first use was authenticated (user signed in during the invite flow): <code>invitations.token_bound_email</code> is set. ALL subsequent requests must come from an authenticated session where <code>auth.users.email = invitations.token_bound_email</code>. Mismatch produces: "This invitation has been linked to a different account. Please sign in with the account you used when first viewing this invitation, or contact the coordinator."</li>
+</ul>
+<p>Render the canonical page only after all five checks pass.</p>
+<h3>Page contents</h3>
+<ul>
+<li>Hero banner with destination image</li>
+<li>Coordinator's message</li>
+<li>Trip details + itinerary</li>
+<li>Cabin grid (booked / pending / available with color coding)</li>
+<li>RSVP section (Interested / Can't make it / Already booked)</li>
+<li>Group chat preview</li>
+<li>Pricing context</li>
+<li>Coordinator/admin section (visible only to coordinator and platform admin)</li>
+</ul>
+<h3>Coordinator revocation surface</h3>
+<p>Coordinators can revoke invitations from <code>/groups/{id}/invitations</code>:</p>
+<ul>
+<li>Per-invitee "Remove from invitation" action: sets <code>token_revoked_at = NOW()</code>, <code>token_revoked_reason = 'invitee_removed'</code>. The invitee's RSVP record (if any) is retained for audit but the token no longer resolves.</li>
+<li>"Suspected compromise" action: sets <code>token_revoked_reason = 'suspected_compromise'</code>. Audit-log entry records who flagged it.</li>
+<li>Bulk revoke "Re-issue invitations" action: revokes all currently-outstanding tokens with reason <code>coordinator_revoked</code> and generates fresh ones. Useful if a coordinator suspects the invitation list was shared too widely.</li>
+</ul>
+<p>All revocation actions write to <code>audit_log</code> per <a class="xref" href="section-26-security.html#s26-5">§26.5</a>.</p>
+<h3>Schema additions</h3>
+<p>The <code>invitations</code> table gains these columns:</p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.invitations
+  ADD COLUMN token_revoked_at TIMESTAMPTZ,
+  ADD COLUMN token_revoked_reason TEXT
+    CHECK (token_revoked_reason IN (
+      'invitee_removed', 'coordinator_revoked',
+      'first_use_authenticated', 'suspected_compromise', 'expired_natural'
+    )),
+  ADD COLUMN token_first_used_at TIMESTAMPTZ,
+  ADD COLUMN token_bound_email TEXT
+    -- After first authenticated use, the token is bound to the
+    -- specific email address. Subsequent uses with a different
+    -- session must match. NULL until first authenticated use.
+;
+
+CREATE INDEX invitations_token_lookup_idx ON public.invitations(token)
+  WHERE token_revoked_at IS NULL;</code></pre>
+<h2 id="s18-6">18.6 Anonymity <a class="anchor-link" href="#s18-6" aria-label="Permalink">¶</a></h2>
+<p>Two layers: coordinator default + per-invitee opt-out. The coordinator’s setting is a floor; invitees can opt toward more privacy (be anonymous when default visible) but not less.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Coordinator Default</strong></th><th><strong>Invitee Choice</strong></th><th><strong>Result</strong></th></tr></thead><tbody><tr><td>Visible</td><td>No opinion</td><td>Visible</td></tr><tr><td>Visible</td><td>Be anonymous</td><td>Hidden</td></tr><tr><td>Hidden</td><td>No opinion</td><td>Hidden</td></tr><tr><td>Hidden</td><td>Show me anyway</td><td>Hidden (coordinator decides)</td></tr></tbody></table></div>
+<h2 id="s18-7">18.7 RSVP States <a class="anchor-link" href="#s18-7" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>pending — never responded</li>
+<li>interested — clicked ‘I’m interested’ but hasn’t booked</li>
+<li>not_going — declined</li>
+<li>booked — completed a booking</li>
+</ul>
+<h2 id="s18-8">18.8 Reminder Cadence <a class="anchor-link" href="#s18-8" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Time Before Sailing</strong></th><th><strong>Reminder Frequency</strong></th></tr></thead><tbody><tr><td>24+ months</td><td>Every 6 weeks</td></tr><tr><td>12-24 months</td><td>Monthly</td></tr><tr><td>6-12 months</td><td>Every 2 weeks</td></tr><tr><td>1-6 months</td><td>Weekly</td></tr><tr><td>Final 30 days</td><td>‘Last chance’ at 14 days + 24h before group rate deadline (no automated weeklies)</td></tr></tbody></table></div>
+<p>All reminders constrained by 3 emails/24h per invitee rate limit. Inngest cron runs daily checking each invitee’s last-email-sent-at against appropriate interval for their time-before-sailing.</p>
+<h2 id="s18-9">18.9 Token Lifecycle <a class="anchor-link" href="#s18-9" aria-label="Permalink">¶</a></h2>
+<p>Invitation tokens have four lifecycle states tracked in <code>invitations.token_revoked_at</code> and related columns (per <a class="xref" href="#s18-5">§18.5</a> schema):</p>
+<div class="table-wrap"><table><thead><tr><th>State</th><th>Storage signal</th><th>Use behavior</th></tr></thead><tbody><tr><td>Active</td><td><code>token_revoked_at IS NULL</code>; not yet past <code>sailing_date + 30d</code></td><td>Token resolves; full landing page rendering per <a class="xref" href="#s18-5">§18.5</a></td></tr><tr><td>First-used (anonymous)</td><td><code>token_first_used_at IS NOT NULL</code>, <code>token_bound_email IS NULL</code></td><td>Token resolves; still anonymous-accessible</td></tr><tr><td>First-used (bound)</td><td><code>token_first_used_at IS NOT NULL</code>, <code>token_bound_email IS NOT NULL</code></td><td>Token resolves ONLY for authenticated sessions matching the bound email</td></tr><tr><td>Revoked</td><td><code>token_revoked_at IS NOT NULL</code></td><td>Token does not resolve; reason-specific error page</td></tr></tbody></table></div>
+<p>Tokens accommodate cruise booking windows up to 24+ months by expiring lazily at <code>sailing_date + 30 days</code>. After acceptance and authenticated signup, the invitee accesses the group via authenticated session — the token becomes a backup identifier (binding the session to the original invitation), not a primary auth credential.</p>
+<p>Lifecycle events that set revoked state:</p>
+<ul>
+<li>Coordinator removes invitee → <code>'invitee_removed'</code></li>
+<li>Coordinator manually revokes → <code>'coordinator_revoked'</code></li>
+<li>Coordinator flags compromise → <code>'suspected_compromise'</code></li>
+<li>Authenticated first-use completes → token NOT revoked, but <code>token_bound_email</code> set per <a class="xref" href="#s18-5">§18.5</a> step 5</li>
+<li>Natural expiry → <code>'expired_natural'</code> (set on next access or by nightly cron, whichever first)</li>
+</ul>
+<h2 id="s18-10">18.10 Sailed Status — Read-Only <a class="anchor-link" href="#s18-10" aria-label="Permalink">¶</a></h2>
+<p>At travel_start_date, group becomes IMMEDIATELY read-only for group details, RSVP, and member management. No edits, no new invitees. Forum chat stays open separately for in-trip and post-trip discussion.</p>
+<h2 id="s18-11">18.11 Coordinator Portal Tabs <a class="anchor-link" href="#s18-11" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Tab</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>Overview</td><td>Summary stats, recent activity, group rate countdown</td></tr><tr><td>Invitees</td><td>List with status, drill-in to each</td></tr><tr><td>Edit Group</td><td>Details, hero image, message, anonymity</td></tr><tr><td>Preview Email</td><td>Live invitation email preview</td></tr><tr><td>Forum</td><td>Forum chat moderation (also see <a class="xref" href="section-19-forum-style-group-chat.html">§19</a>)</td></tr></tbody></table></div>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-17-authentication-signup-consent.html">← §17: Authentication, Signup & Consent</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-19-forum-style-group-chat.html">§19: Forum-Style Group Chat →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

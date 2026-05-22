@@ -27,4 +27,9 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "escalation_topics",
   "customer_memories",
   "anonymous_sessions",
+  "contacts",
+  "contact_relationships",
+  "pipeline_stages",
+  "quotes",
+  "tenant_host_fee_overrides",
 ]);

@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 6 — RAG Service Schema — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 6</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s6">Section 6 — RAG Service Schema</h1>
+<p>The RAG (Retrieval-Augmented Generation) service runs in a separate Supabase project from the main app. This separation provides isolation: the main app’s schema can evolve without affecting RAG; the RAG service can scale independently; security boundaries are explicit.</p>
+<h2 id="s6-1">6.1 Service Separation Rationale <a class="anchor-link" href="#s6-1" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Independent scaling: RAG vector queries have different load patterns than transactional app queries</li>
+<li>Security isolation: RAG service has its own credentials and access policies</li>
+<li>Schema evolution: changes to RAG don’t require main app migrations</li>
+<li>Independent deployment: RAG service can be redeployed without main app downtime</li>
+</ul>
+<h2 id="s6-2">6.2 Tenant Registry (Synced from Main App) <a class="anchor-link" href="#s6-2" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.tenant_registry (</p>
+<p>tenant_id UUID PRIMARY KEY,</p>
+<p>tenant_type TEXT NOT NULL,</p>
+<p>status TEXT NOT NULL,</p>
+<p>synced_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>Synced via tenant lifecycle webhook from main app. RAG service is read-only on tenant data; it doesn’t manage tenants directly. No hierarchy information is tracked — the platform’s structure is strictly two-level (platform global + tenant), so the RAG service only needs to know that a tenant exists and what type it is.</p>
+<h2 id="s6-3">6.3 Authority Scale <a class="anchor-link" href="#s6-3" aria-label="Permalink">¶</a></h2>
+<p>Knowledge chunks are scored by authority. Five-tier scale:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Range</strong></th><th><strong>Description</strong></th></tr></thead><tbody><tr><td>authoritative_override</td><td>0.96-1.0</td><td>Manual override by platform admin; explicit verification</td></tr><tr><td>official</td><td>0.85-0.95</td><td>From cruise line, port authority, partner press release</td></tr><tr><td>tenant_verified</td><td>0.70-0.84</td><td>Tenant has explicitly verified accuracy</td></tr><tr><td>tenant_default</td><td>0.55-0.69</td><td>Standard tenant-submitted content</td></tr><tr><td>low</td><td>0.30-0.54</td><td>Community-sourced, unverified, or aged content</td></tr></tbody></table></div>
+<p>Pricing chunks auto-cap at 0.55. Manual override (with reason) bypasses the cap.</p>
+<p>Tenants can push their tenant-scoped content to 1.0 authority within their own scope. Within their tenant, their override beats everyone else. Doesn’t affect other tenants.</p>
+<h2 id="s6-4">6.4 knowledge_chunks Table <a class="anchor-link" href="#s6-4" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.knowledge_chunks (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>content TEXT NOT NULL,</p>
+<p>content_hash TEXT NOT NULL,</p>
+<p>token_count INTEGER,</p>
+<p>embedding VECTOR(1536),</p>
+<p>– Scope</p>
+<p>scope TEXT NOT NULL CHECK (scope IN (‘global’,‘tenant’)),</p>
+<p>tenant_id UUID REFERENCES public.tenant_registry(tenant_id),</p>
+<p>– Categorization</p>
+<p>category TEXT NOT NULL,</p>
+<p>cruise_line_or_supplier TEXT,</p>
+<p>ship_or_property TEXT,</p>
+<p>destination TEXT,</p>
+<p>agent_scope TEXT[],</p>
+<p>tags TEXT[],</p>
+<p>– Source</p>
+<p>source_type TEXT NOT NULL,</p>
+<p>source_url TEXT,</p>
+<p>source_domain TEXT,</p>
+<p>– Authority</p>
+<p>authority_auto NUMERIC(3,2) NOT NULL,</p>
+<p>authority_manual_override NUMERIC(3,2),</p>
+<p>authority_override_reason TEXT,</p>
+<p>– Lifecycle</p>
+<p>ingested_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>expires_at TIMESTAMPTZ,</p>
+<p>superseded_by_chunk_id UUID REFERENCES public.knowledge_chunks(id),</p>
+<p>– Special flags</p>
+<p>contains_pricing BOOLEAN DEFAULT FALSE,</p>
+<p>promo_sell_by_date DATE,</p>
+<p>promo_sail_by_date DATE,</p>
+<p>promo_status TEXT,</p>
+<p>– Status</p>
+<p>status TEXT DEFAULT ‘approved’,</p>
+<p>ingested_by_user_id UUID,</p>
+<p>approved_by_user_id UUID,</p>
+<p>approved_at TIMESTAMPTZ</p>
+<p>);</p>
+<p>CREATE INDEX knowledge_chunks_embedding_idx</p>
+<p>ON public.knowledge_chunks USING ivfflat (embedding vector_cosine_ops);</p>
+<p>CREATE INDEX knowledge_chunks_scope_tenant_idx</p>
+<p>ON public.knowledge_chunks(scope, tenant_id);</p>
+<p>CREATE INDEX knowledge_chunks_category_idx</p>
+<p>ON public.knowledge_chunks(category);</p>
+<h2 id="s6-5">6.5 Knowledge Ingestion Queue <a class="anchor-link" href="#s6-5" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.knowledge_ingestion_queue (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>– Submission</p>
+<p>raw_content TEXT NOT NULL,</p>
+<p>raw_source_url TEXT,</p>
+<p>raw_source_type TEXT NOT NULL,</p>
+<p>raw_metadata JSONB,</p>
+<p>submitted_by_user_id UUID NOT NULL,</p>
+<p>submitted_by_tenant_id UUID NOT NULL,</p>
+<p>submitted_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>scope_intent TEXT DEFAULT ‘tenant’,</p>
+<p>priority TEXT DEFAULT ‘normal’,</p>
+<p>– Normalization</p>
+<p>normalized_content TEXT,</p>
+<p>ai_suggested_category TEXT,</p>
+<p>ai_suggested_cruise_line TEXT,</p>
+<p>ai_suggested_ship TEXT,</p>
+<p>ai_suggested_destination TEXT,</p>
+<p>ai_summary TEXT,</p>
+<p>ai_quality_score NUMERIC(3,2),</p>
+<p>ai_authority_score NUMERIC(3,2),</p>
+<p>ai_relevance_score_global NUMERIC(3,2),</p>
+<p>ai_pricing_detected BOOLEAN,</p>
+<p>ai_promo_detection JSONB,</p>
+<p>– Review</p>
+<p>edited_content TEXT,</p>
+<p>edited_category TEXT,</p>
+<p>edited_authority_override NUMERIC(3,2),</p>
+<p>edited_authority_override_reason TEXT,</p>
+<p>edited_expires_at TIMESTAMPTZ,</p>
+<p>tenant_reviewed_by_user_id UUID,</p>
+<p>tenant_reviewed_at TIMESTAMPTZ,</p>
+<p>– Global review (per <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a> revised model)</p>
+<p>global_review_status TEXT,</p>
+<p>global_submitted_at TIMESTAMPTZ,</p>
+<p>global_reviewed_by_user_id UUID,</p>
+<p>global_reviewed_at TIMESTAMPTZ,</p>
+<p>auto_flagged_for_global BOOLEAN DEFAULT FALSE,</p>
+<p>tenant_global_promotion_objection BOOLEAN DEFAULT FALSE,</p>
+<p>tenant_objection_reason TEXT,</p>
+<p>– Promotion</p>
+<p>promoted_to_chunk_id UUID REFERENCES public.knowledge_chunks(id),</p>
+<p>promoted_at TIMESTAMPTZ,</p>
+<p>promotion_scope TEXT,</p>
+<p>– Stage</p>
+<p>processing_stage TEXT DEFAULT ‘submitted’,</p>
+<p>failure_reason TEXT</p>
+<p>);</p>
+<h2 id="s6-6">6.6 Retrieval Logging <a class="anchor-link" href="#s6-6" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.rag_retrieval_log (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL,</p>
+<p>user_id UUID,</p>
+<p>conversation_id UUID,</p>
+<p>persona_id UUID,</p>
+<p>query_text TEXT,</p>
+<p>filters_applied JSONB,</p>
+<p>chunks_returned JSONB, – chunk IDs + scores</p>
+<p>top_k_requested INTEGER,</p>
+<p>retrieval_latency_ms INTEGER,</p>
+<p>outcome TEXT,</p>
+<p>outcome_signal_source TEXT,</p>
+<p>occurred_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX rag_retrieval_log_tenant_idx</p>
+<p>ON public.rag_retrieval_log(tenant_id, occurred_at DESC);</p>
+<h2 id="s6-7">6.7 Promo Lifecycle <a class="anchor-link" href="#s6-7" aria-label="Permalink">¶</a></h2>
+<p>Promos transition through four states. The state is a function of the current time relative to two dates: <code>sell_by</code> (last date a new booking can use the promo) and <code>sail_by</code> (last sailing the promo covers).</p>
+<pre class="codeblock"><code>not_started (NOW &lt; sell_by_start, if defined)
+  │
+  ▼ (sell_by_start reached, or no sell_by_start)
+open_to_new
+  │
+  ▼ (NOW &gt;= sell_by)
+closed_to_new ← retrieval filters this OUT for new prospects
+  │            BUT includes for contacts with existing booking
+  │
+  ▼ (NOW &gt;= sail_by)
+expired ← retrieval excludes entirely</code></pre>
+<h3>Idempotent state reconciliation</h3>
+<p>The promo state is NOT just a stored field that a cron flips at the right moment. It is a <strong>function of current time</strong> that the cron reconciles. This pattern matters because:</p>
+<ul>
+<li>Cron failures (Inngest outage, DST bugs, late execution, timezone drift) must not leave promos in wrong states.</li>
+<li>Backfill on recovery must reach the correct state regardless of how many transitions were missed.</li>
+</ul>
+<p>The implementation:</p>
+<pre class="codeblock" data-lang="sql"><code>-- The expected state for a promo at any moment is computable.
+-- Implementation as a function so it's used by both retrieval and
+-- reconciliation.
+CREATE OR REPLACE FUNCTION public.expected_promo_state(
+  sell_by_start_at TIMESTAMPTZ,
+  sell_by_at TIMESTAMPTZ,
+  sail_by_at TIMESTAMPTZ
+) RETURNS TEXT
+LANGUAGE SQL
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT CASE
+    WHEN NOW() &lt; sell_by_start_at THEN 'not_started'
+    WHEN NOW() &gt;= sail_by_at THEN 'expired'
+    WHEN NOW() &gt;= sell_by_at THEN 'closed_to_new'
+    ELSE 'open_to_new'
+  END;
+$$;</code></pre>
+<p>The reconciliation cron (<code>promo-state-reconcile</code>) runs every 15 minutes and updates any drifted state. The <code>knowledge_chunks</code> table requires columns <code>promo_status</code>, <code>promo_status_reconciled_at</code>, <code>sell_by_start_at</code>, <code>sell_by_at</code>, <code>sail_by_at</code> for this — confirm they exist in <a class="xref" href="#s6-4">§6.4</a> and add if missing.</p>
+<h3>Drift alerting</h3>
+<p>A separate Inngest cron (<code>promo-state-drift-alert</code>) runs every hour and counts promos whose <code>promo_status</code> does not match the expected state. If the count exceeds zero for more than 30 minutes, the platform admin is paged. Drift longer than 30 minutes implies the reconciliation cron itself is broken.</p>
+<h3>Lazy state read fallback</h3>
+<p>For retrieval (<a class="xref" href="section-08-rag-service-architecture.html#s8-4">§8.4</a> <code>/api/retrieve</code>), the scope filter computes the expected state at query time rather than trusting the stored value:</p>
+<pre class="codeblock" data-lang="sql"><code>WHERE (NOT is_promo) OR public.expected_promo_state(
+  sell_by_start_at, sell_by_at, sail_by_at
+) IN ('open_to_new', 'closed_to_new')
+-- closed_to_new filtered further per §6.9 / §8.4 contact context</code></pre>
+<p>This is defense in depth: even if the stored <code>promo_status</code> is stale (reconciliation cron failed), retrieval gets the right answer based on current time.</p>
+<h3>Backfill on recovery</h3>
+<p>If the reconciliation cron is paused/broken for an extended period and then resumes, the function above naturally reaches the correct state on the next run — it operates on absolute time, not relative state-machine steps. There is no "I missed an event" problem because there are no events; the state is purely a function of time.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Timezone correctness is the silent killer.</strong> All date columns on promos are TIMESTAMPTZ. NOW() returns UTC. Tenant-facing promo expiry messages render the date in the tenant's locale, but internal comparisons are UTC. Mixing locale-naive timestamps into this calculation produces hour-scale drift.</li>
+<li><strong>The lazy-state-read fallback in retrieval is non-negotiable.</strong> It's the recovery path for any cron failure. Without it, a cron-down weekend has tenants citing expired promos.</li>
+<li><strong>Drift count &gt; 0 for 30 minutes pages someone.</strong> Don't tune this to be permissive; promo state drift is a customer-visible bug (AI commits to closed promos, retrieves expired ones).</li>
+</ul>
+<h2 id="s6-8">6.8 Pricing Authority Cap <a class="anchor-link" href="#s6-8" aria-label="Permalink">¶</a></h2>
+<p>Pricing content is volatile. Auto-cap at 0.55 reduces the risk of stale prices being treated as authoritative. The cap can be manually overridden (with reason) for content where pricing is intentionally part of authoritative communication (e.g., a freshly-confirmed group rate). The override is logged in audit and visible in chunk metadata.</p>
+<h2 id="s6-9">6.9 Retrieval Scope <a class="anchor-link" href="#s6-9" aria-label="Permalink">¶</a></h2>
+<p>Retrieval scope: global content + caller’s own tenant. No cross-tenant content visibility under any circumstances. The platform’s structure is strictly two-level — there are no ancestor tenants to inherit content from.</p>
+<p>– Retrieval query scope:</p>
+<p>WHERE scope = ‘global’</p>
+<p>OR (scope = ‘tenant’ AND tenant_id = caller_tenant_id)</p>
+<h2 id="s6-10">6.10 Customer Feedback Confidence Factor <a class="anchor-link" href="#s6-10" aria-label="Permalink">¶</a></h2>
+<p>Customer feedback signals (thumbs up/down on AI responses citing specific chunks) inform a <strong>feedback confidence factor</strong> — a fourth input to retrieval ranking, additive to the existing relevance × authority × recency composite.</p>
+<p>This is a deliberate departure from earlier draft language that described feedback as modifying chunk <code>authority_score</code> directly. The earlier model conflated intrinsic chunk quality (authority) with observed retrieval performance (feedback). The new model keeps these separate:</p>
+<ul>
+<li><strong><code>authority_score</code></strong> — chunk's intrinsic authority. Set by <code>authority_auto</code> at ingestion (per <a class="xref" href="#s6-3">§6.3</a> ingestion quality signals); optionally overridden by <code>authority_manual_override</code> for platform-admin curation. NEVER modified by customer feedback.</li>
+<li><strong><code>feedback_confidence_factor</code></strong> — a separate per-chunk value derived from cumulative customer feedback with exponential time decay. Bounded to <code>[-limit, +limit]</code> where <code>limit</code> is configurable (default 0.05). Recomputed on retrieval (with a short cache).</li>
+</ul>
+<h3>Schema additions</h3>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.knowledge_chunks
+  ADD COLUMN feedback_signal_count INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN feedback_weighted_sum NUMERIC(8,4) NOT NULL DEFAULT 0,
+  ADD COLUMN feedback_last_recompute_at TIMESTAMPTZ;
+
+CREATE TABLE public.knowledge_chunk_feedback_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chunk_id UUID NOT NULL REFERENCES public.knowledge_chunks(id) ON DELETE CASCADE,
+  message_id UUID REFERENCES public.messages(id),
+  signal_direction TEXT NOT NULL CHECK (signal_direction IN ('up', 'down')),
+  -- Raw weight contribution at the moment of capture, before decay.
+  raw_weight NUMERIC(4,2) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX kcfe_chunk_time_idx
+  ON public.knowledge_chunk_feedback_events(chunk_id, created_at DESC);</code></pre>
+<h3>The four configurable knobs</h3>
+<p>Stored in the new <code>platform_settings</code> table (per <a class="xref" href="section-05-database-schema-main-app.html#s5-5">§5.5</a> below). Modifiable from the platform admin console:</p>
+<div class="table-wrap"><table><thead><tr><th>Setting</th><th>Default</th><th>Range</th><th>Effect</th></tr></thead><tbody><tr><td><code>feedback_adjustment_limit</code></td><td>0.05</td><td>0.0–0.5</td><td>Maximum signed adjustment to retrieval score from feedback</td></tr><tr><td><code>feedback_min_signal_count</code></td><td>2</td><td>1–100</td><td>Minimum signal count within <code>feedback_period_days</code> to trigger any adjustment</td></tr><tr><td><code>feedback_period_days</code></td><td>30</td><td>1–365</td><td>Lookback window for the minimum signal count</td></tr><tr><td><code>feedback_decay_halflife_days</code></td><td>90</td><td>1–365</td><td>Time at which a signal's weight has decayed to 50% of its initial value</td></tr></tbody></table></div>
+<p>All four are platform-wide settings; no per-tenant override. Tenants do not see these knobs.</p>
+<p>Changes to any setting take effect on the next retrieval (no batch reprocessing — the recomputation function reads current settings each invocation).</p>
+<h3>Recomputation function</h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE OR REPLACE FUNCTION public.compute_feedback_factor(
+  p_chunk_id UUID
+) RETURNS NUMERIC
+LANGUAGE plpgsql
+STABLE
+SET search_path = ''
+AS $$
+DECLARE
+  v_adjustment_limit NUMERIC;
+  v_min_signal_count INTEGER;
+  v_period_days INTEGER;
+  v_halflife_days INTEGER;
+  v_recent_signal_count INTEGER;
+  v_decay_weighted_sum NUMERIC;
+BEGIN
+  -- Read current platform settings.
+  SELECT value::NUMERIC INTO v_adjustment_limit
+    FROM public.platform_settings WHERE key = 'feedback_adjustment_limit';
+  SELECT value::INTEGER INTO v_min_signal_count
+    FROM public.platform_settings WHERE key = 'feedback_min_signal_count';
+  SELECT value::INTEGER INTO v_period_days
+    FROM public.platform_settings WHERE key = 'feedback_period_days';
+  SELECT value::INTEGER INTO v_halflife_days
+    FROM public.platform_settings WHERE key = 'feedback_decay_halflife_days';
+
+  -- Gate: minimum signal count within the lookback period.
+  SELECT COUNT(*) INTO v_recent_signal_count
+    FROM public.knowledge_chunk_feedback_events
+    WHERE chunk_id = p_chunk_id
+      AND created_at &gt;= NOW() - (v_period_days || ' days')::INTERVAL;
+
+  IF v_recent_signal_count &lt; v_min_signal_count THEN
+    RETURN 0;
+  END IF;
+
+  -- Cumulative-with-decay: sum of raw_weight × decay factor.
+  SELECT COALESCE(SUM(
+    raw_weight * POWER(0.5, EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / v_halflife_days)
+  ), 0) INTO v_decay_weighted_sum
+    FROM public.knowledge_chunk_feedback_events
+    WHERE chunk_id = p_chunk_id;
+
+  -- Clamp to [-limit, +limit].
+  RETURN GREATEST(-v_adjustment_limit,
+                  LEAST(v_adjustment_limit, v_decay_weighted_sum * 0.01));
+  -- The * 0.01 scaling factor converts raw weighted-sum units into
+  -- the adjustment scale. Calibrate during Phase 1.
+END;
+$$;</code></pre>
+<h3>Retrieval integration</h3>
+<p>The retrieval scoring in <a class="xref" href="section-08-rag-service-architecture.html#s8-4">§8.4</a> changes from:</p>
+<pre class="codeblock"><code>composite_confidence = match_score × authority × recency</code></pre>
+<p>to:</p>
+<pre class="codeblock"><code>composite_confidence = (match_score × authority × recency) + feedback_factor</code></pre>
+<p>where <code>feedback_factor</code> comes from <code>compute_feedback_factor(chunk_id)</code>, clamped to the configured limit. The retrieval response per <a class="xref" href="section-08-rag-service-architecture.html#s8-4">§8.4</a> returns <code>feedback_factor</code> as a fifth scoring component for transparency.</p>
+<h3>Where feedback events come from</h3>
+<p>The <code>/api/chat/feedback</code> endpoint (per <a class="xref" href="section-07-api-routes.html#s7-2">§7.2</a>) records thumbs-up/thumbs-down on a message. When the message had a non-empty <code>cited_chunk_ids</code> set, each cited chunk gets a <code>knowledge_chunk_feedback_events</code> row inserted:</p>
+<ul>
+<li>Thumbs up → <code>signal_direction = 'up'</code>, <code>raw_weight = +1.0</code></li>
+<li>Thumbs down → <code>signal_direction = 'down'</code>, <code>raw_weight = -1.0</code></li>
+</ul>
+<p>A single feedback event can produce multiple feedback rows (one per cited chunk).</p>
+<h3>Caching</h3>
+<p><code>compute_feedback_factor</code> is <code>STABLE</code> (deterministic for a single transaction). For high-traffic retrieval, the function result is cached at the application layer per chunk for 5 minutes.</p>
+<h3>Platform admin surface</h3>
+<p>The platform admin console gains a "Feedback Tuning" page showing current knob values (editable), histograms of <code>feedback_factor</code> distribution, top chunks by absolute feedback_factor, and settings-change history. Settings changes are gated by <code>withPlatformAdminAudit</code> with <code>reason = 'feedback_settings_change'</code>.</p>
+<h3><code>platform_settings</code> table</h3>
+<p>New table for platform-wide configurable settings, modifiable from the platform admin console without code deploys:</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.platform_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  description TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by_user_id UUID REFERENCES public.users(id)
+);
+
+-- Seed values
+INSERT INTO public.platform_settings (key, value, description) VALUES
+  ('feedback_adjustment_limit', '0.05'::JSONB,
+   'Max signed adjustment to retrieval score from feedback (per §6.10)'),
+  ('feedback_min_signal_count', '2'::JSONB,
+   'Minimum signal count to trigger any feedback adjustment (per §6.10)'),
+  ('feedback_period_days', '30'::JSONB,
+   'Lookback window for minimum signal count check (per §6.10)'),
+  ('feedback_decay_halflife_days', '90'::JSONB,
+   'Halflife for exponential decay of older feedback signals (per §6.10)');</code></pre>
+<p>This table lives in the main app's Supabase project (not the RAG project) and is queried by the RAG service via the existing internal API where needed.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Authority and feedback are separate inputs by design.</strong> A future refactor that "simplifies" by collapsing them into a single score loses this separation. Don't.</li>
+<li><strong>Default decay halflife of 90 days is slow.</strong> A chunk that gets consistent thumbs-down for a month will accumulate signal but the adjustment grows gradually. Faster halflife (e.g., 30 days) makes the loop more reactive at the cost of being more thrash-prone. Tune in Phase 1.</li>
+<li><strong>Minimum signal count = 2 is permissive.</strong> Two thumbs is enough to start moving the factor. This is intentional during early operation when feedback volume is low. Raise as traffic grows.</li>
+<li><strong>The clamp at ±0.05 is a hard ceiling on impact.</strong> Even thousands of thumbs-down on one chunk only adjusts retrieval score by 0.05. This protects against coordinated-thumbs-down attacks while still letting genuine signal accumulate.</li>
+<li><strong>Per-tenant override is deliberately NOT supported.</strong> Tenants can't tune their own corpus's feedback dynamics. This keeps platform retrieval behavior consistent and prevents tenants from gaming their own scoring.</li>
+</ul>
+<h2 id="s6-11">6.11 PII Exclusion <a class="anchor-link" href="#s6-11" aria-label="Permalink">¶</a></h2>
+<p>RAG content must not contain customer PII. Ingestion pipeline (<a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a>) redacts PII before chunks are created. Reports of PII slipping through trigger immediate chunk removal.</p>
+<h2 id="s6-12">6.12 Retention <a class="anchor-link" href="#s6-12" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Approved chunks: indefinite while tenant is active</li>
+<li>Rejected/failed queue items: 90 days</li>
+<li>Retrieval log detail: 90 days, then aggregated</li>
+<li>Audit log on chunk changes: 7 years</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-05-database-schema-main-app.html">← §5: Database Schema (Main App)</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-07-api-routes.html">§7: API Routes →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

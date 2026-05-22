@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 29 — Deployment & Infrastructure — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 29</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s29">Section 29 — Deployment &amp; Infrastructure</h1>
+<p>This section covers how the platform gets from code to production: hosting topology, environment progression, DNS, database management, deployments, rollbacks, and operational runbooks.</p>
+<h2 id="s29-1">29.1 Service Topology <a class="anchor-link" href="#s29-1" aria-label="Permalink">¶</a></h2>
+<p>            ┌─────────────────────────────────────┐</p>
+<p>            │         Vercel (US-East primary)    │</p>
+<p>            │  ┌──────────────┐  ┌─────────────┐  │</p>
+<p>            │  │  Main App    │  │ RAG Service │  │</p>
+<p>            │  │  Next.js 14  │  │  Next.js 14 │  │</p>
+<p>            │  └──────┬───────┘  └──────┬──────┘  │</p>
+<p>            └─────────┼─────────────────┼──────────┘</p>
+<p>                      │                 │</p>
+<p>      ┌───────────────┼─────────────────┼───────────────┐</p>
+<p>      │               │                 │               │</p>
+<p>      ▼               ▼                 ▼               ▼</p>
+<p>┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐</p>
+<p>│ Supabase │ │ Supabase │ │ Stripe │ │ Anthropic │</p>
+<p>│ (Main DB) │ │ (RAG DB) │ │ │ │ │</p>
+<p>│ Auth+Storage│ │ pgvector │ │ │ │ │</p>
+<p>└────────────┘ └────────────┘ └────────────┘ └────────────┘</p>
+<p>      │</p>
+<p>      ▼</p>
+<p>┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐</p>
+<p>│ Resend │ │ Inngest │ │ OpenAI │ │ Image gen │</p>
+<p>│ │ │ │ │ │ │ (Replicate │</p>
+<p>│ │ │ │ │ │ │ or DALL-E) │</p>
+<p>└────────────┘ └────────────┘ └────────────┘ └────────────┘</p>
+<p>Two Vercel projects, two Supabase projects. Everything else SaaS. No self-hosted infrastructure at launch — deliberate choice to keep operational overhead minimal until volume justifies otherwise.</p>
+<h2 id="s29-2">29.2 Vercel Project Configuration <a class="anchor-link" href="#s29-2" aria-label="Permalink">¶</a></h2>
+<p>Two Vercel projects:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Project</strong></th><th><strong>Code Path</strong></th><th><strong>Domain</strong></th></tr></thead><tbody><tr><td>main-app</td><td>apps/main</td><td>Production: *.ai-travelconcierge.com, tenant custom domains</td></tr><tr><td>rag-service</td><td>apps/rag</td><td>Production: rag.ai-travelconcierge.com</td></tr></tbody></table></div>
+<p>Both deployed from the same monorepo via Vercel’s monorepo support. Each project specifies its own root directory and build command.</p>
+<h3>Build settings</h3>
+<ul>
+<li>Framework: Next.js (auto-detected)</li>
+<li>Node version: 22.x (matches local dev)</li>
+<li>Build command: pnpm build (workspace-aware)</li>
+<li>Install command: pnpm install –frozen-lockfile</li>
+<li>Output directory: .next</li>
+</ul>
+<h3>Runtime</h3>
+<ul>
+<li>Default: Edge runtime for middleware (tenant resolver), Node.js runtime for API routes</li>
+<li>Functions with heavy dependencies (Anthropic SDK, Stripe SDK): Node.js runtime explicitly</li>
+<li>Max execution duration: 60 seconds for streaming routes, 30 seconds for others</li>
+</ul>
+<h2 id="s29-3">29.3 Environments <a class="anchor-link" href="#s29-3" aria-label="Permalink">¶</a></h2>
+<p>Three environments. Vercel’s preview deployments map to ‘staging’ per branch.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Environment</strong></th><th><strong>Trigger</strong></th><th><strong>Domain</strong></th><th><strong>DB</strong></th><th><strong>Stripe</strong></th></tr></thead><tbody><tr><td>Development</td><td>Local</td><td>localhost:3000</td><td>Local or shadow Supabase</td><td>Test mode</td></tr><tr><td>Staging</td><td>Push to main branch</td><td>staging.ai-travelconcierge.com</td><td>Dedicated staging Supabase</td><td>Test mode</td></tr><tr><td>Production</td><td>Manual promote from staging</td><td>ai-travelconcierge.com + tenant domains</td><td>Production Supabase</td><td>Live mode</td></tr></tbody></table></div>
+<p>Promotion model: explicit, not automatic. Pushes to main deploy to staging. Production deploys require a manual ‘Promote to Production’ action in Vercel, gated by a deployment-approval team. This is friction by design — production deploys deserve a moment of consideration.</p>
+<p>Per-branch preview deployments (feature branches) auto-deploy to ephemeral URLs with staging environment variables. Useful for design review without touching staging.</p>
+<h2 id="s29-4">29.4 DNS Configuration <a class="anchor-link" href="#s29-4" aria-label="Permalink">¶</a></h2>
+<p>Platform-owned DNS for the primary domain (registrar: TBD; Cloudflare recommended for DNS-only mode).</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Record</strong></th><th><strong>Value</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>ai-travelconcierge.com A</td><td>Vercel anycast IPs</td><td>Apex</td></tr><tr><td>www CNAME</td><td>cname.vercel-dns.com</td><td>Redirect to apex</td></tr><tr><td>*.ai-travelconcierge.com CNAME</td><td>cname.vercel-dns.com</td><td>Wildcard for tenant subdomains</td></tr><tr><td>rag.ai-travelconcierge.com CNAME</td><td>cname.vercel-dns.com</td><td>RAG service</td></tr><tr><td>admin.ai-travelconcierge.com CNAME</td><td>cname.vercel-dns.com</td><td>Admin console</td></tr><tr><td>mail.ai-travelconcierge.com MX/SPF/DKIM/DMARC</td><td>Per Resend setup</td><td>Outbound mail</td></tr><tr><td>_acme-challenge / various</td><td>Per Vercel/Resend</td><td>TLS + email verification</td></tr></tbody></table></div>
+<p>Tenant custom domains (per <a class="xref" href="section-16-white-label-branding.html#s16-3">§16.3</a>) live in tenants’ own DNS. Tenants add CNAMEs pointing at tenants.ai-travelconcierge.com. Vercel auto-provisions TLS via Let’s Encrypt on first request.</p>
+<h2 id="s29-5">29.5 Supabase Project Setup <a class="anchor-link" href="#s29-5" aria-label="Permalink">¶</a></h2>
+<p>Two production Supabase projects, separate billing line items.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Project</strong></th><th><strong>Tier at Launch</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>main-app-prod</td><td>Pro tier</td><td>Standard transactional load</td></tr><tr><td>rag-service-prod</td><td>Pro tier with pgvector enabled</td><td>Vector indexes need memory; reassess if query latency degrades</td></tr></tbody></table></div>
+<p>Same configuration repeated for main-app-staging and rag-service-staging on Free tier (acceptable for staging).</p>
+<h3>Critical Supabase configuration</h3>
+<ul>
+<li>PITR (Point-in-Time Recovery) enabled on production projects — required for any data-loss recovery beyond 7-day window</li>
+<li>Daily backups retained for 30 days</li>
+<li>Connection pooler (Supavisor) used for serverless functions</li>
+<li>Read replicas: not at launch; add when read load justifies (~5,000 concurrent users would be the trigger)</li>
+</ul>
+<p>I’m not 100% certain Supabase still calls their pooler ‘Supavisor’ in 2026 — they did historically, but verify against current Supabase docs.</p>
+<h2 id="s29-6">29.6 Database Migrations <a class="anchor-link" href="#s29-6" aria-label="Permalink">¶</a></h2>
+<p>Migrations live in the monorepo:</p>
+<p>supabase/</p>
+<p>main/</p>
+<p>migrations/</p>
+<p>20260201_initial_schema.sql</p>
+<p>20260315_add_tenant_usage_metrics.sql</p>
+<p>…</p>
+<p>rag/</p>
+<p>migrations/</p>
+<p>20260201_initial_schema.sql</p>
+<p>…</p>
+<p>Tooling: Supabase CLI with supabase db push. Migrations are forward-only in production. No down migrations in the migration files — rollback is via restore-from-backup or compensating forward migration.</p>
+<h3>Deployment sequence for a release with schema changes</h3>
+<ul>
+<li>PR merged to main</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>CI runs migrations against staging DB (auto)</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Staging deploy proceeds (Vercel preview → staging)</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Smoke tests on staging (automated + manual gate)</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Manual promote to production</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>CI runs migrations against production DB (gated)</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Vercel production deploy proceeds</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Post-deploy smoke tests on production</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Monitor Sentry / metrics for 30 minutes</li>
+</ul>
+<h3>Migration rules</h3>
+<ul>
+<li>Schema changes must be backward-compatible with the previous application version for one deploy cycle (allows rollback without DB rollback)</li>
+<li>Adding nullable columns: safe, run anytime</li>
+<li>Adding non-nullable columns: two-step — add as nullable, backfill, then add NOT NULL constraint in a follow-up migration</li>
+<li>Dropping columns: two-step — stop writing in app code (deploy), then drop in next release</li>
+<li>Renaming columns: never. Add new, dual-write, migrate reads, then drop old. Three releases minimum.</li>
+<li>Changing types: case-by-case. Usually requires new column + dual-write pattern.</li>
+</ul>
+<h2 id="s29-7">29.7 Deployment Workflow <a class="anchor-link" href="#s29-7" aria-label="Permalink">¶</a></h2>
+<h3>Standard release (no schema changes)</h3>
+<ul>
+<li>Developer opens PR against main</li>
+<li>CI runs: typecheck, lint, unit tests, integration tests against ephemeral staging DB</li>
+<li>Vercel deploys a preview URL for the PR</li>
+<li>Reviewer (different person than author for production-impacting changes) approves</li>
+<li>PR merges to main</li>
+<li>Vercel auto-deploys to staging</li>
+<li>Smoke tests run against staging</li>
+<li>Engineer manually promotes to production via Vercel dashboard</li>
+<li>Production deploy is canary’d: Vercel routes 5% of traffic to new build for 10 minutes; if error rate stays normal, ramps to 100%</li>
+<li>Post-deploy: watch Sentry, /admin/dashboard health metrics for 30 minutes</li>
+</ul>
+<p>Release with schema changes: add migration step from <a class="xref" href="#s29-6">§29.6</a> between steps 4 and 7.</p>
+<h3>Emergency hotfix</h3>
+<ul>
+<li>Skip the canary ramp; deploy direct to 100% if the bug is severe enough that current users are blocked</li>
+<li>Still goes through staging unless staging itself is the bug source</li>
+<li>Post-hoc PR review required within 24 hours</li>
+</ul>
+<h2 id="s29-8">29.8 Rollback Strategy <a class="anchor-link" href="#s29-8" aria-label="Permalink">¶</a></h2>
+<h3>Code rollback (no DB schema involved)</h3>
+<ul>
+<li>Vercel keeps every deployment. ‘Instant Rollback’ via dashboard reverts within seconds.</li>
+<li>Production-incident SLA target: code rolled back within 5 minutes of incident detection</li>
+</ul>
+<h3>Schema rollback</h3>
+<p>No automated DB down-migrations. Two options:</p>
+<ul>
+<li>Forward fix (preferred): write a new migration that undoes or compensates for the bad change; deploy as hotfix</li>
+<li>PITR restore: only as last resort for catastrophic data corruption; loses all data after the restore point</li>
+</ul>
+<h3>Data rollback</h3>
+<ul>
+<li>Point-in-Time Recovery (PITR) up to 7 days back for main DB (Pro tier)</li>
+<li>For older recovery: manual import from daily backups (30-day retention)</li>
+<li>Beyond 30 days: data is gone; this is an intentional cost choice</li>
+</ul>
+<h3>Rollback for tenant-specific bad state</h3>
+<ul>
+<li>Targeted SQL repair via platform_super_admin role, against production with re-auth required</li>
+<li>All such repairs audit-logged with reason</li>
+<li>Snapshot the affected rows to audit log before mutation</li>
+</ul>
+<h2 id="s29-9">29.9 Secrets Management <a class="anchor-link" href="#s29-9" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Where</strong></th><th><strong>What</strong></th><th><strong>How</strong></th></tr></thead><tbody><tr><td>Vercel env vars (production project)</td><td>All production secrets per <a class="xref" href="section-28-environment-variables-reference.html">§28</a></td><td>Vercel dashboard or vercel env add CLI</td></tr><tr><td>Vercel env vars (preview project)</td><td>Staging values</td><td>Separate set, marked Preview-only</td></tr><tr><td>GitHub Actions secrets</td><td>CI-only credentials (test DB URLs, etc.)</td><td>GitHub repo settings</td></tr><tr><td>Local dev</td><td>.env.local per developer</td><td>Gitignored; .env.example committed with placeholders</td></tr><tr><td>1Password (or equivalent)</td><td>Master copy of all production secrets</td><td>Source of truth for rotation, recovery, onboarding</td></tr></tbody></table></div>
+<h3>Secret access</h3>
+<ul>
+<li>Production env vars: visible only to engineers with deployment role</li>
+<li>Rotation events logged in 1Password and in deployment audit log</li>
+<li>No secrets in CI logs, error messages, Sentry events (scrubbing rules in app code)</li>
+</ul>
+<h2 id="s29-10">29.10 Observability Stack <a class="anchor-link" href="#s29-10" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Concern</strong></th><th><strong>Tool</strong></th><th><strong>Scope</strong></th></tr></thead><tbody><tr><td>Application errors</td><td>Sentry</td><td>Both apps; PII scrubbed; release-tagged</td></tr><tr><td>Application logs</td><td>Vercel logs (structured JSON)</td><td>7-day retention; longer history → app-level audit_log table</td></tr><tr><td>Metrics</td><td>Vercel Analytics + custom dashboards in /admin</td><td>Latency, throughput, error rate per route</td></tr><tr><td>Uptime</td><td>Better Stack / UptimeRobot synthetic checks</td><td>Status page for tenants</td></tr><tr><td>AI cost</td><td>Anthropic + OpenAI usage APIs</td><td>Daily cron pulls usage; attributes per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a></td></tr><tr><td>Database</td><td>Supabase dashboard</td><td>Connection pool, query performance, storage</td></tr></tbody></table></div>
+<h3>Critical alerts (page on-call)</h3>
+<ul>
+<li>Production error rate &gt; baseline + 3× standard deviation over 5 minutes</li>
+<li>Health-check failure on main app or RAG service</li>
+<li>Stripe webhook delivery failure rate &gt; 5%</li>
+<li>Supabase database unavailable</li>
+<li>Anthropic / OpenAI 5xx error rate &gt; 10%</li>
+</ul>
+<h3>Warning alerts (Slack notify, no page)</h3>
+<ul>
+<li>AI cost approaching daily threshold for any tenant</li>
+<li>RAG retrieval latency &gt; 500ms p95</li>
+<li>Inngest job retries elevated</li>
+<li>Email bounce rate elevated per tenant</li>
+</ul>
+<h2 id="s29-11">29.11 Job &amp; Cron Infrastructure (Inngest) <a class="anchor-link" href="#s29-11" aria-label="Permalink">¶</a></h2>
+<p>All scheduled and background work runs on Inngest. No Vercel Cron Jobs (Inngest is more flexible and observable).</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Category</strong></th><th><strong>Examples</strong></th><th><strong>Frequency</strong></th></tr></thead><tbody><tr><td>Daily housekeeping</td><td>Reset RAG daily counters, recompute usage states, expire old promo chunks</td><td>Daily at 03:00 UTC</td></tr><tr><td>Email scheduling</td><td>Pre-cruise email send checks, group reminders</td><td>Hourly</td></tr><tr><td>Reconciliation</td><td>Host commission statement fetches, Stripe webhook replay verification</td><td>Daily / weekly</td></tr><tr><td>Maintenance</td><td>Audit log archival, expired session cleanup</td><td>Daily / weekly</td></tr><tr><td>Event-driven</td><td>Booking submitted, commission received, tenant promoted</td><td>Real-time</td></tr><tr><td>Retry queues</td><td>Failed AI calls, failed emails, failed webhooks</td><td>Exponential backoff</td></tr></tbody></table></div>
+<p>Inngest functions are colocated in the same Next.js apps under /api/inngest. No separate worker fleet.</p>
+<h2 id="s29-12">29.12 Custom Domain Provisioning Runbook <a class="anchor-link" href="#s29-12" aria-label="Permalink">¶</a></h2>
+<p>When a tenant adds a custom domain:</p>
+<ul>
+<li>Tenant enters domain in /admin/branding</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Platform generates verification token, displays:</li>
+<li>CNAME record: travel.example.com → tenants.ai-travelconcierge.com</li>
+<li>TXT record: _verify.travel.example.com → {token}</li>
+<li>│</li>
+<li>▼</li>
+<li>Tenant adds records at their registrar</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Tenant clicks “Verify” → platform performs DNS lookups</li>
+<li>│</li>
+</ul>
+<p>├─► CNAME present and matches: pass</p>
+<p>├─► TXT matches token: pass</p>
+<p>│</p>
+<p>▼</p>
+<ul>
+<li>Platform calls Vercel API to add custom domain to project</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Vercel triggers Let’s Encrypt cert issuance (typically &lt;60 seconds)</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Platform polls Vercel for cert status</li>
+<li>│</li>
+</ul>
+<p>▼</p>
+<ul>
+<li>Tenant sees “Live” status; AI chat now resolves on their domain</li>
+</ul>
+<h3>Failure modes</h3>
+<ul>
+<li>DNS not propagated yet → tenant told to wait and retry; verification can re-run</li>
+<li>CNAME points wrong → specific error message</li>
+<li>Vercel cert issuance fails → platform admin notified; usually resolves on retry within 1 hour</li>
+<li>Domain already in use by another Vercel project → platform admin needed for resolution</li>
+</ul>
+<p>Apex domains not supported in v6 (per <a class="xref" href="section-16-white-label-branding.html#s16-3">§16.3</a>) — only subdomains. This is a Vercel limitation around shared anycast IPs vs apex.</p>
+<h2 id="s29-13">29.13 Capacity &amp; Scaling <a class="anchor-link" href="#s29-13" aria-label="Permalink">¶</a></h2>
+<h3>Vercel</h3>
+<p>Scales horizontally automatically. No tuning needed at launch volume. Watch:</p>
+<ul>
+<li>Function execution time p95 (target &lt;2s for non-streaming)</li>
+<li>Cold start frequency (Edge functions warm faster than Node)</li>
+<li>Bandwidth (Vercel charges per GB beyond plan)</li>
+</ul>
+<h3>Supabase</h3>
+<p>Scales vertically (instance size) and horizontally (read replicas) on Pro tier. At launch volume, single instance is sufficient. Triggers for upgrade:</p>
+<ul>
+<li>DB CPU &gt; 70% sustained → upgrade instance size</li>
+<li>Connection pool exhaustion → tune Supavisor settings, then upgrade</li>
+<li>Query latency p95 &gt; 200ms on indexed queries → investigate before scaling</li>
+</ul>
+<h3>Anthropic / OpenAI</h3>
+<p>Rate limits per Anthropic and OpenAI plans. At Anthropic Tier 4 (target before public launch), ~5,000 requests/min for Sonnet. If hit, requests queue with exponential backoff. Platform-level rate limit per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>.</p>
+<h2 id="s29-14">29.14 Disaster Recovery Posture <a class="anchor-link" href="#s29-14" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Scenario</strong></th><th><strong>Recovery</strong></th></tr></thead><tbody><tr><td>Bad deploy</td><td>Vercel instant rollback, &lt;5 min RTO</td></tr><tr><td>Single bad migration</td><td>Forward-fix migration as hotfix</td></tr><tr><td>Tenant-level data corruption</td><td>Targeted SQL repair from audit log snapshots</td></tr><tr><td>Production DB partial corruption</td><td>PITR restore to point before incident</td></tr><tr><td>Production DB total loss</td><td>Restore from daily backup (up to 24h data loss)</td></tr><tr><td>Vercel outage</td><td>No mitigation in v6 — single-cloud dependency; status page communicates</td></tr><tr><td>Supabase outage</td><td>No mitigation in v6 — single-vendor dependency</td></tr><tr><td>Anthropic outage</td><td>AI kill switch activates; chat shows fallback; queue resumes when restored</td></tr><tr><td>Region outage (US-East)</td><td>Manual failover process needed (not built in v6); RPO and RTO undefined</td></tr></tbody></table></div>
+<p>Multi-region is explicitly out of scope for v6. Single-region single-cloud is acceptable risk at launch volume. Revisit when: (a) tenant SLA contracts demand it, or (b) two material outages happen in a 12-month window.</p>
+<h2 id="s29-15">29.15 Cost Structure (Monthly Estimate at Launch) <a class="anchor-link" href="#s29-15" aria-label="Permalink">¶</a></h2>
+<p>Order-of-magnitude estimates for a small-fleet launch (10-50 active tenants, modest customer chat volume). Treat as planning, not contractual.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Vendor</strong></th><th><strong>Estimate</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Vercel</td><td>$20-60/mo</td><td>Pro plan; bandwidth and function execution</td></tr><tr><td>Supabase (×2 projects, Pro)</td><td>$50/mo total</td><td>$25/project for Pro tier</td></tr><tr><td>Anthropic</td><td>$200-1500/mo</td><td>Highly variable; tied to chat volume</td></tr><tr><td>OpenAI (embeddings only)</td><td>$5-20/mo</td><td>Trivial at this volume</td></tr><tr><td>Stripe</td><td>Per-transaction fees</td><td>2.9% + $0.30 cards, $2/mo per Connect Express account</td></tr><tr><td>Resend</td><td>$20/mo</td><td>Free tier sufficient for &lt;3k/mo; paid for scale</td></tr><tr><td>Inngest</td><td>$0-50/mo</td><td>Free tier reasonable for launch</td></tr><tr><td>Sentry</td><td>$26/mo</td><td>Team plan</td></tr><tr><td>Uptime monitoring</td><td>$0-29/mo</td><td></td></tr><tr><td>Total</td><td>~$321-1755/mo</td><td>Heavily Anthropic-skewed; tracked in /admin/cost</td></tr></tbody></table></div>
+<p>The AI cost variance is the dominant operational unknown. Per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>, attribution to tenants funds itself through subscriptions; the goal is platform AI cost being a fraction of subscription revenue across the tenant base.</p>
+<h2 id="s29-16">29.16 On-Call &amp; Incident Response <a class="anchor-link" href="#s29-16" aria-label="Permalink">¶</a></h2>
+<p>Launch posture: single founder/operator is sole on-call. Incidents during sleep hours go to the morning queue unless a critical alert fires.</p>
+<p>As team grows: rotating on-call with primary/secondary, follow standard PagerDuty / Slack escalation patterns. Incident severity per <a class="xref" href="section-26-security.html#s26-9">§26.9</a> (P1-P4).</p>
+<p>Runbooks live in the repo at docs/runbooks/. Topics:</p>
+<ul>
+<li>Production rollback</li>
+<li>Stripe webhook backlog drain</li>
+<li>Anthropic rate limit handling</li>
+<li>Database connection exhaustion</li>
+<li>Custom domain verification failure</li>
+<li>Compromised credential rotation</li>
+<li>Mass email send incident</li>
+</ul>
+<h2 id="s29-17">29.17 Calls Worth Flagging <a class="anchor-link" href="#s29-17" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Single-region, single-cloud is a deliberate v6 choice.</strong><strong> </strong>It’s a real risk concentration. The mitigation is operational discipline (good runbooks, fast rollback) rather than redundancy. Reassess if compliance requirements change or if growth makes downtime more expensive.</li>
+<li><strong>No down-migrations.</strong><strong> </strong>Forward-only schema change is the industry-standard discipline for SaaS. Don’t deviate — once a column is gone, recovering it from a half-deployed state is painful.</li>
+<li><strong>Canary ramp at 5% for 10 minutes is short.</strong><strong> </strong>Smaller than ideal for low-volume launch. Worth extending to 30 minutes once there’s enough volume to make 5% meaningful (~10+ requests/min minimum to be useful).</li>
+<li><strong>No multi-region DB replication in v6</strong><strong> </strong>= US-East outage = total platform outage. Status page communicates; recovery is ‘wait for Supabase.’ Tenants should be told this honestly in the SLA documentation.</li>
+<li><strong>PITR is a 7-day window on Supabase Pro.</strong><strong> </strong>Beyond that, recovery is from daily backups with up to 24h data loss. Worth knowing for any compliance discussion.</li>
+<li><strong>Vendor lock-in is significant.</strong><strong> </strong>Vercel (hosting), Supabase (DB+auth+storage), Anthropic (primary AI), Stripe (payments). Each has a credible migration path on paper, but in practice the cost to switch any of them is months of work. Accept the trade.</li>
+<li><strong>Cost estimates are highly speculative.</strong><strong> </strong>Anthropic spend is the dominant unknown. Build the per-tenant cost attribution dashboard early so anomalies surface fast.</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-28-environment-variables-reference.html">← §28: Environment Variables Reference</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-30-testing-requirements.html">§30: Testing Requirements →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

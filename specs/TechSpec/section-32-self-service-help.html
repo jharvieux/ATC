@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 32 — Self-Service Help — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 32</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s32">Section 32 — Self-Service Help</h1>
+<p>The Self-Service Help feature reduces support load on tenant admins and captures customer-reported defects with enough structure that engineering can act on them automatically where possible. It serves three outcomes: educate users, capture defects, and capture feature requests. Each outcome has a dedicated flow tuned for that purpose.</p>
+<p>This section also defines how tenant-facing documentation is generated, indexed in the RAG service under a platform-docs scope, and kept current as code changes.</p>
+<h2 id="s32-1">32.1 Purpose and Scope <a class="anchor-link" href="#s32-1" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-1-1">32.1.1 Purpose <a class="anchor-link" href="#s32-1-1" aria-label="Permalink">¶</a></h3>
+<p>The Self-Service Help feature exists to reduce the operational load of supporting tenant admins and to capture customer-reported defects with enough structure that engineering can act on them automatically where possible. It serves three distinct outcomes: educate users, capture defects, and capture feature requests. Each gets a dedicated flow tuned for that outcome.</p>
+<h3 id="s32-1-2">32.1.2 Scope <a class="anchor-link" href="#s32-1-2" aria-label="Permalink">¶</a></h3>
+<p>In scope for this section:</p>
+<ul>
+<li>A new Help section inside the tenant admin console with onscreen, printable, and downloadable documentation.</li>
+<li>Three AI-driven entry points for tenant admins: ‘I need help,’ ‘Report a bug,’ and ‘Request a feature.’</li>
+<li>A parallel customer bug-reporting path that runs through the existing travel concierge AI persona.</li>
+<li>GitHub integration for bug and feature-request issue creation.</li>
+<li>A bug-auto-fix evaluation pipeline that integrates with the existing CI/CD release pipeline.</li>
+<li>Abuse monitoring extensions for help-flow submissions.</li>
+</ul>
+<p>Out of scope for this section (deferred):</p>
+<ul>
+<li>Authoring the actual help documentation content (engineering builds the structure; content is a separate workstream).</li>
+<li>Non-English documentation. Per v6 <a class="xref" href="section-25-data-privacy-retention.html#s25-8">§25.8</a>, the platform is English-only at launch.</li>
+<li>Integration with bug trackers other than GitHub.</li>
+<li>Customer-facing feature-request voting or roadmap visibility.</li>
+<li>Email notifications for issue lifecycle events beyond standard GitHub notification flow.</li>
+</ul>
+<h3 id="s32-1-3">32.1.3 Personas Affected <a class="anchor-link" href="#s32-1-3" aria-label="Permalink">¶</a></h3>
+<p>This feature touches the personas defined in v6 <a class="xref" href="section-01-platform-overview.html#s1-3">§1.3</a> as follows:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Persona</strong></th><th><strong>What changes</strong></th></tr></thead><tbody><tr><td>Customer</td><td>Gains a bug-reporting path via the travel concierge AI persona. Authentication required (OAuth, per <a class="xref" href="section-17-authentication-signup-consent.html">§17</a> of v6 spec).</td></tr><tr><td>Tenant Owner</td><td>Gains a /admin/help route with documentation and three help flows.</td></tr><tr><td>Tenant Agent</td><td>Same as Tenant Owner; can use help flows but cannot change tenant-wide settings.</td></tr><tr><td>Tenant Billing Admin</td><td>Same as Tenant Owner for help purposes; billing flow unchanged.</td></tr><tr><td>Platform Super Admin</td><td>Gains a triage view of all bug/feature submissions across tenants.</td></tr><tr><td>Platform Support</td><td>Gains visibility into open help sessions for assisted resolution.</td></tr><tr><td>AI Persona (travel concierge)</td><td>Gets a new bug-report intent recognizer. Existing personas unchanged otherwise.</td></tr><tr><td>Help AI (new)</td><td>New persona type, scoped only to help/bug/feature flows. Runs under the supervisor (v6 <a class="xref" href="section-10-ai-supervisor.html">§10</a>).</td></tr></tbody></table></div>
+<h3 id="s32-1-4">32.1.4 Cross-References <a class="anchor-link" href="#s32-1-4" aria-label="Permalink">¶</a></h3>
+<p>This feature explicitly depends on, or interacts with:</p>
+<ul>
+<li><strong>v6 <a class="xref" href="section-01-platform-overview.html#s1-5">§1.5</a></strong> — multi-tenancy and RLS patterns. All new tables follow these.</li>
+<li><strong>v6 <a class="xref" href="section-06-rag-service-schema.html">§6</a></strong> — RAG service. The help documentation may be indexed for retrieval by the Help AI.</li>
+<li><strong>v6 <a class="xref" href="section-10-ai-supervisor.html">§10</a></strong> — Supervisor. All Help AI chats run through the supervisor.</li>
+<li><strong>v6 <a class="xref" href="section-11-customer-memory.html">§11</a></strong> — Customer memory. Bug submissions from customers are linked to the customer’s memory only as audit, not as conversational facts.</li>
+<li><strong>v6 <a class="xref" href="section-17-authentication-signup-consent.html">§17</a></strong> — Authentication. Customer bug reports require OAuth authentication.</li>
+<li><strong>v6 <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a></strong> — Ingestion pipeline / PII redaction. Bug-report bodies pass through this before issue creation.</li>
+<li><strong>v6 <a class="xref" href="section-26-security.html">§26</a></strong> — Roles and permissions.</li>
+<li><strong>v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a></strong> — Abuse monitoring. A new dimension is added.</li>
+<li><strong>CI/CD <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a>, <a class="xref" href="section-04-detailed-feature-matrix.html">§4</a>, <a class="xref" href="section-05-database-schema-main-app.html">§5</a></strong> — GitHub Environments, Actions workflow, staging DB copy. The auto-fix pipeline integrates here.</li>
+</ul>
+<h2 id="s32-2">32.2 User Experience Overview <a class="anchor-link" href="#s32-2" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-2-1">32.2.1 Entry Points <a class="anchor-link" href="#s32-2-1" aria-label="Permalink">¶</a></h3>
+<p>Three entry points for tenant admins (all under /admin/help):</p>
+<ul>
+<li>Documentation viewer — the default view. Renders the help docs onscreen.</li>
+<li>‘I need help’ button — opens the Help AI in conversational mode.</li>
+<li>‘Report a bug’ button — opens the Help AI in structured bug-gathering mode.</li>
+<li>‘Request a feature’ button — opens the Help AI in structured feature-gathering mode.</li>
+</ul>
+<p>One entry point for customers (via existing chat surface):</p>
+<ul>
+<li>Customer mentions a defect (‘this looks broken,’ ‘something’s wrong,’ ‘I think there’s a bug’) — the travel concierge persona offers to file a bug. If the customer accepts, the Help AI bug flow takes over within the same chat surface.</li>
+</ul>
+<h3 id="s32-2-2">32.2.2 The Documentation Viewer <a class="anchor-link" href="#s32-2-2" aria-label="Permalink">¶</a></h3>
+<p>The viewer renders a set of Markdown documents organized into sections. Each section corresponds to a major feature area of the tenant admin console (e.g., ‘Setting up branding,’ ‘Managing your CRM,’ ‘Understanding your usage and tier’). Source files live in apps/main/content/help/ in the platform repo and are rendered with a standard Markdown-to-HTML pipeline (e.g., remark/rehype).</p>
+<p>The viewer offers three output modes:</p>
+<ul>
+<li><strong>Onscreen</strong> — default. Navigation in left sidebar, content in right pane. Search across all docs.</li>
+<li><strong>Print</strong> — applies a print-friendly stylesheet (single-column, no nav, page breaks at section boundaries). User invokes via browser print.</li>
+<li><strong>Download as PDF</strong> — server-side render of the entire doc set as a single PDF, generated on demand and cached for 1 hour. Filename: {tenant_slug}-admin-guide-{date}.pdf.</li>
+<li><strong>Download as Word</strong> — server-side render of the entire doc set as a single .docx file. Same filename pattern, .docx extension.</li>
+</ul>
+<h3 id="s32-2-3">32.2.3 Help AI Chat Surface <a class="anchor-link" href="#s32-2-3" aria-label="Permalink">¶</a></h3>
+<p>When a help/bug/feature button is clicked, a slide-over chat panel appears (right side of viewport, ~480px wide on desktop, full-screen on mobile). The chat is conducted by the Help AI persona (distinct from the travel concierge personas). The panel includes the current conversation, an input field, an ‘Escalate to human’ button, and a ‘Close’ button.</p>
+<p>All Help AI chats run through the supervisor (v6 <a class="xref" href="section-10-ai-supervisor.html">§10</a>) the same way customer-facing chats do. Same hallucination checks, same kill switch, same audit trail.</p>
+<h2 id="s32-3">32.3 Tenant Admin Console Documentation <a class="anchor-link" href="#s32-3" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-3-1">32.3.1 Documentation Source of Truth <a class="anchor-link" href="#s32-3-1" aria-label="Permalink">¶</a></h3>
+<p>All help documentation lives as Markdown files in apps/main/content/help/ in the platform monorepo. This co-locates documentation with the code that it documents, so feature changes can update docs in the same pull request. Documentation is part of the release pipeline — it ships with the code.</p>
+<p>Documentation files are NOT separately versioned; they version with the platform code. The platform displays the docs that correspond to the currently-deployed code version.</p>
+<h3 id="s32-3-2">32.3.2 Document Structure <a class="anchor-link" href="#s32-3-2" aria-label="Permalink">¶</a></h3>
+<p>Initial doc set covers (file names are illustrative; subject to refinement during implementation):</p>
+<div class="table-wrap"><table><thead><tr><th><strong>File</strong></th><th><strong>Topic</strong></th></tr></thead><tbody><tr><td>01-getting-started.md</td><td>First-time setup, signup completion, initial configuration</td></tr><tr><td>02-tenant-settings.md</td><td>Tenant settings: business identity, contact info, time zone</td></tr><tr><td>03-branding.md</td><td>White-label branding: logos, colors, custom domain setup</td></tr><tr><td>04-personas.md</td><td>Configuring AI personas for your tenant</td></tr><tr><td>05-crm.md</td><td>Using the CRM: contacts, relationships, pipeline</td></tr><tr><td>06-quotes-and-bookings.md</td><td>Quote builder, booking submission, tracking</td></tr><tr><td>07-rag-content.md</td><td>Submitting content to your RAG knowledge base; review queue</td></tr><tr><td>08-usage-and-billing.md</td><td>Understanding your tier, usage metrics, billing, and subscription management (changing tier, adding/removing seats, switching billing period)</td></tr><tr><td>09-team-and-permissions.md</td><td>Adding team members, role assignments</td></tr><tr><td>10-customer-management.md</td><td>Customer accounts, memory, escalations</td></tr><tr><td>11-supervisor-and-quality.md</td><td>Reviewing supervisor findings, handling escalations</td></tr><tr><td>12-troubleshooting.md</td><td>Common issues and how to diagnose them</td></tr></tbody></table></div>
+<h3 id="s32-3-3">32.3.3 Print and Download Generation <a class="anchor-link" href="#s32-3-3" aria-label="Permalink">¶</a></h3>
+<p>Print: applies a CSS @media print stylesheet. No server work needed for print; the browser handles it.</p>
+<p>PDF generation:</p>
+<ul>
+<li>Concatenates all Markdown files in section order into a single document.</li>
+<li>Renders to HTML via remark/rehype.</li>
+<li>Converts HTML to PDF via Puppeteer (headless Chromium) on a serverless function.</li>
+<li>Caches the result in Supabase Storage with 1-hour TTL keyed by code version + tenant_id.</li>
+<li>Returns a signed URL for download.</li>
+</ul>
+<p>.docx generation:</p>
+<ul>
+<li>Concatenates all Markdown files in section order.</li>
+<li>Converts to .docx via docx-js with platform-branded styles.</li>
+<li>Caches the result the same way as PDF.</li>
+<li>Returns a signed URL for download.</li>
+</ul>
+<p>Both downloads include the tenant’s branded header (logo, business name) if branding is configured. Otherwise default platform branding.</p>
+<h3 id="s32-3-4">32.3.4 Help Documentation as RAG Content <a class="anchor-link" href="#s32-3-4" aria-label="Permalink">¶</a></h3>
+<p>The help documentation IS indexed in the RAG service (v6 <a class="xref" href="section-06-rag-service-schema.html">§6</a>), scoped to a special ‘platform-docs’ scope visible to all tenants. The Help AI uses this RAG corpus when responding to ‘I need help’ queries. This is the only scope outside of ‘global’ and ‘tenant’ (v6 <a class="xref" href="section-06-rag-service-schema.html#s6-9">§6.9</a> establishes the strictly-two-level scope; the platform-docs scope is documented here as a third logical scope used only by the Help AI).</p>
+<p><strong>Note:</strong><strong> </strong>this is the one place where Section 32 extends v6 <a class="xref" href="section-06-rag-service-schema.html">§6</a>’s two-scope model. The platform-docs scope is read-only and managed entirely by the platform release pipeline. It is not visible to tenant admins as content they can submit or review.</p>
+<h2 id="s32-4">32.4 Help AI Persona <a class="anchor-link" href="#s32-4" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-4-1">32.4.1 Role and Boundaries <a class="anchor-link" href="#s32-4-1" aria-label="Permalink">¶</a></h3>
+<p>The Help AI is a dedicated AI persona distinct from the customer-facing travel concierge personas. It has access to the platform-docs RAG scope and to a structured information-gathering protocol for bug and feature flows. It does NOT have access to tenant customer data, CRM contents, or commission data — its scope is the platform itself, not the tenant’s business.</p>
+<h3 id="s32-4-2">32.4.2 System Prompt Outline <a class="anchor-link" href="#s32-4-2" aria-label="Permalink">¶</a></h3>
+<p>The Help AI runs with a system prompt that includes:</p>
+<ul>
+<li>Role: ‘You are a help assistant for the AI Travel Concierge platform.’</li>
+<li>Capabilities: search platform docs, gather structured info for bugs/features, escalate to humans.</li>
+<li>Boundaries: do not invent feature behaviors; cite docs where possible; if uncertain, say so.</li>
+<li>Tone: professional, brief, helpful. No marketing language.</li>
+<li>PII handling: redact any PII the user enters before storing or sending to GitHub.</li>
+</ul>
+<h3 id="s32-4-3">32.4.3 The Three Flows <a class="anchor-link" href="#s32-4-3" aria-label="Permalink">¶</a></h3>
+<h4>Help flow</h4>
+<p>Open conversational Q&amp;A. The Help AI searches the platform-docs RAG, returns answers with doc references, suggests follow-up topics. If it cannot answer with sufficient confidence after 3 messages, it offers to escalate to platform support.</p>
+<h4>Bug flow</h4>
+<p>Structured information gathering. The Help AI asks for the following, one at a time, persisting answers as it goes:</p>
+<ul>
+<li>Where in the platform is the problem? (URL or feature name)</li>
+<li>What is it doing? (the actual behavior)</li>
+<li>What should it be doing? (the expected behavior)</li>
+<li>Steps to reproduce, as specifically as possible.</li>
+<li>How often does this happen? (always / sometimes / once)</li>
+<li>Browser/device. (auto-detect; offered for user to confirm)</li>
+<li>Optional: screenshots.</li>
+</ul>
+<p>After gathering, the Help AI computes a confidence/clarity score (see <a class="xref" href="section-09-ai-personas.html#s9-2">§9.2</a>) and shows the user a summary before submission. The user can edit before submitting. On submit, the bug is created as a GitHub issue per <a class="xref" href="section-07-api-routes.html">§7</a>.</p>
+<h4>Feature flow</h4>
+<p>Structured information gathering, lighter weight than bug flow:</p>
+<ul>
+<li>What do you want to do?</li>
+<li>Why? What problem does it solve for you?</li>
+<li>How do you handle this today (workaround)?</li>
+<li>How often would you use this?</li>
+</ul>
+<p>On submit: GitHub issue with label feature-request, awaiting human review.</p>
+<h3 id="s32-4-4">32.4.4 Cost Model <a class="anchor-link" href="#s32-4-4" aria-label="Permalink">¶</a></h3>
+<p>Help AI calls follow the same cost-attribution pattern as customer-facing AI (v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>). They attribute to the tenant whose user is interacting. The Help AI uses Sonnet for the main response and Haiku for the supervisor preflight, same as customer-facing chat.</p>
+<p>Customer-side bug flows attribute to the tenant that owns the customer, not to a platform pool. This matters for abuse monitoring (<a class="xref" href="section-11-customer-memory.html">§11</a>) and gives tenants visibility into help-related cost.</p>
+<h2 id="s32-5">32.5 Database Schema <a class="anchor-link" href="#s32-5" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-5-1">32.5.1 help_sessions <a class="anchor-link" href="#s32-5-1" aria-label="Permalink">¶</a></h3>
+<p>One row per help-chat session. A session is opened when any help/bug/feature flow starts and closed when the user leaves the chat surface or submits.</p>
+<p>CREATE TABLE public.help_sessions ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID NOT NULL REFERENCES public.tenants(id), user_id UUID NOT NULL REFERENCES public.users(id), session_type TEXT NOT NULL CHECK (session_type IN (‘help’,‘bug’,‘feature’)), source_surface TEXT NOT NULL CHECK (source_surface IN (‘admin’,‘customer_chat’)), conversation_id UUID REFERENCES public.conversations(id), started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ended_at TIMESTAMPTZ, outcome TEXT CHECK (outcome IN (‘resolved’,‘submitted’,‘escalated’,‘abandoned’)), ai_messages_count INTEGER DEFAULT 0, escalated_to_human BOOLEAN DEFAULT FALSE, escalation_reason TEXT );</p>
+<p>CREATE INDEX help_sessions_tenant_idx ON public.help_sessions(tenant_id); CREATE INDEX help_sessions_user_idx ON public.help_sessions(user_id); CREATE INDEX help_sessions_type_idx ON public.help_sessions(tenant_id, session_type, started_at DESC);</p>
+<h3 id="s32-5-2">32.5.2 bug_submissions <a class="anchor-link" href="#s32-5-2" aria-label="Permalink">¶</a></h3>
+<p>CREATE TABLE public.bug_submissions ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), help_session_id UUID NOT NULL REFERENCES public.help_sessions(id), tenant_id UUID NOT NULL REFERENCES public.tenants(id), submitter_user_id UUID NOT NULL REFERENCES public.users(id), source_type TEXT NOT NULL CHECK (source_type IN (‘tenant_admin’,‘tenant_agent’,‘customer’)),</p>
+<p>– Structured fields (gathered by Help AI; redacted of PII) where_in_platform TEXT, actual_behavior TEXT, expected_behavior TEXT, steps_to_reproduce TEXT, frequency TEXT CHECK (frequency IN (‘always’,‘sometimes’,‘once’,‘unknown’)), browser_info JSONB, screenshots JSONB, – array of storage URLs</p>
+<p>– Quality scoring confidence_score NUMERIC(3,2) CHECK (confidence_score &gt;= 0 AND confidence_score &lt;= 1), confidence_factors JSONB,</p>
+<p>– GitHub linkage github_issue_number INTEGER, github_issue_url TEXT, github_issue_state TEXT CHECK (github_issue_state IN (‘pending’,‘open’,‘closed’,‘failed’)), github_creation_error TEXT,</p>
+<p>– Lifecycle submitted_at TIMESTAMPTZ DEFAULT NOW(), closed_at TIMESTAMPTZ, resolution_summary TEXT );</p>
+<p>CREATE INDEX bug_submissions_tenant_idx ON public.bug_submissions(tenant_id); CREATE INDEX bug_submissions_state_idx ON public.bug_submissions(github_issue_state, submitted_at DESC);</p>
+<h3 id="s32-5-3">32.5.3 feature_requests <a class="anchor-link" href="#s32-5-3" aria-label="Permalink">¶</a></h3>
+<p>CREATE TABLE public.feature_requests ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), help_session_id UUID NOT NULL REFERENCES public.help_sessions(id), tenant_id UUID NOT NULL REFERENCES public.tenants(id), submitter_user_id UUID NOT NULL REFERENCES public.users(id), source_type TEXT NOT NULL CHECK (source_type IN (‘tenant_admin’,‘tenant_agent’,‘customer’)),</p>
+<p>what TEXT, why TEXT, current_workaround TEXT, expected_usage_frequency TEXT,</p>
+<p>github_issue_number INTEGER, github_issue_url TEXT, github_issue_state TEXT CHECK (github_issue_state IN (‘pending’,‘open’,‘closed’,‘failed’)),</p>
+<p>submitted_at TIMESTAMPTZ DEFAULT NOW(), decision TEXT CHECK (decision IN (‘accepted’,‘rejected’,‘deferred’,‘duplicate’)), decision_notes TEXT, decided_at TIMESTAMPTZ );</p>
+<p>CREATE INDEX feature_requests_tenant_idx ON public.feature_requests(tenant_id); CREATE INDEX feature_requests_decision_idx ON public.feature_requests(decision, submitted_at DESC);</p>
+<h3 id="s32-5-4">32.5.4 help_doc_versions <a class="anchor-link" href="#s32-5-4" aria-label="Permalink">¶</a></h3>
+<p>Caches generated PDF/.docx outputs keyed by code version and (optionally) tenant for branding.</p>
+<p>CREATE TABLE public.help_doc_versions ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code_version TEXT NOT NULL, tenant_id UUID REFERENCES public.tenants(id), – nullable format TEXT NOT NULL CHECK (format IN (‘pdf’,‘docx’)), storage_path TEXT NOT NULL, size_bytes BIGINT, generated_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, UNIQUE (code_version, tenant_id, format) );</p>
+<p>CREATE INDEX help_doc_versions_expiry_idx ON public.help_doc_versions(expires_at);</p>
+<h3 id="s32-5-5">32.5.5 Row Level Security <a class="anchor-link" href="#s32-5-5" aria-label="Permalink">¶</a></h3>
+<p>All four tables enable RLS. Policies follow v6 <a class="xref" href="section-01-platform-overview.html#s1-5">§1.5</a> patterns:</p>
+<ul>
+<li>Tenant scope: rows visible only to users belonging to the tenant (auth_user_in_tenant).</li>
+<li>Platform admin override: platform_super_admin and platform_support roles can SELECT across all tenants.</li>
+<li>Customer access: a customer can read their own bug_submissions and feature_requests rows but not other customers’ rows in the same tenant.</li>
+<li>Help_doc_versions: tenant-scoped if tenant_id is set; platform-wide read if tenant_id is NULL.</li>
+</ul>
+<h2 id="s32-6">32.6 API Routes <a class="anchor-link" href="#s32-6" aria-label="Permalink">¶</a></h2>
+<p>New API routes added by this feature. Follows the patterns in v6 <a class="xref" href="section-07-api-routes.html">§7</a>.</p>
+<h3 id="s32-6-1">32.6.1 Documentation Routes <a class="anchor-link" href="#s32-6-1" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>GET</td><td>/api/help/docs</td><td>List doc sections (titles, slugs)</td></tr><tr><td>GET</td><td>/api/help/docs/:slug</td><td>Get a single doc section as HTML</td></tr><tr><td>GET</td><td>/api/help/docs/search?q=…</td><td>Search docs; returns matching sections with snippets</td></tr><tr><td>POST</td><td>/api/help/docs/export</td><td>Trigger PDF or .docx generation; returns job ID</td></tr><tr><td>GET</td><td>/api/help/docs/export/:jobId</td><td>Poll export status; returns signed URL when ready</td></tr></tbody></table></div>
+<h3 id="s32-6-2">32.6.2 Help Chat Routes <a class="anchor-link" href="#s32-6-2" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/help/sessions</td><td>Open a new help session; returns session_id</td></tr><tr><td>POST</td><td>/api/help/sessions/:id/message</td><td>Send a user message; returns SSE stream of AI response</td></tr><tr><td>POST</td><td>/api/help/sessions/:id/close</td><td>Close the session with outcome</td></tr><tr><td>POST</td><td>/api/help/sessions/:id/escalate</td><td>Escalate to platform support</td></tr></tbody></table></div>
+<h3 id="s32-6-3">32.6.3 Bug Submission Routes <a class="anchor-link" href="#s32-6-3" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/help/bugs</td><td>Submit a bug; creates GitHub issue async</td></tr><tr><td>GET</td><td>/api/help/bugs/:id</td><td>Get submission state including GitHub link</td></tr><tr><td>GET</td><td>/api/help/bugs</td><td>List submissions for the current tenant</td></tr></tbody></table></div>
+<h3 id="s32-6-4">32.6.4 Feature Request Routes <a class="anchor-link" href="#s32-6-4" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/help/features</td><td>Submit a feature request</td></tr><tr><td>GET</td><td>/api/help/features/:id</td><td>Get submission state</td></tr><tr><td>GET</td><td>/api/help/features</td><td>List submissions for the current tenant</td></tr></tbody></table></div>
+<h3 id="s32-6-5">32.6.5 Platform Admin Routes <a class="anchor-link" href="#s32-6-5" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>GET</td><td>/api/admin/help/sessions</td><td>Cross-tenant view of help sessions</td></tr><tr><td>GET</td><td>/api/admin/help/bugs</td><td>Cross-tenant view of bug submissions</td></tr><tr><td>GET</td><td>/api/admin/help/features</td><td>Cross-tenant view of feature requests</td></tr><tr><td>PATCH</td><td>/api/admin/help/features/:id</td><td>Set decision on a feature request</td></tr></tbody></table></div>
+<h2 id="s32-7">32.7 GitHub Integration <a class="anchor-link" href="#s32-7" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-7-1">32.7.1 Authentication <a class="anchor-link" href="#s32-7-1" aria-label="Permalink">¶</a></h3>
+<p>The platform authenticates to GitHub as a GitHub App (not a personal access token). Benefits over a PAT: per-installation scoping, finer-grained permissions, audit trail, and rotation without an individual’s credentials in play.</p>
+<p>Required GitHub App permissions:</p>
+<ul>
+<li>Repository: Issues (Read &amp; Write) — create issues, add labels, post comments.</li>
+<li>Repository: Pull Requests (Read &amp; Write) — used by the auto-fix workflow.</li>
+<li>Repository: Contents (Read &amp; Write) — auto-fix branches need to push commits.</li>
+<li>Repository: Actions (Read) — to inspect workflow status.</li>
+</ul>
+<h3 id="s32-7-2">32.7.2 Repository <a class="anchor-link" href="#s32-7-2" aria-label="Permalink">¶</a></h3>
+<p>Bug and feature-request issues are created in the same GitHub repository that holds the platform code. This is the same repo referenced in the CI/CD doc (CI/CD <a class="xref" href="section-04-detailed-feature-matrix.html">§4</a> onward). No separate repo is created for help submissions.</p>
+<h3 id="s32-7-3">32.7.3 Labels <a class="anchor-link" href="#s32-7-3" aria-label="Permalink">¶</a></h3>
+<p>The following labels are used. The platform creates any that don’t exist on first issue submission.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Label</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>bug</td><td>Identifies the issue as a defect.</td></tr><tr><td>feature-request</td><td>Identifies the issue as a feature ask.</td></tr><tr><td>customer-reported</td><td>Bug or feature originated from an end customer.</td></tr><tr><td>tenant-admin-reported</td><td>Bug or feature originated from a tenant admin or agent.</td></tr><tr><td>auto-fix-candidate</td><td>Bug confidence/clarity score exceeds threshold; eligible for auto-fix.</td></tr><tr><td>awaiting-staging-repro</td><td>Auto-fix pipeline is attempting to reproduce on staging.</td></tr><tr><td>repro-confirmed</td><td>Bug reproduced on staging; draft PR opened.</td></tr><tr><td>repro-failed</td><td>Bug could not be reproduced; awaiting human review.</td></tr><tr><td>pending-human-review</td><td>Submission below auto-fix threshold; needs human triage.</td></tr></tbody></table></div>
+<h3 id="s32-7-4">32.7.4 Issue Body Format <a class="anchor-link" href="#s32-7-4" aria-label="Permalink">¶</a></h3>
+<p>Issues are created with a structured Markdown body. Example bug:</p>
+<h3>Source</h3>
+<ul>
+<li>Type: tenant-admin-reported</li>
+<li>Tenant: ${tenant_slug} (id hash: ${tenant_id_hash})</li>
+<li>Submitter user role: tenant_owner</li>
+<li>Confidence/clarity score: 0.82</li>
+</ul>
+<h3>Where in the platform</h3>
+<p>/admin/branding</p>
+<h3>Actual behavior</h3>
+<p>The custom domain verification stays in ‘Pending’ even after I added the CNAME record yesterday.</p>
+<h3>Expected behavior</h3>
+<p>Verification should complete within a few minutes of adding the CNAME.</p>
+<h3>Steps to reproduce</h3>
+<ul>
+<li>Go to /admin/branding</li>
+<li>Click ‘Add custom domain’</li>
+<li>Enter travel.example.com</li>
+<li>Add the CNAME at the registrar (done 2026-05-14 14:00 UTC)</li>
+<li>Refresh the page; status still shows ‘Pending’</li>
+</ul>
+<h3>Frequency</h3>
+<p>Once (it has not resolved itself).</p>
+<h3>Browser</h3>
+<p>Chrome 124 on macOS 14.5.</p>
+<h3>Submitted from help session</h3>
+<p>The auto-generated GitHub issue body MUST contain enough context that a reviewer can understand and act on the bug without clicking through to the platform admin's internal help-session page. Include in the issue body:</p>
+<ul>
+<li>The bug description as the customer or tenant admin entered it (verbatim, redacted for PII if applicable).</li>
+<li>Browser, OS, viewport size from the help session metadata.</li>
+<li>Steps to reproduce as captured during the bug submission flow.</li>
+<li>Any screenshots attached (referenced inline via GitHub's image upload mechanism, not as external links).</li>
+<li>Timestamp and tenant slug.</li>
+</ul>
+<p>A reference to the help session is included but labeled clearly as platform-staff-only:</p>
+<pre class="codeblock"><code>**Help session reference** (platform staff only, requires auth):
+/admin/help/sessions/${session_id}</code></pre>
+<p>This link is for forensic deep-dive when needed; the issue body above should be sufficient for routine review.</p>
+<h4>Why the previous design (link-only) was insufficient</h4>
+<ul>
+<li>A reviewer not on the platform admin team gets 401 on the link with no fallback context.</li>
+<li>If the issue tracker is ever opened publicly (Phase 3 bug bounty), the session_id is exposed with no actionable context.</li>
+<li>Forensic continuity: if the help session page URL structure changes, old issues' links break.</li>
+</ul>
+<h4>What NOT to include in the issue body</h4>
+<ul>
+<li>Customer email, name, or other PII.</li>
+<li>Tenant admin user_id (the tenant_slug is sufficient for engineering identification).</li>
+<li>Stack traces with internal infrastructure detail.</li>
+<li>Database row IDs that could be used to construct unauthorized queries.</li>
+</ul>
+<p>The bug submission flow's PII redaction (per <a class="xref" href="#s32-7-6">§32.7.6</a>) applies to the issue body content.</p>
+<p><em>Auto-generated by Self-Service Help v1. Submitted at ${submitted_at}.</em></p>
+<h3 id="s32-7-5">32.7.5 Issue Creation Resilience <a class="anchor-link" href="#s32-7-5" aria-label="Permalink">¶</a></h3>
+<p>GitHub API failures must not lose the submission. If issue creation fails (network error, rate limit, GitHub down), the bug_submissions row stays in github_issue_state = ‘pending’ and a background job retries with exponential backoff. After 24 hours of failure, the row is marked ‘failed’, the user is notified via in-app banner, and a platform admin alert fires.</p>
+<p>Once an issue is created, the issue_number and issue_url are written back to the bug_submissions / feature_requests row.</p>
+<h3 id="s32-7-6">32.7.6 PII Redaction Before GitHub <a class="anchor-link" href="#s32-7-6" aria-label="Permalink">¶</a></h3>
+<p>Bug-report content can contain PII. Before any content is sent to GitHub:</p>
+<ul>
+<li>Run the v6 <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a> redaction pipeline over all free-text fields.</li>
+<li>Zero-tolerance items (SSN, full credit-card numbers, passport numbers) — quarantine the submission, do NOT create the issue, alert a platform admin.</li>
+<li>Tolerable items (names, emails, phone numbers) — redact to [REDACTED-NAME] / [REDACTED-EMAIL] / [REDACTED-PHONE].</li>
+<li>Screenshots — strip EXIF metadata. Optionally run a vision-based PII check (Haiku vision pass) before upload. If detected, refuse upload and ask the user to redact and re-upload.</li>
+</ul>
+<h2 id="s32-8">32.8 Confidence and Clarity Scoring <a class="anchor-link" href="#s32-8" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-8-1">32.8.1 Why a Score <a class="anchor-link" href="#s32-8-1" aria-label="Permalink">¶</a></h3>
+<p>Not every bug report is actionable. A score lets the platform route high-quality reports into the auto-fix pipeline and lower-quality reports into the human-review queue without blocking either path.</p>
+<p>The score is a single number 0.00–1.00 stored in bug_submissions.confidence_score. The factors that contributed are stored in bug_submissions.confidence_factors as JSONB for later analysis and threshold tuning.</p>
+<h3 id="s32-8-2">32.8.2 Score Computation <a class="anchor-link" href="#s32-8-2" aria-label="Permalink">¶</a></h3>
+<p>The Help AI emits a structured assessment at the end of the bug flow. The score is the average of the following factor scores, each 0–1:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Factor</strong></th><th><strong>What it measures</strong></th></tr></thead><tbody><tr><td>specificity_of_location</td><td>How precisely ‘where in the platform’ identifies a route or feature</td></tr><tr><td>clarity_of_actual_behavior</td><td>Whether the actual behavior is described concretely</td></tr><tr><td>clarity_of_expected_behavior</td><td>Whether the expected behavior is described concretely</td></tr><tr><td>completeness_of_steps</td><td>Whether reproduction steps are complete and ordered</td></tr><tr><td>reproducibility_signal</td><td>Whether the user reports the bug as ‘always’ or ‘sometimes’ (always = higher)</td></tr><tr><td>environment_completeness</td><td>Whether browser/device info is captured</td></tr></tbody></table></div>
+<p>Weighting can be added later if a uniform average produces poor results. v1 uses uniform weighting.</p>
+<h3 id="s32-8-3">32.8.3 Threshold Configuration <a class="anchor-link" href="#s32-8-3" aria-label="Permalink">¶</a></h3>
+<p>The auto-fix threshold is an environment variable BUG_AUTOFIX_CONFIDENCE_THRESHOLD with an initial value of 0.7. It can be changed without code deploy. Recommend recalibrating after the first 30 days of real submissions, once a distribution of real-world scores is observed.</p>
+<h3 id="s32-8-4">32.8.4 Score Transparency <a class="anchor-link" href="#s32-8-4" aria-label="Permalink">¶</a></h3>
+<p>The submitting user sees their confidence/clarity score after submission, with a brief explanation of factors that scored low. This encourages quality submissions and lets the user revise before submission if they want.</p>
+<p>Customers do not see the score — they see only ‘submitted’ confirmation with an issue link. This avoids putting non-technical users in a position of feeling judged by a number.</p>
+<h2 id="s32-9">32.9 Bug Auto-Fix Pipeline <a class="anchor-link" href="#s32-9" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-9-1">32.9.1 Overview <a class="anchor-link" href="#s32-9-1" aria-label="Permalink">¶</a></h3>
+<p>Bugs that score above the threshold and pass staging reproduction are eligible for an automated fix attempt by Claude Code. This pipeline is gated, observable, and never deploys to production without human approval — the existing CI/CD <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a> production approval gate stands.</p>
+<h3 id="s32-9-2">32.9.2 Workflow <a class="anchor-link" href="#s32-9-2" aria-label="Permalink">¶</a></h3>
+<p>A new GitHub Actions workflow .github/workflows/bug-auto-fix.yml is added. Triggered on issue events:</p>
+<ul>
+<li>Issue opened with labels bug AND auto-fix-candidate.</li>
+<li>Workflow extracts the structured fields from the issue body (using a parser keyed on the section headers from <a class="xref" href="section-07-api-routes.html#s7-4">§7.4</a>).</li>
+<li>Workflow opens a fresh staging environment with the latest prod DB copy + fixups (per CI/CD <a class="xref" href="section-05-database-schema-main-app.html">§5</a>).</li>
+<li>Workflow runs a reproduction attempt — initially a Playwright script generated by Claude Code from the reproduction steps; future versions may use a dedicated bug-repro framework.</li>
+<li><strong>Pre-fix repro gate:</strong> the generated Playwright script is run against the CURRENT pre-fix code (on staging). The script MUST FAIL (i.e., demonstrate the bug). If the script passes against pre-fix code, the bug either doesn't reproduce or the script is faulty — in either case the auto-fix attempt is aborted. Add label <code>repro-script-faulty</code> and post a comment explaining the failure.</li>
+<li>If pre-fix repro fails as expected: add label <code>repro-confirmed</code>; invoke Claude Code via API to propose a fix; open a draft PR <code>fix/issue-{number} → dev</code> with the repro test included.</li>
+<li><strong>Post-fix repro gate:</strong> the proposed fix is applied; the same Playwright script is run against the now-modified code. The script MUST PASS (i.e., demonstrate the bug is no longer reproducible). If the script still fails, the fix didn't fix the bug — abort PR creation, add label <code>fix-ineffective</code>, post a comment.</li>
+<li>If both gates pass: the draft PR is opened with the repro test included. PR review then verifies the fix is sensible (review is human; auto-fix only verifies the test pass/fail behavior is correct).</li>
+<li>If reproduction script generation fails entirely (Claude Code cannot produce a valid Playwright script from the issue text): add label <code>repro-failed</code>; post a comment summarizing what was tried; the issue stays open for human review.</li>
+</ul>
+<h3 id="s32-9-2a">32.9.2a Calls Worth Flagging <a class="anchor-link" href="#s32-9-2a" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>The two-gate pattern (pre-fix MUST fail, post-fix MUST pass) is the defense against the "auto-fixed but didn't actually fix anything" loop.</strong> Without it, a faulty repro that passes against buggy code would let the auto-fixer "fix" nothing and the PR would CI-green its way through review.</li>
+<li><strong>The pre-fix gate runs against CURRENT staging code</strong>, not against a fresh checkout. If the bug was already fixed by an earlier release, the gate catches that ("repro doesn't reproduce — bug may be already fixed"). The issue is closed as not-reproducible.</li>
+<li><strong>The post-fix gate runs against the proposed fix applied locally to the workflow runner.</strong> Once the gate passes and the PR opens, normal CI runs against the full PR diff and may catch other regressions.</li>
+<li><strong>Both gates use the same Playwright script.</strong> A fix that requires changing the test is suspicious.</li>
+</ul>
+<h3 id="s32-9-3">32.9.3 PR Conventions <a class="anchor-link" href="#s32-9-3" aria-label="Permalink">¶</a></h3>
+<p>Auto-fix PRs are always:</p>
+<ul>
+<li>Draft state (not ‘ready for review’).</li>
+<li>Include the reproduction test in the same PR as the fix.</li>
+<li>Title format: ‘fix: {first 80 chars of issue title} (#{issue_number})’.</li>
+<li>Body includes a link to the issue, a summary of the analysis, the proposed fix description, and a note that production deploy still requires human approval.</li>
+<li>Auto-fix PRs are flagged with a github label auto-fix-pr so the team can filter.</li>
+</ul>
+<h3 id="s32-9-4">32.9.4 Manual Override <a class="anchor-link" href="#s32-9-4" aria-label="Permalink">¶</a></h3>
+<p>A platform admin can add the label needs-human-fix to any issue, which removes auto-fix-candidate and prevents the auto-fix workflow from triggering. Useful when the admin knows the bug is sensitive (security, compliance, customer-impact heavy) or when a previous auto-fix attempt produced a poor result.</p>
+<h3 id="s32-9-5">32.9.5 Failure Modes and Their Handling <a class="anchor-link" href="#s32-9-5" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Failure mode</strong></th><th><strong>Handling</strong></th></tr></thead><tbody><tr><td>Staging DB copy fails</td><td>Skip repro; label repro-failed with explanation; alert platform admin</td></tr><tr><td>Playwright script invalid</td><td>Comment on issue with error; label repro-failed</td></tr><tr><td>Claude Code fix attempt times out</td><td>Close any partial PR; comment on issue; label repro-confirmed remains; needs human intervention</td></tr><tr><td>Fix PR fails CI</td><td>PR remains draft; engineer takes over</td></tr><tr><td>Fix PR review rejected</td><td>Engineer closes PR; issue stays open</td></tr></tbody></table></div>
+<h3 id="s32-9-6">32.9.6 Cost Controls <a class="anchor-link" href="#s32-9-6" aria-label="Permalink">¶</a></h3>
+<p>The auto-fix pipeline can consume meaningful Claude API budget. Controls:</p>
+<ul>
+<li>Per-day cap on auto-fix attempts across the platform — initial value 10/day. Beyond cap, additional candidates queue.</li>
+<li>Per-tenant cap — initial value 3/day. Prevents a single tenant from dominating the pipeline.</li>
+<li>Claude API key for the auto-fix workflow has its own spending limit configured in the Anthropic Console (separate from the production app key).</li>
+<li>All auto-fix Claude calls log to the AI cost-attribution system (v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>) under a synthetic ‘platform-autofix’ tenant identifier.</li>
+</ul>
+<h2 id="s32-10">32.10 Customer Bug Flow <a class="anchor-link" href="#s32-10" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-10-1">32.10.1 Trigger <a class="anchor-link" href="#s32-10-1" aria-label="Permalink">¶</a></h3>
+<p>The existing travel concierge persona gets a new intent recognizer for bug reports. Trigger phrases include (non-exhaustive):</p>
+<ul>
+<li>‘this is broken’</li>
+<li>‘something’s wrong with…’</li>
+<li>‘i think there’s a bug’</li>
+<li>‘this page is glitching’</li>
+<li>‘the website crashed’</li>
+</ul>
+<p>On detection, the travel concierge responds with: ‘It sounds like something might not be working right. Would you like me to file a bug report? I’ll ask you a few quick questions and our engineering team will take a look.’</p>
+<h3 id="s32-10-2">32.10.2 Authentication Gate <a class="anchor-link" href="#s32-10-2" aria-label="Permalink">¶</a></h3>
+<p>Customer bug reporting requires the customer to be OAuth-authenticated (per v6 <a class="xref" href="section-17-authentication-signup-consent.html">§17</a>). An anonymous customer trying to file a bug is asked to sign in first. The original conversation context is preserved through the anonymous-to-authenticated transfer (v6 <a class="xref" href="section-11-customer-memory.html#s11-6">§11.6</a>).</p>
+<p>If the customer declines to sign in, the travel concierge offers an alternative: ‘Would you like me to summarize the issue and forward it to a human agent at {tenant business name}?’ This routes to the tenant’s existing escalation path (v6 <a class="xref" href="section-10-ai-supervisor.html#s10-3">§10.3</a> topic escalations) rather than to GitHub.</p>
+<h3 id="s32-10-3">32.10.3 Flow Hand-off <a class="anchor-link" href="#s32-10-3" aria-label="Permalink">¶</a></h3>
+<p>If the customer accepts and is authenticated, the chat surface visually shifts (subtle banner: ‘Bug report mode’) and the bug flow takes over within the same conversation. The bug flow uses the same structured questions as <a class="xref" href="section-04-detailed-feature-matrix.html#s4-3">§4.3</a>, adapted in tone for end customers:</p>
+<ul>
+<li>‘Where were you when you noticed this?’ (instead of ‘Where in the platform’)</li>
+<li>‘What happened?’</li>
+<li>‘What did you expect to happen?’</li>
+<li>‘Can you walk me through exactly what you did?’</li>
+<li>‘Did this happen once, or has it happened more than once?’</li>
+<li>‘I’ll grab your browser info — does this look right?’</li>
+<li>‘Want to send a screenshot? Drag it into the chat or upload.’</li>
+</ul>
+<h3 id="s32-10-4">32.10.4 Issue Creation <a class="anchor-link" href="#s32-10-4" aria-label="Permalink">¶</a></h3>
+<p>The issue is created in the same GitHub repo as tenant-reported bugs (D-002 in MEMORY.md). Labels applied: bug, customer-reported. The submitter_user_id is the customer’s user_id (visible only to platform staff via the bug_submissions row, never exposed in the public GitHub issue body). The tenant_slug appears in the issue body so engineering can identify which tenant’s customer is affected.</p>
+<h3 id="s32-10-5">32.10.5 Customer Confirmation <a class="anchor-link" href="#s32-10-5" aria-label="Permalink">¶</a></h3>
+<p>After submission, the customer sees: ‘Thanks — I’ve sent that to the engineering team. You’ll hear back if we need more info.’ The customer does not see the GitHub issue URL directly (it’s an internal artifact); they see a friendly reference ID.</p>
+<h3 id="s32-10-6">32.10.6 Confidence Threshold for Customer Bugs <a class="anchor-link" href="#s32-10-6" aria-label="Permalink">¶</a></h3>
+<p>Customer-reported bugs follow the same confidence threshold for auto-fix eligibility. However, customer-reported bugs tend to have lower clarity scores than tenant-admin-reported bugs (different vocabulary, less technical specificity). The threshold value can be set independently for customer-reported bugs if real-world data shows the uniform threshold is poorly calibrated; v1 uses a single threshold for simplicity.</p>
+<h3 id="s32-10-7">32.10.7 Resolution Notification <a class="anchor-link" href="#s32-10-7" aria-label="Permalink">¶</a></h3>
+<p>When the corresponding GitHub issue is closed, the customer optionally receives an in-app or email notification (depending on their preferences). The notification phrasing avoids technical detail: ‘The issue you reported has been resolved. Thanks for letting us know.’</p>
+<h2 id="s32-11">32.11 Abuse Monitoring <a class="anchor-link" href="#s32-11" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-11-1">32.11.1 New Dimension <a class="anchor-link" href="#s32-11-1" aria-label="Permalink">¶</a></h3>
+<p>v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> defines an abuse-monitoring framework with multiple dimensions (AI cost, chat volume, email volume, group invitations, RAG submissions). This feature adds a new dimension: help_submission_rate.</p>
+<h3 id="s32-11-2">32.11.2 Initial Thresholds <a class="anchor-link" href="#s32-11-2" aria-label="Permalink">¶</a></h3>
+<p>Per-tenant per-day submission counts (bugs + feature requests combined). These are initial values; recalibrate after first 90 days of usage:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>State</strong></th><th><strong>Threshold (submissions/day)</strong></th><th><strong>Action</strong></th></tr></thead><tbody><tr><td>ok</td><td>≤ 19</td><td>No action</td></tr><tr><td>soft1</td><td>20–49</td><td>In-app banner to platform admin; no tenant notification</td></tr><tr><td>soft2</td><td>50–99</td><td>Email to tenant owner; throttle to 1 submission per 10 minutes for that tenant</td></tr><tr><td>hard</td><td>≥ 100</td><td>Block further submissions for the rest of the day; alert platform admin</td></tr></tbody></table></div>
+<h3 id="s32-11-3">32.11.3 Cost Attribution <a class="anchor-link" href="#s32-11-3" aria-label="Permalink">¶</a></h3>
+<p>Help AI calls attribute to the tenant whose user is interacting, exactly as customer-facing AI calls do (v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>). This means a tenant with many Help AI sessions will see those costs in their tier consumption.</p>
+<h3 id="s32-11-4">32.11.4 Customer-Bug-Specific Rate Limit <a class="anchor-link" href="#s32-11-4" aria-label="Permalink">¶</a></h3>
+<p>In addition to per-tenant rate limits, individual customers face a per-customer limit on bug submissions: 5 per day per customer. This blocks a single customer from spamming GitHub via the AI. Exceeding the limit triggers a polite refusal: ‘You’ve reported a few issues today already — our team will get to them. Try again tomorrow if you find something else.’</p>
+<h2 id="s32-12">32.12 Permissions <a class="anchor-link" href="#s32-12" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-12-1">32.12.1 Role Mapping <a class="anchor-link" href="#s32-12-1" aria-label="Permalink">¶</a></h3>
+<p>Per v6 <a class="xref" href="section-26-security.html">§26</a>, the role model is:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Role</strong></th><th><strong>Can view docs</strong></th><th><strong>Can use help flow</strong></th><th><strong>Can submit bug</strong></th><th><strong>Can submit feature</strong></th></tr></thead><tbody><tr><td>tenant_owner</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>tenant_agent</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>tenant_billing_admin</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>customer (authenticated)</td><td>No</td><td>No</td><td>Yes (via concierge)</td><td>No</td></tr><tr><td>customer (anonymous)</td><td>No</td><td>No</td><td>No</td><td>No</td></tr><tr><td>platform_super_admin</td><td>Yes (all tenants)</td><td>Yes</td><td>Yes (tagged platform-internal)</td><td>Yes</td></tr><tr><td>platform_support</td><td>Yes (all tenants)</td><td>Yes (read-only view)</td><td>Yes (on behalf)</td><td>Yes</td></tr><tr><td>platform_compliance</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>platform_finance</td><td>Yes</td><td>No</td><td>Yes</td><td>Yes</td></tr></tbody></table></div>
+<h3 id="s32-12-2">32.12.2 Customer Feature Requests <a class="anchor-link" href="#s32-12-2" aria-label="Permalink">¶</a></h3>
+<p>Customers cannot directly submit feature requests via this v1 release. Their feedback can still reach the platform via the tenant’s existing escalation path, where a tenant agent may translate it into a feature request through the tenant admin flow. This is a deliberate scope choice; customer-direct feature requests can be added in a future version once the volume model for customer bugs is understood.</p>
+<h2 id="s32-13">32.13 Privacy and Security <a class="anchor-link" href="#s32-13" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-13-1">32.13.1 PII Handling <a class="anchor-link" href="#s32-13-1" aria-label="Permalink">¶</a></h3>
+<p>Every free-text field captured by the bug or feature flow passes through the v6 <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a> PII redaction pipeline before:</p>
+<ul>
+<li>Being stored in bug_submissions or feature_requests (redacted form is stored; raw form is discarded).</li>
+<li>Being sent to GitHub as issue body.</li>
+<li>Being indexed or retained beyond the redaction step.</li>
+</ul>
+<h3 id="s32-13-2">32.13.2 Screenshots <a class="anchor-link" href="#s32-13-2" aria-label="Permalink">¶</a></h3>
+<p>Uploaded screenshots are subject to:</p>
+<ul>
+<li>EXIF metadata stripped on upload.</li>
+<li>Stored in tenant-scoped Supabase Storage with signed-URL access only.</li>
+<li>Optional vision-based PII detection before issue attachment — initial behavior: warn the user, do not block. After 90 days of data, evaluate moving to block-on-detection.</li>
+</ul>
+<h3 id="s32-13-3">32.13.3 Audit Logging <a class="anchor-link" href="#s32-13-3" aria-label="Permalink">¶</a></h3>
+<p>Audited events:</p>
+<ul>
+<li>Help session opened, closed, escalated.</li>
+<li>Bug or feature submitted (rows are themselves audit records).</li>
+<li>GitHub issue creation (success and failure).</li>
+<li>Auto-fix workflow triggered, succeeded, failed.</li>
+<li>Platform admin override (needs-human-fix label applied).</li>
+<li>Feature request decision (accepted/rejected/deferred/duplicate).</li>
+</ul>
+<p>Retention follows v6 audit-log retention: 7 years.</p>
+<h3 id="s32-13-4">32.13.4 Tenant Isolation <a class="anchor-link" href="#s32-13-4" aria-label="Permalink">¶</a></h3>
+<p>Help sessions, bug submissions, and feature requests are tenant-scoped via RLS. A tenant admin can see only their own tenant’s submissions. Platform admins can see across tenants. GitHub issues are not tenant-scoped (they live in a single repo) but the tenant identifier is hashed in any externally-visible portion of the issue body, with the plaintext tenant ID stored only in the platform’s bug_submissions row.</p>
+<h2 id="s32-14">32.14 Environment Variables <a class="anchor-link" href="#s32-14" aria-label="Permalink">¶</a></h2>
+<p>New variables added by this feature. Follows the v6 <a class="xref" href="section-28-environment-variables-reference.html">§28</a> conventions.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Variable</strong></th><th><strong>Required</strong></th><th><strong>Secret</strong></th><th><strong>Description</strong></th></tr></thead><tbody><tr><td>GITHUB_APP_ID</td><td>Yes</td><td>No</td><td>GitHub App identifier</td></tr><tr><td>GITHUB_APP_PRIVATE_KEY</td><td>Yes</td><td>Yes</td><td>GitHub App private key (PEM)</td></tr><tr><td>GITHUB_APP_INSTALLATION_ID</td><td>Yes</td><td>No</td><td>GitHub App installation identifier (per-repo install)</td></tr><tr><td>GITHUB_REPO_OWNER</td><td>Yes</td><td>No</td><td>Owner of the issues repo</td></tr><tr><td>GITHUB_REPO_NAME</td><td>Yes</td><td>No</td><td>Name of the issues repo</td></tr><tr><td>BUG_AUTOFIX_CONFIDENCE_THRESHOLD</td><td>Yes</td><td>No</td><td>Score threshold for auto-fix eligibility (default 0.7)</td></tr><tr><td>BUG_AUTOFIX_DAILY_PLATFORM_CAP</td><td>Yes</td><td>No</td><td>Platform-wide daily cap on auto-fix attempts (default 10)</td></tr><tr><td>BUG_AUTOFIX_DAILY_TENANT_CAP</td><td>Yes</td><td>No</td><td>Per-tenant daily cap on auto-fix attempts (default 3)</td></tr><tr><td>CLAUDE_CODE_API_KEY</td><td>Yes</td><td>Yes</td><td>API key for auto-fix Claude Code invocations; separate from main app key</td></tr><tr><td>HELP_DOCS_CACHE_TTL_SECONDS</td><td>No</td><td>No</td><td>TTL for cached PDF/.docx exports (default 3600)</td></tr></tbody></table></div>
+<h2 id="s32-15">32.15 Phased Rollout <a class="anchor-link" href="#s32-15" aria-label="Permalink">¶</a></h2>
+<h3 id="s32-15-1">32.15.1 Phase Alignment <a class="anchor-link" href="#s32-15-1" aria-label="Permalink">¶</a></h3>
+<p>v6 <a class="xref" href="section-31-implementation-phasing.html">§31</a> defines four phases (0–3). This feature lands in phases as follows:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Phase</strong></th><th><strong>What ships</strong></th></tr></thead><tbody><tr><td>Phase 1</td><td>Tenant admin help flows (help / bug / feature). Documentation viewer with onscreen + print + PDF download. GitHub integration. No auto-fix yet — manual triage for all submissions.</td></tr><tr><td>Phase 2</td><td>Customer bug flow via the travel concierge persona. .docx download. Auto-fix pipeline enabled. Abuse monitoring dimension turned on with enforcement.</td></tr><tr><td>Phase 3</td><td>Threshold recalibration based on real submission data. Optional customer feature requests if data shows volume warrants. Vision-based screenshot PII detection moves from warn to block if calibration supports it.</td></tr></tbody></table></div>
+<h3 id="s32-15-2">32.15.2 Phase 1 Done Definition <a class="anchor-link" href="#s32-15-2" aria-label="Permalink">¶</a></h3>
+<ul>
+<li>At least 5 doc sections written and approved.</li>
+<li>All three help flows tested end-to-end on staging.</li>
+<li>At least one real bug filed via the flow and visible as a GitHub issue.</li>
+<li>PDF download produces a readable, branded document.</li>
+<li>PII redaction verified by submitting a test bug containing fake SSN.</li>
+</ul>
+<h3 id="s32-15-3">32.15.3 Phase 2 Done Definition <a class="anchor-link" href="#s32-15-3" aria-label="Permalink">¶</a></h3>
+<ul>
+<li>Customer bug flow tested with a real authenticated test customer.</li>
+<li>Auto-fix workflow successfully reproduces a synthetic bug on staging.</li>
+<li>Auto-fix workflow opens a draft PR with proposed fix; engineer review confirms the fix is reasonable.</li>
+<li>Abuse monitoring dimension active and enforcing for non-platform tenants.</li>
+</ul>
+<h2 id="s32-16">32.16 Calls Worth Flagging <a class="anchor-link" href="#s32-16" aria-label="Permalink">¶</a></h2>
+<p>Design trade-offs in this section that may need revisiting:</p>
+<ul>
+<li><strong>GitHub as the issue system.</strong><strong> </strong>Locks bug/feature handling to GitHub. If the engineering team ever migrates to Linear, Jira, or another tracker, the issue-creation layer (<a class="xref" href="section-07-api-routes.html">§7</a>) has to be re-implemented. The repository abstraction is concentrated in apps/main/src/lib/github/, so the swap is contained — but it is a swap, not a config toggle.</li>
+<li><strong>Uniform confidence threshold for customer vs tenant-admin bugs.</strong><strong> </strong>Customers and tenant admins have different bug-reporting fluency. A single threshold may be miscalibrated for one side. Phase 3 may want a per-source threshold.</li>
+<li><strong>Auto-fix Playwright reproduction.</strong><strong> </strong>Bugs that don’t involve UI interaction (e.g., a background-job failure, an API contract mismatch) won’t reproduce in a UI-driven script. The reproduction layer needs to support multiple reproduction types over time. v1 supports UI-driven repro only.</li>
+<li><strong>Customer-reported feature requests are not in v1.</strong><strong> </strong>May create frustration if customers see they can report bugs but not request features. Worth measuring tenant feedback after Phase 2.</li>
+<li><strong>Help docs as part of the release pipeline.</strong><strong> </strong>Means a doc typo correction requires a release. Acceptable while the team is small; revisit if docs become a frequent edit surface.</li>
+<li><strong>Screenshot PII detection starts in warn-only mode.</strong><strong> </strong>If a customer attaches an image with PII visible (e.g., a passport photo by accident), the platform allows the upload with a warning. A later phase may flip this to block-by-default.</li>
+<li><strong>Help_doc_versions cache invalidation on every release.</strong><strong> </strong>Cache key includes the code version. Every deploy invalidates the cache. Acceptable while deploys are weekly or less frequent; if deploys become daily, cached generation cost becomes nontrivial.</li>
+<li><strong>No SLA on auto-fix turnaround.</strong><strong> </strong>An auto-fix PR may sit in draft for a long time before a human picks it up. The PR queue can grow. v6 doesn’t have an SLA framework; if one is added later, auto-fix PRs should be included.</li>
+</ul>
+<h1 id="s32">Appendix A — Fresh-Build Notes</h1>
+<p>This appendix is for the engineer who picks up the codebase six months from now and asks ‘why was this done this way?’ or who’s tasked with building it from scratch. It captures the choices, conventions, and traps that aren’t obvious from the per-section spec text but matter for getting the implementation right.</p>
+<h2>A.1 Things That Look Like Bugs But Aren’t</h2>
+<p>A short list of behaviors that will look wrong if you don’t know they’re deliberate:</p>
+<ul>
+<li>Monotonic abuse-monitoring state within a calendar month. A tenant whose usage drops back below threshold remains in the elevated state until next month. This is intentional anti-oscillation. See <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-7">§27.7</a>.</li>
+<li>No down-migrations. The schema is forward-only. Rollback is via code rollback (Vercel) or compensating forward migration. See <a class="xref" href="section-29-deployment-infrastructure.html#s29-6">§29.6</a>.</li>
+<li>The platform structure is strictly two-level (platform and tenant). Sub-hosts who engage subcontractors track that internally; the platform has no relationship with subcontractors and does not facilitate payments to them. See <a class="xref" href="section-01-platform-overview.html#s1-5">§1.5</a> and <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3a">§14.3a</a>.</li>
+<li>Tenant-promoted RAG chunks don’t move; they’re duplicated. Promotion to global creates a new global chunk. The original tenant chunk remains. This preserves tenant continuity and audit. See <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-9">§22.9</a>.</li>
+<li>DOBs are stored, ages are computed. Ages drift; DOBs don’t. Anywhere you see age math, look for the DOB upstream. See <a class="xref" href="section-11-customer-memory.html#s11-5">§11.5</a>.</li>
+<li>The same OAuth user has multiple public.users rows across tenants. Don’t dedupe across tenants. The user has separate memory, separate CRM identity, separate everything in each tenant they’ve engaged with. See <a class="xref" href="section-03-multi-tenancy-tier-matrix.html#s3-7">§3.7</a>.</li>
+<li>Pricing chunks auto-cap at authority 0.55. Even when from an official source. This is deliberate against price staleness. Override exists but logs reason. See <a class="xref" href="section-06-rag-service-schema.html#s6-8">§6.8</a>.</li>
+<li>The fallback email adapter returns synthetic booking refs. Strings like EMAIL-{tenant_id}-{ts}. These will look weird in admin views until you know they mean ‘not yet reconciled with real host system.’ See <a class="xref" href="section-13-host-agency-abstraction-layer.html#s13-6">§13.6</a>.</li>
+<li>Memory extraction happens every 10 turns, not every turn. Don’t optimize for per-turn extraction; that’s not the design. See <a class="xref" href="section-11-customer-memory.html#s11-2">§11.2</a>.</li>
+</ul>
+<h2>A.2 Multi-Tenancy Discipline</h2>
+<p>This is the single most error-prone area of the codebase. Cross-tenant bugs are catastrophic. A few rules:</p>
+<ul>
+<li>Every tenant-scoped table has tenant_id. No exceptions. If you find a tenant-scoped concept that doesn’t have it, that’s a schema bug, not a ‘we’ll figure it out.’</li>
+<li>Every API handler runs assertPermission() at entry. No exceptions. Don’t add ‘internal endpoints’ without auth — those are how cross-tenant bugs ship.</li>
+<li>RLS is defense in depth, not the only defense. Application code also filters by tenant_id. Both layers must be correct.</li>
+<li>Service role bypasses RLS. Use it sparingly (webhooks, scheduled jobs, admin operations). When used, the code must filter explicitly. Audit-log every service-role mutation.</li>
+<li>Test cross-tenant access on every new route. Add a Playwright probe. Cross-tenant probe tests run in CI per <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a>.</li>
+<li>Tenant resolution happens once per request, in middleware. Don’t re-resolve mid-request.</li>
+<li>‘Anonymous’ is a user-state, not a tenant-state. Anonymous chat still resolves to a tenant (by host). Don’t conflate the two.</li>
+</ul>
+<h2>A.3 Authorization vs. Authentication</h2>
+<p>The codebase treats these as distinct concepts:</p>
+<ul>
+<li><strong>Authentication</strong><strong> </strong>= ‘who is this person?’ Handled by Supabase Auth. Returns a verified auth_user_id.</li>
+<li><strong>Authorization</strong><strong> </strong>= ‘is this person allowed to do this?’ Handled by assertPermission() against rules defined in code.</li>
+</ul>
+<p>Routes never check ‘is the user signed in?’ without also checking ‘is the user authorized for this action?’ The two questions get answered together. A route that only checks authentication will eventually leak.</p>
+<h2>A.4 The Three Date/Time Conventions</h2>
+<ul>
+<li>All timestamps stored as TIMESTAMPTZ in UTC.</li>
+<li>All dates without time stored as DATE (no time zone). For example: sailing date is a DATE — the ship sails on June 15 regardless of where the customer is.</li>
+<li>Tenant-displayed times convert to tenants.timezone. Customer-displayed times convert to the customer’s resolved time zone. Never assume UTC at the display layer.</li>
+</ul>
+<p>Implication: never store ‘5pm’ as a string. Either it’s a TIMESTAMPTZ with an explicit instant, or it’s a DATE + a tenant-relative time interpreted at display.</p>
+<h2>A.5 IDs Everywhere</h2>
+<ul>
+<li>All primary keys are UUIDs (gen_random_uuid()). No sequential IDs. This prevents enumeration attacks and lets the platform reseat / merge data without ID collision.</li>
+<li>Foreign keys cascade only where data ownership is obvious (e.g., users to tenant cascades; bookings to users does NOT cascade — deleting a user does not delete their bookings).</li>
+<li>External-system IDs (Stripe IDs, host booking refs, etc.) live alongside the UUID, never replace it. The UUID is platform-internal truth.</li>
+</ul>
+<h2>A.6 Encryption Boundaries</h2>
+<p>Three layers of encryption exist; they protect against different threats:</p>
+<ul>
+<li>In transit (TLS). Standard. Vercel handles this.</li>
+<li>At rest (Supabase-managed). Standard. Supabase handles full-disk encryption.</li>
+<li>Application-layer encryption (you). This is the one to think about. Used for credentials (host adapter API keys, Resend API keys, anything that grants real-world authority). Uses AES-256-GCM with a per-record IV. Key lives in env var. See <a class="xref" href="section-13-host-agency-abstraction-layer.html#s13-5">§13.5</a> and <a class="xref" href="section-26-security.html#s26-6">§26.6</a>.</li>
+</ul>
+<p>The reason for layer 3: a DB-level breach (someone exfiltrates the DB) reveals everything in layers 1-2 in plaintext. Layer 3 keeps credentials encrypted even if the DB is dumped.</p>
+<h2>A.7 Idempotency Is Not Optional</h2>
+<p>Critical mutations accept an Idempotency-Key header. Stripe webhooks, booking submissions, commission writes — all of these must be idempotent. Cached for 24 hours.</p>
+<p>The reason: networks fail. Clients retry. Stripe retries. Inngest retries. Without idempotency, a single conceptual operation becomes two real ones. Two commissions credited. Two bookings submitted. Two emails sent.</p>
+<p>When in doubt: make it idempotent. The cost is small (24-hour cache row). The cost of getting it wrong is real money.</p>
+<h2>A.8 Why Two Supabase Projects</h2>
+<p>The RAG service has its own Supabase project. This is not ‘scale-driven’ — it’s a design choice:</p>
+<ul>
+<li>RAG schema can evolve without main app migrations</li>
+<li>RAG service can be redeployed without main app downtime</li>
+<li>Security boundary is explicit (RAG service has its own service-role key)</li>
+<li>Vector query load patterns are different from transactional load patterns</li>
+<li>Audit and ownership are cleaner</li>
+</ul>
+<p>Cost: two Supabase project bills, slightly more operational overhead. The tradeoff is intentional. Don’t merge them in the name of simplicity.</p>
+<h2>A.9 Why JWT for Inter-Service Auth (Not Shared Secret)</h2>
+<p>The main app calls the RAG service many times per chat turn. Options considered:</p>
+<ul>
+<li>Shared secret in header. Simple, but every endpoint has to verify the same thing. Rotation is hard. No per-call context.</li>
+<li>Mutual TLS. Heavy. Vercel function cold starts make it worse.</li>
+<li>JWT signed by main app, verified by RAG. Carries per-call context (tenant, user, persona). Replay-protected via jti. Rotation manageable with overlap windows.</li>
+</ul>
+<p>JWT wins. See <a class="xref" href="section-08-rag-service-architecture.html#s8-3">§8.3</a>.</p>
+<h2>A.10 The Schema-First Mindset</h2>
+<p>Schema is the source of truth. Type definitions in code mirror it (generated where possible). When schema disagrees with code, schema wins; fix the code.</p>
+<p>A corollary: schema reviews matter. Adding a column without thinking about the type, nullability, indexes, RLS, and migration backward-compatibility is how broken schema ships. Treat schema PRs with the same care as security PRs.</p>
+<h2>A.11 Why React Email for Templates</h2>
+<p>Three reasons:</p>
+<ul>
+<li>Type-safe templates. Tenant branding context flows through as typed props. No string interpolation bugs.</li>
+<li>Components compose. The BrandedLayout component embeds all the tenant-branding boilerplate. Templates focus on content.</li>
+<li>Plain-text alternates generate automatically. Email clients that don’t render HTML get a usable fallback.</li>
+</ul>
+<p>The alternatives (raw HTML templates, MJML, etc.) all sacrifice one of these. React Email is the local maximum.</p>
+<h2>A.12 Tone Matching Is a Feature, Not a Hack</h2>
+<p>The 5-level tone scale (<a class="xref" href="section-24-chat-ui.html#s24-5">§24.5</a>) is part of the persona design, not an afterthought. The supervisor’s tone_drift check exists to catch deviations — too casual on serious topics, too formal where rapport has been built. The customer’s rapport_tone_level in memory persists across conversations.</p>
+<p>Engineers shouldn’t strip this out as ‘complexity.’ It’s a deliberate part of why the AI doesn’t feel robotic. If a tenant’s customers complain about tone, look at level configuration first, not ‘remove tone matching.’</p>
+<h2>A.13 Anti-Patterns to Avoid</h2>
+<p>A non-exhaustive list of things that look reasonable but cause problems:</p>
+<ul>
+<li>Caching tenant data in module-level globals. Tenant context changes per request. Module globals leak.</li>
+<li>Building ‘internal admin shortcuts’ that bypass assertPermission. Convenience for the operator becomes a vulnerability when forgotten.</li>
+<li>Logging full prompts including tenant content. PII leak. Use IDs.</li>
+<li>Holding a DB connection across an AI streaming response. Long-lived connections starve the pool. Stream from buffer, not from open connection.</li>
+<li>Trusting host adapter responses without sanity-checking. The adapter returns what the host sent. The host can send garbage. Validate.</li>
+<li>Letting ai_mode = ‘disabled’ mean ‘no AI calls ever.’ It still means ‘no customer-facing AI.’ Background AI (memory extraction, supervisor preflight where applicable) still runs.</li>
+<li>Putting Stripe price IDs in code. They’re environment-specific (test mode vs live mode have different IDs). Env vars per <a class="xref" href="section-28-environment-variables-reference.html#s28-7">§28.7</a>.</li>
+<li>Assuming the supervisor catches everything. It catches most. The remainder gets surfaced via thumbs-down, eval suite, and customer feedback. Defense in depth.</li>
+<li>Treating the fallback email adapter as a ‘real’ adapter for testing. It’s a degraded mode, not a test mode. Use proper test mode and adapter mocks.</li>
+</ul>
+<h2>A.14 Naming Conventions</h2>
+<ul>
+<li>Tables: snake_case, plural (bookings, not booking)</li>
+<li>Columns: snake_case, singular (booking_id, not bookings_id)</li>
+<li>Foreign keys: {referenced_table_singular}_id (tenant_id, user_id)</li>
+<li>JSON fields: snake_case keys for consistency with DB columns</li>
+<li>TypeScript: camelCase variables, PascalCase types/classes</li>
+<li>Routes: kebab-case segments (/api/group-bookings/…)</li>
+<li>Env vars: SCREAMING_SNAKE_CASE</li>
+<li>React components: PascalCase</li>
+<li>Feature flags: SCREAMING_SNAKE_CASE matching env var convention</li>
+</ul>
+<p>Type generation handles the snake_case ↔ camelCase boundary at the DB layer. Don’t fight it.</p>
+<h2>A.15 The ‘Don’t Decide Now’ Items</h2>
+<p>Some choices were deliberately deferred to be made in implementation context. Don’t backfill them into the spec — they need real-world signal to decide right:</p>
+<ul>
+<li>Image generation provider (Replicate SDXL vs OpenAI DALL-E 3): depends on cost-per-image and quality at the time of implementation. See <a class="xref" href="section-02-technology-stack.html#s2-3">§2.3</a>.</li>
+<li>Native flow vs host widget for booking (<a class="xref" href="section-20-booking-flow.html">§20</a>): depends on host agency selection.</li>
+<li>Inngest tier: depends on job volume.</li>
+<li>Anthropic plan tier: depends on launch chat volume.</li>
+<li>Whether to add Redis cache: depends on observed query patterns. None at launch; add if needed.</li>
+<li>Read replicas for Supabase: depends on observed load. None at launch.</li>
+</ul>
+<p>Building the spec to dictate these would have made it wrong on day one of operation. They’re decisions for the engineer with their hands on production metrics.</p>
+<h2>A.16 Recommended Reading Order (For New Engineers)</h2>
+<p>If someone needs to learn the system, read in this order:</p>
+<ul>
+<li><a class="xref" href="section-01-platform-overview.html">§1</a> (overview), <a class="xref" href="section-02-technology-stack.html">§2</a> (stack), <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a> (multi-tenancy) — get the model</li>
+<li><a class="xref" href="section-05-database-schema-main-app.html">§5</a> (main schema), <a class="xref" href="section-06-rag-service-schema.html">§6</a> (RAG schema) — get the data</li>
+<li><a class="xref" href="section-09-ai-personas.html">§9</a> (personas), <a class="xref" href="section-10-ai-supervisor.html">§10</a> (supervisor), <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html">§21</a> (RAG consumer side), <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-10">§21.10</a> (hallucination defense) — get the AI behavior</li>
+<li><a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a> (host abstraction), <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a> (commissions) — get the money path</li>
+<li><a class="xref" href="section-17-authentication-signup-consent.html">§17</a> (auth), <a class="xref" href="section-25-data-privacy-retention.html">§25</a> (privacy), <a class="xref" href="section-26-security.html">§26</a> (security) — get the safety</li>
+<li><a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> (abuse monitoring) — get the operational constraints</li>
+<li>Everything else as relevant to current task</li>
+</ul>
+<p>The temptation is to read in section order. Don’t. The dependency order above gets you productive faster.</p>
+<h2>A.17 When the Spec Is Wrong</h2>
+<p>The spec will be wrong sometimes. Reality always surprises specs. When this happens:</p>
+<ul>
+<li>If a section’s stated behavior is contradicted by real observations, update the spec. Don’t keep the code matching a wrong spec.</li>
+<li>If a ‘Call Worth Flagging’ item turns out to be the bigger problem than the main design, promote it. Move the flag to the main text and explain.</li>
+<li>If a ‘Deferred’ item becomes urgent, document the reactivation reason in MEMORY.</li>
+<li>If MEMORY contains a decision that the spec contradicts, MEMORY wins (it’s more recent). Update the spec to match.</li>
+</ul>
+<p>The spec is a living document. Out-of-date specs are worse than no specs.</p>
+<h1 id="s32">Appendix B — Glossary</h1>
+<p>Quick-reference definitions for terminology used throughout the spec. Entries grouped by domain rather than alphabetized — closely-related terms appear together for context.</p>
+<h2>B.1 Platform Structure</h2>
+<p><strong>Platform</strong> — The system as a whole, operated by the platform owner. Hosts multiple tenants. Also the legal entity that has the relationship with the host agency, Stripe, Anthropic, and other vendors.</p>
+<p><strong>Tenant</strong> — A direct account on the platform. One of three types: BYO-host, sub-host, or the platform’s own automated agency. No tenant nests beneath another — the platform’s structure is strictly two-level.</p>
+<p><strong>BYO-host tenant</strong> — An independent travel agent who has their own host agency relationship and subscribes to the platform as SaaS. They bring their own host credentials; commissions flow through their existing arrangements without platform intermediation.</p>
+<p><strong>Sub-host tenant</strong> — An independent travel agent who doesn’t have their own host agency relationship and operates under the platform’s host agency. The platform takes a commission split and remits the remainder via Stripe Connect Express.</p>
+<p><strong>Subcontractor</strong> — A person a sub-host engages to help operate their agency. NOT a tenant on the platform. The platform has no relationship with subcontractors — they’re tracked privately inside the sub-host’s tenant for internal bookkeeping only.</p>
+<p><strong>Platform tenant</strong> — A special tenant: the platform operator’s own automated travel agency (Prong 1). Operates like any other tenant but is operated by the platform owner directly.</p>
+<p><strong>Three prongs</strong> — The three business models the platform supports: (1) the platform’s own automated agency, (2) BYO-host SaaS, (3) sub-host (white-label).</p>
+<h2>B.2 People &amp; Roles</h2>
+<p><strong>Customer (end traveler)</strong> — The person being served by a tenant — the one who books a cruise. Has an account on the platform; may interact with multiple tenants over time, each with separate identity and memory.</p>
+<p><strong>Tenant owner</strong> — The operator of a tenant. Has full admin access to that tenant. Different from the platform owner.</p>
+<p><strong>Tenant agent</strong> — A sub-user of a tenant who assists with customer service. Permissions narrower than tenant owner. Multiple per tenant on BYO Agency tier.</p>
+<p><strong>Platform super admin</strong> — Top-level platform operator with full access to admin console.</p>
+<p><strong>Platform compliance</strong> — Role responsible for reviewing tenant onboarding submissions.</p>
+<p><strong>Platform finance</strong> — Role responsible for reconciling commissions and payouts.</p>
+<p><strong>AI persona</strong> — One of the six AI travel advisors a customer can interact with: Marcus, Marco, Priya, Dave, Maya, Jenny.</p>
+<p><strong>Group coordinator</strong> — A customer who is organizing a group booking — created the group, manages invitations.</p>
+<p><strong>Group invitee</strong> — A customer invited to a group booking by a coordinator.</p>
+<h2>B.3 Money</h2>
+<p><strong>Commission</strong> — The amount paid by the host agency for a booking. Computed as commission rate × commissionable fare.</p>
+<p><strong>Commissionable fare</strong> — The portion of a booking’s total cost that earns commission. Distinct from total. Excludes taxes, port fees, insurance, and some addons.</p>
+<p><strong>Host booking fee</strong> — A per-booking fee that host agencies often deduct from gross commission before the platform’s share is calculated. May be flat, percent, or tiered.</p>
+<p><strong>Net commission</strong> — What the platform actually receives after host booking fees are deducted. The amount the two-party split is applied to.</p>
+<p><strong>Two-party split</strong> — The commission allocation: platform retains its tier-defined percentage of net commission; sub-host receives the remainder. There is no hierarchy or chain walk.</p>
+<p><strong>Tier-defined percentage</strong> — The percentage of net commission the platform retains, set by the sub-host’s tier (Starter 30%, Pro 20%, Agency 10%).</p>
+<p><strong>Hold period</strong> — The time between commission receipt and payout availability for a sub-host. 7 / 3 / 0 days by tier (Starter / Pro / Agency). Cushions against clawback risk.</p>
+<p><strong>Pending balance</strong> — Amount accrued but still in hold period. Not yet payable.</p>
+<p><strong>Available balance</strong> — Amount past hold period; eligible for the next scheduled payout.</p>
+<p><strong>In-transit balance</strong> — Amount currently in a Stripe transfer; not yet settled to the bank.</p>
+<p><strong>Payout</strong> — The Stripe Connect transfer that moves money from the platform’s account to a sub-host’s connected bank.</p>
+<p><strong>Clawback</strong> — Reversal of a previously-paid commission, typically due to customer cancellation. May happen during hold period (deducted from pending) or after payout (Stripe reversal or contractual recovery).</p>
+<p><strong>1099-NEC</strong> — US tax form Stripe Connect Express files automatically for sub-hosts earning $600+/year. Platform’s job is to ensure all payouts flow through Connect.</p>
+<p><strong>Stripe Connect Express</strong> — Stripe’s marketplace product for handling sub-host KYC, banking, and payouts. Express level: simpler onboarding, Stripe owns more of the dashboard.</p>
+<p><strong>Subscription</strong> — The platform’s SaaS fee charged via Stripe Subscriptions, separate from commission flow. BYO-host pays only this; sub-host pays this AND has commission split.</p>
+<p><strong>Trial period</strong> — 30 days, starting at tenant activation (not signup), during which no subscription charge applies.</p>
+<h2>B.4 AI Behavior</h2>
+<p><strong>Persona</strong> — An AI character with defined expertise, voice, and visual identity. Six total: Marcus, Marco, Priya, Dave, Maya, Jenny.</p>
+<p><strong>Persona overrides</strong> — Per-tenant customization of personas: display name renaming (Pro+ tier), system prompt addendum (Agency tier only), disabling.</p>
+<p><strong>System prompt</strong> — The instruction text given to Claude that defines a persona’s behavior. Built from three layers: base persona block, platform constraints, optional tenant addendum.</p>
+<p><strong>Prompt addendum</strong> — Tenant-supplied additional persona instructions. Agency tier only. Haiku-screened for safety before save.</p>
+<p><strong>Supervisor</strong> — The safety layer that runs around every AI response: hallucination check, persona drift, promise detection, arithmetic check, compliance keyword, tone drift, topic escalation.</p>
+<p><strong>Preflight check</strong> — A supervisor check that runs before an AI response is surfaced to the customer. Pass = release; flag = regenerate or escalate.</p>
+<p><strong>Tone drift</strong> — A supervisor check that catches tone-topic mismatches (e.g., casual on serious topics) or tone changes inconsistent with configuration.</p>
+<p><strong>Tone level</strong> — One of five levels customers can experience: formal, professional, casual, friendly, matched-energy. Per-tenant cap (default 3) and per-customer memory of current level.</p>
+<p><strong>Topic-level escalation</strong> — Escalating one topic in a customer’s conversation to human while AI continues to handle unrelated topics. Different from conversation-level escalation.</p>
+<p><strong>Kill switch</strong> — Platform-wide ability to pause AI responses (per <a class="xref" href="section-10-ai-supervisor.html#s10-6">§10.6</a>). Customer-facing chat falls back to ‘human will be in touch.’</p>
+<p><strong>Hallucination defense</strong> — The 8-layer stack of mechanisms that reduce AI factual errors: persona instructions, RAG grounding, hallucination check, confidence floor, promise detection, arithmetic check, customer feedback, escalation safety net.</p>
+<p><strong>Tool use / tools</strong> — Functions the AI can call: search_host_inventory, get_customer_context, generate_quote, collect_booking_details, escalate_to_human, update_memory.</p>
+<p><strong>AI mode</strong> — Tenant-level setting: autonomous (AI replies directly), draft_only (AI drafts, tenant agent reviews and sends), disabled (no AI).</p>
+<p><strong>Disclosure (AI)</strong> — Required notice that the customer is interacting with AI. Persistent UI banner; persona discloses on direct question.</p>
+<h2>B.5 RAG (Retrieval-Augmented Generation)</h2>
+<p><strong>RAG</strong> — The system that retrieves relevant knowledge chunks and includes them in AI prompts to ground responses in source material.</p>
+<p><strong>Knowledge chunk</strong> — A unit of text (~500 tokens) with metadata, embedded as a vector, stored in the RAG service’s database.</p>
+<p><strong>Embedding</strong> — A 1536-dimension vector that captures semantic meaning of a chunk. Used for similarity search.</p>
+<p><strong>Scope</strong> — Visibility of a chunk: global (all tenants) or tenant (only the owning tenant). The platform’s structure is strictly two-level — no inheritance, no ancestor walks.</p>
+<p><strong>Authority</strong> — A 0-1 score indicating how trustworthy a chunk is. Five tiers: low (0.30-0.54), tenant_default (0.55-0.69), tenant_verified (0.70-0.84), official (0.85-0.95), authoritative_override (0.96-1.0).</p>
+<p><strong>Recency</strong> — A computed score reflecting how fresh a chunk is. Decays over time; category-specific halflives.</p>
+<p><strong>Composite confidence</strong> — Weighted combination of match score, authority, and recency. Used for filtering at retrieval.</p>
+<p><strong>Confidence floor</strong> — Minimum composite confidence (0.35) for a chunk to be included in a prompt. Filters out weak matches.</p>
+<p><strong>Promo lifecycle</strong> — States a promotional chunk moves through based on dates: not_started → open_to_new → closed_to_new → expired. Sell-by and sail-by dates drive transitions.</p>
+<p><strong>Pricing authority cap</strong> — Pricing chunks auto-cap at 0.55 authority regardless of source. Manual override available with logged reason.</p>
+<p><strong>Promotion (RAG)</strong> — Action where platform admin moves a tenant chunk to global scope. Permanently raises the source tenant’s RAG cap by 25.</p>
+<p><strong>Tenant cap (RAG)</strong> — Per-tenant total cap on tenant-specific chunks (relevance &lt; 0.6). Base value by tier; each global promotion adds 25 permanently.</p>
+<p><strong>Queue-eligible item</strong> — A submission with relevance ≥ 0.6, awaiting platform admin global-review decision. Doesn’t count against tenant cap while pending.</p>
+<p><strong>Authority feedback loop</strong> — Customer thumbs-up/down feeds small (bounded ±0.05) adjustments to chunk authority over time.</p>
+<h2>B.6 Multi-Tenancy &amp; Security</h2>
+<p><strong>Tenant resolver</strong> — Middleware that maps a request’s hostname to a tenant context (subdomain, custom domain, or platform-direct).</p>
+<p><strong>RLS (Row-Level Security)</strong> — PostgreSQL feature that enforces tenant scoping at the database level. Defense in depth — application code also filters.</p>
+<p><strong>auth_user_in_tenant(tenant_id)</strong> — RLS helper function used in policies to check whether the authenticated user has a public.users row in the target tenant.</p>
+<p><strong>assertPermission()</strong> — Function called at every API handler entry that verifies the user is authorized for the action. Logs to audit_log.</p>
+<p><strong>Service role</strong> — Supabase service-level credential that bypasses RLS. Used by webhooks and scheduled jobs. Strict discipline — all use audit-logged.</p>
+<p><strong>Cross-tenant access</strong> — Attempted access from tenant A to tenant B’s data. Should always fail. Tested extensively.</p>
+<p><strong>Audit log</strong> — Append-only table recording every significant action: actor, action, target, outcome. 7-year retention. Encrypted at rest.</p>
+<p><strong>Anonymization</strong> — Replacing PII with placeholder values while preserving required-retention records. Triggered on customer deletion requests for booking/commission/audit records that cannot be fully deleted.</p>
+<p><strong>Application-layer encryption</strong> — AES-256-GCM encryption of credentials (host adapter API keys, tenant Resend keys) in the database. Per-record IV. KMS key in env var.</p>
+<p><strong>JWT (inter-service)</strong> — JSON Web Token signed by main app, verified by RAG service. RS256, 5-minute TTL, jti-based replay protection.</p>
+<h2>B.7 Booking &amp; Group</h2>
+<p><strong>Quote</strong> — A trip price summary sent to a customer. Has lifecycle states: draft, sent, viewed, accepted, declined, expired, converted. Becomes a booking on acceptance.</p>
+<p><strong>Booking</strong> — A confirmed-to-be-purchased trip. Has lifecycle states: draft, submitted, pending_host_review, confirmed, modified, cancelled, sailed, completed.</p>
+<p><strong>Host adapter</strong> — The pluggable layer that translates platform booking requests to a specific host agency’s API. Each adapter implements the HostAgencyClient interface.</p>
+<p><strong>Fallback email adapter</strong> — A degraded-mode adapter that emails structured booking details to a configured destination. Used when no real adapter is configured or available. Returns synthetic EMAIL-{tenant}-{ts} booking refs.</p>
+<p><strong>Provider booking ref</strong> — The reference number assigned by the host agency / cruise line for a confirmed booking. Stored alongside platform’s UUID.</p>
+<p><strong>Sailing date</strong> — The DATE the ship departs. Stored as DATE (no time zone) — the ship sails on this calendar date regardless of where customer is.</p>
+<p><strong>Group booking</strong> — A coordinated booking involving multiple cabins, organized by a group coordinator. Has lifecycle states: planning, active, closed, sailed, cancelled.</p>
+<p><strong>Group invitee</strong> — A customer invited to a group. May or may not be a platform user yet at the time of invitation.</p>
+<p><strong>Invitation token</strong> — HMAC-signed token in invitation URL that authenticates the invitee landing page without requiring login. Expires sailing_date + 30 days.</p>
+<p><strong>RSVP</strong> — Invitee’s response state: pending, interested, not_going, booked.</p>
+<p><strong>Coordinator portal</strong> — The interface where group coordinators manage their group: invitees, edits, hero image, preview, forum moderation.</p>
+<p><strong>Forum (group chat)</strong> — Threaded asynchronous discussion area per group. AI-moderated. Text only at launch.</p>
+<h2>B.8 Operational</h2>
+<p><strong>Inngest</strong> — Background job platform. Handles scheduled jobs (daily resets, recompute), event-driven flows (booking submitted → commission tracking), and retry queues.</p>
+<p><strong>Resend</strong> — Email sending provider. Two patterns: tenant’s own account (Pattern A) or platform’s account with tenant CNAME (Pattern B, default).</p>
+<p><strong>SSE (Server-Sent Events)</strong> — Streaming protocol used for chat responses. Client subscribes; server streams response tokens. Reconnect via Last-Event-ID.</p>
+<p><strong>Sandbox mode</strong> — Tenant testing mode where bookings go through the fallback adapter, no real commission records are created, and Stripe is in test mode. Switching to live requires explicit confirmation.</p>
+<p><strong>Onboarding stage</strong> — Where a tenant is in the signup → review → active flow. Persisted on tenants row.</p>
+<p><strong>Override (usage)</strong> — Admin-granted exception to a tenant’s normal usage threshold (per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-9">§27.9</a>). Time-bounded, reason-required, audit-logged.</p>
+<p><strong>Boot-time env verification</strong> — Service startup check that fails-loud if required env vars are missing or invalid. Per <a class="xref" href="section-28-environment-variables-reference.html#s28-19">§28.19</a>.</p>
+<h2>B.9 Compliance &amp; Legal</h2>
+<p><strong>ICA (Independent Contractor Agreement)</strong> — The substantive contract between platform and sub-host. Distinct from ToU. Accepted with electronic signature (typed legal name).</p>
+<p><strong>ToU (Terms of Use)</strong> — Platform-level legal document. Every user accepts on signup.</p>
+<p><strong>Privacy Policy</strong> — Platform-level legal document. Every user accepts on signup.</p>
+<p><strong>AI Liability Disclaimer</strong> — Platform-level legal document. Every user accepts on signup. Acknowledges AI may make mistakes, AI is not a licensed travel agent, etc.</p>
+<p><strong>CAN-SPAM</strong> — US email marketing law. Requires physical address, accurate from-line, unsubscribe link, prompt unsubscribe processing.</p>
+<p><strong>CCPA</strong> — California Consumer Privacy Act. Defines customer rights: know, delete, correct, opt-out of sale, non-discrimination.</p>
+<p><strong>Seller of Travel (SoT)</strong> — State-level registration required to sell travel in some states (CA, FL, WA, etc.). Handled via ICA clause referring to platform’s host agency registration. Deferred per-tenant verification pending host selection.</p>
+<p><strong>E</strong><strong>&amp;</strong><strong>O Insurance (Errors </strong><strong>&amp;</strong><strong> Omissions)</strong> — Professional liability insurance. Handled via ICA clause referring to platform’s host agency coverage where applicable. Deferred pending host selection.</p>
+<p><strong>Versioned consent</strong> — System where every legal document has a version; consents are recorded per (user, document, version, action). Re-prompt on version change.</p>
+<p><strong>Suppression (email)</strong> — A recipient × tenant pairing flagged to skip email sends. Types: hard_bounce, complaint, unsubscribe_all, unsubscribe_marketing, unsubscribe_news, manual_suppress.</p>
+<h2>B.10 Data Model Concepts</h2>
+<p><strong>UUID</strong> — Primary key format used everywhere. Prevents enumeration; allows merge/reseat without collision.</p>
+<p><strong>Tenant-scoped table</strong> — A table whose rows belong to a specific tenant. Has a tenant_id column with RLS policy enforcing isolation.</p>
+<p><strong>DOB-not-ages</strong> — Storage convention: dates of birth (DATE) are stored, never ages. Ages computed at sailing date for booking validation. Estimated DOBs flagged with date_of_birth_is_estimated.</p>
+<p><strong>Memory</strong> — Per-customer, per-tenant structured context used to prime AI conversations: preferences, family composition, accessibility needs, dietary restrictions, etc. Customer-controlled (view, edit, delete, opt-out).</p>
+<p><strong>Conversation</strong> — A continuous chat session between a customer and an AI persona. Has summary, status, message count.</p>
+<p><strong>Message</strong> — A single turn in a conversation: user message or assistant response. Carries persona, RAG chunks used, supervisor findings, feedback score.</p>
+<p><strong>Contact (CRM)</strong> — A structured record of a person known to the tenant. May or may not have a corresponding user account. Multi-traveler bookings reference contacts.</p>
+<p><strong>Contact relationship</strong> — Directional link between two contacts: spouse, partner, parent_of, child_of, sibling, friend, colleague. AI inferred or manually added.</p>
+<h2>B.11 Phases &amp; Status</h2>
+<p><strong>Phase 0</strong> — ‘Foundation’ — infrastructure setup. Per <a class="xref" href="section-31-implementation-phasing.html#s31-3">§31.3</a>.</p>
+<p><strong>Phase 1</strong> — ‘First Revenue’ — Prong 1 alive with real customers, real commissions. Per <a class="xref" href="section-31-implementation-phasing.html#s31-4">§31.4</a>.</p>
+<p><strong>Phase 2</strong> — ‘Multi-Tenant’ — Prongs 2 and 3 open; full tier matrix. Per <a class="xref" href="section-31-implementation-phasing.html#s31-5">§31.5</a>.</p>
+<p><strong>Phase 3</strong> — ‘Scale’ — deferred items shipped; performance work. Per <a class="xref" href="section-31-implementation-phasing.html#s31-6">§31.6</a>.</p>
+<p><strong>Sailed</strong> — A booking lifecycle state. Group bookings become read-only on the travel start date.</p>
+<p><strong>Suspended (tenant)</strong> — Tenant state: read-only, no new bookings; existing commissions continue to settle.</p>
+<p><strong>Terminated (tenant)</strong> — Tenant state: closed; data anonymized per retention policy.</p>
+<p><strong>Active (tenant)</strong> — Tenant state: fully operational; can take customer interactions and bookings.</p>
+<h2>B.12 Self-Service Help Terms</h2>
+<p>Terms specific to the Self-Service Help feature (<a class="xref" href="#s32">§32</a>). See <a class="xref" href="#s32">§32</a> for the full feature specification.</p>
+<p><strong>Help AI</strong> — The AI persona that runs the help / bug / feature chat flows defined in <a class="xref" href="#s32">§32</a>. Distinct from the travel concierge personas.</p>
+<p><strong>Help flow</strong> — One of three modes the Help AI runs in: ‘help’ (open Q&amp;A), ‘bug’ (structured bug-info gathering), ‘feature’ (structured feature-request gathering).</p>
+<p><strong>Help session</strong> — A single user session in any help flow. One row in the help_sessions table.</p>
+<p><strong>Auto-fix</strong> — A pipeline that attempts to reproduce a bug on staging and propose a fix via Claude Code, gated by a confidence/clarity threshold.</p>
+<p><strong>Confidence/clarity score</strong> — A 0–1 score computed by the Help AI at the end of the bug flow, capturing how actionable the bug report is.</p>
+<p><strong>Customer-reported bug</strong> — A bug filed by an end customer through the travel concierge persona. Labeled ‘customer-reported’ on the corresponding GitHub issue.</p>
+<p><strong>Tenant-admin-reported bug</strong> — A bug filed by a tenant admin or agent through the admin console help flow. Labeled ‘tenant-admin-reported’.</p>
+<p><strong>Repro-confirmed</strong> — Label applied when the auto-fix pipeline reproduced the bug on staging.</p>
+<p><strong>Repro-failed</strong> — Label applied when the auto-fix pipeline could not reproduce the bug; awaiting human review.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-31-implementation-phasing.html">← §31: Implementation Phasing</a><a class="toc-link" href="index.html">Table of Contents</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 10 — AI Supervisor — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 10</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s10">Section 10 — AI Supervisor</h1>
+<p>The supervisor is a safety and quality layer that runs around every AI response. It performs preflight checks before responses are surfaced to customers, handles escalations, and feeds into platform-wide monitoring.</p>
+<h2 id="s10-1">10.1 Architecture <a class="anchor-link" href="#s10-1" aria-label="Permalink">¶</a></h2>
+<pre class="codeblock"><code>[User message arrives]
+  │
+  ▼
+[AI generates response candidate]
+  │
+  ▼
+[Supervisor preflight checks]
+  ├──► hallucination_risk
+  ├──► persona_drift
+  ├──► promise_detection
+  ├──► arithmetic_check
+  ├──► compliance_keyword
+  ├──► tone_drift
+  └──► topic_escalation
+  │
+  ▼
+[Pass] ──► response surfaced to customer
+  │
+[Flag] ──► check regen budget (per §10.1a)
+  │           │
+  │           ├── budget exhausted ──► escalate to human (no further regens)
+  │           │
+  │           └── budget remaining ──► regenerate with stricter instructions
+  │                                        │
+  │                                        ▼
+  │                                    [Re-check preflight]
+  │                                        │
+  │                                        └──► (loop back to budget check)
+  ▼
+[After 2 failed regens OR budget exhausted] ──► escalate to human</code></pre>
+<h2 id="s10-1a">10.1a Per-Conversation Regen Budget <a class="anchor-link" href="#s10-1a" aria-label="Permalink">¶</a></h2>
+<p>A bad persona prompt, a prompt-injection attack, or genuinely challenging content can produce repeated regen cycles. Each regen is a full Sonnet call. Without a cap, a single afternoon of regen spirals can consume a tenant's entire monthly AI budget — and <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>'s monthly thresholds catch it too late.</p>
+<h3>Budget structure</h3>
+<p>Each <code>conversations</code> row tracks the cumulative regen activity:</p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.conversations
+  ADD COLUMN regen_tokens_consumed INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN regen_count_total INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN regen_budget_exhausted_at TIMESTAMPTZ;</code></pre>
+<p>The supervisor's regen loop reads two thresholds (configurable per <a class="xref" href="section-28-environment-variables-reference.html">§28</a>.X — env vars below):</p>
+<ul>
+<li><code>SUPERVISOR_REGEN_MAX_PER_CONVERSATION</code> (default: 6) — absolute cap on regen attempts for a single conversation across its lifetime. Independent of message count.</li>
+<li><code>SUPERVISOR_REGEN_MAX_TOKENS_PER_CONVERSATION</code> (default: 25000) — cumulative token spend cap on regen attempts. Sonnet at ~$3/MTok input + $15/MTok output makes 25K tokens roughly $0.25 — a reasonable per-conversation ceiling.</li>
+</ul>
+<p>EITHER threshold trips the exhaustion state. Once exhausted:</p>
+<ul>
+<li>The current message gets one final escalation-to-human (no further regens; the in-flight regen attempt completes and is delivered or the existing response is surfaced with a warning marker).</li>
+<li><code>regen_budget_exhausted_at</code> is set on the conversation row.</li>
+<li>ALL subsequent messages in this conversation skip the regen loop entirely — supervisor still preflights, but flag → direct escalation, no regeneration attempts.</li>
+<li>Tenant is alerted (<a class="xref" href="#s10-5">§10.5</a> supervisor dashboard shows a new "Exhausted regen budget" surface).</li>
+</ul>
+<h3>Budget recovery</h3>
+<p>Per-conversation exhaustion does not auto-reset. The conversation is flagged for human attention until either:</p>
+<ul>
+<li>A human agent intervenes and resets the budget manually (sets <code>regen_budget_exhausted_at = NULL</code>, increments <code>regen_count_total</code> by 0 — explicit no-op so audit log records the reset).</li>
+<li>The conversation is closed (<code>status = 'closed'</code>). A new conversation starts fresh.</li>
+</ul>
+<h3>Why per-conversation, not per-tenant or per-hour</h3>
+<ul>
+<li>Per-tenant: <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-4">§27.4</a> already does this at monthly granularity. Too coarse to catch spirals within a single afternoon.</li>
+<li>Per-hour-globally: rate-limiting AI calls at the tenant level affects ALL conversations including healthy ones; pathological conversations need to fail without dragging down everyone.</li>
+<li>Per-conversation: the scope of the problem. A pathological conversation gets quarantined; other conversations in the same tenant continue normally.</li>
+</ul>
+<h3>Defense layering</h3>
+<p>The per-conversation cap is the FIRST line. Defense in depth:</p>
+<div class="table-wrap"><table><thead><tr><th>Layer</th><th>Trigger</th><th>Effect</th></tr></thead><tbody><tr><td>Per-conversation cap (<a class="xref" href="#s10-1a">§10.1a</a>)</td><td>6 regens OR 25K tokens in one conversation</td><td>Conversation quarantined, escalates to human</td></tr><tr><td>Per-tenant abuse monitoring (<a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>)</td><td>Monthly thresholds</td><td>Throttle / hard limit per tier</td></tr><tr><td>Global kill switch (<a class="xref" href="#s10-6">§10.6</a>)</td><td>Platform-wide misbehavior</td><td>All AI paused</td></tr></tbody></table></div>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Defaults are deliberately conservative.</strong> 6 regens / 25K tokens per conversation is a ceiling, not a target. Tune downward in Phase 1 if observation shows most healthy conversations need fewer regens.</li>
+<li><strong>Exhaustion is sticky on the conversation.</strong> A conversation that hits the budget stays human-escalated even after a successful human handoff back to AI, until a human explicitly resets it. This avoids re-entering the spiral.</li>
+<li><strong>The token cap protects against a "few small regens that add up" attack.</strong> A pathological prompt that produces 4 regens each with 6K tokens hits the token cap before the regen count cap. Both bounds together cover the failure space.</li>
+</ul>
+<h2 id="s10-2">10.2 Preflight Checks <a class="anchor-link" href="#s10-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Check</strong></th><th><strong>What it does</strong></th><th><strong>Action on flag</strong></th></tr></thead><tbody><tr><td>hallucination_risk</td><td>Extract factual claims, verify against retrieved chunks</td><td>Regenerate with grounding</td></tr><tr><td>persona_drift</td><td>AI staying in character</td><td>Regenerate</td></tr><tr><td>promise_detection</td><td>Catches ‘guaranteed’, ‘I assure you’, etc.</td><td>Rewrite to hedged language</td></tr><tr><td>arithmetic_check</td><td>Validates any math in response</td><td>Regenerate</td></tr><tr><td>compliance_keyword</td><td>Detects medical, legal, financial advice patterns</td><td>Escalate</td></tr><tr><td>tone_drift (heuristic)</td><td>Tone-topic mismatch, excessive profanity in non-opted-in tenants, off-brand sycophancy</td><td>Regenerate or flag</td></tr><tr><td>tone_drift (lexical)</td><td>Deterministic match against slur and hate-speech deny-list per <a class="xref" href="section-24-chat-ui.html#s24-5">§24.5</a></td><td>Regenerate; auto-escalate after 3 consecutive matches</td></tr><tr><td>topic_escalation</td><td>Topics customer or tenant flagged for human</td><td>Defer on flagged topics</td></tr></tbody></table></div>
+<h2 id="s10-3">10.3 Topic-Level Escalation <a class="anchor-link" href="#s10-3" aria-label="Permalink">¶</a></h2>
+<p>Unlike conversation-level escalation, the supervisor tracks escalation at the TOPIC level. A customer may have an active escalation about a refund (handled by human) while continuing to chat about an unrelated future trip (AI continues to handle).</p>
+<p>CREATE TABLE public.escalation_topics (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>conversation_id UUID NOT NULL REFERENCES public.conversations(id),</p>
+<p>user_id UUID REFERENCES public.users(id),</p>
+<p>topic_summary TEXT NOT NULL,</p>
+<p>topic_tags TEXT[],</p>
+<p>status TEXT NOT NULL CHECK (status IN (‘open’,‘in_progress’,‘resolved’,‘closed’)),</p>
+<p>initiated_by TEXT, – ‘supervisor’,‘customer’,‘agent’</p>
+<p>initiated_reason TEXT,</p>
+<p>assigned_agent_id UUID REFERENCES public.users(id),</p>
+<p>opened_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>resolved_at TIMESTAMPTZ,</p>
+<p>resolution_notes TEXT</p>
+<p>);</p>
+<p>When uncertain whether a new message relates to an open escalation, the AI asks for clarification rather than guessing.</p>
+<h2 id="s10-4">10.4 Supervisor Findings (per message) <a class="anchor-link" href="#s10-4" aria-label="Permalink">¶</a></h2>
+<p>Every preflight check produces a finding (pass or flag). Findings stored in messages.supervisor_findings JSONB:</p>
+<p>{</p>
+<p>“checks_run”: [“hallucination_risk”,“persona_drift”,“promise_detection”,“arithmetic_check”,“compliance_keyword”,“tone_drift”,“topic_escalation”],</p>
+<p>“findings”: [</p>
+<p>{“check”:“hallucination_risk”,“severity”:“info”,“details”:“All factual claims supported”},</p>
+<p>{“check”:“promise_detection”,“severity”:“warning”,“details”:“Soft-rewrote ‘always available’ to ‘typically available’”}</p>
+<p>],</p>
+<p>“regen_count”: 0,</p>
+<p>“final_action”: “allow”</p>
+<p>}</p>
+<h2 id="s10-5">10.5 Supervisor Dashboard <a class="anchor-link" href="#s10-5" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Open topic-level escalations (assigned + unassigned)</li>
+<li>Recent flagged messages by check type</li>
+<li>Per-persona metrics: response quality, thumbs-down rate, regen rate</li>
+<li>Per-tenant aggregate metrics (visible to platform admin)</li>
+<li>Alert feed (priority-sorted)</li>
+</ul>
+<h2 id="s10-5a">10.5a Supervisor Sampling and Review <a class="anchor-link" href="#s10-5a" aria-label="Permalink">¶</a></h2>
+<p>The supervisor pipeline per <a class="xref" href="#s10-1">§10.1</a> has three outcomes per message: <strong>pass</strong>, <strong>regenerate</strong> (then re-evaluate), and <strong>escalate</strong>. The "pass" outcome includes a subset where supervisor findings include <code>severity: warning</code> items that were auto-rewritten or auto-corrected. These borderline passes are the highest-value source for tuning the supervisor itself — cases where a check fired, the system self-recovered, but a human eye might catch a residual issue the checks missed.</p>
+<p>This subsection defines the sampling and review surface.</p>
+<h3>What gets sampled</h3>
+<p>Four sampling rates, applied per message at supervisor completion:</p>
+<div class="table-wrap"><table><thead><tr><th>Outcome class</th><th>Default sample rate</th><th>Configurable</th></tr></thead><tbody><tr><td>Pass with no findings</td><td>1% (<code>supervisor_sample_rate_clean_pass</code>)</td><td>Yes</td></tr><tr><td>Pass with warning findings (auto-rewritten)</td><td>10% (<code>supervisor_sample_rate_warning_pass</code>)</td><td>Yes</td></tr><tr><td>Regen attempted (regardless of final outcome)</td><td>25% (<code>supervisor_sample_rate_regen</code>)</td><td>Yes</td></tr><tr><td>Escalate to human</td><td>100%</td><td>No — every escalation is reviewable already via <a class="xref" href="#s10-5">§10.5</a> dashboard</td></tr></tbody></table></div>
+<p>Sampled messages go into a <code>supervisor_review_queue</code> table. Random per-message (not per-conversation, not per-tenant).</p>
+<h3>Queue surface</h3>
+<p><code>/admin/supervisor/review-queue</code> displays the queue with these tabs:</p>
+<div class="table-wrap"><table><thead><tr><th>Tab</th><th>Filter</th><th>Action shape</th></tr></thead><tbody><tr><td>Recent (default)</td><td>All sampled messages from last 7 days</td><td>Mark as "OK" / "issue spotted"</td></tr><tr><td>Warning passes</td><td>Only <code>severity: warning</code> items</td><td>Same</td></tr><tr><td>Regens</td><td>All sampled regens</td><td>Same</td></tr><tr><td>Disputed</td><td>Items previously marked "issue spotted"</td><td>Adjudicate / annotate / close</td></tr></tbody></table></div>
+<p>Each item shows: original AI response, supervisor findings, conversation context (previous N messages), cited RAG chunks if applicable, customer's subsequent thumbs reaction if any. Reviewer marks "OK" (most cases, fast) or "issue spotted" (flagged for engineering attention with a free-text reason).</p>
+<h3>What "issue spotted" triggers</h3>
+<ul>
+<li>Engineering team alerted via existing audit-log + Sentry pipeline.</li>
+<li>Item moves to "Disputed" tab.</li>
+<li>Pattern surfaces in <a class="xref" href="#s10-7">§10.7</a> supervisor performance metrics.</li>
+<li>If 3+ items flagged "issue spotted" within a 7-day window cite similar supervisor finding types, an aggregated issue is auto-created for engineering with the pattern summary.</li>
+</ul>
+<h3>Why this isn't the <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-7">§22.7</a> review queue</h3>
+<p><a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-7">§22.7</a> reviews RAG content (chunks). This reviews supervisor verdicts on AI responses. Different domain expertise, different queue, different SLA.</p>
+<h3>Schema</h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.supervisor_review_queue (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  message_id UUID NOT NULL REFERENCES public.messages(id),
+  conversation_id UUID NOT NULL REFERENCES public.conversations(id),
+  sample_category TEXT NOT NULL CHECK (sample_category IN (
+    'clean_pass', 'warning_pass', 'regen_attempted', 'escalation'
+  )),
+  supervisor_findings_snapshot JSONB NOT NULL,
+  conversation_context_snapshot JSONB,
+  review_status TEXT NOT NULL CHECK (review_status IN (
+    'pending', 'reviewed_ok', 'reviewed_issue', 'disputed_resolved'
+  )) DEFAULT 'pending',
+  reviewed_by_user_id UUID REFERENCES public.users(id),
+  reviewed_at TIMESTAMPTZ,
+  review_notes TEXT,
+  sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  purge_after TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '90 days')
+);
+
+CREATE INDEX supervisor_review_queue_status_idx
+  ON public.supervisor_review_queue(review_status, sampled_at DESC)
+  WHERE review_status = 'pending';</code></pre>
+<h3>Configurable knobs (in <code>platform_settings</code>)</h3>
+<div class="table-wrap"><table><thead><tr><th>Setting</th><th>Default</th><th>Range</th></tr></thead><tbody><tr><td><code>supervisor_sample_rate_clean_pass</code></td><td>0.01</td><td>0.0–1.0</td></tr><tr><td><code>supervisor_sample_rate_warning_pass</code></td><td>0.10</td><td>0.0–1.0</td></tr><tr><td><code>supervisor_sample_rate_regen</code></td><td>0.25</td><td>0.0–1.0</td></tr><tr><td><code>supervisor_review_retention_days</code></td><td>90</td><td>30–365</td></tr></tbody></table></div>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Sampling is at supervisor-completion time, not lazily.</strong> Atomic snapshot prevents "data I wanted to review changed before I got to it."</li>
+<li><strong>Reviewer notes drive pattern detection.</strong> The aggregated-issue trigger (3+ items in 7 days) is where the queue produces engineering signal.</li>
+<li><strong>Defaults err generous for launch.</strong> Tune downward once queue's signal-to-noise is understood.</li>
+<li><strong>Reviewer authority:</strong> any platform admin can review. Marking "issue spotted" without a reason is allowed (required only if it's the third item in a 7-day pattern).</li>
+</ul>
+<h2 id="s10-6">10.6 Kill Switch <a class="anchor-link" href="#s10-6" aria-label="Permalink">¶</a></h2>
+<p>If AI behavior becomes problematic platform-wide (model misbehavior, prompt injection campaign, etc.), platform admin can pause AI responses globally or per-tenant. Activated AI shows: ‘Our AI is taking a brief break. A human will be in touch shortly.’</p>
+<h2 id="s10-7">10.7 Supervisor Performance Metrics <a class="anchor-link" href="#s10-7" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Hallucination check fire rate</li>
+<li>Block-after-regen rate</li>
+<li>Compliance escalation rate</li>
+<li>Thumbs-down rate per persona, per topic</li>
+<li>Tone-drift detection rate</li>
+<li>Average AI response latency (with supervisor overhead)</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-09-ai-personas.html">← §9: AI Personas</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-11-customer-memory.html">§11: Customer Memory →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

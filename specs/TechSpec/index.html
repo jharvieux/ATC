@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Table of Contents — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a></nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <div class="cover">
+<h1>AI Travel Concierge Platform</h1>
+<div class="subtitle">Technical Specification — Version 6.2</div>
+<div class="cover-meta">Pre-Development Hardening Applied · May 2026</div>
+</div>
+<section class="meta">
+<h2>About this version</h2>
+<p>v6.2 incorporates approximately 50 spec edits across 7 hardening batches, addressing all Critical and 17 of 18 High red-team findings, plus 9 curated Medium items and one operator-designed feature (the authenticated customer chat rate limit, §24.9).</p>
+<p>For detailed merge history see <code>Merge_Notes.md</code>; for design decisions and rejected alternatives see <code>Memory.md</code> entries D-022 through D-040.</p>
+</section>
+<section class="op-confirm-summary">
+<h2>OPERATOR CONFIRM markers (attorney engagement)</h2>
+<p>These markers remain in v6.2 and gate Phase 2 onboarding launch. All resolvable in a single attorney engagement.</p>
+<ul>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-7">§15.7</a> — Seller of Travel registration coverage for CA/FL/HI/IA/WA</li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-14">§15.14</a> — ToU/ICA chunk-license-survival language</li>
+<li><a href="section-16-white-label-branding.html#s16-7">§16.7</a> — Legal-page attribution wording</li>
+<li><a href="section-25-data-privacy-retention.html#s25-4">§25.4a</a> — Tenant-owned notes treatment after CCPA deletion</li>
+</ul>
+</section>
+<section class="toc">
+<h2>Table of Contents</h2>
+<div class="toc-section">
+<h3><a href="section-01-platform-overview.html">Section 1 — Platform Overview</a></h3>
+<ul class="toc-subs">
+<li><a href="section-01-platform-overview.html#s1-1">§1.1 Business Model — Three Prongs</a></li>
+<li><a href="section-01-platform-overview.html#s1-2">§1.2 Technical Posture at a Glance</a></li>
+<li><a href="section-01-platform-overview.html#s1-3">§1.3 Personas Served</a></li>
+<li><a href="section-01-platform-overview.html#s1-4">§1.4 Tenant Resolution</a></li>
+<li><a href="section-01-platform-overview.html#s1-5">§1.5 Multi-Tenancy Architecture</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-02-technology-stack.html">Section 2 — Technology Stack</a></h3>
+<ul class="toc-subs">
+<li><a href="section-02-technology-stack.html#s2-1">§2.1 Application Runtime</a></li>
+<li><a href="section-02-technology-stack.html#s2-2">§2.2 Data & State</a></li>
+<li><a href="section-02-technology-stack.html#s2-3">§2.3 AI Services</a></li>
+<li><a href="section-02-technology-stack.html#s2-4">§2.4 Payments</a></li>
+<li><a href="section-02-technology-stack.html#s2-5">§2.5 Communication</a></li>
+<li><a href="section-02-technology-stack.html#s2-6">§2.6 Observability</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-03-multi-tenancy-tier-matrix.html">Section 3 — Multi-Tenancy & Tier Matrix</a></h3>
+<ul class="toc-subs">
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-1">§3.1 Tenant Types</a></li>
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-2">§3.2 Tenant Lifecycle States</a></li>
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-3">§3.3 Tier Matrix</a></li>
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-4">§3.4 Hold Periods</a></li>
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-5">§3.5 Trial Period</a></li>
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-6">§3.6 Tenant Resolution Logic</a></li>
+<li><a href="section-03-multi-tenancy-tier-matrix.html#s3-7">§3.7 Multi-Tenant Identity</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-04-detailed-feature-matrix.html">Section 4 — Detailed Feature Matrix</a></h3>
+</div>
+<div class="toc-section">
+<h3><a href="section-05-database-schema-main-app.html">Section 5 — Database Schema (Main App)</a></h3>
+<ul class="toc-subs">
+<li><a href="section-05-database-schema-main-app.html#s5-1">§5.1 Tenancy & Identity</a></li>
+<li><a href="section-05-database-schema-main-app.html#s5-2">§5.2 Conversations & Messages</a></li>
+<li><a href="section-05-database-schema-main-app.html#s5-3">§5.3 Bookings & Commissions</a></li>
+<li><a href="section-05-database-schema-main-app.html#s5-4">§5.4 Database Access Patterns</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-06-rag-service-schema.html">Section 6 — RAG Service Schema</a></h3>
+<ul class="toc-subs">
+<li><a href="section-06-rag-service-schema.html#s6-1">§6.1 Service Separation Rationale</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-2">§6.2 Tenant Registry (Synced from Main App)</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-3">§6.3 Authority Scale</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-4">§6.4 knowledge_chunks Table</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-5">§6.5 Knowledge Ingestion Queue</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-6">§6.6 Retrieval Logging</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-7">§6.7 Promo Lifecycle</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-8">§6.8 Pricing Authority Cap</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-9">§6.9 Retrieval Scope</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-10">§6.10 Customer Feedback Confidence Factor</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-11">§6.11 PII Exclusion</a></li>
+<li><a href="section-06-rag-service-schema.html#s6-12">§6.12 Retention</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-07-api-routes.html">Section 7 — API Routes</a></h3>
+<ul class="toc-subs">
+<li><a href="section-07-api-routes.html#s7-1">§7.1 Authentication & Identity</a></li>
+<li><a href="section-07-api-routes.html#s7-2">§7.2 Chat & AI</a></li>
+<li><a href="section-07-api-routes.html#s7-3">§7.3 CRM & Quotes</a></li>
+<li><a href="section-07-api-routes.html#s7-4">§7.4 Bookings</a></li>
+<li><a href="section-07-api-routes.html#s7-5">§7.5 Groups</a></li>
+<li><a href="section-07-api-routes.html#s7-6">§7.6 RAG & Knowledge</a></li>
+<li><a href="section-07-api-routes.html#s7-7">§7.7 Commissions & Payouts</a></li>
+<li><a href="section-07-api-routes.html#s7-8">§7.8 Webhooks</a></li>
+<li><a href="section-07-api-routes.html#s7-9">§7.9 Conventions</a></li>
+<li><a href="section-07-api-routes.html#s7-9a">§7.9a Stripe Webhook Handler Contract</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-08-rag-service-architecture.html">Section 8 — RAG Service Architecture</a></h3>
+<ul class="toc-subs">
+<li><a href="section-08-rag-service-architecture.html#s8-1">§8.1 Deployment</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-2">§8.2 Tenant Registry Sync</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-3">§8.3 Service-to-Service Authentication</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-4">§8.4 POST /api/retrieve</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-5">§8.5 POST /api/ingest</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-6">§8.6 POST /api/approve/tenant and /api/approve/global</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-7">§8.7 POST /api/tenant-events</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-7a">§8.7a Main-App Retry Queue for RAG Sync</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-8">§8.8 PII Redaction at Ingestion</a></li>
+<li><a href="section-08-rag-service-architecture.html#s8-9">§8.9 Scope Isolation</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-09-ai-personas.html">Section 9 — AI Personas</a></h3>
+<ul class="toc-subs">
+<li><a href="section-09-ai-personas.html#s9-1">§9.1 Persona Roster</a></li>
+<li><a href="section-09-ai-personas.html#s9-2">§9.2 Persona Selection</a></li>
+<li><a href="section-09-ai-personas.html#s9-3">§9.3 System Prompt Architecture</a></li>
+<li><a href="section-09-ai-personas.html#s9-4">§9.4 Persona Base Block Structure</a></li>
+<li><a href="section-09-ai-personas.html#s9-5">§9.5 Tenant Persona Overrides</a></li>
+<li><a href="section-09-ai-personas.html#s9-6">§9.6 Tool Use</a></li>
+<li><a href="section-09-ai-personas.html#s9-7">§9.7 Disclosure Rules</a></li>
+<li><a href="section-09-ai-personas.html#s9-8">§9.8 In-Conversation Persona Switching</a></li>
+<li><a href="section-09-ai-personas.html#s9-9">§9.9 Streaming via SSE</a></li>
+<li><a href="section-09-ai-personas.html#s9-10">§9.10 AI Mode (Tenant-Level)</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-10-ai-supervisor.html">Section 10 — AI Supervisor</a></h3>
+<ul class="toc-subs">
+<li><a href="section-10-ai-supervisor.html#s10-1">§10.1 Architecture</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-1a">§10.1a Per-Conversation Regen Budget</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-2">§10.2 Preflight Checks</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-3">§10.3 Topic-Level Escalation</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-4">§10.4 Supervisor Findings (per message)</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-5">§10.5 Supervisor Dashboard</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-5a">§10.5a Supervisor Sampling and Review</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-6">§10.6 Kill Switch</a></li>
+<li><a href="section-10-ai-supervisor.html#s10-7">§10.7 Supervisor Performance Metrics</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-11-customer-memory.html">Section 11 — Customer Memory</a></h3>
+<ul class="toc-subs">
+<li><a href="section-11-customer-memory.html#s11-1">§11.1 Memory Storage</a></li>
+<li><a href="section-11-customer-memory.html#s11-2">§11.2 Memory Extraction</a></li>
+<li><a href="section-11-customer-memory.html#s11-3">§11.3 Customer-Facing Memory Controls</a></li>
+<li><a href="section-11-customer-memory.html#s11-4">§11.4 Memory in Prompts</a></li>
+<li><a href="section-11-customer-memory.html#s11-5">§11.5 DOBs Not Ages</a></li>
+<li><a href="section-11-customer-memory.html#s11-6">§11.6 Anonymous-to-Authenticated Transfer</a></li>
+<li><a href="section-11-customer-memory.html#s11-7">§11.7 Memory Audit</a></li>
+<li><a href="section-11-customer-memory.html#s11-8">§11.8 Memory and CRM</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-12-crm.html">Section 12 — CRM</a></h3>
+<ul class="toc-subs">
+<li><a href="section-12-crm.html#s12-1">§12.1 Contacts</a></li>
+<li><a href="section-12-crm.html#s12-2">§12.2 Contact Relationships</a></li>
+<li><a href="section-12-crm.html#s12-3">§12.3 Pipeline</a></li>
+<li><a href="section-12-crm.html#s12-4">§12.4 Quotes</a></li>
+<li><a href="section-12-crm.html#s12-5">§12.5 Commissionable Fare</a></li>
+<li><a href="section-12-crm.html#s12-6">§12.6 Host Booking Fees</a></li>
+<li><a href="section-12-crm.html#s12-7">§12.7 Commission Math (Worked Example)</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-13-host-agency-abstraction-layer.html">Section 13 — Host Agency Abstraction Layer</a></h3>
+<ul class="toc-subs">
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-1">§13.1 Goals</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-2">§13.2 The HostAgencyClient Interface</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-3">§13.3 Adapter Registry</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-4">§13.4 Tenant Host Configuration</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-5">§13.5 Credential Storage Pattern</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-6">§13.6 The Fallback Email Adapter</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-7">§13.7 Adapter Selection Flow</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-8">§13.8 Sub-Host Credential Patterns</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-9">§13.9 Health Monitoring</a></li>
+<li><a href="section-13-host-agency-abstraction-layer.html#s13-10">§13.10 Anti-Patterns</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-14-commissions-splits-payouts.html">Section 14 — Commissions, Splits & Payouts</a></h3>
+<ul class="toc-subs">
+<li><a href="section-14-commissions-splits-payouts.html#s14-0">§14.0 Money Representation Rules</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-1">§14.1 Lifecycle</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-2">§14.2 Commission States</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-3">§14.3 Two-Party Split</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-3a">§14.3a Sub-Host Internal Subcontractor Tracking</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-4">§14.4 Fail-Closed Rule</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-5">§14.5 Hold Periods</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-6">§14.6 Payout Balances</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-7">§14.7 Stripe Connect Transfer</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-8">§14.8 Statement Reconciliation</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-9">§14.9 Clawback Handling</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-10">§14.10 Stripe Connect Pricing (Verified Mid-2026)</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-11">§14.11 1099-NEC Reporting</a></li>
+<li><a href="section-14-commissions-splits-payouts.html#s14-12">§14.12 Platform Revenue Tracking</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-15-tenant-onboarding-compliance.html">Section 15 — Tenant Onboarding & Compliance</a></h3>
+<ul class="toc-subs">
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-1">§15.1 Stages</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-2">§15.2 Onboarding Stage Tracking</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-3">§15.3 Profile Stage</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-4">§15.4 Legal Acceptance</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-5">§15.5 ICA Acceptance</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-6">§15.6 Tax Form Collection</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-7">§15.7 Compliance Attestation</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-8">§15.8 Tier Selection & Subscription</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-9">§15.9 Stripe Connect Express Setup</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-10">§15.10 Submit for Review</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-11">§15.11 Platform Admin Review</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-12">§15.12 Sandbox Mode</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-13">§15.13 Ongoing Compliance Monitoring</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-14">§15.14 Termination</a></li>
+<li><a href="section-15-tenant-onboarding-compliance.html#s15-15">§15.15 Subscription Management (post-signup)</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-16-white-label-branding.html">Section 16 — White-Label Branding</a></h3>
+<ul class="toc-subs">
+<li><a href="section-16-white-label-branding.html#s16-1">§16.1 Visual Brand</a></li>
+<li><a href="section-16-white-label-branding.html#s16-2">§16.2 Color System</a></li>
+<li><a href="section-16-white-label-branding.html#s16-3">§16.3 Custom Domains</a></li>
+<li><a href="section-16-white-label-branding.html#s16-4">§16.4 Email-From Customization</a></li>
+<li><a href="section-16-white-label-branding.html#s16-5">§16.5 Persona Overrides (Pro+ tiers)</a></li>
+<li><a href="section-16-white-label-branding.html#s16-6">§16.6 Persona Addendum Validation</a></li>
+<li><a href="section-16-white-label-branding.html#s16-7">§16.7 ‘Powered By’ Attribution</a></li>
+<li><a href="section-16-white-label-branding.html#s16-8">§16.8 Email Template Branding</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-17-authentication-signup-consent.html">Section 17 — Authentication, Signup & Consent</a></h3>
+<ul class="toc-subs">
+<li><a href="section-17-authentication-signup-consent.html#s17-1">§17.1 OAuth Providers</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-2">§17.2 Microsoft No-Email Handling</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-3">§17.3 Signup Flow</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-4">§17.4 Versioned Consent System</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-5">§17.5 Document Version Change Flow</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-6">§17.6 AI Liability Disclaimer</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-7">§17.7 Session Management</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-8">§17.8 Account Lifecycle</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-9">§17.9 CCPA Data Export</a></li>
+<li><a href="section-17-authentication-signup-consent.html#s17-10">§17.10 CCPA Data Deletion</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-18-group-bookings.html">Section 18 — Group Bookings</a></h3>
+<ul class="toc-subs">
+<li><a href="section-18-group-bookings.html#s18-1">§18.1 Lifecycle</a></li>
+<li><a href="section-18-group-bookings.html#s18-2">§18.2 Group Creation</a></li>
+<li><a href="section-18-group-bookings.html#s18-3">§18.3 Destination-Relevant Hero Images</a></li>
+<li><a href="section-18-group-bookings.html#s18-4">§18.4 Invitation Email Components</a></li>
+<li><a href="section-18-group-bookings.html#s18-5">§18.5 Invitee Landing Page</a></li>
+<li><a href="section-18-group-bookings.html#s18-6">§18.6 Anonymity</a></li>
+<li><a href="section-18-group-bookings.html#s18-7">§18.7 RSVP States</a></li>
+<li><a href="section-18-group-bookings.html#s18-8">§18.8 Reminder Cadence</a></li>
+<li><a href="section-18-group-bookings.html#s18-9">§18.9 Token Lifecycle</a></li>
+<li><a href="section-18-group-bookings.html#s18-10">§18.10 Sailed Status — Read-Only</a></li>
+<li><a href="section-18-group-bookings.html#s18-11">§18.11 Coordinator Portal Tabs</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-19-forum-style-group-chat.html">Section 19 — Forum-Style Group Chat</a></h3>
+<ul class="toc-subs">
+<li><a href="section-19-forum-style-group-chat.html#s19-1">§19.1 Model</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-2">§19.2 Posting Permissions</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-3">§19.3 AI Moderation Pipeline</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-4">§19.4 Screening Dimensions</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-5">§19.5 Reactions</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-6">§19.6 Anonymity in Forum</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-7">§19.7 Coordinator Tools</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-8">§19.8 Edit and Delete</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-9">§19.9 User Strike System</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-10">§19.10 Post-Sailing Forum</a></li>
+<li><a href="section-19-forum-style-group-chat.html#s19-11">§19.11 Photo Support — Deferred</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-20-booking-flow.html">Section 20 — Booking Flow</a></h3>
+<ul class="toc-subs">
+<li><a href="section-20-booking-flow.html#s20-1">§20.1 Considerations Regardless of Implementation Path</a></li>
+<li><a href="section-20-booking-flow.html#s20-2">§20.2 Platform-Native Flow (Fallback Reference Design)</a></li>
+<li><a href="section-20-booking-flow.html#s20-3">§20.3 Entry Points</a></li>
+<li><a href="section-20-booking-flow.html#s20-4">§20.4 AI Co-Pilot</a></li>
+<li><a href="section-20-booking-flow.html#s20-5">§20.5 DOB Confirmation Gate</a></li>
+<li><a href="section-20-booking-flow.html#s20-6">§20.6 Validation Layers</a></li>
+<li><a href="section-20-booking-flow.html#s20-7">§20.7 Sub-Host Tenant-of-Record Disclosure</a></li>
+<li><a href="section-20-booking-flow.html#s20-8">§20.8 No Anonymous Bookings</a></li>
+<li><a href="section-20-booking-flow.html#s20-9">§20.9 Cancellation & Modification</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-21-rag-knowledge-base-consumer-side.html">Section 21 — RAG Knowledge Base (Consumer Side)</a></h3>
+<ul class="toc-subs">
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-1">§21.1 Retrieval Flow in Chat</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-2">§21.2 Entity Extraction</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-3">§21.3 Chunk Filtering Before Prompt Inclusion</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-4">§21.4 RAG Knowledge Block Format (in Prompt)</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-5">§21.5 Citation in AI Responses</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-6">§21.6 Customer-Facing Source Transparency</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-7">§21.7 Outdated Information Handling</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-8">§21.8 Conflict Handling</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-9">§21.9 No-Result Handling</a></li>
+<li><a href="section-21-rag-knowledge-base-consumer-side.html#s21-10">§21.10 §21.19 Hallucination Defense (Consolidated)</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-22-knowledge-ingestion-rag-submission-side.html">Section 22 — Knowledge Ingestion (RAG Submission Side)</a></h3>
+<ul class="toc-subs">
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-1">§22.1 Submission Methods</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-2">§22.2 No Submission Limits</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-3">§22.3 Supported File Types</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4 Normalization Pipeline</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-5">§22.5 Tenant Review Queue</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-6">§22.6 Revised Global Review Model</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-7">§22.7 Four-Tab Global Review Queue</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-8">§22.8 Promotion Mechanics</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-9">§22.9 Suggested Browser Extension Capability</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-10">§22.10 iOS Shortcut Capability</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-11">§22.11 Quality Signals from Submissions</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-12">§22.12 Re-Ingestion</a></li>
+<li><a href="section-22-knowledge-ingestion-rag-submission-side.html#s22-13">§22.13 Failure Modes</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-23-email-notifications.html">Section 23 — Email & Notifications</a></h3>
+<ul class="toc-subs">
+<li><a href="section-23-email-notifications.html#s23-1">§23.1 Provider Architecture</a></li>
+<li><a href="section-23-email-notifications.html#s23-2">§23.2 Email Log</a></li>
+<li><a href="section-23-email-notifications.html#s23-3">§23.3 CAN-SPAM Compliance</a></li>
+<li><a href="section-23-email-notifications.html#s23-4">§23.4 Pre-Cruise Email Series</a></li>
+<li><a href="section-23-email-notifications.html#s23-5">§23.5 Companion Web Pages</a></li>
+<li><a href="section-23-email-notifications.html#s23-6">§23.6 Email Categories & Rate Limits</a></li>
+<li><a href="section-23-email-notifications.html#s23-7">§23.7 Bounce & Complaint Handling</a></li>
+<li><a href="section-23-email-notifications.html#s23-8">§23.8 In-App Notifications</a></li>
+<li><a href="section-23-email-notifications.html#s23-9">§23.9 Gmail Inbound (Optional)</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-24-chat-ui.html">Section 24 — Chat UI</a></h3>
+<ul class="toc-subs">
+<li><a href="section-24-chat-ui.html#s24-1">§24.1 Layout</a></li>
+<li><a href="section-24-chat-ui.html#s24-2">§24.2 Persistent AI Disclosure</a></li>
+<li><a href="section-24-chat-ui.html#s24-3">§24.3 Streaming with Auto-Scroll</a></li>
+<li><a href="section-24-chat-ui.html#s24-4">§24.4 Message Components</a></li>
+<li><a href="section-24-chat-ui.html#s24-5">§24.5 Tone Matching & Rapport Building</a></li>
+<li><a href="section-24-chat-ui.html#s24-6">§24.6 Persona Switching In-Conversation</a></li>
+<li><a href="section-24-chat-ui.html#s24-7">§24.7 Message Persistence</a></li>
+<li><a href="section-24-chat-ui.html#s24-8">§24.8 Anonymous Chat Limit</a></li>
+<li><a href="section-24-chat-ui.html#s24-9">§24.9 Authenticated Customer Chat Rate Limit</a></li>
+<li><a href="section-24-chat-ui.html#s24-10">§24.10 Escalation Surface</a></li>
+<li><a href="section-24-chat-ui.html#s24-11">§24.11 Memory Indicators</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-25-data-privacy-retention.html">Section 25 — Data Privacy & Retention</a></h3>
+<ul class="toc-subs">
+<li><a href="section-25-data-privacy-retention.html#s25-1">§25.1 Data Classifications</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-2">§25.2 Retention Schedule</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-3">§25.3 CCPA Rights</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-4">§25.4 Anonymization of Required-Retention Data</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-4a">§25.4a Free-Text Anonymization Strategy</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-5">§25.5 Sub-Processors</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-6">§25.6 Data Residency</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-7">§25.7 Consent Granularity</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-8">§25.8 Cookie Policy</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-9">§25.9 Data Breach Response</a></li>
+<li><a href="section-25-data-privacy-retention.html#s25-10">§25.10 Production Data on Staging — Privacy Posture</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-26-security.html">Section 26 — Security</a></h3>
+<ul class="toc-subs">
+<li><a href="section-26-security.html#s26-1">§26.1 Threat Model</a></li>
+<li><a href="section-26-security.html#s26-2">§26.2 Four-Layer Auth</a></li>
+<li><a href="section-26-security.html#s26-3">§26.3 Authorization Pattern</a></li>
+<li><a href="section-26-security.html#s26-3a">§26.3a Service-Role Discipline</a></li>
+<li><a href="section-26-security.html#s26-4">§26.4 Encryption</a></li>
+<li><a href="section-26-security.html#s26-5">§26.5 Audit Logging</a></li>
+<li><a href="section-26-security.html#s26-5a">§26.5a Forensics Logging</a></li>
+<li><a href="section-26-security.html#s26-6">§26.6 Monitoring & Alerts</a></li>
+<li><a href="section-26-security.html#s26-7">§26.7 Incident Response</a></li>
+<li><a href="section-26-security.html#s26-8">§26.8 Anti-Prompt-Injection</a></li>
+<li><a href="section-26-security.html#s26-9">§26.9 Vendor Outage Handling</a></li>
+<li><a href="section-26-security.html#s26-10">§26.10 Breach Response Process</a></li>
+<li><a href="section-26-security.html#s26-11">§26.11 Penetration Testing</a></li>
+<li><a href="section-26-security.html#s26-12">§26.12 Compliance Posture</a></li>
+<li><a href="section-26-security.html#s26-13">§26.13 Real PII on Staging — Documented Risk Acceptance</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-27-saas-abuse-monitoring-cost-controls.html">Section 27 — SaaS Abuse Monitoring & Cost Controls</a></h3>
+<ul class="toc-subs">
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-1">§27.1 Why This Section Exists</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-2">§27.2 Five Monitored Dimensions</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-3">§27.3 Three-Tier Limit Structure (Hybrid)</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-4">§27.4 Thresholds by Dimension</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-5">§27.5 Schema</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-6">§27.6 Enforcement Behavior by Dimension</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-7">§27.7 Recomputation & State Transitions</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-8">§27.8 Notification Flow</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-9">§27.9 Override Workflow</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-10">§27.10 Platform Admin Dashboard</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-11">§27.11 Tenant-Facing Usage UI</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12 Cost Attribution</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-13">§27.13 Integration with Existing Sections</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-14">§27.14 What Is Not Covered Here</a></li>
+<li><a href="section-27-saas-abuse-monitoring-cost-controls.html#s27-15">§27.15 Calls Worth Flagging</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-28-environment-variables-reference.html">Section 28 — Environment Variables Reference</a></h3>
+<ul class="toc-subs">
+<li><a href="section-28-environment-variables-reference.html#s28-1">§28.1 Platform Identity & Routing</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-2">§28.2 Supabase — Main App</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-3">§28.3 Supabase — RAG Service</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-4">§28.4 Inter-Service Auth (Main ↔ RAG)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-5">§28.5 Anthropic (Claude API)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-6">§28.6 OpenAI (Embeddings)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-7">§28.7 Stripe (Subscriptions + Connect)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-8">§28.8 Resend (Email)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-9">§28.9 OAuth Providers (Supabase Auth)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-10">§28.10 Gmail Integration (Optional Per-Tenant)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-11">§28.11 Inngest (Background Jobs)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-12">§28.12 Image Generation</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-13">§28.13 Application-Layer Encryption</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-14">§28.14 Audit & Observability</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-15">§28.15 Feature Flags & Operational Toggles</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-16">§28.16 Tone & Persona Configuration</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-17">§28.17 Abuse Monitoring Thresholds (§27)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-18">§28.18 Vendor Pricing (Cached Daily — Not Env Vars)</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-19">§28.19 Required-at-Boot Verification</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-20">§28.20 Secret Rotation Policy</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-21">§28.21 Local Development</a></li>
+<li><a href="section-28-environment-variables-reference.html#s28-22">§28.22 Calls Worth Flagging</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-29-deployment-infrastructure.html">Section 29 — Deployment & Infrastructure</a></h3>
+<ul class="toc-subs">
+<li><a href="section-29-deployment-infrastructure.html#s29-1">§29.1 Service Topology</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-2">§29.2 Vercel Project Configuration</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-3">§29.3 Environments</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-4">§29.4 DNS Configuration</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-5">§29.5 Supabase Project Setup</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-6">§29.6 Database Migrations</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-7">§29.7 Deployment Workflow</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-8">§29.8 Rollback Strategy</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-9">§29.9 Secrets Management</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-10">§29.10 Observability Stack</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-11">§29.11 Job & Cron Infrastructure (Inngest)</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-12">§29.12 Custom Domain Provisioning Runbook</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-13">§29.13 Capacity & Scaling</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-14">§29.14 Disaster Recovery Posture</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-15">§29.15 Cost Structure (Monthly Estimate at Launch)</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-16">§29.16 On-Call & Incident Response</a></li>
+<li><a href="section-29-deployment-infrastructure.html#s29-17">§29.17 Calls Worth Flagging</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-30-testing-requirements.html">Section 30 — Testing Requirements</a></h3>
+<ul class="toc-subs">
+<li><a href="section-30-testing-requirements.html#s30-1">§30.1 Testing Philosophy</a></li>
+<li><a href="section-30-testing-requirements.html#s30-2">§30.2 Test Categories & Layers</a></li>
+<li><a href="section-30-testing-requirements.html#s30-3">§30.3 What Must Be Tested (By Domain)</a></li>
+<li><a href="section-30-testing-requirements.html#s30-4">§30.4 Test Data Strategy</a></li>
+<li><a href="section-30-testing-requirements.html#s30-5">§30.5 CI Pipeline</a></li>
+<li><a href="section-30-testing-requirements.html#s30-6">§30.6 AI Behavior Evaluation</a></li>
+<li><a href="section-30-testing-requirements.html#s30-7">§30.7 Load Testing</a></li>
+<li><a href="section-30-testing-requirements.html#s30-8">§30.8 Security Testing</a></li>
+<li><a href="section-30-testing-requirements.html#s30-9">§30.9 Test Environments</a></li>
+<li><a href="section-30-testing-requirements.html#s30-10">§30.10 Test Maintenance</a></li>
+<li><a href="section-30-testing-requirements.html#s30-11">§30.11 What’s NOT Tested (Explicit)</a></li>
+<li><a href="section-30-testing-requirements.html#s30-12">§30.12 Test-Driven Development Posture</a></li>
+<li><a href="section-30-testing-requirements.html#s30-13">§30.13 Calls Worth Flagging</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-31-implementation-phasing.html">Section 31 — Implementation Phasing</a></h3>
+<ul class="toc-subs">
+<li><a href="section-31-implementation-phasing.html#s31-1">§31.1 Phasing Philosophy</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-2">§31.2 Phase Overview</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-3">§31.3 Phase 0 — Foundation (8-10 weeks)</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-4">§31.4 Phase 1 — First Revenue (8-10 weeks)</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-5">§31.5 Phase 2 — Multi-Tenant (8-10 weeks)</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-6">§31.6 Phase 3 — Scale & Deferred (8-12 weeks)</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-7">§31.7 Cross-Phase Risks & Decisions</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-8">§31.8 What Each Phase Validates</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-9">§31.9 Resource Assumptions</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-10">§31.10 What’s Explicitly Out Of v6</a></li>
+<li><a href="section-31-implementation-phasing.html#s31-11">§31.11 Calls Worth Flagging</a></li>
+</ul>
+</div>
+<div class="toc-section">
+<h3><a href="section-32-self-service-help.html">Section 32 — Self-Service Help</a></h3>
+<ul class="toc-subs">
+<li><a href="section-32-self-service-help.html#s32-1">§32.1 Purpose and Scope</a></li>
+<li><a href="section-32-self-service-help.html#s32-2">§32.2 User Experience Overview</a></li>
+<li><a href="section-32-self-service-help.html#s32-3">§32.3 Tenant Admin Console Documentation</a></li>
+<li><a href="section-32-self-service-help.html#s32-4">§32.4 Help AI Persona</a></li>
+<li><a href="section-32-self-service-help.html#s32-5">§32.5 Database Schema</a></li>
+<li><a href="section-32-self-service-help.html#s32-6">§32.6 API Routes</a></li>
+<li><a href="section-32-self-service-help.html#s32-7">§32.7 GitHub Integration</a></li>
+<li><a href="section-32-self-service-help.html#s32-8">§32.8 Confidence and Clarity Scoring</a></li>
+<li><a href="section-32-self-service-help.html#s32-9">§32.9 Bug Auto-Fix Pipeline</a></li>
+<li><a href="section-32-self-service-help.html#s32-10">§32.10 Customer Bug Flow</a></li>
+<li><a href="section-32-self-service-help.html#s32-11">§32.11 Abuse Monitoring</a></li>
+<li><a href="section-32-self-service-help.html#s32-12">§32.12 Permissions</a></li>
+<li><a href="section-32-self-service-help.html#s32-13">§32.13 Privacy and Security</a></li>
+<li><a href="section-32-self-service-help.html#s32-14">§32.14 Environment Variables</a></li>
+<li><a href="section-32-self-service-help.html#s32-15">§32.15 Phased Rollout</a></li>
+<li><a href="section-32-self-service-help.html#s32-16">§32.16 Calls Worth Flagging</a></li>
+</ul>
+</div>
+</section>
+  </main>
+  <footer class="page-footer">
+    
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>
