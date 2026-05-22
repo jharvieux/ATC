@@ -4,6 +4,50 @@ Newest entries on top.
 
 ---
 
+## D-054 — 2026-05-22 — BP22: RAG ingestion pipeline — key decisions
+
+**Decision:**
+
+1. **OCR provider deferred — `RAG_INGEST_OCR_PROVIDER` defaults to `'none'`.** Operator must pick between `'tesseract'` (free, in-process, slower) and `'gcv'` (Google Cloud Vision, paid, requires `GCV_API_KEY`). Until the choice is made, image uploads and OCR-only PDFs return `extraction_status='failed'` with a clear "operator-action-required" error message rather than silently failing. Document the choice in MEMORY when made.
+
+2. **File parsers stubbed.** `extractContent()` dispatches by MIME type but only `text/plain` and `text/markdown` extract directly. PDF (pdf-parse), DOCX (mammoth), XLSX (sheetjs), PPTX, HTML (cheerio), and images (OCR) return `status='unavailable'` with the library name in the error message. Installing these libraries is a separate operator approval gate (CLAUDE.md says don't install runtime deps without permission). When installed, swap the stub for the real import in `extract-content.ts`.
+
+3. **`rag_pii_recurring_pattern_detected` event has a `// TODO(part-6)` consumer.** The BP27 abuse-signal subsystem isn't built; the Stage-2 PII redaction job still emits the event so the downstream consumer can be wired later without re-touching the Stage-2 code. Search for the event name in `inngest/rag-pii-redact.ts` to find the emission point.
+
+4. **Browser extension and iOS Shortcut: docs only.** Per spec — the actual extension package and `.shortcut` file are operator-downstream tasks. The platform ships the receiving API endpoints (`/api/rag/submit/extension`, `/api/rag/submit/ios-shortcut`, `/api/rag/submit/file`) and the documentation under `docs/rag/{browser-extension,ios-shortcut}.md` with the contract every implementation must satisfy (auth, payload shape, MV3 manifest, OAuth flow).
+
+5. **`tenant_registry.rag_submit_daily_limit` and `rag_chunks_max` columns do NOT exist on either side.** The build prompt's Task 9 says "confirm Build Prompt 06 / 08's tenant_registry already has these columns nullable". They were never created — no enforcement of submission volume limits at the schema level. Per the §22.2 design decision (no submission limits), this is correct. Abuse is handled by §27 quality patterns, not volume thresholds. No ALTER added.
+
+6. **`/replace/chunk/:id` RAG endpoint deferred.** The duplicate-resolution action for `mode='replace'` returns 501 with a suggestion to use `add_with_supersedes` instead. The RAG service doesn't yet have a `/replace` endpoint and adding it cross-cuts the chunk versioning model. Document for BP27 / future RAG service work as `TODO(bp22-rag-replace)`.
+
+7. **`/demote/chunk` RAG endpoint deferred.** Same pattern. The main-app `/api/admin/rag/demote/:promotion_id` calls the RAG side, but if the RAG endpoint returns 404 the main-app still records the demotion intent + audit_log entry. The note `rag_demote_endpoint_not_yet_implemented_main_recorded_intent` is surfaced in the response so operators see the partial-success state.
+
+8. **PII aggregation state lives on the `tenants` table.** Four columns (`pii_quarantine_alert_window_start`, `_count_in_window`, `_recurring_days`, `_last_event_at`) rather than a separate `tenant_pii_quarantine_state` table because the state is 1:1 with the tenant and a separate table adds JOIN cost on every Stage-2 run. Pure-function `computeAggregation()` keeps the state machine unit-testable without DB mocks.
+
+9. **Aggregation state machine details (verified by 5 tests):**
+   - First event → `send_new`, count=1, recurring_days=1.
+   - Subsequent events within `RAG_INGEST_AGGREGATION_WINDOW_HOURS` (default 24h) → `update_existing`, increment count, recurring_days unchanged.
+   - Event after window expiry → `send_new`, count=1. If the prior event was within 2 days (i.e., daily-ish), recurring_days++; otherwise recurring_days reset to 1.
+   - When recurring_days >= `RAG_INGEST_RECURRING_PATTERN_DAYS` (default 3) → emit `tenant.rag_pii_recurring_pattern_detected` event for BP27.
+   - "Within 2 days" is intentional — accounts for clock skew + variable operator activity times.
+
+10. **`rag_global_promotions` RLS allows tenant SELECT for their own promotions.** SELECT policy joins back through `rag_submissions.tenant_id = auth_user's tenant`. Tenants need to see "your chunk was promoted to global" notifications on their dashboard. INSERT/UPDATE/DELETE are service-role-only (platform admin via `withPlatformAdminAudit`).
+
+11. **`audit_log_id` on `rag_global_promotions` is bare UUID (no FK).** Same pattern as D-053 — `audit_log` table doesn't exist yet (D-036). Column populated with a fresh UUID at promote/demote time so the snapshot can be linked when §26 ships.
+
+12. **PostgreSQL JSON-numeric comparison gotcha:** the global-review queue queries cast `normalization_result->>'global_relevance_score'` to TEXT (via `->>`), so range comparisons (`gte/lt`) are string comparisons against `'0.3'` and `String(threshold)`. The values are stored to consistent precision by `clamp01()` in `haiku-normalize.ts`, but if a future refactor changes precision the queries may need an explicit `::numeric` cast.
+
+**What was rejected:**
+- Installing pdf-parse / mammoth / sheetjs as part of BP22 — CLAUDE.md forbids without explicit user permission; stubs make the gating boundary clear.
+- A separate `tenant_pii_quarantine_state` table — JOIN cost on every Stage-2 redaction, no benefit.
+- Adding `rag_submit_daily_limit` columns just to confirm they're nullable — they don't exist; §22.2 says no volume limits.
+- Eager retry of `/replace/chunk` against a missing RAG endpoint — fail-loud 501 with a workaround suggestion is more useful than a silent fallback.
+- A materialized view for tenant_rag_approval_rate_30d — needs DDL + refresh scheduling; the nightly cron computes and logs (BP27 will persist when its schema lands).
+
+**Artifacts:** `20260601000000_rag_ingestion.sql`, `lib/rag-ingest/{create-submission,pii-regex-prefilter,extract-content,haiku-pii-redact,haiku-normalize,pii-quarantine-aggregator}.ts`, `app/api/rag/submit/{web-ui,file,extension,ios-shortcut,batch}/route.ts`, `app/api/rag/queue/{route,[id]/{approve,reject,duplicate-check,duplicate-action},bulk-approve/route}.ts`, `app/api/admin/rag/{global-review,promote/[submission_id],demote/[promotion_id]}/route.ts`, `inngest/{rag-extract-content,rag-pii-redact,rag-normalize,rag-tenant-approval-rate-nightly}.ts`, `docs/rag/{browser-extension,ios-shortcut}.md`. 3 new test files, 20 new unit tests (417/417 passing).
+
+---
+
 ## D-053 — 2026-05-22 — BP21: RAG consumer, 8-layer hallucination defense, quote pricing — key decisions
 
 **Decision:**

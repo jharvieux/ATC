@@ -1,79 +1,82 @@
-# Session state — last updated 2026-05-22 18:45 UTC
+# Session state — last updated 2026-05-22 18:50 UTC
 
 ## Just completed
 
-- BP21 — RAG consumer side, eight-layer hallucination defense, quote pricing discipline (§21) — MERGED to dev as PR #64 (commit 3ece605)
-  - Branch: feature/bp21-rag-consumer-hallucination-quotes (deleted post-merge)
-  - Migration 20260531000000_quote_pricing.sql:
-    - quotes: price_kind, price_lock_token, price_lock_expires_at, customer_accepted_variance_cents, customer_accepted_at, customer_accepted_audit_id, priced_at, estimate_price_cents, locked_price_cents
-    - NEW tenant_settings table (quote_variance_cents, show_chat_sources)
-    - platform_settings seed: quote_estimate_validity_days=7, category_halflives_days
-  - RAG consumer pipeline:
-    - entity-extraction.ts (Haiku, 1s timeout, 1h cache, empty-set fallback)
-    - chunk-types.ts, filter-chunks.ts (floor, expiry, closed-promo, pricing-cap, dedup, topN)
-    - format-block.ts (§21.4 verbatim, ★ rating, AUTHORITATIVE_OVERRIDE tag, no-result block)
-    - retrieve-for-chat.ts (orchestrator with RAG service call)
-  - Persona prompt integration: knowledge_block param flows through buildSystemPrompt
-  - MessageSources.tsx component (§21.6 click-to-expand source UI)
-  - All 5 BP11 supervisor preflight stubs filled:
-    - hallucination_risk (Haiku claim extraction + chunk keyword grounding)
-    - arithmetic_check (deterministic parser + LTR eval + tolerance)
-    - topic_escalation (= §21.10 layer 8 escalation safety net)
-    - persona_drift v1 (model-self-ref + unknown-name + refusal detection)
-    - compliance_keyword (deterministic regex for med/legal/financial advice)
-  - run-supervisor.ts updated: async checks via Promise.all, extras passthrough
-  - supervisor/metrics.ts (§21.10 defense metric emitter — console.warn stub)
-  - Quote pricing discipline:
-    - kind-resolver.ts (15-min freshness + price_lock_token + adapter capability)
-    - render-pdf.ts (estimate/confirmed HTML serialization, audit-snapshot ready)
-    - /api/quotes/[id]/accept rewritten: variance recording + PDF snapshot + audit_id
-    - /api/bookings/[id]/submit extended: §21.10.1 variance branch → pending_customer_reconfirmation
-    - quote-estimate-expiry-sweep.ts (daily 02:00 UTC Inngest cron)
-  - HostCapabilities: supports_price_lock added (defaulted false on existing adapters)
-  - HostAgencyClient: getCurrentPrice added as OPTIONAL method
-  - 8 new test files, 63 new unit tests
-  - All tests pass (397/397 non-skipped), typecheck passes, lint passes, lint:migrations passes
-  - MEMORY.md D-053 added
+- BP22 — RAG ingestion pipeline (§22)
+  - Branch: feature/bp22-rag-ingestion
+  - Migration 20260601000000_rag_ingestion.sql:
+    - rag_submissions table (six submission methods, 4-stage pipeline state)
+    - rag_global_promotions table (with demote tracking)
+    - tenants additions for PII aggregation state (4 columns)
+    - Indexes: review_queue, content_hash dedup, auto_flagged, tenant_suggested
+    - Standard four-policy RLS pattern
+  - Submission endpoints (six methods):
+    - /api/rag/submit/web-ui (text)
+    - /api/rag/submit/file (multipart, Supabase Storage upload)
+    - /api/rag/submit/extension (browser ext OAuth)
+    - /api/rag/submit/ios-shortcut (text or 307 redirect for multipart)
+    - /api/rag/submit/batch (atomic 100-item batch)
+    - manual_entry shares the web-ui endpoint via 'via' param
+  - Four-stage Inngest pipeline:
+    - rag-extract-content (file MIME dispatch; text/plain + text/markdown real, binary formats stubbed pending operator install)
+    - rag-pii-redact (regex zero-tolerance prefilter + Haiku tolerable redaction)
+    - rag-normalize (Haiku structured output + auto-flag threshold)
+    - tenants approval rate nightly
+  - PII quarantine aggregation:
+    - pii-quarantine-aggregator.ts pure function
+    - Window-based alert send/update logic
+    - 3-consecutive-day → tenant.rag_pii_recurring_pattern_detected event for BP27
+  - Tenant review queue:
+    - GET /api/rag/queue (paginated, filterable)
+    - POST /api/rag/queue/[id]/approve (two-step RAG forward)
+    - POST /api/rag/queue/[id]/reject (with abuse-signal event)
+    - POST /api/rag/queue/bulk-approve (10-item safety prompt header)
+    - GET /api/rag/queue/[id]/duplicate-check
+    - POST /api/rag/queue/[id]/duplicate-action (replace/add_with_supersedes/cancel)
+  - Global review queue:
+    - GET /api/admin/rag/global-review (four tabs, withPlatformAdminAudit)
+    - POST /api/admin/rag/promote/[submission_id] (creates rag_global_promotions row)
+    - POST /api/admin/rag/demote/[promotion_id] (to_tenant_scope | hard_delete)
+  - Browser extension + iOS shortcut docs in docs/rag/
+  - 3 new test files, 20 new unit tests (417/417 passing)
+  - MEMORY.md D-054 added (12 decisions documented)
 
 ## In flight
 
-- Nothing in flight — clean checkpoint
+- Nothing in flight — BP22 ready to commit and open PR
 
 ## Next step
 
-- Proceed to BP22 — RAG ingestion: normalization, PII zero-tolerance, four-tab global review (§22). Uses Opus per build prompt.
+- Commit BP22 work on feature/bp22-rag-ingestion
+- Push and open PR; wait for CI; merge if green
+- Then proceed to BP23 — Email infrastructure, pre-cruise series, in-app notifications (§23). Uses Sonnet per build prompt.
 
 ## Blocked on user
 
-- Apply BP21 migration to atc-main: `SUPABASE_DB_URL=<url> pnpm db:migrate`
-  (includes 20260531000000_quote_pricing.sql plus any prior unapplied)
-- Apply pending RAG migrations: 0007, 0008, 0009 psql to atc-rag
-- Env vars to add to Vercel (atc-main) for BP21:
-  - ANTHROPIC_API_KEY (entity extraction + hallucination_risk claim check)
-  - ENTITY_EXTRACTION_MODEL (default: claude-haiku-4-5-20251001)
-  - RAG_CHUNK_CONFIDENCE_FLOOR (default 0.35)
-  - RAG_CHUNK_DEDUP_SIMILARITY_THRESHOLD (default 0.8)
-  - RAG_CHUNK_TOP_N_DEFAULT (default 4)
-  - QUOTE_PDF_RENDERER (default react-pdf)
-  - QUOTE_ESTIMATE_VALIDITY_DAYS (default 7)
-  - QUOTE_DEFAULT_VARIANCE_CENTS (default 5000)
-- Carry-over from BP20:
-  - INVITATION_TOKEN_HMAC_KEY, OPENAI_API_KEY (DALL-E 3)
-  - HAIKU_FORUM_MODERATION_MODEL, HAIKU_NORMALIZATION_MODEL, HAIKU_PII_REDACTION_MODEL
-  - VERCEL_API_TOKEN, VERCEL_PROJECT_ID, PLATFORM_PARENT_DOMAIN, PLATFORM_ENV
-  - Supabase Auth: enable Google, Microsoft, Facebook OAuth
-  - Redis (REDIS_URL) — Upstash
-  - STRIPE_PRICE_* env vars (16 total)
-  - STRIPE_TEST_SECRET_KEY GitHub secret
+- Apply BP22 migration to atc-main: `SUPABASE_DB_URL=<url> pnpm db:migrate`
+- Decide on RAG_INGEST_OCR_PROVIDER ('tesseract' | 'gcv') — currently 'none' = images & OCR-only PDFs fail
+- Approve file parser library installs (pdf-parse, mammoth, sheetjs, pptxgenjs reader, cheerio) when binary uploads are needed
+- Provision Supabase Storage bucket 'rag-submissions' (one-time)
+- Env vars to add to Vercel (atc-main) for BP22:
+  - RAG_INGEST_PII_REDACTION_HAIKU_MODEL (default claude-haiku-4-5-20251001)
+  - RAG_INGEST_NORMALIZATION_HAIKU_MODEL (default claude-haiku-4-5-20251001)
+  - RAG_INGEST_GLOBAL_RELEVANCE_AUTOFLAG_THRESHOLD (default 0.6)
+  - RAG_INGEST_AGGREGATION_WINDOW_HOURS (default 24)
+  - RAG_INGEST_RECURRING_PATTERN_DAYS (default 3)
+  - RAG_INGEST_MAX_FILE_SIZE_BYTES (default 52428800)
+  - RAG_INGEST_OCR_PROVIDER (default 'none' — set when chosen)
+  - GCV_API_KEY (only if 'gcv')
+- Carry-over from BP21:
+  - ANTHROPIC_API_KEY (Haiku entity extraction + claim grounding)
+  - All quote pricing + RAG-consumer env vars
+- Carry-over from BP20: forum, group, OAuth, Redis, Stripe price IDs, etc.
 
 ## Open questions
 
-- Quote PDF binary rendering: react-pdf wiring deferred (HTML serialization is the audit snapshot for now)
-- hallucination_risk claim-extraction Haiku prompt has no recorded contract tests yet — gated by ANTHROPIC_API_KEY
-- Persona-drift v1 catches deterministic patterns; richer Haiku voice-comparison is a follow-up
-- BrandedLayout email send call sites wiring is BP23
-- Forum invitee data loading and live forum component: TODO(prompt-24)
-- No-anon guard middleware promotion when @supabase/ssr installed: TODO(supabase-ssr)
-- Slur deny-list must be populated by operator before launch (currently empty seed)
-- audit_log table real-INSERT swap when §26 lands (D-036, D-053 stub)
-- BP21 RAG service /retrieve auth uses simple Bearer; RS256 JWT signing per BP09 is TODO(bp24-chat-service-jwt)
+- File parsers gated on operator install of pdf-parse / mammoth / sheetjs / pptxgenjs / cheerio
+- OCR provider operator decision pending
+- /replace/chunk and /demote/chunk RAG endpoints not yet built (501 / 404 fallback in main app)
+- BP27 abuse signals will consume tenant.rag_pii_recurring_pattern_detected event
+- BP27 abuse signals will consume tenant.rag_submission_rejected event
+- audit_log table real-INSERT swap when §26 lands (D-036, D-053, D-054 stub patterns)
+- Carry-overs from prior BPs (Slur deny-list, BrandedLayout, persona-drift v2, etc.)
