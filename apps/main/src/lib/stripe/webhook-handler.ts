@@ -102,13 +102,70 @@ export async function handleStripeWebhook(
         }
         break;
       }
-      // TODO(§15.16): customer.subscription.created
+      // §15.8 — Stripe Checkout session completed: write subscription IDs, advance stage.
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        if (session.subscription && session.customer) {
+          const tenantId = session.metadata?.tenant_id;
+          if (tenantId) {
+            const { data: tenant } = await db
+              .from("tenants")
+              .select("onboarding_stage")
+              .eq("id", tenantId)
+              .maybeSingle();
+
+            await db.from("tenants").update({
+              stripe_subscription_id: String(session.subscription),
+              stripe_customer_id: String(session.customer),
+            }).eq("id", tenantId);
+
+            if (tenant?.onboarding_stage === "subscription") {
+              const { progressTo } = await import("@/lib/onboarding/state-machine");
+              await progressTo(tenantId, "connect_setup");
+            }
+            processingOutcome = "success";
+          }
+        }
+        break;
+      }
+
+      // §15.6 / §15.9 — account.updated: tax form completion and Connect setup completion.
+      case "account.updated": {
+        const account = event.data.object as Stripe.Account;
+        // Find tenant by stripe_connect_account_id.
+        const { data: tenantRow } = await db
+          .from("tenants")
+          .select("id, onboarding_stage")
+          .eq("stripe_connect_account_id", account.id)
+          .maybeSingle();
+
+        if (tenantRow) {
+          const updates: Record<string, unknown> = {};
+          const { progressTo } = await import("@/lib/onboarding/state-machine");
+
+          if (account.details_submitted && tenantRow.onboarding_stage === "tax_form") {
+            updates.w9_received_at = new Date().toISOString();
+            await db.from("tenants").update(updates).eq("id", tenantRow.id);
+            await progressTo(tenantRow.id, "state_of_operation");
+          } else if (
+            account.payouts_enabled &&
+            tenantRow.onboarding_stage === "connect_setup"
+          ) {
+            updates.connect_setup_completed_at = new Date().toISOString();
+            await db.from("tenants").update(updates).eq("id", tenantRow.id);
+            await progressTo(tenantRow.id, "branding");
+          } else if (Object.keys(updates).length > 0) {
+            await db.from("tenants").update(updates).eq("id", tenantRow.id);
+          }
+          processingOutcome = "success";
+        }
+        break;
+      }
+
       // TODO(§15.16): customer.subscription.updated
       // TODO(§15.16): customer.subscription.deleted
       // TODO(§15.16): invoice.payment_succeeded
       // TODO(§15.16): invoice.payment_failed
-      // TODO(§15.9): account.updated (Connect)
-      // TODO(§15.9): account.application.deauthorized (Connect)
       default:
         processingOutcome = "unhandled";
         break;
