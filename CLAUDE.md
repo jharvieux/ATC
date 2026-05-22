@@ -147,7 +147,7 @@ Default to surfacing uncertainty, not hiding it.
 
 ## Honesty about uncertainty
 
-**Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.
+**Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.  If unsure about what was in the spec re-read that section before assuming anything.
 
 Do not fill gaps with plausible-sounding information. If you don’t know, say you don’t know and propose how to find out (read a file, run a command, search the docs, ask the user).
 
@@ -260,7 +260,9 @@ When resuming a build prompt mid-execution after a session break, read SESSION.m
 
 ## File and directory conventions
 
-- **Specs** (read-only source of truth, `.docx`): `AI_Travel_Concierge_Spec_v6_Full_REVISED.docx`, `ATC_CICD_Pipeline_v4_REVISED.docx`, `Self_Service_Help_Addendum_v1.docx`. Never modify. If a build prompt disagrees with a spec, the spec wins — flag and stop.
+- **Specs** (read-only source of truth, `.html`): 
+Separate .html file for each section of the spec.
+. Never modify. If a build prompt disagrees with a spec, the spec wins — flag and stop.
 - **Build prompts** (`.md`): execution instructions. Don’t modify unless the user explicitly asks for a build-prompt edit.
 - **Decision log:** `/MEMORY.md` (repo root, uppercase).
 - **Session state:** `/SESSION.md` (repo root, uppercase).

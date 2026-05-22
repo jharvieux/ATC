@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 24 — Chat UI — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 24</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s24">Section 24 — Chat UI</h1>
+<p>The customer-facing chat interface. Design priorities: clarity, AI disclosure, accessibility, and rapport-building tone matching.</p>
+<h2 id="s24-1">24.1 Layout <a class="anchor-link" href="#s24-1" aria-label="Permalink">¶</a></h2>
+<h3>Desktop</h3>
+<p>┌─────────────────────────────────────────────────────────────────┐</p>
+<p>│ [Tenant Logo] [Tenant Name] [Sign In / Account]│</p>
+<p>├─────────────────────────────────────────────────────────────────┤</p>
+<p>│ AI-assisted chat — your conversations are reviewed for quality │ ← persistent disclosure</p>
+<p>├─────────┬───────────────────────────────────────────────────────┤</p>
+<p>│ │ │</p>
+<p>│ Active │ ┌─[Marcus]──────────────────────────┐ │</p>
+<p>│ chat │ │ Hi there! I’m Marcus, your… │ │</p>
+<p>│ │ └───────────────────────────────────┘ │</p>
+<p>│ History │ │</p>
+<p>│ … │ ┌─[You]──────────────────┐ │</p>
+<p>│ │ │ Looking for a 7-night │ │</p>
+<p>│ Memory │ │ Caribbean in March │ │</p>
+<p>│ Prefs │ └────────────────────────┘ │</p>
+<p>│ │ │</p>
+<p>│ │ ┌─[Marcus]──────────────────────────┐ │</p>
+<p>│ │ │ Great! Let me check options… │ sources ☞ │</p>
+<p>│ │ └───────────────────────────────────┘ │</p>
+<p>│ │ │</p>
+<p>│ │ [Type a message…] [Send] │</p>
+<p>└─────────┴───────────────────────────────────────────────────────┘</p>
+<h3>Mobile</h3>
+<ul>
+<li>Single-pane stack; menu drawer for history/memory/prefs</li>
+<li>Chat takes full width; messages flow vertically</li>
+<li>Persona avatar small (left side of assistant message bubble)</li>
+<li>Sticky compose bar at bottom; sticky disclosure at top</li>
+</ul>
+<h2 id="s24-2">24.2 Persistent AI Disclosure <a class="anchor-link" href="#s24-2" aria-label="Permalink">¶</a></h2>
+<p>Visible at top of every chat: ‘AI-assisted chat — your conversations are reviewed for quality’. State law compliance per <a class="xref" href="section-17-authentication-signup-consent.html#s17-6">§17.6</a> satisfied by the AI Liability Disclaimer acceptance; the persistent banner provides ongoing reminder.</p>
+<h2 id="s24-3">24.3 Streaming with Auto-Scroll <a class="anchor-link" href="#s24-3" aria-label="Permalink">¶</a></h2>
+<p>Messages stream token-by-token. Auto-scroll behavior respects user intent:</p>
+<ul>
+<li>If user is at bottom: keep scrolling as response streams</li>
+<li>If user has scrolled up: don’t yank them down (they’re reading earlier content); show ‘New message’ indicator instead</li>
+<li>Click ‘New message’ indicator → smooth scroll to latest</li>
+</ul>
+<h2 id="s24-4">24.4 Message Components <a class="anchor-link" href="#s24-4" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Element</strong></th><th><strong>Behavior</strong></th></tr></thead><tbody><tr><td>Persona avatar</td><td>Shown on assistant messages; from tenant override or platform default</td></tr><tr><td>Persona name</td><td>Tenant override if applicable; else platform default</td></tr><tr><td>Sources indicator</td><td>If RAG used: subtle icon, click to expand</td></tr><tr><td>Timestamp</td><td>Hover shows full; UI shows relative (‘2 min ago’)</td></tr><tr><td>Feedback buttons</td><td>Thumbs up / thumbs down on assistant messages; reason optional on down</td></tr><tr><td>Copy button</td><td>Available on hover; copies plain text</td></tr></tbody></table></div>
+<h2 id="s24-5">24.5 Tone Matching &amp; Rapport Building <a class="anchor-link" href="#s24-5" aria-label="Permalink">¶</a></h2>
+<h3>Five-Level Scale</h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Level</strong></th><th><strong>Style</strong></th><th><strong>Example</strong></th></tr></thead><tbody><tr><td>1 — Formal</td><td>Professional, courteous, full sentences</td><td>I would be delighted to help you explore Caribbean cruise options.</td></tr><tr><td>2 — Professional warm</td><td>Default for most contexts</td><td>Happy to help you find the right Caribbean cruise.</td></tr><tr><td>3 — Casual</td><td>Conversational, contractions, lighter rhythm</td><td>Sure! Let’s find a great Caribbean cruise for you.</td></tr><tr><td>4 — Friendly informal</td><td>First-name basis, lighter language, mild colloquialism</td><td>Awesome — Caribbean cruises are my jam. What’s the occasion?</td></tr><tr><td>5 — Matched energy</td><td>Mirroring customer’s slang and rhythm; warmth without sycophancy</td><td>Heck yes, let’s get you on a Caribbean cruise. What’re we thinking?</td></tr></tbody></table></div>
+<h3>Configuration</h3>
+<ul>
+<li>Default tone level: 2 (professional warm)</li>
+<li>Per-tenant cap (persona_tone_max_level): default 3 (casual); tenant can raise to 5</li>
+<li>All five levels open at launch — not phased; safeguards (supervisor tone_drift check, profanity opt-in) make this safe</li>
+<li>Profanity allow: opt-in per tenant (default FALSE); does not auto-enable at any level</li>
+<li>Slang allow: separate flag from profanity; default TRUE at level 4+</li>
+</ul>
+<h3>Rapport Signal Sources</h3>
+<p>AI infers an appropriate level for each customer from signals:</p>
+<ul>
+<li>Customer’s own message tone (casual vs formal)</li>
+<li>Stated preferences (‘call me Mike, not Michael’)</li>
+<li>Conversation history with tenant</li>
+<li>Persona-base inclination (Marcus more casual; Priya more polished)</li>
+</ul>
+<p>Initial level: midpoint between customer’s apparent style and tenant default. Adjusts upward gradually within the tenant’s cap.</p>
+<h3>Topic-Aware Modulation</h3>
+<p>Serious topics override tone level downward:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Topic</strong></th><th><strong>Treatment</strong></th></tr></thead><tbody><tr><td>Medical / accessibility concern</td><td>Stays at level 1-2 regardless</td></tr><tr><td>Financial discussion (refunds, deposits, large sums)</td><td>Drops to level 2-3</td></tr><tr><td>Cancellation, complaint, escalation</td><td>Drops to level 1-2; empathy increased</td></tr><tr><td>Booking confirmation, contract terms</td><td>Drops to level 2</td></tr><tr><td>Casual exploration, trip ideas</td><td>Free to be at customer’s preferred level</td></tr></tbody></table></div>
+<h3>Customer Override</h3>
+<p>Customer can request tone change explicitly:</p>
+<ul>
+<li>‘Be more casual’ / ‘Lighten up’ → bump level up by 1 (within cap)</li>
+<li>‘Be more professional’ / ‘Tone it down’ → drop level by 1</li>
+<li>‘Cut the small talk’ → drop to level 2; stay direct</li>
+<li>Customer override persisted in customer_memories.rapport_tone_level</li>
+</ul>
+<h3>Supervisor tone_drift Check</h3>
+<p>The <code>tone_drift</code> check has two layers: a <strong>heuristic layer</strong> that flags tone-vs-context mismatch, and a <strong>deterministic lexical layer</strong> that blocks specific terms regardless of tone configuration. Both run on every AI response candidate before it surfaces to the customer.</p>
+<h4>Heuristic layer</h4>
+<ul>
+<li>Detects responses far above tenant's <code>persona_tone_max_level</code></li>
+<li>Detects profanity when <code>allow_profanity = FALSE</code></li>
+<li>Detects mismatched seriousness (e.g., joking while customer is upset)</li>
+<li>Detects sycophancy that reads as fake (independent of tone level)</li>
+<li>Flags severe drift; regenerates with stricter tone instruction</li>
+</ul>
+<h4>Deterministic lexical layer (slurs and hate speech)</h4>
+<p>A curated deny-list of slurs and hate-speech terms is matched against every AI response candidate. Matches are blocked regardless of:</p>
+<ul>
+<li>Tenant's <code>persona_tone_max_level</code> configuration</li>
+<li>Tenant's <code>allow_profanity</code> setting</li>
+<li>Customer's message content (even if the customer used the term, the AI does not mirror or reciprocate)</li>
+<li>Persona-level overrides</li>
+</ul>
+<p>On match:</p>
+<ul>
+<li>Response is rejected and regenerated with explicit instruction: "Your previous response contained language we don't allow. Please rewrite without [specific term redacted]. Keep the same intent and tone otherwise."</li>
+<li>The regeneration counts toward the per-conversation regen budget per <a class="xref" href="section-10-ai-supervisor.html#s10-1a">§10.1a</a>.</li>
+<li>If three consecutive regenerations all match the lexical filter, the conversation auto-escalates to a human and the platform admin is alerted (the persona appears to be stuck producing matched content — could indicate prompt injection or persona corruption).</li>
+<li>Every match is logged to <code>audit_log</code> with the matched term hash (NOT the term itself).</li>
+</ul>
+<h4>Why deterministic, not heuristic, for this category</h4>
+<p>Slurs and hate speech are different from "tone too casual" or "profanity in a low-tone context." They are categorical: the term either appears or it doesn't. A heuristic check (LLM judging "is this slur-adjacent?") produces false negatives that screenshot badly. A deterministic check produces zero false negatives on listed terms.</p>
+<h4>The deny-list</h4>
+<p>The list itself is maintained in <code>src/lib/supervisor/hate-speech-denylist.ts</code> (path indicative). The list:</p>
+<ul>
+<li>Includes slurs targeting race, ethnicity, religion, gender, sexuality, disability, and other protected categories.</li>
+<li>Includes hate-speech terms and known dog-whistles.</li>
+<li>Is reviewed and updated quarterly by platform admin per <a class="xref" href="section-26-security.html#s26-11">§26.11</a>.</li>
+<li>Updates write to <code>audit_log</code> with <code>action = 'denylist.updated'</code> and a count of additions/removals (NOT the specific terms).</li>
+<li>Includes context-aware exclusions (terms that are slurs in one context but anatomical/culinary in another).</li>
+</ul>
+<p>The deny-list is platform-wide; tenants cannot add or remove from it.</p>
+<h4>Tenant-side additional filtering</h4>
+<p>A tenant may add additional terms to a <strong>per-tenant supplemental deny-list</strong> via tenant admin console (Pro+ tier). This adds to the platform list, does not subtract from it.</p>
+<h4>Customer-side matching is informational</h4>
+<p>The lexical filter runs on AI output. The platform does NOT block customers from typing slurs or hate-speech themselves. The AI simply doesn't reciprocate. If a customer's message contains slurs targeted at the AI or the tenant, the supervisor may suggest a topic-level escalation per <a class="xref" href="section-10-ai-supervisor.html#s10-3">§10.3</a> — the customer's behavior is the tenant's call to handle, not the platform's.</p>
+<h3>Calls Worth Flagging (tone_drift)</h3>
+<ul>
+<li><strong>Profanity remains allowed (and mirrorable at tone level 5 when opted in).</strong> This is the existing design and not changed. The new layer is specifically for slurs and hate speech.</li>
+<li><strong>The deny-list is a maintenance burden.</strong> Quarterly review is the cadence. Without active maintenance, the list ages out.</li>
+<li><strong>Three consecutive regen-on-match triggers human escalation.</strong> This is the prompt-injection detector.</li>
+<li><strong>The platform list is platform-wide; tenant supplemental list is additive only.</strong> Tenants cannot weaken the platform's filtering.</li>
+<li><strong>Audit log records matches by hash, not by term.</strong> Protects the deny-list from being reverse-engineered.</li>
+</ul>
+<h2 id="s24-6">24.6 Persona Switching In-Conversation <a class="anchor-link" href="#s24-6" aria-label="Permalink">¶</a></h2>
+<p>When AI suggests handoff (per <a class="xref" href="section-09-ai-personas.html#s9-8">§9.8</a>), customer sees:</p>
+<p><em>I think Maya (our accessibility specialist) would be the right person for these questions. Want me to bring her in? [Yes, switch to Maya] [No, stick with Marcus]</em></p>
+<p>On Yes: active_persona_id updates; Maya’s first message includes brief context summary.</p>
+<h2 id="s24-7">24.7 Message Persistence <a class="anchor-link" href="#s24-7" aria-label="Permalink">¶</a></h2>
+<p>Messages saved as user types (draft) and on submit (final). Conversation reconnect after network drop reloads state from server.</p>
+<h2 id="s24-8">24.8 Anonymous Chat Limit <a class="anchor-link" href="#s24-8" aria-label="Permalink">¶</a></h2>
+<p>Anonymous chat is the highest abuse-surface chat endpoint on the platform: no tenant attribution (every Anthropic call comes off the platform's overall spend), no identity check, no recoverable abuse signal beyond what the platform itself collects. The rate limit is enforced at multiple identifiers, not just session.</p>
+<h3>Three-identifier limit (whichever is most restrictive)</h3>
+<p>Anonymous chat is rate-limited per:</p>
+<ol>
+<li><strong>Session.</strong> Default: 5 messages per session.</li>
+<li><strong>IP address.</strong> Default: 15 messages per IP per rolling 24 hours.</li>
+<li><strong>Client fingerprint.</strong> Default: 10 messages per fingerprint per rolling 24 hours. Fingerprint is a server-derived hash of (user-agent, accept-language, screen size if available, canvas fingerprint if available) — best-effort, not cryptographic.</li>
+</ol>
+<p>The most restrictive of the three applies. A user clearing cookies still hits IP and fingerprint limits. A user switching browsers still hits IP. A user switching networks still hits fingerprint.</p>
+<h3>Behavior at limit</h3>
+<p>When any identifier hits its limit:</p>
+<ul>
+<li>The signup wall is shown (per existing <a class="xref" href="#s24-8">§24.8</a> behavior).</li>
+<li>The wall message indicates the limit was reached but does NOT specify which identifier (avoiding feedback that helps adversaries optimize).</li>
+<li>The customer is invited to sign up. Once signed up, anonymous limits no longer apply — the authenticated customer limit per <a class="xref" href="#s24-9">§24.9</a> (below) applies instead.</li>
+</ul>
+<h3>Tenant abuse signal feeding</h3>
+<p>When an IP or fingerprint repeatedly hits limits across multiple sessions (3+ sessions from the same IP all hitting the 5-message limit within 24h), the platform treats this as a signal that the IP/fingerprint is being used adversarially. The tenant whose subdomain was hit is alerted via <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> abuse monitoring with a new signal type <code>anonymous_chat_burst</code>.</p>
+<p>The signal contributes to <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>'s abuse-monitoring thresholds at the <em>platform admin alert</em> level only — it does NOT directly throttle the tenant.</p>
+<h3>Tier-aware ceiling</h3>
+<p>The defaults above are platform-wide. A tenant under active abuse signal may have their anonymous chat limit reduced by platform admin:</p>
+<ul>
+<li>Normal tenant: 5 / 15 / 10</li>
+<li>Under abuse signal: 2 / 5 / 3 (configurable downward from platform admin console)</li>
+</ul>
+<h3>Schema</h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.anonymous_chat_counters (
+  identifier_type TEXT NOT NULL CHECK (identifier_type IN ('session', 'ip', 'fingerprint')),
+  identifier_value TEXT NOT NULL,
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  current_count INTEGER NOT NULL DEFAULT 0,
+  first_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  limit_hit_at TIMESTAMPTZ,
+  PRIMARY KEY (identifier_type, identifier_value, tenant_id)
+);
+
+CREATE INDEX anonymous_chat_counters_cleanup_idx
+  ON public.anonymous_chat_counters(last_message_at);
+
+-- Cleanup cron: rows older than 7 days hard-deleted nightly.</code></pre>
+<h3>Configurable knobs (in <code>platform_settings</code>)</h3>
+<div class="table-wrap"><table><thead><tr><th>Setting</th><th>Default</th><th>Description</th></tr></thead><tbody><tr><td><code>anon_chat_limit_per_session</code></td><td>5</td><td>Per-session message cap</td></tr><tr><td><code>anon_chat_limit_per_ip_24h</code></td><td>15</td><td>Per-IP 24-hour rolling cap</td></tr><tr><td><code>anon_chat_limit_per_fingerprint_24h</code></td><td>10</td><td>Per-fingerprint 24-hour rolling cap</td></tr><tr><td><code>anon_chat_limit_per_session_under_abuse</code></td><td>2</td><td>Reduced session cap when tenant under abuse signal</td></tr><tr><td><code>anon_chat_limit_per_ip_under_abuse</code></td><td>5</td><td>Reduced IP cap under abuse</td></tr><tr><td><code>anon_chat_limit_per_fingerprint_under_abuse</code></td><td>3</td><td>Reduced fingerprint cap under abuse</td></tr></tbody></table></div>
+<p>Platform-wide only. No per-tenant configurability for anonymous chat.</p>
+<p>Anonymous sessions are preserved for transfer per <a class="xref" href="section-11-customer-memory.html#s11-6">§11.6</a>.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Fingerprinting is best-effort, not a security boundary.</strong> Fingerprint defeats casual evasion; sophisticated adversaries hit other layers.</li>
+<li><strong>The cleanup cron is required.</strong> Without it, counter rows accumulate indefinitely.</li>
+<li><strong>Privacy considerations:</strong> IP addresses are PII in some jurisdictions (GDPR). 7-day retention bounds exposure.</li>
+<li><strong>The "don't specify which limit was hit" rule is deliberate.</strong> Telling a user which limit they hit defeats the layered defense.</li>
+</ul>
+<h2 id="s24-9">24.9 Authenticated Customer Chat Rate Limit <a class="anchor-link" href="#s24-9" aria-label="Permalink">¶</a></h2>
+<h3>Purpose</h3>
+<p>This rate limit protects against authenticated customers who use the AI as a free travel research chatbot without booking through the tenant. It is per-(customer, tenant) and operates on a rolling 30-day window. Same shape as <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>'s three-tier abuse monitoring structure, but at the customer level rather than the tenant level.</p>
+<p>The rate limit does NOT apply to:</p>
+<ul>
+<li>Anonymous customer chat — covered by <a class="xref" href="#s24-8">§24.8</a>.</li>
+<li>Tenant users (agents, coordinators, owner accounts).</li>
+<li>Platform admin users.</li>
+</ul>
+<h3>Three-tier structure</h3>
+<div class="table-wrap"><table><thead><tr><th>Tier</th><th>Default messages in 30d</th><th>Behavior</th></tr></thead><tbody><tr><td>Soft1</td><td>20</td><td>Persona delivers gentle in-character nudge to focus on what cruise the customer would like to book. No system signal; nudge embedded in regular AI response.</td></tr><tr><td>Soft2</td><td>30</td><td>Persona delivers more urgent in-character warning about reduced future availability. Still embedded in AI response.</td></tr><tr><td>Hard</td><td>40</td><td>Chat blocked. Customer sees a system-rendered message (clearly platform-spoken, not in-character) explaining the cap and offering escalation. Essential operations (viewing existing bookings, account settings) and human handoff remain available. Platform admin alerted with conversation summary.</td></tr></tbody></table></div>
+<p>The counter is the running count of customer-sent messages in the trailing 30 days. AI-sent messages don't count against the cap.</p>
+<h3>Booking-based capacity bonus</h3>
+<p>A customer with <strong>any future-dated booking in the tenant</strong> receives a percentage bonus applied to all three thresholds. The bonus is expressed as a percentage (default +100%, meaning effective ×2 capacity). Defaults under +100% bonus: 40 / 60 / 80.</p>
+<p>"Future-dated booking" means: a <code>bookings</code> row in this tenant with <code>sailing_date &gt;= NOW()</code> AND <code>status NOT IN ('cancelled', 'no_show', 'refunded')</code>.</p>
+<p>The bonus is computed lazily on each message — there's no stored "bonus_active" flag. When the last future-dated booking sails (or gets cancelled), the bonus silently drops back to 0%.</p>
+<h3>Scope: per-(customer, tenant)</h3>
+<p>The 30-day counter is scoped per <code>(user_id, tenant_id)</code>. A customer signed in to multiple tenants gets a full quota in each. A booking in tenant A applies the bonus to caps in tenant A only.</p>
+<h3>Tier-aware configurability</h3>
+<p>All four configurable values (Soft1, Soft2, Hard thresholds, plus booking bonus percentage) have platform defaults set in <a class="xref" href="section-05-database-schema-main-app.html#s5-5">§5.5</a> <code>platform_settings</code>. Pro+ tier tenants can override these values in their tenant admin console; lower tiers use platform defaults.</p>
+<p>Tenant overrides are constrained:</p>
+<div class="table-wrap"><table><thead><tr><th>Constraint</th><th>Reason</th></tr></thead><tbody><tr><td>Hard limit cannot exceed <code>platform_settings.customer_chat_limit_hard_ceiling</code> (default 200)</td><td>Prevents tenants from setting absurdly high caps</td></tr><tr><td>Hard limit cannot be lower than <code>platform_settings.customer_chat_limit_hard_floor</code> (default 15)</td><td>Prevents customer-hostile gating</td></tr><tr><td>Soft1 &lt; Soft2 &lt; Hard always (validated on save)</td><td>Sanity</td></tr><tr><td>Booking bonus percentage between 0% and 400%</td><td>Generous range</td></tr></tbody></table></div>
+<p>Changes take effect at the next message.</p>
+<h3>Customer-facing experience</h3>
+<h4>At Soft1 (in-character nudge)</h4>
+<p>The persona is prompted (via prompt augmentation per <a class="xref" href="section-09-ai-personas.html#s9-7">§9.7</a>) to weave a gentle focus-redirect into the response. Example:</p>
+<blockquote>"I've enjoyed our chat about Mediterranean cruises! At this point we've explored quite a bit — want to narrow it down to one or two sailings you're seriously considering? I can put together a detailed quote on whichever you like best."</blockquote>
+<p>The supervisor's <code>tone_drift</code> check (<a class="xref" href="section-10-ai-supervisor.html#s10-2">§10.2</a>) verifies the nudge stays in-character.</p>
+<h4>At Soft2 (in-character warning)</h4>
+<p>More urgent. Example:</p>
+<blockquote>"I want to be upfront with you — at this rate, we won't be able to keep chatting much longer if we don't find a cruise that works for you. I can put together quotes on the top three sailings we've discussed, or we can switch tracks if cruising isn't quite right for this trip. What would you like to do?"</blockquote>
+<h4>At Hard limit (system message)</h4>
+<p>When the customer's next message would push them over the hard cap, the message is NOT sent to the AI. A system message renders directly in chat:</p>
+<blockquote><strong>Chat limit reached.</strong><br><br>You've reached the message limit for this billing period. To continue chatting, you have two options:<br><br>- <strong>Book a cruise</strong> — booking with us doubles your chat quota for as long as you have an upcoming trip.<br>- <strong>Talk to a human</strong> — request a handoff to a trip consultant.<br><br>Your quota resets [30 days from oldest counted message].<br><br>[Talk to a human] [View my bookings]</blockquote>
+<p>The system message is rendered server-side and inserted directly into the chat — no AI call involved. Customer can:</p>
+<ul>
+<li>Click "Talk to a human" → standard escalation per <a class="xref" href="#s24-10">§24.10</a> (existing).</li>
+<li>Click "View my bookings" → navigates to bookings list.</li>
+<li>View existing booking details, account settings, group invitations — all unaffected.</li>
+<li>Cannot send new messages to the AI persona.</li>
+</ul>
+<h3>Platform admin alert at hard limit</h3>
+<p>When a customer hits the hard limit, an alert is generated with a conversation summary:</p>
+<pre class="codeblock" data-lang="json"><code>{
+  "alert_type": "customer_chat_hard_limit",
+  "tenant_id": "uuid",
+  "user_id": "uuid",
+  "user_email": "customer@example.com",
+  "conversation_summary": {
+    "message_count_total": 40,
+    "first_message_at": "2026-04-17T...",
+    "last_message_at": "2026-05-17T...",
+    "topics_discussed": ["Mediterranean cruises", "Royal Caribbean ships", "drink package options", "cabin categories"],
+    "booking_intent_signal": "low | medium | high",
+    "active_bookings_count": 0,
+    "future_bookings_count": 0
+  },
+  "summary_generated_at": "2026-05-17T..."
+}</code></pre>
+<p>The <code>conversation_summary</code> is generated by a Haiku call. Platform admin can review and decide whether to:</p>
+<ul>
+<li>Manually raise the customer's cap (audited via <code>withPlatformAdminAudit</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a> with <code>reason = 'customer_chat_cap_override'</code>).</li>
+<li>Reach out to the tenant about the customer.</li>
+<li>Take no action (most cases).</li>
+</ul>
+<h3>Audit</h3>
+<p>Every soft-tier crossing and every hard-limit block writes to <code>audit_log</code>:</p>
+<div class="table-wrap"><table><thead><tr><th>Event</th><th><code>action</code></th><th><code>changes</code> payload</th></tr></thead><tbody><tr><td>Soft1 crossed</td><td><code>customer_chat.soft1_nudge_issued</code></td><td>message_id, persona_id, counter value</td></tr><tr><td>Soft2 crossed</td><td><code>customer_chat.soft2_warning_issued</code></td><td>same</td></tr><tr><td>Hard limit hit</td><td><code>customer_chat.hard_limit_blocked</code></td><td>counter value, summary reference</td></tr><tr><td>Manual cap override by admin</td><td><code>customer_chat.cap_override</code></td><td>old/new caps, admin user, reason</td></tr></tbody></table></div>
+<h3>Schema</h3>
+<pre class="codeblock" data-lang="sql"><code>-- Per-customer-per-tenant rolling counter.
+CREATE TABLE public.customer_chat_counters (
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,
+  current_count INTEGER NOT NULL DEFAULT 0,
+  last_message_at TIMESTAMPTZ,
+  soft1_last_issued_at TIMESTAMPTZ,
+  soft2_last_issued_at TIMESTAMPTZ,
+  hard_limit_hit_at TIMESTAMPTZ,
+  hard_limit_summary_audit_id UUID REFERENCES public.audit_log(id),
+  resolved_soft1_cap INTEGER,
+  resolved_soft2_cap INTEGER,
+  resolved_hard_cap INTEGER,
+  resolved_booking_bonus_percent INTEGER,
+  resolved_at TIMESTAMPTZ,
+  PRIMARY KEY (user_id, tenant_id)
+);
+
+-- Tenant overrides (Pro+ tier only — enforced at write).
+CREATE TABLE public.customer_chat_tenant_overrides (
+  tenant_id UUID PRIMARY KEY REFERENCES public.tenants(id) ON DELETE RESTRICT,
+  soft1_cap INTEGER,
+  soft2_cap INTEGER,
+  hard_cap INTEGER,
+  booking_bonus_percent INTEGER,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by_user_id UUID REFERENCES public.users(id)
+);</code></pre>
+<h3>The cap-resolution function</h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE OR REPLACE FUNCTION public.resolve_customer_chat_caps(
+  p_tenant_id UUID,
+  p_user_id UUID
+) RETURNS TABLE (
+  soft1_cap INTEGER,
+  soft2_cap INTEGER,
+  hard_cap INTEGER,
+  booking_bonus_percent INTEGER
+)
+LANGUAGE plpgsql
+STABLE
+SET search_path = ''
+AS $$
+DECLARE
+  v_tier TEXT;
+  v_has_future_booking BOOLEAN;
+  v_base_soft1 INTEGER;
+  v_base_soft2 INTEGER;
+  v_base_hard INTEGER;
+  v_bonus INTEGER;
+BEGIN
+  -- 1. Get tenant tier (drives whether overrides apply).
+  SELECT tier_definitions.name INTO v_tier
+    FROM public.tenants
+    JOIN public.tier_definitions ON tenants.tier_id = tier_definitions.id
+    WHERE tenants.id = p_tenant_id;
+
+  -- 2. Check tenant override (only if Pro+).
+  IF v_tier IN ('sub_host_pro', 'sub_host_agency', 'byo_agency') THEN
+    SELECT cco.soft1_cap, cco.soft2_cap, cco.hard_cap, cco.booking_bonus_percent
+      INTO v_base_soft1, v_base_soft2, v_base_hard, v_bonus
+      FROM public.customer_chat_tenant_overrides cco
+      WHERE cco.tenant_id = p_tenant_id;
+  END IF;
+
+  -- 3. Fall back to platform defaults.
+  IF v_base_soft1 IS NULL THEN
+    SELECT (value::TEXT)::INTEGER INTO v_base_soft1
+      FROM public.platform_settings WHERE key = 'customer_chat_soft1_cap';
+  END IF;
+  IF v_base_soft2 IS NULL THEN
+    SELECT (value::TEXT)::INTEGER INTO v_base_soft2
+      FROM public.platform_settings WHERE key = 'customer_chat_soft2_cap';
+  END IF;
+  IF v_base_hard IS NULL THEN
+    SELECT (value::TEXT)::INTEGER INTO v_base_hard
+      FROM public.platform_settings WHERE key = 'customer_chat_hard_cap';
+  END IF;
+  IF v_bonus IS NULL THEN
+    SELECT (value::TEXT)::INTEGER INTO v_bonus
+      FROM public.platform_settings WHERE key = 'customer_chat_booking_bonus_percent';
+  END IF;
+
+  -- 4. Check for future-dated booking.
+  SELECT EXISTS (
+    SELECT 1 FROM public.bookings
+    WHERE bookings.user_id = p_user_id
+      AND bookings.tenant_id = p_tenant_id
+      AND bookings.sailing_date &gt;= NOW()
+      AND bookings.status NOT IN ('cancelled', 'no_show', 'refunded')
+  ) INTO v_has_future_booking;
+
+  -- 5. Apply bonus if applicable.
+  IF v_has_future_booking THEN
+    soft1_cap := v_base_soft1 + (v_base_soft1 * v_bonus / 100);
+    soft2_cap := v_base_soft2 + (v_base_soft2 * v_bonus / 100);
+    hard_cap := v_base_hard + (v_base_hard * v_bonus / 100);
+    booking_bonus_percent := v_bonus;
+  ELSE
+    soft1_cap := v_base_soft1;
+    soft2_cap := v_base_soft2;
+    hard_cap := v_base_hard;
+    booking_bonus_percent := 0;
+  END IF;
+
+  RETURN NEXT;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.resolve_customer_chat_caps(UUID, UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.resolve_customer_chat_caps(UUID, UUID) TO authenticated;</code></pre>
+<h3>Counter maintenance</h3>
+<p>Two paths keep <code>customer_chat_counters.current_count</code> accurate:</p>
+<ol>
+<li><strong>On each message send</strong> (sync, before AI call): increment counter for <code>(user_id, tenant_id)</code>. Check counter against resolved caps; trigger appropriate behavior.</li>
+<li><strong>Nightly recompute</strong> (Inngest cron <code>customer-chat-counter-recompute</code>): for each row, recount messages from the last 30 days. Safety net for drift.</li>
+</ol>
+<h3>Configurable knobs (in <code>platform_settings</code>)</h3>
+<div class="table-wrap"><table><thead><tr><th>Setting</th><th>Default</th><th>Range</th></tr></thead><tbody><tr><td><code>customer_chat_soft1_cap</code></td><td>20</td><td>5–500</td></tr><tr><td><code>customer_chat_soft2_cap</code></td><td>30</td><td>5–500</td></tr><tr><td><code>customer_chat_hard_cap</code></td><td>40</td><td>15–200</td></tr><tr><td><code>customer_chat_booking_bonus_percent</code></td><td>100</td><td>0–400</td></tr><tr><td><code>customer_chat_limit_hard_ceiling</code></td><td>200</td><td>50–500</td></tr><tr><td><code>customer_chat_limit_hard_floor</code></td><td>15</td><td>5–50</td></tr><tr><td><code>customer_chat_window_days</code></td><td>30</td><td>7–90</td></tr></tbody></table></div>
+<h3>Persona prompt augmentation</h3>
+<p>When the conversation handler resolves caps and finds the customer is approaching a soft tier, the persona's system prompt is augmented:</p>
+<ul>
+<li>At Soft1 (current_count &gt;= soft1_cap, &lt; soft2_cap, no Soft1 nudge issued in last 7 days):</li>
+</ul>
+<p>  ``<code>   Note for this turn: this customer has been chatting actively with you over the past few weeks. Without seeming pushy, gently encourage focusing on a specific cruise to book. Suggest you'd be happy to put together a detailed quote on a sailing they're seriously considering. Keep your normal personality and warmth.   </code>``</p>
+<ul>
+<li>At Soft2 (current_count &gt;= soft2_cap, &lt; hard_cap, no Soft2 warning issued in last 3 days):</li>
+</ul>
+<p>  ``<code>   Note for this turn: this customer has had extensive chat time with you and hasn't booked yet. Be more direct (still warm and in-character) about the conversation track. Mention that without finding a cruise that works, you won't be able to keep chatting indefinitely, and offer specific next steps.   </code>``</p>
+<p>The exact text is itself configurable via <code>platform_settings</code> keys <code>customer_chat_soft1_persona_prompt</code> and <code>customer_chat_soft2_persona_prompt</code>.</p>
+<h3>Integration with <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> abuse monitoring</h3>
+<p>Hitting customer chat limits is NOT an abuse signal against the tenant. <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> catches tenant-level patterns (bot armies); this catches per-customer behavior (one person using AI as a free research chatbot). A customer hitting Soft1/Soft2/Hard does NOT count against the tenant's <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> thresholds.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>The booking bonus is generous and configurable.</strong> +100% default doubles the cap. Tenants can configure 0%–400%.</li>
+<li><strong>The bonus is computed lazily, not persisted as a flag.</strong> A customer with a booking that just sailed automatically falls back to base cap.</li>
+<li><strong>Per-tenant scope means a customer can game the system by signing up across tenants.</strong> Acceptable: each tenant pays for AI cost in their tenant.</li>
+<li><strong>The Haiku-generated summary at hard-limit hit is the human-readable signal.</strong> Platform admin sees actionable info.</li>
+<li><strong>Soft tiers have cooldowns</strong> (7 days for Soft1, 3 days for Soft2) to avoid nagging.</li>
+<li><strong>The hard-limit message DOES NOT use the persona.</strong> It's clearly platform-spoken.</li>
+<li><strong><code>status NOT IN ('cancelled', 'no_show', 'refunded')</code> for the booking check is important.</strong> A customer who books then cancels should NOT keep the bonus.</li>
+</ul>
+<h2 id="s24-10">24.10 Escalation Surface <a class="anchor-link" href="#s24-10" aria-label="Permalink">¶</a></h2>
+<p>Customer can request human at any time via:</p>
+<ul>
+<li>Explicit ask ('I'd like to talk to a person')</li>
+<li>Escalation button in conversation menu</li>
+<li>Implicit signals (frustration patterns; supervisor detects)</li>
+</ul>
+<p>On escalation: topic-level escalation created (<a class="xref" href="section-10-ai-supervisor.html#s10-3">§10.3</a>); customer sees friendly transition message; tenant agent receives notification.</p>
+<h2 id="s24-11">24.11 Memory Indicators <a class="anchor-link" href="#s24-11" aria-label="Permalink">¶</a></h2>
+<p>Subtle UI cues when AI uses memory:</p>
+<p><em>Welcome back, Sarah! Last time you mentioned you were thinking about Alaska — should we pick up there?</em></p>
+<p>Memory bar in side panel shows what AI knows; link to memory editor for full control per <a class="xref" href="section-11-customer-memory.html#s11-3">§11.3</a>.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-23-email-notifications.html">← §23: Email & Notifications</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-25-data-privacy-retention.html">§25: Data Privacy & Retention →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

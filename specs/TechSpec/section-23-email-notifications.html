@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 23 — Email & Notifications — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 23</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s23">Section 23 — Email &amp; Notifications</h1>
+<p>Transactional and marketing email infrastructure. Includes the pre-cruise email series, which combines practical operational content with destination excitement to drive customer engagement and reviews.</p>
+<h2 id="s23-1">23.1 Provider Architecture <a class="anchor-link" href="#s23-1" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Outbound: Resend (preferred for low operational cost, simple React Email integration)</li>
+<li>Templates: React Email components, server-rendered</li>
+<li>Inbound (optional, tenant-by-tenant): Gmail API via Google Pub/Sub</li>
+<li>SMS (Phase 3): Twilio, deferred from v6</li>
+</ul>
+<h2 id="s23-2">23.2 Email Log <a class="anchor-link" href="#s23-2" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.email_log (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>user_id UUID REFERENCES public.users(id),</p>
+<p>contact_id UUID REFERENCES public.contacts(id),</p>
+<p>to_email TEXT NOT NULL,</p>
+<p>from_email TEXT NOT NULL,</p>
+<p>reply_to TEXT,</p>
+<p>subject TEXT NOT NULL,</p>
+<p>template_id TEXT NOT NULL,</p>
+<p>template_version INTEGER,</p>
+<p>template_variables JSONB,</p>
+<p>– Provider</p>
+<p>resend_message_id TEXT UNIQUE,</p>
+<p>– Status</p>
+<p>status TEXT NOT NULL CHECK (status IN (</p>
+<p>‘queued’,‘sent’,‘delivered’,‘soft_bounced’,‘hard_bounced’,</p>
+<p>‘complained’,‘rejected’,‘suppressed’</p>
+<p>)),</p>
+<p>sent_at TIMESTAMPTZ,</p>
+<p>delivered_at TIMESTAMPTZ,</p>
+<p>bounced_at TIMESTAMPTZ,</p>
+<p>complained_at TIMESTAMPTZ,</p>
+<p>bounce_reason TEXT,</p>
+<p>– Categorization</p>
+<p>email_category TEXT, – ‘transactional’,‘marketing’,‘pre_cruise’,‘group_invitation’</p>
+<p>related_booking_id UUID REFERENCES public.bookings(id),</p>
+<p>related_group_id UUID REFERENCES public.group_bookings(id),</p>
+<p>– Audit</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE TABLE public.email_suppressions (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>email_address TEXT NOT NULL,</p>
+<p>reason TEXT NOT NULL CHECK (reason IN (</p>
+<p>‘hard_bounce’,‘complaint’,‘unsubscribe_all’,</p>
+<p>‘unsubscribe_marketing’,‘unsubscribe_travel_news’</p>
+<p>)),</p>
+<p>suppressed_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>expires_at TIMESTAMPTZ,</p>
+<p>UNIQUE (tenant_id, email_address, reason)</p>
+<p>);</p>
+<h2 id="s23-3">23.3 CAN-SPAM Compliance <a class="anchor-link" href="#s23-3" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Physical mailing address in every email footer (from tenants.mailing_address)</li>
+<li>Unsubscribe link in every marketing email</li>
+<li>‘About this email’ link to preferences</li>
+<li>Hard bounces and complaints auto-suppressed within tenant scope</li>
+<li>Bulk emails identify themselves as such</li>
+<li>From address is tenant’s identity (per <a class="xref" href="section-16-white-label-branding.html#s16-4">§16.4</a> email pattern)</li>
+</ul>
+<h2 id="s23-4">23.4 Pre-Cruise Email Series <a class="anchor-link" href="#s23-4" aria-label="Permalink">¶</a></h2>
+<p>Four pre-sailing emails enrich the customer experience. Each combines practical info with excitement-building content.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Timing</strong></th><th><strong>Theme</strong></th><th><strong>Practical</strong></th><th><strong>Excitement Component</strong></th></tr></thead><tbody><tr><td>T-90 days</td><td>Anticipation begins</td><td>Documentation reminder; passport check; pre-cruise to-dos</td><td>Destination teasers; must-do experiences per port; traveler stories; did-you-know facts; suggested reads/videos</td></tr><tr><td>T-30 days</td><td>Final prep window</td><td>Reservation reminders for excursions, dining, spa; check-in window; final payment</td><td>Itinerary visualization; personalized recommendations per CRM; specialty experiences; pack inspiration; social proof from prior travelers</td></tr><tr><td>T-7 days</td><td>Almost there</td><td>AI-generated packing checklist; deck plans; ship highlights; cruise-line-specific tips</td><td>Embarkation visuals; first-day-aboard inspiration; what to expect at port</td></tr><tr><td>T-1 day</td><td>Tomorrow!</td><td>Carry-on essentials callout (passport, paperwork, medications); port directions via RAG-stored official URLs; weather for all stops</td><td>Tomorrow’s first port preview; what to expect day-of</td></tr></tbody></table></div>
+<h3>Carry-On Essentials Callout (T-1 day)</h3>
+<p><strong>CRITICAL CONTENT:</strong><strong> </strong>The T-1 day email MUST include a prominent callout. Passports, travel paperwork, and medications go in CARRY-ON, not checked luggage. This single piece of advice prevents the most common avoidable trip-ruining mistakes.</p>
+<h3>Port Information</h3>
+<p>T-1 day email shows directions to embarkation port from RAG-stored official port authority URLs (not Google Maps — platform doesn’t know customer’s starting point and won’t guess).</p>
+<p>Required platform launch task: seed RAG with port chunks for major North American departure ports (Miami, Port Canaveral, Galveston, Seattle, Vancouver, New York, Boston, Baltimore, New Orleans, Los Angeles, San Diego, San Francisco, Long Beach, Tampa, Jacksonville, Mobile, Norfolk). Each port chunk includes: official URL, terminal addresses, parking info, transit/Uber drop-off points, general arrival advice.</p>
+<h3>Caching</h3>
+<p>Per-customer pre-cruise content is generated once and cached. Estimated cost per send: $0.01-0.02 in AI inference. Schema:</p>
+<p>CREATE TABLE public.pre_cruise_email_content (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>booking_id UUID NOT NULL REFERENCES public.bookings(id),</p>
+<p>contact_id UUID NOT NULL REFERENCES public.contacts(id),</p>
+<p>email_phase TEXT NOT NULL CHECK (email_phase IN (‘t_90’,‘t_30’,‘t_7’,‘t_1’)),</p>
+<p>generated_content JSONB NOT NULL, – body sections, image refs, links</p>
+<p>companion_page_url TEXT, – optional web companion for richer content</p>
+<p>generated_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>sent_at TIMESTAMPTZ,</p>
+<p>UNIQUE (booking_id, email_phase)</p>
+<p>);</p>
+<h2 id="s23-5">23.5 Companion Web Pages <a class="anchor-link" href="#s23-5" aria-label="Permalink">¶</a></h2>
+<p>Pre-cruise emails link to companion web pages (under tenant’s domain) with richer content: image galleries, embedded videos, detailed itineraries. Companion pages are token-gated like group invitations; no auth required.</p>
+<h2 id="s23-6">23.6 Email Categories &amp; Rate Limits <a class="anchor-link" href="#s23-6" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Category</strong></th><th><strong>Examples</strong></th><th><strong>Rate Limit</strong></th></tr></thead><tbody><tr><td>Transactional</td><td>Booking confirmation, quote sent, password reset</td><td>Unlimited (must-send)</td></tr><tr><td>Pre-cruise</td><td>T-90, T-30, T-7, T-1 series</td><td>Bound to schedule; not subject to general rate limits</td></tr><tr><td>Group invitation</td><td>Initial invitation + reminders per <a class="xref" href="section-18-group-bookings.html#s18-8">§18.8</a></td><td>3 emails / 24h per invitee</td></tr><tr><td>Marketing</td><td>Travel news, promotions</td><td>Strict opt-in; 4 / month max per contact</td></tr><tr><td>Travel news</td><td>Curated content opt-in</td><td>Weekly digest if subscribed</td></tr></tbody></table></div>
+<h2 id="s23-7">23.7 Bounce &amp; Complaint Handling <a class="anchor-link" href="#s23-7" aria-label="Permalink">¶</a></h2>
+<p>Email sent</p>
+<p>│</p>
+<p>▼</p>
+<p>Resend webhook fires:</p>
+<p>├──► delivered  → log only</p>
+<p>├──► soft bounce → retry up to 3 times over 24h</p>
+<p>├──► hard bounce → suppress + flag email_status='invalid'</p>
+<p>├──► complaint → suppress + flag email_status='complained'</p>
+<p>└──► open / click → log for engagement metrics (no PII)</p>
+<h2 id="s23-8">23.8 In-App Notifications <a class="anchor-link" href="#s23-8" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.notifications (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>user_id UUID NOT NULL REFERENCES public.users(id),</p>
+<p>category TEXT NOT NULL,</p>
+<p>title TEXT NOT NULL,</p>
+<p>body TEXT,</p>
+<p>link_url TEXT,</p>
+<p>icon TEXT,</p>
+<p>read_at TIMESTAMPTZ,</p>
+<p>dismissed_at TIMESTAMPTZ,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX notifications_user_unread_idx</p>
+<p>ON public.notifications(user_id, read_at) WHERE read_at IS NULL;</p>
+<p>Bell icon in app header shows unread count. Categories: booking_update, commission_settled, group_activity, escalation, system.</p>
+<h2 id="s23-9">23.9 Gmail Inbound (Optional) <a class="anchor-link" href="#s23-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Tenant connects their Gmail/Workspace via OAuth</li>
+<li>Google Pub/Sub topic notifies on new messages</li>
+<li>Platform fetches metadata, matches to existing contacts/conversations</li>
+<li>AI summarizes and routes; may surface in CRM activity timeline</li>
+<li>Auto-reply optional (off by default)</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-22-knowledge-ingestion-rag-submission-side.html">← §22: Knowledge Ingestion (RAG Submission Side)</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-24-chat-ui.html">§24: Chat UI →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

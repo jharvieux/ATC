@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 7 — API Routes — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 7</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s7">Section 7 — API Routes</h1>
+<p>The platform exposes ~160 API routes. This section provides a representative summary, grouped by domain. Complete route documentation is generated from code.</p>
+<h2 id="s7-1">7.1 Authentication &amp; Identity <a class="anchor-link" href="#s7-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>GET</td><td>/api/auth/callback</td><td>OAuth callback handler</td></tr><tr><td>POST</td><td>/api/auth/signup/complete</td><td>Complete signup with profile</td></tr><tr><td>POST</td><td>/api/auth/signout</td><td>Sign out current session</td></tr><tr><td>GET</td><td>/api/auth/me</td><td>Current user, tenant, roles, permissions</td></tr><tr><td>GET</td><td>/api/auth/consent-status</td><td>Returns missing required consents</td></tr><tr><td>POST</td><td>/api/auth/consent</td><td>Record consent for a document version</td></tr><tr><td>GET</td><td>/api/legal/:doc-type/current</td><td>Current version of legal document</td></tr><tr><td>POST</td><td>/api/auth/transfer-session</td><td>Transfer anonymous session</td></tr></tbody></table></div>
+<h2 id="s7-2">7.2 Chat &amp; AI <a class="anchor-link" href="#s7-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/chat</td><td>Send message; returns SSE stream</td></tr><tr><td>GET</td><td>/api/chat/conversations</td><td>List user’s conversations</td></tr><tr><td>GET</td><td>/api/chat/conversations/:id</td><td>Get conversation detail</td></tr><tr><td>POST</td><td>/api/chat/conversations/:id/persona</td><td>Switch active persona</td></tr><tr><td>POST</td><td>/api/chat/feedback</td><td>Thumbs up/down on a message</td></tr><tr><td>POST</td><td>/api/chat/escalate</td><td>Customer requests human</td></tr></tbody></table></div>
+<h2 id="s7-3">7.3 CRM &amp; Quotes <a class="anchor-link" href="#s7-3" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>GET</td><td>/api/crm/contacts</td><td>List contacts (filtered, paginated)</td></tr><tr><td>POST</td><td>/api/crm/contacts</td><td>Create contact</td></tr><tr><td>PATCH</td><td>/api/crm/contacts/:id</td><td>Update contact</td></tr><tr><td>GET</td><td>/api/crm/contacts/:id/timeline</td><td>Activity timeline</td></tr><tr><td>POST</td><td>/api/quotes</td><td>Create quote</td></tr><tr><td>POST</td><td>/api/quotes/:id/send</td><td>Send quote to customer</td></tr><tr><td>POST</td><td>/api/quotes/:id/accept</td><td>Customer accepts quote</td></tr></tbody></table></div>
+<h2 id="s7-4">7.4 Bookings <a class="anchor-link" href="#s7-4" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/bookings/draft</td><td>Create draft booking</td></tr><tr><td>GET</td><td>/api/bookings/:id</td><td>Get booking</td></tr><tr><td>PATCH</td><td>/api/bookings/:id</td><td>Update draft</td></tr><tr><td>POST</td><td>/api/bookings/:id/submit</td><td>Submit to host adapter</td></tr><tr><td>POST</td><td>/api/bookings/:id/cancel</td><td>Cancel</td></tr><tr><td>POST</td><td>/api/bookings/:id/modify</td><td>Modify confirmed booking</td></tr></tbody></table></div>
+<h2 id="s7-5">7.5 Groups <a class="anchor-link" href="#s7-5" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/groups</td><td>Create group</td></tr><tr><td>GET</td><td>/api/groups/:id</td><td>Group detail</td></tr><tr><td>POST</td><td>/api/groups/:id/members</td><td>Add invitees</td></tr><tr><td>POST</td><td>/api/groups/:id/broadcast</td><td>Message all invitees</td></tr><tr><td>GET</td><td>/api/groups/invite/:token</td><td>Token-gated invitee landing</td></tr><tr><td>POST</td><td>/api/groups/invite/:token/rsvp</td><td>Submit RSVP</td></tr></tbody></table></div>
+<h2 id="s7-6">7.6 RAG &amp; Knowledge <a class="anchor-link" href="#s7-6" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/rag/submit</td><td>Submit knowledge item</td></tr><tr><td>POST</td><td>/api/rag/batch-submit</td><td>Submit up to 100 items</td></tr><tr><td>GET</td><td>/api/rag/queue</td><td>List tenant’s pending queue</td></tr><tr><td>POST</td><td>/api/rag/queue/:id/approve</td><td>Approve item</td></tr><tr><td>GET</td><td>/api/rag/chunks</td><td>List tenant’s chunks</td></tr><tr><td>PATCH</td><td>/api/rag/chunks/:id</td><td>Edit chunk</td></tr></tbody></table></div>
+<h2 id="s7-7">7.7 Commissions &amp; Payouts <a class="anchor-link" href="#s7-7" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>GET</td><td>/api/commissions</td><td>List tenant’s commissions</td></tr><tr><td>GET</td><td>/api/commissions/:id</td><td>Commission detail</td></tr><tr><td>GET</td><td>/api/payouts/balance</td><td>Current payout balances</td></tr><tr><td>GET</td><td>/api/payouts/history</td><td>Past payouts with statements</td></tr><tr><td>POST</td><td>/api/payouts/manual</td><td>Initiate manual payout (on-demand)</td></tr></tbody></table></div>
+<h2 id="s7-8">7.8 Webhooks <a class="anchor-link" href="#s7-8" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Source</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/webhooks/stripe</td><td>Stripe events (subscriptions, Connect)</td></tr><tr><td>POST</td><td>/api/webhooks/resend</td><td>Email delivery, bounces, complaints</td></tr><tr><td>POST</td><td>/api/webhooks/gmail-pubsub</td><td>Gmail inbox notifications</td></tr></tbody></table></div>
+<h2 id="s7-9">7.9 Conventions <a class="anchor-link" href="#s7-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Rate limiting: per-user (100/hour default), per-tenant, per-IP (anonymous)</li>
+<li>Idempotency: critical mutations accept Idempotency-Key header (24-hour cache)</li>
+<li>Streaming: chat uses Server-Sent Events (SSE) with Last-Event-ID for reconnect</li>
+<li>Authorization: every protected route runs assertPermission() at handler entry</li>
+<li>Audit logging: significant operations write to audit_log table</li>
+</ul>
+<h2 id="s7-9a">7.9a Stripe Webhook Handler Contract <a class="anchor-link" href="#s7-9a" aria-label="Permalink">¶</a></h2>
+<p>Every Stripe webhook handler — <code>/api/webhooks/stripe/platform</code> and <code>/api/webhooks/stripe/connect</code> — follows this contract. Failure to follow it produces duplicate-processing bugs that, for payment events, move real money twice. The contract is enforceable: integration tests per <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a> verify a same-event-id delivered twice produces exactly one side-effect.</p>
+<h3>Step sequence</h3>
+<ol>
+<li><strong>Verify Stripe signature</strong> using the endpoint-specific webhook secret per <a class="xref" href="section-28-environment-variables-reference.html#s28-7">§28.7</a>. Reject with 400 on invalid signature; Stripe will not retry.</li>
+<li><strong>Atomic dedup insert</strong> into <code>public.stripe_webhook_events</code>:</li>
+</ol>
+<p>   ```ts    const { data, error } = await db      .from('stripe_webhook_events')      .insert({        stripe_event_id: event.id,        event_type: event.type,        endpoint: endpointName, // 'platform' | 'connect'        raw_event: event,        processing_started_at: new Date().toISOString(),      })      .select('id')      .single();</p>
+<p>   if (error?.code === '23505') {      // Unique violation on stripe_event_id — event already processed.      // Return 200 OK to Stripe; do nothing else.      return new Response('OK', { status: 200 });    }    if (error) {      // Different error — return 5xx so Stripe retries.      return new Response('error', { status: 500 });    }    ```</p>
+<ol>
+<li><strong>Process the event</strong> in a function-level try/catch. The processing logic varies by event type — commission record updates, subscription state changes, transfer reconciliation, etc.</li>
+<li><strong>Mark completion</strong> by updating the row with <code>processing_completed_at</code>, <code>processing_outcome</code>, and (for failures) <code>error_detail</code>. This is the audit record of "yes we handled this."</li>
+<li><strong>Return 200</strong> to Stripe. Stripe will not retry a 200-OK event.</li>
+</ol>
+<h3>Why the dedup insert is FIRST (not after signature verification)</h3>
+<p>Signature verification rejects forged events; dedup catches legitimate retries from Stripe. These are independent concerns. The order matters: signature first (cheap, syntactic), dedup second (transactional, before any business logic).</p>
+<h3>Why "Return 200 on duplicate" rather than "return 5xx and let Stripe retry forever"</h3>
+<p>A duplicate Stripe event is Stripe doing its job — retrying after a network blip on our side. Returning 200 stops the retry loop. We already have the event recorded.</p>
+<h3>Linking transfers back to payouts</h3>
+<p>For events from <a class="xref" href="section-14-commissions-splits-payouts.html#s14-7">§14.7</a> (Stripe Connect transfers), the <code>processed_idempotency_key</code> column is populated from the event's metadata. The format <code>payout-{payout_records.id}-gen{attempt_generation}</code> lets reconciliation queries link:</p>
+<pre class="codeblock" data-lang="sql"><code>-- "Did the transfer for payout X succeed?"
+SELECT pr.id, pr.status, swe.event_type, swe.created_at
+FROM public.payout_records pr
+LEFT JOIN public.stripe_webhook_events swe
+  ON swe.processed_idempotency_key =
+     'payout-' || pr.id || '-gen' || pr.attempt_generation
+WHERE pr.id = '&lt;payout_id&gt;'
+ORDER BY swe.created_at;</code></pre>
+<h3>Handlers MUST be idempotent in their own right</h3>
+<p>The dedup table catches Stripe-side retries. It does NOT catch our own bugs (handler crashes after partial state mutation; on retry the row exists but <code>processing_outcome</code> is unset). Handlers should be designed to be safely re-runnable, treating <code>processing_completed_at IS NULL</code> as "may need to re-run" and recovering gracefully.</p>
+<p>A reconciliation Inngest job (<code>stripe-webhook-incomplete-reconcile</code>, runs every 15 minutes) finds rows with <code>processing_started_at</code> more than 5 minutes ago and <code>processing_completed_at IS NULL</code>, and either re-runs the handler or escalates to platform admin per the event type.</p>
+<h3>Retention and cleanup</h3>
+<ul>
+<li><code>processing_outcome = 'success'</code>: retain 90 days then delete.</li>
+<li><code>processing_outcome = 'error'</code>: retain 1 year (investigation history).</li>
+<li><code>processing_outcome = 'duplicate'</code>: retain 30 days (mostly noise).</li>
+<li><code>processing_outcome = 'unhandled'</code>: retain 1 year (these are event types we received but had no handler for — surface for review).</li>
+</ul>
+<p>Cleanup cron runs nightly.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>The <code>INSERT ... ON CONFLICT</code> pattern is the correctness gate.</strong> Reading first then inserting is a race: between read and insert, another concurrent webhook delivery can land. Atomic insert with unique-constraint-violation handling is the only safe shape.</li>
+<li><strong>Idempotency-key linkage requires the <a class="xref" href="section-14-commissions-splits-payouts.html#s14-7">§14.7</a> fix to be in place.</strong> This handler depends on the deterministic idempotency-key contract from <a class="xref" href="section-14-commissions-splits-payouts.html#s14-7">§14.7</a>.</li>
+<li><strong>The reconciliation job is not optional.</strong> Without it, a handler crash mid-processing produces a permanently-stuck row that silently fails to complete. Build it in Phase 1 alongside the webhook handlers themselves.</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-06-rag-service-schema.html">← §6: RAG Service Schema</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-08-rag-service-architecture.html">§8: RAG Service Architecture →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

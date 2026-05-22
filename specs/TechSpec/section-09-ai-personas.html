@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 9 — AI Personas — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 9</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s9">Section 9 — AI Personas</h1>
+<p>Six AI personas serve customers. Each has distinct expertise, voice, and visual identity. Personas are globally defined; tenants can override display name (Pro and Agency tiers) and append custom instructions (Agency only).</p>
+<h2 id="s9-1">9.1 Persona Roster <a class="anchor-link" href="#s9-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Persona</strong></th><th><strong>Slug</strong></th><th><strong>Specialty</strong></th></tr></thead><tbody><tr><td>Marcus Cole</td><td>marcus</td><td>Caribbean / Latin America + CATCH-ALL (default routing)</td></tr><tr><td>Marco Bellini</td><td>marco</td><td>Mediterranean / European Rivers</td></tr><tr><td>Priya Sharma</td><td>priya</td><td>Luxury cruises + ship-within-a-ship (Forbes 5-star concierge background)</td></tr><tr><td>Captain Dave Kowalski</td><td>dave</td><td>Alaska / Adventure cruises</td></tr><tr><td>Maya Patel</td><td>maya</td><td>Accessible / Inclusive cruises (OT background, wheelchair user)</td></tr><tr><td>Jenny Hartwell</td><td>jenny</td><td>Family cruises</td></tr></tbody></table></div>
+<h2 id="s9-2">9.2 Persona Selection <a class="anchor-link" href="#s9-2" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Customer can manually pick a persona from ‘Meet our advisors’ page</li>
+<li>AI router selects appropriate persona based on customer’s initial query topic (defaults to Marcus if unclear)</li>
+<li>AI may suggest mid-conversation handoff: ‘This is more in Maya’s wheelhouse — should I get her involved?’</li>
+<li>Customer can override and stay with current persona</li>
+</ul>
+<h2 id="s9-3">9.3 System Prompt Architecture <a class="anchor-link" href="#s9-3" aria-label="Permalink">¶</a></h2>
+<p>Each persona’s system prompt is built from three layers, in order:</p>
+<ul>
+<li>Base persona block — character, voice, expertise, visual identity, base instructions</li>
+<li>Platform constraints — disclosure rules, prohibited topics (medical/legal/financial advice), escalation triggers</li>
+<li>Tenant addendum (Agency tier only) — appended after platform constraints; Haiku-screened for safety before save</li>
+</ul>
+<p>The full prompt is cached (Anthropic prompt caching) to reduce inference cost on subsequent turns.</p>
+<h2 id="s9-4">9.4 Persona Base Block Structure <a class="anchor-link" href="#s9-4" aria-label="Permalink">¶</a></h2>
+<p>Each base block establishes:</p>
+<ul>
+<li>Character: name, background, voice (warm professional / direct / playful)</li>
+<li>Expertise area: regional and topical focus</li>
+<li>Anti-instructions: never claim to be human, never give medical/legal/financial advice, never make commitments on behalf of host</li>
+<li>Tone calibration placeholder: filled at runtime per <a class="xref" href="section-24-chat-ui.html">§24</a> tone matching</li>
+<li>Disclosure pattern: how to introduce self when asked</li>
+</ul>
+<h2 id="s9-5">9.5 Tenant Persona Overrides <a class="anchor-link" href="#s9-5" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.tenant_persona_overrides (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>persona_slug TEXT NOT NULL,</p>
+<p>display_name_override TEXT, – Pro/Agency tier</p>
+<p>system_prompt_addendum TEXT, – Agency tier only</p>
+<p>is_disabled BOOLEAN DEFAULT FALSE, – any tier</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>UNIQUE (tenant_id, persona_slug)</p>
+<p>);</p>
+<h2 id="s9-6">9.6 Tool Use <a class="anchor-link" href="#s9-6" aria-label="Permalink">¶</a></h2>
+<p>Personas have access to tools via Anthropic’s tool use API:</p>
+<ul>
+<li>search_host_inventory — query host adapter for cruise availability</li>
+<li>get_customer_context — fetch CRM + memory for current customer</li>
+<li>generate_quote — create a quote line item set</li>
+<li>collect_booking_details — initiate booking flow with pre-fills</li>
+<li>escalate_to_human — surface to tenant’s supervisor</li>
+<li>update_memory — write to customer_memories (with consent check)</li>
+</ul>
+<h2 id="s9-7">9.7 Disclosure Rules <a class="anchor-link" href="#s9-7" aria-label="Permalink">¶</a></h2>
+<p>AI personas always disclose AI nature when asked. Persistent UI disclosure (<a class="xref" href="section-24-chat-ui.html">§24</a>) says ‘AI-assisted chat’. State-specific AI disclosure laws (California, Illinois, Utah, New York) covered by the AI Liability Disclaimer (<a class="xref" href="section-17-authentication-signup-consent.html#s17-6">§17.6</a>) that every user accepts.</p>
+<h2 id="s9-8">9.8 In-Conversation Persona Switching <a class="anchor-link" href="#s9-8" aria-label="Permalink">¶</a></h2>
+<p>Customer ──► Marcus (“Hi, I want a Caribbean cruise”)</p>
+<p>      │</p>
+<p>      │  (customer mentions accessibility needs)</p>
+<p>      │</p>
+<p>      ├──► Marcus suggests handoff: "Should I get Maya involved?"</p>
+<p>      │</p>
+<p>      ▼ (customer confirms)</p>
+<p>      │</p>
+<p>Customer ──► Maya (“Hi, I’m Maya, taking over from Marcus…”)</p>
+<p>            [previous conversation summary preserved as context]</p>
+<h2 id="s9-9">9.9 Streaming via SSE <a class="anchor-link" href="#s9-9" aria-label="Permalink">¶</a></h2>
+<p>Chat responses stream via Server-Sent Events. Client subscribes to /api/chat with the message; server streams response chunks. Reconnect supported via Last-Event-ID header.</p>
+<h2 id="s9-10">9.10 AI Mode (Tenant-Level) <a class="anchor-link" href="#s9-10" aria-label="Permalink">¶</a></h2>
+<p>Tenants control how AI participates in customer conversations via the <code>ai_mode</code> setting on their tenant configuration.</p>
+<h3>Modes</h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Mode</strong></th><th><strong>Customer-facing chat</strong></th><th><strong>AI drafts available to tenant agent?</strong></th><th><strong>Other AI processes</strong></th></tr></thead><tbody><tr><td>autonomous</td><td>AI responds directly</td><td>N/A (responses go direct)</td><td>All run</td></tr><tr><td>draft_only</td><td>Tenant agent reviews every AI draft before sending</td><td>Yes — required path</td><td>All run</td></tr><tr><td>disabled</td><td>Tenant agent handles all chat manually; no AI in customer chat</td><td>No</td><td>Some still run — see <a class="xref" href="#s9-10-1">§9.10.1</a></td></tr></tbody></table></div>
+<h3 id="s9-10-1">9.10.1 What <code>disabled</code> actually disables <a class="anchor-link" href="#s9-10-1" aria-label="Permalink">¶</a></h3>
+<p><code>ai_mode = 'disabled'</code> means <strong>no customer-facing AI chat responses</strong>. It does NOT mean zero AI processing. The following continue to run regardless of <code>ai_mode</code>:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>AI process</strong></th><th><strong>Runs when ai_mode = disabled?</strong></th><th><strong>Why</strong></th></tr></thead><tbody><tr><td>Customer chat persona response</td><td>NO</td><td>The point of disabled mode</td></tr><tr><td>Customer chat persona draft for agent review</td><td>NO</td><td>Same</td></tr><tr><td>Memory extraction from conversations (<a class="xref" href="section-11-customer-memory.html#s11-2">§11.2</a>)</td><td>YES</td><td>Conversations still happen; memory captures customer facts the agent typed</td></tr><tr><td>Persona addendum Haiku screening (<a class="xref" href="section-16-white-label-branding.html#s16-6">§16.6</a>)</td><td>YES</td><td>Tenant may still configure personas for future use</td></tr><tr><td>RAG ingestion pipeline normalization (<a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a>)</td><td>YES</td><td>Tenant may still submit content for their corpus</td></tr><tr><td>Abuse signal screening on RAG submissions (<a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a>)</td><td>YES</td><td>Platform protection regardless of tenant mode</td></tr><tr><td>Forum moderation (<a class="xref" href="section-19-forum-style-group-chat.html#s19-3">§19.3</a>)</td><td>YES</td><td>Tenant participation in group forums</td></tr><tr><td>Supervisor preflight checks</td><td>NO (no AI response to check)</td><td>N/A</td></tr><tr><td>Pre-cruise email rendering with personalization (<a class="xref" href="section-23-email-notifications.html#s23-4">§23.4</a>)</td><td>YES (if email send enabled)</td><td>Emails are platform-orchestrated, not customer-chat</td></tr></tbody></table></div>
+<p>AI Mode is a customer-chat-scoped control, not a platform-wide AI off switch.</p>
+<h3 id="s9-10-2">9.10.2 Tenant-facing UI requirements <a class="anchor-link" href="#s9-10-2" aria-label="Permalink">¶</a></h3>
+<p>The <code>ai_mode</code> configuration screen MUST:</p>
+<ul>
+<li>Show the three modes with the behavior description from the <a class="xref" href="#s9-10">§9.10</a> table above.</li>
+<li>Show an expandable "What does disabled NOT cover?" section reproducing the <a class="xref" href="#s9-10-1">§9.10.1</a> table.</li>
+<li>Show estimated monthly AI cost ranges for each mode at the tenant's current usage pattern (per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a> cost attribution).</li>
+<li>For <code>disabled</code> specifically: show a callout "If you need TRULY zero AI processing — including memory extraction and persona screening — see Background AI Settings below."</li>
+</ul>
+<h3 id="s9-10-3">9.10.3 Background AI Settings (separate toggle) <a class="anchor-link" href="#s9-10-3" aria-label="Permalink">¶</a></h3>
+<p>For tenants who want zero AI processing of any kind, a separate "Background AI" toggle exists. Default: ON. When OFF:</p>
+<ul>
+<li>Memory extraction does not run.</li>
+<li>Persona addendums cannot be saved (Haiku screening required).</li>
+<li>RAG ingestion content normalization runs with reduced AI (basic rule-based normalization only; PII detection still runs via the zero-tolerance pipeline per <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a>).</li>
+<li>Pre-cruise email rendering uses template-only personalization (no AI-generated narrative).</li>
+<li>Forum moderation falls back to coordinator-only (no Haiku screening — coordinator must approve every message).</li>
+</ul>
+<p><strong>Schema addition:</strong></p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.tenants
+  ADD COLUMN background_ai_enabled BOOLEAN NOT NULL DEFAULT TRUE;</code></pre>
+<p><strong>Tenant UI banner when Background AI is OFF:</strong></p>
+<blockquote>"Background AI is OFF. Some platform features have reduced functionality:<br><br>- Customer memory is not auto-extracted from conversations.<br>- You cannot configure persona positioning (requires AI screening).<br>- Pre-cruise emails use generic templates only.<br>- Group forum moderation requires manual coordinator approval for every message.<br><br>[Turn Background AI back on] [Learn more]"</blockquote>
+<p>This is a niche setting. Most tenants will leave it ON. The toggle exists for tenants with strict compliance requirements who need to assert "no AI processing of customer data at all."</p>
+<h3 id="s9-10-4">9.10.4 The trap §A.13 warned about <a class="anchor-link" href="#s9-10-4" aria-label="Permalink">¶</a></h3>
+<p>§A.13's anti-pattern note ("letting <code>ai_mode = 'disabled'</code> mean 'no AI calls ever'") is addressed by <a class="xref" href="#s9-10-1">§9.10.1</a> above. The <a class="xref" href="#s9-10">§9.10</a> configuration screen makes the distinction explicit so tenants choosing <code>disabled</code> are not surprised by AI-related charges on their bill.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Most tenants who choose <code>disabled</code> actually want <code>draft_only</code>.</strong> Tenant onboarding (<a class="xref" href="section-15-tenant-onboarding-compliance.html">§15</a>) should ask about the underlying goal.</li>
+<li><strong>The Background AI toggle defaults ON.</strong> Off should be a conscious decision.</li>
+<li><strong>Estimated monthly cost ranges in the UI require <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a> cost attribution data.</strong> For new tenants, "varies based on usage" is acceptable.</li>
+</ul>
+<div class="callout note"><strong>NOTE:</strong> Avatar art is user-provided AI-generated images. Asset delivery deferred to implementation.</div>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-08-rag-service-architecture.html">← §8: RAG Service Architecture</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-10-ai-supervisor.html">§10: AI Supervisor →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

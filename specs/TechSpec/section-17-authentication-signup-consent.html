@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 17 — Authentication, Signup & Consent — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 17</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s17">Section 17 — Authentication, Signup &amp; Consent</h1>
+<h2 id="s17-1">17.1 OAuth Providers <a class="anchor-link" href="#s17-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Provider</strong></th><th><strong>Status at Launch</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Google</td><td>Active</td><td>Primary; most US users; reliable email claim</td></tr><tr><td>Microsoft (Azure AD/Entra)</td><td>Active</td><td>Multitenant + personal accounts; email may be missing on personal</td></tr><tr><td>Facebook</td><td>Active</td><td>Older demographic skew</td></tr><tr><td>Apple</td><td>Deferred</td><td>Requires Apple Developer account ($99/yr); spec-ready for later</td></tr></tbody></table></div>
+<h2 id="s17-2">17.2 Microsoft No-Email Handling <a class="anchor-link" href="#s17-2" aria-label="Permalink">¶</a></h2>
+<p>Personal Microsoft accounts often don’t expose email in OAuth claims. Email extraction chain:</p>
+<ul>
+<li>oauth.email (work accounts and most personal)</li>
+<li>Microsoft Graph API /me.mail (work accounts especially)</li>
+<li>Microsoft Graph API /me.otherMails[0] (personal accounts with alternate)</li>
+<li>Prompt user for email BEFORE account creation</li>
+</ul>
+<div class="callout note"><strong>NOTE:</strong><strong> </strong>Cannot screen-scrape Microsoft’s login form — that’s behind OAuth security boundary on Microsoft’s domain. The platform never sees what the user typed.</div>
+<p>Email is HARD-REQUIRED at signup. If none found via OAuth + Graph, user enters email on a prompt screen before public.users row is created. Schema keeps users.email NOT NULL; the complexity is in the flow.</p>
+<h2 id="s17-3">17.3 Signup Flow <a class="anchor-link" href="#s17-3" aria-label="Permalink">¶</a></h2>
+<p>[Landing page]</p>
+<p>│</p>
+<p>├──► [Customer signup from tenant's site]</p>
+<p>│        │</p>
+<p>│        ▼</p>
+<p>│     [OAuth provider]</p>
+<p>│        │</p>
+<p>│        ▼ (if Microsoft + no email: prompt for email)</p>
+<p>│        │</p>
+<p>│        ▼</p>
+<p>│     [Tenant resolver creates public.users]</p>
+<p>│        │</p>
+<p>│        ▼</p>
+<p>│     [Anonymous-to-authenticated transfer prompt if applicable]</p>
+<p>│        │</p>
+<p>│        ▼</p>
+<p>│     [Legal acceptance]</p>
+<p>│        │</p>
+<p>│        ▼</p>
+<p>│     [Profile completion; marketing opt-ins]</p>
+<p>│        │</p>
+<p>│        ▼</p>
+<p>│     [Active]</p>
+<p>│</p>
+<p>└──► [Tenant signup from platform's primary site]</p>
+<p>         │</p>
+<p>         ▼</p>
+<p>      [Choose BYO-host or Sub-host]</p>
+<p>         │</p>
+<p>         ▼</p>
+<p>      [Standard onboarding flow per <a class="xref" href="section-15-tenant-onboarding-compliance.html">§15</a>]</p>
+<h2 id="s17-4">17.4 Versioned Consent System <a class="anchor-link" href="#s17-4" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.legal_documents (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>document_type TEXT NOT NULL CHECK (document_type IN (</p>
+<p>‘tou’,‘privacy_policy’,‘ai_disclaimer’,‘cookie_policy’,</p>
+<p>‘ica_subhost’,‘can_spam_addendum’,‘tcpa_addendum’</p>
+<p>)),</p>
+<p>version INTEGER NOT NULL,</p>
+<p>content_markdown TEXT NOT NULL,</p>
+<p>content_html TEXT,</p>
+<p>summary_of_changes TEXT,</p>
+<p>effective_at TIMESTAMPTZ NOT NULL,</p>
+<p>superseded_at TIMESTAMPTZ,</p>
+<p>created_by_user_id UUID REFERENCES public.users(id),</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>UNIQUE (document_type, version)</p>
+<p>);</p>
+<p>CREATE TABLE public.legal_consents (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>auth_user_id UUID REFERENCES auth.users(id),</p>
+<p>tenant_id UUID REFERENCES public.tenants(id), – nullable for platform-level docs</p>
+<p>document_id UUID NOT NULL REFERENCES public.legal_documents(id),</p>
+<p>document_type TEXT NOT NULL,</p>
+<p>document_version INTEGER NOT NULL,</p>
+<p>action TEXT NOT NULL CHECK (action IN (‘accepted’,‘declined’,‘withdrawn’)),</p>
+<p>ip_address TEXT,</p>
+<p>user_agent TEXT,</p>
+<p>notes TEXT, – for ICA: typed legal name as signature</p>
+<p>acted_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>Platform-level documents (ToU, Privacy, AI Disclaimer) accepted once per auth.users globally — not per tenant. Tenant-specific documents (ICA) accepted per tenant relationship.</p>
+<h2 id="s17-5">17.5 Document Version Change Flow <a class="anchor-link" href="#s17-5" aria-label="Permalink">¶</a></h2>
+<p>Platform admin publishes new version via /admin/legal-docs. On publish:</p>
+<ul>
+<li>New legal_documents row inserted with effective_at = NOW (or scheduled)</li>
+<li>Previous version’s superseded_at set</li>
+<li>Users with latest_accepted_version &lt; new_version flagged</li>
+<li>On next authenticated request → redirect to /consent?missing=…</li>
+<li>Email blast to affected users with change summary</li>
+</ul>
+<h2 id="s17-6">17.6 AI Liability Disclaimer <a class="anchor-link" href="#s17-6" aria-label="Permalink">¶</a></h2>
+<p>Distinct legal document separate from ToU. Acknowledges:</p>
+<ul>
+<li>AI is a tool, not a licensed travel agent</li>
+<li>AI may make mistakes; verify pricing and policies before booking</li>
+<li>Platform not responsible for AI hallucinations or errors</li>
+<li>Final booking confirmation comes from human/host system, not AI</li>
+<li>State-specific AI disclosure requirements (California, Illinois, Utah, New York)</li>
+</ul>
+<p>Disclaimer banner persistent in chat: ‘This conversation may include AI-assisted responses.’</p>
+<h2 id="s17-7">17.7 Session Management <a class="anchor-link" href="#s17-7" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Supabase Auth handles JWT issuance and refresh</li>
+<li>Access token TTL: 1 hour</li>
+<li>Refresh token TTL: 30 days with sliding window</li>
+<li>Re-auth required after 4 hours for sensitive operations (commission overrides, role changes, ICA acceptance)</li>
+</ul>
+<h2 id="s17-8">17.8 Account Lifecycle <a class="anchor-link" href="#s17-8" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>State</strong></th><th><strong>Behavior</strong></th></tr></thead><tbody><tr><td>active</td><td>Default; full access per permissions</td></tr><tr><td>suspended</td><td>Login still works; read-only; banner explains</td></tr><tr><td>deleted</td><td>Cannot log in; 30-day recovery window; then full purge</td></tr></tbody></table></div>
+<h2 id="s17-9">17.9 CCPA Data Export <a class="anchor-link" href="#s17-9" aria-label="Permalink">¶</a></h2>
+<p>GET /api/user/data initiates export. Inngest job assembles. User receives email with signed download URL (24-hour validity). Rate-limited: 1 export per user per 30 days.</p>
+<h2 id="s17-10">17.10 CCPA Data Deletion <a class="anchor-link" href="#s17-10" aria-label="Permalink">¶</a></h2>
+<p>DELETE /api/user/data with confirmation. Sets <code>status = 'deleted'</code>, <code>deleted_at = NOW()</code>. 30-day grace period for recovery. After 30 days: data purged per retention; required-retention records (bookings, commissions) anonymized per <a class="xref" href="section-25-data-privacy-retention.html#s25-4">§25.4</a> and <a class="xref" href="section-25-data-privacy-retention.html#s25-4a">§25.4a</a>.</p>
+<h3>Staging propagation</h3>
+<p>Customer deletions propagate to staging via the next release pipeline run (which restores staging from production data per CI/CD <a class="xref" href="section-05-database-schema-main-app.html">§5</a>). With release cadence of &lt;30 days, propagation falls within the 30-day grace period.</p>
+<p>If release cadence stalls (freeze for major release planning), manual staging cleanup may be required to maintain CCPA compliance. The trigger:</p>
+<ul>
+<li>Customer deletion was performed in production.</li>
+<li>25+ days have elapsed since the deletion (5-day safety margin before 30-day grace + 15-day reporting buffer = 45-day CCPA SLA).</li>
+<li>No release pipeline run has refreshed staging in those 25+ days.</li>
+</ul>
+<p>The operator's runbook: run <code>scripts/staging-fixups.sql</code> against staging with an additional purge clause for the specific <code>deleted_user_id</code>. Documented in CI/CD spec <a class="xref" href="section-09-ai-personas.html#s9-5">§9.5</a>.</p>
+<h4>Why this works under Option B (D-038)</h4>
+<p>The Option B staging posture has reduced forensics (no PITR, no daily backups). Side effect: there's no historical staging state where the customer's data lives — the only copy is on the current staging instance. A targeted purge on that instance satisfies the propagation requirement; there's no backup to also purge.</p>
+<p>Under Option A or Option C (if upgrade is triggered), additional purge of backed-up staging state would be required.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-16-white-label-branding.html">← §16: White-Label Branding</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-18-group-bookings.html">§18: Group Bookings →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

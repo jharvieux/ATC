@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 19 — Forum-Style Group Chat — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 19</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s19">Section 19 — Forum-Style Group Chat</h1>
+<h2 id="s19-1">19.1 Model <a class="anchor-link" href="#s19-1" aria-label="Permalink">¶</a></h2>
+<p>Asynchronous threaded forum, not real-time chat. Better fit for cruise planning that spans months. Each group has one forum, with threads and one-level replies.</p>
+<h2 id="s19-2">19.2 Posting Permissions <a class="anchor-link" href="#s19-2" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Invitees: create threads, reply, react, edit/delete own messages</li>
+<li>Coordinator: invitee permissions + lock threads, hide messages, mute users, post announcements</li>
+<li>Muted users: read only</li>
+<li>RSVP not_going: read only</li>
+<li>Forum-locked group: only coordinator can post</li>
+</ul>
+<h2 id="s19-3">19.3 AI Moderation Pipeline <a class="anchor-link" href="#s19-3" aria-label="Permalink">¶</a></h2>
+<pre class="codeblock"><code>[User submits message]
+  │
+  ▼
+Status: pending
+  │
+  ▼
+AI screen via Haiku (synchronous, target &lt;2s)
+  │
+  ├──► Low risk (all scores &lt;0.4) ──► Status: visible
+  │
+  ├──► Medium risk (0.4-0.7) ──► Status: flagged_review (coordinator-only visible)
+  │
+  ├──► High risk (&gt;0.7) ──► Status: hidden (coordinator + platform admin only)
+  │
+  └──► Haiku unavailable / timeout / error ──► Status: pending_moderation
+                                                    │
+                                                    ▼
+                                        Inngest retry job (5/15/60 min backoff)
+                                                    │
+                                                    ├──► On retry success: state set per scores above
+                                                    └──► After 24h still pending: escalates to coordinator queue</code></pre>
+<h3>Failure modes and behavior</h3>
+<p>The contract: <strong>fail-closed by default, distinct from coordinator-review states, with automatic recovery.</strong></p>
+<div class="table-wrap"><table><thead><tr><th>Failure</th><th>Result</th><th>Customer-visible?</th><th>Recovery</th></tr></thead><tbody><tr><td>Haiku timeout (&gt;2s)</td><td>Status: <code>pending_moderation</code></td><td>No (not yet visible)</td><td>Inngest retry job re-screens on backoff (5/15/60 min)</td></tr><tr><td>Haiku API error</td><td>Status: <code>pending_moderation</code></td><td>No</td><td>Same retry job</td></tr><tr><td>Haiku returns malformed response</td><td>Status: <code>pending_moderation</code> + flagged for engineering attention</td><td>No</td><td>Same retry job; engineering investigates malformed responses</td></tr><tr><td>Haiku auth failure / quota exhaustion</td><td>Status: <code>pending_moderation</code> + alerts platform admin</td><td>No</td><td>Manual intervention</td></tr><tr><td>Retry job fails for &gt;24h</td><td>Status: <code>flagged_review</code></td><td>No initially; then coordinator-visible if escalates</td><td>Coordinator handles via existing flow</td></tr></tbody></table></div>
+<h3>Why fail-closed (not fail-open)</h3>
+<p>Fail-open posts every message immediately when Haiku is unavailable. Under sustained Haiku unavailability or a sophisticated attack timing message posts during Haiku outages, this creates an abuse window. The cost of fail-closed (a brief invisible-message state while retry runs) is far smaller than the cost of an abuse incident in a group forum.</p>
+<h3>Why a separate <code>pending_moderation</code> state (distinct from <code>flagged_review</code>)</h3>
+<p><code>flagged_review</code> is for messages that Haiku <em>successfully</em> screened and flagged as medium-risk. They require coordinator judgment. <code>pending_moderation</code> is for messages that haven't been screened yet — fundamentally different from a coordinator's perspective. Mixing the two would either waste coordinator time auto-screening Haiku-recovered messages, or hide engineering-side outages behind apparent moderation queue depth.</p>
+<h3>The retry job</h3>
+<p><code>forum-moderation-retry</code> Inngest function:</p>
+<ul>
+<li>Triggers on any message entering <code>pending_moderation</code> status.</li>
+<li>Initial backoff: 5 minutes. Second retry: 15 minutes. Third retry: 60 minutes.</li>
+<li>Each attempt re-runs the full Haiku screen.</li>
+<li>On success: message status is set per the screening scores.</li>
+<li>After 24 hours total elapsed time without successful screening: status moves to <code>flagged_review</code> with reason <code>"moderation_timeout"</code>. Coordinator handles manually.</li>
+<li>Each retry attempt writes to <code>audit_log</code> with the attempt count and Haiku-response detail.</li>
+</ul>
+<p>The retry job uses <code>tenantClient</code> with <code>tenantContextFromInngestEvent</code> per the <a class="xref" href="section-11-customer-memory.html#s11-2-2">§11.2.2</a> pattern. The event payload includes the message's <code>tenant_id</code> and <code>forum_id</code>.</p>
+<h3>Schema addition</h3>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.forum_messages
+  ADD COLUMN pending_moderation_since TIMESTAMPTZ,
+  ADD COLUMN moderation_attempt_count INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN moderation_last_attempt_at TIMESTAMPTZ,
+  ADD COLUMN moderation_last_error TEXT;
+
+-- Add 'pending_moderation' to the forum_messages.status CHECK constraint.</code></pre>
+<h3>What the user sees</h3>
+<p>A user who submits a message in a forum:</p>
+<ul>
+<li>Normal path: message appears immediately (status <code>visible</code>) or quietly waits (status <code>pending_moderation</code> looks identical to <code>pending</code> to the submitter).</li>
+<li>Retry succeeds: message becomes visible to others.</li>
+<li>Retry fails 24h: submitter sees "Your message is awaiting review" — same UX as <code>flagged_review</code>.</li>
+</ul>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Fail-closed is non-negotiable for forums.</strong> Fail-open here is a screenshot-able PR incident waiting to happen.</li>
+<li><strong>The retry job MUST be idempotent.</strong> Use optimistic locking on <code>moderation_attempt_count</code>.</li>
+<li><strong>24h timeout to coordinator escalation is generous.</strong> Tune downward if coordinator queue noise from sustained Haiku issues becomes the bigger problem.</li>
+<li><strong>Haiku quota exhaustion alerts the platform admin, not the coordinator.</strong> Quota exhaustion is a platform-level issue, not a tenant-level one.</li>
+</ul>
+<h2 id="s19-4">19.4 Screening Dimensions <a class="anchor-link" href="#s19-4" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Spam (off-platform commerce links, repetition, low-content)</li>
+<li>Abuse (insults, slurs, threats, harassment)</li>
+<li>PII leak (other people’s contact info, credit cards — zero tolerance for credit cards)</li>
+<li>Off-topic promotional content</li>
+<li>Trip misinformation</li>
+<li>Solicitation (selling other travel services)</li>
+<li>Prompt injection attempts</li>
+</ul>
+<h2 id="s19-5">19.5 Reactions <a class="anchor-link" href="#s19-5" aria-label="Permalink">¶</a></h2>
+<p>Bounded emoji set:</p>
+<ul>
+<li>👍 thumbs up</li>
+<li>❤️ heart</li>
+<li>😂 laugh</li>
+<li>😮 surprised</li>
+<li>🎉 celebrate</li>
+<li>👀 eyes / interesting</li>
+</ul>
+<h2 id="s19-6">19.6 Anonymity in Forum <a class="anchor-link" href="#s19-6" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Display name shown as ‘Anonymous’ or ‘Anonymous Traveler’ instead of real name</li>
+<li>Avatar replaced with neutral placeholder</li>
+<li>user_id still stored for moderation; UI never reveals identity</li>
+<li>Coordinator and platform admin always see real names for moderation</li>
+</ul>
+<h2 id="s19-7">19.7 Coordinator Tools <a class="anchor-link" href="#s19-7" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Per-message: hide / unhide / pin within thread</li>
+<li>Per-user: mute (temporary or indefinite) / unmute / view recent posts</li>
+<li>Per-thread: lock / pin / mark announcement (read-only) / delete (soft)</li>
+<li>Forum-wide: lock entire forum / unlock</li>
+</ul>
+<h2 id="s19-8">19.8 Edit and Delete <a class="anchor-link" href="#s19-8" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Edit own message: any time, no expiry</li>
+<li>‘Edited’ indicator shown with last-edited timestamp</li>
+<li>Edit history preserved in JSONB for audit</li>
+<li>Delete own message: soft delete; ‘[message deleted]’ placeholder if replies exist</li>
+</ul>
+<h2 id="s19-9">19.9 User Strike System <a class="anchor-link" href="#s19-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>3 AI-hidden messages in 24h → automatic 24-hour mute</li>
+<li>5 coordinator-hidden messages → coordinator review prompt</li>
+<li>10 cumulative strikes → recommend coordinator consider removing invitee</li>
+</ul>
+<p>Recommendations, not automatic bans. Coordinator has final say.</p>
+<h2 id="s19-10">19.10 Post-Sailing Forum <a class="anchor-link" href="#s19-10" aria-label="Permalink">¶</a></h2>
+<p>Forum stays fully active for in-trip and post-trip conversation. Coordinator can post updates, photos, post-trip thanks. AI screening continues. No automatic forum closure — coordinator can manually lock when group has run its course.</p>
+<h2 id="s19-11">19.11 Photo Support — Deferred <a class="anchor-link" href="#s19-11" aria-label="Permalink">¶</a></h2>
+<p>v6 launch: text-only forum. Photos deferred to v7 due to storage, moderation, EXIF stripping, and mobile UX complexity. Users can share photo links to external hosting (Google Photos, iCloud share).</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-18-group-bookings.html">← §18: Group Bookings</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-20-booking-flow.html">§20: Booking Flow →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 3 — Multi-Tenancy & Tier Matrix — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 3</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s3">Section 3 — Multi-Tenancy &amp; Tier Matrix</h1>
+<h2 id="s3-1">3.1 Tenant Types <a class="anchor-link" href="#s3-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Type</strong></th><th><strong>Description</strong></th></tr></thead><tbody><tr><td>platform</td><td>The platform operator’s own automated agency (one tenant, special)</td></tr><tr><td>byo_host</td><td>Independent agent with their own host agency; uses platform as SaaS</td></tr><tr><td>sub_host</td><td>Independent agent operating under platform’s host agency relationship</td></tr></tbody></table></div>
+<h2 id="s3-2">3.2 Tenant Lifecycle States <a class="anchor-link" href="#s3-2" aria-label="Permalink">¶</a></h2>
+<p>onboarding ──► pending_review ──► active ──► suspended ──► terminated</p>
+<p>               │                  │</p>
+<p>               │                  ▼</p>
+<p>               │            (active operations)</p>
+<p>               │</p>
+<p>               └──► onboarding (more info needed)</p>
+<ul>
+<li>onboarding — tenant is filling in profile, signing legal docs, doing Stripe KYC</li>
+<li>pending_review — submitted for platform admin compliance review</li>
+<li>active — fully operational; can take customer interactions and bookings</li>
+<li>suspended — read-only; no new bookings; existing commissions continue to settle</li>
+<li>terminated — closed; data anonymized per retention policy</li>
+</ul>
+<h2 id="s3-3">3.3 Tier Matrix <a class="anchor-link" href="#s3-3" aria-label="Permalink">¶</a></h2>
+<p>Tiers determine pricing, feature gates, commission split (sub-hosts only), and quota limits.</p>
+<h3>BYO-Host Tiers</h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Monthly</strong></th><th><strong>Annual</strong></th><th><strong>Seats</strong></th><th><strong>Description</strong></th></tr></thead><tbody><tr><td>BYO Research</td><td>$19</td><td>$190</td><td>1</td><td>Single-agent, exploration / research use</td></tr><tr><td>BYO Professional</td><td>$59</td><td>$590</td><td>1</td><td>Single-agent professional with full CRM</td></tr><tr><td>BYO Agency</td><td>$99 base (see ladder)</td><td>$990 base (see ladder)</td><td>1 included; tiered add-on</td><td>Multi-agent agency with custom domain</td></tr></tbody></table></div>
+<p><strong>BYO Agency seat ladder</strong> (additional users beyond the included first seat):</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Seat range</strong></th><th><strong>Monthly per seat</strong></th><th><strong>Annual per seat</strong></th></tr></thead><tbody><tr><td>User 1 (included in base)</td><td>$99</td><td>$990</td></tr><tr><td>Users 2–4</td><td>$59</td><td>$590</td></tr><tr><td>Users 5–10</td><td>$49</td><td>$490</td></tr><tr><td>Users 11+</td><td>$39</td><td>$390</td></tr></tbody></table></div>
+<p>Annual = 10× monthly (two months free) applied at every tier of the ladder. Example: an Agency tenant with 6 users pays $99 + (3 × $59) + (2 × $49) = $374/mo, or $3,740/yr.</p>
+<h3>Sub-Host Tiers</h3>
+<p>Sub-host tiers differ on commission split (platform’s share / sub-host’s share), persona customization, custom domain access, and support level.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Monthly</strong></th><th><strong>Commission Split</strong></th><th><strong>Persona Customization</strong></th><th><strong>Custom Domain?</strong></th></tr></thead><tbody><tr><td>Sub-Host Starter</td><td>$49</td><td>30 / 70</td><td>None</td><td>No</td></tr><tr><td>Sub-Host Pro</td><td>$149</td><td>20 / 80</td><td>Display name rename</td><td>No</td></tr><tr><td>Sub-Host Agency</td><td>$249 base (see ladder)</td><td>10 / 90</td><td>Display name + prompt addendum</td><td>Yes</td></tr></tbody></table></div>
+<p><strong>Sub-Host Agency seat ladder</strong> (additional users beyond the included first seat; same rates as BYO Agency):</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Seat range</strong></th><th><strong>Monthly per seat</strong></th><th><strong>Annual per seat</strong></th></tr></thead><tbody><tr><td>User 1 (included in base)</td><td>$249</td><td>$2,490</td></tr><tr><td>Users 2–4</td><td>$59</td><td>$590</td></tr><tr><td>Users 5–10</td><td>$49</td><td>$490</td></tr><tr><td>Users 11+</td><td>$39</td><td>$390</td></tr></tbody></table></div>
+<p>Annual = 10× monthly (two months free) applied at every tier of the ladder. Starter and Pro are single-seat only.</p>
+<div class="callout note"><strong>NOTE:</strong><strong> </strong>Agency tier adds a Haiku-screened prompt addendum (per <a class="xref" href="section-16-white-label-branding.html#s16-6">§16.6</a>), custom domain support, dedicated success manager, and multi-seat support. Both Pro and Agency get persona display-name renaming.</div>
+<h2 id="s3-4">3.4 Hold Periods <a class="anchor-link" href="#s3-4" aria-label="Permalink">¶</a></h2>
+<p>Default hold periods between commission receipt and payout availability per <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a>. Tenant-configurable; minimums apply by tier.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Default Hold (Days)</strong></th><th><strong>Minimum</strong></th></tr></thead><tbody><tr><td>Sub-Host Starter</td><td>7</td><td>7 (cannot go lower)</td></tr><tr><td>Sub-Host Pro</td><td>3</td><td>0</td></tr><tr><td>Sub-Host Agency</td><td>0 (immediate)</td><td>0</td></tr></tbody></table></div>
+<h2 id="s3-5">3.5 Trial Period <a class="anchor-link" href="#s3-5" aria-label="Permalink">¶</a></h2>
+<p>All paid tenant tiers get a 30-day trial. The trial starts at activation (not at signup), so a sub-host whose review takes a week still gets full 30 days when they’re approved.</p>
+<h2 id="s3-6">3.6 Tenant Resolution Logic <a class="anchor-link" href="#s3-6" aria-label="Permalink">¶</a></h2>
+<p>// apps/main/src/middleware.ts (excerpt)</p>
+<p>async function resolveTenant(req: NextRequest): Promise&lt;Tenant | null&gt; {</p>
+<p>const hostname = req.headers.get(‘host’);</p>
+<p>// Platform primary domain → platform context</p>
+<p>if (hostname === PLATFORM_PRIMARY_DOMAIN) return null;</p>
+<p>// Subdomain on platform</p>
+<p>const subdomainMatch = hostname.match(new RegExp(^([a-z0-9-]+).PLATFORMDOMAINREGEX));</p>
+<p>if (subdomainMatch) {</p>
+<p>return await getTenantBySlug(subdomainMatch[1]);</p>
+<p>}</p>
+<p>// Custom domain</p>
+<p>return await getTenantByCustomDomain(hostname);</p>
+<p>}</p>
+<h2 id="s3-7">3.7 Multi-Tenant Identity <a class="anchor-link" href="#s3-7" aria-label="Permalink">¶</a></h2>
+<p>A single OAuth account (one auth.users row) can be associated with multiple public.users rows across different tenants. The user has a separate identity, memory, and CRM context in each tenant. UI offers a tenant context switcher when applicable.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-02-technology-stack.html">← §2: Technology Stack</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-04-detailed-feature-matrix.html">§4: Detailed Feature Matrix →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

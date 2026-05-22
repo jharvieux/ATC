@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 15 — Tenant Onboarding & Compliance — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 15</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s15">Section 15 — Tenant Onboarding &amp; Compliance</h1>
+<p>Self-service onboarding for sub-host tenants, with a platform admin review gate before activation. Reviews target a 3-business-day SLA.</p>
+<h2 id="s15-1">15.1 Stages <a class="anchor-link" href="#s15-1" aria-label="Permalink">¶</a></h2>
+<p>[Signup landing] → [OAuth] → [Tenant Profile] → [Legal Acceptance]</p>
+<p>                                                  │</p>
+<p>                                                  ▼</p>
+<p>                     [ICA Acceptance] → [Tax Form Collection (Stripe)]</p>
+<p>                                                  │</p>
+<p>                                                  ▼</p>
+<p>                          [State of Operation] → [Tier Selection]</p>
+<p>                                                  │</p>
+<p>                                                  ▼</p>
+<p>                [Stripe Subscription Setup] → [Stripe Connect Setup]</p>
+<p>                                                  │</p>
+<p>                                                  ▼</p>
+<p>                                  [Branding (optional)] → [Submit for Review]</p>
+<p>                                                  │</p>
+<p>                                                  ▼</p>
+<p>                                        [Platform Admin Review]</p>
+<p>                                                  │</p>
+<p>                                    ┌─────────────┼─────────────┐</p>
+<p>                                    ▼             ▼             ▼</p>
+<p>                                 Approved      Rejected     More Info</p>
+<p>                                    │</p>
+<p>                                    ▼</p>
+<p>                                  Active</p>
+<h2 id="s15-2">15.2 Onboarding Stage Tracking <a class="anchor-link" href="#s15-2" aria-label="Permalink">¶</a></h2>
+<p>ALTER TABLE public.tenants ADD COLUMN</p>
+<p>onboarding_stage TEXT</p>
+<p>           CHECK (onboarding_stage IN (</p>
+<p>             'signup','profile','legal','ica','tax_form',</p>
+<p>             'state_of_operation','tier_select','subscription',</p>
+<p>             'connect_setup','branding','review_submitted','complete'</p>
+<p>           )) DEFAULT 'signup';</p>
+<h2 id="s15-3">15.3 Profile Stage <a class="anchor-link" href="#s15-3" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Legal name (required; LLC/sole prop or legal personal name)</li>
+<li>Display name (what customers see)</li>
+<li>Business mailing address (USPS-validated; CAN-SPAM requirement)</li>
+<li>Support contact email and phone</li>
+<li>Time zone</li>
+<li>Slug (auto-suggested from display name; unique; 3-30 chars)</li>
+</ul>
+<h2 id="s15-4">15.4 Legal Acceptance <a class="anchor-link" href="#s15-4" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Document</strong></th><th><strong>Version-checked</strong></th><th><strong>Required</strong></th></tr></thead><tbody><tr><td>Terms of Use</td><td>Yes</td><td>Yes (all users)</td></tr><tr><td>Privacy Policy</td><td>Yes</td><td>Yes (all users)</td></tr><tr><td>AI Liability Disclaimer</td><td>Yes</td><td>Yes (all users)</td></tr><tr><td>Cookie Policy</td><td>Yes</td><td>Yes (US users)</td></tr></tbody></table></div>
+<p>Acceptance records IP, user agent, timestamp, document version.</p>
+<h2 id="s15-5">15.5 ICA Acceptance <a class="anchor-link" href="#s15-5" aria-label="Permalink">¶</a></h2>
+<p>The Independent Contractor Agreement is the substantive contract between platform and sub-host. Distinct from ToU. The current ICA version (from legal_documents table, document_type = ‘ica_subhost’) is presented; user must scroll to bottom before ‘I agree’ enables; types full legal name as electronic signature.</p>
+<p>Required ICA clauses (to be drafted by attorney):</p>
+<ul>
+<li>Sub-host operates under platform’s host agency’s Seller of Travel registration where applicable</li>
+<li>Sub-host’s work product covered by platform’s host agency’s E&amp;O insurance where applicable</li>
+<li>Platform’s RAG content license — submissions grant platform license to use for platform-wide benefit; tenant retains ownership</li>
+<li>Commission split structure</li>
+<li>Clawback and dispute resolution</li>
+<li>Termination terms</li>
+</ul>
+<h2 id="s15-6">15.6 Tax Form Collection <a class="anchor-link" href="#s15-6" aria-label="Permalink">¶</a></h2>
+<p>Handled by Stripe Connect Express, not the platform directly. Stripe collects W-9 (US) or W-8BEN (non-US). Platform stores stripe_connect_account_id and w9_received_at; never touches SSN/EIN/TIN.</p>
+<h2 id="s15-7">15.7 Compliance Attestation <a class="anchor-link" href="#s15-7" aria-label="Permalink">¶</a></h2>
+<h3>Phase 0/1 (single tenant; founder operates as host)</h3>
+<p>Simplified: only required attestation is state of operation. Seller of Travel and E&amp;O Insurance are handled at the host-entity level (the founder's own legal entity acting as host agency). No per-tenant collection in Phase 0/1.</p>
+<h3>Phase 2 (sub-host onboarding opens) — <code>OPERATOR CONFIRM</code> gate</h3>
+<p>Before sub-host onboarding opens to external operators, an attorney engagement MUST resolve the following:</p>
+<ol>
+<li><strong>Seller of Travel registration coverage.</strong> California, Florida, Hawaii, Iowa, and Washington require travel sellers to register with the state. The platform's relationship is:</li>
+</ol>
+<ul>
+<li>Platform = technology provider</li>
+<li>Host agency = registered travel seller (has the state STR)</li>
+<li>Sub-host = operating under the host's umbrella OR has their own STR</li>
+</ul>
+<p>   The attorney must answer: for each of those five states, is the host's STR sufficient for sub-hosts operating under it? Or does each sub-host need their own STR?</p>
+<ol>
+<li><strong>E&amp;O Insurance.</strong> Does the host's E&amp;O policy extend to sub-hosts operating under the host's umbrella, or does each sub-host need their own policy?</li>
+<li><strong>ICA language reflects the answer.</strong> Once the legal stance is established, the ICA's compliance section must mirror it so sub-hosts accept the correct posture at signup.</li>
+<li><strong>Sub-host onboarding flow must collect what's needed.</strong> If sub-hosts need their own STR in some states, the <a class="xref" href="#s15">§15</a> onboarding flow must collect and verify it before activation.</li>
+</ol>
+<h3>Gate</h3>
+<p>Sub-host onboarding (Phase 2) cannot open to the public until items 1–4 above are resolved. The attorney engagement is the critical-path blocker.</p>
+<div class="callout operator-confirm"><strong><code>OPERATOR CONFIRM</code>:</strong> Attorney engagement scheduled. Cross-reference to other legal review items in the same engagement: <a class="xref" href="#s15-14-6">§15.14.6</a> (ToU/ICA chunk license survival language), <a class="xref" href="section-16-white-label-branding.html#s16-7-1">§16.7.1</a> (legal-page attribution wording).</div>
+<p>Track this as a Phase 2 launch gate.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>The attorney engagement is not a one-time activity.</strong> SOT laws change. Annual or semi-annual review keeps the posture current.</li>
+<li><strong>Sub-hosts operating in non-registered states are unconstrained</strong> by SOT laws for those states.</li>
+<li><strong>The default assumption is host-umbrella coverage.</strong> This is cheaper and faster for sub-host onboarding. If attorney advises otherwise for some states, sub-host onboarding flow branches by state and Phase 2 launch is more complex.</li>
+</ul>
+<h2 id="s15-8">15.8 Tier Selection &amp; Subscription <a class="anchor-link" href="#s15-8" aria-label="Permalink">¶</a></h2>
+<p>Sub-host selects Starter / Pro / Agency. Billing period selector (Monthly / Annual) appears alongside tier selection. Annual presented as “Save 2 months” with the pre-calculated annual price visible.</p>
+<p><strong>Seat count picker (Agency tier only):</strong> When Sub-Host Agency is selected, an additional control appears: a seat-count picker (integer input, default 1, minimum 1, no fixed maximum). As the count changes, the displayed price updates live using the <a class="xref" href="section-03-multi-tenancy-tier-matrix.html#s3-3">§3.3</a> seat ladder ($59/$49/$39 per additional seat depending on the band). The summary panel shows:</p>
+<ul>
+<li>Base seat (user 1): $249/mo or $2,490/yr</li>
+<li>Users 2–4: count × $59/mo (or × $590/yr)</li>
+<li>Users 5–10: count × $49/mo (or × $490/yr)</li>
+<li>Users 11+: count × $39/mo (or × $390/yr)</li>
+<li><strong>Total: $X/mo (or $X/yr)</strong></li>
+</ul>
+<p>Selecting Starter or Pro hides the seat picker entirely (those tiers are single-seat only). If the user changes tier from Agency to Starter/Pro, the seat count silently resets to 1 and the picker disappears.</p>
+<p>Stripe Checkout collects payment method. The subscription is created with two price line items for Agency tenants: the base-seat price (quantity 1) and the additional-seat tiered price (quantity = seat_count − 1, using Stripe’s tiered pricing engine to compute the correct per-seat cost across the $59/$49/$39 bands). For Starter/Pro, only the single base price is used.</p>
+<p>Subscription created with trial_end set to far-future placeholder; reset to NOW + 30 days on activation. No billing during pending_review.</p>
+<p><strong>BYO signup parity:</strong> The BYO-host onboarding flow uses the same Tier Selection UI patterns. Seat picker appears for BYO Agency only; BYO Research and BYO Professional are single-seat. The same Stripe two-line-item structure applies for BYO Agency.</p>
+<h2 id="s15-9">15.9 Stripe Connect Express Setup <a class="anchor-link" href="#s15-9" aria-label="Permalink">¶</a></h2>
+<p>Sub-host redirected to Stripe-hosted onboarding. Stripe collects:</p>
+<ul>
+<li>Identity verification (driver’s license / passport)</li>
+<li>SSN/EIN</li>
+<li>Bank account for payouts</li>
+<li>Address verification</li>
+</ul>
+<p>On completion, Stripe webhook fires account.updated. Platform stores stripe_connect_account_id and marks setup complete.</p>
+<h2 id="s15-10">15.10 Submit for Review <a class="anchor-link" href="#s15-10" aria-label="Permalink">¶</a></h2>
+<p>Tenant transitions from onboarding → pending_review. Platform admin notified. Review SLA: 3 business days. Tenant sees ‘Awaiting Review’ status.</p>
+<h2 id="s15-11">15.11 Platform Admin Review <a class="anchor-link" href="#s15-11" aria-label="Permalink">¶</a></h2>
+<p>Reviewer (platform_compliance or platform_super_admin role) sees pending review queue. Reviews each stage’s completeness, makes one of three decisions:</p>
+<ul>
+<li>Approve → tenant.status = ‘active’, activated_at set, trial reset to 30 days, customer-facing chat enabled</li>
+<li>Reject → tenant terminated with reason; refunds any setup charges</li>
+<li>Request more info → return to onboarding with notes</li>
+</ul>
+<h2 id="s15-12">15.12 Sandbox Mode <a class="anchor-link" href="#s15-12" aria-label="Permalink">¶</a></h2>
+<p>Optional. After activation, tenant can use sandbox mode to test before going live:</p>
+<ul>
+<li>All conversations flagged as test</li>
+<li>Bookings via fallback adapter (no real host call)</li>
+<li>No commission records created</li>
+<li>Stripe subscription paused</li>
+<li>Switching to live requires explicit confirmation</li>
+</ul>
+<h2 id="s15-13">15.13 Ongoing Compliance Monitoring <a class="anchor-link" href="#s15-13" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>ICA: if version changed, re-prompt sub-host to accept new version</li>
+<li>Tax form: Stripe handles annually; no platform action</li>
+<li>Inactive sub-host: 30/60/90/180-day nudges; auto-downgrade or suspend at 180 days inactivity</li>
+</ul>
+<h2 id="s15-14">15.14 Termination <a class="anchor-link" href="#s15-14" aria-label="Permalink">¶</a></h2>
+<h3 id="s15-14-1">15.14.1 Termination paths <a class="anchor-link" href="#s15-14-1" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Voluntary:</strong> tenant requests cancellation → suspended through billing period → 90 days for trailing payouts → terminated.</li>
+<li><strong>Involuntary:</strong> platform initiates with reason → immediately suspended → trailing commissions per ICA → Stripe Connect handling per termination type.</li>
+</ul>
+<p>No downline transition logic needed — there are no nested sub-hosts. If a sub-host had internal subcontractors tracked in their tenant, that data terminates with the tenant; settling with those subcontractors is the sub-host's responsibility, not the platform's.</p>
+<h3 id="s15-14-2">15.14.2 Side effects of termination <a class="anchor-link" href="#s15-14-2" aria-label="Permalink">¶</a></h3>
+<p>At the moment <code>tenants.status</code> transitions to <code>terminated</code>:</p>
+<ul>
+<li><strong>Custom domain unbound</strong> from Vercel per <a class="xref" href="section-16-white-label-branding.html#s16-3-3">§16.3.3</a>.</li>
+<li><strong>Subscription cancelled</strong> in Stripe (if still active).</li>
+<li><strong>OAuth tokens revoked.</strong> Any encrypted OAuth refresh tokens for the tenant (host adapter, Gmail integration, etc.) are deleted from the DB. The ciphertext is removed, not just nulled.</li>
+<li><strong>Custom branding kept</strong> on record for audit (legal exposure doesn't go away when the tenant leaves).</li>
+<li><strong>Customer data retained</strong> per <a class="xref" href="section-25-data-privacy-retention.html#s25-2">§25.2</a> retention policy (booking records, conversation history). Anonymization applies on customer deletion request, not on tenant termination.</li>
+<li><strong>RAG chunks: see <a class="xref" href="#s15-14-3">§15.14.3</a> below.</strong></li>
+</ul>
+<h3 id="s15-14-3">15.14.3 RAG chunks contributed by the terminated tenant <a class="anchor-link" href="#s15-14-3" aria-label="Permalink">¶</a></h3>
+<p>This is the chunk lifecycle question that the original <a class="xref" href="#s15-14">§15.14</a> did not address. The platform's RAG corpus contains chunks contributed by tenants and, in some cases, promoted to global scope per <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a>. When a tenant terminates, what happens to those chunks?</p>
+<p>The decision:</p>
+<ul>
+<li><strong>Tenant-scoped chunks</strong> (never promoted to global): retained for 90 days after termination, then hard-deleted along with other tenant-scoped data per <a class="xref" href="section-25-data-privacy-retention.html#s25-2">§25.2</a>. The tenant is no longer operating, so the chunks aren't retrieved (no active sessions in the tenant's scope), but they're available for restoration if termination is rescinded within 90 days.</li>
+<li><strong>Globally-promoted chunks</strong> (per <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-8">§22.8</a>): RETAINED in the global corpus indefinitely. Annotated with <code>terminated_origin_tenant_id</code> pointing at the now-terminated tenant. The promotion was granted under ToU §X.Y (license-to-platform clause) and that license survives tenant termination per ICA.</li>
+</ul>
+<p>  However, terminated-origin chunks are subject to additional review:</p>
+<ul>
+<li>Platform admin receives an alert when a tenant terminates with globally-promoted chunks. The alert lists the chunk count.</li>
+<li>For VOLUNTARY termination: chunks remain by default; platform admin can elect to demote selectively (e.g., if the tenant requests it as part of the termination process).</li>
+<li>For INVOLUNTARY termination triggered by content quality issues (uploaded copyrighted material, abuse of contribution privileges): every globally-promoted chunk from that tenant is automatically moved to a <code>pending_review_post_termination</code> queue. Platform admin reviews each chunk and decides demote-or-retain.</li>
+</ul>
+<p>  The legal stance: the ToU's content-license clause uses language that grants the platform a "perpetual, irrevocable" license to promoted content; this survives tenant termination. The ICA mirrors this language. If a tenant disputes the platform's retention of their promoted chunks post-termination, the dispute is a legal matter referring to the ToU/ICA, not a platform-side automatic removal.</p>
+<h3 id="s15-14-4">15.14.4 Post-termination review queue <a class="anchor-link" href="#s15-14-4" aria-label="Permalink">¶</a></h3>
+<p><code>pending_review_post_termination</code> is a new queue type, sister to the four-tab global review queue in <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-7">§22.7</a>. It contains chunks awaiting post-termination review.</p>
+<ul>
+<li>Platform admin sees a count badge on the global review surface whenever this queue is non-empty.</li>
+<li>Each item shows: chunk content, original source link, terminated tenant's display name (for context), date of original promotion, reason for tenant's termination.</li>
+<li>Actions: <strong>Retain</strong> (chunk stays in global; queue item closed), <strong>Demote</strong> (chunk moves back to tenant scope on the now-terminated tenant, then is deleted with that tenant's data after 90 days), <strong>Hard-delete</strong> (chunk removed from corpus entirely; use for copyrighted material or other clear violations).</li>
+<li>All actions write to <code>audit_log</code> via <code>withPlatformAdminAudit</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a>. The <code>reason</code> enum value is <code>rag_quarantined_content_review</code> (added to the enum per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a>'s reasonable-additions discipline).</li>
+</ul>
+<h3 id="s15-14-5">15.14.5 Schema additions <a class="anchor-link" href="#s15-14-5" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.knowledge_chunks
+  ADD COLUMN terminated_origin_tenant_id UUID
+    REFERENCES public.tenants(id) ON DELETE SET NULL,
+  ADD COLUMN post_termination_review_status TEXT
+    CHECK (post_termination_review_status IN (
+      'not_applicable', 'pending', 'reviewed_retained',
+      'reviewed_demoted', 'reviewed_hard_deleted'
+    )) DEFAULT 'not_applicable';</code></pre>
+<p>(The <code>knowledge_chunks</code> table itself lives in the RAG service Supabase project per <a class="xref" href="section-06-rag-service-schema.html">§6</a>. This ALTER goes in the RAG project's migration set, not the main app's.)</p>
+<h3 id="s15-14-6">15.14.6 ToU and ICA language requirements <a class="anchor-link" href="#s15-14-6" aria-label="Permalink">¶</a></h3>
+<p>Both the customer-facing ToU and the tenant-facing ICA must contain explicit language addressing the chunk-license-survival clause. The language must:</p>
+<ul>
+<li>State that promoted chunks are licensed to the platform on a perpetual, irrevocable basis.</li>
+<li>Make clear that tenant termination (voluntary or involuntary) does NOT revoke the license.</li>
+<li>Note the limited exception: if the terminated tenant proves the original content was uploaded in error (e.g., uploaded by an employee without authority, or contains material the tenant did not own), the platform reviews per <a class="xref" href="#s15-14-4">§15.14.4</a> and may hard-delete.</li>
+</ul>
+<div class="callout operator-confirm"><strong><code>OPERATOR CONFIRM</code>:</strong> legal review of the chunk-license-survival language is required before Phase 2 onboarding opens to sub-hosts. This is a <a class="xref" href="#s15-7">§15.7</a> compliance attestation item — escalate to attorney in the same engagement as the <a class="xref" href="#s15-7">§15.7</a> Seller of Travel review.</div>
+<h3 id="s15-14-7">15.14.7 Calls Worth Flagging <a class="anchor-link" href="#s15-14-7" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>The chunk-license-survival clause is the legally-binding part of this spec.</strong> Without it, terminated tenants could demand removal of contributed content and the platform's RAG corpus would be subject to retroactive depletion. The ToU/ICA language is the protection.</li>
+<li><strong>Voluntary vs involuntary termination treats chunks differently.</strong> Voluntary: trust the tenant's request, leave chunks in place unless they ask for demotion. Involuntary triggered by content issues: review every chunk. The asymmetry is deliberate.</li>
+<li><strong>The <code>terminated_origin_tenant_id</code> annotation is forensic, not functional.</strong> Retrieval doesn't filter on it. Platform admin can query "show me all globally-promoted chunks whose origin tenant is now terminated" for audit purposes.</li>
+<li><strong>Hard-delete of promoted chunks is rare.</strong> The expected default is retain. Hard-delete is for clear violations (copyrighted material, abuse). Most post-termination reviews result in retain.</li>
+</ul>
+<h2 id="s15-15">15.15 Subscription Management (post-signup) <a class="anchor-link" href="#s15-15" aria-label="Permalink">¶</a></h2>
+<p>After activation, tenants manage their subscription from the <strong>Billing</strong> section of the tenant admin console. Visible to users with the Tenant Billing Admin role per <a class="xref" href="section-02-technology-stack.html">§2</a> role matrix.</p>
+<h3>Surfaces</h3>
+<ul>
+<li><strong>Current plan summary</strong> — tier name, billing period, current seat count, next billing date, current period total. For Agency tiers, breakdown of base + each populated seat band ($59/$49/$39).</li>
+<li><strong>Change tier</strong> — dropdown to upgrade or downgrade among the tenant’s eligible tiers (BYO tenants see BYO tiers only; sub-host tenants see sub-host tiers only). Confirmation modal shows price delta and prorated charge or credit.</li>
+<li><strong>Manage seats (Agency tiers only)</strong> — same seat-count picker as <a class="xref" href="#s15-8">§15.8</a> signup. Live price calculation against the <a class="xref" href="section-03-multi-tenancy-tier-matrix.html#s3-3">§3.3</a> ladder. Adjusting the count and confirming triggers a Stripe subscription update.</li>
+<li><strong>Switch billing period</strong> — Monthly ↔ Annual toggle. Switching to Annual prompts immediate charge for the prorated annual remainder; switching to Monthly takes effect at the end of the current annual period (no early refund on annual prepayment).</li>
+<li><strong>Update payment method</strong> — Stripe-hosted portal link.</li>
+<li><strong>Invoice history</strong> — last 24 months, downloadable PDFs from Stripe.</li>
+</ul>
+<h3>Hide rules</h3>
+<ul>
+<li>Single-seat tiers (BYO Research, BYO Pro, Sub-Host Starter, Sub-Host Pro): “Manage seats” surface is hidden entirely. To add seats, the tenant must first upgrade to an Agency tier; the upgrade flow then shows the seat picker.</li>
+<li>Tenants in pending_review or suspended status: subscription management surfaces are read-only. No tier or seat changes until status is active.</li>
+</ul>
+<h3>Proration</h3>
+<p>All mid-period changes (tier change, seat add/remove, billing period switch from Monthly to Annual) use <strong>Stripe’s default proration behavior</strong>. Stripe automatically calculates the prorated charge or credit based on time remaining in the current billing period. The platform does not implement custom proration logic.</p>
+<p><strong>Platform default: immediate charge on upgrades.</strong> When the change increases the subscription cost (tier upgrade, seat addition, switch to Annual), the prorated difference is charged immediately to the tenant’s saved payment method. The Stripe subscription update is configured with proration_behavior=create_prorations and payment_behavior=error_if_incomplete so the change does not commit if payment fails. Tenants see “You’ll be charged $X today” in the confirmation modal.</p>
+<p><strong>Platform default: credit on next invoice for downgrades.</strong> When the change decreases the subscription cost (tier downgrade, seat removal), Stripe creates a prorated credit that applies to the next regularly scheduled invoice. No immediate refund is issued. Tenants see “Your next invoice will reflect a credit of $Y” in the confirmation modal.</p>
+<p>The prorated amounts shown to tenants are pulled live from Stripe’s upcoming-invoice preview API before commit.</p>
+<p>Switching from Monthly to Annual mid-period: treated as an upgrade — immediate charge for the prorated annual remainder, with Stripe crediting the unused portion of the current monthly invoice against the new annual charge. Switching from Annual to Monthly: no immediate change; the switch takes effect at the next annual renewal date. This is a deliberate guard against annual customers downgrading to monthly to chase a refund.</p>
+<h3>Side effects</h3>
+<ul>
+<li>Seat add/remove writes the new seat_count to public.tenants. The <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-4">§27.4</a> abuse thresholds recalculate immediately against the new effective monthly revenue.</li>
+<li>Tier change writes the new tier_id to public.tenants. Feature gates per <a class="xref" href="section-04-detailed-feature-matrix.html">§4</a> update on next request (no session restart required, but the user may need to refresh to see new UI elements).</li>
+<li>Billing period change writes the new billing_period to public.tenants and updates the abuse-threshold multiplier (annual = 10/12 of monthly per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-4-1">§27.4.1</a>).</li>
+</ul>
+<h3>Audit</h3>
+<p>Every subscription change writes an audit row to public.audit_log (per <a class="xref" href="section-26-security.html#s26-5">§26.5</a>) with action = ‘subscription.change’, resource_type = ‘subscription’, resource_id = the tenant’s stripe_subscription_id, actor_user_id = the Tenant Billing Admin who made the change, and changes JSONB containing before/after values for tier_id, seat_count, billing_period, plus the resulting Stripe invoice ID for reconciliation.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-14-commissions-splits-payouts.html">← §14: Commissions, Splits & Payouts</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-16-white-label-branding.html">§16: White-Label Branding →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

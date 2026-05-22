@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 30 — Testing Requirements — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 30</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s30">Section 30 — Testing Requirements</h1>
+<p>This section defines what gets tested, how, and at what point in the pipeline. The goal is not 100% coverage — it’s confidence that the platform behaves correctly in the dimensions that actually matter: money, multi-tenancy, AI behavior, and customer trust.</p>
+<h2 id="s30-1">30.1 Testing Philosophy <a class="anchor-link" href="#s30-1" aria-label="Permalink">¶</a></h2>
+<p>Three principles drive the testing strategy:</p>
+<ul>
+<li>Test the boundaries, not the middle. Unit tests have value but most production bugs live at integration seams — between the app and Stripe, between the app and Anthropic, between RLS and application logic, between tenant A and tenant B. Lean toward integration tests over deep unit pyramids.</li>
+<li>Test what would hurt if it broke. Cross-tenant leakage, commission math, payment flows, AI safety, customer data deletion. These get more rigorous coverage than UI niceties.</li>
+<li>Tests are a deployment gate, not aspirational documentation. Failing tests block deploys. If a test is flaky, it gets fixed or deleted — quarantining flakes erodes the gate.</li>
+</ul>
+<h2 id="s30-2">30.2 Test Categories &amp; Layers <a class="anchor-link" href="#s30-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Layer</strong></th><th><strong>Purpose</strong></th><th><strong>Tool</strong></th><th><strong>Speed</strong></th><th><strong>Run When</strong></th></tr></thead><tbody><tr><td>Unit</td><td>Pure functions, business logic in isolation</td><td>Vitest</td><td>&lt;100ms each</td><td>Every commit</td></tr><tr><td>Integration</td><td>Multi-module flows; DB; external service mocks</td><td>Vitest + testcontainers / mock servers</td><td>&lt;5s each</td><td>Every commit</td></tr><tr><td>Contract</td><td>External API contracts (Stripe, Anthropic, etc.)</td><td>Pact or recorded fixtures</td><td>&lt;2s each</td><td>Every commit + scheduled checks</td></tr><tr><td>E2E (critical paths)</td><td>Real browser, real DB, real-ish external services</td><td>Playwright</td><td>&lt;60s each</td><td>Every PR, every deploy</td></tr><tr><td>Visual regression</td><td>UI doesn’t drift unexpectedly</td><td>Playwright + percy-style snapshots</td><td>&lt;30s each</td><td>Every PR with UI changes</td></tr><tr><td>Load</td><td>Sustained throughput, latency under load</td><td>k6</td><td>Long-running</td><td>Before major releases; quarterly</td></tr><tr><td>Security</td><td>Cross-tenant access, RLS effectiveness, auth bypass attempts</td><td>Custom + OWASP ZAP</td><td>Variable</td><td>Every PR + scheduled</td></tr><tr><td>AI behavior eval</td><td>Persona consistency, hallucination, escalation triggers</td><td>Custom eval harness + Claude as judge</td><td>Variable</td><td>Nightly + on prompt changes</td></tr></tbody></table></div>
+<h2 id="s30-3">30.3 What Must Be Tested (By Domain) <a class="anchor-link" href="#s30-3" aria-label="Permalink">¶</a></h2>
+<h3>Money</h3>
+<p>These tests are non-negotiable. Bugs here are real dollars.</p>
+<ul>
+<li>Commission gross calculation against varied fare structures</li>
+<li>Host booking fee deduction (flat, percent, tiered)</li>
+<li>Two-party split: platform retains tier-defined percentage, sub-host receives remainder</li>
+<li>Fail-closed behavior when tier_id is missing or undefined (booking flagged for admin review)</li>
+<li>Hold period release timing</li>
+<li>Stripe transfer idempotency under retry</li>
+<li>Payout balance arithmetic (pending → available → in_transit → paid)</li>
+<li>Clawback handling at various lifecycle stages</li>
+<li>Statement reconciliation thresholds and variance handling</li>
+<li>Subcontractor tracking (sub-host internal feature): tag a booking with subcontractor; verify revenue forecast math; verify platform payouts are unaffected</li>
+<li>Anonymization vs. retention of money-related records on customer deletion</li>
+</ul>
+<p>These should run as integration tests with seeded data, exercised against a real test Postgres (not mocked) and Stripe test mode.</p>
+<h3>Multi-Tenancy</h3>
+<ul>
+<li>RLS policies actually enforce isolation (tenant A cannot SELECT from tenant B)</li>
+<li>API routes refuse cross-tenant access even with service role bypass attempts</li>
+<li>Tenant resolver returns the right tenant for the right subdomain / custom domain</li>
+<li>User in tenant A who joins tenant B has independent memory in each</li>
+<li>Tenant A cannot see tenant B’s customer data, RAG content, bookings, or anything else (no hierarchy or inheritance — strictly two-level platform/tenant model)</li>
+<li>Tenant termination doesn’t cascade-delete shared customer data</li>
+<li>RAG global content visible to all tenants regardless of origin</li>
+<li>Tenant content visible only to that tenant</li>
+</ul>
+<h3>Authentication &amp; Authorization</h3>
+<ul>
+<li>OAuth flow completes for each enabled provider (Google, Microsoft, Facebook)</li>
+<li>Microsoft no-email path prompts for email before account creation</li>
+<li>Anonymous session transfer requires explicit consent</li>
+<li>Session expiry behaves correctly (1h access, 30d refresh)</li>
+<li>Re-auth required for sensitive operations</li>
+<li>assertPermission() blocks unauthorized actions</li>
+<li>Tenant role mapping respects the principle of least privilege</li>
+<li>Token replay defeated by jti cache</li>
+</ul>
+<h3>AI Behavior</h3>
+<ul>
+<li>Persona prompt loads with correct base + tenant addendum + constraints</li>
+<li>Persona doesn’t drift across long conversations (10+ turns)</li>
+<li>Persona handoff preserves context</li>
+<li>Tool calls execute with proper authorization checks</li>
+<li>RAG retrieval returns chunks within tenant scope + global only (no cross-tenant)</li>
+<li>Supervisor preflight catches: promised guarantees, math errors, prohibited topics, persona drift</li>
+<li>Escalation routes to human when triggered</li>
+<li>Topic-level escalation isolates one conversation thread without locking AI on others</li>
+<li>Memory extraction respects opt-out flag</li>
+<li>Tone-matching respects per-tenant cap</li>
+</ul>
+<h3>RAG System</h3>
+<ul>
+<li>Submission pipeline assigns relevance, quality, authority correctly</li>
+<li>PII redaction catches: SSN, credit cards, passport numbers, names, emails, phones</li>
+<li>Duplicate detection blocks near-duplicate content within a tenant</li>
+<li>Promo lifecycle transitions at sell-by and sail-by dates</li>
+<li>Authority caps for pricing chunks enforced</li>
+<li>Tenant-specific cap enforcement: auto-delete at over-cap on relevance &lt; 0.6</li>
+<li>Queue-pending items don’t count against cap</li>
+<li>Promotion to global increments tenant cap by 25</li>
+<li>Authority feedback loop bounded to ±0.05 per period</li>
+</ul>
+<h3>Customer Data Privacy</h3>
+<ul>
+<li>CCPA export contains everything: profile, conversations, memory, bookings, files</li>
+<li>CCPA deletion within 30 days purges everything not required-retained</li>
+<li>Required-retention records (bookings, commissions, audit) anonymize on customer deletion</li>
+<li>Memory opt-out actually prevents extraction</li>
+<li>Customer can edit/delete specific memory fields</li>
+<li>DOB stored as date, not age, with estimated flag where applicable</li>
+</ul>
+<h3>Payments &amp; Subscriptions</h3>
+<ul>
+<li>Stripe subscription creation, trial setting, billing</li>
+<li>Stripe Connect Express onboarding flow completes</li>
+<li>Subscription state changes trigger correct tier transitions</li>
+<li>Failed payment dunning sequence</li>
+<li>Stripe webhook signature verification rejects unsigned/invalid</li>
+<li>Webhook idempotency handles duplicate delivery</li>
+<li>1099-NEC threshold tracking accurate</li>
+</ul>
+<h3>Group Bookings</h3>
+<ul>
+<li>Group invitation token signature validation</li>
+<li>Token expiry honored</li>
+<li>RSVP state transitions</li>
+<li>Sailed = read-only (no edits possible)</li>
+<li>Anonymity rules enforced (coordinator default + invitee opt-out)</li>
+<li>Reminder cadence fires at correct intervals</li>
+<li>Cabin grid reflects current member states</li>
+</ul>
+<h3>Forum Chat</h3>
+<ul>
+<li>AI moderation pipeline screens messages</li>
+<li>High-risk messages hidden by default</li>
+<li>Mute/lock/pin permissions enforced</li>
+<li>Anonymity in forum display</li>
+<li>Strike system fires automated mutes correctly</li>
+</ul>
+<h3>Abuse Monitoring</h3>
+<ul>
+<li>AI cost increments correctly per call</li>
+<li>Threshold transitions trigger notifications</li>
+<li>Throttle behavior actually slows operations at soft1, soft2</li>
+<li>Hard cutoff pauses chat with fallback message</li>
+<li>RAG over-cap auto-deletes correctly</li>
+<li>Promotion bonus persists across rebuilds</li>
+<li>Monotonic state within month enforced</li>
+</ul>
+<h2 id="s30-4">30.4 Test Data Strategy <a class="anchor-link" href="#s30-4" aria-label="Permalink">¶</a></h2>
+<p>Fixtures over factories where possible. A small set of well-defined seed data makes tests readable and bug repros easier than per-test factories.</p>
+<p>test-data/</p>
+<p>fixtures/</p>
+<p>tenants.sql – platform, 2 BYO-host, 2 sub-host</p>
+<p>users.sql – ~20 users across tenants with varied roles</p>
+<p>contacts.sql – ~50 contacts with relationships</p>
+<p>bookings.sql – bookings at every status, with associated commissions</p>
+<p>rag-chunks.sql – global + tenant chunks across all categories</p>
+<p>legal-docs.sql – current versions of all 7 doc types</p>
+<p>For tests that need randomness (load tests, fuzz), factories generate on top of the fixture baseline.</p>
+<p><strong>Two-track data strategy:</strong></p>
+<ul>
+<li><strong>PR / CI integration tests</strong> run against synthetic fixtures only. No production data. PII in fixtures uses obvious placeholders (test.user.0001@example.test, +1-555-0100).</li>
+<li><strong>Staging E2E tests</strong> run against a copy of the production database, refreshed at the start of every release pipeline via pg_dump from prod and pg_restore to the staging Supabase project. Tokens, Stripe references, and unprocessed email statuses are cleared by a post-restore fixup script. Outbound email and SMS are redirected to the operator via TEST_OVERRIDE_EMAIL and TEST_OVERRIDE_PHONE environment variables. Inngest crons are disabled on staging.</li>
+</ul>
+<p>Rationale: synthetic fixtures keep PR feedback fast and deterministic. Real-data staging catches bugs that only show up against the shape, volume, and edge cases of real production records. See CI/CD Pipeline doc <a class="xref" href="section-05-database-schema-main-app.html">§5</a> for the dump/restore/fixup mechanics, and <a class="xref" href="#s30-9">§30.9</a> below for the resulting environment posture.</p>
+<h2 id="s30-5">30.5 CI Pipeline <a class="anchor-link" href="#s30-5" aria-label="Permalink">¶</a></h2>
+<p>The pipeline has two tracks driven by branch model (see CI/CD Pipeline doc <a class="xref" href="section-01-platform-overview.html#s1-2">§1.2</a> for the full branch model).</p>
+<p><strong>PR / dev track</strong> (runs on every PR and every push to dev):</p>
+<ul>
+<li>Lint + typecheck (parallel; &lt;2 min)</li>
+<li>Unit tests (parallel; &lt;3 min)</li>
+<li>Integration tests against synthetic fixtures (~5 min)</li>
+<li>Secret scan (gitleaks)</li>
+<li>Build verification</li>
+<li>Security gate: RLS policy snapshot diff, cross-tenant probe tests, dependency CVE scan</li>
+<li>On merge to dev: auto-deploy to dev.ai-travelconcierge.com</li>
+</ul>
+<p><strong>Release track</strong> (runs on push to release/*):</p>
+<ul>
+<li>Full CI suite re-runs (typecheck, lint, vitest, gitleaks)</li>
+<li>DB copy: pg_dump from prod → pg_restore to staging → post-restore fixups</li>
+<li>Migrations applied to staging</li>
+<li>Deploy to staging via Vercel CLI</li>
+<li>Full Playwright E2E against staging (with outbound overrides active)</li>
+<li>Staging smoke test</li>
+<li><em><strong> Manual approval gate (GitHub Environments: production) </strong></em></li>
+<li>Migrations applied to production</li>
+<li>Deploy to production via Vercel CLI</li>
+<li>Production smoke test</li>
+<li>Git tag from release version</li>
+<li>Auto-merge release/* back to dev</li>
+</ul>
+<p>Test parallelization target: full PR suite under 15 minutes wall-clock. Release pipeline (push to deploy-production) target: under 30 minutes.</p>
+<p><strong>Required gates:</strong> RLS policy snapshot diff, cross-tenant probe tests, dependency CVE scan, and AI behavior evals. See CI/CD Pipeline doc <a class="xref" href="section-04-detailed-feature-matrix.html#s4-1">§4.1</a> for gate-by-gate definitions.</p>
+<h2 id="s30-6">30.6 AI Behavior Evaluation <a class="anchor-link" href="#s30-6" aria-label="Permalink">¶</a></h2>
+<p>AI testing is qualitatively different from deterministic testing. Three approaches stacked:</p>
+<h3>Behavior Snapshots</h3>
+<p>A curated set of conversation transcripts with expected behaviors. Each is replayed against the current model + prompts + tools:</p>
+<p>evals/</p>
+<p>persona-marcus/</p>
+<p>caribbean-newbie-inquiry.json (expected: warm greeting, asks party size)</p>
+<p>accessibility-redirect-to-maya.json (expected: suggests handoff)</p>
+<p>pricing-question-stays-honest.json (expected: caveats, no commitment)</p>
+<p>hallucination-defense/</p>
+<p>fabrication-attempts-1.json (expected: declines or hedges)</p>
+<p>out-of-date-promo.json (expected: notes expiry)</p>
+<p>…</p>
+<p>Behavior assertions use Claude-as-judge: a separate Anthropic call evaluates whether the response satisfies the expected behavior, with rationale. This is necessarily noisy — accept ~10% disagreement rate and surface for human review.</p>
+<h3>Regression Detection</h3>
+<p>Whenever a system prompt, tool definition, or model version changes, the full eval suite runs. Significant behavior delta → require human review before merge. ‘Significant’ defined as: &gt;5% of evals change verdict, or any safety-critical eval flips from pass to fail.</p>
+<h3>Continuous Sampling</h3>
+<p>In production, randomly sample 1% of conversations daily, run them through evaluation rubrics, and flag drift trends. This catches behavior changes from non-code sources (model provider updates, data shifts, customer query distribution shifts).</p>
+<p><strong>Pipeline integration:</strong> Eval harness invocation is defined in CI/CD Pipeline doc <a class="xref" href="section-04-detailed-feature-matrix.html#s4-1-5">§4.1.5</a>.</p>
+<h2 id="s30-7">30.7 Load Testing <a class="anchor-link" href="#s30-7" aria-label="Permalink">¶</a></h2>
+<p>Not run on every PR — too expensive. Run before major releases (every 4-8 weeks) and quarterly as a routine health check.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Scenario</strong></th><th><strong>Target</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Sustained chat load</td><td>500 concurrent conversations, 30 min</td><td>Watch AI latency, supervisor overhead</td></tr><tr><td>Burst signups</td><td>100 OAuth signups in 60 seconds</td><td>Watch DB connection pool, Stripe API limits</td></tr><tr><td>Group invite blast</td><td>1000-invitee group send</td><td>Watch email queue, Resend rate limits</td></tr><tr><td>RAG retrieval load</td><td>1000 retrievals/sec for 5 min</td><td>Watch pgvector query latency</td></tr><tr><td>Stripe webhook flood</td><td>5000 webhooks in 10 min (statement period close)</td><td>Watch idempotency, processing latency</td></tr><tr><td>Multi-tenant fan-out</td><td>100 tenants × 50 customers × 5 msg conversations</td><td>Watch cross-tenant query plans, RLS overhead</td></tr></tbody></table></div>
+<h3>Thresholds</h3>
+<ul>
+<li>Chat p95 &lt; 5s end-to-end (including streaming)</li>
+<li>RAG retrieval p95 &lt; 500ms</li>
+<li>API non-AI route p95 &lt; 500ms</li>
+<li>Error rate under load &lt; 0.1%</li>
+<li>No memory leaks across 30-minute sustained run</li>
+</ul>
+<p>Load tests are out-of-band by design — they don’t run in the release pipeline. They are scheduled work, executed manually with k6 against a dedicated load-test environment. The CI/CD Pipeline doc workflow does not invoke them; ensure they’re tracked on the engineering operations calendar.</p>
+<h2 id="s30-8">30.8 Security Testing <a class="anchor-link" href="#s30-8" aria-label="Permalink">¶</a></h2>
+<h3>Automated CI Gates</h3>
+<p>Every PR runs the following gates. All are hard — failure blocks merge. There is no "warning" mode for any of them.</p>
+<h4>RLS policy snapshot diff</h4>
+<p>A snapshot of all Postgres RLS policies (table-by-table) lives at <code>db/rls-snapshot.sql</code> in the repo. On every PR, the snapshot is regenerated from the migration set and diffed against the committed file. Unintended changes block merge. Intended changes require updating the snapshot in the same PR.</p>
+<p>The snapshot includes:</p>
+<ul>
+<li>Every table's RLS enabled/disabled state.</li>
+<li>Every policy on every table (name, command, USING clause, WITH CHECK clause).</li>
+<li>Every <code>SECURITY DEFINER</code> function (signature, body hash, <code>search_path</code> setting per <a class="xref" href="section-05-database-schema-main-app.html#s5-1-1">§5.1.1</a> — missing or non-empty <code>search_path</code> fails the gate).</li>
+<li>Every <code>GRANT EXECUTE</code> and <code>REVOKE EXECUTE</code> on the above.</li>
+</ul>
+<h4>RLS coverage check</h4>
+<p>Per <a class="xref" href="section-05-database-schema-main-app.html#s5-1-2">§5.1.2</a>, every tenant-scoped table must have RLS enabled and policies covering SELECT, INSERT, UPDATE, DELETE. The check enumerates tables with a <code>tenant_id</code> column and verifies coverage. Tables on the explicit exception list in <code>db/rls-exceptions.sql</code> are skipped with a comment requirement.</p>
+<p>The check also flags:</p>
+<ul>
+<li>Any policy with <code>USING (true)</code> or <code>WITH CHECK (true)</code>.</li>
+<li>Any <code>SECURITY DEFINER</code> function without <code>SET search_path = ''</code>.</li>
+<li>Any RLS-enabled table with zero policies (the silent-deny trap).</li>
+</ul>
+<h4>Cross-tenant route probe</h4>
+<p>Automated tests enumerate every Next.js API route from the route manifest and attempt cross-tenant access for each: a session for tenant B against a resource owned by tenant A. Any 2xx response is a failure. The probe inspects response bodies, not just status codes — a 403 that leaks tenant A's resource name in the error message is also a failure.</p>
+<h4>Cross-tenant Inngest probe</h4>
+<p>Synthetic Inngest events are dispatched with deliberately-mismatched <code>tenant_id</code> payloads (e.g., a tenant-B job event referencing a tenant-A booking). The probe asserts that no writes occur outside the event's stated tenant. This catches Inngest-specific isolation bugs that the route probe misses.</p>
+<h4>Service-role lint</h4>
+<p>The platform's lint rules (<a class="xref" href="section-29-deployment-infrastructure.html">§29</a>) flag:</p>
+<ul>
+<li><code>createServiceRoleClient</code> imports outside the two authorized files (<code>src/lib/db/tenant-client.ts</code>, <code>src/lib/db/platform-admin-client.ts</code>).</li>
+<li>Direct <code>SUPABASE_SERVICE_ROLE_KEY</code> env var reads outside those same files.</li>
+<li><code>tenantClient</code> invocations without a typed <code>TenantContext</code> argument.</li>
+<li>Function signatures accepting bare <code>tenant_id: string</code> for query construction.</li>
+<li><code>withPlatformAdminAudit</code> invocations where <code>reason</code> is not a value from the <code>PlatformAdminReason</code> enum (<a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a>). The TypeScript type catches this at compile time; the lint rule catches the case where the type is asserted around (<code>as PlatformAdminReason</code>) or imported loosely.</li>
+<li><code>withPlatformAdminAudit</code> invocations where <code>reason === 'manual_emergency_intervention'</code> without a <code>reason_detail</code> string argument. Runtime is enforced too; the lint catches it earlier.</li>
+<li>Functions named <code>^platformAdmin</code> that do not contain a <code>withPlatformAdminAudit</code> call in their body — these would obtain a platform-admin client outside the audit wrapper, which is the pattern <a class="xref" href="section-26-security.html#s26-3a-3">§26.3a.3</a> forbids.</li>
+</ul>
+<p>Per <a class="xref" href="section-26-security.html#s26-3a">§26.3a</a>, these are hard CI failures.</p>
+<h4>TenantContext factory audit</h4>
+<p>A spot-check test runs every <code>TenantContext</code> factory function from <a class="xref" href="section-05-database-schema-main-app.html#s5-4-5">§5.4.5</a> with adversarial inputs (mismatched tenant, terminated tenant, suspended tenant, unknown stripe_customer_id) and asserts each fails closed.</p>
+<h4>Auth bypass attempts</h4>
+<p>Tests probe unauthenticated access to protected endpoints; expect 401/403. Includes the re-auth-required endpoints (<a class="xref" href="section-17-authentication-signup-consent.html#s17-7">§17.7</a>, <a class="xref" href="section-26-security.html#s26-3">§26.3</a>) — tests verify a stale JWT is rejected for sensitive operations.</p>
+<h4>CSRF / clickjacking</h4>
+<p>Standard framework defaults verified. Custom-domain tenants' CSP headers verified per-tenant (tenant A's iframe cannot host tenant B's chat).</p>
+<h4>Dependency scanning</h4>
+<p>Dependabot + Snyk; critical CVEs block deploys until patched. High CVEs produce a warning that requires PR comment to override.</p>
+<h3>Periodic (Quarterly)</h3>
+<ul>
+<li>Internal pen test: dev team or rotating security-focused engineer probes for new vulnerabilities.</li>
+<li>OWASP Top 10 review: walk through the current list against the platform; document mitigations or accept-with-rationale.</li>
+</ul>
+<h3>Annual</h3>
+<ul>
+<li>Third-party pen test (post-launch, before first significant customer contract): external firm. Findings tracked + remediated.</li>
+</ul>
+<h2 id="s30-9">30.9 Test Environments <a class="anchor-link" href="#s30-9" aria-label="Permalink">¶</a></h2>
+<p>Three environments, each with a defined test posture:</p>
+<ul>
+<li><strong>Dev</strong> (dev.ai-travelconcierge.com): auto-deploys on every merge to the dev branch. Integration tests in CI run against an ephemeral or shared test Supabase project populated from synthetic fixtures. Used for ongoing feature work and exploratory testing.</li>
+<li><strong>Staging</strong> (staging.ai-travelconcierge.com): refreshed from production at the start of every release pipeline via pg_dump/pg_restore. Contains real customer PII at rest (see <a class="xref" href="#s30-9-1">§30.9.1</a> below and <a class="xref" href="section-25-data-privacy-retention.html">§25</a> for privacy implications). Outbound email and SMS are redirected to the operator via TEST_OVERRIDE_EMAIL / TEST_OVERRIDE_PHONE. Stripe is in test mode with prod references cleared. Inngest crons are disabled; manual job invocation is possible and should be exercised with awareness of the data state. Full Playwright E2E runs here on every release.</li>
+<li><strong>Production</strong> (ai-travelconcierge.com): never test in production. The only tests that touch production are post-deploy smoke tests against /api/health.</li>
+</ul>
+<h3 id="s30-9-1">30.9.1 Real PII on Staging — Explicit Decision <a class="anchor-link" href="#s30-9-1" aria-label="Permalink">¶</a></h3>
+<p>Staging contains a recent copy of the production database with customer PII intact (names, emails, phone numbers, dates of birth, conversation contents, booking records). This is a deliberate decision to test against real data shape and volumes; it trades a portion of the “production data never reaches tests” posture for higher fidelity in E2E testing.</p>
+<p>The controls that make this acceptable:</p>
+<ul>
+<li>Outbound email and SMS redirected to the operator — no customer contact path exists on staging.</li>
+<li>OAuth tokens cleared on restore — staging cannot impersonate customers against Google, Microsoft, or Facebook.</li>
+<li>Stripe references nulled — staging cannot interact with live-mode Stripe customers.</li>
+<li>Email message statuses suppressed — staging will not categorize, draft replies for, or send responses to production emails.</li>
+<li>Inngest crons disabled — no scheduled job processes real data on staging.</li>
+<li>Staging access is restricted to the same set of users who have production access; no broader staging-only access.</li>
+</ul>
+<p>This decision is cross-referenced in <a class="xref" href="section-25-data-privacy-retention.html#s25-10">§25.10</a> (Data Privacy) and <a class="xref" href="section-26-security.html#s26-13">§26.13</a> (Security).</p>
+<h2 id="s30-10">30.10 Test Maintenance <a class="anchor-link" href="#s30-10" aria-label="Permalink">¶</a></h2>
+<p>Flaky tests are quarantined, not tolerated. A test that fails intermittently has 7 days to be fixed before being deleted. Quarantining indefinitely erodes the test gate’s signal value.</p>
+<p>Slow tests above category targets (&gt;5s for integration, &gt;60s for E2E) are flagged for refactor.</p>
+<p>Coverage as a metric is informational, not goal. No coverage threshold blocks merges. The real signal is: did meaningful tests get added with this change? Reviewer judgment, not a number.</p>
+<h2 id="s30-11">30.11 What’s NOT Tested (Explicit) <a class="anchor-link" href="#s30-11" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Visual pixel-perfect rendering on every browser (covered loosely by Playwright; not exhaustive)</li>
+<li>Internationalization (US-only at launch per <a class="xref" href="section-25-data-privacy-retention.html#s25-8">§25.8</a>)</li>
+<li>Mobile native (no native apps in v6 per <a class="xref" href="section-02-technology-stack.html#s2-1">§2.1</a>)</li>
+<li>Email rendering across all email clients (manual spot-check on Gmail, Outlook, Apple Mail)</li>
+<li>Accessibility automated audit (manual review per release; full automation deferred)</li>
+<li>Localized language responses from the AI (English only at launch)</li>
+</ul>
+<h2 id="s30-12">30.12 Test-Driven Development Posture <a class="anchor-link" href="#s30-12" aria-label="Permalink">¶</a></h2>
+<p>Not mandated. Some engineers work test-first; others write tests after. What matters: tests exist by PR-merge time, cover the change’s risk surface, and pass.</p>
+<h2 id="s30-13">30.13 Calls Worth Flagging <a class="anchor-link" href="#s30-13" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Claude-as-judge for AI evals is necessarily noisy.</strong><strong> </strong>Build in a manual-review queue for the contested verdicts. Don’t treat the judge as infallible — it’s a triage layer, not an oracle.</li>
+<li><strong>Cross-tenant test coverage is the highest-leverage investment.</strong><strong> </strong>A cross-tenant bug is potentially platform-ending (customer trust + legal). Invest disproportionately here.</li>
+<li><strong>Load testing every quarter is light,</strong><strong> </strong>especially for a young platform. Worth doubling to monthly during first 6 months of operation.</li>
+<li><strong>Continuous AI sampling at 1% of conversations</strong><strong> </strong>sounds small but generates real cost. Budget for it.</li>
+<li><strong>No SLA contract testing.</strong><strong> </strong>v6 doesn’t sign SLAs with tenants. If/when SLAs are added, automated SLA-fulfillment tests need to exist.</li>
+<li><strong>Test fixtures will diverge from real data over time.</strong><strong> </strong>Schedule a fixture refresh every 6 months — pull production schema, anonymize, refresh fixtures, update tests as needed.</li>
+<li><strong>AI eval suite cost.</strong><strong> </strong>Running the full suite has real Anthropic spend. Track it as a line item; budget it as part of engineering ops.</li>
+<li><strong>Tests gating deploys creates pressure to skip them in emergencies.</strong><strong> </strong>Have a documented bypass with explicit approval rather than ad-hoc — otherwise people just disable the failing test.</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-29-deployment-infrastructure.html">← §29: Deployment & Infrastructure</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-31-implementation-phasing.html">§31: Implementation Phasing →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

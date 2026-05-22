@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 26 — Security — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 26</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s26">Section 26 — Security</h1>
+<p>Defense-in-depth across authentication, authorization, encryption, audit, monitoring, and incident response.</p>
+<h2 id="s26-1">26.1 Threat Model <a class="anchor-link" href="#s26-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Category</strong></th><th><strong>Examples</strong></th><th><strong>Primary Defenses</strong></th></tr></thead><tbody><tr><td>External attacker</td><td>Credential stuffing, SQL injection, XSS, CSRF</td><td>Supabase Auth + parameterized queries + CSP + same-site cookies</td></tr><tr><td>Insider threat</td><td>Malicious tenant trying to exfiltrate competitor data</td><td>Tenant-scoped RLS; permission checks; audit logs</td></tr><tr><td>Cross-tenant leak</td><td>Tenant A’s data leaks to Tenant B</td><td>RLS on every table; permission-check at handler</td></tr><tr><td>AI-specific</td><td>Prompt injection, jailbreak, data leak via AI</td><td>System-prompt isolation; supervisor checks; output filtering</td></tr><tr><td>Supply chain</td><td>Compromised dependency, malicious npm package</td><td>Lockfile, audit, dependency scanning</td></tr></tbody></table></div>
+<h2 id="s26-2">26.2 Four-Layer Auth <a class="anchor-link" href="#s26-2" aria-label="Permalink">¶</a></h2>
+<p>The platform's defense in depth for tenant isolation runs through four layers. Each is necessary; none is sufficient on its own.</p>
+<pre class="codeblock"><code>Layer 1: Identity (who are you?)
+  Supabase Auth + OAuth providers
+  │
+  ▼
+Layer 2: Tenant context (which tenant?)
+  Middleware resolves tenant from host header
+  Validates user has a public.users row in this tenant
+  Produces a TenantContext (§5.4.2) with source = http_request
+  │
+  ▼
+Layer 3: Authorization (what can you do?)
+  assertPermission() at handler entry
+  Returns enriched ctx with role + resource access decisions
+  │
+  ▼
+Layer 4: Data access scoping (which rows can you touch?)
+  tenantClient(ctx) wraps the DB client (§5.4.3)
+  All queries against tenant-scoped tables auto-filtered by tenant_id
+  RLS policies (§5.1) backstop the application-layer scoping</code></pre>
+<p>Each layer's purpose:</p>
+<ul>
+<li><strong>Layer 1</strong> answers "is this request from a real authenticated user?" — handled by Supabase Auth and the OAuth providers.</li>
+<li><strong>Layer 2</strong> answers "which tenant is this request operating inside?" — handled by middleware that resolves the tenant from the request's host header (subdomain or custom domain per <a class="xref" href="section-01-platform-overview.html#s1-4">§1.4</a>) and validates the user has membership.</li>
+<li><strong>Layer 3</strong> answers "is this user allowed to do this action on this resource?" — handled by <code>assertPermission()</code> at handler entry.</li>
+<li><strong>Layer 4</strong> answers "for queries this handler issues, can the database actually return cross-tenant data?" — handled by the <code>tenantClient</code> wrapper AND by RLS policies. Two independent defenses; either alone is insufficient.</li>
+</ul>
+<p>Layers 1–3 are application-layer checks. Layer 4 is the boundary between application and database. Layers 2 and 3 produce the <code>TenantContext</code> that Layer 4 consumes — the type system threads context through the call chain so it cannot be lost.</p>
+<p>For non-HTTP contexts (Inngest jobs, webhook handlers), Layers 1 and 2 are replaced by the appropriate <code>TenantContext</code> factory per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-5">§5.4.5</a>. Layer 4 is identical regardless of context source — the same <code>tenantClient(ctx)</code> wrapper applies.</p>
+<h2 id="s26-3">26.3 Authorization Pattern <a class="anchor-link" href="#s26-3" aria-label="Permalink">¶</a></h2>
+<p>Every protected HTTP handler entry calls <code>assertPermission()</code> to produce a <code>TenantContext</code> (<a class="xref" href="section-05-database-schema-main-app.html#s5-4-2">§5.4.2</a>) plus role/resource access decisions. The handler then uses the returned <code>ctx</code> to construct a scoped database client via <code>tenantClient(ctx)</code> (<a class="xref" href="section-05-database-schema-main-app.html#s5-4-3">§5.4.3</a>).</p>
+<pre class="codeblock" data-lang="ts"><code>// Every protected handler entry:
+export async function POST(req: Request) {
+  const { ctx, user, permissions } = await assertPermission(req, {
+    resource: 'booking',
+    action: 'modify',
+    resourceId: bookingId,
+  });
+  const db = tenantClient(ctx);
+  // ...handler body, using db for all queries...
+}</code></pre>
+<h3>Inside <code>assertPermission()</code></h3>
+<ol>
+<li>Decode JWT → <code>auth.users.id</code>.</li>
+<li>Resolve tenant from request host per <a class="xref" href="section-01-platform-overview.html#s1-4">§1.4</a> → <code>tenant_id</code>.</li>
+<li>Verify the user has a <code>public.users</code> row for this tenant with <code>status = 'active'</code>. If not, throw 403.</li>
+<li>For write actions, verify <code>tenant_is_active(tenant_id)</code> — see <a class="xref" href="section-05-database-schema-main-app.html#s5-1">§5.1</a>'s policy convention. A user can read their data from a suspended tenant; they cannot write. If write requested against a non-active tenant, throw 403 with a structured error (<code>tenant_suspended</code>, <code>tenant_terminated</code>, etc.) so the client UI can render the right message.</li>
+<li>Check role permissions per the role matrix and resource-specific rules.</li>
+<li>Construct a <code>TenantContext</code> via <code>tenantContextFromRequest()</code> (<a class="xref" href="section-05-database-schema-main-app.html#s5-4-5">§5.4.5</a>). The context records <code>source = http_request, user_id</code>.</li>
+<li>Return <code>{ ctx, user, permissions }</code> or throw 403.</li>
+</ol>
+<h3>Returned context shape</h3>
+<pre class="codeblock" data-lang="ts"><code>type AssertPermissionResult = {
+  ctx: TenantContext;           // For tenantClient(ctx)
+  user: { id: string; email: string; roles: string[] };
+  permissions: { allowed: true; expires_at: Date }; // Time-bounded for sensitive ops per §17.7
+};</code></pre>
+<h3>Sensitive-action re-auth</h3>
+<p>Per <a class="xref" href="section-17-authentication-signup-consent.html#s17-7">§17.7</a>, certain operations (commission overrides, role changes, ICA acceptance) require re-auth within 4 hours of the action. The <code>assertPermission()</code> function checks the JWT's <code>auth_time</code> claim against the action's sensitivity classification. Failing the freshness check throws a structured 401 with a re-auth challenge.</p>
+<h2 id="s26-3a">26.3a Service-Role Discipline <a class="anchor-link" href="#s26-3a" aria-label="Permalink">¶</a></h2>
+<p>The Supabase service role bypasses RLS. It is the most powerful credential in the platform. Its use is restricted by both convention and lint enforcement.</p>
+<h3 id="s26-3a-1">26.3a.1 The four authorized service-role contexts <a class="anchor-link" href="#s26-3a-1" aria-label="Permalink">¶</a></h3>
+<p>Service-role usage is permitted only in these four contexts. Code in any other location that imports <code>createServiceRoleClient</code> is a CI failure.</p>
+<div class="table-wrap"><table><thead><tr><th>Context</th><th>Wrapper</th><th>Tenant scoping</th></tr></thead><tbody><tr><td><code>tenantClient(ctx)</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-3">§5.4.3</a></td><td>Yes — automatic <code>.eq('tenant_id', …)</code> injection</td><td>Tenant-scoped</td></tr><tr><td><code>platformAdminClient()</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-1">§5.4.1</a></td><td>No wrapper; raw access</td><td>None — cross-tenant by design</td></tr><tr><td>Database migrations (<code>supabase db push</code>)</td><td>Run via dedicated migration role per CI/CD <a class="xref" href="section-05-database-schema-main-app.html">§5</a></td><td>N/A — DDL only</td></tr><tr><td>Backup/restore tooling</td><td>Run from operator workstation; not from application code</td><td>N/A — out-of-band</td></tr></tbody></table></div>
+<h3 id="s26-3a-2">26.3a.2 The forbidden patterns <a class="anchor-link" href="#s26-3a-2" aria-label="Permalink">¶</a></h3>
+<p>Each of these is a hard CI failure:</p>
+<ul>
+<li><code>createServiceRoleClient()</code> called outside <code>src/lib/db/tenant-client.ts</code> or <code>src/lib/db/platform-admin-client.ts</code>.</li>
+<li>Importing <code>SUPABASE_SERVICE_ROLE_KEY</code> directly into application code (the env var is read once, in the client factories, never re-read elsewhere).</li>
+<li>A <code>tenantClient</code> constructed from anything other than one of the four <code>TenantContext</code> factories in <a class="xref" href="section-05-database-schema-main-app.html#s5-4-5">§5.4.5</a>.</li>
+<li>A function signature accepting <code>tenant_id: string</code> and constructing database queries from it — instead it must accept <code>ctx: TenantContext</code> and use <code>tenantClient(ctx)</code>.</li>
+</ul>
+<h3 id="s26-3a-3">26.3a.3 The exception: <code>platformAdminClient</code> <a class="anchor-link" href="#s26-3a-3" aria-label="Permalink">¶</a></h3>
+<p><code>platformAdminClient</code> exists because some operations legitimately cross tenant boundaries — the global RAG promotion queue, platform-wide abuse-monitoring rollups, tenant-listing for platform admin dashboards. These call sites:</p>
+<ul>
+<li>MUST be named with <code>platformAdmin*</code> prefixes so they're searchable.</li>
+<li>MUST be wrapped in <code>assertPlatformAdmin(req)</code> (the platform-admin variant of <code>assertPermission</code>) before the client is constructed.</li>
+<li>MUST audit at the JOB level (one <code>audit_log</code> row per function invocation), not per query.</li>
+</ul>
+<p>The set of <code>platformAdminClient</code> call sites is small (target: under 20 across the whole codebase) and reviewed quarterly per <a class="xref" href="#s26-11">§26.11</a>.</p>
+<h4>Per-job audit pattern</h4>
+<p>A platform-admin operation is one function from entry to exit. One audit row is written for each such operation, capturing what the operation did across all its queries. The row is constructed at the function's entry point with a <code>reason</code> and a <code>correlation_id</code>, and is committed at the function's exit with the accumulated query summary filled in.</p>
+<p>The pattern is enforced by wrapping <code>platformAdminClient()</code> calls in a single utility: <code>withPlatformAdminAudit(reason, fn)</code>. The utility manages the audit row's lifecycle so handler code cannot construct a <code>platformAdminClient</code> without going through it. See <a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a> for the utility definition.</p>
+<pre class="codeblock" data-lang="ts"><code>// Platform-admin handler — the only correct shape
+export async function GET(req: Request) {
+  const admin = await assertPlatformAdmin(req);
+
+  const result = await withPlatformAdminAudit(
+    {
+      admin_user_id: admin.user_id,
+      reason: 'tenant_listing_for_admin_dashboard',
+      operation: 'platformAdminListTenants',
+    },
+    async (db, recordQuery) =&gt; {
+      // db is platformAdminClient
+      // recordQuery is a callback to log a query summary into the audit row
+
+      const tenants = await db.from('tenants').select('id, display_name, status');
+      recordQuery({
+        op: 'select',
+        table: 'tenants',
+        columns: ['id', 'display_name', 'status'],
+        row_count: tenants.data?.length ?? 0,
+      });
+
+      return tenants.data;
+    },
+  );
+
+  return Response.json(result);
+}</code></pre>
+<h4>What the audit row looks like</h4>
+<p>The <code>audit_log</code> row written by <code>withPlatformAdminAudit</code>:</p>
+<pre class="codeblock" data-lang="jsonc"><code>{
+  "id": "uuid-of-the-audit-row",
+  "tenant_id": null,                // platform-admin operations are not tenant-scoped
+  "actor_user_id": "uuid-of-admin",
+  "actor_type": "admin",
+  "action": "platformAdmin.tenant_listing_for_admin_dashboard",
+  "resource_type": "platform_admin_operation",
+  "resource_id": null,
+  "changes": {                       // accumulated query summary
+    "correlation_id": "01H...ULID",  // tracks all queries in this job
+    "operation": "platformAdminListTenants",
+    "reason": "tenant_listing_for_admin_dashboard",
+    "reason_detail": null,           // populated only when reason = 'manual_emergency_intervention'
+    "outcome": "success",            // or "error_thrown"
+    "duration_ms": 47,
+    "queries": [
+      {
+        "op": "select",
+        "table": "tenants",
+        "columns": ["id", "display_name", "status"],
+        "row_count": 12
+      }
+    ],
+    "error_message": null            // populated on failure
+  },
+  "context": {
+    "ip": "10.0.0.5",
+    "user_agent": "...",
+    "request_id": "..."              // links to access logs
+  },
+  "occurred_at": "2026-05-17T14:23:11.000Z"
+}</code></pre>
+<h4>Failure path</h4>
+<p>If the wrapped function throws, the audit row is STILL written, with <code>outcome = "error_thrown"</code>, the error message captured, and any queries that had completed before the throw recorded. This means a failed platform-admin operation is auditable — partial work is documented rather than invisible.</p>
+<p>The audit row write is non-transactional with respect to the wrapped function's queries. The audit row commits even if the wrapped function's database work was rolled back. This is deliberate: we want the audit record of an attempted action regardless of whether the action succeeded.</p>
+<h4>What "one job" means</h4>
+<p>One <code>withPlatformAdminAudit</code> invocation = one job = one audit row. Concretely:</p>
+<ul>
+<li>One HTTP request that hits a <code>platformAdmin*</code> handler → one job.</li>
+<li>One Inngest function execution that uses <code>platformAdminClient</code> → one job per execution (Inngest retries produce separate jobs, each with its own audit row).</li>
+<li>A nested call where one <code>platformAdmin*</code> function calls another: the OUTER <code>withPlatformAdminAudit</code> is the job; the inner call uses the same client and reports queries into the same audit row. Nesting is detected by the utility and short-circuits to a no-op so we don't produce two rows for one logical job.</li>
+</ul>
+<h4>Forensic queries against this audit shape</h4>
+<p>The trade-off vs per-query-batch audit: investigations now need to read JSONB rather than filter rows by timestamp. The queries that matter remain answerable, but with a different query shape:</p>
+<pre class="codeblock" data-lang="sql"><code>-- "What did admin X do across the last 30 days?"
+SELECT
+  occurred_at,
+  action,
+  changes-&gt;&gt;'reason' AS reason,
+  changes-&gt;&gt;'outcome' AS outcome,
+  jsonb_array_length(changes-&gt;'queries') AS query_count
+FROM public.audit_log
+WHERE actor_user_id = '&lt;admin_uuid&gt;'
+  AND actor_type = 'admin'
+  AND occurred_at &gt; NOW() - INTERVAL '30 days'
+ORDER BY occurred_at DESC;
+
+-- "Did any platform-admin operation touch the `bookings` table?"
+SELECT id, occurred_at, actor_user_id, changes-&gt;&gt;'reason' AS reason
+FROM public.audit_log
+WHERE actor_type = 'admin'
+  AND changes @&gt; '{"queries": [{"table": "bookings"}]}'::jsonb
+ORDER BY occurred_at DESC;</code></pre>
+<p>The second query uses a JSONB containment check; it benefits from a partial GIN index on <code>audit_log.changes</code> scoped to admin rows only:</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE INDEX audit_log_changes_admin_gin_idx ON public.audit_log
+USING GIN (changes jsonb_path_ops)
+WHERE actor_type = 'admin';</code></pre>
+<p>The index is partial — it only covers rows where <code>actor_type = 'admin'</code>. This is the only <code>actor_type</code> whose <code>changes</code> JSONB needs JSONB-shape querying; user-action audit rows (<code>actor_type = 'user'</code>) are queried by <code>actor_user_id</code> and timestamp, which are covered by existing indexes (per <a class="xref" href="#s26-5">§26.5</a>).</p>
+<p>GIN indexes impose write cost. A partial index limits that cost to the low-volume admin-row write path. User-action writes (which dominate audit-log throughput) pay nothing.</p>
+<p>If a future need arises to JSONB-query <code>changes</code> for non-admin rows (e.g., an investigation into a specific booking lifecycle through its <code>changes-&gt;'before'</code> and <code>changes-&gt;'after'</code>), add a second partial index scoped to that actor_type rather than promoting this one to a full index. The user-action path's write performance is a hot path and small percentages matter.</p>
+<h3 id="s26-3a-4">26.3a.4 Inngest jobs and webhook handlers <a class="anchor-link" href="#s26-3a-4" aria-label="Permalink">¶</a></h3>
+<p>Inngest jobs and webhook handlers run without a user JWT, so they cannot use <code>userClient</code>. They MUST use <code>tenantClient</code> with a <code>TenantContext</code> constructed via the appropriate factory:</p>
+<ul>
+<li>Inngest jobs: <code>tenantContextFromInngestEvent(event)</code>. The event's payload MUST contain a <code>tenant_id</code>. Jobs that genuinely cross tenants (e.g., the daily promo-state-transition cron) iterate tenants explicitly and construct a fresh <code>TenantContext</code> per tenant, rather than using <code>platformAdminClient</code> to update across tenants in one query.</li>
+<li>Webhooks: <code>tenantContextFromStripeEvent(event)</code> for Stripe, similar factories for Resend and Gmail. Each factory validates that the webhook payload corresponds to a known tenant before constructing the context.</li>
+</ul>
+<h3 id="s26-3a-5">26.3a.5 Calls Worth Flagging <a class="anchor-link" href="#s26-3a-5" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>The discipline only works if the lint rule is enforced.</strong> A warning that engineers can override is not a discipline; it's a suggestion. The CI gate must be hard (red = no merge), with override requiring a documented exception in MEMORY.md.</li>
+<li><strong>Inngest events must carry <code>tenant_id</code>.</strong> This is a design constraint on every Inngest event definition. Event types without <code>tenant_id</code> are platform-admin events and use <code>platformAdminClient</code> explicitly.</li>
+<li><strong><code>platformAdminClient</code> call sites are the highest-value review target.</strong> Anything that crosses tenants is anything that can leak data. Quarterly review of the set per <a class="xref" href="#s26-11">§26.11</a> isn't paperwork — it's the audit point.</li>
+<li><strong>Per-job audit trades granularity for cost.</strong> The pattern in <a class="xref" href="#s26-3a-3">§26.3a.3</a> writes one audit row per <code>platformAdmin*</code> function invocation, not per query. This reduces audit row volume materially (typically 5–20x for functions that issue several queries) at the cost of needing JSONB introspection to answer "which query touched table X?" questions. The partial GIN index on <code>audit_log.changes</code> and the query patterns in <a class="xref" href="#s26-3a-3">§26.3a.3</a> make this tractable. If forensic load on the audit log becomes onerous in practice (e.g., investigations routinely take many minutes), revisit per-query audit for write operations only — see <a class="xref" href="#s26-11">§26.11</a> quarterly review.</li>
+<li><strong>The audit-row write is outside the wrapped function's transaction.</strong> This is deliberate. An admin operation that did partial work before failing still produces an audit record of what was attempted. The alternative (audit row participates in transaction, rolled back on failure) would leave failed admin operations invisible in the audit log, which is the wrong default for forensics. Engineering should not "fix" this by moving the audit row into the function's transaction.</li>
+</ul>
+<h2 id="s26-4">26.4 Encryption <a class="anchor-link" href="#s26-4" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Data</strong></th><th><strong>At Rest</strong></th><th><strong>In Transit</strong></th></tr></thead><tbody><tr><td>Supabase database</td><td>AES-256 (Supabase managed)</td><td>TLS 1.2+ from app</td></tr><tr><td>Tenant host credentials</td><td>App-layer AES-256-GCM (per-record IV) on top of DB encryption</td><td>TLS to host APIs</td></tr><tr><td>Tenant API keys (Resend etc.)</td><td>App-layer encryption</td><td>N/A (stored only)</td></tr><tr><td>Customer chat messages</td><td>Supabase managed</td><td>TLS to clients</td></tr><tr><td>File uploads</td><td>Supabase Storage encryption</td><td>TLS</td></tr><tr><td>Backups</td><td>Supabase managed</td><td>Internal to Supabase</td></tr></tbody></table></div>
+<h2 id="s26-5">26.5 Audit Logging <a class="anchor-link" href="#s26-5" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.audit_log (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID REFERENCES public.tenants(id),</p>
+<p>actor_user_id UUID REFERENCES public.users(id),</p>
+<p>actor_type TEXT CHECK (actor_type IN (‘user’,‘system’,‘admin’,‘ai’)),</p>
+<p>action TEXT NOT NULL, – e.g., ‘booking.submit’</p>
+<p>resource_type TEXT NOT NULL,</p>
+<p>resource_id UUID,</p>
+<p>changes JSONB, – field-level before/after</p>
+<p>context JSONB, – ip, user_agent, etc.</p>
+<p>occurred_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX audit_log_tenant_idx ON public.audit_log(tenant_id, occurred_at DESC);</p>
+<p>CREATE INDEX audit_log_actor_idx ON public.audit_log(actor_user_id, occurred_at DESC);</p>
+<p>CREATE INDEX audit_log_resource_idx ON public.audit_log(resource_type, resource_id);</p>
+<p>Significant actions log: auth events, role changes, booking lifecycle, commission overrides, RAG admin actions, tenant lifecycle, payouts, subscription changes (tier, seat count, billing period). Excludes PII from log content (IDs only).</p>
+<h2 id="s26-5a">26.5a Forensics Logging <a class="anchor-link" href="#s26-5a" aria-label="Permalink">¶</a></h2>
+<p>The audit log per <a class="xref" href="#s26-5">§26.5</a> is the compliance/retention record — IDs only, 7-year retention. It answers "did event X happen to resource Y at time Z by actor W?" but cannot answer "what did the customer actually see?" or "what state was this booking in when the disputed action happened?"</p>
+<p>For investigations requiring content snapshots, the platform maintains a complementary <code>forensics_log</code> table with a shorter retention window and stronger access controls.</p>
+<h3>Schema</h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.forensics_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES public.tenants(id),
+  audit_log_id UUID REFERENCES public.audit_log(id),
+  snapshot_type TEXT NOT NULL CHECK (snapshot_type IN (
+    'commission_dispute',
+    'booking_dispute',
+    'tenant_complaint',
+    'ai_misbehavior_investigation',
+    'data_export_request',
+    'security_incident'
+  )),
+  reason TEXT NOT NULL,
+  -- Application-layer encrypted with FORENSICS_ENCRYPTION_KEY_CURRENT
+  encrypted_payload BYTEA NOT NULL,
+  encryption_key_id TEXT NOT NULL,
+  redacted_summary JSONB,
+  captured_by_user_id UUID REFERENCES public.users(id),
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  purge_after TIMESTAMPTZ NOT NULL,
+  legal_hold BOOLEAN NOT NULL DEFAULT FALSE,
+  last_accessed_at TIMESTAMPTZ,
+  access_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX forensics_log_purge_idx ON public.forensics_log(purge_after)
+  WHERE legal_hold = FALSE;
+CREATE INDEX forensics_log_audit_link_idx ON public.forensics_log(audit_log_id);</code></pre>
+<h3>Encryption</h3>
+<p>The forensics log uses application-layer encryption with a dedicated key (<code>FORENSICS_ENCRYPTION_KEY_CURRENT</code> per <a class="xref" href="section-28-environment-variables-reference.html#s28-13">§28.13</a>), separate from the <a class="xref" href="section-13-host-agency-abstraction-layer.html#s13-5">§13.5</a> tenant-credentials key. Separating keys means:</p>
+<ul>
+<li>A compromise of the credentials key does not expose forensics content.</li>
+<li>A compromise of the forensics key does not expose tenant credentials.</li>
+<li>Each key has independent rotation cadence (forensics rotates every 180 days per <a class="xref" href="section-28-environment-variables-reference.html#s28-20">§28.20</a>).</li>
+</ul>
+<p>The encryption uses AES-256-GCM with per-record IV. The same DR discipline from <a class="xref" href="section-13-host-agency-abstraction-layer.html#s13-5-3">§13.5.3</a> applies — offsite backup, quarterly verification.</p>
+<h3>What gets captured</h3>
+<p><code>snapshot_type</code> drives the capture shape. Examples:</p>
+<ul>
+<li><strong><code>commission_dispute</code></strong>: snapshot of the disputed commission row, the underlying booking row, the host adapter response that determined the commission, the audit_log entries for any override actions, and the conversation messages where the customer was told about the commission rate (if applicable).</li>
+<li><strong><code>ai_misbehavior_investigation</code></strong>: snapshot of the message, its preceding context (previous N messages), the persona prompt at the time, the retrieved RAG chunks, the supervisor findings, the customer's thumbs-down feedback if any.</li>
+<li><strong><code>data_export_request</code></strong>: snapshot of every personal-data column for the customer at the moment of export. The export sent to the customer is reconstructable from this snapshot.</li>
+</ul>
+<p>The capture functions live in <code>src/lib/forensics/capture.ts</code> and are invoked from event handlers — never automatically on every event (that's the audit log's role).</p>
+<h3>Access controls</h3>
+<p>Forensics log entries are accessible only to:</p>
+<ul>
+<li>Platform admin via <code>withPlatformAdminAudit</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-8">§5.4.8</a> with <code>reason = 'forensics_log_review'</code>. Every access is itself audited.</li>
+<li>Authorized legal counsel via documented access procedure (NOT programmatic — manual decryption with operator-controlled keys, paired with a court order or signed engagement letter).</li>
+</ul>
+<p>The forensics log is NEVER exposed through tenant-facing APIs. A tenant who wants their own forensic data uses the CCPA export path (<a class="xref" href="section-17-authentication-signup-consent.html#s17-9">§17.9</a>).</p>
+<h3>Retention</h3>
+<ul>
+<li>Default: 90 days from <code>captured_at</code>. After 90 days, <code>forensics_log_purge_cron</code> (nightly) deletes rows where <code>purge_after &lt; NOW() AND legal_hold = FALSE</code>.</li>
+<li>Legal hold: setting <code>legal_hold = TRUE</code> (platform admin action) prevents purge until the hold is removed.</li>
+<li>Audit log retention (7 years per <a class="xref" href="#s26-5">§26.5</a>) is unaffected — the audit row pointing at the deleted forensics entry simply has a null <code>forensics_log_id</code> reference after purge.</li>
+</ul>
+<h3>Cost considerations</h3>
+<p>The forensics log is bounded by capture invocation. It is NOT a "log everything" mode — that would be storage-prohibitive and privacy-hostile. Captures happen:</p>
+<ul>
+<li>On dispute creation (automatic from <code>commissions.dispute_*</code> fields)</li>
+<li>On tenant complaint submission</li>
+<li>On manual platform-admin trigger ("snapshot this conversation for investigation")</li>
+<li>On <code>security_incident</code> declaration</li>
+<li>On CCPA data export request (per <a class="xref" href="section-17-authentication-signup-consent.html#s17-9">§17.9</a> the export itself can optionally trigger a forensics snapshot for audit completeness)</li>
+</ul>
+<p>Steady-state volume is bounded. Capture cost is the encrypted-write overhead plus storage; per-tenant cost is a function of how often that tenant generates disputes/complaints/security events.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>The audit log answers "did this happen?"; the forensics log answers "what did people see?"</strong> Both are needed. Conflating them produces either too much PII in long-term storage (privacy exposure) or insufficient content for investigations (forensic blindness).</li>
+<li><strong>90-day retention is the default; legal hold extends.</strong> Routine investigations should resolve within 90 days. The hold flag is for the unusual case (lawsuit, regulatory review).</li>
+<li><strong>The encryption-key separation matters.</strong> Don't reuse the credentials key. Don't reuse the cookie-session key. A dedicated key keeps blast radius small on compromise.</li>
+<li><strong>Every forensics access is audited.</strong> The audit row for a forensics access includes the accessor's identity, the investigation reason, and a link back to the forensics row.</li>
+</ul>
+<h2 id="s26-6">26.6 Monitoring &amp; Alerts <a class="anchor-link" href="#s26-6" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Signal</strong></th><th><strong>Source</strong></th><th><strong>Severity</strong></th></tr></thead><tbody><tr><td>Auth failure spike</td><td>Supabase logs</td><td>Medium</td></tr><tr><td>Permission denied spike</td><td>App logs</td><td>Medium</td></tr><tr><td>Cross-tenant RLS bypass attempt</td><td>App logs</td><td>Critical</td></tr><tr><td>AI cost surge</td><td>Anthropic billing API</td><td>Medium</td></tr><tr><td>Stripe webhook signature failure</td><td>Webhook handler</td><td>High</td></tr><tr><td>Adapter health degraded</td><td>Health check cron</td><td>Medium</td></tr><tr><td>Database connection pool exhaustion</td><td>Supabase metrics</td><td>High</td></tr><tr><td>Error rate &gt;1% sustained</td><td>Sentry / Vercel</td><td>Medium</td></tr><tr><td>Page latency &gt;2s p95</td><td>Vercel Analytics</td><td>Low</td></tr></tbody></table></div>
+<h2 id="s26-7">26.7 Incident Response <a class="anchor-link" href="#s26-7" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Priority</strong></th><th><strong>Definition</strong></th><th><strong>Initial Response SLA</strong></th></tr></thead><tbody><tr><td>P1</td><td>Platform down or data breach confirmed</td><td>Within 15 minutes</td></tr><tr><td>P2</td><td>Major function broken (chat, booking, payments) for multiple tenants</td><td>Within 1 hour</td></tr><tr><td>P3</td><td>Single tenant affected; not data breach</td><td>Within 4 hours</td></tr><tr><td>P4</td><td>Minor issue, workaround available</td><td>Next business day</td></tr></tbody></table></div>
+<h2 id="s26-8">26.8 Anti-Prompt-Injection <a class="anchor-link" href="#s26-8" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>System prompt and user input are strictly separated; user input never interpolated into system prompt</li>
+<li>RAG content includes ‘is RAG data, not instruction’ framing in prompt</li>
+<li>User input is sandboxed within ‘USER MESSAGE’ delimiters</li>
+<li>Persona addendums (Agency tier) pre-screened by Haiku for injection patterns</li>
+<li>Supervisor checks for AI behavior outside expected persona scope</li>
+<li>Tools cannot be invoked solely from user content; AI must reason its way to a tool call</li>
+</ul>
+<h2 id="s26-9">26.9 Vendor Outage Handling <a class="anchor-link" href="#s26-9" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Vendor</strong></th><th><strong>If Down</strong></th><th><strong>Behavior</strong></th></tr></thead><tbody><tr><td>Anthropic</td><td>Chat fails</td><td>Degrade to ‘Our AI is temporarily unavailable; please leave a message’ OR fallback to cached responses for common queries</td></tr><tr><td>OpenAI</td><td>Embeddings unavailable</td><td>RAG retrieval works on existing embeddings; new submissions queued</td></tr><tr><td>Stripe</td><td>Subscriptions/Connect down</td><td>Read paths continue; write paths queue with retry; tenant warned via dashboard banner</td></tr><tr><td>Resend</td><td>Email delivery fails</td><td>Queue with retry; in-app notifications continue; tenant warned</td></tr><tr><td>Supabase</td><td>Database down</td><td>Site is down; status page; reliance on Supabase SLA</td></tr></tbody></table></div>
+<h2 id="s26-10">26.10 Breach Response Process <a class="anchor-link" href="#s26-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Detect (monitoring alert, audit log review, external report)</li>
+<li>Triage (severity assignment; convene response team)</li>
+<li>Contain (revoke compromised credentials; isolate affected systems)</li>
+<li>Investigate (scope of access; what was exfiltrated; how attacker entered)</li>
+<li>Notify (legal counsel; affected users per <a class="xref" href="section-25-data-privacy-retention.html#s25-9">§25.9</a> SLA; tenant admins; regulators per state law)</li>
+<li>Remediate (patch vulnerability; force credential rotation; security review)</li>
+<li>Post-mortem (write up; circulate; track remediation items)</li>
+</ul>
+<h2 id="s26-11">26.11 Penetration Testing <a class="anchor-link" href="#s26-11" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Annual third-party pen test (Phase 2 post-launch)</li>
+<li>Quarterly internal security review</li>
+<li>Bug bounty program (Phase 3 post-launch)</li>
+</ul>
+<h2 id="s26-12">26.12 Compliance Posture <a class="anchor-link" href="#s26-12" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>CCPA-aligned at launch</li>
+<li>GDPR architecture-ready; not certified at launch</li>
+<li>SOC 2 Type 1 within first 12 months post-launch (target)</li>
+<li>PCI: not applicable; platform never sees card data (Stripe-tokenized)</li>
+</ul>
+<h2 id="s26-13">26.13 Real PII on Staging — Documented Risk Acceptance <a class="anchor-link" href="#s26-13" aria-label="Permalink">¶</a></h2>
+<p>Staging contains real customer PII via the prod-DB-copy mechanism described in <a class="xref" href="section-30-testing-requirements.html#s30-9-1">§30.9.1</a> and the CI/CD Pipeline doc <a class="xref" href="section-05-database-schema-main-app.html">§5</a>. This is a documented risk acceptance; the alternative (synthetic-only staging) was rejected because it would not catch a class of data-shape and data-volume bugs that the platform has explicitly chosen to test for.</p>
+<p>Controls:</p>
+<ul>
+<li><strong>Outbound isolation.</strong> Wrapper functions src/lib/email/send.ts and src/lib/twilio/client.ts:sendSms() apply TEST_OVERRIDE_EMAIL and TEST_OVERRIDE_PHONE to every outbound send. Audit of call sites is part of the one-time setup checklist (CI/CD doc <a class="xref" href="section-11-customer-memory.html">§11</a>). New outbound integrations must route through these wrappers as a code-review requirement.</li>
+<li><strong>External-service neutering.</strong> OAuth tokens and Stripe customer/subscription IDs cleared by the post-restore fixup script (CI/CD doc <a class="xref" href="section-05-database-schema-main-app.html#s5-1">§5.1</a>). Staging cannot impersonate users or interact with live customers in external systems.</li>
+<li><strong>Background job suppression.</strong> Inngest crons disabled on staging; the email_messages status field is set to ignored for unprocessed records on restore.</li>
+<li><strong>Access scope.</strong> Staging access is restricted to the same users who have production access. No broader staging-only access exists.</li>
+<li><strong>Refresh hygiene.</strong> Staging data is overwritten on each release. Customer deletion requests propagate to staging on the next release cycle.</li>
+</ul>
+<p>Audit log scope (<a class="xref" href="#s26-5">§26.5</a>) and monitoring (<a class="xref" href="#s26-6">§26.6</a>) apply to staging as well as production. Cross-tenant RLS bypass attempts detected on staging are P1, the same as on production.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-25-data-privacy-retention.html">← §25: Data Privacy & Retention</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-27-saas-abuse-monitoring-cost-controls.html">§27: SaaS Abuse Monitoring & Cost Controls →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

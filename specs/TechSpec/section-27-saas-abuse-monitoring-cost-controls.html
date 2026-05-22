@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 27 — SaaS Abuse Monitoring & Cost Controls — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 27</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s27">Section 27 — SaaS Abuse Monitoring &amp; Cost Controls</h1>
+<p>The platform’s cost structure is unusual: a single tenant’s behavior (especially AI usage) can run up real dollars in third-party API spend within hours. This section defines how the platform monitors per-tenant usage across five dimensions, enforces a three-tier limit structure with dimension-specific thresholds, and surfaces the right signal to the right person at the right time.</p>
+<h2 id="s27-1">27.1 Why This Section Exists <a class="anchor-link" href="#s27-1" aria-label="Permalink">¶</a></h2>
+<p>Three forces make abuse monitoring more than a ‘nice to have’:</p>
+<ul>
+<li><strong>Cost asymmetry.</strong><strong> </strong>Anthropic and OpenAI charge per token. A single tenant looping a customer through novel-length conversations, or running a runaway script against the chat API, can spend hundreds of dollars in an afternoon. Subscription revenue from a single-seat tenant for the same period is at most $249/month (Sub-Host Agency); multi-seat tenants on the seat ladder can exceed this, but the cost-to-revenue ratio is what matters and it does not improve at scale without limits. Without limits, a few bad actors can wipe out platform margin.</li>
+<li><strong>Sender reputation.</strong><strong> </strong>Email blast abuse from any tenant on platform Resend infrastructure degrades deliverability for every tenant on the same sending domain. One tenant’s misbehavior is everyone’s problem.</li>
+<li><strong>Quality drift via RAG.</strong><strong> </strong>A tenant flooding their knowledge base with low-quality or copy-paste content degrades retrieval quality for that tenant and (if promoted to global) for the platform.</li>
+</ul>
+<p>The goal is not to police tenants — it is to catch the small subset whose usage patterns are inconsistent with the platform’s economics or with shared infrastructure health, and to do so before damage is done.</p>
+<h2 id="s27-2">27.2 Five Monitored Dimensions <a class="anchor-link" href="#s27-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Dimension</strong></th><th><strong>Concern</strong></th><th><strong>Cost Type</strong></th><th><strong>Reset</strong></th></tr></thead><tbody><tr><td>AI cost (LLM tokens)</td><td>Tenant burns disproportionate AI spend</td><td>Direct $</td><td>Monthly</td></tr><tr><td>RAG submissions</td><td>Bulk dump of low-quality tenant-specific content</td><td>Indirect (quality + storage)</td><td>Total cap with promotion-earned increases (no reset)</td></tr><tr><td>Chat message volume</td><td>Runaway scripts; customer-facing chat loops</td><td>Direct $ (drives AI cost)</td><td>Monthly</td></tr><tr><td>Email send volume</td><td>Spam blasts; sender reputation degradation</td><td>Reputation + $</td><td>Daily + monthly</td></tr><tr><td>Group invitation blasts</td><td>Coordinator inviting hundreds at once</td><td>Reputation + spam classification</td><td>Monthly</td></tr></tbody></table></div>
+<h2 id="s27-3">27.3 Three-Tier Limit Structure (Hybrid) <a class="anchor-link" href="#s27-3" aria-label="Permalink">¶</a></h2>
+<p>The structure is uniform across all five dimensions; the thresholds are dimension-specific.</p>
+<p>Soft Limit 1 (most-used threshold):</p>
+<p>Action: Throttle the offending activity (rate-limit or queue).</p>
+<p>    Platform admin notified (no customer-visible signal).</p>
+<p>    Tenant operations continue but slowed.</p>
+<p>Soft Limit 2 (warning threshold):</p>
+<p>Action: Tenant owner emailed with explanation and projection.</p>
+<p>    Throttle continues; harder if usage keeps climbing.</p>
+<p>    Platform admin sees escalation in dashboard.</p>
+<p>Hard Limit (cutoff threshold):</p>
+<p>Action: The offending dimension is paused for the rest of the</p>
+<p>    current billing month.</p>
+<p>    Tenant owner notified by email + in-app banner.</p>
+<p>    Customer-facing impact varies by dimension (see 27.6).</p>
+<p>    Tenant must contact support to discuss raised limits or</p>
+<p>    address root cause before the next month rolls over.</p>
+<p>The same three-tier structure is used everywhere; only the numeric thresholds differ by dimension and tier. This keeps the runbook short and consistent for platform admin.</p>
+<h2 id="s27-4">27.4 Thresholds by Dimension <a class="anchor-link" href="#s27-4" aria-label="Permalink">¶</a></h2>
+<p>All thresholds are per tenant per calendar month unless otherwise noted. Calendar month aligns with subscription billing periods, so monthly resets are predictable. Every tenant is evaluated independently — there’s no concept of one tenant inheriting or sharing usage with another.</p>
+<h3 id="s27-4-1">27.4.1 AI Cost <a class="anchor-link" href="#s27-4-1" aria-label="Permalink">¶</a></h3>
+<p>The most operationally important dimension. Thresholds are in platform-attributed AI cost — the dollar value of Anthropic + OpenAI usage attributed to that tenant.</p>
+<p><strong>Sizing rule:</strong> hard limit must sit below subscription revenue. This ensures the platform does not lose money on any tenant, even at peak abuse-pattern usage. The structure is calculated as a percentage of the tenant’s effective monthly revenue:</p>
+<ul>
+<li>Soft 1 = 30% of effective monthly revenue</li>
+<li>Soft 2 = 50% of effective monthly revenue</li>
+<li>Hard = 70% of effective monthly revenue</li>
+</ul>
+<p>The remaining 30% of revenue covers Stripe fees (~3%), non-AI infrastructure (Supabase, Vercel, Resend), platform operational overhead, and platform margin.</p>
+<p><strong>Effective monthly revenue</strong> is calculated from the tenant’s current subscription state:</p>
+<ul>
+<li><strong>Monthly billing:</strong> effective monthly revenue = base seat price + sum of additional seat prices per <a class="xref" href="section-03-multi-tenancy-tier-matrix.html#s3-3">§3.3</a> ladder</li>
+<li><strong>Annual billing:</strong> effective monthly revenue = (annual price ÷ 12). Because annual pricing is 10× monthly (two months free), the annual customer’s effective monthly revenue is 10/12 ≈ 83.3% of the equivalent monthly customer’s. Thresholds scale down accordingly.</li>
+</ul>
+<p>Thresholds are recalculated whenever the tenant’s subscription state changes — seat added or removed, billing period switched, tier upgraded or downgraded.</p>
+<p><strong>Illustrative thresholds at single-seat base price, monthly billing:</strong></p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Monthly Revenue</strong></th><th><strong>Soft 1 (30%)</strong></th><th><strong>Soft 2 (50%)</strong></th><th><strong>Hard (70%)</strong></th></tr></thead><tbody><tr><td>BYO Research</td><td>$19</td><td>$5.70</td><td>$9.50</td><td>$13.30</td></tr><tr><td>BYO Professional</td><td>$59</td><td>$17.70</td><td>$29.50</td><td>$41.30</td></tr><tr><td>BYO Agency</td><td>$99</td><td>$29.70</td><td>$49.50</td><td>$69.30</td></tr><tr><td>Sub-Host Starter</td><td>$49</td><td>$14.70</td><td>$24.50</td><td>$34.30</td></tr><tr><td>Sub-Host Pro</td><td>$149</td><td>$44.70</td><td>$74.50</td><td>$104.30</td></tr><tr><td>Sub-Host Agency</td><td>$249</td><td>$74.70</td><td>$124.50</td><td>$174.30</td></tr></tbody></table></div>
+<p><strong>Worked example (multi-seat, annual):</strong> A Sub-Host Agency tenant on annual billing with 6 users has annual revenue of $2,490 (base) + 3×$590 (users 2–4) + 2×$490 (users 5–6) = $5,240/year. Effective monthly revenue = $5,240 ÷ 12 = $436.67. Thresholds: Soft 1 $131.00, Soft 2 $218.33, Hard $305.67.</p>
+<p>These percentages should be treated as starting estimates, not contractually fixed. Real-world usage data in the first 90 days post-launch should drive recalibration. The platform should also watch the ratio of cost-to-revenue across all active tenants — if median tenant cost runs at 80%+ of revenue, the subscription pricing itself needs adjustment, not just thresholds.</p>
+<p>I’m not certain how Anthropic prices Sonnet vs. Haiku will hold through 2026; if pricing moves, these thresholds need to move with it.</p>
+<h3 id="s27-4-2">27.4.2 RAG Submissions (Total Cap with Promotion Rewards) <a class="anchor-link" href="#s27-4-2" aria-label="Permalink">¶</a></h3>
+<p>This dimension is structurally different from the other four. The platform wants tenants to upload knowledge content — high-quality content makes the system better, and content useful enough to promote to global makes the platform better for everyone. So the model is designed to reward beneficial behavior, not just penalize volume.</p>
+<h4>Core mechanics</h4>
+<ul>
+<li>The cap is a total cap on tenant-specific chunks, not a monthly velocity limit. It’s cumulative across the tenant’s lifetime.</li>
+<li>‘Tenant-specific’ means chunks with AI-assessed relevance to global scope below 0.6 — content useful only to that tenant.</li>
+<li>Chunks promoted to global scope do not count against this cap (they belong to the platform now).</li>
+<li>Chunks sitting in the ingestion queue awaiting admin global-review decision (relevance ≥ 0.6) do not count while pending. They can sit there indefinitely.</li>
+<li>Each globally-promoted chunk permanently raises the tenant’s cap by 25 chunks — a meaningful reward that compounds over time for tenants who contribute useful content.</li>
+</ul>
+<h4>Base caps by tier</h4>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Base Tenant-Specific Cap</strong></th></tr></thead><tbody><tr><td>BYO Research</td><td>200</td></tr><tr><td>BYO Professional</td><td>400</td></tr><tr><td>BYO Agency</td><td>800</td></tr><tr><td>Sub-Host Starter</td><td>200</td></tr><tr><td>Sub-Host Pro</td><td>600</td></tr><tr><td>Sub-Host Agency</td><td>1,500</td></tr></tbody></table></div>
+<p>For multi-seat tenants (BYO Agency, Sub-Host Agency), the base cap scales with effective monthly revenue using the same multiplier as <a class="xref" href="#s27-4-1">§27.4.1</a> — adding seats raises the cap proportionally. Annual-billing tenants get caps at 10/12 ≈ 83.3% of the equivalent monthly tenant’s, consistent with their lower effective monthly revenue.</p>
+<p>Effective cap = (base × revenue multiplier) + (25 × number of globally-promoted chunks from this tenant). Once raised by global promotion, the bonus persists even if the platform later removes the promoted chunk. This is a deliberate trust signal: ‘you proved you contribute useful content, so we trust you with more capacity.’</p>
+<h4>When a submission lands</h4>
+<ul>
+<li>Pipeline assigns relevance score (per <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a> stage 4)</li>
+<li>If relevance ≥ 0.6 → queued for admin global review, does not count against cap while pending</li>
+<li>If relevance &lt; 0.6 AND tenant is under cap → approved as tenant-specific chunk, counts against cap</li>
+<li>If relevance &lt; 0.6 AND tenant is at or over cap → chunk auto-deleted; user sees inline message in submission UI</li>
+</ul>
+<h4>When admin reviews a queue-eligible item</h4>
+<ul>
+<li>Promote to global → chunk’s scope becomes global; tenant’s cap raises by 25; original counts are unchanged</li>
+<li>Decline → chunk falls back to tenant-specific scope. If tenant is under cap, chunk approved as tenant-specific and now counts. If tenant is at or over cap, chunk auto-deleted; tenant notified.</li>
+</ul>
+<h4>Warning structure (modified from the standard three-tier)</h4>
+<p>The standard ‘soft1 throttle → soft2 throttle → hard cutoff’ structure doesn’t fit here because the cap is enforced by auto-deletion rather than throttling. Instead:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>State</strong></th><th><strong>Trigger</strong></th><th><strong>Behavior</strong></th></tr></thead><tbody><tr><td>Approaching</td><td>85% of effective cap</td><td>Banner to tenant: ‘You’re nearing your tenant-content cap. Submitting content that the platform can promote globally will increase it.’</td></tr><tr><td>At cap</td><td>100% of effective cap</td><td>Banner + email to tenant. New low-relevance submissions auto-deleted with inline notice. Platform admin notified for visibility (not action).</td></tr><tr><td>Over cap</td><td>Cap was higher previously, e.g. due to chunk removal</td><td>Same as at-cap behavior. No additional penalty.</td></tr></tbody></table></div>
+<p>There is no ‘hard cutoff’ tier here because over-cap behavior IS the enforcement — submissions don’t stop, they’re simply filtered. The tenant can keep submitting queue-eligible content; only tenant-specific landings get pruned.</p>
+<h4>Tenant UI cues</h4>
+<ul>
+<li>Submission form shows current count vs effective cap, with breakdown of base cap + promotion bonus</li>
+<li>‘You earned X additional slots by contributing Y chunks to the platform’ — concrete framing</li>
+<li>Approaching-cap banner explicitly suggests: ‘Submit content that’s useful beyond your agency — the platform admin reviews submissions for promotion to global scope, and each promotion earns you +25 slots permanently.’</li>
+</ul>
+<p>This is the only dimension where the platform’s interest and the tenant’s interest are aligned by design: more genuinely useful content benefits both parties, and the cap is sized so legitimate tenant operation never hits it.</p>
+<h3 id="s27-4-3">27.4.3 Chat Message Volume <a class="anchor-link" href="#s27-4-3" aria-label="Permalink">¶</a></h3>
+<p>Chat volume is the leading indicator for AI cost. The two correlate strongly but not perfectly (Haiku-heavy turns are cheaper than Sonnet-heavy ones). Both are monitored independently because volume can spike without cost spiking (e.g., short turns dominated by classification) and vice versa.</p>
+<p>Thresholds are sized so a tenant burning average cost-per-message would hit the chat volume threshold around the same time as the AI cost threshold. This gives the platform two independent triggers; whichever fires first wins. Because the AI cost threshold scales with effective monthly revenue (per <a class="xref" href="#s27-4-1">§27.4.1</a>), chat volume thresholds scale with the same multiplier.</p>
+<p><strong>Sizing rule:</strong> Chat volume thresholds = base allocation × (tenant effective monthly revenue ÷ tier reference revenue). The reference revenue is the single-seat monthly price for that tier. So a tenant adding seats sees thresholds rise proportionally; an annual customer sees thresholds at 10/12 ≈ 83.3% of the equivalent monthly customer.</p>
+<p><strong>Illustrative thresholds at single-seat base price, monthly billing:</strong></p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Soft 1 (msgs/mo)</strong></th><th><strong>Soft 2 (msgs/mo)</strong></th><th><strong>Hard (msgs/mo)</strong></th></tr></thead><tbody><tr><td>BYO Research</td><td>600</td><td>1,000</td><td>1,500</td></tr><tr><td>BYO Professional</td><td>2,000</td><td>3,500</td><td>5,000</td></tr><tr><td>BYO Agency</td><td>3,500</td><td>6,000</td><td>8,500</td></tr><tr><td>Sub-Host Starter</td><td>1,500</td><td>2,800</td><td>4,300</td></tr><tr><td>Sub-Host Pro</td><td>5,000</td><td>8,800</td><td>12,500</td></tr><tr><td>Sub-Host Agency</td><td>8,500</td><td>14,300</td><td>21,400</td></tr></tbody></table></div>
+<p><strong>Worked example (multi-seat, annual):</strong> Same Sub-Host Agency tenant from <a class="xref" href="#s27-4-1">§27.4.1</a> — 6 users, annual billing, effective monthly revenue $436.67. Reference revenue for Sub-Host Agency is $249/month. Multiplier = $436.67 ÷ $249 = 1.753. Thresholds: Soft 1 ≈ 14,900 msgs/mo, Soft 2 ≈ 25,070 msgs/mo, Hard ≈ 37,520 msgs/mo.</p>
+<p>‘Messages’ counts both user and assistant turns. Forum chat counts separately (no AI cost there) and is governed by per-user strike system in <a class="xref" href="section-19-forum-style-group-chat.html">§19</a>, not this dimension.</p>
+<p>If AI pricing changes meaningfully (Anthropic or OpenAI), volume thresholds should be recalibrated alongside cost thresholds — the message-to-dollar ratio shifts.</p>
+<h3 id="s27-4-4">27.4.4 Email Send Volume <a class="anchor-link" href="#s27-4-4" aria-label="Permalink">¶</a></h3>
+<p>Reputation is shared across tenants using platform Resend (Pattern B per <a class="xref" href="section-16-white-label-branding.html#s16-4">§16.4</a>). Tenants on Pattern A (their own Resend) are still monitored but the hard limit is advisory — their reputation, their problem — unless their sending domain CNAMEs back to a platform-shared address.</p>
+<p><strong>Sizing rule:</strong> Email volume thresholds = base allocation × (tenant effective monthly revenue ÷ tier reference revenue), same scaling rule as <a class="xref" href="#s27-4-1">§27.4.1</a> and <a class="xref" href="#s27-4-3">§27.4.3</a>. A tenant adding seats earns proportionally more send headroom; an annual customer’s caps scale down to 10/12 ≈ 83.3% of the equivalent monthly customer’s.</p>
+<p><strong>Illustrative thresholds at single-seat base price, monthly billing:</strong></p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Soft 1 (per day)</strong></th><th><strong>Soft 2 (per day)</strong></th><th><strong>Hard (per day)</strong></th></tr></thead><tbody><tr><td>BYO Research</td><td>100</td><td>200</td><td>400</td></tr><tr><td>BYO Professional</td><td>500</td><td>1,000</td><td>2,000</td></tr><tr><td>BYO Agency</td><td>1,000</td><td>2,000</td><td>4,000</td></tr><tr><td>Sub-Host Starter</td><td>150</td><td>300</td><td>600</td></tr><tr><td>Sub-Host Pro</td><td>1,250</td><td>2,500</td><td>5,000</td></tr><tr><td>Sub-Host Agency</td><td>2,850</td><td>5,700</td><td>10,700</td></tr></tbody></table></div>
+<p>Transactional emails (booking confirmations, password resets) are excluded from this count. The dimension is about marketing + notification email volume.</p>
+<p>A separate signal — bounce rate above 5% in a rolling 24-hour window — escalates straight to platform admin regardless of volume, and may pause sending even before volume thresholds are hit. Hard bounces signal list quality issues that compound deliverability damage.</p>
+<p><strong>Note on shared-reputation risk:</strong> Because email volume thresholds scale with revenue, a large multi-seat tenant could in principle generate high send volume that affects shared-IP deliverability for smaller tenants. Operationally, the bounce-rate signal above is the second guardrail; if a high-volume tenant degrades the shared pool, the bounce check escalates them out of Pattern B faster than monthly volume alone would.</p>
+<h3 id="s27-4-5">27.4.5 Group Invitation Blasts <a class="anchor-link" href="#s27-4-5" aria-label="Permalink">¶</a></h3>
+<p>A single group can invite a large number of people legitimately (a family reunion cruise might be 80 people). The abuse pattern is different: many groups in rapid succession from one tenant, or one group with an absurd invitee list (1,000+).</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Tier</strong></th><th><strong>Soft 1</strong></th><th><strong>Soft 2</strong></th><th><strong>Hard</strong></th></tr></thead><tbody><tr><td>Any tier (BYO Pro and above; lower tiers have no group feature)</td><td>500</td><td>1,000</td><td>2,000</td></tr></tbody></table></div>
+<p>Tier doesn’t matter much here — the abuse pattern is the same regardless of plan. A separate per-group cap of 100 invitees applies on top of the monthly tenant cap.</p>
+<h2 id="s27-5">27.5 Schema <a class="anchor-link" href="#s27-5" aria-label="Permalink">¶</a></h2>
+<p>– Per-tenant per-month usage tracking (for monthly-reset dimensions)</p>
+<p>CREATE TABLE public.tenant_usage_metrics (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>billing_period DATERANGE NOT NULL,</p>
+<p>ai_cost_cents BIGINT NOT NULL DEFAULT 0,</p>
+<p>chat_messages_count INTEGER NOT NULL DEFAULT 0,</p>
+<p>email_sent_count INTEGER NOT NULL DEFAULT 0,</p>
+<p>group_invitees_count INTEGER NOT NULL DEFAULT 0,</p>
+<p>email_sent_today INTEGER NOT NULL DEFAULT 0,</p>
+<p>email_sent_day_ref DATE NOT NULL DEFAULT CURRENT_DATE,</p>
+<p>ai_cost_limit_state TEXT NOT NULL DEFAULT ‘ok’</p>
+<p>              CHECK (ai_cost_limit_state IN ('ok','soft1','soft2','hard')),</p>
+<p>ai_cost_state_changed_at TIMESTAMPTZ,</p>
+<p>chat_volume_limit_state TEXT NOT NULL DEFAULT ‘ok’,</p>
+<p>chat_volume_state_changed_at TIMESTAMPTZ,</p>
+<p>email_volume_limit_state TEXT NOT NULL DEFAULT ‘ok’,</p>
+<p>email_volume_state_changed_at TIMESTAMPTZ,</p>
+<p>group_invite_limit_state TEXT NOT NULL DEFAULT ‘ok’,</p>
+<p>group_invite_state_changed_at TIMESTAMPTZ,</p>
+<p>last_recomputed_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>UNIQUE (tenant_id, billing_period)</p>
+<p>);</p>
+<p>– RAG content quota (separate table; total cap with promotion rewards, NOT monthly)</p>
+<p>CREATE TABLE public.tenant_rag_quotas (</p>
+<p>tenant_id UUID PRIMARY KEY REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>base_cap INTEGER NOT NULL,</p>
+<p>promoted_chunks_count INTEGER NOT NULL DEFAULT 0,</p>
+<p>current_tenant_chunks_count INTEGER NOT NULL DEFAULT 0,</p>
+<p>rag_state TEXT NOT NULL DEFAULT ‘ok’</p>
+<p>                        CHECK (rag_state IN ('ok','approaching','at_cap','over_cap')),</p>
+<p>rag_state_changed_at TIMESTAMPTZ,</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>– Admin-granted exception</p>
+<p>CREATE TABLE public.tenant_usage_overrides (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE RESTRICT,</p>
+<p>dimension TEXT NOT NULL CHECK (dimension IN (</p>
+<p>‘ai_cost’,‘rag_cap’,‘chat_volume’,‘email_volume’,‘group_invite’</p>
+<p>)),</p>
+<p>tier_override TEXT CHECK (tier_override IN (‘soft1’,‘soft2’,‘hard’,‘base_cap’)),</p>
+<p>threshold_value BIGINT NOT NULL,</p>
+<p>effective_from DATE NOT NULL,</p>
+<p>effective_to DATE,</p>
+<p>reason TEXT NOT NULL,</p>
+<p>approved_by_user_id UUID NOT NULL REFERENCES public.users(id),</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>– Audit trail for every state transition</p>
+<p>CREATE TABLE public.usage_limit_events (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>dimension TEXT NOT NULL,</p>
+<p>from_state TEXT NOT NULL,</p>
+<p>to_state TEXT NOT NULL,</p>
+<p>metric_value BIGINT NOT NULL,</p>
+<p>threshold_crossed BIGINT NOT NULL,</p>
+<p>triggered_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>notification_sent_to TEXT[],</p>
+<p>resolution_action TEXT,</p>
+<p>resolved_at TIMESTAMPTZ,</p>
+<p>resolved_by_user_id UUID REFERENCES public.users(id)</p>
+<p>);</p>
+<p>– RAG-specific audit (auto-deletes, promotion bonuses, etc.)</p>
+<p>CREATE TABLE public.tenant_rag_cap_events (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>event_type TEXT NOT NULL CHECK (event_type IN (</p>
+<p>‘submission_auto_deleted’,‘declined_chunk_auto_deleted’,</p>
+<p>‘promoted_cap_increased’,‘state_transition’,‘manual_cap_adjustment’</p>
+<p>)),</p>
+<p>chunk_id UUID,</p>
+<p>queue_id UUID,</p>
+<p>cap_before INTEGER,</p>
+<p>cap_after INTEGER,</p>
+<p>count_before INTEGER,</p>
+<p>count_after INTEGER,</p>
+<p>reason TEXT,</p>
+<p>occurred_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<h2 id="s27-6">27.6 Enforcement Behavior by Dimension <a class="anchor-link" href="#s27-6" aria-label="Permalink">¶</a></h2>
+<p>What ‘soft1 throttle / soft2 throttle / hard cutoff’ actually means in user-visible terms varies by dimension:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Dimension</strong></th><th><strong>Soft 1 Throttle</strong></th><th><strong>Soft 2 Throttle</strong></th><th><strong>Hard Cutoff Effect</strong></th></tr></thead><tbody><tr><td>AI cost</td><td>Switch eligible turns from Sonnet to Haiku; cap conversation memory size injected into prompts</td><td>Above + reduce RAG top-k from default 4 to 2; cap response length</td><td>Chat falls back to ‘Our system is over capacity for the moment — a human will be in touch.’ All AI responses paused for tenant. Existing conversations remain readable.</td></tr><tr><td>RAG submissions</td><td>(Approaching state) Banner to tenant suggesting they submit promotion-worthy content to earn more capacity</td><td>(At cap state) New tenant-specific submissions auto-deleted with inline notice; queue-eligible submissions continue to flow normally</td><td>No traditional hard cutoff — over-cap enforcement is auto-deletion of low-relevance new content.</td></tr><tr><td>Chat volume</td><td>Insert 2-3 second delay between user message and AI response</td><td>Insert longer delay; serve ‘we’re experiencing high load’ message variant</td><td>Same as AI cost hard cutoff</td></tr><tr><td>Email volume</td><td>Queue email send with 5-minute delay</td><td>Queue with 30-minute delay</td><td>Send refused; transactional emails still go through; tenant sees banner</td></tr><tr><td>Group invitation</td><td>Delay invitation sends; require explicit ‘Send Now’ confirmation per batch</td><td>Same plus require platform admin pre-approval for batches &gt; 20</td><td>No new invitations until next month; existing groups continue to function</td></tr></tbody></table></div>
+<p>The ‘Hard cutoff’ column is deliberately conservative — paused, not deleted. Existing conversations stay readable. Existing groups stay open. The tenant can keep using the parts of the platform that aren’t in cutoff. The aim is to stop the bleeding, not to brick the tenant.</p>
+<p>The RAG dimension is the only one without a hard-cutoff tier. By design: the platform’s interest is more useful content, not less. Over-cap behavior filters out content that wouldn’t have helped the platform anyway, while letting promotion-worthy content keep flowing.</p>
+<h2 id="s27-7">27.7 Recomputation &amp; State Transitions <a class="anchor-link" href="#s27-7" aria-label="Permalink">¶</a></h2>
+<h3>Real-time (event-driven)</h3>
+<ul>
+<li>Every AI API call appends to running ai_cost_cents</li>
+<li>Every chat message increments chat_messages_count</li>
+<li>Every email send increments email_sent_count and email_sent_today</li>
+<li>Every group invitation send increments group_invitees_count</li>
+<li>Every approved tenant-specific RAG chunk creation increments current_tenant_chunks_count</li>
+<li>Every promotion to global increments promoted_chunks_count</li>
+<li>Every chunk deletion decrements current_tenant_chunks_count</li>
+</ul>
+<h3>Scheduled (daily at 03:00 UTC)</h3>
+<ul>
+<li>Reset email_sent_today to 0 if email_sent_day_ref is from a prior day</li>
+<li>Reset monthly metrics if billing_period has rolled over (new row inserted; old row preserved for audit). RAG quota is NOT reset — it persists across months.</li>
+<li>Recompute monthly state for tenants near thresholds</li>
+</ul>
+<p>State transitions for monthly dimensions (AI cost, chat volume, email volume, group invitations) are monotonic within a billing period: a tenant can move ok → soft1 → soft2 → hard, but not backward until the next monthly reset. This prevents oscillation if usage drops just below a threshold and then climbs back up. To move backward early, a platform admin must explicitly resolve the usage_limit_event with notes.</p>
+<p>State transitions for the RAG dimension are NOT monotonic — they reflect current standing. A tenant who deletes chunks to free up cap space immediately drops back to ‘ok’ status.</p>
+<h2 id="s27-8">27.8 Notification Flow <a class="anchor-link" href="#s27-8" aria-label="Permalink">¶</a></h2>
+<p>Threshold crossed</p>
+<p>│</p>
+<p>▼</p>
+<p>┌───┴───────────────────────────────────┐</p>
+<p>│ │</p>
+<p>soft1: soft2:</p>
+<p>In-app banner to Email to tenant owner with:</p>
+<p>platform admin only - which dimension</p>
+<p>(no tenant notification — - current usage / threshold</p>
+<p>throttle is invisible) - projected month-end usage</p>
+<ul>
+<li>actions tenant can take</li>
+</ul>
+<p>                                  Platform admin banner promoted</p>
+<p>                                  to "escalation watch" list</p>
+<p>                               │</p>
+<p>                               ▼</p>
+<p>                            hard:</p>
+<p>                               Email + in-app banner to tenant owner</p>
+<p>                               Email + Slack to platform admin</p>
+<p>                               Tenant admin dashboard shows</p>
+<p>                               red banner with link to support</p>
+<h2 id="s27-9">27.9 Override Workflow <a class="anchor-link" href="#s27-9" aria-label="Permalink">¶</a></h2>
+<p>Platform admin may grant overrides via /admin/tenants/{id}/usage-overrides. Use cases:</p>
+<ul>
+<li>A tenant has a legitimate spike (large family-reunion group invitation, big seasonal campaign)</li>
+<li>A tenant is on a hand-negotiated comp arrangement</li>
+<li>A new feature rollout legitimately pushes a tenant past a threshold</li>
+</ul>
+<p>Overrides are dimension-specific, time-bounded, and require a written reason logged in the override row. They do not silently raise the threshold forever — there’s an effective_to date and an audit trail.</p>
+<h2 id="s27-10">27.10 Platform Admin Dashboard <a class="anchor-link" href="#s27-10" aria-label="Permalink">¶</a></h2>
+<p>A dedicated view at /admin/abuse-monitoring shows:</p>
+<ul>
+<li>All tenants currently at soft1, soft2, or hard on any dimension</li>
+<li>Trend lines (per-tenant usage curves overlaid on threshold bands)</li>
+<li>Tenants approaching thresholds (e.g., &gt;85% of soft1)</li>
+<li>Recent state transitions (last 30 days)</li>
+<li>Override requests pending review</li>
+<li>‘Top consumers’ lists per dimension (useful for spotting anomalies before they breach)</li>
+</ul>
+<p>The dashboard is read-only-by-default; making changes (overrides, manual state resets) requires platform_super_admin role and re-auth per <a class="xref" href="section-26-security.html#s26-2">§26.2</a>.</p>
+<h2 id="s27-11">27.11 Tenant-Facing Usage UI <a class="anchor-link" href="#s27-11" aria-label="Permalink">¶</a></h2>
+<p>Tenants see their own usage at /settings/usage:</p>
+<ul>
+<li>Current month’s metrics with progress bars against their tier’s thresholds</li>
+<li>Daily history for velocity dimensions</li>
+<li>Estimated month-end if current rate continues</li>
+<li>Plain-language explanation of what each limit means</li>
+<li>Link to upgrade their tier if they’re consistently near thresholds</li>
+</ul>
+<p>The aim is transparency: tenants should not be surprised when they hit a soft2 email, and should be able to plan their usage.</p>
+<h2 id="s27-12">27.12 Cost Attribution <a class="anchor-link" href="#s27-12" aria-label="Permalink">¶</a></h2>
+<p>AI cost attribution requires care. A single chat turn typically involves:</p>
+<ul>
+<li>1-2 Haiku calls (entity extraction, screening)</li>
+<li>1 Sonnet call (main response)</li>
+<li>1 supervisor Haiku call (preflight)</li>
+<li>Sometimes 1 OpenAI embeddings call (if RAG runs)</li>
+</ul>
+<p>Each is logged with: tenant_id, conversation_id, model, input_tokens, output_tokens, cost_estimate_cents. The cost_estimate_cents is computed from the model’s posted pricing at the time of the call (cached daily from Anthropic and OpenAI docs).</p>
+<p>Memory extraction Haiku calls (per <a class="xref" href="section-11-customer-memory.html#s11-2">§11.2</a>) attribute to the tenant whose memory is being extracted. RAG normalization Haiku calls attribute to the submitting tenant. Pre-cruise email generation attributes to the tenant whose customer is receiving the email.</p>
+<p>The accuracy ceiling here is ‘good enough for monthly billing reconciliation,’ not ‘good enough for chargeback to the cent.’ Some shared overhead (model warm-up, background classification) is amortized.</p>
+<h2 id="s27-13">27.13 Integration with Existing Sections <a class="anchor-link" href="#s27-13" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><a class="xref" href="section-10-ai-supervisor.html">§10</a> (Supervisor): supervisor preflight cost counts toward AI cost dimension</li>
+<li><a class="xref" href="section-17-authentication-signup-consent.html">§17</a> (Auth): signing in costs nothing; signups do nothing here</li>
+<li><a class="xref" href="section-19-forum-style-group-chat.html">§19</a> (Forum): forum strike system handles per-user abuse independently</li>
+<li><a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a> (Knowledge Ingestion): velocity tracked here; quality checks happen in pipeline</li>
+<li><a class="xref" href="section-23-email-notifications.html">§23</a> (Email): suppressions are about deliverability per recipient; volume here is about tenant-level send pattern</li>
+<li><a class="xref" href="section-24-chat-ui.html">§24</a> (Chat UI): when chat is throttled or paused, banner copy comes from this section’s enforcement table</li>
+</ul>
+<h2 id="s27-14">27.14 What Is Not Covered Here <a class="anchor-link" href="#s27-14" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Per-customer abuse (one customer spamming the chat): handled by per-IP and per-user rate limits in middleware</li>
+<li>Forum-level abuse: <a class="xref" href="section-19-forum-style-group-chat.html">§19</a>’s strike system handles it</li>
+<li>Persona prompt addendum abuse: <a class="xref" href="section-16-white-label-branding.html#s16-6">§16.6</a> Haiku pre-screen handles it</li>
+<li>Stripe payment fraud / chargeback abuse: handled by Stripe’s risk engine</li>
+<li>Custom domain abuse (typosquatting, impersonation): domain verification per <a class="xref" href="section-16-white-label-branding.html#s16-3">§16.3</a> catches most</li>
+</ul>
+<h2 id="s27-15">27.15 Calls Worth Flagging <a class="anchor-link" href="#s27-15" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>AI cost hard limits now sit below subscription revenue across all tiers.</strong><strong> </strong>This guarantees the platform doesn’t lose money on any tenant, even at peak abuse-pattern usage. The trade-off is less headroom for legitimate heavy users — if real-world data shows many tenants legitimately running near hard, the choice is to raise pricing or grant overrides, not to let cost exceed revenue.</li>
+<li><strong>Thresholds are starting estimates.</strong><strong> </strong>Real usage data should drive recalibration within the first 90 days post-launch.</li>
+<li><strong>RAG model rewards beneficial behavior rather than just policing volume.</strong><strong> </strong>Worth observing: do tenants understand the promotion mechanic? If most don’t, the incentive doesn’t work and the cap just frustrates.</li>
+<li><strong>Promotion bonus is permanent.</strong><strong> </strong>Each promoted chunk adds 25 to the cap forever, even if the promoted chunk is later removed from global. Probably fine; revisit if a single tenant ends up with cap &gt; 10,000.</li>
+<li><strong>Cost attribution is</strong><strong> </strong><strong>‘</strong><strong>good enough,</strong><strong>’</strong><strong> </strong><strong>not exact.</strong><strong> </strong>Don’t promise tenants precise per-dollar accounting; that’s a future improvement requiring much heavier instrumentation.</li>
+<li><strong>Monotonic state within a month</strong><strong> </strong>(for monthly dimensions) is a deliberate design choice to prevent oscillation, but it means a tenant who briefly spikes then drops back stays throttled until next month or until an admin manually resolves.</li>
+<li><strong>Hard limit = month-long pause is severe</strong><strong> </strong>(for monthly dimensions). No mid-month relief without admin intervention. Worth observing in practice whether this is too harsh; could soften to a 7-day cooling-off period later.</li>
+<li><strong>AI pricing volatility.</strong><strong> </strong>If Anthropic or OpenAI pricing changes meaningfully, the AI-cost thresholds become wrong overnight, and chat-volume thresholds drift with them.</li>
+<li><strong>RAG dimension lacks a hard cutoff</strong><strong> </strong>— by design, but it means there’s no platform-side ‘kill switch’ if a tenant somehow exploits the queue-pending exemption to flood the system.</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-26-security.html">← §26: Security</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-28-environment-variables-reference.html">§28: Environment Variables Reference →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

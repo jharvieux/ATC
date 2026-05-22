@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 12 — CRM — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 12</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s12">Section 12 — CRM</h1>
+<p>Customer Relationship Management for travel agents. Multi-traveler contact records, relationship graphs, quote builder, and pipeline.</p>
+<h2 id="s12-1">12.1 Contacts <a class="anchor-link" href="#s12-1" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.contacts (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>user_id UUID REFERENCES public.users(id), – nullable; not all contacts are platform users</p>
+<p>– Identity</p>
+<p>first_name TEXT,</p>
+<p>last_name TEXT,</p>
+<p>middle_name TEXT,</p>
+<p>preferred_name TEXT,</p>
+<p>email TEXT,</p>
+<p>phone TEXT,</p>
+<p>– Demographics</p>
+<p>date_of_birth DATE,</p>
+<p>date_of_birth_is_estimated BOOLEAN DEFAULT FALSE,</p>
+<p>estimation_basis TEXT,</p>
+<p>gender TEXT,</p>
+<p>nationality TEXT,</p>
+<p>– Travel-relevant</p>
+<p>passport_expiry DATE,</p>
+<p>loyalty_programs JSONB,</p>
+<p>dietary_restrictions TEXT,</p>
+<p>accessibility_needs TEXT,</p>
+<p>– Source</p>
+<p>source TEXT, – ‘manual’,‘ai_extracted’,‘signup’,‘imported’,‘referred’</p>
+<p>source_reference TEXT,</p>
+<p>– Audit</p>
+<p>created_by_user_id UUID REFERENCES public.users(id),</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE INDEX contacts_tenant_idx ON public.contacts(tenant_id);</p>
+<p>CREATE INDEX contacts_email_idx ON public.contacts(tenant_id, email);</p>
+<p>CREATE INDEX contacts_name_idx ON public.contacts(tenant_id, last_name, first_name);</p>
+<h2 id="s12-2">12.2 Contact Relationships <a class="anchor-link" href="#s12-2" aria-label="Permalink">¶</a></h2>
+<p>Contacts are linked via a relationship graph. Each link captures a directional relationship type with optional notes.</p>
+<p>CREATE TABLE public.contact_relationships (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>from_contact_id UUID NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,</p>
+<p>to_contact_id UUID NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,</p>
+<p>relationship_type TEXT NOT NULL, – ‘spouse’,‘partner’,‘parent_of’,‘child_of’,‘sibling’,‘friend’,‘colleague’</p>
+<p>notes TEXT,</p>
+<p>source TEXT, – ‘manual’,‘ai_inferred’</p>
+<p>confidence NUMERIC(3,2),</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>UNIQUE (tenant_id, from_contact_id, to_contact_id, relationship_type)</p>
+<p>);</p>
+<h2 id="s12-3">12.3 Pipeline <a class="anchor-link" href="#s12-3" aria-label="Permalink">¶</a></h2>
+<p>Default sales pipeline stages (tenant-configurable):</p>
+<p>Lead ──► Qualified ──► Quote Sent ──► Quote Accepted ──► Booked ──► Sailed</p>
+<p>        │                                                │</p>
+<p>        └──► Lost (with reason)                          ▼</p>
+<p>                                                Post-Trip Follow-up</p>
+<h2 id="s12-4">12.4 Quotes <a class="anchor-link" href="#s12-4" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.quotes (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>contact_id UUID NOT NULL REFERENCES public.contacts(id),</p>
+<p>user_id UUID REFERENCES public.users(id),</p>
+<p>– Trip details</p>
+<p>cruise_line TEXT,</p>
+<p>ship_name TEXT,</p>
+<p>sailing_date DATE,</p>
+<p>duration_nights INTEGER,</p>
+<p>cabin_category TEXT,</p>
+<p>passenger_count INTEGER,</p>
+<p>– Financial</p>
+<p>commissionable_fare NUMERIC(12,2),</p>
+<p>non_commissionable_total NUMERIC(12,2),</p>
+<p>total_amount NUMERIC(12,2),</p>
+<p>– Lifecycle</p>
+<p>status TEXT CHECK (status IN (‘draft’,‘sent’,‘viewed’,‘accepted’,‘declined’,‘expired’,‘converted’)),</p>
+<p>sent_at TIMESTAMPTZ,</p>
+<p>viewed_at TIMESTAMPTZ,</p>
+<p>accepted_at TIMESTAMPTZ,</p>
+<p>declined_at TIMESTAMPTZ,</p>
+<p>declined_reason TEXT,</p>
+<p>valid_until TIMESTAMPTZ,</p>
+<p>– Conversion</p>
+<p>converted_to_booking_id UUID REFERENCES public.bookings(id),</p>
+<p>– Display</p>
+<p>show_breakdown_to_customer BOOLEAN DEFAULT TRUE,</p>
+<p>custom_notes TEXT,</p>
+<p>– Audit</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>Quote PDFs default to FULL breakdown of line items (tenant-configurable). Customer sees what’s included and what’s optional.</p>
+<h2 id="s12-5">12.5 Commissionable Fare <a class="anchor-link" href="#s12-5" aria-label="Permalink">¶</a></h2>
+<p>Commission is computed against the commissionable_fare, not the total. This is a critical distinction: taxes, port fees, gratuities, and some addons typically aren’t commissionable.</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Line Item Category</strong></th><th><strong>Commissionable?</strong></th></tr></thead><tbody><tr><td>Base cruise fare</td><td>Yes</td></tr><tr><td>Cabin category upgrade</td><td>Yes</td></tr><tr><td>Loyalty discount</td><td>Reduces commissionable fare</td></tr><tr><td>Taxes / port fees</td><td>No</td></tr><tr><td>Gratuities (pre-paid)</td><td>Usually No (varies by line)</td></tr><tr><td>Insurance</td><td>No</td></tr><tr><td>Specialty dining</td><td>Varies (line-specific)</td></tr><tr><td>Beverage packages</td><td>Yes (most lines)</td></tr><tr><td>Excursions</td><td>Yes (when booked through cruise line)</td></tr></tbody></table></div>
+<h2 id="s12-6">12.6 Host Booking Fees <a class="anchor-link" href="#s12-6" aria-label="Permalink">¶</a></h2>
+<p>Host agencies often charge a per-booking fee deducted from gross commission BEFORE the platform’s share is calculated. This means both the platform and the sub-host see proportionally smaller cuts when a host fee applies.</p>
+<p>– Host booking fee can be flat, percent, tiered, or none</p>
+<p>CREATE TABLE public.host_booking_fee_configs (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>host_adapter TEXT NOT NULL,</p>
+<p>fee_type TEXT NOT NULL CHECK (fee_type IN (‘none’,‘flat’,‘percent’,‘tiered’)),</p>
+<p>flat_fee_amount NUMERIC(12,2),</p>
+<p>percent_of_commission NUMERIC(5,4),</p>
+<p>tiered_rules JSONB,</p>
+<p>minimum_commission_threshold NUMERIC(12,2),</p>
+<p>effective_from DATE NOT NULL,</p>
+<p>effective_to DATE,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<p>CREATE TABLE public.tenant_host_fee_overrides (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>host_adapter TEXT NOT NULL,</p>
+<p>– Same fields as host_booking_fee_configs (overrides for this tenant)</p>
+<p>fee_type TEXT NOT NULL,</p>
+<p>flat_fee_amount NUMERIC(12,2),</p>
+<p>percent_of_commission NUMERIC(5,4),</p>
+<p>tiered_rules JSONB,</p>
+<p>minimum_commission_threshold NUMERIC(12,2),</p>
+<p>effective_from DATE NOT NULL,</p>
+<p>effective_to DATE,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+<h2 id="s12-7">12.7 Commission Math (Worked Example) <a class="anchor-link" href="#s12-7" aria-label="Permalink">¶</a></h2>
+<p>Booking: $5,000 commissionable fare; host commission rate 15%; host booking fee $25 flat; sub-host on Pro tier (20/80 split):</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Step</strong></th><th><strong>Calculation</strong></th><th><strong>Amount</strong></th></tr></thead><tbody><tr><td>Gross commission</td><td>$5,000 × 15%</td><td>$750.00</td></tr><tr><td>Host booking fee</td><td>Flat $25</td><td>−$25.00</td></tr><tr><td>Net commission to platform</td><td>$750 − $25</td><td>$725.00</td></tr><tr><td>Platform takes (20%)</td><td>$725 × 20%</td><td>$145.00</td></tr><tr><td>Sub-host retains (80%)</td><td>$725 × 80%</td><td>$580.00</td></tr></tbody></table></div>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-11-customer-memory.html">← §11: Customer Memory</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-13-host-agency-abstraction-layer.html">§13: Host Agency Abstraction Layer →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

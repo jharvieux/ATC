@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 11 — Customer Memory — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 11</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s11">Section 11 — Customer Memory</h1>
+<p>Memory gives the AI continuity across conversations. A returning customer doesn’t have to re-explain their travel preferences, family composition, or accessibility needs. Memory is tenant-scoped, customer-controlled, and respects opt-out.</p>
+<h2 id="s11-1">11.1 Memory Storage <a class="anchor-link" href="#s11-1" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.customer_memories (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>user_id UUID NOT NULL REFERENCES public.users(id),</p>
+<p>contact_id UUID REFERENCES public.contacts(id),</p>
+<p>– Structured data</p>
+<p>preferences JSONB, – cruise lines, ports, cabin types, dining</p>
+<p>travel_history JSONB, – past trips taken</p>
+<p>family_composition JSONB, – partners, children (DOBs not ages), notable companions</p>
+<p>accessibility_needs TEXT,</p>
+<p>dietary_restrictions TEXT,</p>
+<p>loyalty_programs JSONB,</p>
+<p>important_dates JSONB, – anniversaries, birthdays</p>
+<p>notes_freeform TEXT,</p>
+<p>– Rapport (per <a class="xref" href="section-24-chat-ui.html">§24</a> tone matching)</p>
+<p>rapport_tone_level INTEGER DEFAULT 2 CHECK (rapport_tone_level BETWEEN 1 AND 5),</p>
+<p>rapport_signals JSONB,</p>
+<p>rapport_level_set_at TIMESTAMPTZ,</p>
+<p>– Lifecycle</p>
+<p>last_extracted_at TIMESTAMPTZ,</p>
+<p>conversation_count INTEGER DEFAULT 0,</p>
+<p>created_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>updated_at TIMESTAMPTZ DEFAULT NOW(),</p>
+<p>UNIQUE (tenant_id, user_id)</p>
+<p>);</p>
+<h3 id="s11-1-1">11.1.1 Scope discipline <a class="anchor-link" href="#s11-1-1" aria-label="Permalink">¶</a></h3>
+<p>The <code>UNIQUE (tenant_id, user_id)</code> constraint is the schema-level guarantee of memory isolation: a single user has exactly one memory row per tenant. Cross-tenant leak (a fact from tenant A's conversation written to tenant B's memory row) is impossible at the constraint level — the wrong tenant_id would produce a violation or an INSERT into a different row.</p>
+<p>But the constraint only catches scope violations at write time. Read and update paths are protected by:</p>
+<ul>
+<li>RLS policies per <a class="xref" href="section-05-database-schema-main-app.html#s5-1">§5.1</a> (<code>auth_user_in_tenant</code> + <code>tenant_is_active</code> for writes).</li>
+<li>The <code>tenantClient</code> proxy per <a class="xref" href="section-05-database-schema-main-app.html#s5-4-3">§5.4.3</a> (auto-filters every query by <code>tenant_id</code>).</li>
+<li>The extraction job's explicit scope contract per <a class="xref" href="#s11-2-2">§11.2.2</a>.</li>
+</ul>
+<p>All three together. Removing any one is a regression.</p>
+<h2 id="s11-2">11.2 Memory Extraction <a class="anchor-link" href="#s11-2" aria-label="Permalink">¶</a></h2>
+<p>Memory extraction is the Inngest-driven background job that updates <code>customer_memories</code> from conversation content. The job's correctness depends on strict tenant scoping — a bug in scope handling produces the worst-case privacy bug shape (one tenant's customer facts written to another tenant's memory row). This subsection specifies the scoping contract and the debounce behavior.</p>
+<h3 id="s11-2-1">11.2.1 Trigger conditions <a class="anchor-link" href="#s11-2-1" aria-label="Permalink">¶</a></h3>
+<p>Extraction is enqueued when EITHER:</p>
+<ul>
+<li>The conversation reaches a multiple of 10 messages.</li>
+<li>The conversation enters a <code>closed</code> or <code>abandoned</code> state.</li>
+</ul>
+<p>Enqueuing produces an Inngest event with <code>tenant_id</code>, <code>conversation_id</code>, <code>user_id</code> populated from the conversation row at enqueue time. The event's <code>tenant_id</code> is the authoritative tenant scope for the extraction — NOT the user's "current" tenant or the calling request's tenant.</p>
+<h3 id="s11-2-2">11.2.2 The mandatory scope contract <a class="anchor-link" href="#s11-2-2" aria-label="Permalink">¶</a></h3>
+<p>Extraction runs inside <code>withPlatformAdminAudit</code> is INCORRECT — it is a tenant-scoped operation, not a platform-admin one. The correct pattern:</p>
+<pre class="codeblock" data-lang="ts"><code>export const extractMemory = inngest.createFunction(
+  { id: 'customer-memory-extraction' },
+  { event: 'conversation.memory_extract_requested' },
+  async ({ event, step }) =&gt; {
+    // tenant_id is sourced ONLY from the event payload.
+    const ctx = await tenantContextFromInngestEvent(event);
+    const db = tenantClient(ctx);
+
+    // Every query MUST go through `db`. The proxy auto-injects
+    // `tenant_id = ctx.tenant_id`. No raw service-role calls allowed
+    // by the lint rule in §26.3a.
+    const conversation = await step.run('fetch-conversation', async () =&gt; {
+      return db
+        .from('conversations')
+        .select('id, user_id, status')
+        .eq('id', event.data.conversation_id)
+        .single();
+    });
+
+    // CRITICAL: assert the conversation's tenant matches the context.
+    // The query above is already auto-filtered by tenant_id, so a
+    // mismatched conversation_id would return zero rows (not a row
+    // from another tenant). The assertion is defense in depth.
+    if (!conversation.data || conversation.data.user_id !== event.data.user_id) {
+      throw new Error('Conversation/user/tenant mismatch in extraction');
+    }
+
+    // ... rest of extraction ...
+
+    // Write goes through `db` too — auto-scoped to tenant_id.
+    await step.run('update-memory', async () =&gt; {
+      return db
+        .from('customer_memories')
+        .upsert({
+          tenant_id: ctx.tenant_id,
+          user_id: event.data.user_id,
+          // ... fields ...
+        });
+    });
+  },
+);</code></pre>
+<p>What this gets us:</p>
+<ul>
+<li><strong>Single source of <code>tenant_id</code>:</strong> the event payload. Not the user's default tenant, not the calling request's host header, not a derived field.</li>
+<li><strong>Auto-scoping at the query layer.</strong> Even if a developer writes a bare <code>db.from('conversations').select(...)</code> without an explicit <code>tenant_id</code> filter, the <code>tenantClient</code> proxy from <a class="xref" href="section-05-database-schema-main-app.html#s5-4-3">§5.4.3</a> adds the filter. A cross-tenant read returns zero rows, not someone else's data.</li>
+<li><strong>Defense-in-depth assertion.</strong> The handler also explicitly verifies the conversation row's <code>user_id</code> matches the event's <code>user_id</code>. Belt-and-suspenders against a future change to the <code>tenantClient</code> proxy.</li>
+<li><strong>Inngest event_id audit trail.</strong> Every extraction run is traceable to the event that triggered it. Forensic investigations can ask "which extraction job processed conversation X?" and answer it from the audit log via <a class="xref" href="section-26-security.html#s26-5">§26.5</a>.</li>
+</ul>
+<h3 id="s11-2-3">11.2.3 Debounce <a class="anchor-link" href="#s11-2-3" aria-label="Permalink">¶</a></h3>
+<p>A customer who sends 100 messages in 5 minutes would otherwise trigger 10 extraction jobs. Each job is a Haiku call. Debounce coalesces these:</p>
+<ul>
+<li>The Inngest event handler checks <code>customer_memories.last_extracted_at</code> for the <code>(tenant_id, user_id)</code> row.</li>
+<li>If <code>last_extracted_at</code> is within the last <code>MEMORY_EXTRACTION_DEBOUNCE_SECONDS</code> (default 120 — env var per <a class="xref" href="section-28-environment-variables-reference.html#s28-16">§28.16</a>), the handler exits without running extraction. The new state is processed by the next natural trigger.</li>
+<li>This is rate-limit-by-design, not by-default — implementations must enforce it. The lint rule in <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a> verifies that the extraction function reads <code>last_extracted_at</code> before issuing a Haiku call.</li>
+</ul>
+<h3 id="s11-2-4">11.2.4 Optimistic locking on memory merge <a class="anchor-link" href="#s11-2-4" aria-label="Permalink">¶</a></h3>
+<p>Multiple extraction jobs can race for the same <code>(tenant_id, user_id)</code> row (rare with debounce in place, possible during the debounce window). The merge step uses optimistic locking:</p>
+<pre class="codeblock" data-lang="ts"><code>// Read current memory with its updated_at timestamp.
+const current = await db
+  .from('customer_memories')
+  .select('*, updated_at')
+  .eq('user_id', event.data.user_id)
+  .single();
+
+// Merge extracted facts into the current memory JSONB structures.
+const merged = mergeMemory(current.data, extracted);
+
+// Conditional update: only commit if updated_at hasn't changed.
+const result = await db
+  .from('customer_memories')
+  .update({ ...merged, updated_at: new Date().toISOString() })
+  .eq('user_id', event.data.user_id)
+  .eq('updated_at', current.data.updated_at)
+  .select();
+
+if (!result.data || result.data.length === 0) {
+  // Another extraction job committed between our read and write.
+  // Re-enqueue with a small delay.
+  await inngest.send({
+    name: 'conversation.memory_extract_requested',
+    data: event.data,
+    ts: Date.now() + 5000,
+  });
+  return;
+}</code></pre>
+<p>The optimistic-lock retry uses Inngest's natural retry/event-send mechanism rather than a tight loop — keeps the function simple and plays well with Inngest's observability.</p>
+<h3 id="s11-2-5">11.2.5 Process <a class="anchor-link" href="#s11-2-5" aria-label="Permalink">¶</a></h3>
+<ul>
+<li>Take the last N messages from the conversation (N = 50 default; configurable via env per <a class="xref" href="section-28-environment-variables-reference.html#s28-16">§28.16</a>).</li>
+<li>Plus current <code>customer_memories</code> row content for the <code>(tenant_id, user_id)</code>.</li>
+<li>Haiku prompt: "Extract any new facts or updates about this customer; return structured JSON."</li>
+<li>Result merged with existing memory using the optimistic-locking pattern in <a class="xref" href="#s11-2-4">§11.2.4</a>.</li>
+</ul>
+<h3 id="s11-2-6">11.2.6 Calls Worth Flagging <a class="anchor-link" href="#s11-2-6" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong><code>tenant_id</code> source must be event payload, never derived.</strong> A helpful refactor that derives <code>tenant_id</code> from the conversation's <code>user_id</code> lookup is a bug — it removes the explicit "what tenant is this extraction for" decision from the path. The Inngest event is the authoritative scope.</li>
+<li><strong>The proxy auto-filter is the primary defense; the assertion in the handler is defense-in-depth.</strong> Both layers matter. If the proxy is ever bypassed (a bug in <code>tenantClient</code>, a future refactor that uses raw service role), the handler-level assertion catches it.</li>
+<li><strong>Debounce trades freshness for cost.</strong> A customer sending a flurry of messages won't have all those facts in memory immediately. For pre-cruise email personalization, the next natural extraction (conversation close, next 10-message boundary) catches up. Acceptable trade-off; document in tenant-facing copy where memory freshness matters.</li>
+<li><strong>Optimistic locking with re-enqueue is preferable to row-level DB locks</strong> for this workload. Locks held during a Haiku call (several seconds) are too long; optimistic-lock-and-retry handles contention cleanly.</li>
+</ul>
+<h2 id="s11-3">11.3 Customer-Facing Memory Controls <a class="anchor-link" href="#s11-3" aria-label="Permalink">¶</a></h2>
+<p>Customer can view, edit, and delete their memory at /settings/memory. Memory respects:</p>
+<ul>
+<li>memory_opt_out flag on users — disables memory extraction entirely for that customer</li>
+<li>Individual field editing — customer can correct or remove specific facts</li>
+<li>Full memory deletion — clears all memory for this tenant</li>
+<li>Per-tenant isolation — memory in tenant A invisible to tenant B</li>
+</ul>
+<h2 id="s11-4">11.4 Memory in Prompts <a class="anchor-link" href="#s11-4" aria-label="Permalink">¶</a></h2>
+<p>Persona system prompt receives a ‘CUSTOMER CONTEXT’ block populated from memory:</p>
+<p>CUSTOMER CONTEXT:</p>
+<p>Name: Sarah Johnson</p>
+<p>Preferences:</p>
+<ul>
+<li>Prefers balcony cabins</li>
+<li>Cruise lines tried: Royal Caribbean (twice), Princess (once)</li>
+<li>Favorite destinations: Caribbean, especially Eastern itineraries</li>
+</ul>
+<p>Family: Husband Mike (DOB 1985-03-15), 2 children (DOBs 2014-05-22, 2017-09-08)</p>
+<p>Accessibility: None noted</p>
+<p>Dietary: Vegetarian</p>
+<p>Loyalty: Royal Caribbean Crown &amp; Anchor (Diamond), Princess Captain’s Circle (Gold)</p>
+<p>Important dates: Wedding anniversary April 15</p>
+<p>Conversation history: 8 prior conversations, 1 booking completed (Caribbean 7-night, 2024)</p>
+<p>Rapport tone level: 3 (casual)</p>
+<h2 id="s11-5">11.5 DOBs Not Ages <a class="anchor-link" href="#s11-5" aria-label="Permalink">¶</a></h2>
+<p>Memory and CRM store dates of birth, never ages. Ages are computed at sailing date for booking validation (cruise lines have age rules for kids, drinking, etc.). The DOB lifecycle for estimated entries is specified below to prevent old estimates feeding into personalization indefinitely.</p>
+<h3>Storage shape</h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "first_name": "Mike",
+  "date_of_birth": "1985-01-01",
+  "date_of_birth_is_estimated": true,
+  "estimation_basis": "customer said 'about 40' on 2025-03-15",
+  "estimation_recorded_at": "2025-03-15T14:23:00Z",
+  "estimation_last_reprompt_at": null
+}</code></pre>
+<h3>Visual marker for estimated DOBs</h3>
+<p>Every UI rendering of an estimated DOB MUST include a visual marker:</p>
+<div class="table-wrap"><table><thead><tr><th>Surface</th><th>Rendering</th></tr></thead><tbody><tr><td>CRM contact detail view</td><td>"(estimated, click to confirm)" link next to the DOB field</td></tr><tr><td>Booking submission gate (<a class="xref" href="section-20-booking-flow.html">§20</a>)</td><td>"We need to confirm Mike's exact birthday before submitting — please ask Mike to verify"</td></tr><tr><td>Pre-cruise emails (<a class="xref" href="section-23-email-notifications.html">§23</a>)</td><td>DOB-derived content (e.g., "celebrating Mike's 40th") is SUPPRESSED for estimated DOBs</td></tr><tr><td>Quote PDFs</td><td>Estimated DOBs not rendered at all</td></tr><tr><td>Customer-facing memory view (<a class="xref" href="#s11-3">§11.3</a>)</td><td>"(approx)" badge next to the DOB</td></tr><tr><td>Agent conversation context (<a class="xref" href="section-09-ai-personas.html">§9</a>)</td><td>Persona instructed to never assert facts about birthdays for estimated DOBs</td></tr></tbody></table></div>
+<p>The principle: <strong>estimated DOBs participate in eligibility decisions but NOT in personalization content</strong>. Saying "celebrating Mike's milestone birthday!" when Mike's DOB is estimated risks an awkward customer experience if the estimate was off.</p>
+<h3>Aging-out and re-prompting</h3>
+<p>If an estimated DOB is:</p>
+<ul>
+<li>Older than 365 days from <code>estimation_recorded_at</code>, AND</li>
+<li>Never confirmed (no booking submitted that locked in the actual DOB via <a class="xref" href="section-20-booking-flow.html">§20</a>'s confirmation gate), AND</li>
+<li>The associated customer is still in active conversation with the tenant (any message in the last 90 days),</li>
+</ul>
+<p>then on the customer's next conversation turn, the AI is prompted (via persona system prompt augmentation) to gently re-confirm:</p>
+<blockquote>"I have a quick reminder — when we first chatted, you mentioned Mike was around 40. For trip planning we should have an exact birthday — would you mind sharing it (or noting if my estimate was off)?"</blockquote>
+<p>The re-prompt is generated by the persona in-character. After the customer responds:</p>
+<ul>
+<li>If they provide an exact DOB: <code>date_of_birth_is_estimated = false</code>, <code>estimation_basis</code> cleared, <code>date_of_birth</code> updated.</li>
+<li>If they decline or ignore: <code>estimation_last_reprompt_at = NOW()</code>. No further re-prompt for another 365 days.</li>
+</ul>
+<h3>Background cleanup</h3>
+<p>Inngest cron <code>dob-estimate-reprompt-eligible</code> runs nightly:</p>
+<ul>
+<li>Finds <code>customer_memories</code> rows where any family member has <code>date_of_birth_is_estimated = true</code> AND <code>estimation_recorded_at &lt; NOW() - 365 days</code> AND (<code>estimation_last_reprompt_at IS NULL</code> OR <code>estimation_last_reprompt_at &lt; NOW() - 365 days</code>).</li>
+<li>Sets <code>awaiting_dob_reprompt: true</code> flag on the <code>customer_memories</code> row.</li>
+<li>On the customer's next conversation turn, the persona prompt augmentation logic (per <a class="xref" href="section-09-ai-personas.html#s9-7">§9.7</a>) reads this flag and includes the re-prompt instruction.</li>
+<li>The flag clears once a re-prompt has been issued.</li>
+</ul>
+<p>A customer who hasn't conversed with the tenant in 90+ days is not re-prompted — no point waking up a dormant relationship to ask about a birthday.</p>
+<h3>Schema</h3>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.customer_memories
+  ADD COLUMN awaiting_dob_reprompt BOOLEAN NOT NULL DEFAULT FALSE;</code></pre>
+<p>The estimation tracking fields live inside the family_composition JSONB per <a class="xref" href="#s11-1">§11.1</a>; this adds the gate flag for fast read by the conversation handler.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Suppression in pre-cruise emails is the most important UX guard.</strong> A "celebrating Mike's 40th!" email when Mike is actually 38 is annoying; when Mike is actually 47, worse.</li>
+<li><strong>Re-prompt cadence (365 days) is generous.</strong> Re-prompting every 90 days creates conversation friction.</li>
+<li><strong>The persona delivers the re-prompt, not a system message.</strong> Fits the chat.</li>
+<li><strong>Estimated DOBs persist through customer deletion grace.</strong> On CCPA deletion, treated same as confirmed DOBs per <a class="xref" href="section-25-data-privacy-retention.html#s25-4a">§25.4a</a>.</li>
+</ul>
+<h2 id="s11-6">11.6 Anonymous-to-Authenticated Transfer <a class="anchor-link" href="#s11-6" aria-label="Permalink">¶</a></h2>
+<p>Anonymous customers can chat for a limited number of messages before sign-up is required per <a class="xref" href="section-24-chat-ui.html#s24-8">§24.8</a>. When they sign up, the platform offers explicit consent to transfer the anonymous session into their authenticated identity. The consent UX has three properties: <strong>preview before accept, distinct from sign-up flow, and 24-hour reversibility</strong>.</p>
+<h3>Flow</h3>
+<pre class="codeblock"><code>Anonymous user chats ──► identifier limits per §24.8
+  │
+  ▼
+Sign-up prompt ──► User completes OAuth
+  │
+  ▼
+Consent screen with PREVIEW:
+  "We saved your previous conversation. Want to keep it?
+   You'll be able to continue where you left off.
+   You can undo this within 24 hours."
+
+   [Preview shows: N messages, time range, first ~20 words of each]
+   [Yes, keep it]  [No, start fresh]
+  │
+  ▼
+On Yes: anonymous_session_id soft-linked to user_id with
+        transfer_soft_commit_at = NOW()
+  │
+  ▼
+Memory extraction + CRM contact creation deferred 24 hours
+  │
+  ├──► User does nothing for 24h: soft commit becomes hard commit;
+  │    memory extraction proceeds; CRM contact created if applicable
+  │
+  └──► User clicks "Undo transfer" in settings within 24h:
+       soft commit reverted; conversation re-anonymized; no
+       downstream processing has happened
+
+On No: anonymous session marked discarded; purged at retention.</code></pre>
+<h3>Preview rendering</h3>
+<p>The consent screen MUST show:</p>
+<ul>
+<li>Total message count being transferred.</li>
+<li>Time span of the conversation (first message → last message).</li>
+<li>The first ~20 words of each message (truncated, not full content).</li>
+<li>A note: "These messages will be available to you and to your trip consultant (if you book through this organization). If anything in these messages was personal or sensitive, you can choose 'No, start fresh.'"</li>
+</ul>
+<p>The preview is the H-3 fix: a user who clicked through a generic "keep your conversation?" prompt without thought now sees what's about to be associated with their authenticated identity.</p>
+<h3>24-hour soft commit</h3>
+<p>After the user clicks "Yes, keep it":</p>
+<ul>
+<li><code>anonymous_sessions.transfer_soft_commit_at = NOW()</code>, <code>anonymous_sessions.transferred_to_user_id = user_id</code>.</li>
+<li>The session is now associated with the user — they can continue the conversation immediately.</li>
+<li>BUT: downstream processing that creates derived data is DEFERRED for 24 hours.</li>
+</ul>
+<h3>Deferred-processing rule</h3>
+<p>For 24 hours after <code>transfer_soft_commit_at</code>, the following do NOT execute against the transferred messages:</p>
+<ul>
+<li>Memory extraction (<code>extractMemory</code> per <a class="xref" href="#s11-2">§11.2</a>).</li>
+<li>CRM contact creation.</li>
+<li>Pre-cruise email scheduling.</li>
+<li>Persona memory updates beyond what's needed to keep the conversation flowing.</li>
+</ul>
+<p>If the user invokes "Undo transfer" within 24h:</p>
+<ul>
+<li><code>anonymous_sessions.transfer_soft_commit_at = NULL</code>, <code>anonymous_sessions.transferred_to_user_id = NULL</code>.</li>
+<li>The conversation is moved back to anonymous-session state with the user's authenticated session unaffected. The user can start fresh immediately.</li>
+<li>No derived data needs cleanup — the deferred-processing rule ensured none was created.</li>
+</ul>
+<p>After 24h elapses without an undo:</p>
+<ul>
+<li><code>anonymous_sessions.transfer_committed_at = NOW()</code>.</li>
+<li>Inngest job <code>transfer-finalize</code> fires, running the deferred processing.</li>
+<li>Subsequent thumbs / feedback / memory updates apply normally.</li>
+</ul>
+<h3>Where the "Undo" affordance lives</h3>
+<p>A persistent banner at the top of <code>/settings/conversations</code> for the 24h post-transfer window:</p>
+<blockquote>"We saved your previous (pre-signup) conversation with [Persona Name] from [DateTime]. [Undo this transfer] (available for [N hours] more)"</blockquote>
+<p>After 24h, the banner disappears and the link is replaced with "Transfer made permanent on [DateTime]."</p>
+<h3>Schema additions</h3>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.anonymous_sessions
+  ADD COLUMN transfer_soft_commit_at TIMESTAMPTZ,
+  ADD COLUMN transferred_to_user_id UUID REFERENCES public.users(id),
+  ADD COLUMN transfer_committed_at TIMESTAMPTZ,
+  ADD COLUMN transfer_undo_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX anonymous_sessions_pending_commit_idx
+  ON public.anonymous_sessions(transfer_soft_commit_at)
+  WHERE transfer_soft_commit_at IS NOT NULL
+    AND transfer_committed_at IS NULL;</code></pre>
+<h3>Audit</h3>
+<p>Every undo writes to <code>audit_log</code> with <code>action = 'session_transfer.undone'</code>, <code>changes</code> snapshot of message count and time range.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>24h is the right window length for "I clicked through without thinking."</strong> Longer creates a long tail of pending commits; shorter doesn't accommodate users who returned next morning to reconsider.</li>
+<li><strong>Deferred-processing simplifies undo dramatically.</strong> Without it, undo would need to "un-extract memory," "delete CRM contact," etc. With it, undo is "set columns to NULL."</li>
+<li><strong>The preview is the H-3 fix; the undo is the safety net.</strong> Both are required.</li>
+<li><strong><code>transfer_undo_count</code> is signal-not-surfaced.</strong> Logged for future observation if a customer pattern of "consent → undo → re-consent" emerges.</li>
+</ul>
+<h2 id="s11-7">11.7 Memory Audit <a class="anchor-link" href="#s11-7" aria-label="Permalink">¶</a></h2>
+<p>All memory changes audit-logged: who changed what when (customer self-edit, AI extraction, agent edit). 7-year retention.</p>
+<h2 id="s11-8">11.8 Memory and CRM <a class="anchor-link" href="#s11-8" aria-label="Permalink">¶</a></h2>
+<p>Memory is for the AI’s conversational context. CRM (<a class="xref" href="section-12-crm.html">§12</a>) is for structured records used by agents. They share some data (DOB, dietary, accessibility) but serve different purposes. Updates to one don’t automatically propagate to the other unless explicitly handled in the data flow.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-10-ai-supervisor.html">← §10: AI Supervisor</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-12-crm.html">§12: CRM →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

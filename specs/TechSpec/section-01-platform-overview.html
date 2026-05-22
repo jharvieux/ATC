@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 1 — Platform Overview — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 1</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s1">Section 1 — Platform Overview</h1>
+<p>The platform delivers AI-powered cruise travel agency services across three business models, sharing a common technical foundation. This section defines the business model, the personas the platform serves, and the high-level technical posture.</p>
+<h2 id="s1-1">1.1 Business Model — Three Prongs <a class="anchor-link" href="#s1-1" aria-label="Permalink">¶</a></h2>
+<h3>Prong 1: Fully Automated Own Agency</h3>
+<p>The platform operator runs their own cruise travel agency. AI personas handle customer inquiries, recommend trips, generate quotes, and submit bookings. Commissions accrue to the platform directly. This is the platform’s first-party revenue stream.</p>
+<h3>Prong 2: BYO-Host SaaS for Independent Agents</h3>
+<p>Independent travel agents who already have their own host agency relationship (e.g., with Travel Leaders, Avoya, Cruise Planners) subscribe to the platform as software. They bring their own host agency credentials. The platform charges a per-seat subscription; commissions flow to their existing host agency arrangements without platform intermediation.</p>
+<h3>Prong 3: White-Label Sub-Host Model</h3>
+<p>Independent travel agents who don’t have their own host agency relationship subscribe to the platform AND book under the platform’s host agency. The platform takes a commission split (with tiered rates) and remits the remainder via Stripe Connect Express.</p>
+<h2 id="s1-2">1.2 Technical Posture at a Glance <a class="anchor-link" href="#s1-2" aria-label="Permalink">¶</a></h2>
+<p>┌─────────────────────────────────────────────────────────────────────┐</p>
+<p>│ Customer-facing surfaces (chat, quotes, bookings, group invites) │</p>
+<p>├─────────────────────────────────────────────────────────────────────┤</p>
+<p>│ Tenant-facing surfaces (CRM, supervisor, admin, RAG management) │</p>
+<p>├─────────────────────────────────────────────────────────────────────┤</p>
+<p>│ Platform-admin surfaces (multi-tenant ops, legal docs, audit) │</p>
+<p>├─────────────────────────────────────────────────────────────────────┤</p>
+<p>│ │</p>
+<p>│ Main App (Next.js 14, Vercel) ──── RAG Service (Next.js, Vercel) │</p>
+<p>│ │ │ │</p>
+<p>│ ├──── Supabase (auth + DB + storage) │ │</p>
+<p>│ │ │ │</p>
+<p>│ ├──── Stripe (subscriptions + Connect) │ │</p>
+<p>│ │ │ │</p>
+<p>│ ├──── Anthropic (Sonnet + Haiku) ├──── separate DB │</p>
+<p>│ │ │ (Supabase) │</p>
+<p>│ ├──── OpenAI (embeddings) │ │</p>
+<p>│ │ │ │</p>
+<p>│ ├──── Resend (email) │ │</p>
+<p>│ │ │ │</p>
+<p>│ ├──── Inngest (background jobs) │ │</p>
+<p>│ │ │ │</p>
+<p>│ └──── Host Agency Adapter Layer ─────── Host Agency APIs │</p>
+<p>│ │</p>
+<p>└─────────────────────────────────────────────────────────────────────┘</p>
+<h2 id="s1-3">1.3 Personas Served <a class="anchor-link" href="#s1-3" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Persona</strong></th><th><strong>Description</strong></th><th><strong>Primary Surfaces</strong></th></tr></thead><tbody><tr><td>Customer</td><td>End traveler being served by a tenant agency</td><td>Chat, quote view, booking flow, group invite landing</td></tr><tr><td>Tenant Owner</td><td>Operator of a sub-host or BYO-host tenant</td><td>Tenant admin, CRM, supervisor, settings</td></tr><tr><td>Tenant Agent</td><td>Sub-user of a tenant; assists with customers</td><td>CRM, chat history, quote builder, booking flow</td></tr><tr><td>Tenant Billing Admin</td><td>Manages subscription and payouts</td><td>Billing UI, Stripe Connect dashboard</td></tr><tr><td>Platform Super Admin</td><td>Operates the platform; full access</td><td>Admin console, RAG global review, tenant ops</td></tr><tr><td>Platform Compliance</td><td>Handles tenant reviews and legal</td><td>Admin console, onboarding queue, legal docs</td></tr><tr><td>Platform Finance</td><td>Reconciles commissions, payouts</td><td>Admin console, finance dashboards</td></tr><tr><td>Platform Support</td><td>Customer-facing support across tenants</td><td>Read-only admin views, ticket integration</td></tr><tr><td>AI Persona</td><td>The AI assistant the customer interacts with</td><td>Chat, drafted emails, suggested quotes</td></tr><tr><td>Group Coordinator</td><td>Customer organizing a group booking</td><td>Coordinator portal, forum chat, RSVPs</td></tr><tr><td>Group Invitee</td><td>Customer invited to a group</td><td>Invitation landing, forum chat, RSVP</td></tr></tbody></table></div>
+<h2 id="s1-4">1.4 Tenant Resolution <a class="anchor-link" href="#s1-4" aria-label="Permalink">¶</a></h2>
+<p>Every request to the platform resolves to a tenant context based on the request’s host:</p>
+<ul>
+<li>Platform primary domain (e.g., ai-travelconcierge.com) → platform context (admin operations, signup landing)</li>
+<li>Tenant subdomain on platform (e.g., smithtravel.ai-travelconcierge.com) → that tenant</li>
+<li>Tenant custom domain (e.g., travel.smithfamilyagency.com) → that tenant via DNS CNAME (per <a class="xref" href="section-16-white-label-branding.html#s16-3">§16.3</a>)</li>
+</ul>
+<p>Tenant resolution happens in middleware and is cached for the request lifecycle. RLS policies enforce tenant scoping at the database level.</p>
+<h2 id="s1-5">1.5 Multi-Tenancy Architecture <a class="anchor-link" href="#s1-5" aria-label="Permalink">¶</a></h2>
+<p>The platform enforces tenant isolation through four layers (<a class="xref" href="section-26-security.html#s26-2">§26.2</a>): identity (Supabase Auth), tenant context (middleware tenant resolution), authorization (<code>assertPermission()</code>), and data access scoping (<code>tenantClient(ctx)</code> plus RLS).</p>
+<p>All tenant-scoped tables include a <code>tenant_id</code> column with RLS policies enforcing access. Two helper functions are used in policies: <code>auth_user_in_tenant(tenant_id)</code> checks the user has an active row in that tenant; <code>tenant_is_active(tenant_id)</code> checks the tenant itself is operational. See <a class="xref" href="section-05-database-schema-main-app.html#s5-1">§5.1</a> for definitions and <a class="xref" href="section-05-database-schema-main-app.html#s5-1-2">§5.1.2</a> for required policy coverage.</p>
+<p>Database access from application code goes through typed clients per <a class="xref" href="section-05-database-schema-main-app.html#s5-4">§5.4</a>. Service-role usage discipline is defined in <a class="xref" href="section-26-security.html#s26-3a">§26.3a</a>.</p>
+<p>The platform supports a strictly two-level structure: the platform, and direct tenants (BYO-host, sub-host, or the platform's own automated agency). No tenant nests beneath another tenant. If a sub-host engages subcontractors to help operate their agency, those subcontractors are users inside the sub-host's tenant — not separate tenants on the platform. The platform has no relationship with a sub-host's subcontractors.</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="index.html">← Table of Contents</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-02-technology-stack.html">§2: Technology Stack →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

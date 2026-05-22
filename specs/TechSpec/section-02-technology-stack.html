@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 2 — Technology Stack — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 2</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s2">Section 2 — Technology Stack</h1>
+<p>Concrete technology choices, with rationale and scope.</p>
+<h2 id="s2-1">2.1 Application Runtime <a class="anchor-link" href="#s2-1" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Component</strong></th><th><strong>Choice</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Frontend framework</td><td>Next.js 14 (App Router)</td><td>Server components, SSR, streaming</td></tr><tr><td>Hosting</td><td>Vercel</td><td>Edge functions, automatic TLS, deployment</td></tr><tr><td>Backend language</td><td>TypeScript (Node.js runtime)</td><td>Shared types between frontend and backend</td></tr><tr><td>Mobile</td><td>Responsive web only (no native apps in v6)</td><td>Design preserves future native option</td></tr><tr><td>UI library</td><td>shadcn/ui + Tailwind CSS</td><td>Component composition; tenant theming via CSS vars</td></tr></tbody></table></div>
+<h2 id="s2-2">2.2 Data &amp; State <a class="anchor-link" href="#s2-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Component</strong></th><th><strong>Choice</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Database</td><td>Supabase (PostgreSQL)</td><td>Main app DB; separate Supabase project for RAG</td></tr><tr><td>Auth</td><td>Supabase Auth</td><td>OAuth providers: Google, Microsoft, Facebook</td></tr><tr><td>File storage</td><td>Supabase Storage</td><td>Logos, generated images, statement PDFs</td></tr><tr><td>Row-level security</td><td>Postgres RLS</td><td>Tenant scoping enforced at DB layer</td></tr><tr><td>Vector embeddings</td><td>pgvector in RAG Supabase</td><td>OpenAI text-embedding-3-small (1536-dim)</td></tr><tr><td>Job queue / cron</td><td>Inngest</td><td>Background tasks, scheduled jobs, retries</td></tr></tbody></table></div>
+<h2 id="s2-3">2.3 AI Services <a class="anchor-link" href="#s2-3" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Service</strong></th><th><strong>Use</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Claude Sonnet (Anthropic)</td><td>Conversational chat, drafting, complex reasoning</td><td>Streaming via SSE</td></tr><tr><td>Claude Haiku (Anthropic)</td><td>Classification, screening, entity extraction, lightweight tasks</td><td>Cost-effective for high-volume calls</td></tr><tr><td>OpenAI Embeddings</td><td>Vector embeddings for RAG</td><td>text-embedding-3-small @ 1536 dimensions</td></tr><tr><td>Image generation</td><td>Replicate (Stable Diffusion XL) or OpenAI DALL-E 3</td><td>For group hero images, destination imagery; choice deferred to implementation</td></tr></tbody></table></div>
+<h2 id="s2-4">2.4 Payments <a class="anchor-link" href="#s2-4" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Component</strong></th><th><strong>Choice</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Subscription billing</td><td>Stripe Subscriptions</td><td>Per-tenant subscriptions for SaaS access</td></tr><tr><td>Marketplace payouts</td><td>Stripe Connect Express</td><td>Sub-host KYC + payouts via standard Connect flow</td></tr><tr><td>Tax reporting</td><td>Stripe Connect (1099-NEC automatic)</td><td>Stripe files 1099s for sub-hosts ≥ $600/year</td></tr><tr><td>Currency</td><td>USD only at launch</td><td>Architecture supports adding currencies later</td></tr></tbody></table></div>
+<h2 id="s2-5">2.5 Communication <a class="anchor-link" href="#s2-5" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Channel</strong></th><th><strong>Provider</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Outbound email</td><td>Resend</td><td>React Email templates, tenant-from domain support</td></tr><tr><td>Inbound email (Gmail)</td><td>Gmail API via Google Pub/Sub</td><td>Optional per-tenant Gmail integration</td></tr><tr><td>SMS (Phase 3)</td><td>Twilio (planned)</td><td>Out of scope for v6 launch</td></tr><tr><td>Webhooks</td><td>Stripe, Resend, Gmail Pub/Sub</td><td>Signature verification mandatory</td></tr></tbody></table></div>
+<h2 id="s2-6">2.6 Observability <a class="anchor-link" href="#s2-6" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Concern</strong></th><th><strong>Approach</strong></th><th><strong>Notes</strong></th></tr></thead><tbody><tr><td>Application errors</td><td>Sentry (or Vercel built-in)</td><td>Error tracking with stack traces (PII scrubbed)</td></tr><tr><td>Application logs</td><td>Vercel logs + structured JSON</td><td>No PII; IDs only</td></tr><tr><td>Metrics</td><td>Vercel Analytics + custom dashboards</td><td>Performance, latency, cost trends</td></tr><tr><td>Audit logs</td><td>PostgreSQL audit_log table</td><td>7-year retention per <a class="xref" href="section-25-data-privacy-retention.html">§25</a></td></tr><tr><td>AI cost tracking</td><td>Anthropic + OpenAI usage APIs</td><td>Per-tenant cost attribution</td></tr></tbody></table></div>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-01-platform-overview.html">← §1: Platform Overview</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-03-multi-tenancy-tier-matrix.html">§3: Multi-Tenancy & Tier Matrix →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

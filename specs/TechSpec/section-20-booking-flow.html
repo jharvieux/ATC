@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 20 — Booking Flow — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 20</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s20">Section 20 — Booking Flow</h1>
+<p><strong>DESIGN STATUS:</strong><strong> </strong>DEFERRED for final design until host agency is selected. Many host agencies provide booking widgets (iframe or embedded JS) that handle the booking UI directly. v6 <a class="xref" href="#s20">§20</a> draft documents the platform-native flow as a fallback. Once host is chosen, decision needed: use host widget vs build native flow.</p>
+<h2 id="s20-1">20.1 Considerations Regardless of Implementation Path <a class="anchor-link" href="#s20-1" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>AI co-pilot, CRM integration, group context, persona handoff — platform-native regardless</li>
+<li>Commission tracking and reconciliation — platform-side</li>
+<li>Booking record (commissionable_fare, fare_breakdown) — must be captured per <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a> even if host widget owns the form</li>
+<li>DOB-not-ages, estimated DOB confirmation requirements — must apply somewhere in flow</li>
+<li>Multi-traveler contact creation — handled platform-side after submission</li>
+<li>All <a class="xref" href="#s20">§20</a> schema fields stay valid in either implementation path</li>
+</ul>
+<h2 id="s20-2">20.2 Platform-Native Flow (Fallback Reference Design) <a class="anchor-link" href="#s20-2" aria-label="Permalink">¶</a></h2>
+<p>[Quote accepted] OR [Direct booking request]</p>
+<p>│</p>
+<p>▼</p>
+<p>[Draft booking created]</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 1: Confirm trip details</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 2: Passenger details (DOBs not ages)</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 3: Booking options (insurance, addons)</p>
+<p>│</p>
+<p>▼</p>
+<p>Stage 4: Review and confirm (with disclosures)</p>
+<p>│</p>
+<p>▼</p>
+<p>Submit to host adapter</p>
+<p>│</p>
+<p>▼</p>
+<p>Booking confirmed / pending host review / rejected</p>
+<p>│</p>
+<p>▼</p>
+<p>Confirmation page + email</p>
+<h2 id="s20-3">20.3 Entry Points <a class="anchor-link" href="#s20-3" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Entry</strong></th><th><strong>Context</strong></th></tr></thead><tbody><tr><td>From a quote</td><td>Quote accepted → booking flow with quote data pre-filled</td></tr><tr><td>From AI chat</td><td>AI’s collect_booking_details tool → flow with conversation context</td></tr><tr><td>From a group invitation</td><td>Invitee clicks ‘Book my cabin’ → group context pre-filled</td></tr><tr><td>From ‘Book now’ CTA</td><td>Direct entry, blank booking</td></tr><tr><td>From price watch alert</td><td>Watch fires → ‘Book at this price’ → flow with watch context</td></tr></tbody></table></div>
+<h2 id="s20-4">20.4 AI Co-Pilot <a class="anchor-link" href="#s20-4" aria-label="Permalink">¶</a></h2>
+<p>Persistent panel beside the booking form. Modes:</p>
+<ul>
+<li>Passive (default): quiet; shows stage indicator, quick stats, suggestion chips</li>
+<li>Active: customer types or asks; chat panel expands</li>
+</ul>
+<p>Co-pilot can do:</p>
+<ul>
+<li>Answer field-specific questions</li>
+<li>Compare options</li>
+<li>Pull from CRM with permission</li>
+<li>Validate input (typo detection)</li>
+<li>Detect concerns (tight final-payment timeline)</li>
+<li>Pre-fill from memory</li>
+</ul>
+<p>Co-pilot cannot submit booking — only the form does that. All co-pilot responses go through supervisor preflight per <a class="xref" href="section-10-ai-supervisor.html">§10</a>.</p>
+<h2 id="s20-5">20.5 DOB Confirmation Gate <a class="anchor-link" href="#s20-5" aria-label="Permalink">¶</a></h2>
+<p>If a passenger has date_of_birth_is_estimated = true (from age-only mention), field shows pre-filled with warning icon: ‘We have [name]’s DOB as approximately [date]. Please confirm or update.’ Booking cannot submit until all estimation flags cleared.</p>
+<h2 id="s20-6">20.6 Validation Layers <a class="anchor-link" href="#s20-6" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>Layer</strong></th><th><strong>When</strong></th><th><strong>Examples</strong></th></tr></thead><tbody><tr><td>Per-field</td><td>Real-time as customer types</td><td>Email format, DOB sanity, passport expiry &gt; sailing date + 6 months</td></tr><tr><td>Cross-field</td><td>On stage transition</td><td>All passengers have DOBs; pricing math sums</td></tr><tr><td>Final submission</td><td>Before host adapter call</td><td>All required fields populated; cruise line age rules satisfied; promo codes verified</td></tr></tbody></table></div>
+<h2 id="s20-7">20.7 Sub-Host Tenant-of-Record Disclosure <a class="anchor-link" href="#s20-7" aria-label="Permalink">¶</a></h2>
+<p>Stage 4 (Review) explicitly shows the legal entity of record:</p>
+<p><em>This booking will be made through [Host Agency Name]. Your sub-host: [Tenant Name]. Customer service contact: [Tenant Support Email].</em></p>
+<p>Required for transparency. Customer sees who’s actually selling them the trip even when site is white-labeled.</p>
+<h2 id="s20-8">20.8 No Anonymous Bookings <a class="anchor-link" href="#s20-8" aria-label="Permalink">¶</a></h2>
+<p>Booking requires a signed-in account. Booking flow detects anonymous state and redirects to signup with the in-progress draft preserved (per <a class="xref" href="section-11-customer-memory.html#s11-6">§11.6</a> anonymous-to-authenticated transfer).</p>
+<h2 id="s20-9">20.9 Cancellation &amp; Modification <a class="anchor-link" href="#s20-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Cancellation: shows impact (refund, lost deposits) → customer confirms → adapter.cancelBooking() → status to ‘cancelled’ → commission reversal per <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a></li>
+<li>Modification: cabin change, passenger add/remove, insurance changes — varies by cruise line and proximity to sailing; handled via adapter.modifyBooking()</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-19-forum-style-group-chat.html">← §19: Forum-Style Group Chat</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-21-rag-knowledge-base-consumer-side.html">§21: RAG Knowledge Base (Consumer Side) →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

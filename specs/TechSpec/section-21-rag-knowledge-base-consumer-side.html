@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 21 — RAG Knowledge Base (Consumer Side) — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 21</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s21">Section 21 — RAG Knowledge Base (Consumer Side)</h1>
+<p>How retrieved knowledge is used in chat conversations: filtering, prompt inclusion, citation, freshness handling, and the hallucination defense layer.</p>
+<h2 id="s21-1">21.1 Retrieval Flow in Chat <a class="anchor-link" href="#s21-1" aria-label="Permalink">¶</a></h2>
+<p>[User message arrives]</p>
+<p>│</p>
+<p>▼</p>
+<p>Extract entities (destinations, cruise lines, dates, party type, intent)</p>
+<p>│</p>
+<p>▼</p>
+<p>Build query for RAG (message text + entities + persona specialty)</p>
+<p>│</p>
+<p>▼</p>
+<p>Call RAG /retrieve (per <a class="xref" href="section-08-rag-service-architecture.html#s8-4">§8.4</a>)</p>
+<p>│</p>
+<p>▼</p>
+<p>Filter and sort chunks (confidence floor, deduplication, top N)</p>
+<p>│</p>
+<p>▼</p>
+<p>Format into RAG knowledge block</p>
+<p>│</p>
+<p>▼</p>
+<p>Include in system prompt for Claude Sonnet</p>
+<p>│</p>
+<p>▼</p>
+<p>Stream response</p>
+<p>│</p>
+<p>▼</p>
+<p>Log retrieval feedback signals post-response</p>
+<h2 id="s21-2">21.2 Entity Extraction <a class="anchor-link" href="#s21-2" aria-label="Permalink">¶</a></h2>
+<p>Lightweight Haiku call before RAG. Extracts:</p>
+<ul>
+<li>Destinations (Alaska, Glacier Bay)</li>
+<li>Cruise lines (Royal Caribbean)</li>
+<li>Ships (Symphony of the Seas)</li>
+<li>Travel dates</li>
+<li>Passenger composition (couple, family with kids)</li>
+<li>Intent (research, compare, book, support)</li>
+<li>Categories hint (cabin_intel, dining, ports, etc.)</li>
+</ul>
+<h2 id="s21-3">21.3 Chunk Filtering Before Prompt Inclusion <a class="anchor-link" href="#s21-3" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Confidence floor: chunks with composite_confidence &lt; 0.35 dropped</li>
+<li>Expired chunks: excluded</li>
+<li>Closed-to-new promos: only included with contact-has-booking signal</li>
+<li>Similarity dedup: similar chunks (&gt;0.8) — only highest scored kept</li>
+<li>Final cap: top 3-5 chunks (default 4) included in prompt</li>
+</ul>
+<h2 id="s21-4">21.4 RAG Knowledge Block Format (in Prompt) <a class="anchor-link" href="#s21-4" aria-label="Permalink">¶</a></h2>
+<p>KNOWLEDGE CONTEXT (retrieved for this turn):</p>
+<p>[1] Authority: 0.92 (official) | Recency: 0.85 | Match: 0.91 | Confidence: 0.89</p>
+<p>Category: cabin_intel | Source: royalcaribbean.com</p>
+<p>Indicator: ★★★★★ Verified official source</p>
+<p>Royal Caribbean’s Symphony of the Seas Junior Suites feature [content…].</p>
+<p>[2] Authority: 0.85 (tenant_verified) | Recency: 0.78 | Match: 0.84 | Confidence: 0.82</p>
+<p>Category: dining | Source: tenant verified</p>
+<p>Indicator: ★★★★ Verified by your agency</p>
+<p>Symphony of the Seas dining venues include [content…].</p>
+<p>INSTRUCTIONS:</p>
+<ul>
+<li>Higher-confidence chunks should be treated as more reliable.</li>
+<li>“Verified” chunks are explicitly approved; trust their facts.</li>
+<li>“Tenant knowledge” chunks may be more situational.</li>
+<li>Always include a freshness caveat for pricing or time-sensitive info.</li>
+<li>If chunks contradict each other, prefer the higher-authority chunk and note the discrepancy if relevant.</li>
+<li>If no chunks are highly relevant to the user’s question, say so honestly.</li>
+</ul>
+<h2 id="s21-5">21.5 Citation in AI Responses <a class="anchor-link" href="#s21-5" aria-label="Permalink">¶</a></h2>
+<p>Inline source attribution lets customer evaluate trust:</p>
+<p><em>Symphony of the Seas Junior Suites typically have a 220 sq ft layout with a private balcony, per Royal Caribbean’s official site. Pricing varies seasonally; let me look up current rates.</em></p>
+<p>For sub-host scenarios, tenant-submitted content framed as ‘your agency’s records’ — preserves white-label trust without misrepresenting authority.</p>
+<h2 id="s21-6">21.6 Customer-Facing Source Transparency <a class="anchor-link" href="#s21-6" aria-label="Permalink">¶</a></h2>
+<p>Chat UI shows subtle ‘source’ indicator on AI responses that used RAG. Hover/click expands to: source title, confidence tier (★ rating), excerpt. Tenant-configurable: tenants can disable source display for minimal interface.</p>
+<h2 id="s21-7">21.7 Outdated Information Handling <a class="anchor-link" href="#s21-7" aria-label="Permalink">¶</a></h2>
+<p>Time-sensitive content auto-flagged for freshness caveats: pricing, promos, schedules, frequently-changing policies. Hard-expiry chunks excluded. UI shows ‘may be outdated’ badge for chunks older than category halflife.</p>
+<h2 id="s21-8">21.8 Conflict Handling <a class="anchor-link" href="#s21-8" aria-label="Permalink">¶</a></h2>
+<p>Two chunks may disagree. AI prompted to:</p>
+<ul>
+<li>Prefer higher authority by default</li>
+<li>Weight recency too — newer often trumps stale official</li>
+<li>Surface conflict honestly when relevant</li>
+<li>Authoritative_override chunks win against any other</li>
+</ul>
+<h2 id="s21-9">21.9 No-Result Handling <a class="anchor-link" href="#s21-9" aria-label="Permalink">¶</a></h2>
+<p>When RAG returns nothing useful (all chunks below 0.35), AI receives empty knowledge block with instructions:</p>
+<ul>
+<li>Don’t fabricate</li>
+<li>Answer from general knowledge with appropriate caveats if possible</li>
+<li>Acknowledge limitation: ‘I don’t have specific information on that. Would you like me to check with our team?’</li>
+<li>Consider escalation</li>
+</ul>
+<h2 id="s21-10">21.10 <a class="xref" href="#s21-19">§21.19</a> Hallucination Defense (Consolidated) <a class="anchor-link" href="#s21-10" aria-label="Permalink">¶</a></h2>
+<p>There is no single mechanism. The platform stacks eight layers of defense. The goal: be wrong rarely; when wrong, be wrong in low-consequence ways; when high-consequence, escalate rather than commit.</p>
+<h3>Eight-Layer Defense</h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Layer</strong></th><th><strong>What It Does</strong></th><th><strong>Catches</strong></th></tr></thead><tbody><tr><td>1. Persona prompt instructions</td><td>Forbids unsupported facts, requires hedging, freshness caveats</td><td>Baseline; cheapest defense</td></tr><tr><td>2. RAG grounding</td><td>Provides retrieved chunks with authority/recency</td><td>Factual hallucination on topics with RAG coverage</td></tr><tr><td>3. Hallucination risk check</td><td>Supervisor extracts factual claims, checks against RAG</td><td>Fabricated facts; regenerates with strict grounding</td></tr><tr><td>4. Confidence floor</td><td>Chunks below 0.35 filtered out before AI sees them</td><td>Anchoring on weak content</td></tr><tr><td>5. Promise detection</td><td>Catches ‘guaranteed’, ‘I assure you’</td><td>Over-confident commitments</td></tr><tr><td>6. Arithmetic check</td><td>Validates any math in response</td><td>Made-up plausible numbers</td></tr><tr><td>7. Customer feedback</td><td>Thumbs-down feeds authority nudges</td><td>Pattern detection over time</td></tr><tr><td>8. Escalation safety net</td><td>Low-confidence topics route to human</td><td>When in doubt, get a human</td></tr></tbody></table></div>
+<h3>Topic-Specific Guards</h3>
+<ul>
+<li>Pricing: chunks auto-capped at 0.55; freshness caveat injected; arithmetic check enforced; <strong>quote PDFs include "ESTIMATE" header and a "subject to confirmation at booking" footer in all cases where the host has not provided a price-lock guarantee per <a class="xref" href="#s21-10-1">§21.10.1</a> below.</strong></li>
+<li>Medical/accessibility/dietary: persona forbids advice; defaults to escalation</li>
+<li>Legal/contractual: persona forbids advice; cancellation policy references documentation only</li>
+<li>Date and availability: never asserted by AI; always from search_host_inventory tool</li>
+<li>Loyalty programs: cited from RAG only; suggests member-direct verification</li>
+</ul>
+<h3>Known Residual Risk</h3>
+<ul>
+<li>Subtle factual errors in narrative responses (may evade claim extractor)</li>
+<li>Wrong source attribution</li>
+<li>Plausible-but-outdated scheduling</li>
+<li>Multi-fact synthesis errors</li>
+<li>Memory-level hallucinations (claimed conversation context that didn’t happen)</li>
+</ul>
+<h3>Tuning Levers (Post-Launch)</h3>
+<ul>
+<li>Raise confidence floor from 0.35 to 0.50</li>
+<li>Mandatory citation for all factual claims</li>
+<li>Require multi-chunk consensus for confident assertion</li>
+<li>Constrain training-knowledge fallback for high-stakes categories</li>
+<li>Pre-flight fact-check (second AI call to verify the first)</li>
+</ul>
+<h3>Measurement Points</h3>
+<ul>
+<li>Hallucination risk check fire rate</li>
+<li>Block-after-regen rate</li>
+<li>Escalation rate due to confidence floor</li>
+<li>Thumbs-down rate per persona, per topic</li>
+<li>Per-chunk role in flagged responses (feeds authority nudge)</li>
+<li>Compound metric: thumbs-down × confidence (low confidence + high feedback = overreaching)</li>
+</ul>
+<h2 id="s21-10-1">21.10.1 Quote Pricing Discipline <a class="anchor-link" href="#s21-10-1" aria-label="Permalink">¶</a></h2>
+<p>Quotes are estimates until the host confirms. The platform's quote PDF and quote acceptance flow reflects this explicitly to prevent "the platform promised me $X" disputes when the booking comes back at $Y.</p>
+<h3>When is a price "confirmed"?</h3>
+<p>A price is "confirmed" only if BOTH:</p>
+<ol>
+<li>The host adapter returned the price within the last 15 minutes, and</li>
+<li>The host adapter exposes a <code>price_lock_token</code> or equivalent guarantee mechanism, and the token is currently valid.</li>
+</ol>
+<p>Without both conditions, the price is an "estimate." Most host adapters at launch will NOT expose price-lock — so default is estimate.</p>
+<h3>Quote PDF rendering</h3>
+<p>For ESTIMATE quotes (default):</p>
+<ul>
+<li><strong>Header:</strong> "ESTIMATE — pricing subject to confirmation at booking"</li>
+<li><strong>Inline:</strong> every price line shows a small "est." marker.</li>
+<li><strong>Footer:</strong> "This quote is an estimate. Final pricing will be confirmed at booking submission and may differ. By accepting this quote, you authorize us to submit a booking at the host's then-current price within $X variance of the estimate above. Bookings beyond $X variance will be sent back to you for re-confirmation." where <code>X</code> is configurable per tenant (default $50).</li>
+<li><strong>Validity period:</strong> 7 days. After 7 days, the quote auto-expires and the customer is asked to request a refresh.</li>
+</ul>
+<p>For CONFIRMED quotes (rare at launch):</p>
+<ul>
+<li><strong>Header:</strong> "QUOTE — price locked through [timestamp]"</li>
+<li><strong>Inline:</strong> no "est." marker.</li>
+<li><strong>Footer:</strong> "Price locked by [host name] through [timestamp]. If booking is not submitted by this time, the price will be re-quoted."</li>
+<li><strong>Validity period:</strong> matches the price-lock token's expiry.</li>
+</ul>
+<h3>Quote acceptance flow</h3>
+<p>When the customer accepts a quote:</p>
+<ul>
+<li>ESTIMATE acceptance: the platform records the estimate price and the customer's authorized variance ($X default). Booking submission proceeds with the host. If the host returns a price within variance, booking proceeds. If outside variance, the booking is paused in <code>pending_customer_reconfirmation</code> status; customer is emailed with the new price and a one-click re-confirm action.</li>
+<li>CONFIRMED acceptance: the platform records the price-lock token and submits within its validity. If the token expires before submission, the quote is automatically re-quoted and the customer is asked to re-accept.</li>
+</ul>
+<h3>Booking-submit handler contract</h3>
+<p><code>/api/bookings/:id/submit</code> extends from <a class="xref" href="section-07-api-routes.html#s7-4">§7.4</a>:</p>
+<ol>
+<li>Resolve the quote underlying the booking.</li>
+<li>If quote was CONFIRMED and price-lock token is still valid: submit at the locked price.</li>
+<li>If quote was ESTIMATE: a. Call host adapter for current price. b. Compute variance against the accepted estimate. c. If within variance: submit at host's current price. d. If outside variance: mark booking <code>pending_customer_reconfirmation</code>; notify customer; do NOT submit.</li>
+</ol>
+<h3>Audit</h3>
+<p>Every quote send, acceptance, and reconfirmation writes to <code>audit_log</code> with the rendered price snapshot. This protects against later disputes: "you told me $3,847" is answered by the audit record of what the customer saw and accepted.</p>
+<h3>Configuration</h3>
+<div class="table-wrap"><table><thead><tr><th>Setting</th><th>Default</th><th>Where</th></tr></thead><tbody><tr><td>Default ESTIMATE variance allowed at submission</td><td>$50</td><td><code>tenant_settings.quote_variance_cents</code> (per-tenant)</td></tr><tr><td>ESTIMATE quote validity period</td><td>7 days</td><td><code>platform_settings.quote_estimate_validity_days</code></td></tr></tbody></table></div>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Default-to-estimate is the safe default.</strong> Most hosts at launch won't expose price-lock. Treating every quote as an estimate protects the platform from over-commitment.</li>
+<li><strong>Variance threshold matters for customer experience.</strong> $50 is the right rough number — small enough that customers don't get surprised, large enough that minor host-side price adjustments don't bounce every booking back. Tune per tenant if needed.</li>
+<li><strong>Audit snapshot at acceptance is the dispute defense.</strong> If the customer later claims "you quoted me $3,847," the audit log shows what they accepted, with what variance, on what date. The dispute resolves quickly.</li>
+</ul>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-20-booking-flow.html">← §20: Booking Flow</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-22-knowledge-ingestion-rag-submission-side.html">§22: Knowledge Ingestion (RAG Submission Side) →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

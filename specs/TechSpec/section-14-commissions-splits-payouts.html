@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 14 — Commissions, Splits & Payouts — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 14</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s14">Section 14 — Commissions, Splits &amp; Payouts</h1>
+<p>The end-to-end money flow: from booking commission to bank deposit.</p>
+<h2 id="s14-0">14.0 Money Representation Rules <a class="anchor-link" href="#s14-0" aria-label="Permalink">¶</a></h2>
+<p>Every money value in the schema and every money computation in code follows the rules in this subsection. These rules exist because (a) NUMERIC and BIGINT-cents have different rounding behavior and mixing them silently produces fractional-cent drift, and (b) unspecified rounding means different code paths produce different results from the same inputs.</p>
+<h3 id="s14-0-1">14.0.1 Storage representation <a class="anchor-link" href="#s14-0-1" aria-label="Permalink">¶</a></h3>
+<p>All money columns store integer cents as <code>BIGINT</code>. No NUMERIC money columns. No DECIMAL money columns. No floating-point money columns — ever, anywhere.</p>
+<p>Columns are suffixed <code>_cents</code> so the unit is unambiguous at read time:</p>
+<ul>
+<li><code>total_amount_cents BIGINT</code></li>
+<li><code>commissionable_fare_cents BIGINT</code></li>
+<li><code>gross_commission_cents BIGINT</code></li>
+<li><code>host_booking_fee_cents BIGINT</code></li>
+<li><code>net_commission_cents BIGINT</code></li>
+<li><code>received_commission_cents BIGINT</code></li>
+</ul>
+<p>(Renames from earlier drafts: <code>total_amount</code> → <code>total_amount_cents</code>; <code>commissionable_fare</code> → <code>commissionable_fare_cents</code>. See <a class="xref" href="section-05-database-schema-main-app.html#s5-3">§5.3</a> for the affected schema definitions.)</p>
+<p>Currency is stored on the row (column <code>currency TEXT NOT NULL DEFAULT 'USD'</code>). At launch all currencies are USD per <a class="xref" href="section-02-technology-stack.html#s2-4">§2.4</a>, but the schema allows future expansion.</p>
+<h3 id="s14-0-2">14.0.2 Rates and percentages <a class="anchor-link" href="#s14-0-2" aria-label="Permalink">¶</a></h3>
+<p>Rates and percentages are stored as <code>NUMERIC(5,4)</code> representing the decimal form (e.g., 0.1500 for 15%, 0.2000 for 20%), NOT as a percent-points integer or <code>NUMERIC(5,2)</code>. This eliminates one multiply-or-divide-by-100 step and the rounding error that comes with it.</p>
+<ul>
+<li><code>commission_rate NUMERIC(5,4)</code> — host commission rate</li>
+<li><code>platform_split_rate NUMERIC(5,4)</code> — platform's share of net commission (e.g., 0.2000 for the Pro-tier 20/80 split)</li>
+</ul>
+<p>(Rename from earlier drafts: <code>commission_rate_percent</code> → <code>commission_rate</code>.)</p>
+<h3 id="s14-0-3">14.0.3 Rounding strategy <a class="anchor-link" href="#s14-0-3" aria-label="Permalink">¶</a></h3>
+<p>All money rounding is <strong>half-away-from-zero</strong> (also called "commercial rounding" or "round half up" for positive values). This matches what spreadsheets and most accounting systems do by default and matches what the host's statements will use.</p>
+<p>Rounding happens at exactly one place in any computation: the final write to a <code>_cents</code> column. Intermediate computations operate on arbitrary-precision NUMERIC and are only rounded when persisted.</p>
+<h3 id="s14-0-4">14.0.4 The money utility module <a class="anchor-link" href="#s14-0-4" aria-label="Permalink">¶</a></h3>
+<p>All money computation in code goes through a single utility module <code>src/lib/money.ts</code> (path indicative — exact location at engineering discretion, but a single module is non-negotiable). The module exposes:</p>
+<ul>
+<li><code>toCents(amount: BigNumberLike): bigint</code> — convert a NUMERIC-shaped input to integer cents using the rounding strategy in <a class="xref" href="#s14-0-3">§14.0.3</a>.</li>
+<li><code>fromCents(cents: bigint): BigNumberLike</code> — convert for display only; never for further computation.</li>
+<li><code>multiplyRate(cents: bigint, rate: NumericRate): bigint</code> — apply a rate (0.0000–1.0000) to a cents value, rounding the result.</li>
+<li><code>subtractFee(cents: bigint, feeCents: bigint): bigint</code> — subtract one cents value from another, asserting non-negative result (or raising an explicit error caller must handle).</li>
+</ul>
+<p>Any code performing money arithmetic via <code>Number</code>, JavaScript's <code>*</code> operator, or <code>parseFloat</code> on a money string is a code-review failure. CI lint rule per <a class="xref" href="section-30-testing-requirements.html#s30-8">§30.8</a> should flag these patterns.</p>
+<h3 id="s14-0-5">14.0.5 Currency mixing <a class="anchor-link" href="#s14-0-5" aria-label="Permalink">¶</a></h3>
+<p>Operations that combine values in different currencies must be explicitly rejected. The money utility module enforces this — any function that takes two money inputs validates they share a currency context, or accepts an explicit currency-conversion parameter. Silent mixing produces the worst kind of bug (numerically valid, semantically wrong).</p>
+<p>At launch all values are USD so this is a forward-compatibility constraint, not an active concern. Document it now so the utility shape doesn't have to be retrofitted when a second currency is added.</p>
+<h3 id="s14-0-6">14.0.6 Calls Worth Flagging <a class="anchor-link" href="#s14-0-6" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Half-away-from-zero is the spec's choice.</strong> If a partnered host agency uses banker's rounding (half-to-even) for their statements, the platform's reconciliation will show ~half-a-cent variance on some bookings. This is below the <a class="xref" href="#s14-8">§14.8</a> auto-accept threshold ($5) but worth understanding before disputes happen.</li>
+<li><strong>The money utility is a library boundary.</strong> Engineers will be tempted to do "just this one multiplication" inline. They shouldn't. Make it a code-review reflex.</li>
+</ul>
+<h2 id="s14-1">14.1 Lifecycle <a class="anchor-link" href="#s14-1" aria-label="Permalink">¶</a></h2>
+<p>(Rates are locked into the commissions row at booking submission per <a class="xref" href="#s14-3">§14.3</a>. Money representation rules in <a class="xref" href="#s14-0">§14.0</a>.)</p>
+<p>Booking submitted ──► expected_commission tracked</p>
+<p>│</p>
+<p>▼ (host pays per typical lag)</p>
+<p>received commission_status=‘received’</p>
+<p>│</p>
+<p>▼</p>
+<p>Two-party split applied (platform retains tier %, sub-host gets remainder)</p>
+<p>│</p>
+<p>┌────┴────┐</p>
+<p>│ │</p>
+<p>▼ ▼</p>
+<p>Platform Sub-host payout_balance</p>
+<p>revenue │</p>
+<p>             ▼ (after hold period)</p>
+<p>        available_cents</p>
+<p>             │</p>
+<p>             ▼ (on scheduled payout date)</p>
+<p>        in_transit ──► Stripe transfer</p>
+<p>                             │</p>
+<p>                             ▼</p>
+<p>                        Settled to bank</p>
+<h2 id="s14-2">14.2 Commission States <a class="anchor-link" href="#s14-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table><thead><tr><th><strong>State</strong></th><th><strong>Meaning</strong></th></tr></thead><tbody><tr><td>expected</td><td>Booking submitted; commission anticipated per typical lag</td></tr><tr><td>invoiced</td><td>Host has acknowledged but not paid yet</td></tr><tr><td>received</td><td>Payment landed in platform’s account</td></tr><tr><td>partial</td><td>Some portion paid; more expected</td></tr><tr><td>overdue</td><td>Past expected payment date without receipt</td></tr><tr><td>disputed</td><td>Platform or host flagged an issue</td></tr><tr><td>waived</td><td>Written off (cancellation past clawback, intentional waiver)</td></tr></tbody></table></div>
+<h2 id="s14-3">14.3 Two-Party Split <a class="anchor-link" href="#s14-3" aria-label="Permalink">¶</a></h2>
+<p>Commission splits are strictly two-party: platform and sub-host. The platform retains its tier-defined percentage of net commission; the sub-host receives the remainder. This is the entire structure — there is no chain walk, no hierarchy, no multi-level allocation. The platform's responsibility ends at paying the sub-host their share.</p>
+<h3>Rate locking</h3>
+<p>The two rates that determine the split — <code>commission_rate</code> (host's rate to the platform) and <code>platform_split_rate</code> (platform's share of net commission) — are LOCKED into the <code>commissions</code> row at booking <strong>submission</strong> time, not at commission-receipt time.</p>
+<ul>
+<li>At <code>POST /api/bookings/:id/submit</code>, the handler resolves the current values from the host adapter capabilities (<code>commission_rate</code>) and the tenant's current tier (<code>platform_split_rate</code>) and persists them on the <code>commissions</code> row alongside the booking reference.</li>
+<li>Subsequent changes — host adjusts their commission rate, sub-host upgrades or downgrades tier, platform changes the tier rate table — do NOT affect already-submitted commissions. The locked values apply.</li>
+<li>New bookings submitted after the change use the new rates.</li>
+</ul>
+<p>This rule eliminates the time-of-check-vs-time-of-use ambiguity (a sub-host upgrading from Starter to Pro between booking submission and commission receipt: which rate? — answer: whichever rate was current at submission). The trade-off is that tenants who upgrade mid-cycle don't see the better rate apply to in-flight bookings; this is deliberate and is documented in tenant-facing tier-change copy per <a class="xref" href="section-15-tenant-onboarding-compliance.html#s15-15">§15.15</a>.</p>
+<h3>Computation</h3>
+<p>All math uses the money utility per <a class="xref" href="#s14-0-4">§14.0.4</a>. The commissions row stores both the inputs and the computed outcomes so the math is auditable without re-derivation:</p>
+<pre class="codeblock"><code>gross_commission_cents     = multiplyRate(commissionable_fare_cents, commission_rate)
+net_commission_cents       = subtractFee(gross_commission_cents, host_booking_fee_cents)
+platform_retained_cents    = multiplyRate(net_commission_cents, platform_split_rate)
+subhost_payable_cents      = subtractFee(net_commission_cents, platform_retained_cents)</code></pre>
+<p>Note the last line subtracts rather than multiplying-by-(1 - rate). This guarantees <code>platform_retained_cents + subhost_payable_cents == net_commission_cents</code> exactly, eliminating sub-cent drift on the two-multiplications path. The host-side variant (<code>× rate</code>, <code>× (1 - rate)</code>) can produce a 1-cent gap on values where the rate has many decimal places.</p>
+<h3>Worked Example</h3>
+<p>Booking: $5,000.00 commissionable fare ($500,000 cents); host commission rate 0.1500 (15%); host booking fee $25.00 flat ($2,500 cents); sub-host on Pro tier with platform_split_rate 0.2000 (platform retains 20%).</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Step</strong></th><th><strong>Computation</strong></th><th><strong>Result (cents)</strong></th><th><strong>Result ($)</strong></th></tr></thead><tbody><tr><td>Gross commission</td><td>multiplyRate(500000, 0.1500)</td><td>75000</td><td>$750.00</td></tr><tr><td>Host booking fee</td><td>(locked at submission)</td><td>2500</td><td>$25.00</td></tr><tr><td>Net commission</td><td>subtractFee(75000, 2500)</td><td>72500</td><td>$725.00</td></tr><tr><td>Platform retained</td><td>multiplyRate(72500, 0.2000)</td><td>14500</td><td>$145.00</td></tr><tr><td>Sub-host payable</td><td>subtractFee(72500, 14500)</td><td>58000</td><td>$580.00</td></tr></tbody></table></div>
+<div class="callout note"><strong>NOTE:</strong> Two parties, two amounts, one Stripe transfer. The sub-host's $580.00 lands in their Stripe Connect account on their hold-period schedule.</div>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong>Rate-locked-at-submission is the spec's choice.</strong> A tenant whose tier upgrade was processed five minutes before booking submission gets the new rate; one whose upgrade landed five minutes after submission doesn't. The cutoff is the booking-submit timestamp. Tenant-facing copy on tier changes must make this clear so a sub-host doesn't expect a retroactive bump.</li>
+<li><strong>The host-fee column is locked at submission too.</strong> If the host changes their fee schedule after submission, in-flight commissions use the snapshot. Implementation must persist the fee snapshot (<code>host_booking_fee_cents</code> and <code>host_booking_fee_rule_ref</code>), not re-derive at receipt time.</li>
+</ul>
+<h2 id="s14-3a">14.3a Sub-Host Internal Subcontractor Tracking <a class="anchor-link" href="#s14-3a" aria-label="Permalink">¶</a></h2>
+<p>Sub-hosts often work with their own subcontractors — assistant agents, friends-and-family helpers, referral partners. The platform offers a private bookkeeping feature so sub-hosts can forecast their net revenue after subcontractor obligations. This is entirely internal to the sub-host’s tenant; the platform does not pay subcontractors, does not validate their identities, does not generate tax documents for them, and has no relationship with them.</p>
+<p>How it works for the sub-host:</p>
+<ul>
+<li>Sub-host maintains a list of named subcontractors with a percentage for each (e.g., ‘Sarah Martin — 50%’)</li>
+<li>When a booking is created, the sub-host can tag it with a subcontractor</li>
+<li>Revenue dashboards subtract the subcontractor’s percentage from the sub-host’s share to show net retained revenue</li>
+<li>The sub-host pays their subcontractor outside the platform via whatever arrangement they have</li>
+</ul>
+<p>UI gating: subcontractor feature appears only for tenants with tenant_type = ‘sub_host’. BYO-host tenants don’t see it (they handle their own structure inside their host agency relationship), nor does the platform’s own automated agency.</p>
+<div class="callout note"><strong>NOTE:</strong><strong> </strong>The platform’s commission tracking and payouts are unaffected by the sub-host’s internal subcontractor data. Subcontractor data exists purely for the sub-host’s bookkeeping convenience.</div>
+<h2 id="s14-4">14.4 Fail-Closed Rule <a class="anchor-link" href="#s14-4" aria-label="Permalink">¶</a></h2>
+<p>The booking-submit handler MUST resolve both rates (<code>commission_rate</code> from the host adapter, <code>platform_split_rate</code> from the tenant's tier definition) before it can write the <code>commissions</code> row. If either is unresolvable, the submit fails closed:</p>
+<ul>
+<li><code>commission_rate</code> unresolvable (host adapter unhealthy, host doesn't publish rates programmatically, or the adapter returns null): the booking submission is paused. The booking row enters status <code>pending_host_review</code> with a structured reason. Platform admin is alerted. Tenant sees: "We're confirming the commission rate with the host before submitting this booking."</li>
+<li><code>platform_split_rate</code> unresolvable (<code>tier_id</code> is null, tier definition is missing, sub-host tier doesn't define a split): the booking is flagged for platform admin review with reason <code>missing_platform_split</code>. No commissions row is written until resolved.</li>
+</ul>
+<p>In neither case does the platform silently default to a guessed rate. A silently-defaulted rate is the path to disputes that cost more than the booking is worth.</p>
+<p>The handler logs the rate-resolution attempt and outcome to <code>audit_log</code> (per <a class="xref" href="section-26-security.html#s26-5">§26.5</a>) on every submission, successful or not.</p>
+<h2 id="s14-5">14.5 Hold Periods <a class="anchor-link" href="#s14-5" aria-label="Permalink">¶</a></h2>
+<p>Per <a class="xref" href="section-03-multi-tenancy-tier-matrix.html#s3-4">§3.4</a>: 7 / 3 / 0 days by tier (Starter / Pro / Agency). Cruise commissions usually arrive AFTER sailing — clawback risk is mostly past by then. Stripe Connect’s 60-day reversal window handles residual risk.</p>
+<h2 id="s14-6">14.6 Payout Balances <a class="anchor-link" href="#s14-6" aria-label="Permalink">¶</a></h2>
+<p>[Commission split runs]</p>
+<p>│</p>
+<p>▼</p>
+<p>pending ──(after hold period via daily cron)──► available</p>
+<p>                                                  │</p>
+<p>                                                  ▼ (scheduled payout)</p>
+<p>                                               in_transit</p>
+<p>                                                  │</p>
+<p>                                                  ▼ (Stripe webhook: paid)</p>
+<p>                                               [paid out — removed]</p>
+<h2 id="s14-7">14.7 Stripe Connect Transfer <a class="anchor-link" href="#s14-7" aria-label="Permalink">¶</a></h2>
+<h3>Idempotency contract</h3>
+<p>The idempotency key for a Stripe transfer is derived <strong>deterministically from the logical payout</strong>, not from wall-clock time. A retry of the same logical operation MUST produce the same key, or Stripe creates duplicate transfers and real money moves twice.</p>
+<p>The key is constructed from the <code>payout_records.id</code> (a UUID created before the transfer is attempted) plus an <code>attempt_generation</code> integer:</p>
+<pre class="codeblock"><code>idempotencyKey = `payout-${payoutRecord.id}-gen${payoutRecord.attempt_generation}`</code></pre>
+<p><code>attempt_generation</code> defaults to <code>1</code> and is incremented ONLY when an operator (not the system) decides the payout must be retried under a fresh idempotency key — for example, after a Stripe-side failure that Stripe will not let us re-submit under the original key. System-driven retries (network timeout, transient Stripe error, Inngest retry) use the same key. This is the entire point of idempotency.</p>
+<h3>Transfer creation</h3>
+<pre class="codeblock" data-lang="ts"><code>import { multiplyRate, toCents } from '@/lib/money';
+
+const transfer = await stripe.transfers.create(
+  {
+    amount: Number(payoutRecord.amount_cents), // safe: amount fits i32 for any realistic payout
+    currency: 'usd',
+    destination: tenant.stripe_connect_account_id,
+    description: `Platform payout to ${tenant.display_name}`,
+    metadata: {
+      tenant_id: tenantId,
+      platform_payout_id: payoutRecord.id,
+      attempt_generation: String(payoutRecord.attempt_generation),
+    },
+  },
+  {
+    idempotencyKey: `payout-${payoutRecord.id}-gen${payoutRecord.attempt_generation}`,
+  }
+);</code></pre>
+<h3>Transaction ordering contract</h3>
+<p>The order of operations matters for recoverability:</p>
+<ol>
+<li><strong>Write <code>payout_records</code> row first</strong>, status <code>'processing'</code>, with <code>attempt_generation = 1</code> (or current value if retry).</li>
+<li><strong>Then call Stripe</strong> with the idempotency key derived from the <code>payout_records.id</code> and <code>attempt_generation</code>.</li>
+<li><strong>On Stripe response</strong>, update the <code>payout_records</code> row with <code>stripe_transfer_id</code>.</li>
+</ol>
+<p>This order makes the platform DB the source of truth for "did we intend to make this transfer." If step 1 completes but step 2 is interrupted (network failure, server crash, Inngest job killed), the reconciliation job (Inngest, every 5 minutes) finds the <code>'processing'</code> row and queries Stripe by idempotency key to determine actual state:</p>
+<ul>
+<li>Stripe has a transfer for the key → mark <code>payout_records</code> with <code>stripe_transfer_id</code>, status follows the Stripe state.</li>
+<li>Stripe has no transfer for the key → the call never reached Stripe; re-attempt with the same key (idempotent).</li>
+</ul>
+<p>If the order were reversed — Stripe call first, then DB write — a successful Stripe response that fails to reach the platform DB write step creates an orphan transfer with no platform record. Reconciliation would have no way to find it (no key to query Stripe by; the key would never have been generated and stored).</p>
+<p><strong>Reverse-order is forbidden.</strong> The spec asserts this as a correctness constraint, not a preference.</p>
+<h3>Failure response matrix</h3>
+<div class="table-wrap"><table><thead><tr><th>Step 1 (DB write)</th><th>Step 2 (Stripe call)</th><th>Recovery</th></tr></thead><tbody><tr><td>Success</td><td>Success</td><td>Normal path; status updates on webhook per <a class="xref" href="#s14-7">§14.7</a></td></tr><tr><td>Success</td><td>Timeout / network error</td><td>Reconciliation job (5-min cycle) queries Stripe by idempotency key; updates state</td></tr><tr><td>Success</td><td>Explicit Stripe error (insufficient funds, etc.)</td><td><code>payout_records</code> status → <code>'failed'</code>; alert platform admin</td></tr><tr><td>Failure</td><td>(not reached)</td><td>Original handler returns error; no Stripe call attempted</td></tr></tbody></table></div>
+<h3><code>payout_records</code> schema addition</h3>
+<p><code>public.payout_records</code> (defined in <a class="xref" href="section-05-database-schema-main-app.html#s5-3">§5.3</a>) gains one column:</p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.payout_records
+  ADD COLUMN attempt_generation INTEGER NOT NULL DEFAULT 1;</code></pre>
+<p>The <code>payout_records</code> row is written in <code>status = 'processing'</code> BEFORE the Stripe call. The row's UUID becomes part of the idempotency key. On Stripe's response:</p>
+<ul>
+<li>Success → update row with <code>stripe_transfer_id</code>, leave status <code>'processing'</code> until the Stripe webhook confirms <code>'paid'</code> per <a class="xref" href="#s14-6">§14.6</a>.</li>
+<li>Stripe network error / timeout → row stays in <code>'processing'</code>; a reconciliation job (Inngest, every 5 minutes) queries Stripe for the transfer by the row's idempotency key and resolves the state.</li>
+<li>Stripe rejection that cannot be retried under the same key (rare): operator increments <code>attempt_generation</code> after investigation and re-runs.</li>
+</ul>
+<h3>Why deterministic key matters</h3>
+<p>A non-deterministic key (e.g., the previous draft's <code>Date.now()</code>) defeats Stripe's idempotency cache. Every retry produces a new key, so every retry creates a new transfer. Networks fail, Stripe times out, Inngest retries — without a deterministic key, every one of these produces a duplicate payout. This is the most expensive bug shape in the platform.</p>
+<h3>Calls Worth Flagging</h3>
+<ul>
+<li><strong><code>amount_cents</code> is BIGINT in the row, but Stripe's API takes a JavaScript number.</strong> BIGINT can hold values larger than <code>Number.MAX_SAFE_INTEGER</code> (2^53 - 1 cents = roughly $90 trillion). At realistic payout sizes this is fine, but the boundary is worth the assertion. The transfer code SHOULD assert <code>amount_cents &lt;= Number.MAX_SAFE_INTEGER</code> before passing to Stripe.</li>
+<li><strong>The reconciliation job is part of the design, not an afterthought.</strong> Without it, a Stripe-side success that we never see (because the response timed out before reaching us) leaves the row in <code>'processing'</code> forever and the operator has to investigate manually. Build the job in Phase 1 alongside the transfer code.</li>
+<li><strong><code>attempt_generation</code> is operator-driven, not automatic.</strong> Auto-incrementing it on any failure would re-introduce the duplicate-payout bug. The whole point is that the system retries the same key; only humans cross the boundary to a new generation.</li>
+</ul>
+<h2 id="s14-8">14.8 Statement Reconciliation <a class="anchor-link" href="#s14-8" aria-label="Permalink">¶</a></h2>
+<p>Two paths for ingesting host commission statements:</p>
+<ul>
+<li>Automated (host has API): Inngest cron daily fetches and matches by provider_booking_ref</li>
+<li>Manual upload (PDF/CSV): Haiku parses; admin reviews and confirms matches</li>
+</ul>
+<p>Reconciliation thresholds:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Variance</strong></th><th><strong>Action</strong></th></tr></thead><tbody><tr><td>&lt; $5</td><td>Auto-accept, log to audit</td></tr><tr><td>$5 - $50</td><td>Flag for admin review (default: accept)</td></tr><tr><td>&gt; $50</td><td>Flag for admin review (default: hold for decision)</td></tr><tr><td>Booking not found</td><td>Mark as orphan; admin investigates</td></tr></tbody></table></div>
+<h2 id="s14-9">14.9 Clawback Handling <a class="anchor-link" href="#s14-9" aria-label="Permalink">¶</a></h2>
+<p>Cancellations during hold period: deduct from pending balance (no money has moved). After hold release: deduct from available. After payout: Stripe transfer reversal within 60 days, then contractual recovery.</p>
+<h2 id="s14-10">14.10 Stripe Connect Pricing (Verified Mid-2026) <a class="anchor-link" href="#s14-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Subscription billing: 2.9% + $0.30 per card transaction</li>
+<li>Connect Express accounts: $2/month per active account</li>
+<li>Payouts: 0.25% + $0.25 per payout</li>
+<li>ACH (standard): 0.8% capped at $5</li>
+<li>Instant payouts (optional): ~1%, not enabled by default</li>
+</ul>
+<h2 id="s14-11">14.11 1099-NEC Reporting <a class="anchor-link" href="#s14-11" aria-label="Permalink">¶</a></h2>
+<p>Stripe Connect Express handles 1099-NEC generation for sub-hosts ≥ $600/year. Platform’s only responsibility: ensure all payouts flow through Connect (no off-platform payments). Stripe files with IRS and provides sub-host’s copy via Connect dashboard.</p>
+<h2 id="s14-12">14.12 Platform Revenue Tracking <a class="anchor-link" href="#s14-12" aria-label="Permalink">¶</a></h2>
+<p>CREATE TABLE public.platform_revenue (</p>
+<p>id UUID PRIMARY KEY DEFAULT gen_random_uuid(),</p>
+<p>commission_id UUID NOT NULL REFERENCES public.commissions(id),</p>
+<p>amount_cents BIGINT NOT NULL,</p>
+<p>source_tenant_id UUID NOT NULL REFERENCES public.tenants(id),</p>
+<p>tier_rate_applied NUMERIC(5,2) NOT NULL,</p>
+<p>recorded_at TIMESTAMPTZ DEFAULT NOW()</p>
+<p>);</p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-13-host-agency-abstraction-layer.html">← §13: Host Agency Abstraction Layer</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-15-tenant-onboarding-compliance.html">§15: Tenant Onboarding & Compliance →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>
