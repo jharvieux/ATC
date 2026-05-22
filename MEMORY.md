@@ -4,6 +4,32 @@ Newest entries on top.
 
 ---
 
+## D-046 — 2026-05-23 — BP11: Supervisor sampling rates, stub status, slur deny-list launch state
+
+**Decision:**
+Three decisions documented for post-launch tuning:
+
+1. **Sampling rates** use the spec §10.5a defaults (1%/10%/25%) stored in `platform_settings`. Tune downward once queue signal-to-noise is understood after first week of production observation. The defaults are deliberately generous for launch.
+
+2. **Five "real" preflight checks are STUBS** — each returns `severity: 'info', details: 'pass (stub)'` until Part 5 §21.10 (hallucination defense) lands:
+   - `hallucination_risk` — TODO(§21.10)
+   - `persona_drift` — TODO(§21.10)
+   - `arithmetic_check` — TODO(§21.10)
+   - `compliance_keyword` — TODO(§21.10)
+   - `topic_escalation` — TODO(Part 5)
+   
+   Two checks with deterministic lexical logic are REAL now: `promise_detection` (regex list) and `tone_drift` (slur deny-list match + reset counter).
+
+3. **Slur deny-list** (`platform_settings.supervisor_slur_deny_list`) is seeded as an empty JSON array `[]`. Operator MUST populate it before opening the platform to tenants. The tone_drift check silently passes an empty list — this is intentional (fail-open on missing config is better than blocking all responses at launch).
+
+**What was rejected:**
+- Hard-coding slur terms in source: rejected because the list is content (operator-managed), not code.
+- Seeding with a default list: rejected because any default list could be incomplete, offensive, or culturally inappropriate. Operator responsibility.
+
+**Related artifacts:** `apps/main/supabase/migrations/20260523150000_supervisor_sampling_settings.sql`, `apps/main/src/lib/supervisor/checks/tone-drift.ts`, BP11 PR #46.
+
+---
+
 ## D-045 — 2026-05-22 — BP10: Persona slugs and specialties from Agent Backstories Photo Guide; no-direct-service-role refactor
 
 **Decision:**
