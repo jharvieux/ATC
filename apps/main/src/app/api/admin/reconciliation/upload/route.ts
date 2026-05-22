@@ -1,0 +1,263 @@
+// §14.8 — Manual statement upload: Haiku parses CSV text; matches commissions.
+//
+// POST /api/admin/reconciliation/upload
+// Body: multipart/form-data with field "file" (text/csv) and "tenant_id" (UUID).
+//
+// Flow:
+//   1. Haiku extracts structured line items from raw CSV/text.
+//   2. Each line item is matched against commissions by provider_booking_ref.
+//   3. Variance thresholds applied (§14.8):
+//      < $5  → auto-accept + audit log
+//      $5–$50 → queue (default: accept)
+//      > $50  → queue (default: hold)
+//      not found → orphan row
+//
+// Requires x-admin-user-id header (TODO §26 replace with full session check).
+
+import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
+import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+
+const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;
+const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;
+
+const ParsedLineItemSchema = z.object({
+  provider_booking_ref: z.string(),
+  received_amount_cents: z.number().int(),
+  currency: z.string().default("USD"),
+  description: z.string().optional(),
+});
+
+const ParsedStatementSchema = z.object({
+  line_items: z.array(ParsedLineItemSchema),
+  parse_confidence: z.enum(["high", "medium", "low"]),
+  warnings: z.array(z.string()).optional(),
+});
+
+type ParsedLineItem = z.infer<typeof ParsedLineItemSchema>;
+
+export async function POST(req: Request): Promise<Response> {
+  const adminUserId = req.headers.get("x-admin-user-id");
+  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+
+  const formData = await req.formData();
+  const file = formData.get("file");
+  const tenantId = formData.get("tenant_id");
+
+  if (!file || typeof tenantId !== "string") {
+    return Response.json(
+      { error: "Required fields: file (CSV text), tenant_id" },
+      { status: 400 },
+    );
+  }
+
+  let rawText: string;
+  if (file instanceof File) {
+    rawText = await file.text();
+  } else if (typeof file === "string") {
+    rawText = file;
+  } else {
+    return Response.json({ error: "Invalid file field" }, { status: 400 });
+  }
+
+  if (rawText.length > 500_000) {
+    return Response.json({ error: "File too large (max 500 KB)" }, { status: 413 });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 503 });
+  }
+
+  const client = new Anthropic({ apiKey });
+
+  const haikusResponse = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 4096,
+    messages: [
+      {
+        role: "user",
+        content: `You are a financial data parser. Extract commission statement line items from the following CSV or text content.
+
+For each line item, identify:
+- provider_booking_ref: the booking reference/ID from the host agency
+- received_amount_cents: the commission amount in cents (integer, convert dollars by multiplying by 100)
+- currency: currency code (default USD if not specified)
+- description: any useful description or booking details
+
+Return ONLY a JSON object matching this schema:
+{
+  "line_items": [
+    {
+      "provider_booking_ref": "string",
+      "received_amount_cents": number (integer cents),
+      "currency": "USD",
+      "description": "optional string"
+    }
+  ],
+  "parse_confidence": "high" | "medium" | "low",
+  "warnings": ["optional array of parsing warnings"]
+}
+
+If you cannot identify booking references, set parse_confidence to "low" and explain in warnings.
+If amounts appear to be in dollars, multiply by 100 to convert to cents.
+
+Input content:
+\`\`\`
+${rawText}
+\`\`\`
+
+Return only the JSON, no other text.`,
+      },
+    ],
+  });
+
+  const rawContent = haikusResponse.content[0];
+  if (!rawContent || rawContent.type !== "text") {
+    return Response.json({ error: "Haiku returned no parseable content" }, { status: 502 });
+  }
+
+  let parsed: z.infer<typeof ParsedStatementSchema>;
+  try {
+    const jsonText = rawContent.text.trim();
+    const jsonStart = jsonText.indexOf("{");
+    const jsonEnd = jsonText.lastIndexOf("}");
+    if (jsonStart === -1 || jsonEnd === -1) throw new Error("no JSON object found");
+    const data = JSON.parse(jsonText.slice(jsonStart, jsonEnd + 1));
+    parsed = ParsedStatementSchema.parse(data);
+  } catch {
+    return Response.json(
+      { error: "Failed to parse Haiku response as structured statement" },
+      { status: 502 },
+    );
+  }
+
+  try {
+    const { auto_accepted, queued, orphans, errors } = await withPlatformAdminAudit(
+      {
+        admin_user_id: adminUserId,
+        reason: "commission_reconciliation_audit",
+        operation: "reconciliation.manual_upload",
+      },
+      async () => {
+        const db = createServiceRoleClient();
+        const counts = { auto_accepted: 0, queued: 0, orphans: 0, errors: 0 };
+
+        for (const line of parsed.line_items as ParsedLineItem[]) {
+          try {
+            await processLineItem(db, tenantId, line, "manual_upload", counts);
+          } catch {
+            counts.errors++;
+          }
+        }
+        return counts;
+      },
+    );
+
+    return Response.json({
+      ok: true,
+      parse_confidence: parsed.parse_confidence,
+      warnings: parsed.warnings ?? [],
+      results: { total: parsed.line_items.length, auto_accepted, queued, orphans, errors },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Error";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
+
+async function processLineItem(
+  db: ReturnType<typeof createServiceRoleClient>,
+  tenantId: string,
+  line: ParsedLineItem,
+  sourcePath: "automated" | "manual_upload",
+  counts: { auto_accepted: number; queued: number; orphans: number },
+): Promise<void> {
+  const { data: bookingData } = await db
+    .from("bookings")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("provider_booking_ref", line.provider_booking_ref)
+    .maybeSingle();
+
+  if (!bookingData) {
+    await db.from("reconciliation_review_queue").insert({
+      tenant_id: tenantId,
+      commission_id: null,
+      provider_booking_ref: line.provider_booking_ref,
+      variance_cents: BigInt(line.received_amount_cents).toString(),
+      source_path: sourcePath,
+      status: "orphan",
+      notes: JSON.stringify({
+        reason: "booking_not_found",
+        received_cents: line.received_amount_cents,
+        description: line.description,
+      }),
+    });
+    counts.orphans++;
+    return;
+  }
+
+  const { data: commData } = await db
+    .from("commissions")
+    .select("id, subhost_payable_cents")
+    .eq("booking_id", bookingData.id)
+    .maybeSingle();
+
+  if (!commData) {
+    await db.from("reconciliation_review_queue").insert({
+      tenant_id: tenantId,
+      provider_booking_ref: line.provider_booking_ref,
+      variance_cents: BigInt(line.received_amount_cents).toString(),
+      source_path: sourcePath,
+      status: "orphan",
+      notes: JSON.stringify({ reason: "commission_not_found", booking_id: bookingData.id }),
+    });
+    counts.orphans++;
+    return;
+  }
+
+  const comm = commData as { id: string; subhost_payable_cents: string };
+  const expectedCents = BigInt(comm.subhost_payable_cents);
+  const receivedCents = BigInt(line.received_amount_cents);
+  const varianceCents =
+    receivedCents > expectedCents
+      ? receivedCents - expectedCents
+      : expectedCents - receivedCents;
+
+  if (varianceCents < AUTO_ACCEPT_THRESHOLD_CENTS) {
+    console.warn(
+      "[audit-log:STUB] " +
+        JSON.stringify({
+          action: "reconcile_auto_accepted",
+          commission_id: comm.id,
+          expected_cents: expectedCents.toString(),
+          received_cents: receivedCents.toString(),
+          variance_cents: varianceCents.toString(),
+          source_path: sourcePath,
+          _stub: "§26",
+        }),
+    );
+    counts.auto_accepted++;
+    return;
+  }
+
+  const defaultAction = varianceCents >= REVIEW_HOLD_THRESHOLD_CENTS ? "hold" : "accept";
+
+  await db.from("reconciliation_review_queue").insert({
+    commission_id: comm.id,
+    tenant_id: tenantId,
+    provider_booking_ref: line.provider_booking_ref,
+    variance_cents: varianceCents.toString(),
+    source_path: sourcePath,
+    status: "pending",
+    notes: JSON.stringify({
+      expected_cents: expectedCents.toString(),
+      received_cents: receivedCents.toString(),
+      default_action: defaultAction,
+      description: line.description,
+    }),
+  });
+  counts.queued++;
+}

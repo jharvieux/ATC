@@ -74,16 +74,41 @@ export async function handleStripeWebhook(
 
   try {
     // Step 3: Dispatch to event-type handler
-    switch (event.type) {
-      // TODO(§14): customer.subscription.created
-      // TODO(§14): customer.subscription.updated
-      // TODO(§14): customer.subscription.deleted
-      // TODO(§14): invoice.payment_succeeded
-      // TODO(§14): invoice.payment_failed
-      // TODO(§16): account.updated (Connect)
-      // TODO(§16): account.application.deauthorized (Connect)
-      // TODO(§16): transfer.created (Connect)
-      // TODO(§16): payout.paid (Connect)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    switch (event.type as any) {
+      case "transfer.paid": {
+        // §14.7 — Stripe transfer paid: transition payout_records 'processing' → 'paid'
+        // transfer.paid is a valid Stripe event but absent from some SDK type unions.
+        const transfer = event.data.object as Stripe.Transfer;
+        const { data: payoutRows } = await db
+          .from("payout_records")
+          .select("id")
+          .eq("stripe_transfer_id", transfer.id)
+          .eq("status", "processing");
+
+        if (payoutRows && payoutRows.length > 0) {
+          const ids = payoutRows.map((r) => (r as { id: string }).id);
+          await db
+            .from("payout_records")
+            .update({ status: "paid", settled_at: new Date().toISOString() })
+            .in("id", ids);
+          processingOutcome = "success";
+        } else {
+          console.warn(
+            "[stripe-webhook] transfer.paid: no payout_records row for transfer %s",
+            transfer.id,
+          );
+          processingOutcome = "unhandled";
+        }
+        break;
+      }
+      // TODO(§15.16): customer.subscription.created
+      // TODO(§15.16): customer.subscription.updated
+      // TODO(§15.16): customer.subscription.deleted
+      // TODO(§15.16): invoice.payment_succeeded
+      // TODO(§15.16): invoice.payment_failed
+      // TODO(§15.9): account.updated (Connect)
+      // TODO(§15.9): account.application.deauthorized (Connect)
       default:
         processingOutcome = "unhandled";
         break;

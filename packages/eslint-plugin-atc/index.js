@@ -10,11 +10,13 @@
 
 const noDirectServiceRoleImport = require("../config/eslint-rules/no-direct-service-role-import");
 const platformAdminFunctionsMustUseAuditWrapper = require("../config/eslint-rules/platform-admin-functions-must-use-audit-wrapper");
+const noMoneyMath = require("../config/eslint-rules/no-money-math");
 
 module.exports = {
   rules: {
     "no-direct-service-role-import": noDirectServiceRoleImport,
     "platform-admin-functions-must-use-audit-wrapper":
       platformAdminFunctionsMustUseAuditWrapper,
+    "no-money-math": noMoneyMath,
   },
 };

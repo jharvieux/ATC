@@ -18,3 +18,4 @@ pending_rag_sync # platform-internal retry queue; no user-facing access paths. A
 supervisor_review_queue # platform-internal review queue; SELECT/UPDATE for platform admins only via withPlatformAdminAudit (service_role), INSERT by supervisor sampling path (service_role), DELETE by retention purge (service_role). No authenticated-user policies per §10.5a design.
 host_booking_fee_configs # platform-scoped (no tenant_id column). SELECT to authenticated (tenants can read fee catalog). INSERT/UPDATE/DELETE service_role only (platform admin). Per §12.6 design.
 host_adapters # platform-scoped adapter registry (no tenant_id column). SELECT to authenticated so tenants can browse adapters. INSERT/UPDATE/DELETE service_role only (platform admin). Per §13.3.
+reconciliation_review_queue # platform-admin reconciliation queue. No authenticated-user access paths. All reads and writes via service_role through withPlatformAdminAudit. Per §14.8.

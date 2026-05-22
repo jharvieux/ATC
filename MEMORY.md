@@ -4,6 +4,37 @@ Newest entries on top.
 
 ---
 
+## D-048 — 2026-05-22 — BP15: Commissions, splits, payouts — key decisions
+
+**Decision:**
+
+1. **Commission_rate resolution via host_adapters.config**: `HostAgencyClient` has no `getCommissionRate()` method. The booking submit handler reads `commission_rate` from `host_adapters.config->>'default_commission_rate'` (host adapter config JSONB). If unresolvable → fail-closed per §14.4 (booking goes to `pending_host_review`, no commissions row written).
+
+2. **payout_records.status extension via migration**: The BP01 schema had `status CHECK IN ('processing','paid','failed')`. BP15 extends this to include `'pending','available','cancelled'` by dropping and re-adding the check constraint in migration `20260525000000_money_columns.sql`. This is safe because no data existed in the constraint-protected states.
+
+3. **Dual subcontractor tables**: The existing `subcontractors` table (from BP01) uses `payout_percent NUMERIC(5,2)`. BP15 creates `sub_host_subcontractors` with `share_rate NUMERIC(5,4)` per §14.0.2. Both tables coexist; a future consolidation pass can merge them. The new table is the canonical §14.3a implementation.
+
+4. **tier_rate_applied is NUMERIC(5,4) not NUMERIC(5,2)**: The §14.12 SQL snippet shows NUMERIC(5,2) but §14.0.2 mandates 4 decimal places for rates. Used NUMERIC(5,4) everywhere per the overriding rule. This is a spec inconsistency, not a code bug.
+
+5. **reconciliation_review_queue: commission_id nullable for orphans**: Added `commission_id` as nullable (not NOT NULL) to allow rows for "booking not found" orphan cases. Added `provider_booking_ref TEXT` column and `'orphan'` as a valid status value. Without nullable commission_id, orphan bookings couldn't be queued for admin review.
+
+6. **No sub-cent drift guarantee via subtractFee**: The spec §14.3 requires `platform_retained_cents + subhost_payable_cents === net_commission_cents` exactly. Achieved by using `subtractFee(net, retained)` instead of `multiplyRate(net, 1-rate)`. Tested with property tests across all tier rates. The double-multiply path would produce 1-cent gaps.
+
+7. **Statement reconciliation manual upload uses Haiku**: The manual CSV/PDF parse step calls `claude-haiku-4-5-20251001` with a structured JSON extraction prompt. Haiku returns `{ line_items, parse_confidence, warnings }`. The result is matched against commissions by `provider_booking_ref`. This keeps the expensive Sonnet model out of routine financial parsing.
+
+8. **`transfer.paid` event type cast**: Stripe's TypeScript union for `event.type` in the SDK version in use doesn't include `"transfer.paid"` as a recognized discriminant. Used `switch (event.type as any)` with an explanatory comment. The event IS valid per Stripe's API docs; the omission is an SDK type definition gap.
+
+9. **DB write FIRST, Stripe call SECOND**: §14.7 critical ordering constraint. The payout-execute-transfer Inngest job writes `payout_records` to status `'processing'` BEFORE calling Stripe. If Stripe times out, the reconciliation cron (every 5 min) finds the processing row and queries Stripe by idempotency key. `attempt_generation` is NEVER auto-incremented — only operator-driven after explicit investigation.
+
+**What was rejected:**
+- `commission_rate` read from `HostCapabilities`: rejected because `HostCapabilities` is adapter-level (not tenant-rate-level). Rate lives in adapter config JSONB where it's operator-configurable per host.
+- NUMERIC(5,2) for `tier_rate_applied`: rejected per §14.0.2 override.
+- `commission_id NOT NULL` in reconciliation_review_queue: rejected because orphan bookings need to be trackable.
+
+**Artifacts:** `20260525000000_money_columns.sql`, `lib/money.ts`, `lib/commissions/state-machine.ts`, `app/api/bookings/[id]/submit/route.ts`, `app/api/bookings/[id]/cancel/route.ts`, 4 Inngest payout jobs, `inngest/reconcile-statement-automated.ts`, `app/api/admin/reconciliation/upload/route.ts`, `app/api/admin/reconciliation/queue/route.ts`, `app/api/subcontractors/**`, `app/(tenant)/settings/subcontractors/page.tsx`, `docs/runbooks/year-end-1099.md`. PR pending.
+
+---
+
 ## D-047 — 2026-05-22 — BP12: Customer Memory scope contract, merge logic, DOB lifecycle, transfer undo cancellation
 
 **Decision:**

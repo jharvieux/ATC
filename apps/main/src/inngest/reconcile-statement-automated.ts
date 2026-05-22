@@ -1,0 +1,221 @@
+// §14.8 — Automated statement reconciliation Inngest cron.
+//
+// Runs daily at 04:00 UTC. For each active sub-host tenant whose host adapter
+// reports supports_commission_api === true, fetches yesterday's commission
+// statement and reconciles each line item against commissions rows.
+//
+// Variance thresholds (§14.8):
+//   < $5   (500 cents)    → auto-accept, log to audit stub
+//   $5–$50 (500–5000 cents) → queue for review (default: accept)
+//   > $50  (5000 cents)   → queue for review (default: hold)
+//   booking not found     → orphan row; admin investigates
+
+import { inngest } from "./client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { selectAdapter } from "@/lib/host-adapters/select-adapter";
+
+const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;   // $5
+const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;  // $50
+
+type StatementLineItem = {
+  provider_booking_ref: string;
+  received_amount_cents: number;
+  currency?: string;
+  period_start?: string;
+  period_end?: string;
+};
+
+type TenantRow = {
+  id: string;
+  display_name: string;
+  tenant_type: string;
+  stripe_connect_account_id: string | null;
+  tier_id: string | null;
+};
+
+type CommissionRow = {
+  id: string;
+  tenant_id: string;
+  subhost_payable_cents: string;
+  currency: string;
+  status: string;
+};
+
+export const reconcileStatementAutomated = inngest.createFunction(
+  {
+    id: "reconcile-statement-automated",
+    triggers: [{ cron: "0 4 * * *" }],
+  },
+  async () => {
+    const db = createServiceRoleClient();
+
+    const yesterday = new Date();
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const periodStart = yesterday.toISOString().split("T")[0]!;
+    const periodEnd = periodStart;
+
+    const { data: tenants } = await db
+      .from("tenants")
+      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id")
+      .in("tenant_type", ["sub_host"])
+      .eq("status", "active");
+
+    if (!tenants || tenants.length === 0) {
+      return { ok: true, processed: 0 };
+    }
+
+    let totalProcessed = 0;
+    let totalAutoAccepted = 0;
+    let totalQueued = 0;
+    let totalOrphans = 0;
+
+    for (const tenant of tenants as TenantRow[]) {
+      try {
+        const adapter = await selectAdapter({ id: tenant.id, prong: tenant.tenant_type });
+
+        if (!adapter.capabilities.supports_commission_api) {
+          continue;
+        }
+
+        const ctx = {
+          tenant_id: tenant.id,
+          user_id: null,
+          correlation_id: crypto.randomUUID(),
+        };
+
+        const result = await adapter.fetchCommissionStatement(
+          { period_start: periodStart, period_end: periodEnd, format: "json" },
+          ctx,
+        );
+
+        if (!result.ok) {
+          console.warn(
+            "[audit-log:STUB] " +
+              JSON.stringify({
+                action: "reconcile_statement_fetch_failed",
+                tenant_id: tenant.id,
+                error_code: result.error.code,
+                _stub: "§26",
+              }),
+          );
+          continue;
+        }
+
+        const lines = result.value as StatementLineItem[];
+        if (!Array.isArray(lines)) continue;
+
+        for (const line of lines) {
+          totalProcessed++;
+
+          // Find matching commission by provider_booking_ref via bookings
+          const { data: bookingData } = await db
+            .from("bookings")
+            .select("id")
+            .eq("tenant_id", tenant.id)
+            .eq("provider_booking_ref", line.provider_booking_ref)
+            .maybeSingle();
+
+          if (!bookingData) {
+            // Orphan — booking not found
+            await db.from("reconciliation_review_queue").insert({
+              tenant_id: tenant.id,
+              commission_id: null,
+              provider_booking_ref: line.provider_booking_ref,
+              variance_cents: BigInt(line.received_amount_cents).toString(),
+              source_path: "automated",
+              status: "orphan",
+              notes: JSON.stringify({
+                reason: "booking_not_found",
+                received_cents: line.received_amount_cents,
+                period: periodStart,
+              }),
+            });
+            totalOrphans++;
+            continue;
+          }
+
+          const { data: commData } = await db
+            .from("commissions")
+            .select("id, tenant_id, subhost_payable_cents, currency, status")
+            .eq("booking_id", bookingData.id)
+            .maybeSingle();
+
+          if (!commData) {
+            await db.from("reconciliation_review_queue").insert({
+              tenant_id: tenant.id,
+              provider_booking_ref: line.provider_booking_ref,
+              variance_cents: BigInt(line.received_amount_cents).toString(),
+              source_path: "automated",
+              status: "orphan",
+              notes: JSON.stringify({
+                reason: "commission_not_found",
+                booking_id: bookingData.id,
+                received_cents: line.received_amount_cents,
+              }),
+            });
+            totalOrphans++;
+            continue;
+          }
+
+          const commission = commData as CommissionRow;
+          const expectedCents = BigInt(commission.subhost_payable_cents);
+          const receivedCents = BigInt(line.received_amount_cents);
+          const varianceCents =
+            receivedCents > expectedCents
+              ? receivedCents - expectedCents
+              : expectedCents - receivedCents;
+
+          if (varianceCents < AUTO_ACCEPT_THRESHOLD_CENTS) {
+            // Auto-accept — within $5 tolerance
+            console.warn(
+              "[audit-log:STUB] " +
+                JSON.stringify({
+                  action: "reconcile_auto_accepted",
+                  commission_id: commission.id,
+                  expected_cents: expectedCents.toString(),
+                  received_cents: receivedCents.toString(),
+                  variance_cents: varianceCents.toString(),
+                  _stub: "§26",
+                }),
+            );
+            totalAutoAccepted++;
+            continue;
+          }
+
+          // Variance too large — queue for review
+          const defaultAction =
+            varianceCents >= REVIEW_HOLD_THRESHOLD_CENTS ? "hold" : "accept";
+
+          await db.from("reconciliation_review_queue").insert({
+            commission_id: commission.id,
+            tenant_id: tenant.id,
+            provider_booking_ref: line.provider_booking_ref,
+            variance_cents: varianceCents.toString(),
+            source_path: "automated",
+            status: "pending",
+            notes: JSON.stringify({
+              expected_cents: expectedCents.toString(),
+              received_cents: receivedCents.toString(),
+              default_action: defaultAction,
+              period: periodStart,
+            }),
+          });
+          totalQueued++;
+        }
+      } catch (err) {
+        console.error(
+          `reconcile-statement-automated: error processing tenant ${tenant.id}:`,
+          err,
+        );
+      }
+    }
+
+    return {
+      ok: true,
+      processed: totalProcessed,
+      auto_accepted: totalAutoAccepted,
+      queued: totalQueued,
+      orphans: totalOrphans,
+    };
+  },
+);
