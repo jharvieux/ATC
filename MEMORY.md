@@ -4,6 +4,48 @@ Newest entries on top.
 
 ---
 
+## D-051 — 2026-05-22 — BP18: White-label visual brand, custom domains, persona addendums
+
+**Decision:**
+
+1. **Persona display-name override stays in existing `tenant_persona_overrides` table** — NOT a new JSONB column on `personas` (which doesn't exist as a table) nor a separate `persona_tenant_overrides` table. BP10 already created `tenant_persona_overrides` with `display_name_override TEXT` and `is_disabled BOOLEAN`. BP18 reuses these — no schema change for display name. The spec's §16.5 "personas.display_name_override_by_tenant JSONB" is moot until a real personas table lands (BP10 deferred it).
+
+2. **Persona addendum table is NEW, separate from existing `tenant_persona_overrides.system_prompt_addendum`.** BP10 stored the addendum string directly on `tenant_persona_overrides`; BP18 creates `persona_addendums` with its own workflow (status: `pending_screen`/`approved`/`suspended`/`rejected`, `haiku_screen_result` JSONB, `haiku_screened_at`). `build-system-prompt.ts` was updated to read from `persona_addendums` where `status='approved'` instead of `tenant_persona_overrides.system_prompt_addendum`. The old column is now unused but not dropped (preserve historical content).
+
+3. **`persona_addendums.persona_slug TEXT` instead of the spec's `persona_id UUID REFERENCES personas(id)`.** No `personas` table exists yet — personas are code-side base blocks (see D-045 / BP10 memory). Using `persona_slug` is consistent with how `tenant_persona_overrides` keys, and avoids a forward dependency. When the `personas` table eventually lands, a future migration can swap to `persona_id` with a backfill.
+
+4. **TXT-drift post-grace state name: `txt_grace_expired`.** Added to the CHECK constraint in `20260528000000_white_label.sql`. Spec §16.3.2 said "after grace, remove the Vercel binding" without naming the new state. `txt_grace_expired` is distinct from `cname_drifted` so the operator dashboard can show what kind of recovery the tenant needs (re-add the TXT record vs. fix DNS entirely). Tenants in this state still have the CNAME pointing at us, so re-adding the TXT record alone re-enables.
+
+5. **Reserved-parent-domain guard is THREE LAYERS:** 
+   - **Boot (env.ts):** if `PLATFORM_PARENT_DOMAIN === RESERVED_PARENT_DOMAIN` AND `PLATFORM_ENV !== 'production'`, refuse to boot.
+   - **Before any Vercel call (`vercel/domain-client.ts:assertProductionEnvForCrownJewel`):** if `PLATFORM_ENV !== 'production'`, throw `CrownJewelGuardError`.
+   - **Annual operator audit (`crown-jewel-annual-audit` Inngest cron):** January 1 each year, emits a structured warning + points to `docs/runbooks/crown-jewel-annual-audit.md`. Operator manually verifies.
+   
+   6 unit tests cover the second layer (staging/preview/development/unset PLATFORM_ENV all fail; the guard fires regardless of whether VERCEL_API_TOKEN is set).
+
+6. **Custom-domain endpoint uses `withPlatformAdminAudit` with `reason: 'tenant_status_change'`.** §16.3.6 mentions adding a more specific reason ("cross_tenant_health_aggregation" for the weekly cron) but `tenant_status_change` is the existing closest match for the binding endpoint. Future enum addition: `custom_domain_management`.
+
+7. **BrandedLayout email template uses raw `<head>` and `<img>`** (suppressed via per-file eslint-disable). Next.js's `<Head />` / `<Image />` components are HTML/JS abstractions that don't work in email clients. React Email library is not yet installed — current template returns a JSX tree that's serializable via `renderToStaticMarkup` from `react-dom/server`.
+
+8. **Chunk-license-survival ATTORNEY ENGAGEMENT now blocks THREE wordings simultaneously** (D-049 + D-050 + D-051):
+   - §15.14.6 ICA chunk-license-survival clause (`legal_documents.ica_subhost` seed)
+   - §17.6 AI Liability Disclaimer state-specific appendices (`legal_documents.ai_disclaimer` seed)
+   - §16.7.1 legal-page attribution wording (`LegalPageAttribution.tsx` component, `TODO(legal-attorney)`)
+
+   One attorney engagement closes all three. Until then, all are illustrative.
+
+9. **`crown-jewel-annual-audit` cron registered** in `apps/main/src/app/api/inngest/route.ts`. Runs `0 9 1 1 *` (Jan 1 at 09:00 UTC). Runbook published at `docs/runbooks/crown-jewel-annual-audit.md`.
+
+**What was rejected:**
+- Spec's JSONB-on-personas override approach for display names — no personas table.
+- `persona_id` FK to personas — same reason.
+- Adding the addendum workflow columns to `tenant_persona_overrides` — schema would become overloaded; new table is cleaner.
+- Implementing react-email — too large a dep introduction for one template; deferred until email volume justifies.
+
+**Artifacts:** `20260528000000_white_label.sql`, `lib/env.ts` (boot guard), `lib/vercel/domain-client.ts` (call-time guard), `lib/dns/doh-resolver.ts`, `lib/branding/contrast.ts`, `lib/personas/screen-addendum-haiku.ts`, updated `lib/personas/build-system-prompt.ts` (explicit wrapping), `lib/email/send-tenant-email.ts`, `emails/BrandedLayout.tsx`, `components/branding/{PoweredBy,LegalPageAttribution}.tsx`, `api/admin/tenants/[id]/custom-domain/{route,verify}.ts`, `api/tenant/{branding,personas/[slug]/addendum}/route.ts`, 6 new Inngest functions (`custom-domain-reverify`, `custom-domain-txt-grace-sweep`, `custom-domain-cleanup-on-lifecycle`×4, `crown-jewel-annual-audit`, `persona-addendum-screen`, `persona-addendum-rescreen-nightly`), 27 new unit tests, `docs/runbooks/crown-jewel-annual-audit.md`.
+
+---
+
 ## D-050 — 2026-05-22 — BP17: Termination, chunk-license survival, versioned consent, CCPA
 
 **Decision:**

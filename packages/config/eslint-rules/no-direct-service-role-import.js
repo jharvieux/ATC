@@ -127,6 +127,16 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/user/consent/pending/route.ts",
   // BP17: AI disclaimer page — reads current document as server component. §17.6.
   "/app/legal/ai-disclaimer/page.tsx",
+  // BP18: Custom domain weekly reverify cron — cross-tenant DNS scan. §16.3.2.
+  "/inngest/custom-domain-reverify.ts",
+  // BP18: TXT-drift grace sweep cron — cross-tenant scan. §16.3.2.
+  "/inngest/custom-domain-txt-grace-sweep.ts",
+  // BP18: Lifecycle cleanup Inngest — reads tenants, calls Vercel. §16.3.3.
+  "/inngest/custom-domain-cleanup-on-lifecycle.ts",
+  // BP18: Persona addendum screen — reads addendum content, writes result. §16.6.
+  "/inngest/persona-addendum-screen.ts",
+  // BP18: Persona addendum nightly re-screen — cross-tenant scan. §16.6.
+  "/inngest/persona-addendum-rescreen-nightly.ts",
 ];
 
 function endsWithAllowed(filename) {
