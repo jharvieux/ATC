@@ -119,16 +119,34 @@ export async function tenantContextFromStripeEvent(
 }
 
 /**
- * STUB — implementation lands when Inngest jobs are wired up. When
- * implemented, derives tenant from the event payload (which MUST include
- * tenant_id; jobs without one use platformAdminClient instead).
+ * Derives a tenant context from an Inngest event payload.
+ *
+ * MANDATORY SCOPE CONTRACT (§11.2.2 / §5.4.5):
+ *   tenant_id is sourced ONLY from event.data.tenant_id.
+ *   NEVER from a user lookup, a request header, or any derived field.
+ *   This is the sole authoritative source for background-job tenant scope.
+ *   Any deviation produces the worst-case shape of cross-tenant leak.
  */
-export async function tenantContextFromInngestEvent(
-  _event: unknown,
-): Promise<TenantContext> {
-  throw new Error(
-    "tenantContextFromInngestEvent: not implemented (lands in future Inngest work).",
-  );
+export function tenantContextFromInngestEvent(event: {
+  id: string;
+  name: string;
+  data: Record<string, unknown>;
+}): TenantContext {
+  const tenant_id = event.data.tenant_id;
+  if (!tenant_id || typeof tenant_id !== "string") {
+    throw new Error(
+      "tenantContextFromInngestEvent: event.data.tenant_id is missing or not a string. " +
+        "All background jobs MUST carry tenant_id in the event payload.",
+    );
+  }
+  return {
+    tenant_id,
+    source: {
+      kind: "inngest_job",
+      function_name: event.name,
+      event_id: event.id,
+    },
+  };
 }
 
 /**

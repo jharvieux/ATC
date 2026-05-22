@@ -27,6 +27,8 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/stripe-webhook-incomplete-reconcile.ts",
   // RAG sync retry cron: background job, no user session. §8.7a.
   "/inngest/rag-sync-retry.ts",
+  // DOB re-prompt cron: cross-tenant scan, no user session. §11.5.
+  "/inngest/dob-estimate-reprompt-eligible.ts",
   // RAG sync publisher: fires after DB write commits, outside user request scope. §8.7.
   "/lib/rag-sync/publish-tenant-event.ts",
   // Platform-internal admin endpoint: bearer-token auth, no user JWT. §8.3.

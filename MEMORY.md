@@ -4,6 +4,37 @@ Newest entries on top.
 
 ---
 
+## D-047 — 2026-05-22 — BP12: Customer Memory scope contract, merge logic, DOB lifecycle, transfer undo cancellation
+
+**Decision:**
+
+1. **Inngest-event-as-authoritative-scope pattern confirmed working.** `tenantContextFromInngestEvent(event)` reads `tenant_id` from `event.data.tenant_id` and passes it to `tenantClient(ctx)`. The proxy auto-injects `.eq("tenant_id", ctx.tenant_id)` on every scoped table query. The defense-in-depth assertion (`conversation.user_id === event.data.user_id`) fires before any write. All three layers (event payload, proxy filter, assertion) are tested.
+
+2. **`mergeMemory` conflict choices:**
+   - **Scalar JSONB object fields** (`preferences`, `travel_history`, etc.): shallow-merge, extracted keys win on conflict. Existing keys absent from extracted are preserved.
+   - **`loyalty_programs` array**: union by `program_code` key. Extracted entry wins on same code.
+   - **`family_composition` array**: extracted replaces current if non-empty (no stable unique key per member).
+   - **Null extracted values**: do NOT overwrite existing data. Only non-null extracted values write.
+   - **`notes_freeform`, `rapport_tone_level`**: extracted wins unconditionally when non-null.
+
+3. **DOB re-prompt persona instruction location**: `buildSystemPrompt` (Prompt 10 / `build-system-prompt.ts`) appends the re-prompt instruction when `customer_memories.awaiting_dob_reprompt === true`, then clears the flag and sets `estimation_last_reprompt_at = NOW()` after the persona response commits. This lives at the chat-response-commit step (Part 5 §21 fills in the actual chat handler). Left as a TODO in `build-system-prompt.ts` for when chat is fully wired.
+
+4. **Transfer undo cancellation approach: no-op flag on re-read.** When `undoTransfer` clears `transfer_soft_commit_at = NULL`, the already-scheduled finalize Inngest event fires 24h later but finds the field is NULL → returns `{ status: "undone_noop" }`. This avoids needing Inngest's `cancelOn` machinery (which requires a separate cancel event and more complex wiring). Trade-off: the finalize function always fires (wasted invocation), but it's cheap and deterministic.
+
+5. **`contacts` FK on `customer_memories.contact_id` and `conversations.contact_id` still deferred.** The columns are bare `UUID` with `TODO(contacts-fk)` comments. Prompt 13 adds the FK constraint when the `contacts` table lands.
+
+6. **`anonymous_sessions` created as a stub.** The table was assumed to exist from prior auth work but did not. Migration 0019 creates a minimal stub (id, tenant_id, last_active_at, created_at) plus the 4 transfer lifecycle columns. Full auth-session wiring (passkeys, device tokens) lands in a later prompt.
+
+7. **Inngest client reverted to untyped.** `new Inngest<InngestEvents>({ id: "atc-main" })` fails type checking in v4.4.0 because the generic is `ClientOptions`, not an event schema type. The typed events API in v4 uses `EventSchemas` differently; deferred until the correct v4 API is confirmed. Event data is cast via `event.data.field as string` in handlers — safe because Inngest guarantees event data matches the trigger event.
+
+**What was rejected:**
+- `cancelOn` for transfer undo: more complex wiring, no meaningful correctness benefit over the re-read approach since the finalize function already re-reads state on arrival.
+- Typed Inngest client (`new Inngest<InngestEvents>`): incompatible with v4.4.0's actual generic constraint.
+
+**Artifacts:** Migrations 0018/0019, `inngest/extract-memory.ts`, `inngest/transfer-finalize.ts`, `inngest/dob-estimate-reprompt-eligible.ts`, `lib/memory/merge.ts`, `lib/memory/dob.ts`, `lib/transfer/anon-to-auth.ts`, `lib/transfer/deferred-processing-guard.ts`, memory API routes, transfer consent UI, UndoBanner. PR #48 open.
+
+---
+
 ## D-046 — 2026-05-23 — BP11: Supervisor sampling rates, stub status, slur deny-list launch state
 
 **Decision:**
