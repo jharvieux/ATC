@@ -1,0 +1,9 @@
+# Gitleaks configuration — suppress false positives for CI placeholder values.
+#
+# CI workflows use non-secret placeholder strings for env vars that require
+# non-empty values at build time. These are not real credentials; real secrets
+# are injected via GitHub Actions secrets at runtime.
+
+[allowlist]
+  description = "CI placeholder values in GitHub Actions workflow files are not real secrets"
+  paths = ['''^\.github/workflows/''']
