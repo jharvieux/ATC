@@ -39,6 +39,34 @@ export interface TenantSubscriptionChangedPayload {
   new_billing_period?: string;
 }
 
+// §15.14.1 — Tenant termination scheduled (voluntary or involuntary).
+export interface TenantTerminationScheduledPayload {
+  tenant_id: string;
+  kind: "voluntary" | "involuntary_content" | "involuntary_other";
+  terminate_at: string;
+  admin_user_id: string;
+}
+
+// §15.14.2 — Tenant fully terminated (triggers side-effects).
+export interface TenantTerminatedPayload {
+  tenant_id: string;
+  kind: "voluntary" | "involuntary_content" | "involuntary_other";
+}
+
+// §17.9 — CCPA data export requested.
+export interface UserDataExportRequestedPayload {
+  auth_user_id: string;
+  export_request_id: string;
+}
+
+// §17.10 — CCPA data purge scheduled (after 30-day grace period).
+export interface UserDataPurgeScheduledPayload {
+  auth_user_id: string;
+  user_id: string;
+  deleted_at: string;
+  purge_at: string;
+}
+
 export type InngestEvents = {
   "conversation.memory_extract_requested": {
     data: ConversationMemoryExtractRequestedPayload;
@@ -57,5 +85,20 @@ export type InngestEvents = {
   };
   "tenant.subscription_changed": {
     data: TenantSubscriptionChangedPayload;
+  };
+  "tenant.termination_scheduled": {
+    data: TenantTerminationScheduledPayload;
+  };
+  "tenant.terminated": {
+    data: TenantTerminatedPayload;
+  };
+  "tenant.custom_domain_removed_by_lifecycle": {
+    data: { tenant_id: string; reason: string };
+  };
+  "user.data_export_requested": {
+    data: UserDataExportRequestedPayload;
+  };
+  "user.data_purge_scheduled": {
+    data: UserDataPurgeScheduledPayload;
   };
 };

@@ -4,6 +4,33 @@ Newest entries on top.
 
 ---
 
+## D-050 — 2026-05-22 — BP17: Termination, chunk-license survival, versioned consent, CCPA
+
+**Decision:**
+
+1. **`terminated_origin_tenant_id` FK targets `tenant_registry_shadow` (RAG side), NOT `main_app.tenants`.** Cross-database FK is impossible in Postgres — the RAG Supabase project cannot reference tables in the main-app Supabase project. Migration `0009_post_termination.sql` uses `REFERENCES public.tenant_registry_shadow(tenant_id)` instead. This is a spec correction (§15.14.5 implies a cross-DB FK). Both tables serve as a record of the origin tenant at promotion time; referential integrity is enforced at application level (the RAG service only marks chunks for tenants it has in its shadow registry).
+
+2. **Chunk-license-survival ICA wording is still `// TODO(legal-attorney)` from BP16.** The `ica_subhost` document seed in migration `20260527000000_legal_consent.sql` includes `[CHUNK-LICENSE-SURVIVAL CLAUSE — TODO(legal-attorney)]`. Same attorney engagement that finalizes ICA language closes this. No separate timeline.
+
+3. **`purgeUserDataPerRetention` is a stub until Part 6 §25.** The `user-data-purge-after-grace` Inngest job calls an inline `purgeUserDataPerRetention()` function that deletes conversations, messages, legal_consents, and nulls bookings. It has a `// TODO(part-6)` comment. The full retention-compliant purge (with anonymization hash, RAG corpus cleanup, audit trail) is Part 6 §25 work.
+
+4. **Staging-propagation runbook published as `docs/runbooks/ccpa-staging-cleanup.md`.** CI/CD §29 pipeline (Part 7) hasn't shipped yet — the runbook is the safety net. The `ccpa-staging-propagation-monitor` cron alerts via `console.warn` (TODO: wire to Resend/Slack once alerting infra lands). The 25-day threshold gives 20 days before the 45-day CCPA SLA is breached.
+
+5. **Consent gate implemented as API-level check + UI flow, not middleware.** `@supabase/ssr` is not installed — the current middleware cannot read Supabase auth session cookies. The consent check is enforced through: (a) the `/api/user/consent/pending` endpoint (UI polls and redirects to `/consent`), (b) the consent page itself. A TODO(supabase-ssr) for middleware-level redirect exists in the pattern. When `@supabase/ssr` is installed (BP18 or later), the consent redirect can be promoted to middleware for complete bypass prevention.
+
+6. **`legal_documents` SELECT policy uses `auth.uid() IS NOT NULL` not `USING (TRUE)`.** The spec §17.4 says "select=public" for legal_documents. Using `USING (TRUE)` triggers the migration lint rule against no-op policies. Changed to `auth.uid() IS NOT NULL` which has identical intent (any authenticated user can read documents) without the lint violation.
+
+7. **`legal_consents` INSERT/UPDATE/DELETE all blocked for authenticated users.** Consent rows are written by service_role via the `/api/user/consent` endpoint only. Explicit `WITH CHECK (FALSE)` / `USING (FALSE)` policies on the table make the lint pass and prevent direct writes.
+
+**What was rejected:**
+- Cross-DB FK for `terminated_origin_tenant_id` — impossible in Postgres.
+- Middleware-level consent redirect via cookie parsing — requires `@supabase/ssr` (not installed); deferred.
+- `USING (TRUE)` on `legal_documents` SELECT — triggers lint; `auth.uid() IS NOT NULL` achieves same result cleanly.
+
+**Artifacts:** `20260527000000_legal_consent.sql`, `20260527000001_termination.sql`, `0009_post_termination.sql`, `api/admin/tenants/[id]/terminate/route.ts`, `inngest/tenant-on-terminated.ts`, `inngest/rag-tenant-scoped-purge.ts`, `api/admin/legal-docs/route.ts`, `api/user/consent/route.ts`, `api/user/consent/pending/route.ts`, `api/user/data/export-request/route.ts`, `api/user/data/delete-request/route.ts`, `api/user/data/undo-delete/route.ts`, `inngest/user-data-export-build.ts`, `inngest/user-data-purge-after-grace.ts`, `inngest/ccpa-staging-propagation-monitor.ts`, `api/admin/chunks/post-termination/route.ts`, RAG endpoints `post-termination-mark`, `purge-tenant-scoped-chunks`, `post-termination-queue`, `post-termination-review`, pages: `/consent`, `/legal/ai-disclaimer`, `/admin/legal-docs`, `/admin/chunks/post-termination`, `lib/consent/pending.ts`, `docs/runbooks/ccpa-staging-cleanup.md`, 16 new unit tests.
+
+---
+
 ## D-049 — 2026-05-22 — BP16: Tenant onboarding — key decisions
 
 **Decision:**

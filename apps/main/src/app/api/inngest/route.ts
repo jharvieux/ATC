@@ -14,6 +14,11 @@ import { payoutsExecuteTransfer } from "@/inngest/payouts-execute-transfer";
 import { payoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
 import { reconcileStatementAutomated } from "@/inngest/reconcile-statement-automated";
 import { complianceNightly } from "@/inngest/compliance-nightly";
+import { tenantTerminationScheduled, tenantOnTerminatedSideEffects } from "@/inngest/tenant-on-terminated";
+import { ragTenantScopedPurgeOnTermination } from "@/inngest/rag-tenant-scoped-purge";
+import { userDataExportBuild } from "@/inngest/user-data-export-build";
+import { userDataPurgeAfterGrace } from "@/inngest/user-data-purge-after-grace";
+import { ccpaStagingPropagationMonitor } from "@/inngest/ccpa-staging-propagation-monitor";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -32,5 +37,11 @@ export const { GET, POST, PUT } = serve({
     payoutsReconcileProcessing,
     reconcileStatementAutomated,
     complianceNightly,
+    tenantTerminationScheduled,
+    tenantOnTerminatedSideEffects,
+    ragTenantScopedPurgeOnTermination,
+    userDataExportBuild,
+    userDataPurgeAfterGrace,
+    ccpaStagingPropagationMonitor,
   ],
 });
