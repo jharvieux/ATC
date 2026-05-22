@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-045 — 2026-05-22 — BP10: Persona slugs and specialties from Agent Backstories Photo Guide; no-direct-service-role refactor
+
+**Decision:**
+
+- **Persona slugs and content from backstories doc**: The six personas use the slugs and specialties defined in `specs/Agent Backstories Photo Guide v2.docx`, NOT the generic placeholders from the build prompt's §9.1 table. Correct mapping: `marcus-cole` (Caribbean + CATCHALL), `marco-bellini` (Mediterranean/Rivers), `priya-sharma` (Luxury/Ultra-Premium), `captain-dave` (Alaska/Adventure), `maya-patel` (Accessible/Inclusive Travel), `jenny-hartwell` (Family Cruising). Full system prompts from the backstories doc are in code — no content TODOs remain for the base blocks.
+- **no-direct-service-role-import lint compliance**: `build-system-prompt.ts` and `upsert-persona-override.ts` accept a `SupabaseClient` parameter (passed as `tenantClient(ctx)` from route handlers) instead of constructing their own service-role clients. This keeps the §5.4.4 audit trail intact — service-role is only constructed in `tenant-client.ts` and `platform-admin-client.ts`. API routes use `tenantClient(ctx)` and manually add `.eq("id", ctx.tenant_id)` for the `tenants` table (not in TENANT_SCOPED_TABLES, so no auto-filter).
+- **Haiku screening is first-draft**: The screening prompt in `screen-addendum.ts` was written without operator input. It should be reviewed before launch. Fail-closed on parse failure (returns `approved: false`).
+- **Persona content flagged for operator**: Avatar images need to be generated using the prompts in the backstories doc and uploaded to Supabase Storage. The `agents` table (referenced in the backstories doc) is not yet created — personas are in code as base-block files; the table lands in a later build prompt.
+- **display_name_override availability**: Available to all tiers except `byo_research`. The backstories doc references an `agents` table slug — confirmed in the maintenance prompts. The in-code slugs use hyphens to match the doc exactly.
+- **`§9.10.4 / §A.13 trap`**: The build prompt warned about this. resolveAIBehavior correctly implements `ai_mode=disabled` with background AI still on — disabled only affects customer-facing chat, not extraction/screening/RAG/email/forum. This is the non-obvious behavior the §A.13 warning was about.
+
+**Why:** The backstories doc supersedes any placeholder content. The service-role refactor was required by the existing lint rule (D-033 / §5.4.4 enforcement) — it also produces cleaner architecture.
+
+**Artifacts:** `apps/main/src/lib/personas/base-blocks/` (6 files), `build-system-prompt.ts`, `platform-constraints.ts`, `resolve-ai-behavior.ts`, `screen-addendum.ts`, `tools.ts`, `upsert-persona-override.ts`, 2 migrations, 4 API routes, `/settings/ai-mode` page, Switch + Dialog components. PR #44 merged to dev.
+
+---
+
 ## D-044 — 2026-05-22 — BP09: pgvector retrieval via RPC, PII separator backreference, submitted_by_user_id nullable
 
 **Decision:**
