@@ -1,9 +1,9 @@
-# Session state — last updated 2026-05-22 18:50 UTC
+# Session state — last updated 2026-05-22 19:05 UTC
 
 ## Just completed
 
-- BP22 — RAG ingestion pipeline (§22)
-  - Branch: feature/bp22-rag-ingestion
+- BP22 — RAG ingestion pipeline (§22) — MERGED to dev as PR #66 (commit 7eb9951)
+  - Branch: feature/bp22-rag-ingestion (deleted post-merge)
   - Migration 20260601000000_rag_ingestion.sql:
     - rag_submissions table (six submission methods, 4-stage pipeline state)
     - rag_global_promotions table (with demote tracking)
@@ -43,13 +43,11 @@
 
 ## In flight
 
-- Nothing in flight — BP22 ready to commit and open PR
+- Nothing in flight — clean checkpoint
 
 ## Next step
 
-- Commit BP22 work on feature/bp22-rag-ingestion
-- Push and open PR; wait for CI; merge if green
-- Then proceed to BP23 — Email infrastructure, pre-cruise series, in-app notifications (§23). Uses Sonnet per build prompt.
+- Proceed to BP23 — Email infrastructure, pre-cruise series, in-app notifications (§23). Uses Sonnet per build prompt.
 
 ## Blocked on user
 
