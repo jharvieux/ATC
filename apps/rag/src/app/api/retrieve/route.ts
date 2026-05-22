@@ -3,6 +3,7 @@
 // All retrieval is scoped to the tenant identified by the JWT (ctx.tenant_id).
 // The body.tenant_id field MUST match ctx.tenant_id — a mismatch is surfaced
 // as 403 to catch caller bugs early (defense-in-depth; JWT is authoritative).
+export const dynamic = "force-dynamic";
 
 import { randomUUID } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";

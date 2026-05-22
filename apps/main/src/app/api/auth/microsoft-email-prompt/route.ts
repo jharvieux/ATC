@@ -9,7 +9,7 @@
 // A companion route POST /api/auth/microsoft-email-verify accepts the code,
 // validates it, then completes user-row creation.
 
-const OTP_STORE = new Map<string, { code: string; expires: number }>();
+import { OTP_STORE } from "@/lib/auth/otp-store";
 
 function generateOtp(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -46,5 +46,4 @@ export async function POST(req: Request): Promise<Response> {
   return new Response(null, { status: 302, headers });
 }
 
-// Exported for testing — in production use only the POST handler above.
-export { OTP_STORE };
+// OTP_STORE is imported from @/lib/auth/otp-store — import from there for testing.

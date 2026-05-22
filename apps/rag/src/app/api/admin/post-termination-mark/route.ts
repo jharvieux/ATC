@@ -1,5 +1,6 @@
 // §15.14.3 — Post-termination chunk marking.
 // Called by the main app's tenant-on-terminated Inngest function when a tenant is terminated.
+export const dynamic = "force-dynamic";
 // Updates globally-promoted chunks from the terminated tenant:
 //   - voluntary / involuntary_other → reviewed_retained
 //   - involuntary_content → pending (all go to post-termination review queue)

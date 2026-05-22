@@ -1,5 +1,6 @@
 // §15.14.4 — List knowledge_chunks pending post-termination review.
 // Called by the main app's /api/admin/chunks/post-termination GET handler.
+export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";

@@ -2,6 +2,7 @@
 //
 // Promotes a pending_review queue item to an approved knowledge_chunks row,
 // scoped to the approving tenant. body.tenant_id must match ctx.tenant_id.
+export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";

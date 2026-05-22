@@ -1,6 +1,7 @@
 // §15.14.3 — Purge tenant-scoped chunks for a terminated tenant.
 // Called by the daily cron in the main app after 90 days post-termination.
 // Only deletes scope='tenant' chunks. Globally-promoted chunks are NEVER auto-deleted.
+export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";

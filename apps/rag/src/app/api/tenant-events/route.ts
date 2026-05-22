@@ -4,6 +4,7 @@
 // learns about tenant existence in the first place). Instead, verifies the
 // X-Webhook-Signature header using HMAC-SHA256 over the raw body with
 // RAG_WEBHOOK_SECRET.
+export const dynamic = "force-dynamic";
 
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
