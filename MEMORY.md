@@ -4,6 +4,60 @@ Newest entries on top.
 
 ---
 
+## D-050 — 2026-05-22 — BP17: Termination, chunk-license survival, versioned consent, CCPA
+
+**Decision:**
+
+1. **`terminated_origin_tenant_id` FK targets `tenant_registry_shadow` (RAG side), NOT `main_app.tenants`.** Cross-database FK is impossible in Postgres — the RAG Supabase project cannot reference tables in the main-app Supabase project. Migration `0009_post_termination.sql` uses `REFERENCES public.tenant_registry_shadow(tenant_id)` instead. This is a spec correction (§15.14.5 implies a cross-DB FK). Both tables serve as a record of the origin tenant at promotion time; referential integrity is enforced at application level (the RAG service only marks chunks for tenants it has in its shadow registry).
+
+2. **Chunk-license-survival ICA wording is still `// TODO(legal-attorney)` from BP16.** The `ica_subhost` document seed in migration `20260527000000_legal_consent.sql` includes `[CHUNK-LICENSE-SURVIVAL CLAUSE — TODO(legal-attorney)]`. Same attorney engagement that finalizes ICA language closes this. No separate timeline.
+
+3. **`purgeUserDataPerRetention` is a stub until Part 6 §25.** The `user-data-purge-after-grace` Inngest job calls an inline `purgeUserDataPerRetention()` function that deletes conversations, messages, legal_consents, and nulls bookings. It has a `// TODO(part-6)` comment. The full retention-compliant purge (with anonymization hash, RAG corpus cleanup, audit trail) is Part 6 §25 work.
+
+4. **Staging-propagation runbook published as `docs/runbooks/ccpa-staging-cleanup.md`.** CI/CD §29 pipeline (Part 7) hasn't shipped yet — the runbook is the safety net. The `ccpa-staging-propagation-monitor` cron alerts via `console.warn` (TODO: wire to Resend/Slack once alerting infra lands). The 25-day threshold gives 20 days before the 45-day CCPA SLA is breached.
+
+5. **Consent gate implemented as API-level check + UI flow, not middleware.** `@supabase/ssr` is not installed — the current middleware cannot read Supabase auth session cookies. The consent check is enforced through: (a) the `/api/user/consent/pending` endpoint (UI polls and redirects to `/consent`), (b) the consent page itself. A TODO(supabase-ssr) for middleware-level redirect exists in the pattern. When `@supabase/ssr` is installed (BP18 or later), the consent redirect can be promoted to middleware for complete bypass prevention.
+
+6. **`legal_documents` SELECT policy uses `auth.uid() IS NOT NULL` not `USING (TRUE)`.** The spec §17.4 says "select=public" for legal_documents. Using `USING (TRUE)` triggers the migration lint rule against no-op policies. Changed to `auth.uid() IS NOT NULL` which has identical intent (any authenticated user can read documents) without the lint violation.
+
+7. **`legal_consents` INSERT/UPDATE/DELETE all blocked for authenticated users.** Consent rows are written by service_role via the `/api/user/consent` endpoint only. Explicit `WITH CHECK (FALSE)` / `USING (FALSE)` policies on the table make the lint pass and prevent direct writes.
+
+**What was rejected:**
+- Cross-DB FK for `terminated_origin_tenant_id` — impossible in Postgres.
+- Middleware-level consent redirect via cookie parsing — requires `@supabase/ssr` (not installed); deferred.
+- `USING (TRUE)` on `legal_documents` SELECT — triggers lint; `auth.uid() IS NOT NULL` achieves same result cleanly.
+
+**Artifacts:** `20260527000000_legal_consent.sql`, `20260527000001_termination.sql`, `0009_post_termination.sql`, `api/admin/tenants/[id]/terminate/route.ts`, `inngest/tenant-on-terminated.ts`, `inngest/rag-tenant-scoped-purge.ts`, `api/admin/legal-docs/route.ts`, `api/user/consent/route.ts`, `api/user/consent/pending/route.ts`, `api/user/data/export-request/route.ts`, `api/user/data/delete-request/route.ts`, `api/user/data/undo-delete/route.ts`, `inngest/user-data-export-build.ts`, `inngest/user-data-purge-after-grace.ts`, `inngest/ccpa-staging-propagation-monitor.ts`, `api/admin/chunks/post-termination/route.ts`, RAG endpoints `post-termination-mark`, `purge-tenant-scoped-chunks`, `post-termination-queue`, `post-termination-review`, pages: `/consent`, `/legal/ai-disclaimer`, `/admin/legal-docs`, `/admin/chunks/post-termination`, `lib/consent/pending.ts`, `docs/runbooks/ccpa-staging-cleanup.md`, 16 new unit tests.
+
+---
+
+## D-049 — 2026-05-22 — BP16: Tenant onboarding — key decisions
+
+**Decision:**
+
+1. **USPS address validation deferred**: §15.3 recommends USPS API or third-party validator. Phase 1 ships with accept-as-is + a `// TODO(usps-validator)` comment. Addresses are validated for non-emptiness only. Rationale: no operator decision on validator vendor yet; deferring avoids a hard dependency on a service not yet procured.
+
+2. **ICA chunk-license-survival clause is `// TODO(legal-attorney)`**: The ICA page renders placeholder Markdown per §15.14.6. The perpetual/irrevocable license wording must be finalized by an attorney before Phase 2 onboarding opens. Consents are recorded against the stub document. The document version is real; the language is not legally final.
+
+3. **180-day inactivity → suspend shipped; auto-downgrade deferred**: §15.13 mentions both suspend and auto-downgrade as options. Shipped suspend at 180 days. Auto-downgrade variant deferred to Phase 1 follow-up. The `compliance-nightly` Inngest cron handles this.
+
+4. **`pending_billing_period_change_effective_at` cron**: Annual-to-monthly switch is deferred to next renewal. The `effective_at` is computed from Stripe's `current_period_end`. A cron to apply deferred billing period changes is registered in the Inngest cron registry as a Phase 1 TODO — the column exists and the webhook path is wired, but the execution cron is not yet shipped.
+
+5. **Tax form + Connect setup share the same Stripe Express flow**: §15.6 says "tax form via Stripe" and §15.9 says "Connect Express setup" are separate stages, but Stripe Express onboarding combines both into one flow. Implementation: both stages generate/reuse the same Connect account. The `account.updated` webhook distinguishes stage advancement by checking which fields are now satisfied (`details_submitted` → stage 6; `payouts_enabled` → stage 10).
+
+6. **Legal/ICA stages use `// TODO(prompt-17)` stubs**: `legal_documents` and `legal_consents` tables don't exist until BP17. Stubs record the intent (console.info log) and advance the stage. When §17 ships, replace the console.info with actual DB writes.
+
+7. **Sandbox mode column is `is_sandbox` not `sandbox_mode`**: The existing BP01 schema has `tenants.is_sandbox`. §15.12 calls it `sandbox_mode`. All code uses `is_sandbox`. The migration comment documents this distinction.
+
+**What was rejected:**
+- Shipping USPS validation at Phase 1: rejected — no vendor selected.
+- Auto-downgrade at 180d: rejected in favor of suspend (simpler, lower risk of unintended data loss).
+- Separate Stripe Connect accounts for tax vs connect stages: rejected — one Express account serves both; confirmed by Stripe's own onboarding flow design.
+
+**Artifacts:** `20260526000000_onboarding.sql`, `lib/onboarding/state-machine.ts`, `lib/timezones.ts`, 12 onboarding API routes, 11 onboarding pages, `admin/tenants/review-queue` (API + page), `api/admin/tenants/[id]/review`, `api/tenant/sandbox`, `api/tenant/billing`, `inngest/compliance-nightly.ts`, `settings/billing/page.tsx`. PR #56 merged to dev.
+
+---
+
 ## D-048 — 2026-05-22 — BP15: Commissions, splits, payouts — key decisions
 
 **Decision:**

@@ -97,6 +97,36 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/platform/settings/host-agency-name/route.ts",
   // BP16: Admin review queue — paginated cross-tenant read. §15.11.
   "/app/api/admin/tenants/review-queue/route.ts",
+  // BP17: Consent renewal — verifies auth then writes legal_consents. §17.4.
+  "/app/api/user/consent/route.ts",
+  // BP17: Termination handler — reads tenant for Stripe, updates status. §15.14.1.
+  "/app/api/admin/tenants/[id]/terminate/route.ts",
+  // BP17: Tenant termination Inngest — finalizes termination, calls RAG. §15.14.2.
+  "/inngest/tenant-on-terminated.ts",
+  // BP17: RAG tenant-scoped purge cron — finds terminated tenants, calls RAG. §15.14.3.
+  "/inngest/rag-tenant-scoped-purge.ts",
+  // BP17: CCPA export request — rate-limit check, inserts export_request row. §17.9.
+  "/app/api/user/data/export-request/route.ts",
+  // BP17: CCPA delete request — sets deleted_at on users. §17.10.
+  "/app/api/user/data/delete-request/route.ts",
+  // BP17: CCPA undo delete — clears deleted_at within grace period. §17.10.
+  "/app/api/user/data/undo-delete/route.ts",
+  // BP17: CCPA export build — assembles user data ZIP via Inngest. §17.9.
+  "/inngest/user-data-export-build.ts",
+  // BP17: CCPA purge after grace — executes retention purge stub. §17.10.
+  "/inngest/user-data-purge-after-grace.ts",
+  // BP17: Staging propagation monitor cron — reads platform_settings. §17.10.
+  "/inngest/ccpa-staging-propagation-monitor.ts",
+  // BP17: Legal docs admin API — lists and publishes versioned documents. §17.5.
+  "/app/api/admin/legal-docs/route.ts",
+  // BP17: Consent pending utility — checks user_consent_pending cross-tenant. §17.4.
+  "/lib/consent/pending.ts",
+  // BP17: Post-termination chunk review — admin reads RAG chunk metadata. §15.14.4.
+  "/app/api/admin/chunks/post-termination/route.ts",
+  // BP17: Consent pending list — returns pending docs with content for the consent page. §17.4.
+  "/app/api/user/consent/pending/route.ts",
+  // BP17: AI disclaimer page — reads current document as server component. §17.6.
+  "/app/legal/ai-disclaimer/page.tsx",
 ];
 
 function endsWithAllowed(filename) {

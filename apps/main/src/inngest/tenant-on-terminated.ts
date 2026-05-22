@@ -1,0 +1,121 @@
+// §15.14.2 — Tenant termination side-effects.
+// Triggered when tenant.status transitions to 'terminated' (not 'suspended').
+//
+// Side-effects (§15.14.2):
+//   1. Custom domain unbind — indirected via Inngest event (BP18 not yet shipped)
+//   2. OAuth tokens (host adapter credentials) deleted
+//   3. Custom branding kept for audit
+//   4. Customer data retained per §25.2 (no action at termination)
+//   5. RAG chunks handled per §15.14.3 (Task 2 below)
+//
+// §15.14.3 — Chunk handling:
+//   tenant-scoped chunks: 90d retention then hard-delete (separate cron)
+//   globally-promoted chunks:
+//     voluntary / involuntary_other → reviewed_retained (non-blocking alert)
+//     involuntary_content → pending (all go to post-termination review queue)
+//
+// The RAG-side update is performed via a privileged POST to the RAG service admin endpoint.
+
+import { inngest } from "./client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+
+interface TenantTerminationScheduledPayload {
+  tenant_id: string;
+  kind: "voluntary" | "involuntary_content" | "involuntary_other";
+  terminate_at: string;
+  admin_user_id: string;
+}
+
+export const tenantTerminationScheduled = inngest.createFunction(
+  {
+    id: "tenant-termination-scheduled",
+    triggers: [{ event: "tenant.termination_scheduled" }],
+  },
+  async ({ event }) => {
+    const { tenant_id, kind, terminate_at } = event.data as TenantTerminationScheduledPayload;
+    const db = createServiceRoleClient();
+
+    // Wait until suspension_end_at before terminating.
+    const terminateTime = new Date(terminate_at).getTime();
+    if (Date.now() < terminateTime) {
+      // Reschedule — Inngest's sleep or delay mechanism.
+      // TODO(inngest-delay): use inngest.sleep() when Inngest step functions are available.
+      // For now, emit the event again for the reconcile cron to pick up.
+      return { deferred: true, terminate_at };
+    }
+
+    // Finalize termination.
+    const { error } = await db.from("tenants").update({
+      status: "terminated",
+      terminated_at: new Date().toISOString(),
+    }).eq("id", tenant_id).eq("status", "suspended");
+
+    if (error) {
+      throw new Error(`Failed to terminate tenant ${tenant_id}: ${error.message}`);
+    }
+
+    await onTerminated(db, tenant_id, kind);
+    return { ok: true };
+  },
+);
+
+export const tenantOnTerminatedSideEffects = inngest.createFunction(
+  {
+    id: "tenant-on-terminated-side-effects",
+    triggers: [{ event: "tenant.terminated" }],
+  },
+  async ({ event }) => {
+    const { tenant_id, kind } = event.data as { tenant_id: string; kind: string };
+    const db = createServiceRoleClient();
+    await onTerminated(db, tenant_id, kind as "voluntary" | "involuntary_content" | "involuntary_other");
+  },
+);
+
+async function onTerminated(
+  db: ReturnType<typeof createServiceRoleClient>,
+  tenantId: string,
+  kind: "voluntary" | "involuntary_content" | "involuntary_other",
+): Promise<void> {
+  // §15.14.2-1: Custom domain unbind via Inngest event indirection (BP18).
+  await inngest.send({
+    name: "tenant.custom_domain_removed_by_lifecycle",
+    data: { tenant_id: tenantId, reason: "termination" },
+  });
+
+  // §15.14.2-2: Delete encrypted host adapter credentials.
+  await db.from("tenant_host_configs")
+    .update({ credentials_encrypted: null })
+    .eq("tenant_id", tenantId);
+
+  // §15.14.2-3: Custom branding kept — no action.
+  // §15.14.2-4: Customer data retained per §25.2 — no action.
+
+  // §15.14.3: Notify RAG service to mark globally-promoted chunks.
+  const ragServiceUrl = process.env.RAG_SERVICE_URL;
+  if (!ragServiceUrl) {
+    console.warn("[tenant-on-terminated] RAG_SERVICE_URL not set — chunk marking skipped");
+    return;
+  }
+
+  const serviceJwt = process.env.SERVICE_JWT_PRIVATE_KEY;
+  const postTermStatus = kind === "involuntary_content" ? "pending" : "reviewed_retained";
+
+  const response = await fetch(`${ragServiceUrl}/api/admin/post-termination-mark`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${serviceJwt}`,
+    },
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      termination_kind: kind,
+      post_termination_review_status: postTermStatus,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("[tenant-on-terminated] RAG chunk marking failed: %s %s", response.status, text);
+    // Non-fatal — chunk marking can be retried via admin action.
+  }
+}
