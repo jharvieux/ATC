@@ -34,6 +34,9 @@ import { personaAddendumRescreenNightly } from "@/inngest/persona-addendum-rescr
 import { invitationTokensNaturalExpirySweep } from "@/inngest/invitation-tokens-natural-expiry-sweep";
 import { groupsMarkSailed } from "@/inngest/groups-mark-sailed";
 import { groupReminderCadence } from "@/inngest/group-reminder-cadence";
+// BP20: Forum moderation (§19)
+import { forumModerationRetry } from "@/inngest/forum-moderation-retry";
+import { forumModerationTimeoutSweep } from "@/inngest/forum-moderation-timeout-sweep";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -71,5 +74,8 @@ export const { GET, POST, PUT } = serve({
     invitationTokensNaturalExpirySweep,
     groupsMarkSailed,
     groupReminderCadence,
+    // BP20: Forum moderation (§19)
+    forumModerationRetry,
+    forumModerationTimeoutSweep,
   ],
 });

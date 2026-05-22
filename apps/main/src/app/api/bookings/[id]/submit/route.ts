@@ -82,6 +82,20 @@ export async function POST(
       return Response.json({ error: "Only draft bookings can be submitted." }, { status: 422 });
     }
 
+    // §20.5 DOB confirmation gate — must clear before host adapter call
+    const { assertNoEstimatedDOBs, DOBEstimateUnresolvedError } = await import("@/lib/booking/dob-gate");
+    try {
+      await assertNoEstimatedDOBs(bookingId);
+    } catch (err) {
+      if (err instanceof DOBEstimateUnresolvedError) {
+        return Response.json({
+          error: "estimated_dob_unresolved",
+          affected_passengers: err.affectedPassengers,
+        }, { status: 409 });
+      }
+      throw err;
+    }
+
     // Load the tenant (to determine prong and tier)
     const { data: tenantData } = await adminDb
       .from("tenants")

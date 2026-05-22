@@ -87,6 +87,12 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   // Per-tenant daily AI image generation cap (§18.3).
   IMAGE_GEN_RATE_LIMIT_DAILY: z.coerce.number().int().positive().optional().default(20),
+  // Forum moderation — §19.3 fail-closed Haiku contract
+  HAIKU_FORUM_MODERATION_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  // Timeout in ms for the synchronous Haiku moderation call (§19.3).
+  FORUM_MODERATION_HAIKU_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2000),
+  // Hours before a stuck pending_moderation message auto-escalates to flagged_review (§19.3).
+  FORUM_MODERATION_RETRY_TIMEOUT_HOURS: z.coerce.number().int().positive().optional().default(24),
 });
 
 type Env = z.infer<typeof envSchema>;

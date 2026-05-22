@@ -145,6 +145,30 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/group-reminder-cadence.ts",
   // BP19: Hero image — reads destination_images and writes cache. §18.3.
   "/lib/groups/hero-image.ts",
+  // BP20: Forum message post — writes forum_messages + calls Haiku inline. §19.3.
+  "/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts",
+  // BP20: Forum message patch (coordinator hide/edit) — reads/writes forum_messages. §19.7.
+  "/app/api/forums/messages/[id]/route.ts",
+  // BP20: Forum reactions — writes/deletes forum_reactions. §19.5.
+  "/app/api/forums/messages/[id]/reactions/route.ts",
+  "/app/api/forums/messages/[id]/reactions/[emoji]/route.ts",
+  // BP20: Forum thread patch — coordinator thread management. §19.7.
+  "/app/api/forums/threads/[id]/route.ts",
+  // BP20: Forum user state — coordinator mute/unmute. §19.7.
+  "/app/api/forums/users/[userId]/state/route.ts",
+  // BP20: Forum lock — coordinator forum-wide lock. §19.7.
+  "/app/api/forums/[forumId]/route.ts",
+  // BP20: Forum strikes library — reads/writes forum_strikes + forum_user_state. §19.9.
+  "/lib/forums/strikes.ts",
+  // BP20: Forum moderation retry Inngest — background job, no user session. §19.3.
+  "/inngest/forum-moderation-retry.ts",
+  // BP20: Forum moderation timeout sweep — cross-tenant cron. §19.3.
+  "/inngest/forum-moderation-timeout-sweep.ts",
+  // BP20: Booking cancel (BP15 already listed above) — clawback + commission reversal.
+  // BP20: Booking modify — reads bookings + calls host adapter. §20.9.
+  "/app/api/bookings/[id]/modify/route.ts",
+  // BP20: DOB gate — reads booking_passengers across the booking. §20.5.
+  "/lib/booking/dob-gate.ts",
 ];
 
 function endsWithAllowed(filename) {
