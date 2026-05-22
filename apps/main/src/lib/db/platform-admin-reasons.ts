@@ -57,6 +57,12 @@ export const PLATFORM_ADMIN_REASONS = [
   // Feedback settings (per §6.10)
   "feedback_settings_change",
 
+  // AI Supervisor kill switch (§10.6)
+  "ai_kill_switch_global_pause",
+  "ai_kill_switch_global_resume",
+  "ai_kill_switch_tenant_pause",
+  "ai_kill_switch_tenant_resume",
+
   // Catch-all for emergencies (use sparingly — must be paired with
   // an audit_log.changes.reason_detail string and a MEMORY.md entry)
   "manual_emergency_intervention",

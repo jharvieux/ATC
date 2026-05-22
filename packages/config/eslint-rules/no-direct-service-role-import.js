@@ -31,6 +31,10 @@ const ALLOWED_PATH_SUFFIXES = [
   "/lib/rag-sync/publish-tenant-event.ts",
   // Platform-internal admin endpoint: bearer-token auth, no user JWT. §8.3.
   "/api/admin/tenants/route.ts",
+  // Supervisor dashboard: platform admin Server Component — reads cross-tenant
+  // metrics. TODO(§26): replace with withPlatformAdminAudit once admin session
+  // auth lands. Until then, this page is gated by the admin route group layout.
+  "/app/(admin)/supervisor/page.tsx",
 ];
 
 function endsWithAllowed(filename) {

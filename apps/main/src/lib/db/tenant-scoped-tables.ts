@@ -24,4 +24,5 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "payout_records",
   "stripe_webhook_events",
   "tenant_persona_overrides",
+  "escalation_topics",
 ]);
