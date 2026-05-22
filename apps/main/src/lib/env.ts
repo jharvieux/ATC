@@ -29,6 +29,12 @@ const envSchema = z.object({
   SUPERVISOR_REGEN_MAX_PER_CONVERSATION: z.coerce.number().int().positive().optional().default(6),
   // Cumulative token cap across all regen attempts per conversation (default 25000)
   SUPERVISOR_REGEN_MAX_TOKENS_PER_CONVERSATION: z.coerce.number().int().positive().optional().default(25000),
+  // Memory extraction debounce (§11.2.3) — minimum gap in seconds between extraction runs per (tenant_id, user_id)
+  MEMORY_EXTRACTION_DEBOUNCE_SECONDS: z.coerce.number().int().positive().optional().default(120),
+  // Number of recent messages fed to Haiku for extraction (§11.2.5)
+  MEMORY_EXTRACTION_MESSAGE_WINDOW: z.coerce.number().int().positive().optional().default(50),
+  // Delay in ms before re-enqueue on optimistic-lock conflict (§11.2.4)
+  MEMORY_EXTRACTION_RETRY_DELAY_MS: z.coerce.number().int().positive().optional().default(5000),
 });
 
 type Env = z.infer<typeof envSchema>;
