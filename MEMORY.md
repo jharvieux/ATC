@@ -4,6 +4,41 @@ Newest entries on top.
 
 ---
 
+## D-056 — 2026-05-22 — BP23: Email infrastructure, pre-cruise series, in-app notifications — key decisions
+
+**Decision:**
+
+1. **`sendEmail()` accepts pre-rendered `html: string`, NOT `jsx: React.ReactElement`.** Next.js App Router's production bundler rejects static `react-dom/server` imports anywhere in the API route tree (`app/api/inngest/route.ts → precruise-generate-and-send.ts → send.ts`). Fix: remove the react-dom/server static import from `send.ts`; callers render to HTML with `const { renderToStaticMarkup } = await import("react-dom/server")` before calling `sendEmail`. Callers that don't use JSX (e.g. group-reminder-cadence.ts, soft-bounce-retry) pass a plain HTML string directly.
+
+2. **Pre-cruise email scheduler fires Inngest events; generation is a separate function.** The hourly cron (`precruise/email.due` event) only decides which bookings are due — it does NOT generate content inline. `precruiseGenerateAndSend` is the triggered function. This keeps the cron fast and makes content-generation failures observable per-booking.
+
+3. **`buildEmail()` in `precruise-generate-and-send.ts` is async with dynamic `react-dom/server` import.** This is the only place in the pre-cruise path where JSX is rendered to HTML. The dynamic import executes at Inngest function invocation time (inside a background job), never in an App Router API route synchronous path.
+
+4. **T-1 CARRY-ON ESSENTIALS callout is hardcoded in `PreCruiseT1.tsx`.** The callout (passport, cruise paperwork, medications in carry-on) MUST NOT be AI-generated per §23.4 CRITICAL. It is a `<table>` cell with a yellow/amber inline-style box that renders correctly in email clients without a full CSS reset. File comment explicitly marks it "DO NOT AI-GENERATE".
+
+5. **Companion page token uses `COMPANION_TOKEN_HMAC_KEY` falling back to `INVITATION_TOKEN_HMAC_KEY`.** If operators don't set a dedicated companion key, the invitation key doubles. Purpose prefix ("companion:" vs "unsubscribe:") prevents token reuse across domains even when the same key is used.
+
+6. **Weather integration deferred.** `TODO(weather-integration)` comment in `PreCruiseT1Props.weather_summary` and in T-1 content generation. The `weather_summary` prop is optional — omitting it hides the section in the email.
+
+7. **Port info content is placeholder.** All 17 North American departure ports in `port_info_chunks` have `NULL` for `parking_info`, `transit_dropoff_info`, `arrival_advice`, `terminal_addresses`. Operator must populate via SQL or admin UI (not yet built). `TODO(content)` is the signal.
+
+8. **Gmail inbound deferred to docs.** The `/api/webhooks/gmailpubsub` stub was updated with a `TODO(gmail-pubsub)` comment pointing to `docs/runbooks/gmail-inbound-setup.md`. The Gmail API OAuth flow, Pub/Sub topic/subscription, and webhook handler are documented but not coded.
+
+9. **`email_category` CHECK constraint uses 4 values.** `transactional | marketing | pre_cruise | group_invitation`. The spec §23.2 description mentions `travel_news` — this is a suppression reason (email_suppressions.reason) not an email_category value. The rate-limit check covers `travel_news` as a suppression category; the email_log column does not need it.
+
+10. **email_log `contact_id` is bare UUID.** The `contacts` table lands in a future build prompt. `TODO(contacts-fk)` comment is consistent with prior deferred FK decisions (D-047).
+
+**What was rejected:**
+- Static `react-dom/server` import in send.ts — bundler rejection, replaced with pre-rendered `html` string API.
+- Rendering JSX inside the send helper — requires bundler awareness of React at the library level, not caller level.
+- Weather integration in T-1 — no weather API key or service selected yet.
+- Gmail inbound implementation — requires operator OAuth setup outside the codebase; docs-first is the right gate.
+- `travel_news` as an email_category value — it's a suppression type, not a sending category.
+
+**Artifacts:** `20260602000000_email_notifications.sql`, `lib/email/{send,rate-limit,unsubscribe-token}.ts`, `lib/notifications/create.ts`, `emails/{PreCruiseT90,PreCruiseT30,PreCruiseT7,PreCruiseT1,BrandedLayout}.tsx`, `inngest/{pre-cruise-email-scheduler,precruise-generate-and-send,email-soft-bounce-retry}.ts`, `app/api/webhooks/resend/route.ts`, `app/api/email/unsubscribe/route.ts`, `app/api/notifications/{mark-read,dismiss}/route.ts`, `app/companion/[token]/page.tsx`, `app/email/unsubscribe-confirmed/page.tsx`, `docs/runbooks/gmail-inbound-setup.md`. 4 test files, 21 tests. PR #69 merged to dev.
+
+---
+
 ## D-055 — 2026-05-22 — BP22 follow-up: file parsers + OCR installed
 
 **Decision:**
