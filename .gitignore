@@ -37,3 +37,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tesseract.js language data — downloaded at first OCR call, not source
+*.traineddata

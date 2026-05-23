@@ -1,19 +1,32 @@
 // §22.3 — File extraction dispatch tests.
-// Verifies text-based formats extract directly and binary formats return
-// 'unavailable' until parser libraries are installed (operator decision).
+// Verifies text-based formats extract directly, HTML stripping behavior, and
+// failure paths (storage download error, unsupported MIME, legacy .doc).
+//
+// Binary format tests (PDF, DOCX, XLSX, PPTX, OCR) are integration-only —
+// they require either real binary fixtures or library mocks. The dispatch
+// shape is the same; the parser branches are covered by their respective
+// libraries' own test suites and exercised in staging on real uploads.
 
 import { describe, it, expect, vi } from "vitest";
 import { extractContent } from "@/lib/rag-ingest/extract-content";
 
-function mockDb(text: string | null) {
-  const blob = text == null ? null : new Blob([text], { type: "text/plain" });
+function mockDb(payload: { text?: string; bytes?: ArrayBuffer } | null) {
+  if (payload === null) {
+    return {
+      storage: {
+        from: () => ({
+          download: vi.fn().mockResolvedValue({ data: null, error: { message: "not_found" } }),
+        }),
+      },
+    } as unknown as Parameters<typeof extractContent>[0]["db"];
+  }
+  const blob = payload.bytes
+    ? new Blob([payload.bytes], { type: "application/octet-stream" })
+    : new Blob([payload.text ?? ""], { type: "text/plain" });
   return {
     storage: {
       from: () => ({
-        download: vi.fn().mockResolvedValue({
-          data: blob,
-          error: blob ? null : { message: "not_found" },
-        }),
+        download: vi.fn().mockResolvedValue({ data: blob, error: null }),
       }),
     },
   } as unknown as Parameters<typeof extractContent>[0]["db"];
@@ -22,7 +35,7 @@ function mockDb(text: string | null) {
 describe("extractContent — §22.3", () => {
   it("extracts text/plain directly", async () => {
     const out = await extractContent({
-      db: mockDb("Wonder of the Seas — 7-night Caribbean."),
+      db: mockDb({ text: "Wonder of the Seas — 7-night Caribbean." }),
       storage_path: "tenant_x/rag_submissions/1/file.txt",
       mime_type: "text/plain",
     });
@@ -32,7 +45,7 @@ describe("extractContent — §22.3", () => {
 
   it("extracts text/markdown directly", async () => {
     const out = await extractContent({
-      db: mockDb("# Heading\n\nText."),
+      db: mockDb({ text: "# Heading\n\nText." }),
       storage_path: "p",
       mime_type: "text/markdown",
     });
@@ -40,39 +53,38 @@ describe("extractContent — §22.3", () => {
     expect(out.content).toMatch(/# Heading/);
   });
 
-  it("returns 'unavailable' for PDF (parser not installed)", async () => {
+  it("strips nav/footer/script from HTML and returns body text", async () => {
+    const html = `<html><body>
+      <nav>Top nav</nav>
+      <script>alert(1)</script>
+      <main>Caribbean cruises depart Miami.</main>
+      <footer>copyright stuff</footer>
+    </body></html>`;
     const out = await extractContent({
-      db: mockDb("ignored"),
+      db: mockDb({ text: html }),
       storage_path: "p",
-      mime_type: "application/pdf",
+      mime_type: "text/html",
     });
-    expect(out.status).toBe("unavailable");
-    expect(out.error).toMatch(/pdf-parse/);
+    expect(out.status).toBe("extracted");
+    expect(out.content).toMatch(/Caribbean cruises depart Miami/);
+    expect(out.content).not.toMatch(/Top nav/);
+    expect(out.content).not.toMatch(/alert/);
+    expect(out.content).not.toMatch(/copyright/);
   });
 
-  it("returns 'unavailable' for DOCX (parser not installed)", async () => {
+  it("returns 'unavailable' for legacy .doc (libreoffice required)", async () => {
     const out = await extractContent({
-      db: mockDb("ignored"),
+      db: mockDb({ text: "ignored" }),
       storage_path: "p",
-      mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      mime_type: "application/msword",
     });
     expect(out.status).toBe("unavailable");
-    expect(out.error).toMatch(/mammoth/);
-  });
-
-  it("returns 'unavailable' for images (OCR not configured)", async () => {
-    const out = await extractContent({
-      db: mockDb("ignored"),
-      storage_path: "p",
-      mime_type: "image/jpeg",
-    });
-    expect(out.status).toBe("unavailable");
-    expect(out.error).toMatch(/OCR/);
+    expect(out.error).toMatch(/legacy_doc_format/);
   });
 
   it("returns 'failed' for unsupported MIME", async () => {
     const out = await extractContent({
-      db: mockDb("ignored"),
+      db: mockDb({ text: "ignored" }),
       storage_path: "p",
       mime_type: "application/x-novel-format",
     });
@@ -88,5 +100,16 @@ describe("extractContent — §22.3", () => {
     });
     expect(out.status).toBe("failed");
     expect(out.error).toMatch(/storage_download_failed/);
+  });
+
+  it("returns 'failed' on empty HTML body after strip", async () => {
+    const html = `<html><body><nav>only nav</nav><script>x</script></body></html>`;
+    const out = await extractContent({
+      db: mockDb({ text: html }),
+      storage_path: "p",
+      mime_type: "text/html",
+    });
+    expect(out.status).toBe("failed");
+    expect(out.error).toMatch(/html_empty_after_strip/);
   });
 });
