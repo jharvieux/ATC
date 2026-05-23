@@ -36,8 +36,15 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   "tenant.activated": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.submitted_for_review": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.termination_scheduled": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "tenant.suspended": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.subscription_changed": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.custom_domain_removed_by_lifecycle": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+
+  // Commission lifecycle (BP15)
+  "commission/state_received": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+
+  // Encryption key rotation (BP14)
+  "admin/reencrypt_credentials_started": { kind: "platform_admin", payload_shape: platformAdminShape },
 
   // Customer memory + transfer (BP12/13)
   "conversation.memory_extract_requested": { kind: "tenant_scoped", payload_shape: tenantScopedShape },

@@ -1,0 +1,16 @@
+-- §30.8 RLS coverage check exceptions.
+--
+-- Every entry MUST be followed by `-- REASON: <text>` on the same line.
+-- Without a REASON the rls-coverage-check script exits non-zero.
+--
+-- Three skip kinds are supported:
+--   skip_table:   <tablename>                       -- whole table is exempt from coverage rules
+--   skip_policy:  <tablename>:<policyname>          -- specific policy may use USING (true) / WITH CHECK (true)
+--   skip_definer: <function_name>(<argtypes>)       -- SECURITY DEFINER function may omit SET search_path = ''
+--
+-- Lines starting with `--` are comments. Blank lines are ignored.
+--
+-- Keep this list small. Each entry is a deviation from the §30.8 contract
+-- and accrues review debt — re-justify on every audit.
+
+-- (no exceptions yet)

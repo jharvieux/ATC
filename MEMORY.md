@@ -4,6 +4,42 @@ Newest entries on top.
 
 ---
 
+## D-063 — 2026-05-23 — BP30 Phase A: static security probes + service-role lint guard — key decisions
+
+**Decision:**
+
+1. **BP30 split into phases to defer cost.** User directive after the BP30 scope walk-through: no AI eval harness (real Anthropic calls per snapshot + judge), no continuous-sampling cron (writes to a new `ai_sampling_results` table + judge calls per sampled conversation), no dedicated test Supabase project beyond what CI already uses, no Percy/Chromatic (visual regression skipped at launch per spec out), no load-test environment provisioning. Phase A ships only the static security probes; Phase B will ship fixtures + db-setup + k6 scripts + runbooks + Vitest config audit.
+
+2. **`scripts/rls-coverage-check.ts` ships as a new CI-runnable script** complementing the existing `rls:check` (snapshot diff). Catches the §30.8 RLS-coverage failure modes the snapshot diff alone can't: tenant-scoped table missing one of SELECT/INSERT/UPDATE/DELETE policies (partial coverage → silent deny for the uncovered command), RLS-enabled table with zero policies (silent-deny trap), `USING (true)` / `WITH CHECK (true)` (equivalent to no RLS), SECURITY DEFINER functions without `SET search_path = ''` (§5.1.1 contract). Reads `db/rls-exceptions.sql` for explicit skips — every entry MUST have a `-- REASON:` comment or the script exits 2. Connects via `SUPABASE_DB_URL` (same secret CI uses for the snapshot diff job).
+
+3. **`pnpm rls:coverage` added** alongside `pnpm rls:check` and `pnpm rls:snapshot`. CI workflow wiring deferred to a follow-on (the script is self-contained and can be invoked from a new job stanza when convenient).
+
+4. **Cross-tenant Inngest probe is static, not dispatch-based** (`tests/security/cross-tenant-inngest-probe.test.ts`). A live-dispatch probe against a running Inngest dev server would require fixtures + a test DB + audit_log query plumbing — all deferred. The static probe enforces the §11.2.2 / §5.4.5 shape contract: every handler that touches a DB must import an authority surface token (`tenantContextFromInngestEvent`, `tenantClient`, `withPlatformAdminAudit`, `platformAdminClient`, or `createServiceRoleClient`). No-DB handlers (vendor-health probe, console-only annual reminders) get an automatic pass via `touchesDb()`. Mixed `tenantClient` + `createServiceRoleClient` usage flagged unless explicitly opted-in via a `// INNGEST-PROBE-ALLOW-MIXED: <reason>` comment.
+
+5. **3 unregistered Inngest events added to `EVENT_REGISTRY`** as a byproduct of the probe rollout: `tenant.suspended`, `commission/state_received`, `admin/reencrypt_credentials_started`. The first two are `tenant_scoped`; the third is `platform_admin`. The probe's "every event-triggered handler is registered" check now passes for the full set of 60 handlers.
+
+6. **TenantContext factory audit** (`tests/security/tenant-context-factory-audit.test.ts`) — 18 tests covering each factory's fail-closed contract. Uses lightweight in-test mocks of `@supabase/supabase-js` and the service-role-client / audit-write modules; no live DB needed. Exercises the worst-case shapes: missing `x-resolved-tenant-id`, `'platform'` value (admin-route guard), missing/malformed Authorization, invalid access token, suspended user, Stripe event with no account/customer, Resend event with no email_id, Inngest event with non-string `tenant_id`.
+
+7. **Auth-bypass probe is a STATIC import-check, not a runtime HTTP probe** (`tests/security/auth-bypass-probe.test.ts`). Enumerates every `apps/main/src/app/api/**/route.ts`; asserts each imports one of the AUTH_TOKENS (assertPermission, withPlatformAdminAudit, tenantContextFromRequest, tenantContextFromStripeEvent, verifyServiceJwt, handleStripeWebhook, OTP_STORE, signInWithOAuth, etc.) or appears on PUBLIC_ROUTE_ALLOWLIST with a documented reason. A live-HTTP probe would need a running Next.js dev server in CI — out of scope for Phase A. The static check catches the most common bug shape (route handler that forgets auth wholesale) at zero infra cost.
+
+8. **PUBLIC_ROUTE_ALLOWLIST has 7 entries** (intentionally-public surfaces): `/legal/[doctype]/current`, `/tenants/slug-check`, `/api/auth/callback`, `/api/email/unsubscribe`, `/api/groups/invite/[token]/...`, `/api/pricing/preview`, `/api/webhooks/gmailpubsub` (501 stub). Each carries a reason and a stale-entry guard test catches allowlist drift.
+
+9. **Service-role lint discipline guard** (`tests/security/service-role-lint-active.test.ts`) — 3 structural tests that assert the BP26 lint rules (`no-direct-service-role-import`, `no-direct-service-role-env-import`, `platform-admin-functions-must-use-audit-wrapper`, `no-direct-anthropic-or-openai-import`, `no-money-math`) are exported from the plugin AND wired at "error" severity in `apps/main/.eslintrc.json`. Regression catcher in case someone silently disables one.
+
+10. **Probe self-tests** (`tests/security/probe-self-tests.test.ts`) — 13 tests verifying each static probe's detection logic actually fires on a deliberately-buggy synthetic input. Covers the RLS exceptions parser, auth-bypass token detector on bug-shape source, Inngest handler shape detector, factory enumeration, and exceptions-file round-trip.
+
+11. **All Phase A probes are deterministic and run with zero external dependencies.** No DB, no Anthropic, no live Inngest, no Playwright browser. Adds 45 tests (560 → 605); typecheck + lint + lint:migrations clean.
+
+**What was rejected:**
+- Live-dispatch cross-tenant Inngest probe — needs fixtures + DB + audit query plumbing all deferred.
+- Live-HTTP auth-bypass probe — needs a running Next.js dev server in CI.
+- Enforcing `tenantClient` (§11.2.2 preferred surface) as a HARD requirement for every tenant-scoped event handler — many existing handlers use `createServiceRoleClient` with manual `.eq("tenant_id", x)` filters; making the probe reject them would flag ~10 files that aren't a security breach, just a style violation. Documented as a follow-on lint-rule consideration.
+- A standalone CI workflow job for `pnpm rls:coverage` — script is committed but not wired into deploy.yml yet. Run on-demand for now; wire to a job when Phase B lands.
+
+**Artifacts:** `scripts/rls-coverage-check.ts`, `db/rls-exceptions.sql`, `tests/security/{cross-tenant-inngest-probe,tenant-context-factory-audit,auth-bypass-probe,service-role-lint-active,probe-self-tests}.test.ts`, event-registry.ts (+3 entries), `package.json` (+2 scripts: rls:coverage, test:security). 47 security tests, 605 total. PR #?? open.
+
+---
+
 ## D-062 — 2026-05-23 — BP29: §28 env-var reconciliation + Zod boot validation + secret rotation runbook — key decisions
 
 **Decision:**
