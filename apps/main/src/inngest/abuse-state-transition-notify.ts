@@ -8,8 +8,11 @@
 // Also stamps usage_limit_events.notification_sent_to with the recipient
 // list for forensic visibility.
 
-import { renderToStaticMarkup } from "react-dom/server";
-import React from "react";
+// react-dom/server is dynamically imported inside the handler to avoid the
+// Next.js App Router bundler restriction on top-level react-dom/server
+// imports (same pattern as lib/email/send-breach-notifications.ts and
+// inngest/precruise-generate-and-send.ts).
+import * as React from "react";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { sendTenantEmail } from "@/lib/email/send-tenant-email";
@@ -106,6 +109,8 @@ export const abuseStateTransitionNotify = inngest.createFunction(
 
         const usagePageUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? ""}${PUBLIC_ORIGIN_PATH}`;
         const sentTo: string[] = [];
+
+        const { renderToStaticMarkup } = await import("react-dom/server");
 
         // 4. Render + send per admin.
         for (const admin of adminList) {
