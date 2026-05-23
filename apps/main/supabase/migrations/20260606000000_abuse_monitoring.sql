@@ -109,9 +109,13 @@ CREATE TABLE public.tenant_usage_overrides (
   created_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Originally a partial index with `WHERE effective_to IS NULL OR effective_to > CURRENT_DATE`,
+-- but Postgres rejects non-IMMUTABLE functions (CURRENT_DATE is STABLE) in index
+-- predicates (error 42P17). Use a plain index over (tenant_id, dimension, effective_to)
+-- so the "active overrides for tenant+dim" lookup still uses the index; callers
+-- compare effective_to in the WHERE clause at query time instead.
 CREATE INDEX tenant_usage_overrides_active_idx
-  ON public.tenant_usage_overrides(tenant_id, dimension)
-  WHERE effective_to IS NULL OR effective_to > CURRENT_DATE;
+  ON public.tenant_usage_overrides(tenant_id, dimension, effective_to);
 
 ALTER TABLE public.tenant_usage_overrides ENABLE ROW LEVEL SECURITY;
 

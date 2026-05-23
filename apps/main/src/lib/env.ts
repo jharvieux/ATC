@@ -180,6 +180,10 @@ const envSchema = z.object({
   ABUSE_AI_COST_HARD_PERCENT:              z.coerce.number().int().positive().optional().default(70),
   ABUSE_RAG_APPROACHING_PERCENT:           z.coerce.number().int().positive().optional().default(85),
   ABUSE_EMAIL_BOUNCE_RATE_THRESHOLD_PERCENT: z.coerce.number().int().positive().optional().default(5),
+  // BP28 — abuse dashboard + recompute
+  ABUSE_RECOMPUTE_CRON_SCHEDULE:        z.string().optional().default("0 3 * * *"),
+  ABUSE_OVERRIDE_DEFAULT_DURATION_DAYS: z.coerce.number().int().positive().optional().default(30),
+  ABUSE_TENANT_USAGE_REFRESH_SECONDS:   z.coerce.number().int().positive().optional().default(60),
 });
 
 type Env = z.infer<typeof envSchema>;
