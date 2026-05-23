@@ -10,6 +10,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { env } from "@/lib/env";
+import { writeAuditLog } from "@/lib/audit/write";
 import type { Result } from "@atc/shared-types";
 
 const IV_BYTES = 12;
@@ -90,7 +91,6 @@ export function decryptCredential(payload: {
 
 // §13.5.3: Audit-log every decryption failure with a SHA-256 hash of the
 // ciphertext (NOT the ciphertext itself) for forensic correlation.
-// TODO(audit-log §26): replace console.warn with insert into public.audit_log.
 function logDecryptionFailure(payload: {
   ciphertext: string;
   key_id: string;
@@ -99,14 +99,16 @@ function logDecryptionFailure(payload: {
   const ciphertext_sha256 = createHash("sha256")
     .update(payload.ciphertext)
     .digest("hex");
-  console.warn(
-    "[audit-log:STUB] " +
-      JSON.stringify({
-        action: "credential.decryption_failed",
-        ciphertext_sha256,
-        failure_code: payload.code,
-        key_id: payload.key_id,
-        _stub: "audit_log table not yet created (§26)",
-      }),
-  );
+  // Fire-and-forget — the decrypt path can't await this without changing
+  // its signature, and the audit row isn't load-bearing for the result.
+  void writeAuditLog({
+    actor_type: "system",
+    action: "credential.decryption_failed",
+    resource_type: "credential",
+    changes: {
+      ciphertext_sha256,
+      failure_code: payload.code,
+      key_id: payload.key_id,
+    },
+  });
 }

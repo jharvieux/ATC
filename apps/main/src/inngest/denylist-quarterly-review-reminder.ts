@@ -1,11 +1,12 @@
 // §24.5 / §26.11 — Quarterly reminder to review the platform deny-list.
 //
 // Fires every 90 days. Without active maintenance, the list ages out. This
-// cron alerts the platform admin via console.warn (TODO(audit-log) ties in
-// once §26 audit_log lands so the alert routes through the standard channel).
+// cron alerts the platform admin both via the audit_log (BP26) and via a
+// console.warn breadcrumb for operators tailing logs.
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export const denylistQuarterlyReviewReminder = inngest.createFunction(
   {
@@ -23,6 +24,12 @@ export const denylistQuarterlyReviewReminder = inngest.createFunction(
       .maybeSingle();
     const list = (data as { value?: unknown } | null)?.value;
     const count = Array.isArray(list) ? list.length : 0;
+    await writeAuditLog({
+      actor_type: "system",
+      action: "denylist.quarterly_review_due",
+      resource_type: "platform_settings",
+      changes: { current_count: count, docs: "/admin/denylist" },
+    });
     console.warn(
       "[denylist-quarterly-review-reminder] " +
         JSON.stringify({

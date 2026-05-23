@@ -10,6 +10,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const PRO_PLUS_TIERS = new Set(["sub_pro", "sub_agency", "byo_professional", "byo_agency"]);
 
@@ -148,16 +149,15 @@ export async function PUT(req: Request): Promise<Response> {
     }
 
     // §24.9 audit (stub until §26 audit_log lands).
-    console.warn(
-      "[audit-log:STUB] " +
-        JSON.stringify({
-          action: "customer_chat.cap_override",
-          tenant_id: ctx.tenant_id,
-          user_id: userId,
-          new_caps: { soft1_cap: s1, soft2_cap: s2, hard_cap: hd, booking_bonus_percent: bn },
-          _stub: "audit_log table not yet created",
-        }),
-    );
+    await writeAuditLog({
+      tenant_id: ctx.tenant_id,
+      actor_user_id: userId,
+      actor_type: "user",
+      action: "customer_chat.cap_override",
+      resource_type: "tenant",
+      resource_id: ctx.tenant_id,
+      changes: { new_caps: { soft1_cap: s1, soft2_cap: s2, hard_cap: hd, booking_bonus_percent: bn } },
+    });
     return Response.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -11,6 +11,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { transitionCommissionState } from "@/lib/commissions/state-machine";
+import { writeAuditLog } from "@/lib/audit/write";
 
 type CommissionRow = {
   id: string;
@@ -134,17 +135,18 @@ export async function POST(
 
       if (daysSinceSettlement > CLAWBACK_WINDOW_DAYS) {
         // After 60d — alert platform admin, no automatic action
-        console.warn(
-          "[audit-log:STUB] " +
-            JSON.stringify({
-              action: "clawback_requires_contractual_recovery",
-              booking_id: bookingId,
-              commission_id: commission.id,
-              payout_id: payout.id,
-              days_since_settlement: daysSinceSettlement,
-              _stub: "§26",
-            }),
-        );
+        await writeAuditLog({
+          tenant_id: ctx.tenant_id,
+          actor_type: "system",
+          action: "clawback_requires_contractual_recovery",
+          resource_type: "booking",
+          resource_id: bookingId,
+          changes: {
+            commission_id: commission.id,
+            payout_id: payout.id,
+            days_since_settlement: daysSinceSettlement,
+          },
+        });
         return Response.json({ ok: true, clawback: "contractual_recovery_required" });
       }
 

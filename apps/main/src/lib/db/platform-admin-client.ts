@@ -1,26 +1,23 @@
-// Spec ref: §5.4.8
+// Spec ref: §5.4.8 / §26.3a.3
 //
-// `withPlatformAdminAudit` is the single supported way to obtain a
-// platform-admin (raw service-role, unscoped) database client. There is
-// no exported `platformAdminClient()` factory — the only public surface
-// is this wrapper. Every call produces an audit row.
+// `withPlatformAdminAudit` is the canonical way to scope a platform-admin
+// (raw service-role, unscoped) database operation. Every call produces
+// exactly one audit_log row. BP26 also exports `platformAdminClient()` so
+// downstream helpers (e.g., decryptForensicsSnapshot) can reach the
+// service-role db without it being plumbed through — the ALS check
+// throws when called outside withPlatformAdminAudit.
 //
 // Nesting safety: AsyncLocalStorage tracks whether we're already inside
 // an audit wrapper. Re-entering reuses the outer context (same db, same
 // recordQuery) so a function legally calling another platform-admin
 // helper produces ONE audit row, not two.
 //
-// Audit-row write uses a SEPARATE dedicated client (not the wrapped
-// function's `db`) so the audit row commits even if the wrapped function
-// rolled back a transaction. The wrapped function's queries that DID
-// commit are summarized via `recordQuery`; the wrapped function's queries
-// that rolled back will still appear in the queries list — that is
+// Audit-row write uses a SEPARATE dedicated service-role client (not the
+// wrapped function's `db`) so the audit row commits even if the wrapped
+// function rolled back a transaction. The wrapped function's queries that
+// DID commit are summarized via `recordQuery`; the wrapped function's
+// queries that rolled back still appear in the queries list — that is
 // intentional, since the audit row is forensic, not transactional.
-//
-// TODO(audit-log): the audit_log table doesn't exist yet (§26 work).
-// `writeAuditRow` below logs a structured JSON to console.warn for now.
-// When the table lands, swap the body to a real insert. The audit-row
-// shape mirrors what the table will accept.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
@@ -70,6 +67,18 @@ function currentPlatformAdminAuditContext(): AuditContext {
   return ctx;
 }
 
+// §26.3a.3 — Reads the active service-role db from the current
+// withPlatformAdminAudit ALS context. Throws if called outside the
+// wrapper — this is how decryptForensicsSnapshot and similar helpers
+// enforce "only callable inside an audited admin operation".
+//
+// This function is the INVERSE of the rule the lint enforces: it can
+// only run inside the wrapper, not call it. Disable the rule here.
+// eslint-disable-next-line atc/platform-admin-functions-must-use-audit-wrapper
+export function platformAdminClient(): SupabaseClient {
+  return currentPlatformAdminAuditContext().db;
+}
+
 function runInsidePlatformAdminAudit<T>(
   ctx: AuditContext,
   fn: () => Promise<T>,
@@ -77,7 +86,6 @@ function runInsidePlatformAdminAudit<T>(
   return auditStorage.run(ctx, fn);
 }
 
-// TODO(audit-log): replace with insert into public.audit_log when §26 lands.
 async function writeAuditRow(row: {
   tenant_id: string | null;
   actor_user_id: string;
@@ -88,9 +96,31 @@ async function writeAuditRow(row: {
   changes: Record<string, unknown>;
   context: Record<string, unknown>;
 }): Promise<void> {
-  console.warn(
-    "[audit-log:STUB] " + JSON.stringify({ ...row, _stub: "audit_log table not yet created" }),
-  );
+  // Dedicated service-role client so this commits even if the wrapped
+  // function rolled back its own transaction. If the audit insert itself
+  // fails, log to console and continue — we never throw from finally to
+  // mask the wrapped fn's result.
+  try {
+    const auditDb = createServiceRoleClient();
+    const { error } = await auditDb.from("audit_log").insert({
+      tenant_id: row.tenant_id,
+      actor_user_id: row.actor_user_id,
+      actor_type: row.actor_type,
+      action: row.action,
+      resource_type: row.resource_type,
+      resource_id: row.resource_id,
+      changes: row.changes,
+      context: row.context,
+    });
+    if (error) {
+      console.warn("[audit-log:write-failed] " + JSON.stringify({ error: error.message, action: row.action }));
+    }
+  } catch (err) {
+    console.warn(
+      "[audit-log:write-threw] " +
+        JSON.stringify({ error: err instanceof Error ? err.message : String(err), action: row.action }),
+    );
+  }
 }
 
 export async function withPlatformAdminAudit<T>(

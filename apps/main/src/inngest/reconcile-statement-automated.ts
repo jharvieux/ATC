@@ -13,6 +13,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapter } from "@/lib/host-adapters/select-adapter";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;   // $5
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;  // $50
@@ -89,15 +90,14 @@ export const reconcileStatementAutomated = inngest.createFunction(
         );
 
         if (!result.ok) {
-          console.warn(
-            "[audit-log:STUB] " +
-              JSON.stringify({
-                action: "reconcile_statement_fetch_failed",
-                tenant_id: tenant.id,
-                error_code: result.error.code,
-                _stub: "§26",
-              }),
-          );
+          await writeAuditLog({
+            tenant_id: tenant.id,
+            actor_type: "system",
+            action: "reconcile_statement_fetch_failed",
+            resource_type: "tenant",
+            resource_id: tenant.id,
+            changes: { error_code: result.error.code },
+          });
           continue;
         }
 
@@ -167,17 +167,18 @@ export const reconcileStatementAutomated = inngest.createFunction(
 
           if (varianceCents < AUTO_ACCEPT_THRESHOLD_CENTS) {
             // Auto-accept — within $5 tolerance
-            console.warn(
-              "[audit-log:STUB] " +
-                JSON.stringify({
-                  action: "reconcile_auto_accepted",
-                  commission_id: commission.id,
-                  expected_cents: expectedCents.toString(),
-                  received_cents: receivedCents.toString(),
-                  variance_cents: varianceCents.toString(),
-                  _stub: "§26",
-                }),
-            );
+            await writeAuditLog({
+              tenant_id: tenant.id,
+              actor_type: "system",
+              action: "reconcile_auto_accepted",
+              resource_type: "commission",
+              resource_id: commission.id,
+              changes: {
+                expected_cents: expectedCents.toString(),
+                received_cents: receivedCents.toString(),
+                variance_cents: varianceCents.toString(),
+              },
+            });
             totalAutoAccepted++;
             continue;
           }

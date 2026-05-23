@@ -30,6 +30,7 @@ import { checkArithmetic } from "./checks/arithmetic-check";
 import { checkComplianceKeyword } from "./checks/compliance-keyword";
 import { checkToneDrift } from "./checks/tone-drift";
 import { checkTopicEscalation } from "./checks/topic-escalation";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const CHECKS_RUN = [
   "hallucination_risk",
@@ -213,19 +214,18 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     const hashFromDetails = toneDriftFinding.details.startsWith("lexical_match:")
       ? toneDriftFinding.details.slice("lexical_match:".length)
       : "unknown";
-    // TODO(audit-log): replace console.warn with audit_log INSERT when §26 ships.
-    console.warn(
-      "[audit-log:STUB] " +
-        JSON.stringify({
-          action: "chat.hate_speech_lexical_match",
-          tenant_id: input.ctx.tenant_id,
-          conversation_id,
-          message_id,
-          term_hash: hashFromDetails,
-          consecutive_count: newSlurConsecutiveCount,
-          _stub: "audit_log table not yet created",
-        }),
-    );
+    await writeAuditLog({
+      tenant_id: input.ctx.tenant_id,
+      actor_type: "ai",
+      action: "chat.hate_speech_lexical_match",
+      resource_type: "message",
+      resource_id: message_id,
+      changes: {
+        conversation_id,
+        term_hash: hashFromDetails,
+        consecutive_count: newSlurConsecutiveCount,
+      },
+    });
   } else {
     newSlurConsecutiveCount = 0;
   }

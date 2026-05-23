@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const MemoryPatchSchema = z.object({
   preferences: z.record(z.unknown()).nullable().optional(),
@@ -72,14 +73,15 @@ export async function PATCH(req: Request): Promise<Response> {
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
-    // Audit-log the update (stub until §26 audit_log table lands).
-    console.warn("[audit-log:STUB]", JSON.stringify({
-      action: "customer_memory.updated",
+    await writeAuditLog({
       tenant_id: ctx.tenant_id,
-      user_id: user.id,
-      fields_changed: Object.keys(parsed.data),
-      ts: now,
-    }));
+      actor_user_id: user.id,
+      actor_type: "user",
+      action: "customer_memory.updated",
+      resource_type: "customer_memory",
+      resource_id: user.id,
+      changes: { fields_changed: Object.keys(parsed.data) },
+    });
 
     return Response.json(data);
   } catch (err) {
@@ -117,12 +119,14 @@ export async function DELETE(req: Request): Promise<Response> {
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
-    console.warn("[audit-log:STUB]", JSON.stringify({
-      action: "customer_memory.cleared",
+    await writeAuditLog({
       tenant_id: ctx.tenant_id,
-      user_id: user.id,
-      ts: now,
-    }));
+      actor_user_id: user.id,
+      actor_type: "user",
+      action: "customer_memory.cleared",
+      resource_type: "customer_memory",
+      resource_id: user.id,
+    });
 
     return new Response(null, { status: 204 });
   } catch (err) {

@@ -205,6 +205,14 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/anonymous-session-cleanup.ts",
   "/inngest/rag-rejected-items-purge.ts",
   "/inngest/booking-commission-retention-purge.ts",
+  // BP26: audit_log helper — every audit writer goes through this. §26.5.
+  "/lib/audit/write.ts",
+  // BP26: forensics_log retention cron — service-role daily purge. §26.5a.
+  "/inngest/forensics-log-purge-cron.ts",
+  // BP26: §26.6 monitoring crons — cross-tenant scans, no user session.
+  "/inngest/auth-failure-monitor.ts",
+  "/inngest/permission-denied-monitor.ts",
+  "/inngest/cross-tenant-rls-bypass-monitor.ts",
   // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
   "/inngest/rag-tenant-approval-rate-nightly.ts",
 ];

@@ -6,11 +6,15 @@
 // configs. The single source of truth for the rule code stays under
 // packages/config/eslint-rules/.
 //
-// Spec ref: §5.4.4
+// Spec refs: §5.4.4, §14.0.4, §26.3a
 
 const noDirectServiceRoleImport = require("../config/eslint-rules/no-direct-service-role-import");
 const platformAdminFunctionsMustUseAuditWrapper = require("../config/eslint-rules/platform-admin-functions-must-use-audit-wrapper");
 const noMoneyMath = require("../config/eslint-rules/no-money-math");
+// BP26 (§26.3a) — service-role discipline rules.
+const noDirectServiceRoleEnvImport = require("../config/eslint-rules/no-direct-service-role-env-import");
+const noAdHocTenantIdString = require("../config/eslint-rules/no-ad-hoc-tenant-id-string");
+const noDirectAnthropicOrOpenaiImport = require("../config/eslint-rules/no-direct-anthropic-or-openai-import");
 
 module.exports = {
   rules: {
@@ -18,5 +22,9 @@ module.exports = {
     "platform-admin-functions-must-use-audit-wrapper":
       platformAdminFunctionsMustUseAuditWrapper,
     "no-money-math": noMoneyMath,
+    // BP26
+    "no-direct-service-role-env-import": noDirectServiceRoleEnvImport,
+    "no-ad-hoc-tenant-id-string": noAdHocTenantIdString,
+    "no-direct-anthropic-or-openai-import": noDirectAnthropicOrOpenaiImport,
   },
 };

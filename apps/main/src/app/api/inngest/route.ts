@@ -57,6 +57,14 @@ import { anonymousSessionCleanup } from "@/inngest/anonymous-session-cleanup";
 import { ragRejectedItemsPurge } from "@/inngest/rag-rejected-items-purge";
 import { bookingCommissionRetentionPurge } from "@/inngest/booking-commission-retention-purge";
 import { subprocessorsAnnualReview } from "@/inngest/subprocessors-annual-review";
+// BP26: Forensics retention (§26.5a)
+import { forensicsLogPurgeCron } from "@/inngest/forensics-log-purge-cron";
+// BP26: Vendor health probe (§26.9)
+import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
+// BP26: §26.6 monitoring crons
+import { authFailureMonitor } from "@/inngest/auth-failure-monitor";
+import { permissionDeniedMonitor } from "@/inngest/permission-denied-monitor";
+import { crossTenantRlsBypassMonitor } from "@/inngest/cross-tenant-rls-bypass-monitor";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -117,5 +125,13 @@ export const { GET, POST, PUT } = serve({
     ragRejectedItemsPurge,
     bookingCommissionRetentionPurge,
     subprocessorsAnnualReview,
+    // BP26: Forensics retention (§26.5a)
+    forensicsLogPurgeCron,
+    // BP26: Vendor health probe (§26.9)
+    vendorHealthProbe,
+    // BP26: §26.6 monitoring crons
+    authFailureMonitor,
+    permissionDeniedMonitor,
+    crossTenantRlsBypassMonitor,
   ],
 });

@@ -2,6 +2,7 @@ packages:
   - "apps/*"
   - "packages/*"
 allowBuilds:
+  '@sentry/cli': false
   esbuild: true
   msw: true
   protobufjs: true

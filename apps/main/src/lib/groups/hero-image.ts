@@ -6,7 +6,7 @@
 //   3. AI generation (DALL-E 3) — tier-gated, rate-limited, cached
 //   4. Cruise-line default fallback
 
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 const CRUISE_LINE_DEFAULTS: Record<string, string> = {
   "Royal Caribbean": "https://cdn.ai-travelconcierge.com/defaults/cruise-ship-ocean.jpg",
@@ -34,9 +34,7 @@ export async function selectHeroImage(ctx: HeroImageContext): Promise<string> {
   // 1. Coordinator-provided URL
   if (ctx.coordinator_url) return ctx.coordinator_url;
 
-  const serviceUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const db = createClient(serviceUrl, serviceKey);
+  const db = createServiceRoleClient();
 
   // 2. Library match
   const { data: lib } = await db

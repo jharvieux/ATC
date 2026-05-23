@@ -27,6 +27,12 @@ import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { tenantContextFromRequest } from "@/lib/db/factories";
+import { writeAuditLog } from "@/lib/audit/write";
+import {
+  recordVendorFailure,
+  recordVendorSuccess,
+  vendorHealthStatus,
+} from "@/lib/vendor-health/registry";
 import {
   checkAnonLimit,
   incrementAnonCounters,
@@ -213,17 +219,15 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         user_email: null,
       });
       const auditId = randomUUID();
-      console.warn(
-        "[audit-log:STUB] " + JSON.stringify({
-          id: auditId,
-          action: "customer_chat.hard_limit_blocked",
-          tenant_id: tenantId,
-          user_id: userId,
-          current_count: decision.current_count,
-          summary,
-          _stub: "audit_log table not yet created",
-        }),
-      );
+      await writeAuditLog({
+        tenant_id: tenantId,
+        actor_user_id: userId,
+        actor_type: "system",
+        action: "customer_chat.hard_limit_blocked",
+        resource_type: "user",
+        resource_id: userId,
+        changes: { audit_correlation_id: auditId, current_count: decision.current_count, summary },
+      });
       // Persist the audit id on the counter row so the alert can be re-linked.
       await svc
         .from("customer_chat_counters")
@@ -433,6 +437,21 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     await close();
     return;
   }
+
+  // §26.9 — Anthropic vendor health gate. If the registry says Anthropic is
+  // down, surface the §26.9 fallback message directly instead of attempting
+  // the call. The probe cron updates the registry every minute; degraded
+  // state activates after 3 consecutive failures, down after 5.
+  if (vendorHealthStatus("anthropic") === "down") {
+    const fallbackBody =
+      "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.";
+    await send({ type: "delta", text: fallbackBody });
+    await send({ type: "supervisor", action: "allow", regens: 0 });
+    await send({ type: "done" });
+    await close();
+    return;
+  }
+
   const anthropic = new Anthropic({ apiKey });
   const generationModel = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
@@ -444,12 +463,29 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   for (let attempt = 0; attempt < REGEN_HARD_CEILING; attempt++) {
     const sys = extraInstruction ? `${systemPrompt}\n\n${extraInstruction}` : systemPrompt;
 
-    const resp = await anthropic.messages.create({
-      model: generationModel,
-      max_tokens: 1024,
-      system: sys,
-      messages: [{ role: "user", content: userMessage }],
-    });
+    let resp;
+    try {
+      resp = await anthropic.messages.create({
+        model: generationModel,
+        max_tokens: 1024,
+        system: sys,
+        messages: [{ role: "user", content: userMessage }],
+      });
+      recordVendorSuccess("anthropic");
+    } catch (err) {
+      recordVendorFailure("anthropic", err instanceof Error ? err.message : String(err));
+      // Surface the fallback message and bail. The error is recorded so
+      // the vendor-health registry flips to degraded/down after enough
+      // consecutive failures across instances.
+      await send({
+        type: "delta",
+        text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
+      });
+      await send({ type: "supervisor", action: "allow", regens: attempt });
+      await send({ type: "done" });
+      await close();
+      return;
+    }
 
     candidate = resp.content
       .map((c) => (c.type === "text" ? c.text : ""))

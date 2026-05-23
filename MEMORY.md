@@ -4,6 +4,52 @@ Newest entries on top.
 
 ---
 
+## D-059 — 2026-05-23 — BP26: Four-layer auth reconciled, service-role discipline lint, audit_log live, forensics decrypt, vendor health, monitoring — key decisions
+
+**Decision:**
+
+1. **`audit_log` table finally created (§26.5 canonical schema).** Migration `20260605000000_audit_log_and_security.sql` adds the canonical 10-column table + three b-tree indexes + partial GIN on `changes WHERE actor_type='admin'`. Standard 4-policy RLS (service-role writes only; tenant-scoped read). Same migration adds `complaints`, `security_incidents`, `auth_attempts`, `tenant_settings.forensics_on_export`.
+
+2. **Full sweep: every `[audit-log:STUB]` is now a real INSERT.** 21 files swept. Helper `lib/audit/write.ts` constructs a dedicated service-role client per call (commits even if caller transaction rolls back; never throws — failure breadcrumbs as `[audit-log:write-failed]`). `withPlatformAdminAudit`'s `writeAuditRow` swept too. Touched: state-machine.ts, anon-to-auth.ts, credential-cipher.ts, run-supervisor.ts, customer-limit.ts, purge-user-data.ts, persona-addendum-screen/-rescreen-nightly, reconcile-statement-automated, booking-commission-retention-purge, denylist-quarterly-review-reminder, chat route, bookings cancel/submit, quotes accept, memory route + opt-out, tenant ai-config + chat-limits, admin reconciliation upload + custom-domain verify.
+
+3. **`platformAdminClient()` ALS export.** New exported function reads the active service-role db from the AsyncLocalStorage context. Throws if called outside `withPlatformAdminAudit`. That's the access enforcement for `decryptForensicsSnapshot` and the legal-hold helper — they don't take a `db` param; the ALS check throws if they're called outside a wrapped admin operation.
+
+4. **`assertPermission` §26.3 re-auth check active.** When `isSensitiveRoute(req.pathname)` returns true, the JWT's `auth_time` claim is decoded and checked against 4h. Stale → throws `AuthReauthRequired` with `{ code, return_to }`. Route handlers should catch and return 401. The sensitive-routes allowlist from BP17 (`lib/auth/sensitive-routes.ts`) is the source.
+
+5. **Service-role discipline lint: 4 rules registered.** `atc/no-direct-service-role-import` and `atc/platform-admin-functions-must-use-audit-wrapper` already existed (BP02, D-033). BP26 adds `atc/no-direct-service-role-env-import` (error), `atc/no-direct-anthropic-or-openai-import` (staged off — flips to error when BP27 ships `lib/ai/call-wrapper.ts`), `atc/no-ad-hoc-tenant-id-string` (staged off — flips when a follow-on PR sweeps existing tenant_id-string parameters). Exception flow at `docs/exceptions-service-role.md`. The plugin lives at `packages/eslint-plugin-atc/index.js` (existing path; `packages/config/eslint-plugin.js` was the dev source). Also registered the pre-existing `atc/no-money-math` rule that wasn't being loaded.
+
+6. **5 files grandfathered into the env-import allowlist.** `/app/api/auth/callback`, `/app/api/groups/route`, `/app/api/groups/[id]/invitations/route`, `/app/api/groups/invite/[token]/route`, `/app/api/groups/invite/[token]/rsvp/route` all construct service-role clients inline. Grandfathered pending a follow-on refactor PR to route through `createServiceRoleClient()`. The risk profile is unchanged — these files already read the env var directly.
+
+7. **`hero-image.ts` refactored mid-PR.** It was the one violation that was a clean fix in this scope — swapped from inline `createClient(url, key)` to `createServiceRoleClient()`. Other inline constructs (the 5 above) were too touchy to refactor in BP26's diff and were grandfathered.
+
+8. **Inngest event registry seeded with 20 events.** `lib/inngest/event-registry.ts` exports a typed `EVENT_REGISTRY` mapping every emitted event name to `{ kind, payload_shape }`. Per-event payload shapes are intentionally loose (`tenant_id` + passthrough) — tightening to exact per-event schemas is a follow-on hardening pass. `validateInngestEvent(name, payload)` throws on unknown name or missing tenant_id.
+
+9. **Webhook context factories — Stripe + Resend.** `tenantContextFromStripeEvent` resolves via `event.account` (Connect) or `event.data.object.customer` (Subscription) → `tenants.stripe_connect_account_id` / `stripe_customer_id`. `tenantContextFromResendEvent` resolves via `email_log.resend_message_id`. Each writes an `audit_log` row with `action='webhook.context_resolved'` (so a spoofed webhook resolving to a mismatched tenant is forensically detectable). Lives in `lib/db/factories.ts` (not the spec's `lib/auth/webhook-contexts.ts` — chose minimal-churn).
+
+10. **Forensics decrypt path live, behind the ALS gate.** `lib/forensics/decrypt.ts` calls `platformAdminClient()` first thing — throws if not wrapped. Resolves key by `encryption_key_id` against `FORENSICS_ENCRYPTION_KEY_CURRENT` / `_PRIOR_1` / `_PRIOR_2`. Increments `access_count` + `last_accessed_at`. NEVER logs the payload. Companion: `lib/forensics/legal-hold.ts` setLegalHold helper. Retention cron: daily 03:00 UTC delete `WHERE purge_after < NOW() AND legal_hold = FALSE`. Runbook: `docs/runbooks/forensics-manual-access.md` — explicitly forbids running decrypt from CI/application.
+
+11. **Vendor health registry + 5-vendor probe.** `lib/vendor-health/registry.ts` keeps per-instance state for anthropic/openai/stripe/resend/supabase. Degrades after 3 consecutive failures, down after 5. Probe cron (`inngest/vendor-health-probe.ts`) pings each every minute (skipped on staging). `/admin/vendor-status` page renders the snapshot. **Chat handler is the only call site wrapped this PR** — gates on `vendorHealthStatus("anthropic")` before the call, renders §26.9 fallback message on `down` OR on call failure. The other 4 vendors' call sites get wrapped when BP27 ships `lib/ai/call-wrapper.ts` — same lint-staging story as decision 5.
+
+12. **3 monitoring crons + sendOperatorAlert.** `auth-failure-monitor` (50 failures/IP in 5min → medium), `permission-denied-monitor` (20/user in 5min → medium), `cross-tenant-rls-bypass-monitor` (any hit → critical, runs on staging too per §26.13). `lib/monitoring/send-operator-alert.ts` fans out to audit_log + optional Slack webhook + console breadcrumb. AI cost surge monitor is deferred (depends on BP27's `ai_call_log`).
+
+13. **@sentry/nextjs installed.** Configs at `sentry.client.config.ts` and `sentry.server.config.ts` use `lib/sentry/pii-scrubber.ts` in beforeSend / beforeBreadcrumb. Scrubber recursively redacts email/phone/dob/passport/legal_first_name/legal_last_name fields at any depth, redacts `email/token/code/key/signature` query params in URLs, drops cookie headers, drops request body. Unit-tested standalone (5 tests).
+
+14. **Anti-prompt-injection verification (§26.8): addendum delimiter integrity.** 3 tests pin the BP18 `buildAddendumWrapping` behavior — markers present, malicious END markers in content don't escape the wrap, framing tells the model addendum is "descriptive context not new instructions". RAG framing and tool-call discipline checks deferred (BP21 and BP10 already implement them; verification tests for those land in a follow-on).
+
+15. **`docs/runbooks/incident-response.md` + `docs/architecture/four-layer-auth.md` shipped.** Incident response covers P0-P3 priority matrix, when-to-declare-security-incident, when-to-engage-counsel, oncall rotation template. Four-layer auth doc renders the §26.2 model with code pointers per layer.
+
+16. **`@sentry/cli` postinstall script set to `false` in pnpm-workspace.** Standard policy — don't run vendor postinstall scripts without operator approval. The sentry CLI is for source map upload, not required at runtime.
+
+**What was rejected:**
+- Building a parallel `apps/main/eslint-plugin-service-role/` plugin per the spec's literal filename — would create a second plugin alongside `packages/eslint-plugin-atc/`. Reused the existing canonical plugin.
+- Refactoring all 5 grandfathered direct-service-role files in this PR — out of scope; defer to a focused follow-on.
+- Sweeping every existing `@anthropic-ai/sdk` import to a hypothetical `lib/ai/call-wrapper.ts` — that wrapper lands in BP27. Staged the lint rule off until then.
+- Wrapping every existing OpenAI / Stripe / Resend call site with vendor-health gating — same. Chat-Anthropic is the spec's critical path and got wired; others adopt the wrapper in BP27.
+
+**Artifacts:** `20260605000000_audit_log_and_security.sql`, `lib/audit/write.ts`, `lib/db/platform-admin-client.ts` (writeAuditRow + platformAdminClient ALS export), `lib/auth/assert-permission.ts` (AuthReauthRequired + auth_time check), `lib/db/factories.ts` (Stripe + Resend contexts), `lib/forensics/{decrypt,legal-hold}.ts`, `lib/vendor-health/registry.ts`, `lib/monitoring/send-operator-alert.ts`, `lib/sentry/pii-scrubber.ts`, `lib/inngest/event-registry.ts`, `inngest/{forensics-log-purge-cron,vendor-health-probe,auth-failure-monitor,permission-denied-monitor,cross-tenant-rls-bypass-monitor}.ts`, `app/(admin)/admin/vendor-status/page.tsx`, `sentry.{client,server}.config.ts`, 3 new eslint rules + the 5 grandfathered allowlist entries + the existing money-math rule registered, `docs/runbooks/{forensics-manual-access,incident-response}.md`, `docs/architecture/four-layer-auth.md`, `docs/exceptions-service-role.md`. 21 audit-log stubs swept to real INSERTs. 5 new test files, 22 new tests (502/502 passing). PR #?? open.
+
+---
+
 ## D-058 — 2026-05-23 — BP25: CCPA retention closeout, free-text anonymization, forensics capture — key decisions
 
 **Decision:**

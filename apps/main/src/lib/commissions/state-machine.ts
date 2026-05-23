@@ -8,9 +8,10 @@
 //   any state → disputed
 //   any state → waived
 //
-// On every transition an audit_log row is written (stub until §26 lands).
+// On every transition an audit_log row is written.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export type CommissionState =
   | "expected"
@@ -76,17 +77,12 @@ export async function transitionCommissionState(
     throw new Error(`Failed to transition commission ${commissionId}: ${updateError.message}`);
   }
 
-  // TODO(audit-log §26): replace console.warn with insert into public.audit_log
-  console.warn(
-    "[audit-log:STUB] " +
-      JSON.stringify({
-        action: "commission.state_transition",
-        resource_id: commissionId,
-        from,
-        to,
-        actor_user_id: meta.actor_user_id ?? null,
-        reason: meta.reason ?? null,
-        _stub: "audit_log table not yet created (§26)",
-      }),
-  );
+  await writeAuditLog({
+    actor_user_id: meta.actor_user_id ?? null,
+    actor_type: meta.actor_user_id ? "user" : "system",
+    action: "commission.state_transition",
+    resource_type: "commission",
+    resource_id: commissionId,
+    changes: { from, to, reason: meta.reason ?? null },
+  });
 }

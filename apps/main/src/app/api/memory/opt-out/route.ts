@@ -4,6 +4,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -20,12 +21,14 @@ export async function POST(req: Request): Promise<Response> {
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
-    console.warn("[audit-log:STUB]", JSON.stringify({
-      action: "customer_memory.opted_out",
+    await writeAuditLog({
       tenant_id: ctx.tenant_id,
-      user_id: user.id,
-      ts: new Date().toISOString(),
-    }));
+      actor_user_id: user.id,
+      actor_type: "user",
+      action: "customer_memory.opted_out",
+      resource_type: "user",
+      resource_id: user.id,
+    });
 
     return Response.json({ status: "opted_out" });
   } catch (err) {

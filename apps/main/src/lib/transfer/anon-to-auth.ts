@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const TRANSFER_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -91,15 +92,15 @@ export async function softCommitTransfer({
     ts: now.getTime() + TRANSFER_WINDOW_MS,
   });
 
-  // 5. Audit-log (stub to console.warn until §26 audit_log table lands).
-  console.warn("[audit-log:STUB]", JSON.stringify({
-    action: "session_transfer.soft_committed",
+  await writeAuditLog({
     tenant_id,
-    user_id,
-    anonymous_session_id,
-    expires_at,
-    ts: now.toISOString(),
-  }));
+    actor_user_id: user_id,
+    actor_type: "user",
+    action: "session_transfer.soft_committed",
+    resource_type: "anonymous_session",
+    resource_id: anonymous_session_id,
+    changes: { expires_at, soft_committed_at: now.toISOString() },
+  });
 
   return { status: "soft_committed", expires_at };
 }
@@ -198,15 +199,15 @@ export async function undoTransfer({
     ? { from: msgSnapshot[0]?.created_at, to: msgSnapshot[msgSnapshot.length - 1]?.created_at }
     : null;
 
-  console.warn("[audit-log:STUB]", JSON.stringify({
-    action: "session_transfer.undone",
+  await writeAuditLog({
     tenant_id,
-    user_id,
-    anonymous_session_id,
-    message_count: messageCount,
-    time_range: timeRange,
-    ts: new Date().toISOString(),
-  }));
+    actor_user_id: user_id,
+    actor_type: "user",
+    action: "session_transfer.undone",
+    resource_type: "anonymous_session",
+    resource_id: anonymous_session_id,
+    changes: { message_count: messageCount, time_range: timeRange },
+  });
 
   return { status: "undone" };
 }

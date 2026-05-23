@@ -5,6 +5,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export const personaAddendumRescreenNightly = inngest.createFunction(
   {
@@ -52,7 +53,14 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
             .eq("id", row.id);
           suspended++;
           // TODO(notifications): email tenant with §16.6 suspension explanation.
-          // TODO(audit-log): write platform-admin alert row.
+          await writeAuditLog({
+            tenant_id: row.tenant_id,
+            actor_type: "system",
+            action: "persona_addendum.suspended_on_rescreen",
+            resource_type: "persona_addendum",
+            resource_id: row.id,
+            changes: { persona_slug: row.persona_slug, findings_count: result.findings.length },
+          });
           console.warn(
             "[persona-addendum-rescreen-nightly] SUSPENDED tenant=%s persona=%s findings=%d",
             row.tenant_id, row.persona_slug, result.findings.length,

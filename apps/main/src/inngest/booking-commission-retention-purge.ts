@@ -11,6 +11,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const SEVEN_YEARS_MS = 7 * 365 * 24 * 60 * 60 * 1000;
 
@@ -72,15 +73,16 @@ export const bookingCommissionRetentionPurge = inngest.createFunction(
       return { error: delErr.message };
     }
 
-    console.warn(
-      "[audit-log:STUB] " + JSON.stringify({
-        action: "retention.bookings_purged",
+    await writeAuditLog({
+      actor_type: "system",
+      action: "retention.bookings_purged",
+      resource_type: "booking",
+      changes: {
         deleted_bookings_count: count ?? 0,
         preserved_for_dispute_count: disputedSet.size,
         cutoff_sailing_date: cutoffDate,
-        _stub: "audit_log table not yet created",
-      }),
-    );
+      },
+    });
 
     return {
       deleted_bookings: count ?? 0,
