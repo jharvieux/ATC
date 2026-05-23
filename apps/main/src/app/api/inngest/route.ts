@@ -44,6 +44,10 @@ import { ragExtractContent } from "@/inngest/rag-extract-content";
 import { ragPiiRedact } from "@/inngest/rag-pii-redact";
 import { ragNormalize } from "@/inngest/rag-normalize";
 import { ragTenantApprovalRateNightly } from "@/inngest/rag-tenant-approval-rate-nightly";
+// BP23: Email infrastructure + in-app notifications (§23)
+import { preCruiseEmailScheduler } from "@/inngest/pre-cruise-email-scheduler";
+import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send";
+import { emailSoftBounceRetry } from "@/inngest/email-soft-bounce-retry";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -91,5 +95,9 @@ export const { GET, POST, PUT } = serve({
     ragPiiRedact,
     ragNormalize,
     ragTenantApprovalRateNightly,
+    // BP23: Email infrastructure + in-app notifications (§23)
+    preCruiseEmailScheduler,
+    precruiseGenerateAndSend,
+    emailSoftBounceRetry,
   ],
 });
