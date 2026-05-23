@@ -4,6 +4,53 @@ Newest entries on top.
 
 ---
 
+## D-058 — 2026-05-23 — BP25: CCPA retention closeout, free-text anonymization, forensics capture — key decisions
+
+**Decision:**
+
+1. **PLATFORM_PEPPER is set once at platform genesis and NEVER rotated.** The pepper is the secret salt for `deriveCustomerHash(user_id, tenant_id)`. The hash lands on `bookings.anonymized_customer_hash`, `commissions.anonymized_customer_hash`, and `contacts.anonymized_customer_hash` whenever a CCPA purge runs. Rotating the pepper orphans every prior anonymized row from its hash-derived placeholder — there is no migration path. **Operator must store the pepper in the 1Password vault entry `atc-platform-pepper` (or equivalent) with explicit "DO NOT ROTATE" documentation.** If the secret leaks, the right response is a key-compromise incident runbook, not a rotation.
+
+2. **Tenant CRM notes live on `contacts.notes`, not a separate `tenant_crm_notes` table.** Spec §25.4a names the Category-3 surface generically. The repo had no `tenant_crm_notes` table and `contacts` had no `notes` column. The BP25 migration added `contacts.notes TEXT` and `contacts.anonymized_customer_hash TEXT` so the Category-3 contract has a target. Future migrations that introduce a separate notes table can move the purge logic over; the purge function will need updating.
+
+3. **`bookings.user_id` is the customer FK (no `customer_user_id`).** Spec §25.4 names `bookings.customer_user_id`; actual schema (BP15) uses `bookings.user_id`. Same for the related JOIN in `resolve_customer_chat_caps` (BP24, D-057). The purge function uses `user_id` throughout.
+
+4. **Bookings has no denormalized customer PII** (no `customer_email`/`customer_phone`/`customer_dob`). The spec's Step 6 PII clearing on bookings has no surface; passenger PII lives on `booking_passengers.contact_id → contacts.user_id`. The purge anonymizes the deleting user's contact row (clears `user_id`, sets `anonymized_customer_hash`) and the passenger's `contact_id` FK stays intact pointing at the now-anonymized contact. The `passenger_contacts_anonymized_count` field on `ccpa_deletion_executions` is the audit trail.
+
+5. **Bookings has no `dispute_state` column.** Only `commissions.dispute_status` exists. The forensics-snapshot-before-deletion trigger checks commissions only — find commissions for the user's bookings with `dispute_status IN ('open','under_review')`. The spec's "booking_dispute" snapshot_type enum value is retained for future use when a bookings dispute model lands.
+
+6. **`quotes.narrative TEXT` added in this migration.** The Category-2 spec-named target didn't exist; quotes had `custom_notes`. Added `narrative` as the canonical AI-generated narrative column so the purge can NULL it cleanly. Quote pricing (BP21) doesn't currently populate it; a future Haiku-generated narrative feature can fill it.
+
+7. **Forensics capture is write-only here; decrypt + retention cron + access controls land in BP26.** `lib/forensics/capture.ts` encrypts the payload (AES-256-GCM, separate `FORENSICS_ENCRYPTION_KEY_CURRENT`), writes the `forensics_log` row with `purge_after = NOW() + 90 days`, and returns the snapshot id. **There is no decrypt path in this PR.** §26.5a says decryption is "manual, operator-controlled keys, paired with a court order or signed engagement letter" — the BP26 prompt builds that path with `withPlatformAdminAudit` gating.
+
+8. **`forensics_log.audit_log_id` is a bare UUID, not a FK.** Same pattern as `customer_chat_counters.hard_limit_summary_audit_id` (D-057), `quotes.customer_accepted_audit_id` (D-053), and `pre_cruise_email_content` references (D-056). `audit_log` table still doesn't exist (D-036). Every audit write in BP25 (purge execution, soft/hard tier crossings, CCPA cap override, hate-speech match, retention purges) remains a `console.warn` stub. When §26 ships the table, sweep the `[audit-log:STUB]` greps and convert.
+
+9. **`retrieval_log` aggregation cron is deferred.** Data lives in the RAG service's Supabase project; main-app's Inngest can't reach it. Building this requires either (a) RAG-side Inngest infrastructure or (b) a main-app cron calling a new RAG admin endpoint. Either is a meaningful new pattern that warrants its own scope decision. Tagged `TODO(rag-side-inngest)`. The data is still retained on the RAG side in the meantime.
+
+10. **Boot-time key separation check active.** `verifyEnvAtBoot` throws `[security-violation]` if `FORENSICS_ENCRYPTION_KEY_CURRENT === APP_ENCRYPTION_KEY_CURRENT`. Also verifies the forensics key decodes to 32 bytes. Per §26.5a — collision means a single key compromise gives access to BOTH tenant credentials AND forensics snapshots.
+
+11. **Anonymous session 60-day cleanup vs BP24's 7-day chat counter cleanup are distinct.** BP24's `anonymous-chat-counter-cleanup` (D-057) hard-deletes `anonymous_chat_counters` rows after 7 days for per-message-counter privacy. BP25's `anonymous-session-cleanup` deletes `anonymous_sessions` rows after 60 days inactivity — the broader privacy/GDPR retention on the session record itself.
+
+12. **Booking 7-year retention cron uses calendar-day math (not exact-7-years).** `cutoff = NOW() - 7 years` evaluated as `(Date.now() - 7 * 365 * 24h)`, then sliced to `YYYY-MM-DD` for the date-only comparison against `bookings.sailing_date`. Leap-year drift is acceptable — the regulatory boundary is the calendar anniversary, not a microsecond-precise interval. Open commission disputes on linked rows preserve the booking indefinitely.
+
+13. **`memory_opt_out` short-circuit already implemented (BP12 / D-047).** `extract-memory.ts` reads `users.memory_opt_out` fresh from the DB at the START of each invocation (lines 101-108) and returns `{ status: "opted_out" }` before any other DB read. No code change needed for BP25 Task 14. Documenting here so the §25.7 contract is traceable.
+
+14. **Staging outbound isolation wired in `lib/email/send.ts`.** When `STAGING_MODE === "true"` and `TEST_OVERRIDE_EMAIL` is set, every email is redirected to the override address with subject prefixed `[STAGING → original-recipient@...]`. Three unit tests in `test/unit/email/staging-override.test.ts` cover the on/off/no-override paths. No SMS sender wired today; `TEST_OVERRIDE_PHONE` env var is reserved for when one lands.
+
+15. **BP25 retention crons skip in staging via `staging_cron_skips` table.** New crons (`anonymous-session-cleanup`, `rag-rejected-items-purge`, `booking-commission-retention-purge`) check `process.env.STAGING_MODE === "true"` at start, insert a row into `staging_cron_skips`, and return early. Earlier-prompt crons that mutate production-shaped data may need this guard too — BP26 will audit and add where needed.
+
+16. **No formal tenant_admin role exists yet.** The CRM-anonymization notification fans out to ALL active users in each affected tenant (not just admins). When §26 ships RBAC, tighten to the `tenant_admin` role — TODO marker in the cron source.
+
+**What was rejected:**
+- Adding a separate `tenant_crm_notes` table — overcomplicates the §12 contacts model when `contacts.notes` works.
+- Migrating tier code naming to spec-verbatim (`sub_host_*`) — same rationale as D-057.
+- Using `env()` inside `lib/forensics/capture.ts` — broke unit tests (no boot). Read `process.env.FORENSICS_ENCRYPTION_KEY_*` directly. The boot-time separation check in `verifyEnvAtBoot` still enforces the key invariant — just at boot, not on every call.
+- Cross-DB FK from `bookings`/`commissions`/`contacts` to a notional `ccpa_purge_records` row — no value; the row already references back via `user_id`.
+- True PostgreSQL `BEGIN/COMMIT` transaction wrap on Steps 3-9 — Supabase JS v2 has no transaction API. Per-step error handling + the audit row recording partial state is the pragmatic choice. A future refactor to a `pg` client (or a stored procedure) could improve atomicity if the partial-failure rate is non-zero in production.
+
+**Artifacts:** `20260604000000_retention_ccpa_forensics.sql`, `lib/privacy/{customer-hash,purge-user-data}.ts`, `lib/forensics/capture.ts`, `inngest/user-data-purge-after-grace.ts` (wired to real purge), `inngest/{anonymous-session-cleanup,rag-rejected-items-purge,booking-commission-retention-purge,subprocessors-annual-review}.ts`, `app/api/user/privacy/{route,cookies/route}.ts`, `app/settings/privacy/{page,cookies/page}.tsx`, `components/privacy/CookieConsentBanner.tsx` wired into root layout, `app/(tenant)/tenant-admin/crm/anonymized-notes/page.tsx`, `app/api/tenant/crm/notes/{list/route,[id]/route}.ts`, `emails/{BreachNotificationUser,BreachNotificationTenantAdmin}.tsx`, `lib/email/send-breach-notifications.ts`, `lib/email/send.ts` staging override (3 unit tests), `app/legal/sub-processors/page.tsx`, `docs/runbooks/{breach-response,staging-pii-risk-acceptance}.md`, `docs/cookies-inventory.md`. 4 new test files, 16 new tests (483/483 passing). PR #?? open.
+
+---
+
 ## D-057 — 2026-05-22 — BP24: Chat UI, tone matching, deny-list, anonymous + customer rate limits — key decisions
 
 **Decision:**

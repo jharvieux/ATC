@@ -157,6 +157,21 @@ const envSchema = z.object({
   CUSTOMER_CHAT_SOFT2_COOLDOWN_DAYS: z.coerce.number().int().positive().optional().default(3),
   // §24.5 / §24.9 Haiku model for hard-limit conversation summary + heuristic tone-drift check.
   CHAT_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  // Retention / forensics — §25
+  // PLATFORM_PEPPER: 256-bit secret used to derive customer hashes.
+  // SET ONCE AT PLATFORM GENESIS. NEVER ROTATE — rotation breaks every
+  // existing customer hash on bookings, commissions, and contacts.
+  PLATFORM_PEPPER: z.string().min(1),
+  // Forensics encryption keys — §26.5a. MUST be distinct from APP_ENCRYPTION_KEY_*.
+  // Boot-time check below enforces the separation.
+  FORENSICS_ENCRYPTION_KEY_CURRENT: z.string().min(1),
+  FORENSICS_ENCRYPTION_KEY_ID_CURRENT: z.string().optional().default("forensics-v1"),
+  FORENSICS_ENCRYPTION_KEY_PRIOR_1: z.string().optional(),
+  FORENSICS_ENCRYPTION_KEY_PRIOR_2: z.string().optional(),
+  // §25.10 staging real-PII risk acceptance — outbound isolation envs.
+  STAGING_MODE: z.enum(["true", "false"]).optional().default("false"),
+  TEST_OVERRIDE_EMAIL: z.string().email().optional(),
+  TEST_OVERRIDE_PHONE: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
@@ -198,6 +213,26 @@ export function verifyEnvAtBoot(): Env {
       );
     }
   }
+  // §26.5a forensics-key separation. FORENSICS_ENCRYPTION_KEY_CURRENT and
+  // APP_ENCRYPTION_KEY_CURRENT MUST hold different key material — if they
+  // collide, a single key compromise gives an attacker access to BOTH tenant
+  // credentials AND forensics snapshots. Compare as raw strings; reject
+  // identical material before decoding.
+  if (data.FORENSICS_ENCRYPTION_KEY_CURRENT === data.APP_ENCRYPTION_KEY_CURRENT) {
+    throw new Error(
+      "[security-violation] FORENSICS_ENCRYPTION_KEY_CURRENT must differ from " +
+        "APP_ENCRYPTION_KEY_CURRENT per §26.5a. Generate a separate 256-bit base64 key. " +
+        "Key material is not logged. Refusing to boot.",
+    );
+  }
+  const forensicsKeyBytes = Buffer.from(data.FORENSICS_ENCRYPTION_KEY_CURRENT, "base64");
+  if (forensicsKeyBytes.length !== 32) {
+    throw new Error(
+      `FORENSICS_ENCRYPTION_KEY_CURRENT must decode to exactly 32 bytes (got ${forensicsKeyBytes.length}). ` +
+        `Key material is not logged.`,
+    );
+  }
+
   // §16.3.4 reserved-parent-domain boot guard. If PLATFORM_PARENT_DOMAIN equals
   // the reserved value AND we are NOT in production, refuse to boot — binding
   // the reserved domain in any non-production project would route every

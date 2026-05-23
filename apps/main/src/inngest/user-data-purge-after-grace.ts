@@ -1,50 +1,21 @@
-// §17.10 — Purges a user's data after the 30-day CCPA deletion grace period expires.
-// Triggered by user.data_purge_scheduled when deleted_at + 30d elapses.
+// §17.10 / §25.4a — Purges a user's data after the 30-day CCPA deletion grace
+// period expires. Triggered by user.data_purge_scheduled.
+//
+// BP25 finalization: the inline stub is replaced with a call to
+// lib/privacy/purge-user-data which implements the §25.4a three-category
+// anonymization, forensics-snapshot-before-deletion for active disputes,
+// and the audit row insert.
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { purgeUserDataPerRetention } from "@/lib/privacy/purge-user-data";
+import { createNotification } from "@/lib/notifications/create";
 
 interface PurgePayload {
   auth_user_id: string;
   user_id: string;
   deleted_at: string;
   purge_at: string;
-}
-
-async function purgeUserDataPerRetention(
-  db: ReturnType<typeof createServiceRoleClient>,
-  userId: string,
-  authUserId: string,
-): Promise<void> {
-  // TODO(part-6): full retention-compliant purge per §25.2.
-  // Current stub: basic delete on core tables.
-
-  // Anonymize bookings per §25.4 (null customer ref, store hash).
-  // TODO(part-6): use actual email hash once users.email is available.
-  await db.from("bookings")
-    .update({ auth_user_id: null })
-    .eq("auth_user_id", authUserId);
-
-  // Delete conversation history.
-  const { data: convs } = await db
-    .from("conversations")
-    .select("id")
-    .eq("auth_user_id", authUserId);
-
-  if (convs && convs.length > 0) {
-    const convIds = (convs as { id: string }[]).map((c) => c.id);
-    await db.from("messages").delete().in("conversation_id", convIds);
-    await db.from("conversations").delete().eq("auth_user_id", authUserId);
-  }
-
-  // Delete consent records.
-  await db.from("legal_consents").delete().eq("auth_user_id", authUserId);
-
-  // Delete the users row itself.
-  await db.from("users").delete().eq("id", userId);
-
-  // TODO(part-6): audit_log entry for CCPA deletion completion.
-  console.info("[user-data-purge] user=%s purge complete (stub)", userId);
 }
 
 export const userDataPurgeAfterGrace = inngest.createFunction(
@@ -67,7 +38,7 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
     // Re-read the user row — if undo-delete was called, deleted_at will be NULL.
     const { data: userRow } = await db
       .from("users")
-      .select("deleted_at")
+      .select("deleted_at, status")
       .eq("auth_user_id", auth_user_id)
       .maybeSingle();
 
@@ -76,20 +47,64 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
       return { skipped: true };
     }
 
-    const typedUser = userRow as { deleted_at: string | null };
+    const typedUser = userRow as { deleted_at: string | null; status: string };
     if (!typedUser.deleted_at) {
-      // User undid the deletion within the grace period.
       console.info("[user-data-purge] user=%s deletion was undone — skipping purge", auth_user_id);
       return { skipped: true, reason: "undo_delete" };
     }
-
-    // Verify the deleted_at matches what we scheduled for (prevents re-delete after undo+re-delete).
     if (typedUser.deleted_at !== deleted_at) {
       console.info("[user-data-purge] user=%s deleted_at mismatch — skipping stale job", auth_user_id);
       return { skipped: true, reason: "stale" };
     }
+    if (typedUser.status === "purged") {
+      console.info("[user-data-purge] user=%s already purged — skipping", auth_user_id);
+      return { skipped: true, reason: "already_purged" };
+    }
 
-    await purgeUserDataPerRetention(db, user_id, auth_user_id);
-    return { ok: true };
+    const result = await purgeUserDataPerRetention(db, {
+      user_id,
+      grace_period_ended_at: deleted_at,
+    });
+
+    if (result.purge_outcome === "error") {
+      // Leave users.status='deleted' so a future retry can pick this up.
+      console.warn(
+        "[user-data-purge] user=%s purge FAILED detail=%s",
+        user_id,
+        result.error_detail,
+      );
+      return { ok: false, error: result.error_detail, counts: result.counts };
+    }
+
+    // §25.4a Category 3 — notify the affected tenants' admins so they can
+    // review residual PII in their CRM notes. No formal tenant_admin role
+    // exists today (§26 ships RBAC); for now we notify every active user
+    // in each affected tenant — operators can narrow later.
+    // TODO(rbac-tenant-admin): target only tenant_admin once roles ship.
+    for (const tenantId of result.affected_tenant_ids) {
+      const { data: users } = await db
+        .from("users")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("status", "active");
+      for (const u of ((users ?? []) as Array<{ id: string }>)) {
+        await createNotification({
+          db,
+          tenant_id: tenantId,
+          user_id: u.id,
+          category: "system",
+          title: "Customer removed under CCPA — review your notes for residual PII",
+          body: "A customer exercised CCPA deletion. Notes you wrote about them are retained but their identifier was anonymized. Review and redact any PII in the note text.",
+          link_url: "/tenant-admin/crm/anonymized-notes",
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      counts: result.counts,
+      forensics_snapshot_id: result.forensics_snapshot_id,
+      affected_tenant_ids: result.affected_tenant_ids,
+    };
   },
 );

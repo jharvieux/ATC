@@ -52,6 +52,11 @@ import { emailSoftBounceRetry } from "@/inngest/email-soft-bounce-retry";
 import { anonymousChatCounterCleanup } from "@/inngest/anonymous-chat-counter-cleanup";
 import { customerChatCounterRecompute } from "@/inngest/customer-chat-counter-recompute";
 import { denylistQuarterlyReviewReminder } from "@/inngest/denylist-quarterly-review-reminder";
+// BP25: Retention crons (§25.2)
+import { anonymousSessionCleanup } from "@/inngest/anonymous-session-cleanup";
+import { ragRejectedItemsPurge } from "@/inngest/rag-rejected-items-purge";
+import { bookingCommissionRetentionPurge } from "@/inngest/booking-commission-retention-purge";
+import { subprocessorsAnnualReview } from "@/inngest/subprocessors-annual-review";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -107,5 +112,10 @@ export const { GET, POST, PUT } = serve({
     anonymousChatCounterCleanup,
     customerChatCounterRecompute,
     denylistQuarterlyReviewReminder,
+    // BP25: Retention crons (§25.2)
+    anonymousSessionCleanup,
+    ragRejectedItemsPurge,
+    bookingCommissionRetentionPurge,
+    subprocessorsAnnualReview,
   ],
 });

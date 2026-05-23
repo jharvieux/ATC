@@ -18,8 +18,7 @@
 - Nothing in flight — clean checkpoint
 
 ## Next step
-- Switch model back to Sonnet 4.6: `/model claude-sonnet-4-6`
-- Begin BP25 — first prompt in Part 6 (data privacy & retention §25)
+- Begin BP25 — first prompt in Part 6 (data privacy & retention §25). Uses Opus 4.7 — stay on current model.
 
 ## Blocked on user
 - Nothing

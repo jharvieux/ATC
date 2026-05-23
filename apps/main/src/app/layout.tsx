@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { CookieConsentBanner } from "@/components/privacy/CookieConsentBanner";
 
 export const metadata: Metadata = {
   title: "AI Travel Concierge",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <CookieConsentBanner />
+      </body>
     </html>
   );
 }

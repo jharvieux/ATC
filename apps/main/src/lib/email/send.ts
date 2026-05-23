@@ -57,6 +57,15 @@ const RESEND_API_URL = "https://api.resend.com/emails";
 export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult> {
   const { db, tenant, to, subject, template_id, category, html } = input;
 
+  // §25.10 — Staging outbound isolation. When STAGING_MODE=true and
+  // TEST_OVERRIDE_EMAIL is set, redirect ALL outbound email to the test
+  // address so a restored prod copy doesn't accidentally email real users.
+  // The override happens before suppression checks so we don't accidentally
+  // skip-suppress test-mode sends.
+  const stagingOverrideTo =
+    process.env.STAGING_MODE === "true" ? process.env.TEST_OVERRIDE_EMAIL : null;
+  const effectiveTo = stagingOverrideTo ?? to;
+
   // 1 — Suppression check
   const suppressionReasons: string[] = ["unsubscribe_all", "hard_bounce", "complaint"];
   if (category === "marketing") suppressionReasons.push("unsubscribe_marketing");
@@ -119,8 +128,8 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from,
-        to,
-        subject,
+        to: effectiveTo,
+        subject: stagingOverrideTo ? `[STAGING → ${to}] ${subject}` : subject,
         html,
         ...(input.reply_to ? { reply_to: input.reply_to } : {}),
       }),
