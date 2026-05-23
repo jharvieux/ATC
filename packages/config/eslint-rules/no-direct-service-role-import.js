@@ -177,6 +177,18 @@ const ALLOWED_PATH_SUFFIXES = [
   // BP22: RAG ingestion pipeline Inngest functions — background jobs, no user session. §22.4.
   "/inngest/rag-extract-content.ts",
   "/inngest/rag-pii-redact.ts",
+  // BP23: Pre-cruise email scheduler cron — cross-tenant booking scan. §23.4.
+  "/inngest/pre-cruise-email-scheduler.ts",
+  // BP23: Pre-cruise generate and send — Haiku content + email write. §23.4.
+  "/inngest/precruise-generate-and-send.ts",
+  // BP23: Soft bounce retry — reads email_log, writes suppressions. §23.7.
+  "/inngest/email-soft-bounce-retry.ts",
+  // BP23: Resend webhook handler — writes email_log + suppressions outside user session. §23.7.
+  "/app/api/webhooks/resend/route.ts",
+  // BP23: Unsubscribe endpoint — writes email_suppressions without user session. §23.3.
+  "/app/api/email/unsubscribe/route.ts",
+  // BP23: Companion page — reads pre_cruise_email_content via token, no user session. §23.5.
+  "/app/companion/[token]/page.tsx",
   "/inngest/rag-normalize.ts",
   // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
   "/inngest/rag-tenant-approval-rate-nightly.ts",

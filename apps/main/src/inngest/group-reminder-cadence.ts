@@ -95,17 +95,22 @@ export const groupReminderCadence = inngest.createFunction(
         if (daysSinceLast < intervalDays) { skipped++; continue; }
       }
 
-      // 3-per-24h rate limit.
+      // 3-per-24h rate limit. Uses §23.2 email_log schema (BP23 migration).
       const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const { data: recentLog } = await svc
         .from("email_log")
         .select("id")
-        .eq("recipient_email", inv.invitee_email)
+        .eq("tenant_id", group.tenant_id)
+        .eq("to_email", inv.invitee_email)
+        .eq("email_category", "group_invitation")
         .gte("sent_at", windowStart.toISOString());
       if ((recentLog?.length ?? 0) >= 3) { skipped++; continue; }
 
       const apiKey = process.env.RESEND_API_KEY;
       if (!apiKey) { skipped++; continue; }
+
+      const subject = `Reminder: ${group.cruise_line} — ${group.ship_name} sailing ${group.sailing_date}`;
+      const html = `<p>Hi ${inv.invitee_name ?? "there"},</p><p>Friendly reminder about your group trip on <strong>${group.ship_name}</strong> (${group.cruise_line}) sailing <strong>${group.sailing_date}</strong>.</p>${group.coordinator_message ? `<blockquote>${group.coordinator_message}</blockquote>` : ""}`;
 
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
@@ -113,14 +118,26 @@ export const groupReminderCadence = inngest.createFunction(
         body: JSON.stringify({
           from: "trips@ai-travelconcierge.com",
           to: inv.invitee_email,
-          subject: `Reminder: ${group.cruise_line} — ${group.ship_name} sailing ${group.sailing_date}`,
-          html: `<p>Hi ${inv.invitee_name ?? "there"},</p><p>Friendly reminder about your group trip on <strong>${group.ship_name}</strong> (${group.cruise_line}) sailing <strong>${group.sailing_date}</strong>.</p>${group.coordinator_message ? `<blockquote>${group.coordinator_message}</blockquote>` : ""}`,
+          subject,
+          html,
         }),
       });
 
       if (res.ok) {
+        const resendBody = await res.json() as { id?: string };
         await Promise.all([
-          svc.from("email_log").insert({ recipient_email: inv.invitee_email, template_name: "group_reminder", tenant_id: group.tenant_id }),
+          svc.from("email_log").insert({
+            tenant_id: group.tenant_id,
+            to_email: inv.invitee_email,
+            from_email: "trips@ai-travelconcierge.com",
+            subject,
+            template_id: "group_reminder",
+            email_category: "group_invitation",
+            status: "sent",
+            sent_at: now.toISOString(),
+            ...(resendBody.id ? { resend_message_id: resendBody.id } : {}),
+            ...(group.id ? { related_group_id: group.id } : {}),
+          }),
           svc.from("invitations").update({ last_email_sent_at: now.toISOString() }).eq("id", inv.id),
         ]);
         sent++;

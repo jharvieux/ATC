@@ -126,6 +126,17 @@ const envSchema = z.object({
   RAG_INGEST_OCR_PROVIDER: z.enum(["tesseract", "gcv", "none"]).optional().default("none"),
   // Google Cloud Vision API key — only required if RAG_INGEST_OCR_PROVIDER='gcv'.
   GCV_API_KEY: z.string().optional(),
+  // Email & Notifications — §23
+  // Resend webhook signing secret (required — verifies bounce/complaint events from Resend).
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
+  // Pre-cruise email timing — hours before sailing for each phase (§23.4).
+  PRECRUISE_T90_HOURS_BEFORE: z.coerce.number().int().positive().optional().default(2160),
+  PRECRUISE_T30_HOURS_BEFORE: z.coerce.number().int().positive().optional().default(720),
+  PRECRUISE_T7_HOURS_BEFORE:  z.coerce.number().int().positive().optional().default(168),
+  PRECRUISE_T1_HOURS_BEFORE:  z.coerce.number().int().positive().optional().default(24),
+  // Companion page token HMAC key (§23.5).
+  // Uses INVITATION_TOKEN_HMAC_KEY as fallback — see MEMORY D-056 for rationale.
+  COMPANION_TOKEN_HMAC_KEY: z.string().optional(),
 });
 
 type Env = z.infer<typeof envSchema>;
