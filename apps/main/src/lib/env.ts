@@ -137,6 +137,26 @@ const envSchema = z.object({
   // Companion page token HMAC key (§23.5).
   // Uses INVITATION_TOKEN_HMAC_KEY as fallback — see MEMORY D-056 for rationale.
   COMPANION_TOKEN_HMAC_KEY: z.string().optional(),
+  // Chat UI — §24
+  // Anonymous chat — §24.8 three-identifier limit (normal + under-abuse caps).
+  ANON_CHAT_LIMIT_PER_SESSION:                z.coerce.number().int().positive().optional().default(5),
+  ANON_CHAT_LIMIT_PER_IP_24H:                 z.coerce.number().int().positive().optional().default(15),
+  ANON_CHAT_LIMIT_PER_FINGERPRINT_24H:        z.coerce.number().int().positive().optional().default(10),
+  ANON_CHAT_LIMIT_PER_SESSION_UNDER_ABUSE:    z.coerce.number().int().positive().optional().default(2),
+  ANON_CHAT_LIMIT_PER_IP_UNDER_ABUSE:         z.coerce.number().int().positive().optional().default(5),
+  ANON_CHAT_LIMIT_PER_FINGERPRINT_UNDER_ABUSE: z.coerce.number().int().positive().optional().default(3),
+  // Authenticated customer chat — §24.9 three-tier limit.
+  CUSTOMER_CHAT_SOFT1_CAP:           z.coerce.number().int().positive().optional().default(20),
+  CUSTOMER_CHAT_SOFT2_CAP:           z.coerce.number().int().positive().optional().default(30),
+  CUSTOMER_CHAT_HARD_CAP:            z.coerce.number().int().positive().optional().default(40),
+  CUSTOMER_CHAT_BOOKING_BONUS_PERCENT: z.coerce.number().int().nonnegative().optional().default(100),
+  CUSTOMER_CHAT_LIMIT_HARD_CEILING:  z.coerce.number().int().positive().optional().default(200),
+  CUSTOMER_CHAT_LIMIT_HARD_FLOOR:    z.coerce.number().int().positive().optional().default(15),
+  CUSTOMER_CHAT_WINDOW_DAYS:         z.coerce.number().int().positive().optional().default(30),
+  CUSTOMER_CHAT_SOFT1_COOLDOWN_DAYS: z.coerce.number().int().positive().optional().default(7),
+  CUSTOMER_CHAT_SOFT2_COOLDOWN_DAYS: z.coerce.number().int().positive().optional().default(3),
+  // §24.5 / §24.9 Haiku model for hard-limit conversation summary + heuristic tone-drift check.
+  CHAT_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
 });
 
 type Env = z.infer<typeof envSchema>;

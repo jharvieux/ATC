@@ -72,6 +72,9 @@ export const PLATFORM_ADMIN_REASONS = [
   // Catch-all for emergencies (use sparingly — must be paired with
   // an audit_log.changes.reason_detail string and a MEMORY.md entry)
   "manual_emergency_intervention",
+
+  // Deny-list quarterly review / additions / removals (per §24.5 / §26.11).
+  "denylist_management",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

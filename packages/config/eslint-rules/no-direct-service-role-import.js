@@ -190,6 +190,17 @@ const ALLOWED_PATH_SUFFIXES = [
   // BP23: Companion page — reads pre_cruise_email_content via token, no user session. §23.5.
   "/app/companion/[token]/page.tsx",
   "/inngest/rag-normalize.ts",
+  // BP24: Chat backend handler — drives anonymous + authenticated chat,
+  // writes anonymous_chat_counters / customer_chat_counters / messages /
+  // conversations / customer_memories before any user session exists for
+  // the anonymous path. §24.
+  "/app/api/chat/route.ts",
+  // BP24: Anonymous chat counter cleanup cron — cross-tenant nightly. §24.8.
+  "/inngest/anonymous-chat-counter-cleanup.ts",
+  // BP24: Customer chat counter recompute cron — cross-tenant nightly. §24.9.
+  "/inngest/customer-chat-counter-recompute.ts",
+  // BP24: Deny-list quarterly review reminder cron — platform-wide. §24.5.
+  "/inngest/denylist-quarterly-review-reminder.ts",
   // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
   "/inngest/rag-tenant-approval-rate-nightly.ts",
 ];
