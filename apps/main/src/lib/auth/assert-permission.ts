@@ -1,16 +1,21 @@
-// Spec ref: §7.9 (API calling conventions)
+// Spec ref: §7.9 / §26.3 (assertPermission canonical contract)
 //
 // assertPermission verifies that the caller is an authenticated, active member
-// of the resolved tenant, then returns the TenantContext and the raw Supabase
-// auth user. Route handlers call this at the top of every handler body.
+// of the resolved tenant. For sensitive routes (§17.7 / §26.3 re-auth list)
+// it also asserts the JWT's `auth_time` claim is ≤ 4 hours old; on a stale
+// auth_time it throws AuthReauthRequired with a structured shape so the
+// client can redirect to /auth/reauth?return=...
 //
-// Full RBAC/permission matrix is in a later spec section.
-// TODO(rbac): evaluate `opts.resource` + `opts.action` against the permission
-// matrix when that section lands. For now the params are logged and we proceed.
+// Full RBAC matrix is later spec work; for now we log resource+action and
+// proceed once membership + freshness pass.
 
 import { createClient } from "@supabase/supabase-js";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import type { TenantContext } from "@/lib/db/tenant-context";
+import {
+  isSensitiveRoute,
+  SENSITIVE_SESSION_MAX_AGE_MS,
+} from "./sensitive-routes";
 
 export type User = {
   id: string;
@@ -19,11 +24,29 @@ export type User = {
   status: string;
 };
 
+/**
+ * Structured re-auth required error. Route handlers should catch this and
+ * return a 401 with `{ error: "reauth_required", return_to }`.
+ */
+export class AuthReauthRequired extends Error {
+  readonly code = "reauth_required" as const;
+  readonly return_to: string;
+  constructor(return_to: string) {
+    super("Sensitive action requires re-authentication (auth_time > 4h).");
+    this.return_to = return_to;
+  }
+}
+
+interface AssertPermissionOpts {
+  resource: string;
+  action: string;
+}
+
 export async function assertPermission(
   req: Request,
-  opts: { resource: string; action: string },
+  opts: AssertPermissionOpts,
 ): Promise<{ ctx: TenantContext; user: User }> {
-  // TODO(rbac): log resource + action for future matrix evaluation
+  // TODO(rbac): evaluate against the permission matrix when §26.2 RBAC lands.
   console.log("[assertPermission] resource=%s action=%s", opts.resource, opts.action);
 
   const ctx = await tenantContextFromRequest(req);
@@ -47,6 +70,21 @@ export async function assertPermission(
     throw new Error("assertPermission: invalid or expired access token.");
   }
 
+  // §26.3 sensitive-action re-auth check. Decode auth_time from the JWT
+  // payload (no signature verification needed — Supabase already validated
+  // the token in getUser()). If stale, throw the structured error.
+  const pathname = new URL(req.url).pathname;
+  if (isSensitiveRoute(pathname)) {
+    const authTime = readAuthTime(accessToken);
+    if (authTime === null) {
+      throw new AuthReauthRequired(pathname);
+    }
+    const ageMs = Date.now() - authTime * 1000;
+    if (ageMs > SENSITIVE_SESSION_MAX_AGE_MS) {
+      throw new AuthReauthRequired(pathname);
+    }
+  }
+
   const { data: row, error } = await supabase
     .from("users")
     .select("id, auth_user_id, tenant_id, status")
@@ -64,4 +102,25 @@ export async function assertPermission(
   }
 
   return { ctx, user: row as User };
+}
+
+/**
+ * Reads the JWT `auth_time` claim (Unix seconds). Returns null if the
+ * claim is missing or the JWT is malformed. We do NOT verify the signature
+ * here — Supabase auth already did in getUser().
+ */
+function readAuthTime(jwt: string): number | null {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(parts[1]!, "base64").toString("utf8"),
+    ) as Record<string, unknown>;
+    const auth_time = payload.auth_time;
+    return typeof auth_time === "number" && Number.isFinite(auth_time)
+      ? auth_time
+      : null;
+  } catch {
+    return null;
+  }
 }

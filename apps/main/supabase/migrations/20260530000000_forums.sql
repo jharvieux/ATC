@@ -90,13 +90,41 @@ CREATE TABLE public.forum_messages (
   moderation_attempt_count  INTEGER     NOT NULL DEFAULT 0,
   moderation_last_attempt_at TIMESTAMPTZ,
   moderation_last_error     TEXT,
-  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  -- One-level reply constraint: parent must itself be top-level
-  CONSTRAINT one_level_reply CHECK (
-    parent_message_id IS NULL OR
-    (SELECT parent_message_id FROM public.forum_messages p WHERE p.id = forum_messages.parent_message_id) IS NULL
-  )
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  -- One-level reply invariant is enforced by the trigger below.
+  -- (A CHECK constraint cannot contain a subquery in PostgreSQL.)
 );
+
+-- §19.1 — One-level reply: a reply's parent must itself be top-level.
+-- Enforced as a BEFORE INSERT/UPDATE trigger (CHECK constraints don't
+-- allow subqueries in PostgreSQL).
+CREATE OR REPLACE FUNCTION public.forum_messages_assert_one_level_reply()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  IF NEW.parent_message_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.forum_messages p
+    WHERE p.id = NEW.parent_message_id
+      AND p.parent_message_id IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'forum_messages.one_level_reply: parent message (%) is itself a reply; only one level of nesting is allowed', NEW.parent_message_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.forum_messages_assert_one_level_reply() FROM public;
+GRANT  EXECUTE ON FUNCTION public.forum_messages_assert_one_level_reply() TO authenticated, service_role;
+
+CREATE TRIGGER forum_messages_one_level_reply_trg
+  BEFORE INSERT OR UPDATE OF parent_message_id ON public.forum_messages
+  FOR EACH ROW EXECUTE FUNCTION public.forum_messages_assert_one_level_reply();
 
 CREATE INDEX forum_messages_thread_created_idx ON public.forum_messages(thread_id, created_at);
 CREATE INDEX forum_messages_moderation_queue_idx

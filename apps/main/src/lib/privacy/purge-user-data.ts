@@ -21,6 +21,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deriveCustomerHash } from "./customer-hash";
 import { captureForensicsSnapshot } from "@/lib/forensics/capture";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export interface PurgeArgs {
   user_id: string;
@@ -297,16 +298,14 @@ export async function purgeUserDataPerRetention(
       purge_outcome: "success",
     });
 
-    console.warn(
-      "[audit-log:STUB] " + JSON.stringify({
-        action: "user.ccpa_purge_executed",
-        resource_type: "user",
-        resource_id: user_id,
-        changes: counts,
-        forensics_snapshot_id,
-        _stub: "audit_log table not yet created",
-      }),
-    );
+    await writeAuditLog({
+      actor_user_id: user_id,
+      actor_type: "system",
+      action: "user.ccpa_purge_executed",
+      resource_type: "user",
+      resource_id: user_id,
+      changes: { ...counts, forensics_snapshot_id },
+    });
 
     return {
       user_id,
@@ -363,16 +362,14 @@ async function finishError(
     purge_outcome: "error",
     error_detail,
   });
-  console.warn(
-    "[audit-log:STUB] " + JSON.stringify({
-      action: "user.ccpa_purge_failed",
-      resource_type: "user",
-      resource_id: user_id,
-      error_detail,
-      partial_counts: counts,
-      _stub: "audit_log table not yet created",
-    }),
-  );
+  await writeAuditLog({
+    actor_user_id: user_id,
+    actor_type: "system",
+    action: "user.ccpa_purge_failed",
+    resource_type: "user",
+    resource_id: user_id,
+    changes: { error_detail, partial_counts: counts },
+  });
   return {
     user_id,
     customer_hash,

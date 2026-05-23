@@ -18,6 +18,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;
@@ -227,18 +228,18 @@ async function processLineItem(
       : expectedCents - receivedCents;
 
   if (varianceCents < AUTO_ACCEPT_THRESHOLD_CENTS) {
-    console.warn(
-      "[audit-log:STUB] " +
-        JSON.stringify({
-          action: "reconcile_auto_accepted",
-          commission_id: comm.id,
-          expected_cents: expectedCents.toString(),
-          received_cents: receivedCents.toString(),
-          variance_cents: varianceCents.toString(),
-          source_path: sourcePath,
-          _stub: "§26",
-        }),
-    );
+    await writeAuditLog({
+      actor_type: "system",
+      action: "reconcile_auto_accepted",
+      resource_type: "commission",
+      resource_id: comm.id,
+      changes: {
+        expected_cents: expectedCents.toString(),
+        received_cents: receivedCents.toString(),
+        variance_cents: varianceCents.toString(),
+        source_path: sourcePath,
+      },
+    });
     counts.auto_accepted++;
     return;
   }

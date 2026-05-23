@@ -1,24 +1,32 @@
-// Spec ref: §5.4.8
+// Spec ref: §5.4.8 / §26.5
 //
-// Verifies the audit row stub fires on both success and error paths,
+// Verifies the audit row INSERT fires on both success and error paths,
 // that nesting reuses the outer context, and that the
 // manual_emergency_intervention reason requires a reason_detail string.
+//
+// After BP26, writeAuditLog inserts into audit_log via a dedicated
+// service-role client. We mock the createServiceRoleClient factory and
+// capture the insert payloads.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the service-role client so we don't need real Supabase env vars.
-const mockSupabase = { from: vi.fn() };
+const capturedInserts: Array<{ table: string; row: Record<string, unknown> }> = [];
+
 vi.mock("../../../src/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => mockSupabase,
+  createServiceRoleClient: () => ({
+    from: (table: string) => ({
+      insert: (row: Record<string, unknown>) => {
+        capturedInserts.push({ table, row });
+        return Promise.resolve({ data: null, error: null });
+      },
+    }),
+  }),
 }));
 
 import { withPlatformAdminAudit } from "../../../src/lib/db/platform-admin-client";
 
-const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
 beforeEach(() => {
-  warnSpy.mockClear();
-  mockSupabase.from.mockReset();
+  capturedInserts.length = 0;
 });
 
 afterEach(() => {
@@ -26,11 +34,8 @@ afterEach(() => {
 });
 
 function lastAuditRow(): Record<string, unknown> | null {
-  const last = warnSpy.mock.calls.at(-1);
-  if (!last || typeof last[0] !== "string") return null;
-  const m = last[0].match(/^\[audit-log:STUB\] (.*)$/);
-  if (!m || !m[1]) return null;
-  return JSON.parse(m[1]) as Record<string, unknown>;
+  const last = capturedInserts.filter((c) => c.table === "audit_log").at(-1);
+  return last?.row ?? null;
 }
 
 describe("withPlatformAdminAudit", () => {
@@ -74,12 +79,8 @@ describe("withPlatformAdminAudit", () => {
 
     const row = lastAuditRow();
     expect(row).not.toBeNull();
-    expect((row!.changes as Record<string, unknown>).outcome).toBe(
-      "error_thrown",
-    );
-    expect((row!.changes as Record<string, unknown>).error_message).toBe(
-      "boom",
-    );
+    expect((row!.changes as Record<string, unknown>).outcome).toBe("error_thrown");
+    expect((row!.changes as Record<string, unknown>).error_message).toBe("boom");
   });
 
   it("nested calls reuse the outer context (only ONE audit row emitted)", async () => {
@@ -94,7 +95,6 @@ describe("withPlatformAdminAudit", () => {
       },
       async (db, _record) => {
         outerDb = db;
-        // Nested call — should reuse the outer db reference.
         await withPlatformAdminAudit(
           {
             admin_user_id: "admin-3",
@@ -108,8 +108,9 @@ describe("withPlatformAdminAudit", () => {
       },
     );
 
-    // Only ONE audit row from the outer call; the nested call reuses context.
-    expect(warnSpy).toHaveBeenCalledTimes(1);
+    // Only ONE audit_log insert from the outer call; the nested call reuses context.
+    const auditInserts = capturedInserts.filter((c) => c.table === "audit_log");
+    expect(auditInserts.length).toBe(1);
     expect(outerDb).toBe(innerDb);
   });
 
@@ -121,9 +122,7 @@ describe("withPlatformAdminAudit", () => {
           reason: "manual_emergency_intervention",
           operation: "platformAdminEmergencyFix",
         },
-        async () => {
-          return "should-not-reach";
-        },
+        async () => "should-not-reach",
       ),
     ).rejects.toThrow(/reason_detail is required/);
   });
@@ -142,8 +141,6 @@ describe("withPlatformAdminAudit", () => {
     expect(result).toBe("ok");
     const row = lastAuditRow();
     expect(row).not.toBeNull();
-    expect((row!.changes as Record<string, unknown>).reason_detail).toMatch(
-      /Stripe outage/,
-    );
+    expect((row!.changes as Record<string, unknown>).reason_detail).toMatch(/Stripe outage/);
   });
 });

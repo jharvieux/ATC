@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { resolveAIBehavior, type AIMode } from "@/lib/personas/resolve-ai-behavior";
+import { writeAuditLog } from "@/lib/audit/write";
 
 // Cost range strings per §9.10.2 — real values land when §27.12 cost attribution lands
 // TODO(§27.12-cost-display): replace with real cost attribution data
@@ -104,14 +105,15 @@ export async function PATCH(req: Request): Promise<Response> {
       return Response.json({ error: error.message }, { status: 500 });
     }
 
-    // Audit log per §9.10 — TODO(audit-log): swap to real INSERT when §26 lands
-    console.warn("[audit-log:STUB]", JSON.stringify({
-      action: "tenant.ai-config.updated",
+    await writeAuditLog({
       tenant_id: ctx.tenant_id,
-      before,
-      after,
-      source: ctx.source,
-    }));
+      actor_user_id: ctx.source.kind === "http_request" ? ctx.source.user_id : null,
+      actor_type: "user",
+      action: "tenant.ai-config.updated",
+      resource_type: "tenant",
+      resource_id: ctx.tenant_id,
+      changes: { before, after },
+    });
 
     const ai_mode = (after.ai_mode as AIMode) ?? "autonomous";
     const background_ai_enabled = after.background_ai_enabled ?? true;

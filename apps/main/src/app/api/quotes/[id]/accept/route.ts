@@ -20,6 +20,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { renderQuotePdfHtml } from "@/lib/quotes/render-pdf";
+import { writeAuditLog } from "@/lib/audit/write";
 
 interface QuoteRow {
   id: string;
@@ -175,7 +176,20 @@ export async function POST(
   }
 }
 
-// TODO(audit-log §26): replace with insert into public.audit_log
+// BP26: legacy shim around writeAuditLog. Each caller passes action +
+// tenant_id + various fields; the rest go into changes.
 function logQuoteAuditStub(payload: Record<string, unknown>): void {
-  console.warn("[audit-log:STUB] " + JSON.stringify({ ...payload, _stub: "§26" }));
+  const { action, tenant_id, quote_id, ...rest } = payload as {
+    action?: string;
+    tenant_id?: string;
+    quote_id?: string;
+  };
+  void writeAuditLog({
+    tenant_id: typeof tenant_id === "string" ? tenant_id : null,
+    actor_type: "user",
+    action: typeof action === "string" ? action : "unknown",
+    resource_type: "quote",
+    resource_id: typeof quote_id === "string" ? quote_id : null,
+    changes: rest as Record<string, unknown>,
+  });
 }

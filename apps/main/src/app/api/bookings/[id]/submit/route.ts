@@ -16,6 +16,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapter } from "@/lib/host-adapters/select-adapter";
 import { multiplyRate, subtractFee, toRate, type Cents } from "@/lib/money";
+import { writeAuditLog } from "@/lib/audit/write";
 import type { BookingSubmissionRequest } from "@atc/shared-types";
 
 type BookingRow = {
@@ -434,7 +435,21 @@ export async function POST(
   }
 }
 
-// TODO(audit-log §26): replace with insert into public.audit_log
+// BP26: legacy shim around writeAuditLog. Each caller passes a payload with
+// `action` and `tenant_id`; the rest goes into `changes`. New callers should
+// use writeAuditLog directly with explicit actor_type / resource_type.
 function logAuditStub(payload: Record<string, unknown>): void {
-  console.warn("[audit-log:STUB] " + JSON.stringify({ ...payload, _stub: "§26" }));
+  const { action, tenant_id, resource_id, ...rest } = payload as {
+    action?: string;
+    tenant_id?: string;
+    resource_id?: string;
+  };
+  void writeAuditLog({
+    tenant_id: typeof tenant_id === "string" ? tenant_id : null,
+    actor_type: "system",
+    action: typeof action === "string" ? action : "unknown",
+    resource_type: "booking",
+    resource_id: typeof resource_id === "string" ? resource_id : null,
+    changes: rest as Record<string, unknown>,
+  });
 }

@@ -13,6 +13,7 @@
 // nagging at the same customer on every message in a hot tier.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export type CustomerLimitDecision =
   | { tier: "below"; resolved: ResolvedCaps; current_count: number }
@@ -176,14 +177,15 @@ export async function enforceCustomerLimit(
         .update({ soft2_last_issued_at: now })
         .eq("user_id", args.user_id)
         .eq("tenant_id", args.tenant_id);
-      // §24.9 audit: soft2_warning_issued (stub until §26).
-      console.warn("[audit-log:STUB] " + JSON.stringify({
-        action: "customer_chat.soft2_warning_issued",
+      await writeAuditLog({
         tenant_id: args.tenant_id,
-        user_id: args.user_id,
-        current_count: nextCount,
-        _stub: "audit_log table not yet created",
-      }));
+        actor_user_id: args.user_id,
+        actor_type: "system",
+        action: "customer_chat.soft2_warning_issued",
+        resource_type: "user",
+        resource_id: args.user_id,
+        changes: { current_count: nextCount },
+      });
       return { tier: "soft2", resolved, current_count: nextCount, persona_augmentation: augmentation };
     }
   } else if (nextCount >= resolved.soft1_cap) {
@@ -200,13 +202,15 @@ export async function enforceCustomerLimit(
         .update({ soft1_last_issued_at: now })
         .eq("user_id", args.user_id)
         .eq("tenant_id", args.tenant_id);
-      console.warn("[audit-log:STUB] " + JSON.stringify({
-        action: "customer_chat.soft1_nudge_issued",
+      await writeAuditLog({
         tenant_id: args.tenant_id,
-        user_id: args.user_id,
-        current_count: nextCount,
-        _stub: "audit_log table not yet created",
-      }));
+        actor_user_id: args.user_id,
+        actor_type: "system",
+        action: "customer_chat.soft1_nudge_issued",
+        resource_type: "user",
+        resource_id: args.user_id,
+        changes: { current_count: nextCount },
+      });
       return { tier: "soft1", resolved, current_count: nextCount, persona_augmentation: augmentation };
     }
   }

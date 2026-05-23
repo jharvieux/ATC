@@ -12,6 +12,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
     "@atc/shared-types": "workspace:*",
+    "@sentry/nextjs": "^10.53.1",
     "big.js": "^7.0.1",
     "cheerio": "^1.2.0",
     "inngest": "^4.4.0",

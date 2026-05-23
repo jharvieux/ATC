@@ -1,0 +1,53 @@
+// §26.9 — Vendor health probe.
+//
+// Runs every minute. Pings a lightweight read endpoint on each vendor we
+// depend on. Per-instance — each Vercel function instance maintains its
+// own view of vendor health.
+
+import { inngest } from "./client";
+import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
+
+async function ping(name: string, url: string, headers: Record<string, string> = {}): Promise<void> {
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+    if (res.ok || res.status === 401 || res.status === 403) {
+      // 401/403 mean the vendor is up — just our request wasn't authorized.
+      recordVendorSuccess(name as never);
+    } else {
+      recordVendorFailure(name as never, `http_${res.status}`);
+    }
+  } catch (err) {
+    recordVendorFailure(name as never, err instanceof Error ? err.message : String(err));
+  }
+}
+
+export const vendorHealthProbe = inngest.createFunction(
+  {
+    id: "vendor-health-probe",
+    triggers: [{ cron: "* * * * *" }], // every minute
+  },
+  async () => {
+    if (process.env.STAGING_MODE === "true") {
+      // Don't probe vendors from staging.
+      return { skipped_for_staging: true };
+    }
+
+    await Promise.allSettled([
+      ping("anthropic", "https://api.anthropic.com/v1/messages", {
+        "anthropic-version": "2023-06-01",
+        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+      }),
+      ping("openai", "https://api.openai.com/v1/models", {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
+      }),
+      ping("stripe", "https://api.stripe.com/v1/balance", {
+        Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY ?? ""}`,
+      }),
+      ping("resend", "https://api.resend.com/domains", {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
+      }),
+      ping("supabase", `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/auth/v1/health`),
+    ]);
+    return { ok: true };
+  },
+);

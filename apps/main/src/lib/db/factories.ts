@@ -106,16 +106,129 @@ export async function tenantContextFromRequest(
 }
 
 /**
- * STUB — implementation lands in BP07 (Stripe webhook handler). When
- * implemented, derives the tenant from event metadata or by looking up
- * the stripe_customer_id, and writes the construction to audit_log.
+ * Custom error thrown when a webhook event can't be mapped to a tenant.
+ * The caller (webhook route handler) should return a 4xx so the provider
+ * stops retrying — a missing mapping won't resolve on retry.
  */
-export async function tenantContextFromStripeEvent(
-  _event: unknown,
-): Promise<TenantContext> {
-  throw new Error(
-    "tenantContextFromStripeEvent: not implemented (lands in BP07).",
-  );
+export class WebhookContextNotFoundError extends Error {
+  readonly code = "webhook_context_not_found" as const;
+}
+
+/**
+ * §26.3a.4 — Derive tenant context from a Stripe webhook event.
+ *
+ * Resolution order:
+ *   1. event.account (Connect events) → tenants.stripe_connect_account_id
+ *   2. event.data.object.customer (Subscription/Invoice events) →
+ *      tenants.stripe_customer_id
+ *
+ * Every resolution writes an audit_log row so a spoofed webhook that
+ * resolves to an unexpected tenant is forensically detectable.
+ */
+export async function tenantContextFromStripeEvent(event: {
+  id: string;
+  type: string;
+  account?: string;
+  data?: { object?: { customer?: string } };
+}): Promise<TenantContext> {
+  const { createServiceRoleClient } = await import("./service-role-client");
+  const { writeAuditLog } = await import("@/lib/audit/write");
+  const db = createServiceRoleClient();
+
+  let tenant_id: string | null = null;
+  let resolved_via: "stripe_connect_account_id" | "stripe_customer_id" | null = null;
+
+  if (event.account) {
+    const { data } = await db
+      .from("tenants")
+      .select("id")
+      .eq("stripe_connect_account_id", event.account)
+      .maybeSingle();
+    if (data) {
+      tenant_id = (data as { id: string }).id;
+      resolved_via = "stripe_connect_account_id";
+    }
+  }
+  if (!tenant_id && event.data?.object?.customer) {
+    const { data } = await db
+      .from("tenants")
+      .select("id")
+      .eq("stripe_customer_id", event.data.object.customer)
+      .maybeSingle();
+    if (data) {
+      tenant_id = (data as { id: string }).id;
+      resolved_via = "stripe_customer_id";
+    }
+  }
+  if (!tenant_id) {
+    throw new WebhookContextNotFoundError(
+      `Stripe event ${event.type} (${event.id}) cannot be resolved to a tenant.`,
+    );
+  }
+
+  await writeAuditLog({
+    tenant_id,
+    actor_type: "system",
+    action: "webhook.context_resolved",
+    resource_type: "webhook",
+    changes: {
+      provider: "stripe",
+      event_type: event.type,
+      event_id: event.id,
+      resolved_via,
+    },
+  });
+
+  return {
+    tenant_id,
+    source: { kind: "stripe_webhook", stripe_event_id: event.id },
+  };
+}
+
+/**
+ * §26.3a.4 — Derive tenant context from a Resend webhook event by joining
+ * email_log on resend_message_id.
+ */
+export async function tenantContextFromResendEvent(event: {
+  id: string;
+  type: string;
+  data?: { email_id?: string };
+}): Promise<TenantContext> {
+  const { createServiceRoleClient } = await import("./service-role-client");
+  const { writeAuditLog } = await import("@/lib/audit/write");
+  const messageId = event.data?.email_id;
+  if (!messageId) {
+    throw new WebhookContextNotFoundError(
+      `Resend event ${event.type} (${event.id}) has no email_id; cannot resolve tenant.`,
+    );
+  }
+  const db = createServiceRoleClient();
+  const { data } = await db
+    .from("email_log")
+    .select("tenant_id")
+    .eq("resend_message_id", messageId)
+    .maybeSingle();
+  const tenant_id = (data as { tenant_id?: string } | null)?.tenant_id ?? null;
+  if (!tenant_id) {
+    throw new WebhookContextNotFoundError(
+      `Resend message_id ${messageId} not found in email_log.`,
+    );
+  }
+  await writeAuditLog({
+    tenant_id,
+    actor_type: "system",
+    action: "webhook.context_resolved",
+    resource_type: "webhook",
+    changes: { provider: "resend", event_type: event.type, event_id: event.id },
+  });
+  return {
+    tenant_id,
+    // Resend doesn't have a dedicated source kind in TenantContext yet;
+    // synthesize via inngest_job for now since the resend handler emits
+    // inngest events downstream. Future TenantContext source extension
+    // would add 'resend_webhook'.
+    source: { kind: "inngest_job", function_name: "resend.webhook", event_id: event.id },
+  };
 }
 
 /**

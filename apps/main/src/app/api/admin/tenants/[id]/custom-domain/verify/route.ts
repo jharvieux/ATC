@@ -5,6 +5,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { lookupCname, lookupTxt } from "@/lib/dns/doh-resolver";
 import { vercelAddDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
+import { writeAuditLog } from "@/lib/audit/write";
 
 export async function POST(
   req: Request,
@@ -88,7 +89,15 @@ export async function POST(
     if (err instanceof CrownJewelGuardError) {
       // §16.3.4 — log a security event when a non-production env attempts to bind.
       console.error("[crown-jewel-guard] BLOCKED Vercel binding attempt: %s", err.message);
-      // TODO(audit-log): write security event row when audit_log lands (§26).
+      await writeAuditLog({
+        tenant_id: tenantId,
+        actor_user_id: adminUserId,
+        actor_type: "admin",
+        action: "security.crown_jewel_guard_blocked",
+        resource_type: "tenant",
+        resource_id: tenantId,
+        changes: { error: err.message },
+      });
       return Response.json({ error: "non_production_binding_refused" }, { status: 403 });
     }
     const msg = err instanceof Error ? err.message : String(err);

@@ -5,6 +5,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
+import { writeAuditLog } from "@/lib/audit/write";
 
 interface ScreenPayload {
   tenant_id: string;
@@ -23,7 +24,7 @@ export const personaAddendumScreen = inngest.createFunction(
 
     const { data: row, error } = await db
       .from("persona_addendums")
-      .select("id, content, status")
+      .select("id, content, status, tenant_id")
       .eq("id", addendum_id)
       .maybeSingle();
 
@@ -32,7 +33,7 @@ export const personaAddendumScreen = inngest.createFunction(
       return { error: "addendum_not_found" };
     }
 
-    const a = row as { id: string; content: string; status: string };
+    const a = row as { id: string; content: string; status: string; tenant_id: string };
     const result = await screenAddendumHaiku(a.content);
 
     const newStatus = result.pass ? "approved" : "rejected";
@@ -48,7 +49,14 @@ export const personaAddendumScreen = inngest.createFunction(
       .eq("id", a.id);
 
     // TODO(notifications): on rejected, email tenant with findings summary.
-    // TODO(audit-log): write persona_addendum.changed row per §16.6 Audit subsection.
+    await writeAuditLog({
+      tenant_id: a.tenant_id,
+      actor_type: "system",
+      action: "persona_addendum.screened",
+      resource_type: "persona_addendum",
+      resource_id: a.id,
+      changes: { status: newStatus, findings_count: result.pass ? 0 : result.findings.length },
+    });
     console.info(
       "[persona-addendum-screen] addendum=%s status=%s findings=%d",
       a.id, newStatus, result.pass ? 0 : result.findings.length,
