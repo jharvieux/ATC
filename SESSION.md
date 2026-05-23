@@ -1,32 +1,35 @@
-# Session state — last updated 2026-05-22 23:20 UTC
+# Session state — last updated 2026-05-23
 
 ## Just completed
-- BP24: Chat UI — tone matching, deterministic hate-speech deny-list, anon + customer chat rate limits (§24) — PR #71 merged to dev
-  - Migration 20260603000000_chat_ui.sql: tenant_settings tone/safety columns, customer_memories.rapport_tone_directive, anonymous_chat_counters, customer_chat_counters + customer_chat_tenant_overrides, resolve_customer_chat_caps SQL function, 18 platform_settings seeds
-  - 14 new env vars (anon caps, customer caps, cooldowns, hard ceiling/floor, soft prompts)
-  - lib/chat/: tone-resolution, persona-base-tones, customer-tone-override, fingerprint, anonymous-limit, customer-limit (Haiku hard-limit summary)
-  - Supervisor finalized: tone-drift async with Haiku heuristic + by-hash details; run-supervisor unions platform + tenant supplemental deny-lists with audit-by-hash on every match; HATE_SPEECH_REGEN_INSTRUCTION exported
-  - Chat backend (six routes replace 501 stubs): POST /api/chat (full orchestration + SSE word-replay), conversations list/get/PATCH, persona switch, feedback, escalate
-  - Admin denylist /admin/denylist page + API (count + hashes only — never the term)
-  - Tenant admin /tenant-admin/safety + /tenant-admin/chat-limits (Pro+ gated)
-  - Chat UI: /chat page (desktop 3-pane + mobile single-pane), persistent AI disclosure banner, StreamingArea (IntersectionObserver auto-scroll + "New message" indicator), MessageBubble (avatar/sources/copy/feedback/memory tooltip), SignupWall (no identifier reveal), HardLimitMessage (platform-spoken)
-  - 3 Inngest crons: anonymous-chat-counter-cleanup, customer-chat-counter-recompute, denylist-quarterly-review-reminder
-  - 5 new test files, 33 new tests; all 466 tests pass; CI all green
-  - MEMORY D-057 with 15 decisions documented
+- BP25: CCPA retention closeout, free-text anonymization, forensics capture (§25) — PR #73 merged to dev
+  - Migration 20260604000000_retention_ccpa_forensics.sql: ccpa_deletion_executions, forensics_log (BP26 owns decrypt), bookings/commissions anonymized_customer_hash, quotes.narrative (new column), contacts.notes + contacts.anonymized_customer_hash (Category 3 surface), users phone + deleted_purged_at + cookie_preferences + performance_analytics_opt_out + status='purged', staging_cron_skips
+  - 4 new env vars + boot-time guard: PLATFORM_PEPPER (never-rotate), FORENSICS_ENCRYPTION_KEY_CURRENT/_PRIOR_1/_PRIOR_2, key separation check per §26.5a
+  - lib/privacy/customer-hash + forensics/capture + purge-user-data (10-step purge with forensics-snapshot-on-dispute, three-category anonymization, transaction-shape per-step error handling)
+  - user-data-purge-after-grace cron wired to real purge; fans out notifications to affected tenants
+  - 4 retention crons: anonymous-session-cleanup (60d), rag-rejected-items-purge (90d), booking-commission-retention-purge (7y with dispute guard), subprocessors-annual-review (Jan 1) — all with STAGING_MODE skip
+  - Cookie consent banner wired into root layout + /settings/privacy + /settings/privacy/cookies + cookie_preferences mirror
+  - /tenant-admin/crm/anonymized-notes review page with inline redaction
+  - Breach response runbook + BreachNotificationUser/TenantAdmin templates + sendBreachNotifications helper
+  - Staging outbound isolation wired in lib/email/send.ts; staging-pii-risk-acceptance runbook
+  - /legal/sub-processors public page
+  - 4 new test files, 16 new tests; all 483 tests pass; typecheck/lint/lint:migrations all clean
+  - MEMORY D-058 added with 16 decisions
 
 ## In flight
 - Nothing in flight — clean checkpoint
 
 ## Next step
-- Begin BP25 — first prompt in Part 6 (data privacy & retention §25). Uses Opus 4.7 — stay on current model.
+- BP26 — second prompt in Part 6 (security §26). Uses Opus 4.7 — stay on current model.
 
 ## Blocked on user
 - Nothing
 
 ## Open questions
-- Operator content task: populate `platform_settings.supervisor_slur_deny_list` (still seeded `[]` from BP11 D-046; deny-list infrastructure ready but list is empty)
-- Operator tasks for BP24:
-  - Apply migration 20260603000000_chat_ui.sql to atc-main
-  - Confirm ANTHROPIC_API_KEY set in Vercel (chat handler requires it)
-  - Walk /chat once deployed to staging (anon + authenticated; both rate-limit branches)
-- Carry-over from prior BPs: audit_log real-INSERT swap (D-036), port_info_chunks content (BP23), weather integration, Gmail inbound, contacts FK
+- Operator tasks for BP25 (not code):
+  - Generate `PLATFORM_PEPPER` (256-bit random) and `FORENSICS_ENCRYPTION_KEY_CURRENT` (32-byte base64); set in Vercel staging + production
+  - **NEVER rotate `PLATFORM_PEPPER`** — store in 1Password with explicit "do not rotate" note (D-058 #1)
+  - Apply migration 20260604000000_retention_ccpa_forensics.sql to atc-main
+  - Set `STAGING_MODE=true` + `TEST_OVERRIDE_EMAIL` in the staging Vercel project
+  - Engage counsel on breach notification template wording (TODO(legal-counsel))
+  - Populate `docs/runbooks/breach-response.md` contact list + `docs/cookies-inventory.md` stub
+- Carry-over: audit_log table real-INSERT swap when §26 lands (D-036, D-053, D-056, D-057, D-058), retrieval-log aggregation needs RAG-side Inngest (D-058), no formal tenant_admin role yet (RBAC ships in §26), no SMS sender yet so TEST_OVERRIDE_PHONE is reserved
