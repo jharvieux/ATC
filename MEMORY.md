@@ -4,6 +4,90 @@ Newest entries on top.
 
 ---
 
+## D-062 — 2026-05-23 — BP29: §28 env-var reconciliation + Zod boot validation + secret rotation runbook — key decisions
+
+**Decision:**
+
+1. **Existing `env.ts` schemas are the canonical surface.** The build prompt assumed `apps/main/src/lib/env.ts` was ad-hoc and prescribed a new `apps/main/src/lib/env-check.ts`. In fact prior BPs built a full Zod-validated schema with `verifyEnvAtBoot()`, and `apps/main/instrumentation.ts` + `apps/rag/instrumentation.ts` already wire the boot check. BP29 reconciles + tightens that existing surface rather than rebuilding it.
+
+2. **`docs/env-audit.md` captures the spec-vs-code cross-reference.** Lists every var with one of five states (match / naming-drift / missing-from-code / code-only / process.env-bypass). The audit informed every other BP29 decision.
+
+3. **Naming-drift waivers — keep code names, propose spec amendments (operator-confirmed).**
+   - `SERVICE_JWT_*` (code) keeps the name; spec §28.4 lists `INTER_SERVICE_JWT_*`.
+   - `SUPABASE_RAG_*` (RAG service) keeps the prefix order; spec §28.3 lists `RAG_SUPABASE_*`. Operator rationale: all Supabase-prefixed vars co-locate in shared `.env.local`.
+   - `STRIPE_PRICE_BYO_PROFESSIONAL_*` (code) keeps `_PROFESSIONAL_`; spec §28.7 lists `_PRO_`.
+   - `STRIPE_PRICE_*_SEATS_*` (code) keeps the plural; spec §28.7 lists `_SEAT_` singular.
+   - `IMAGE_GEN_RATE_LIMIT_DAILY` (code) keeps the name; spec §28.12 lists `IMAGE_GEN_DAILY_LIMIT_PER_TENANT`.
+   - `ABUSE_RECOMPUTE_CRON_SCHEDULE` (code, cron string) keeps the cron form; spec §28.17 lists `ABUSE_AI_COST_RECOMPUTE_INTERVAL_SECONDS`. Different surface (interval seconds vs cron string).
+   - **No rename in this PR.** Renaming would force operator env-var renames in CI + Vercel across 3 environments with downtime risk. Spec amendments to be proposed as follow-up.
+
+4. **STRIPE_PRICE_* stays `.optional()` (operator-confirmed waiver).** Spec §28.7 lists all 16 price IDs as required-at-boot. Code marks them optional so missing IDs fail at the Stripe call site (clearer error) rather than at boot (operator must populate every ID across dev/staging/prod for the app to start). Documented in `docs/runbooks/stripe-price-ids.md`.
+
+5. **ANTHROPIC_API_KEY tightened to required + `.startsWith("sk-ant-")`** (operator-confirmed).Schema rejects malformed keys at boot. CI placeholder must use the `sk-ant-` prefix. Test `baseEnv()` helpers in `env-boot-validation.test.ts` and `bp28-env-vars.test.ts` updated with the placeholder. `OPENAI_API_KEY` kept `.optional()` (some envs don't run image gen) but shape-validated when present.
+
+6. **Forensics encryption keys keep `_PRIOR_1` / `_PRIOR_2` two-step grace** (operator-confirmed). Spec §28.13 lists single `_PREVIOUS`; code uses the two-step pattern that gives operators a second rotation cycle to age out old ciphertext before keys are deleted. Documented in `docs/runbooks/secret-rotation.md`.
+
+7. **Schema additions for spec parity (all optional with sensible defaults):**
+   - `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_PLATFORM_BRAND_NAME`, `NEXT_PUBLIC_PLATFORM_SUPPORT_EMAIL`
+   - `SUPABASE_JWT_SECRET`, `SUPABASE_DB_URL`, `STRIPE_PLATFORM_ACCOUNT_ID`
+   - `ANTHROPIC_SONNET_MODEL` (default `claude-sonnet-4-6`), `ANTHROPIC_HAIKU_MODEL`, `ANTHROPIC_PROMPT_CACHE_ENABLED`
+   - `RESEND_FROM_DOMAIN/ADDRESS_DEFAULT/NAME_DEFAULT`
+   - `OAUTH_GOOGLE/MICROSOFT/FACEBOOK/APPLE_ENABLED` (defaults: true/true/true/false)
+   - `MICROSOFT_GRAPH_CLIENT_ID/SECRET/SECRET_PREVIOUS` (conditional via superRefine)
+   - All `GMAIL_OAUTH_*` (deferred per-tenant integration)
+   - `SENTRY_DSN/ENVIRONMENT`, `LOG_LEVEL`, `AUDIT_LOG_RETENTION_YEARS`, `OPERATOR_SLACK_WEBHOOK_URL`
+   - `AI_GLOBAL_KILL_SWITCH/RAG_INGESTION_PAUSED/MAINTENANCE_MODE/SIGNUP_ENABLED/STRIPE_CONNECT_ONBOARDING_ENABLED`
+   - `PERSONA_TONE_DEFAULT_MAX_LEVEL` (3), `PERSONA_ADDENDUM_HAIKU_SCREEN_ENABLED` (true)
+   - `ABUSE_OVERRIDE_REQUIRE_REAUTH` (true), `ABUSE_RAG_PROMOTION_BONUS_PER_CHUNK` (25)
+   - `SERVICE_JWT_TTL_SECONDS` (300), `INNGEST_SERVE_PATH` (`/api/inngest`)
+   - `APP_ENCRYPTION_BACKUP_VERIFIED_AT` (ISO datetime; > 100 days emits Sentry warning per §13.5.3)
+   - RAG service: `RAG_SUPABASE_DB_URL`, `SERVICE_JWT_PUBLIC_KEY_PREVIOUS`, `SENTRY_DSN/ENVIRONMENT`, `LOG_LEVEL`, `VERCEL_ENV`. Plus `OPENAI_EMBEDDING_DIMENSIONS.refine(v => v === 1536)` per §6.
+
+8. **Tightened constraints on existing vars:**
+   - `STRIPE_SECRET_KEY.regex(/^sk_(test|live)_/)` — gates the test/live mode signal.
+   - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY.regex(/^pk_(test|live)_/)`.
+   - `STRIPE_WEBHOOK_SECRET.startsWith("whsec_")`, `STRIPE_CONNECT_WEBHOOK_SECRET.startsWith("whsec_")`.
+   - `RESEND_API_KEY.startsWith("re_")` when present.
+   - `OPENAI_API_KEY.startsWith("sk-")` when present (RAG: required + startsWith).
+
+9. **`verifyEnvAtBoot()` refactored to accumulate every error.** Spec §28.19 requires surfacing all failures at once. Both schema-level errors and post-schema checks (encryption-key bytes, forensics-key separation, crown-jewel guard) now collect into a single thrown error. The §13.5.3 backup-verification staleness check is **Sentry-warn-only** (does not block boot — operator may have verified out-of-band and not yet updated the env var).
+
+10. **Microsoft OAuth conditional via `superRefine`.** When `OAUTH_MICROSOFT_ENABLED=true` (default), both `MICROSOFT_GRAPH_CLIENT_ID` and `MICROSOFT_GRAPH_CLIENT_SECRET` are required. Test baseEnv helpers include placeholders to keep existing tests green.
+
+11. **Schema-discipline meta-tests** (`apps/main/test/unit/env/bp29-schema-discipline.test.ts`, 14 tests):
+    - §28.22 NEXT_PUBLIC_* discipline — walks the schema; asserts no NEXT_PUBLIC_* key contains any secret-shaped substring (`SECRET`, `PRIVATE_KEY`, `API_KEY`, `WEBHOOK_SECRET`, `SERVICE_ROLE`, `PEPPER`, `HMAC`, `DSN`, `PUBSUB_VERIFICATION_TOKEN`).
+    - §28.18 vendor pricing not in env — asserts no `*_PRICE_PER_MILLION_*` keys; `STRIPE_PRICE_*` IDs allowed.
+    - §28.21 `.env.example` parity with schema — every schema key appears (active or commented) in the example; no active example key is absent from the schema.
+    - §28.19 multi-error surfacing — missing both ANTHROPIC and STRIPE keys surfaces both in the error message.
+    - §28.5 ANTHROPIC_API_KEY shape rejection (malformed key).
+    - §28.9 Apple OAuth deferred — no APPLE_* creds declared.
+
+12. **Stripe price-ID mode separation is procedural, not enforced** (operator waiver). The runtime check can verify only `STRIPE_SECRET_KEY` prefix (`sk_test_` vs `sk_live_`), not whether `STRIPE_PRICE_*` IDs are test- or live-mode (visually indistinguishable). `docs/runbooks/stripe-price-ids.md` is the procedural safety net.
+
+13. **Runbooks shipped (4):**
+    - `docs/runbooks/stripe-price-ids.md` — per-environment price-ID hygiene
+    - `docs/runbooks/secret-rotation.md` — per-secret-class procedures with the inter-service JWT overlap-window pattern as the highest-risk rotation. Includes sign-off checklist + annual calendar template
+    - `docs/runbooks/feature-flags.md` — env-var vs DB-backed toggle catalog
+    - `docs/local-development.md` — §28.21 contributor onboarding
+
+14. **CODEOWNERS routes env.ts + .env.example + secret-rotation runbook through operator review** so a new NEXT_PUBLIC_* var can't slip in without scrutiny (§28.22).
+
+15. **CI workflow placeholders unchanged.** `verifyEnvAtBoot()` does not run during `next build` — only at server startup via instrumentation.ts. The CI build step passes the same env-var subset as before; tests provide their own placeholders via baseEnv helpers.
+
+16. **`.env.example` files committed** at `apps/main/.env.example` (full surface) and `apps/rag/.env.example` (RAG-scope subset). Both grouped by §28 subsection with SECRET / OPERATOR markers.
+
+**What was rejected:**
+- Building a parallel `apps/main/src/lib/env-check.ts` alongside the existing `env.ts` — would create two competing schemas. Reused the canonical `env.ts`.
+- Renaming `SERVICE_JWT_*` → `INTER_SERVICE_JWT_*` (and the other spec-drift items) in this PR — would force operator-side Vercel env renames across 3 projects with downtime risk. Captured as a follow-on spec-amendment PR.
+- Making `STRIPE_PRICE_*` required-at-boot — operator preference for clearer call-site failure.
+- Making `OPENAI_API_KEY` required-at-boot — some envs disable image generation.
+- Adding APP_ENCRYPTION_BACKUP_VERIFIED_AT as a boot-blocking check — spec §13.5.3 says emit warning only.
+- Auto-running boot-time price-ID mode verification — visually indistinguishable from prefix, would produce false negatives.
+
+**Artifacts:** `docs/env-audit.md`, updated `apps/main/src/lib/env.ts` (+38 vars, tightened constraints, superRefine, accumulated-error verifier), updated `apps/rag/src/lib/env.ts` (+8 vars, OPENAI_EMBEDDING_DIMENSIONS refine), `apps/main/.env.example` + `apps/rag/.env.example`, `apps/main/test/unit/env/bp29-schema-discipline.test.ts` (14 tests), `docs/runbooks/{stripe-price-ids,secret-rotation,feature-flags}.md`, `docs/local-development.md`, `.github/CODEOWNERS` (+6 routes), updated `env-boot-validation.test.ts` + `bp28-env-vars.test.ts` baseEnv helpers. Full suite: 560 passing (16 new), typecheck + lint + lint:migrations all green. PR #?? open.
+
+---
+
 ## D-061 — 2026-05-23 — BP28: SaaS abuse dashboard + override workflow + nightly recompute (§27.7 / §27.8 / §27.11 / §27.14) — key decisions
 
 **Decision:**

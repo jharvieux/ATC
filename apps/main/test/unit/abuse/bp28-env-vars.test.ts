@@ -32,6 +32,12 @@ function baseEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pro
     INVITATION_TOKEN_HMAC_KEY: HMAC_KEY_B64,
     PLATFORM_PEPPER: "test-pepper",
     FORENSICS_ENCRYPTION_KEY_CURRENT: FORENSICS_KEY_B64,
+    // BP29 §28.5 — ANTHROPIC_API_KEY required at boot with sk-ant- prefix.
+    ANTHROPIC_API_KEY: "sk-ant-test-placeholder",
+    // BP29 §28.9 — Microsoft OAuth defaults on; placeholders for the
+    // conditional Graph credential refinement.
+    MICROSOFT_GRAPH_CLIENT_ID: "ms-test-client-id",
+    MICROSOFT_GRAPH_CLIENT_SECRET: "ms-test-client-secret",
   };
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete env[k];

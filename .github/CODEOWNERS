@@ -1,3 +1,12 @@
 /.github/workflows/    @jharvieux
 /.github/CODEOWNERS    @jharvieux
 /scripts/staging-fixups.sql @jharvieux
+# §28.22 NEXT_PUBLIC_* discipline — any change to the env schema or its
+# .env.example needs operator review so a new NEXT_PUBLIC_* var can't slip
+# in without scrutiny on what it exposes to the browser.
+/apps/main/src/lib/env.ts @jharvieux
+/apps/rag/src/lib/env.ts @jharvieux
+/apps/main/.env.example @jharvieux
+/apps/rag/.env.example @jharvieux
+/docs/runbooks/secret-rotation.md @jharvieux
+/docs/runbooks/stripe-price-ids.md @jharvieux
