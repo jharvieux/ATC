@@ -1,14 +1,47 @@
-// Tests for verifyEnvAtBoot() encryption key validation (§13.5.3).
+// Tests for verifyEnvAtBoot() encryption key validation (§13.5.3 + §26.5a).
 // Kept in a separate file so it has no module-level env mock.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const VALID_KEY_B64 = Buffer.from("a".repeat(32)).toString("base64");
+const APP_KEY_B64 = Buffer.from("a".repeat(32)).toString("base64");
+const FORENSICS_KEY_B64 = Buffer.from("b".repeat(32)).toString("base64");
+const HMAC_KEY_B64 = Buffer.from("c".repeat(32)).toString("base64");
 
 let originalEnv: NodeJS.ProcessEnv;
 
+function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    ...originalEnv,
+    NODE_ENV: "test",
+    PLATFORM_PRIMARY_DOMAIN: "test.example.com",
+    PLATFORM_DOMAIN_REGEX: "^([a-z0-9-]+)\\.test\\.example\\.com$",
+    NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    STRIPE_SECRET_KEY: "sk_test_key",
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_key",
+    STRIPE_WEBHOOK_SECRET: "whsec_test",
+    STRIPE_CONNECT_WEBHOOK_SECRET: "whsec_connect_test",
+    INNGEST_SIGNING_KEY: "signkey",
+    INNGEST_EVENT_KEY: "eventkey",
+    SERVICE_JWT_PRIVATE_KEY: "privkey",
+    SERVICE_JWT_KEY_ID: "kid1",
+    RAG_SERVICE_URL: "https://rag.test.example.com",
+    RAG_WEBHOOK_SECRET: "rag-secret",
+    APP_ENCRYPTION_KEY_CURRENT: APP_KEY_B64,
+    APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
+    INVITATION_TOKEN_HMAC_KEY: HMAC_KEY_B64,
+    PLATFORM_PEPPER: "test-pepper",
+    FORENSICS_ENCRYPTION_KEY_CURRENT: FORENSICS_KEY_B64,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   originalEnv = process.env;
+  // env.ts memoizes _env at module scope; reset modules between tests so
+  // each call to verifyEnvAtBoot re-parses process.env from scratch.
+  vi.resetModules();
 });
 
 afterEach(() => {
@@ -18,59 +51,36 @@ afterEach(() => {
 describe("verifyEnvAtBoot — encryption key validation (§13.5.3)", () => {
   it("rejects APP_ENCRYPTION_KEY_CURRENT that decodes to fewer than 32 bytes", async () => {
     const shortKey = Buffer.from("tooshort").toString("base64"); // 8 bytes
-
-    // Build a minimal valid env (required fields for zod schema)
-    process.env = {
-      ...originalEnv,
-      NODE_ENV: "test",
-      PLATFORM_PRIMARY_DOMAIN: "test.example.com",
-      PLATFORM_DOMAIN_REGEX: "^([a-z0-9-]+)\\.test\\.example\\.com$",
-      NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
-      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      STRIPE_SECRET_KEY: "sk_test_key",
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_key",
-      STRIPE_WEBHOOK_SECRET: "whsec_test",
-      STRIPE_CONNECT_WEBHOOK_SECRET: "whsec_connect_test",
-      INNGEST_SIGNING_KEY: "signkey",
-      INNGEST_EVENT_KEY: "eventkey",
-      SERVICE_JWT_PRIVATE_KEY: "privkey",
-      SERVICE_JWT_KEY_ID: "kid1",
-      RAG_SERVICE_URL: "https://rag.test.example.com",
-      RAG_WEBHOOK_SECRET: "rag-secret",
-      APP_ENCRYPTION_KEY_CURRENT: shortKey,
-      APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
-      INVITATION_TOKEN_HMAC_KEY: VALID_KEY_B64,
-    };
-
+    process.env = baseEnv({ APP_ENCRYPTION_KEY_CURRENT: shortKey });
     const { verifyEnvAtBoot } = await import("@/lib/env");
     expect(() => verifyEnvAtBoot()).toThrow(/32 bytes/);
   });
 
   it("accepts a valid 32-byte base64 key", async () => {
-    process.env = {
-      ...originalEnv,
-      NODE_ENV: "test",
-      PLATFORM_PRIMARY_DOMAIN: "test.example.com",
-      PLATFORM_DOMAIN_REGEX: "^([a-z0-9-]+)\\.test\\.example\\.com$",
-      NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
-      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
-      STRIPE_SECRET_KEY: "sk_test_key",
-      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_key",
-      STRIPE_WEBHOOK_SECRET: "whsec_test",
-      STRIPE_CONNECT_WEBHOOK_SECRET: "whsec_connect_test",
-      INNGEST_SIGNING_KEY: "signkey",
-      INNGEST_EVENT_KEY: "eventkey",
-      SERVICE_JWT_PRIVATE_KEY: "privkey",
-      SERVICE_JWT_KEY_ID: "kid1",
-      RAG_SERVICE_URL: "https://rag.test.example.com",
-      RAG_WEBHOOK_SECRET: "rag-secret",
-      APP_ENCRYPTION_KEY_CURRENT: VALID_KEY_B64,
-      APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
-      INVITATION_TOKEN_HMAC_KEY: VALID_KEY_B64,
-    };
+    process.env = baseEnv();
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).not.toThrow();
+  });
+});
 
+describe("verifyEnvAtBoot — forensics key separation (§26.5a)", () => {
+  it("rejects when FORENSICS_ENCRYPTION_KEY_CURRENT equals APP_ENCRYPTION_KEY_CURRENT", async () => {
+    process.env = baseEnv({
+      FORENSICS_ENCRYPTION_KEY_CURRENT: APP_KEY_B64, // same as APP key
+    });
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).toThrow(/security-violation/);
+  });
+
+  it("rejects FORENSICS_ENCRYPTION_KEY_CURRENT shorter than 32 bytes", async () => {
+    const shortKey = Buffer.from("tooshort").toString("base64");
+    process.env = baseEnv({ FORENSICS_ENCRYPTION_KEY_CURRENT: shortKey });
+    const { verifyEnvAtBoot } = await import("@/lib/env");
+    expect(() => verifyEnvAtBoot()).toThrow(/FORENSICS_ENCRYPTION_KEY_CURRENT must decode/);
+  });
+
+  it("accepts distinct 32-byte forensics + app keys", async () => {
+    process.env = baseEnv(); // already has distinct keys
     const { verifyEnvAtBoot } = await import("@/lib/env");
     expect(() => verifyEnvAtBoot()).not.toThrow();
   });

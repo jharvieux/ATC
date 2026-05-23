@@ -201,6 +201,10 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/customer-chat-counter-recompute.ts",
   // BP24: Deny-list quarterly review reminder cron — platform-wide. §24.5.
   "/inngest/denylist-quarterly-review-reminder.ts",
+  // BP25: Retention crons — cross-tenant scans, no user session. §25.2.
+  "/inngest/anonymous-session-cleanup.ts",
+  "/inngest/rag-rejected-items-purge.ts",
+  "/inngest/booking-commission-retention-purge.ts",
   // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
   "/inngest/rag-tenant-approval-rate-nightly.ts",
 ];
