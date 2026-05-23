@@ -4,6 +4,51 @@ Newest entries on top.
 
 ---
 
+## D-057 — 2026-05-22 — BP24: Chat UI, tone matching, deny-list, anonymous + customer rate limits — key decisions
+
+**Decision:**
+
+1. **Deny-list storage key reused from BP11 — `platform_settings.supervisor_slur_deny_list`, NOT a new `hate_speech_denylist`.** BP11 had already wired the lexical-match + 3-consecutive auto-escalation end-to-end against this key (D-046). BP24's spec calls it `hate_speech_denylist` but it's the same conceptual content. Reusing avoids: (a) duplicate empty lists, (b) data migration, (c) updating every existing reference. The trade-off (storage name drifts from spec) is documented here.
+
+2. **Tier-code drift in `resolve_customer_chat_caps`.** Spec §24.9 SQL function lists Pro+ tiers as `'sub_host_pro', 'sub_host_agency', 'byo_agency'`. Actual seeded codes in tier_definitions (D-031) are `'sub_pro', 'sub_agency', 'byo_agency'`. The spec is internally inconsistent — no other artifact creates `sub_host_*` codes. Migration uses the real codes (also includes `byo_professional` as Pro+). Documented inside the migration file too.
+
+3. **Chat backend built as part of BP24.** The prompt's prerequisite check claimed "the chat conversation route already exists from earlier prompts" — it did not. All six chat-related API routes (`/api/chat`, `/api/chat/conversations`, `/api/chat/conversations/[id]`, `/api/chat/conversations/[id]/persona`, `/api/chat/feedback`, `/api/chat/escalate`) were 501 stubs. BP24 replaces all six with working handlers AND introduces the page UI. Without this, the new rate limits, tone resolution, and supervisor enforcement would have nothing to plug into.
+
+4. **Streaming approach: word-replay, not true Anthropic SSE.** The supervisor MUST see the full candidate response BEFORE the customer does — otherwise hate-speech or hallucination text leaks during streaming. The chat handler generates non-streaming, runs supervisor (with regen loop), then replays the approved text word-by-word as SSE events to the client. This satisfies §24.3 streaming UX (cursor-aware auto-scroll via IntersectionObserver). True token streaming with parallel supervisor buffering is `TODO(bp24-true-stream)`.
+
+5. **Anonymous fingerprinting is best-effort, not security.** `lib/chat/fingerprint.ts` hashes (UA + accept-language + sec-ch-ua-* hints + an optional `x-atc-client-hint` header). Defeats casual cookie-clearing; sophisticated adversaries still hit the IP and session layers. Per §24.8 "Calls Worth Flagging".
+
+6. **Anonymous limit message MUST NOT reveal which identifier hit.** Per §24.8 — telling a user "you hit the IP cap" lets adversaries optimize evasion. The chat handler emits `signup_wall` with a generic body; the internal `hit_identifier_type` is used only for `recordLimitHitAndCheckBurst` (which fires `chat.anonymous_chat_burst_detected` when 3+ sessions from the same IP all hit the cap in 24h).
+
+7. **Hard-limit message is platform-spoken, NOT in-character.** Per §24.9. The chat handler returns a `hard_limit` SSE event (system body + reset_at) BEFORE any AI call. The persona prompt is never invoked. Persona augmentation only happens at Soft1/Soft2.
+
+8. **Hard-limit summary uses Haiku and is best-effort.** `generateHardLimitSummary` returns `null` if `ANTHROPIC_API_KEY` is missing or the call fails. The audit-stub is still written (action `customer_chat.hard_limit_blocked`), just without the summary payload. The handler stores the audit_id on `customer_chat_counters.hard_limit_summary_audit_id` (bare UUID — `audit_log` table doesn't exist yet, D-036).
+
+9. **Booking bonus is computed lazily inside the SQL function on every cap resolution.** No persisted "bonus_active" flag. A customer who cancels their last future-dated booking silently drops back to the base cap on next message. The function joins `bookings` directly using `b.sailing_date` (BP15) and filters `status <> 'cancelled'` (the enum has no `no_show`/`refunded` values that the spec mentions).
+
+10. **Persona base tone lives in a separate map (`lib/chat/persona-base-tones.ts`), not on each persona base block.** Avoids churning the six BP10 persona files (D-045 personas are code, not DB rows). The map keys slug → level (1..5); default 2.
+
+11. **Tenant supplemental deny-list is additive only.** `tenant_settings.supplemental_hate_speech_denylist` JSONB array. Pro+ tier only (enforced in `/api/tenant/safety`). `run-supervisor` loads both lists and de-dupes by lowercase value before passing the union to `checkToneDrift`. Tenants CAN'T remove platform-blocked terms.
+
+12. **Audit-by-hash, never by term.** `checkToneDrift` returns `details: "lexical_match:<12-char-sha256>"`. `run-supervisor` parses that prefix and writes the audit stub with `term_hash` only. The `/admin/denylist` API also exposes hashes only in GET (the term itself is never returned by any endpoint other than the audit-free POST that operators just typed).
+
+13. **Regen loop runs inside the chat handler, governed by supervisor budget.** Up to 6 attempts in BP24 (matches `SUPERVISOR_REGEN_MAX_PER_CONVERSATION` default). On a lexical hit the handler prepends `HATE_SPEECH_REGEN_INSTRUCTION` for the next attempt (term placeholder, not the matched term). On supervisor `escalate`, the AI response is dropped and an in-character transition message is rendered.
+
+14. **Three new Inngest crons.** `anonymous-chat-counter-cleanup` (nightly 04:00 UTC, hard-deletes rows > 7d for GDPR), `customer-chat-counter-recompute` (nightly 04:30 UTC, drift safety net), `denylist-quarterly-review-reminder` (Jan/Apr/Jul/Oct 1st 10:00 UTC). All registered in `app/api/inngest/route.ts`.
+
+15. **`chat.anonymous_chat_burst_detected` event has a TODO consumer.** Fired by `recordLimitHitAndCheckBurst` when 3+ sessions from the same IP all hit limits within 24h. BP27 abuse subsystem will consume it; consumer is a `// TODO(part-6)` stub until then.
+
+**What was rejected:**
+- Adding a new `platform_settings.hate_speech_denylist` alongside the BP11 key — would create two empty lists with no clear "live" one.
+- Migrating tier_definitions codes to spec-verbatim `sub_host_pro` etc. — large blast radius (onboarding state machine, persona resolver, billing all reference the codes) for a naming win.
+- True Anthropic token streaming in BP24 — would let unfiltered tokens reach the customer before the supervisor's hate-speech check ran. Word-replay deferred until parallel-buffering design lands.
+- Persisting a `bonus_active` flag on customer_chat_counters — lazy computation in the SQL function is the spec's design (catches cancellations immediately).
+- Including `no_show`/`refunded` in the booking-status exclusion — those values don't exist in the booking_status enum; only `cancelled` is filtered.
+
+**Artifacts:** `20260603000000_chat_ui.sql`, `lib/chat/{tone-resolution,persona-base-tones,customer-tone-override,fingerprint,anonymous-limit,customer-limit}.ts`, `lib/supervisor/checks/tone-drift.ts` (rewrite with heuristic Haiku layer + hash details), `lib/supervisor/run-supervisor.ts` (union deny-list + audit-by-hash + tenant context fields), `app/api/chat/route.ts` (full handler, replaces 501 stub), `app/api/chat/{conversations,conversations/[id],conversations/[id]/persona,feedback,escalate}/route.ts` (all replace 501 stubs), `app/api/admin/denylist/route.ts`, `app/(admin)/admin/denylist/page.tsx`, `app/api/tenant/{safety,chat-limits}/route.ts`, `app/(tenant)/tenant-admin/{safety,chat-limits}/page.tsx`, `app/chat/page.tsx`, `components/chat/{AIDisclosureBanner,MessageBubble,StreamingArea,SignupWall,HardLimitMessage}.tsx`, `inngest/{anonymous-chat-counter-cleanup,customer-chat-counter-recompute,denylist-quarterly-review-reminder}.ts`, `lib/db/platform-admin-reasons.ts` (added `denylist_management`). 5 new test files, 33 new tests (466/466 passing). PR #?? open.
+
+---
+
 ## D-056 — 2026-05-22 — BP23: Email infrastructure, pre-cruise series, in-app notifications — key decisions
 
 **Decision:**

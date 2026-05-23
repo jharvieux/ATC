@@ -111,6 +111,17 @@ function buildMockDb(opts: {
           }),
         };
       }
+      if (table === "tenant_settings") {
+        // §24.5 BP24 added a supplemental deny-list lookup here.
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () =>
+                ({ data: { supplemental_hate_speech_denylist: [] }, error: null }),
+            }),
+          }),
+        };
+      }
       if (table === "messages") {
         return {
           update: () => ({

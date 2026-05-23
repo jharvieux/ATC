@@ -48,6 +48,10 @@ import { ragTenantApprovalRateNightly } from "@/inngest/rag-tenant-approval-rate
 import { preCruiseEmailScheduler } from "@/inngest/pre-cruise-email-scheduler";
 import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send";
 import { emailSoftBounceRetry } from "@/inngest/email-soft-bounce-retry";
+// BP24: Chat UI maintenance crons (§24)
+import { anonymousChatCounterCleanup } from "@/inngest/anonymous-chat-counter-cleanup";
+import { customerChatCounterRecompute } from "@/inngest/customer-chat-counter-recompute";
+import { denylistQuarterlyReviewReminder } from "@/inngest/denylist-quarterly-review-reminder";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -99,5 +103,9 @@ export const { GET, POST, PUT } = serve({
     preCruiseEmailScheduler,
     precruiseGenerateAndSend,
     emailSoftBounceRetry,
+    // BP24: Chat UI maintenance crons (§24)
+    anonymousChatCounterCleanup,
+    customerChatCounterRecompute,
+    denylistQuarterlyReviewReminder,
   ],
 });

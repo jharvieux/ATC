@@ -43,6 +43,14 @@ const CHECKS_RUN = [
 
 const SLUR_CONSECUTIVE_ESCALATION_THRESHOLD = 3;
 
+// §24.5 — Regen prompt augmentation used when the lexical layer fires.
+// Surfaced on the SupervisorOutcome so the chat handler can prepend it to the
+// next regeneration prompt. The matched term itself is NEVER included — only
+// a placeholder so the model can rewrite without us re-exposing the term.
+export const HATE_SPEECH_REGEN_INSTRUCTION =
+  "Your previous response contained language we don't allow. " +
+  "Please rewrite without that language. Keep the same intent and tone otherwise.";
+
 export type RunSupervisorInput = {
   ctx: TenantContext;
   conversation_id: string;
@@ -57,6 +65,10 @@ export type RunSupervisorInput = {
   };
   recent_escalation_offered?: boolean;
   persona_specializes_in_sensitive?: boolean;
+  // §24.5 tone_drift heuristic context.
+  tenant_tone_max_level?: number;
+  tenant_allow_profanity?: boolean;
+  customer_prior_message?: string;
 };
 
 export async function runSupervisor(input: RunSupervisorInput): Promise<SupervisorOutcome> {
@@ -122,27 +134,55 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     };
   }
 
-  // Step 3: Load slur deny list from platform_settings for tone_drift check
+  // Step 3: Load union of platform + tenant supplemental deny lists (§24.5).
+  // Platform list (BP11 key: 'supervisor_slur_deny_list') is non-removable
+  // by tenants; supplemental is tenant-additive only. We dedupe by
+  // lowercase value.
   const { data: slurSetting } = await db
     .from("platform_settings")
     .select("value")
     .eq("key", "supervisor_slur_deny_list")
     .single();
 
-  const slurDenyList: string[] = Array.isArray(slurSetting?.value)
+  const platformDenyList: string[] = Array.isArray(slurSetting?.value)
     ? (slurSetting.value as string[])
     : [];
 
+  const { data: tenantSupplemental } = await db
+    .from("tenant_settings")
+    .select("supplemental_hate_speech_denylist")
+    .eq("tenant_id", input.ctx.tenant_id)
+    .maybeSingle();
+
+  const supplemental: string[] = Array.isArray(
+    (tenantSupplemental as { supplemental_hate_speech_denylist?: unknown } | null)
+      ?.supplemental_hate_speech_denylist,
+  )
+    ? ((tenantSupplemental as { supplemental_hate_speech_denylist: unknown[] })
+        .supplemental_hate_speech_denylist as string[])
+    : [];
+
+  const seen = new Set<string>();
+  const slurDenyList: string[] = [];
+  for (const term of [...platformDenyList, ...supplemental]) {
+    const key = String(term).toLowerCase();
+    if (!seen.has(key) && term) {
+      seen.add(key);
+      slurDenyList.push(term);
+    }
+  }
+
   // Step 4: Run all seven preflight checks.
-  // hallucination_risk is async (Haiku call); the rest are synchronous.
-  // Pass-through extras (entities, recent_escalation_offered, ...) belong on
-  // RunSupervisorInput and flow through to the check input verbatim.
+  // hallucination_risk and tone_drift are async (Haiku calls); the rest are sync.
   const checkInput = {
     candidate_response,
     retrieved_chunks,
     entities: input.entities,
     recent_escalation_offered: input.recent_escalation_offered,
     persona_specializes_in_sensitive: input.persona_specializes_in_sensitive,
+    tenant_tone_max_level: input.tenant_tone_max_level,
+    tenant_allow_profanity: input.tenant_allow_profanity,
+    customer_prior_message: input.customer_prior_message,
   };
 
   const findings: SupervisorFinding[] = await Promise.all([
@@ -151,7 +191,7 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     Promise.resolve(checkPromiseDetection(checkInput)),
     Promise.resolve(checkArithmetic(checkInput)),
     Promise.resolve(checkComplianceKeyword(checkInput)),
-    Promise.resolve(checkToneDrift({ ...checkInput, slurDenyList })),
+    checkToneDrift({ ...checkInput, slurDenyList }),
     Promise.resolve(checkTopicEscalation(checkInput)),
   ]);
 
@@ -163,10 +203,29 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
   let regenCount = conversation.regen_count_total;
   let newSlurConsecutiveCount = conversation.supervisor_slur_consecutive_count;
 
-  // Tone drift critical hit — track consecutive count for auto-escalation
+  // Tone drift critical hit — track consecutive count for auto-escalation,
+  // AND write an audit row keyed by term hash only (NEVER the term itself).
+  // §24.5 audit-by-hash rule. The audit_log table is still a console.warn
+  // stub (D-036); when it lands, swap to an INSERT.
   const toneDriftFinding = findings.find((f) => f.check === "tone_drift");
   if (toneDriftFinding?.severity === "critical") {
     newSlurConsecutiveCount = conversation.supervisor_slur_consecutive_count + 1;
+    const hashFromDetails = toneDriftFinding.details.startsWith("lexical_match:")
+      ? toneDriftFinding.details.slice("lexical_match:".length)
+      : "unknown";
+    // TODO(audit-log): replace console.warn with audit_log INSERT when §26 ships.
+    console.warn(
+      "[audit-log:STUB] " +
+        JSON.stringify({
+          action: "chat.hate_speech_lexical_match",
+          tenant_id: input.ctx.tenant_id,
+          conversation_id,
+          message_id,
+          term_hash: hashFromDetails,
+          consecutive_count: newSlurConsecutiveCount,
+          _stub: "audit_log table not yet created",
+        }),
+    );
   } else {
     newSlurConsecutiveCount = 0;
   }

@@ -41,6 +41,11 @@ export type CheckInput = {
   persona_specializes_in_sensitive?: boolean | undefined;
   // §21.10 persona-drift: optional reference text used by checkPersonaDrift.
   persona_base_summary?: string | undefined;
+  // §24.5 tone_drift heuristic context. Populated by the chat handler from
+  // tenant_settings + the customer's prior message.
+  tenant_tone_max_level?: number | undefined;
+  tenant_allow_profanity?: boolean | undefined;
+  customer_prior_message?: string | undefined;
 };
 
 export type AsyncCheck = (input: CheckInput) => Promise<SupervisorFinding>;
