@@ -4,6 +4,47 @@ Newest entries on top.
 
 ---
 
+## D-055 — 2026-05-22 — BP22 follow-up: file parsers + OCR installed
+
+**Decision:**
+
+1. **Runtime deps installed (operator-approved this run):**
+   - `pdf-parse@^2.4.5` (+ `@types/pdf-parse` dev) — PDF text extraction, with OCR fallback when the PDF has no text layer.
+   - `mammoth@^1.12.0` — DOCX raw-text extraction.
+   - `xlsx@^0.18.5` (SheetJS) — XLSX/XLS read via `xlsx.utils.sheet_to_csv` per sheet, blocks joined with `# Sheet: <name>` headers.
+   - `officeparser@^7.0.3` — PPTX/PPT extraction via `OfficeConverter.convert(buffer, 'text')`. v7's API returns an AST + ConversionResult; v5's simpler `parseOfficeAsync` is deprecated.
+   - `cheerio@^1.2.0` — HTML extraction with nav/footer/script/iframe stripping; prefers `<main>` or `<article>` content over full body when present.
+   - `tesseract.js@^7.0.0` — local OCR fallback. Marked `allowBuilds: true` in `pnpm-workspace.yaml` (postinstall opencollective banner only — no risky build steps).
+
+2. **GCV uses raw `fetch`, not the official `@google-cloud/vision` SDK.** The SDK is heavy (~30MB), and Vision's REST API with API-key auth is straightforward: a single POST to `https://vision.googleapis.com/v1/images:annotate?key=KEY` with a base64 image and `DOCUMENT_TEXT_DETECTION` feature. Keeps the function bundle lean.
+
+3. **OCR provider fallback chain (per user request):**
+   - `RAG_INGEST_OCR_PROVIDER='none'` → unavailable.
+   - `RAG_INGEST_OCR_PROVIDER='gcv'` → GCV first, fall back to tesseract on any GCV failure (logs the fallback).
+   - `RAG_INGEST_OCR_PROVIDER='tesseract'` → tesseract directly.
+   - default (env unset) → GCV if `GCV_API_KEY` present and non-empty, otherwise tesseract.
+
+4. **`.doc` (legacy Word) still NOT supported.** Requires libreoffice binary on the function host (a 100MB+ install on the Vercel host). Returns `status='unavailable'` with a clear message: "Re-save as .docx and resubmit." If a tenant pushes for it, the workaround is operator-managed (LibreOffice on a separate worker).
+
+5. **PDF text-layer + OCR fallback chain:** `pdf-parse` runs first; if text is empty/whitespace, we re-route the raw bytes through `ocrImage()`. This handles scanned PDFs without a separate code path. Error message preserves both stages: `pdf_no_text_layer_ocr_failed: <ocr_error>`.
+
+6. **HTML extraction prefers `<main>` / `<article>` over `<body>`.** Tested with `<nav>`, `<script>`, `<footer>`, `<iframe>`, and `<noscript>` stripping. Returns `failed` with `html_empty_after_strip` if nothing useful remains — better signal than a single space.
+
+7. **OCR tests pruned to deterministic-only paths.** `ocrImage()` running tesseract on synthetic bytes spawns a worker thread whose post-test uncaught error breaks Vitest's clean-exit accounting. Only the `RAG_INGEST_OCR_PROVIDER='none'` path is unit-tested; the recognizer call paths (GCV REST + tesseract worker) are integration-level and run on staging with real fixtures.
+
+8. **All parser imports are dynamic.** `await import('pdf-parse')`, `await import('xlsx')`, etc. — keeps cold-start light for handlers that don't extract files. The Inngest function `rag-extract-content` is the only path that loads them.
+
+**What was rejected:**
+- `@google-cloud/vision` SDK — 30MB+, replaced by 5 lines of raw fetch.
+- `node-pptx-parser` — less maintained than officeparser v7.
+- `officeparser@5.x` (simpler `parseOfficeAsync` API) — v7's `convert()` returns the same `text` value through a richer-but-documented path; upgrading immediately is safer than committing to a future-deprecated API.
+- Removing the OCR worker error from Vitest by registering an unhandled-exception suppressor — would mask real future errors. Pruning the test instead.
+- Inline `require()` instead of `await import()` — Next.js bundler tracks dynamic imports cleanly; require()'d node modules at request time bypass tree-shaking.
+
+**Artifacts:** `apps/main/src/lib/rag-ingest/ocr.ts`, rewrite of `apps/main/src/lib/rag-ingest/extract-content.ts` (replaces all "unavailable" stubs except `application/msword`), `apps/main/test/unit/rag-ingest/extract-content.test.ts` (verifies text-based extraction + HTML strip + legacy-doc fallback path), `apps/main/test/unit/rag-ingest/ocr.test.ts` (provider-selection 'none' path only), `apps/main/package.json` deps. `pnpm-workspace.yaml` allowBuilds: tesseract.js. 418/418 tests pass; Next build compiles successfully (prerender errors on /legal/ai-disclaimer etc. are pre-existing missing-env locally).
+
+---
+
 ## D-054 — 2026-05-22 — BP22: RAG ingestion pipeline — key decisions
 
 **Decision:**

@@ -1,16 +1,22 @@
 // §22.3 — File content extraction dispatch.
 //
-// Routes by MIME type to a parser. Text-based formats (text/plain, text/markdown)
-// extract directly with no library deps. Binary formats (PDF, DOCX, XLSX,
-// PPTX, HTML, images) require library installs that are deferred — they
-// return an ExtractionResult with status='unavailable' and a clear error
-// message. Operator must install the libraries and remove the stub before
-// these formats can be processed. Documented in MEMORY (D-054).
+// Routes by MIME type to a parser. All major formats are now implemented:
+//   - text/plain, text/markdown: direct read.
+//   - text/html: cheerio (strip nav/footer/scripts).
+//   - application/pdf: pdf-parse, falling back to OCR if the PDF has no
+//     extractable text (image-only PDFs).
+//   - DOCX: mammoth.
+//   - DOC: NOT auto-converted (requires libreoffice binary on the function
+//     host); returns 'unavailable' with a clear "convert to .docx" message.
+//   - XLSX / XLS: SheetJS, one logical block per sheet (header row + rows).
+//   - PPTX / PPT: officeparser (handles both).
+//   - image/jpeg, image/png: OCR provider chain (GCV → tesseract fallback).
 //
-// The dispatcher is structured so that swapping a stub for a real parser is
-// a one-line change in this file plus the actual import.
+// All parser imports are dynamic — keeps cold-start light for handlers that
+// don't extract files.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ocrImage } from "./ocr";
 
 export type ExtractionStatus = "extracted" | "failed" | "unavailable";
 
@@ -27,7 +33,6 @@ export async function extractContent(opts: {
 }): Promise<ExtractionResult> {
   const { db, storage_path, mime_type } = opts;
 
-  // Download file bytes from Supabase Storage.
   const { data: blob, error: dlErr } = await db.storage.from("rag-submissions").download(storage_path);
   if (dlErr || !blob) {
     return { status: "failed", error: `storage_download_failed: ${dlErr?.message ?? "unknown"}` };
@@ -39,38 +44,151 @@ export async function extractContent(opts: {
       return { status: "extracted", content: await blob.text() };
 
     case "text/html":
-      // HTML extraction needs cheerio (operator install pending).
-      return unavailable("text/html", "cheerio");
+      return extractHtml(await blob.text());
 
     case "application/pdf":
-      return unavailable("application/pdf", "pdf-parse + OCR fallback");
+      return extractPdf(await blob.arrayBuffer());
 
     case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      return extractDocx(await blob.arrayBuffer());
+
     case "application/msword":
-      return unavailable(mime_type, "mammoth (DOCX) / libreoffice (DOC)");
+      return {
+        status: "unavailable",
+        error:
+          "legacy_doc_format: .doc files require libreoffice on the function host. " +
+          "Re-save as .docx and resubmit.",
+      };
 
     case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
     case "application/vnd.ms-excel":
-      return unavailable(mime_type, "sheetjs (XLSX)");
+      return extractXlsx(await blob.arrayBuffer());
 
     case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
     case "application/vnd.ms-powerpoint":
-      return unavailable(mime_type, "pptxgenjs reader");
+      return extractPptx(await blob.arrayBuffer());
 
     case "image/jpeg":
-    case "image/png":
-      return unavailable(mime_type, `OCR (${process.env.RAG_INGEST_OCR_PROVIDER ?? "none"})`);
+    case "image/png": {
+      const r = await ocrImage(await blob.arrayBuffer());
+      if (r.status === "extracted") return { status: "extracted", content: r.text ?? "" };
+      return { status: r.status, error: r.error ?? "ocr_failed" };
+    }
 
     default:
       return { status: "failed", error: `unsupported_mime: ${mime_type}` };
   }
 }
 
-function unavailable(mime: string, parser: string): ExtractionResult {
-  return {
-    status: "unavailable",
-    error:
-      `parser_not_installed: ${parser} required for ${mime}. ` +
-      `Operator action: install the parser dependency and remove the stub from extract-content.ts.`,
+// ── HTML — cheerio strip nav/footer/scripts ─────────────────────────────────
+
+async function extractHtml(html: string): Promise<ExtractionResult> {
+  try {
+    const { load } = await import("cheerio");
+    const $ = load(html);
+    $("script, style, nav, footer, noscript, iframe, header[role='banner']").remove();
+    // Prefer the document's <main> or <article> if present; else fall back to body.
+    const main = $("main, article").first();
+    const node = main.length > 0 ? main : $("body");
+    const text = node.text().replace(/\s+/g, " ").trim();
+    if (text.length === 0) return { status: "failed", error: "html_empty_after_strip" };
+    return { status: "extracted", content: text };
+  } catch (err) {
+    return { status: "failed", error: `html_parse_throw: ${String(err)}` };
+  }
+}
+
+// ── PDF — pdf-parse, OCR fallback on empty text ─────────────────────────────
+
+async function extractPdf(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  try {
+    const mod = (await import("pdf-parse")) as unknown as {
+      default?: (b: Buffer) => Promise<{ text?: string }>;
+    } | ((b: Buffer) => Promise<{ text?: string }>);
+    const pdfParse =
+      typeof mod === "function"
+        ? mod
+        : (mod.default ?? (mod as unknown as (b: Buffer) => Promise<{ text?: string }>));
+    const buf = Buffer.from(bytes);
+    const parsed = await pdfParse(buf);
+    const text = (parsed.text ?? "").trim();
+
+    if (text.length > 0) {
+      return { status: "extracted", content: text };
+    }
+
+    // No text layer — try OCR.
+    const ocr = await ocrImage(bytes);
+    if (ocr.status === "extracted") {
+      return { status: "extracted", content: ocr.text ?? "" };
+    }
+    return {
+      status: ocr.status,
+      error: `pdf_no_text_layer_ocr_${ocr.status}: ${ocr.error ?? "no_text_recovered"}`,
+    };
+  } catch (err) {
+    return { status: "failed", error: `pdf_parse_throw: ${String(err)}` };
+  }
+}
+
+// ── DOCX — mammoth (extract raw text, no styling) ───────────────────────────
+
+async function extractDocx(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  try {
+    const mammoth = await import("mammoth");
+    const buf = Buffer.from(bytes);
+    const { value } = await mammoth.extractRawText({ buffer: buf });
+    const text = (value ?? "").trim();
+    if (text.length === 0) return { status: "failed", error: "docx_empty_after_extract" };
+    return { status: "extracted", content: text };
+  } catch (err) {
+    return { status: "failed", error: `docx_parse_throw: ${String(err)}` };
+  }
+}
+
+// ── XLSX / XLS — SheetJS, one labeled block per sheet ───────────────────────
+
+interface XlsxModule {
+  read: (data: ArrayBuffer | Uint8Array, opts?: { type?: string }) => {
+    SheetNames: string[];
+    Sheets: Record<string, unknown>;
   };
+  utils: {
+    sheet_to_csv: (ws: unknown) => string;
+  };
+}
+
+async function extractXlsx(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  try {
+    const xlsx = (await import("xlsx")) as unknown as XlsxModule;
+    const workbook = xlsx.read(new Uint8Array(bytes), { type: "array" });
+    const blocks: string[] = [];
+    for (const name of workbook.SheetNames) {
+      const ws = workbook.Sheets[name];
+      if (!ws) continue;
+      const csv = xlsx.utils.sheet_to_csv(ws).trim();
+      if (csv.length === 0) continue;
+      blocks.push(`# Sheet: ${name}\n${csv}`);
+    }
+    if (blocks.length === 0) return { status: "failed", error: "xlsx_no_sheets_with_data" };
+    return { status: "extracted", content: blocks.join("\n\n") };
+  } catch (err) {
+    return { status: "failed", error: `xlsx_parse_throw: ${String(err)}` };
+  }
+}
+
+// ── PPTX / PPT — officeparser ───────────────────────────────────────────────
+
+async function extractPptx(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  try {
+    const { convert } = await import("officeparser");
+    const buf = Buffer.from(bytes);
+    // OfficeConverter.convert returns { value: string } for destination 'text'.
+    const result = await convert(buf, "text");
+    const text = String(result?.value ?? "").trim();
+    if (text.length === 0) return { status: "failed", error: "pptx_empty_after_extract" };
+    return { status: "extracted", content: text };
+  } catch (err) {
+    return { status: "failed", error: `pptx_parse_throw: ${String(err)}` };
+  }
 }
