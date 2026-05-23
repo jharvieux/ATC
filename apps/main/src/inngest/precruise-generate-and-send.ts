@@ -220,8 +220,8 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       portInfo = (portRaw as PortInfo | null);
     }
 
-    // Build JSX + subject
-    const { jsx, subject } = buildEmail(phase, {
+    // Build HTML + subject (dynamic import avoids Next.js bundler react-dom/server restriction)
+    const { html, subject } = await buildEmail(phase, {
       layoutProps,
       customerName,
       shipName,
@@ -250,7 +250,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       subject,
       template_id: `pre_cruise_${phase}`,
       category: "pre_cruise",
-      jsx,
+      html,
       ...(booking.user_id ? { user_id: booking.user_id } : {}),
       ...(booking.group_id ? { related_group_id: booking.group_id } : {}),
     });
@@ -341,7 +341,7 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
   }
 }
 
-function buildEmail(
+async function buildEmail(
   phase: Phase,
   ctx: {
     layoutProps: Omit<BrandedLayoutProps, "children">;
@@ -354,7 +354,8 @@ function buildEmail(
     companionPageUrl: string;
     portInfo: PortInfo | null;
   },
-): { jsx: React.ReactElement; subject: string } {
+): Promise<{ html: string; subject: string }> {
+  const { renderToStaticMarkup } = await import("react-dom/server");
   const { layoutProps, customerName, shipName, cruiseLine, sailingDate, ports, generatedContent: c, companionPageUrl, portInfo } = ctx;
 
   switch (phase) {
@@ -373,7 +374,7 @@ function buildEmail(
         suggested_reads: (c.suggested_reads as string[]) ?? [],
       };
       return {
-        jsx: React.createElement(PreCruiseT90, props),
+        html: renderToStaticMarkup(React.createElement(PreCruiseT90, props)),
         subject: `90 days to your ${cruiseLine} cruise — let the anticipation begin!`,
       };
     }
@@ -392,7 +393,7 @@ function buildEmail(
         companion_page_url: companionPageUrl,
       };
       return {
-        jsx: React.createElement(PreCruiseT30, props),
+        html: renderToStaticMarkup(React.createElement(PreCruiseT30, props)),
         subject: `30 days out — final prep for ${shipName}`,
       };
     }
@@ -410,7 +411,7 @@ function buildEmail(
         companion_page_url: companionPageUrl,
       };
       return {
-        jsx: React.createElement(PreCruiseT7, props),
+        html: renderToStaticMarkup(React.createElement(PreCruiseT7, props)),
         subject: `One week away — pack, prepare, and get excited!`,
       };
     }
@@ -426,7 +427,7 @@ function buildEmail(
         companion_page_url: companionPageUrl,
       };
       return {
-        jsx: React.createElement(PreCruiseT1, props),
+        html: renderToStaticMarkup(React.createElement(PreCruiseT1, props)),
         subject: `Tomorrow! Your ${cruiseLine} cruise departs — final checklist inside`,
       };
     }

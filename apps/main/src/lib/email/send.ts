@@ -4,15 +4,18 @@
 //   1. Check email_suppressions for (tenant_id, to_email, reason).
 //   2. Check rate limit per §23.6.
 //   3. Resolve from-address per tenant email_send_pattern (Pattern A / B).
-//   4. Render the React Email template to HTML + plain text.
-//   5. Call Resend API.
-//   6. Write email_log row.
+//   4. Call Resend API with the caller-provided HTML string.
+//   5. Write email_log row.
+//
+// Rendering React email templates to HTML is the caller's responsibility.
+// Callers must use a dynamic import for react-dom/server to avoid bundler
+// issues with Next.js App Router API routes:
+//   const { renderToStaticMarkup } = await import("react-dom/server");
+//   const html = renderToStaticMarkup(jsx);
 //
 // Callers must pass a service-role SupabaseClient (db) — this function writes
 // email_log and reads suppressions at the service level.
 
-import * as ReactDOMServer from "react-dom/server";
-import * as React from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkRateLimit, type EmailCategory } from "./rate-limit";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
@@ -33,8 +36,8 @@ export interface SendEmailInput {
   template_id: string;
   template_variables?: Record<string, unknown>;
   category: EmailCategory;
-  // JSX element — the rendered email body (caller builds from a template component)
-  jsx: React.ReactElement;
+  // Pre-rendered HTML — caller must render the JSX template before calling sendEmail.
+  html: string;
   related_booking_id?: string;
   related_group_id?: string;
   user_id?: string;
@@ -52,7 +55,7 @@ export interface EmailSendResult {
 const RESEND_API_URL = "https://api.resend.com/emails";
 
 export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult> {
-  const { db, tenant, to, subject, template_id, category, jsx } = input;
+  const { db, tenant, to, subject, template_id, category, html } = input;
 
   // 1 — Suppression check
   const suppressionReasons: string[] = ["unsubscribe_all", "hard_bounce", "complaint"];
@@ -105,10 +108,7 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     apiKey = platformKey;
   }
 
-  // 4 — Render template to HTML
-  const html = ReactDOMServer.renderToStaticMarkup(jsx);
-
-  // 5 — Call Resend
+  // 4 — Call Resend
   let resendMessageId: string | undefined;
   let sendStatus: "sent" | "failed" = "sent";
   let sendFailReason: string | undefined;

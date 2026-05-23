@@ -5,12 +5,10 @@
 // vi.stubGlobal fetch mock so no real HTTP happens.
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import * as React from "react";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Minimal JSX element for testing
-const testJsx = React.createElement("p", null, "Test email body");
+const testHtml = "<p>Test email body</p>";
 
 type DbChain = Record<string, unknown>;
 
@@ -91,7 +89,7 @@ describe("sendEmail — §23", () => {
       subject: "Test Subject",
       template_id: "test_template",
       category: "transactional",
-      jsx: testJsx,
+      html: testHtml,
     });
     expect(result.status).toBe("sent");
     expect(result.resend_message_id).toBe("resend-msg-123");
@@ -106,7 +104,7 @@ describe("sendEmail — §23", () => {
       subject: "Test",
       template_id: "t",
       category: "transactional",
-      jsx: testJsx,
+      html: testHtml,
     });
     expect(result.status).toBe("suppressed");
     expect(result.reason).toBe("hard_bounce");
@@ -121,7 +119,7 @@ describe("sendEmail — §23", () => {
       subject: "Marketing email",
       template_id: "promo",
       category: "marketing",
-      jsx: testJsx,
+      html: testHtml,
     });
     expect(result.status).toBe("rate_limited");
     expect(result.reason).toBe("marketing_monthly_limit_reached");
@@ -137,7 +135,7 @@ describe("sendEmail — §23", () => {
       subject: "Test",
       template_id: "t",
       category: "transactional",
-      jsx: testJsx,
+      html: testHtml,
     });
     expect(result.status).toBe("failed");
     expect(result.reason).toMatch(/platform_resend_key_not_set/);
