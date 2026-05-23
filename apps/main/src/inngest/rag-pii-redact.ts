@@ -65,7 +65,7 @@ export const ragPiiRedact = inngest.createFunction(
     }
 
     // Haiku redaction for tolerable PII.
-    const redact = await haikuPiiRedact(content);
+    const redact = await haikuPiiRedact(content, { tenant_id });
     await db
       .from("rag_submissions")
       .update({

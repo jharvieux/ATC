@@ -1,7 +1,7 @@
 // §16.6 — Haiku pre-screen for persona addendum content.
 // Returns structured finding result. Fail-closed on any parse error.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export interface HaikuScreenFinding {
   category: string;
@@ -37,23 +37,17 @@ Respond with JSON ONLY:
 OR
 { "pass": false, "findings": [{ "category": "...", "evidence": "..." }] }`;
 
-let _client: Anthropic | null = null;
-function getClient(): Anthropic {
-  if (!_client) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-    _client = new Anthropic({ apiKey });
-  }
-  return _client;
-}
-
-export async function screenAddendumHaiku(content: string): Promise<HaikuScreenResult> {
-  const client = getClient();
+export async function screenAddendumHaiku(
+  content: string,
+  ctx: { tenant_id: string } = { tenant_id: "00000000-0000-0000-0000-000000000000" },
+): Promise<HaikuScreenResult> {
   const model = process.env.PERSONA_ADDENDUM_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
   try {
-    const response = await client.messages.create({
+    const { text } = await instrumentedClaudeCall({
+      tenant_id: ctx.tenant_id,
       model,
+      purpose: "persona_addendum_screen",
       max_tokens: 1024,
       system: SCREENING_PROMPT,
       messages: [
@@ -64,7 +58,6 @@ export async function screenAddendumHaiku(content: string): Promise<HaikuScreenR
       ],
     });
 
-    const text = response.content.find((b) => b.type === "text")?.text ?? "";
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
       return { pass: false, findings: [{ category: "parse_error", evidence: "no JSON in response" }] };

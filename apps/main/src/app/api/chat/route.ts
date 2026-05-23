@@ -24,15 +24,11 @@
 // is acceptable.
 
 import { randomUUID } from "node:crypto";
-import Anthropic from "@anthropic-ai/sdk";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import { writeAuditLog } from "@/lib/audit/write";
-import {
-  recordVendorFailure,
-  recordVendorSuccess,
-  vendorHealthStatus,
-} from "@/lib/vendor-health/registry";
+import { vendorHealthStatus } from "@/lib/vendor-health/registry";
 import {
   checkAnonLimit,
   incrementAnonCounters,
@@ -452,7 +448,6 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     return;
   }
 
-  const anthropic = new Anthropic({ apiKey });
   const generationModel = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
   let extraInstruction = "";
@@ -463,20 +458,23 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   for (let attempt = 0; attempt < REGEN_HARD_CEILING; attempt++) {
     const sys = extraInstruction ? `${systemPrompt}\n\n${extraInstruction}` : systemPrompt;
 
-    let resp;
+    let candidateText: string;
     try {
-      resp = await anthropic.messages.create({
+      // instrumentedClaudeCall records vendor health + ai_call_log +
+      // tenant_usage_metrics increment + state-transition check.
+      const result = await instrumentedClaudeCall({
+        tenant_id: tenantId,
+        conversation_id: conversationId,
+        user_id: userId,
         model: generationModel,
+        purpose: "chat_main",
         max_tokens: 1024,
         system: sys,
         messages: [{ role: "user", content: userMessage }],
       });
-      recordVendorSuccess("anthropic");
-    } catch (err) {
-      recordVendorFailure("anthropic", err instanceof Error ? err.message : String(err));
-      // Surface the fallback message and bail. The error is recorded so
-      // the vendor-health registry flips to degraded/down after enough
-      // consecutive failures across instances.
+      candidateText = result.text;
+    } catch {
+      // Vendor failure was already recorded inside the wrapper.
       await send({
         type: "delta",
         text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
@@ -487,9 +485,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       return;
     }
 
-    candidate = resp.content
-      .map((c) => (c.type === "text" ? c.text : ""))
-      .join("");
+    candidate = candidateText;
 
     // Insert/UPDATE assistant message row so supervisor has a message_id to write findings to.
     if (!assistantMessageId) {

@@ -67,7 +67,13 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   // CCPA / user data (BP17, BP25)
   "user.data_export_requested": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "user.data_purge_scheduled": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+
+  // Abuse + cost monitoring (BP27)
+  "abuse.state_transition": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 };
+
+// Silence the unused-variable warning until a platform_admin event ships.
+void platformAdminShape;
 
 export class EventNotRegisteredError extends Error {
   constructor(name: string) {

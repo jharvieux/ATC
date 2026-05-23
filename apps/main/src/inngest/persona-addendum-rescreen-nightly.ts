@@ -31,7 +31,7 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
     for (const row of (rows ?? []) as { id: string; tenant_id: string; persona_slug: string; content: string }[]) {
       reviewed++;
       try {
-        const result = await screenAddendumHaiku(row.content);
+        const result = await screenAddendumHaiku(row.content, { tenant_id: row.tenant_id });
 
         if (result.pass) {
           await db

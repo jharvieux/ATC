@@ -44,7 +44,12 @@ export async function retrieveForChat(
   input: RetrieveForChatInput,
 ): Promise<RetrieveForChatResult> {
   // Step 1: entity extraction (best-effort).
-  const entities = await extractEntities(input.message);
+  const entities = await extractEntities({
+    message: input.message,
+    tenant_id: input.tenant_id,
+    user_id: input.user_id,
+    conversation_id: input.conversation_id,
+  });
 
   // Step 2: construct the retrieval query.
   const queryParts = [

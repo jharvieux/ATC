@@ -21,7 +21,7 @@
 // metric (Task 12) lets operators tune over time.
 
 import type { CheckInput, SupervisorFinding } from "../types";
-import Anthropic from "@anthropic-ai/sdk";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 interface RetrievedChunkShape {
   content?: string;
@@ -41,20 +41,9 @@ Return JSON ONLY:
 
 If there are no concrete claims, return { "claims": [] }.`;
 
-let _client: Anthropic | null = null;
-function getClient(): Anthropic | null {
-  if (_client) return _client;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  _client = new Anthropic({ apiKey });
-  return _client;
-}
-
 export async function checkHallucinationRisk(input: CheckInput): Promise<SupervisorFinding> {
   const chunks = (input.retrieved_chunks ?? []) as RetrievedChunkShape[];
   if (chunks.length === 0) {
-    // No retrieved chunks. The no-result instructions handle this on the
-    // persona side (§21.9). Nothing to validate against here.
     return {
       check: "hallucination_risk",
       severity: "info",
@@ -62,8 +51,7 @@ export async function checkHallucinationRisk(input: CheckInput): Promise<Supervi
     };
   }
 
-  const client = getClient();
-  if (!client) {
+  if (!process.env.ANTHROPIC_API_KEY) {
     return {
       check: "hallucination_risk",
       severity: "info",
@@ -74,30 +62,22 @@ export async function checkHallucinationRisk(input: CheckInput): Promise<Supervi
   let claims: Array<{ text: string; claim_type: string }> = [];
   try {
     const model = process.env.ENTITY_EXTRACTION_MODEL ?? "claude-haiku-4-5-20251001";
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 2000);
-    const response = await client.messages.create(
-      {
-        model,
-        max_tokens: 1024,
-        system: CLAIM_EXTRACTION_PROMPT,
-        messages: [{ role: "user", content: input.candidate_response }],
-      },
-      { signal: abort.signal },
-    );
-    clearTimeout(timer);
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    const { text } = await instrumentedClaudeCall({
+      tenant_id: input.tenant_id ?? "00000000-0000-0000-0000-000000000000",
+      conversation_id: input.conversation_id ?? null,
+      user_id: input.user_id ?? null,
+      model,
+      purpose: "chat_supervisor",
+      max_tokens: 1024,
+      system: CLAIM_EXTRACTION_PROMPT,
+      messages: [{ role: "user", content: input.candidate_response }],
+    });
     const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
     const obj = JSON.parse(cleaned) as { claims?: Array<{ text?: string; claim_type?: string }> };
     claims = (obj.claims ?? [])
       .filter((c): c is { text: string; claim_type: string } => typeof c?.text === "string")
       .map((c) => ({ text: c.text, claim_type: c.claim_type ?? "other" }));
   } catch {
-    // Fail-open on extraction error — we treat the response as ungrounded-unknown
-    // rather than blocking. The metric captures the failure for operators.
     return {
       check: "hallucination_risk",
       severity: "info",

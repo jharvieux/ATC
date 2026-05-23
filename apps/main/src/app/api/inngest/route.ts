@@ -65,6 +65,12 @@ import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
 import { authFailureMonitor } from "@/inngest/auth-failure-monitor";
 import { permissionDeniedMonitor } from "@/inngest/permission-denied-monitor";
 import { crossTenantRlsBypassMonitor } from "@/inngest/cross-tenant-rls-bypass-monitor";
+// BP27: SaaS abuse monitoring + cost controls (§27)
+import { aiPricingCacheRefresh } from "@/inngest/ai-pricing-cache-refresh";
+import { emailBounceRateMonitor } from "@/inngest/email-bounce-rate-monitor";
+import { qualityLowApprovalSignal } from "@/inngest/quality-low-approval-signal";
+import { duplicateHighRateSignal } from "@/inngest/duplicate-high-rate-signal";
+import { abuseSignalRagPiiRecurring, abuseSignalAnonChatBurst } from "@/inngest/abuse-signal-consumers";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -133,5 +139,12 @@ export const { GET, POST, PUT } = serve({
     authFailureMonitor,
     permissionDeniedMonitor,
     crossTenantRlsBypassMonitor,
+    // BP27: SaaS abuse monitoring + cost controls (§27)
+    aiPricingCacheRefresh,
+    emailBounceRateMonitor,
+    qualityLowApprovalSignal,
+    duplicateHighRateSignal,
+    abuseSignalRagPiiRecurring,
+    abuseSignalAnonChatBurst,
   ],
 });

@@ -172,6 +172,14 @@ const envSchema = z.object({
   STAGING_MODE: z.enum(["true", "false"]).optional().default("false"),
   TEST_OVERRIDE_EMAIL: z.string().email().optional(),
   TEST_OVERRIDE_PHONE: z.string().optional(),
+  // SaaS abuse monitoring + cost controls — §27
+  ANTHROPIC_DAILY_PRICING_CACHE_TTL_HOURS: z.coerce.number().int().positive().optional().default(24),
+  OPENAI_DAILY_PRICING_CACHE_TTL_HOURS:    z.coerce.number().int().positive().optional().default(24),
+  ABUSE_AI_COST_SOFT1_PERCENT:             z.coerce.number().int().positive().optional().default(30),
+  ABUSE_AI_COST_SOFT2_PERCENT:             z.coerce.number().int().positive().optional().default(50),
+  ABUSE_AI_COST_HARD_PERCENT:              z.coerce.number().int().positive().optional().default(70),
+  ABUSE_RAG_APPROACHING_PERCENT:           z.coerce.number().int().positive().optional().default(85),
+  ABUSE_EMAIL_BOUNCE_RATE_THRESHOLD_PERCENT: z.coerce.number().int().positive().optional().default(5),
 });
 
 type Env = z.infer<typeof envSchema>;

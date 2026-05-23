@@ -8,8 +8,8 @@
 // Cached by message-hash for 1 hour to avoid re-extraction on regen-loop
 // re-tries within the same conversation.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type EntityIntent = "research" | "compare" | "book" | "support";
 
@@ -59,55 +59,46 @@ interface CacheEntry {
 const CACHE: Map<string, CacheEntry> = new Map();
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-let _client: Anthropic | null = null;
-function getClient(): Anthropic | null {
-  if (_client) return _client;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  _client = new Anthropic({ apiKey });
-  return _client;
-}
-
 function hash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
-export async function extractEntities(message: string): Promise<EntitySet> {
-  const key = hash(message);
+export interface ExtractEntitiesArgs {
+  message: string;
+  tenant_id: string;
+  user_id?: string | null;
+  conversation_id?: string | null;
+}
+
+export async function extractEntities(args: ExtractEntitiesArgs | string): Promise<EntitySet> {
+  // Backwards-compatible: legacy callers passed a bare string.
+  const input: ExtractEntitiesArgs = typeof args === "string"
+    ? { message: args, tenant_id: "00000000-0000-0000-0000-000000000000" }
+    : args;
+
+  const key = hash(input.message);
   const cached = CACHE.get(key);
   if (cached && cached.expires > Date.now()) return cached.value;
 
-  const client = getClient();
-  if (!client) {
-    return EMPTY_ENTITY_SET;
-  }
+  if (!process.env.ANTHROPIC_API_KEY) return EMPTY_ENTITY_SET;
 
   const model = process.env.ENTITY_EXTRACTION_MODEL ?? "claude-haiku-4-5-20251001";
 
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 1000);
-
   try {
-    const response = await client.messages.create(
-      {
-        model,
-        max_tokens: 512,
-        system: EXTRACTION_PROMPT,
-        messages: [{ role: "user", content: message }],
-      },
-      { signal: abort.signal },
-    );
-    clearTimeout(timer);
-
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    const parsed = parseEntities(text);
+    const result = await instrumentedClaudeCall({
+      tenant_id: input.tenant_id,
+      user_id: input.user_id ?? null,
+      conversation_id: input.conversation_id ?? null,
+      model,
+      purpose: "entity_extraction",
+      max_tokens: 512,
+      system: EXTRACTION_PROMPT,
+      messages: [{ role: "user", content: input.message }],
+    });
+    const parsed = parseEntities(result.text);
     CACHE.set(key, { expires: Date.now() + CACHE_TTL_MS, value: parsed });
     return parsed;
   } catch {
-    clearTimeout(timer);
     return EMPTY_ENTITY_SET;
   }
 }

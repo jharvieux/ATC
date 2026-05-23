@@ -200,19 +200,17 @@ function buildMockDb(opts: MockOptions): SupabaseClient {
   return db;
 }
 
-// ── Mock Anthropic ────────────────────────────────────────────────────────────
+// ── Mock the AI call wrapper ──────────────────────────────────────────────
+// BP27: extract-memory now calls instrumentedClaudeCall instead of the
+// Anthropic SDK directly. Mock the wrapper to avoid hitting the real
+// service-role client + ai_call_log insert paths.
 
-vi.mock("@anthropic-ai/sdk", () => {
-  return {
-    default: class MockAnthropic {
-      messages = {
-        create: async () => ({
-          content: [{ type: "text", text: '{"notes_freeform":"loves ocean views"}' }],
-        }),
-      };
-    },
-  };
-});
+vi.mock("@/lib/ai/call-wrapper", () => ({
+  instrumentedClaudeCall: async () => ({
+    text: '{"notes_freeform":"loves ocean views"}',
+    raw: {},
+  }),
+}));
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

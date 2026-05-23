@@ -1,18 +1,10 @@
-// §22.4 Stage 2b — Haiku redaction of TOLERABLE PII.
-//
-// Tolerable categories: names, email addresses, phone numbers.
-// Replaces them with [REDACTED] markers. Returns 'clean' if no PII found
-// or 'redacted' if at least one replacement was made.
-//
-// Zero-tolerance PII (SSN, credit card, passport) is detected separately
-// by detectZeroTolerancePII in pii-regex-prefilter.ts — those quarantine
-// the submission BEFORE this function runs.
+// §22.4 Stage 2 — Tolerable-PII redaction via Haiku.
 //
 // On ANY Haiku error or missing ANTHROPIC_API_KEY: returns the input
 // content unchanged with status='clean'. The regex-prefilter is the
 // safety-critical layer; tolerable-PII redaction is best-effort.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type HaikuRedactResult =
   | { status: "clean"; content: string }
@@ -30,39 +22,27 @@ URLs, prices, dates, ship names, port names. Do not summarize or rephrase.
 
 Output ONLY the redacted text. No explanation, no JSON, no code fences.`;
 
-let _client: Anthropic | null = null;
-function getClient(): Anthropic | null {
-  if (_client) return _client;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  _client = new Anthropic({ apiKey });
-  return _client;
-}
-
-export async function haikuPiiRedact(content: string): Promise<HaikuRedactResult> {
-  const client = getClient();
-  if (!client) return { status: "clean", content };
-
+export async function haikuPiiRedact(
+  content: string,
+  ctx: { tenant_id: string } = { tenant_id: "00000000-0000-0000-0000-000000000000" },
+): Promise<HaikuRedactResult> {
+  if (!process.env.ANTHROPIC_API_KEY) return { status: "clean", content };
   const model = process.env.RAG_INGEST_PII_REDACTION_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
   try {
-    const response = await client.messages.create({
+    const { text } = await instrumentedClaudeCall({
+      tenant_id: ctx.tenant_id,
       model,
+      purpose: "rag_pii_redaction",
       max_tokens: Math.max(1024, Math.min(content.length * 2, 16000)),
       system: REDACTION_PROMPT,
       messages: [{ role: "user", content }],
     });
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    if (text.length === 0) {
-      return { status: "clean", content };
-    }
-    const changed = text !== content;
-    return changed ? { status: "redacted", content: text } : { status: "clean", content };
+    if (text.length === 0) return { status: "clean", content };
+    return text !== content
+      ? { status: "redacted", content: text }
+      : { status: "clean", content };
   } catch {
-    // Best-effort: on any error, treat as clean and proceed.
     return { status: "clean", content };
   }
 }

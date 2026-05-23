@@ -4,6 +4,65 @@ Newest entries on top.
 
 ---
 
+## D-060 — 2026-05-23 — BP27: SaaS abuse monitoring + cost controls (§27) — key decisions
+
+**Decision:**
+
+1. **Migration 20260606000000_abuse_monitoring.sql adds 8 tables.** All §27.5 canonical schemas verbatim plus ai_call_log (§27.12), abuse_signals (§27.10 consumer surface), and group_invite_pending_approval (§27.6 soft2 admin pre-approval queue). Plus `tenant_settings.email_paused_due_to_bounce_rate` flag for the §27.4.4 side channel. RLS: tenant-scoped read on tenant_usage_metrics + tenant_rag_quotas (tenants see their own usage), service-role only for the rest. `rag_submissions.review_status` CHECK extended to include `'auto_deleted'` for §27.4.2.
+
+2. **Spec drift: `billing_period DATERANGE` vs build-prompt's "TEXT YYYY-MM".** The §27.5 spec schema uses DATERANGE; the build prompt's prose contradicted it. Followed the spec — DATERANGE supports annual-billers' actual cycles, and a helper builds the calendar-month range for monthly billers. The composite UNIQUE on `(tenant_id, billing_period)` works fine with DATERANGE.
+
+3. **AI pricing catalog lives in source** (`lib/ai/pricing.ts → AI_PRICING_DEFAULTS`) **with override via `platform_settings.ai_pricing_catalog` JSONB.** Values as of 2026-05-23 per Anthropic + OpenAI public pricing pages. The daily refresh cron (`ai-pricing-cache-refresh`) only bumps `last_refreshed_at`; the actual scrape parsers are `// TODO(operator)` because vendor pricing pages change format. Operator updates either the constant (PR + deploy) or the platform_settings row (no deploy).
+
+4. **Instrumented call wrapper at `lib/ai/call-wrapper.ts` is the ONE allowed importer of Anthropic + OpenAI SDKs.** BP26 lint rule `atc/no-direct-anthropic-or-openai-import` tightened from prefix `/lib/ai/` to the specific file, and flipped from `off` → `error`. Wrapper records vendor-health + writes ai_call_log + UPSERTs tenant_usage_metrics.ai_cost_cents + calls checkStateTransitionIfNeeded.
+
+5. **selectModelForPurpose runs INSIDE the wrapper.** Per the user's decision: every call automatically inherits the §27.6 AI-cost soft1 model downgrade (Sonnet/Opus → Haiku) for non-customer-facing purposes. Customer-facing purposes (chat_main, precruise_generation, quote_narrative) are never downgraded. The downgrade map and customer-facing set are in `call-wrapper.ts`.
+
+6. **9 SDK-import call sites migrated to the wrapper.** Full list (tenant_id sources documented at each site):
+   - `app/api/chat/route.ts` (chat_main; tenant from middleware)
+   - `app/api/admin/reconciliation/upload/route.ts` (content_normalization; tenant from body)
+   - `inngest/extract-memory.ts` (memory_extraction; tenant from event)
+   - `lib/personas/screen-addendum-haiku.ts` (persona_addendum_screen; tenant via ctx param)
+   - `lib/personas/screen-addendum.ts` (same)
+   - `lib/rag-ingest/haiku-normalize.ts` (rag_normalization; tenant via ctx)
+   - `lib/rag-ingest/haiku-pii-redact.ts` (rag_pii_redaction; tenant via ctx)
+   - `lib/rag/entity-extraction.ts` (entity_extraction; tenant via plumbed param from retrieveForChat)
+   - `lib/supervisor/checks/hallucination-risk.ts` (chat_supervisor; tenant via CheckInput from run-supervisor)
+
+   **Fetch-based call sites** (not blocked by lint, still bypass cost attribution today; flagged for follow-on PR): `lib/chat/customer-limit.ts`, `lib/supervisor/checks/tone-drift.ts`, `inngest/forum-moderation-retry.ts`, `inngest/precruise-generate-and-send.ts`. Migrating these requires the wrapper to grow a non-SDK fetch path or callers to switch to the SDK.
+
+7. **`PLATFORM_TENANT_ID = '00000000-0000-0000-0000-000000000000'`.** The all-zero UUID is the sentinel attribution for genuinely platform-wide calls (e.g., cross-tenant cron embeddings). The wrapper short-circuits tenant lookups for this id — no usage metrics or state transitions are written.
+
+8. **Seat-ladder source: hardcoded in `lib/abuse/revenue.ts`.** The §3.3 ladder values (users 2-4 @ $59/590, 5-10 @ $49/490, 11+ @ $39/390) and the per-tier base prices are in source code with a `TODO(verify)` marker. Hardcoding chosen over `platform_settings` or new `tier_definitions` columns to keep the §3.3 source-of-truth in one place — operator confirms the values when commercial agreement is finalized; if they change, edit the constant + deploy.
+
+9. **Build-prompt's seat-ladder description is wrong.** The build prompt says "seats 2–3" at $59. The §3.3 spec says users 2-4. Followed the spec (spec wins). Worked-example tests verify single-seat $249, 4-user $426, 6-user-annual $436.67/mo all match §3.3.
+
+10. **Threshold resolution is the single source of truth (`lib/abuse/thresholds.ts`).** All 5 dimensions resolved by `resolveThresholdsSync` (tests use this) and `resolveThresholds` (async DB variant that loads overrides). Override precedence: any active row in `tenant_usage_overrides` matching dimension+tier replaces the computed threshold. Expired overrides ignored. **Per-dimension base counts (chat 5000/mo etc.) hardcoded** in this file with `TODO(tier_definitions)` to move into a columns extension later. Per §27.4.
+
+11. **State machine: monthly dimensions are MONOTONIC, RAG is NOT.** Once `ai_cost_limit_state` advances to `soft1` in a billing period, dropping below soft1 in the same period does NOT revert. RAG state (`tenant_rag_quotas.rag_state`) is freshly recomputed on every chunk count change — deletions immediately drop the state. `checkStateTransitionIfNeeded` handles both via the dispatch table in `state-machine.ts`.
+
+12. **Promotion bonus persistence is the most surprising rule in §27.** When admin DEMOTES a previously-promoted chunk, `tenant_rag_quotas.promoted_chunks_count` does NOT decrement. Effective cap stays elevated. The demoted chunk's fate (tenant-scoped or hard-deleted) is separate. **Tenants earn permanent cap by submitting promotable content; they never lose it once earned.** Documented at the BP22 demote path call site for future maintainers.
+
+13. **`abuse.state_transition` event registered.** Only platform-spawned event in this prompt. Tenant-scoped (carries tenant_id). BP28's notification consumer will subscribe.
+
+14. **Counter-increment helpers in `lib/abuse/counters.ts` are NOT yet wired at every event.** The functions exist (`incrementChatMessages`, `incrementEmailSent`, `incrementGroupInvitees`, `adjustRagChunkCount`) but call-site wiring (chat handler post-assistant-turn, sendEmail post-send, invite send endpoints, RAG chunk lifecycle) is **deferred to a follow-on PR**. The library is the foundation; the BP28 work + an integration sweep will adopt it. Same for `enforcement.ts` decisions — the helpers exist but aren't wired into chat/email/invite handlers yet. Documented as cleanup-debt.
+
+15. **RAG normalization Stage 4 auto-delete IS wired** (BP22's `rag-normalize.ts`). Low-relevance submissions over cap are now `review_status='auto_deleted'` with a `tenant_rag_cap_events` row. Promotion bonus persistence is preserved because the chunk count alone drives cap state — demote doesn't subtract from promoted_chunks_count.
+
+16. **6 new Inngest functions registered:** `ai-pricing-cache-refresh` (daily, stub fetch), `email-bounce-rate-monitor` (every 6h, 5% threshold side channel), `quality-low-approval-signal-cron` (daily), `duplicate-high-rate-signal-cron` (daily), `abuse-signal-consumer-rag-pii-recurring`, `abuse-signal-consumer-anon-chat-burst`. The last two close the loop on the BP22 + BP24 `// TODO(part-6)` event consumers.
+
+17. **3 new unit test files (16 tests):** `abuse/revenue.test.ts` (5 worked-example matches), `abuse/thresholds.test.ts` (6 — AI-cost percentages, RAG promotion bonus, override precedence + expiry), `ai/pricing.test.ts` (4 — BigInt math, unknown model fallback). Full suite: 518/518.
+
+**What was rejected:**
+- Wiring the counter increment helpers + enforcement helpers into every call site in this PR — adds ~10 more file edits and risks breaking unrelated tests. Helpers are ready; integration PR follows.
+- Building a platform-admin-typed Inngest event today — BP28 work; nothing currently emits one.
+- Migrating the four fetch-based AI call sites (customer-limit, tone-drift, forum-moderation-retry, precruise-generate-and-send) — they'd need the wrapper to grow a non-SDK fetch path. Captured as follow-on.
+- A `tier_definitions` schema migration to add `base_seat_monthly_cents`/`chat_volume_base_monthly`/`rag_chunks_base` columns. Hardcoding in `revenue.ts` + `thresholds.ts` keeps §3.3 + §27.4 in source until commercial terms freeze.
+
+**Artifacts:** `20260606000000_abuse_monitoring.sql`, `lib/ai/{pricing,call-wrapper}.ts`, `lib/abuse/{revenue,thresholds,state-machine,counters,enforcement}.ts`, `inngest/{ai-pricing-cache-refresh,email-bounce-rate-monitor,quality-low-approval-signal,duplicate-high-rate-signal,abuse-signal-consumers}.ts`, BP22 `inngest/rag-normalize.ts` Stage 4 update, 9 call-site migrations, `lib/inngest/event-registry.ts` (+1 event), eslint rule tightening + allowlist additions, 3 new test files (16 tests). PR #?? open.
+
+---
+
 ## D-059 — 2026-05-23 — BP26: Four-layer auth reconciled, service-role discipline lint, audit_log live, forensics decrypt, vendor health, monitoring — key decisions
 
 **Decision:**

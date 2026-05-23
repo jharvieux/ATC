@@ -1,16 +1,22 @@
 "use strict";
 
-// §26.3a / §27 (incoming) — Forbids direct imports of @anthropic-ai/sdk
-// and openai outside the AI call wrapper directory (src/lib/ai/**).
-// The wrapper centralizes cost attribution, vendor-health checks, and
-// fallback logic; bypassing it loses the §27.12 per-call cost tracking
-// and the §26.9 vendor outage handling.
+// §26.3a / §27.12 — Direct imports of @anthropic-ai/sdk and openai are
+// allowed in EXACTLY ONE file: apps/main/src/lib/ai/call-wrapper.ts.
+// The wrapper centralizes:
+//   • per-call cost attribution (ai_call_log + tenant_usage_metrics)
+//   • model downgrade selection at AI-cost soft1/soft2 (§27.6)
+//   • vendor-health success/failure recording (§26.9)
 //
-// Until lib/ai/call-wrapper.ts lands in BP27, the entire src/lib/ai/**
-// tree is the allowlist. BP27 will tighten to the specific file.
+// BP26 staged this rule off until BP27's wrapper existed. BP27 tightens
+// the allowlist to just the wrapper file and flips the rule to "error"
+// in apps/main/.eslintrc.
 
-const ALLOWED_PATH_PREFIXES = [
-  "/lib/ai/",
+const ALLOWED_PATH_SUFFIXES = [
+  "/lib/ai/call-wrapper.ts",
+  // The pricing catalog imports vendor types only, not the SDK client.
+  // Listed here so a future operator adding `import { ... } from "openai"`
+  // for typed pricing structures doesn't get blocked.
+  "/lib/ai/pricing.ts",
 ];
 
 const FORBIDDEN_PACKAGES = new Set([
@@ -20,7 +26,7 @@ const FORBIDDEN_PACKAGES = new Set([
 
 function isAllowedPath(filename) {
   const normalized = filename.replace(/\\/g, "/");
-  return ALLOWED_PATH_PREFIXES.some((prefix) => normalized.includes(prefix));
+  return ALLOWED_PATH_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
 module.exports = {
@@ -28,12 +34,12 @@ module.exports = {
     type: "problem",
     docs: {
       description:
-        "Disallow direct @anthropic-ai/sdk or openai imports outside lib/ai/** (spec §26.3a / §27.12)",
+        "Disallow direct @anthropic-ai/sdk or openai imports outside lib/ai/call-wrapper.ts (spec §26.3a / §27.12)",
     },
     schema: [],
     messages: {
       forbidden:
-        "Direct import of {{pkg}} is not allowed here. Use lib/ai/call-wrapper.ts (lands in BP27); this enforces cost attribution and vendor outage handling.",
+        "Direct import of {{pkg}} is not allowed here. Use instrumentedClaudeCall / instrumentedOpenAIEmbedding from lib/ai/call-wrapper.ts to ensure cost attribution + vendor-health tracking.",
     },
   },
   create(context) {

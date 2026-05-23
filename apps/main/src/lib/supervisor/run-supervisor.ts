@@ -184,6 +184,9 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     tenant_tone_max_level: input.tenant_tone_max_level,
     tenant_allow_profanity: input.tenant_allow_profanity,
     customer_prior_message: input.customer_prior_message,
+    tenant_id: input.ctx.tenant_id,
+    conversation_id,
+    user_id: input.ctx.source.kind === "http_request" ? input.ctx.source.user_id : undefined,
   };
 
   const findings: SupervisorFinding[] = await Promise.all([
