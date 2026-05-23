@@ -3,6 +3,9 @@
 -- Generated against schema: public
 
 -- Tables with RLS enabled:
+-- public.abuse_recompute_drift_log (rls_enabled)
+-- public.abuse_signals (rls_enabled)
+-- public.ai_call_log (rls_enabled)
 -- public.ai_kill_switch_state (rls_enabled)
 -- public.anonymous_chat_counters (rls_enabled)
 -- public.anonymous_sessions (rls_enabled)
@@ -30,6 +33,7 @@
 -- public.forum_threads (rls_enabled)
 -- public.forum_user_state (rls_enabled)
 -- public.forums (rls_enabled)
+-- public.group_invite_pending_approval (rls_enabled)
 -- public.groups (rls_enabled)
 -- public.host_adapters (rls_enabled)
 -- public.host_booking_fee_configs (rls_enabled)
@@ -60,9 +64,15 @@
 -- public.tenant_host_configs (rls_enabled)
 -- public.tenant_host_fee_overrides (rls_enabled)
 -- public.tenant_inactivity_nudges (rls_enabled)
+-- public.tenant_override_requests (rls_enabled)
 -- public.tenant_persona_overrides (rls_enabled)
+-- public.tenant_rag_cap_events (rls_enabled)
+-- public.tenant_rag_quotas (rls_enabled)
 -- public.tenant_settings (rls_enabled)
+-- public.tenant_usage_metrics (rls_enabled)
+-- public.tenant_usage_overrides (rls_enabled)
 -- public.tenants (rls_enabled)
+-- public.usage_limit_events (rls_enabled)
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
@@ -75,6 +85,48 @@
 -- public.tier_definitions (rls_disabled)
 
 -- Policies:
+-- TABLE: public.abuse_recompute_drift_log
+CREATE POLICY "ardl_delete_service" ON public.abuse_recompute_drift_log
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "ardl_insert_service" ON public.abuse_recompute_drift_log
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "ardl_select_service" ON public.abuse_recompute_drift_log
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "ardl_update_service" ON public.abuse_recompute_drift_log
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.abuse_signals
+CREATE POLICY "abuse_signals_delete_service" ON public.abuse_signals
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "abuse_signals_insert_service" ON public.abuse_signals
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "abuse_signals_select_service" ON public.abuse_signals
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "abuse_signals_update_service" ON public.abuse_signals
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.ai_call_log
+CREATE POLICY "ai_call_log_delete_service" ON public.ai_call_log
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "ai_call_log_insert_service" ON public.ai_call_log
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "ai_call_log_select_service" ON public.ai_call_log
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "ai_call_log_update_service" ON public.ai_call_log
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
 -- TABLE: public.ai_kill_switch_state
 CREATE POLICY "ai_kill_switch_state_select_policy" ON public.ai_kill_switch_state
   FOR SELECT TO PUBLIC
@@ -462,6 +514,20 @@ CREATE POLICY "forums_update" ON public.forums
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.group_invite_pending_approval
+CREATE POLICY "gipa_delete_service" ON public.group_invite_pending_approval
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "gipa_insert_service" ON public.group_invite_pending_approval
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "gipa_select_service" ON public.group_invite_pending_approval
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "gipa_update_service" ON public.group_invite_pending_approval
+  FOR UPDATE TO PUBLIC
+  USING (false);
 
 -- TABLE: public.groups
 CREATE POLICY "groups_delete" ON public.groups
@@ -865,6 +931,20 @@ CREATE POLICY "tenant_inactivity_nudges_update" ON public.tenant_inactivity_nudg
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.tenant_override_requests
+CREATE POLICY "tor_delete_service" ON public.tenant_override_requests
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "tor_insert_in_tenant" ON public.tenant_override_requests
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tor_select_in_tenant" ON public.tenant_override_requests
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "tor_update_service" ON public.tenant_override_requests
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
 -- TABLE: public.tenant_persona_overrides
 CREATE POLICY "tenant_persona_overrides_delete" ON public.tenant_persona_overrides
   FOR DELETE TO PUBLIC
@@ -879,6 +959,34 @@ CREATE POLICY "tenant_persona_overrides_update" ON public.tenant_persona_overrid
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.tenant_rag_cap_events
+CREATE POLICY "trce_delete_service" ON public.tenant_rag_cap_events
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "trce_insert_service" ON public.tenant_rag_cap_events
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "trce_select_service" ON public.tenant_rag_cap_events
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "trce_update_service" ON public.tenant_rag_cap_events
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.tenant_rag_quotas
+CREATE POLICY "trq_delete_service" ON public.tenant_rag_quotas
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "trq_insert_service" ON public.tenant_rag_quotas
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "trq_select_in_tenant" ON public.tenant_rag_quotas
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "trq_update_service" ON public.tenant_rag_quotas
+  FOR UPDATE TO PUBLIC
+  USING (false);
 
 -- TABLE: public.tenant_settings
 CREATE POLICY "tenant_settings_delete_policy" ON public.tenant_settings
@@ -895,6 +1003,34 @@ CREATE POLICY "tenant_settings_update_policy" ON public.tenant_settings
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.tenant_usage_metrics
+CREATE POLICY "tum_delete_service" ON public.tenant_usage_metrics
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "tum_insert_service" ON public.tenant_usage_metrics
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "tum_select_in_tenant" ON public.tenant_usage_metrics
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "tum_update_service" ON public.tenant_usage_metrics
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.tenant_usage_overrides
+CREATE POLICY "tuo_delete_service" ON public.tenant_usage_overrides
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "tuo_insert_service" ON public.tenant_usage_overrides
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "tuo_select_service" ON public.tenant_usage_overrides
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "tuo_update_service" ON public.tenant_usage_overrides
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
 -- TABLE: public.tenants
 CREATE POLICY "tenants_select_policy" ON public.tenants
   FOR SELECT TO PUBLIC
@@ -903,6 +1039,20 @@ CREATE POLICY "tenants_update_policy" ON public.tenants
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(id))
   WITH CHECK (auth_user_in_tenant(id) AND tenant_is_active(id));
+
+-- TABLE: public.usage_limit_events
+CREATE POLICY "ule_delete_service" ON public.usage_limit_events
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "ule_insert_service" ON public.usage_limit_events
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "ule_select_service" ON public.usage_limit_events
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "ule_update_service" ON public.usage_limit_events
+  FOR UPDATE TO PUBLIC
+  USING (false);
 
 -- TABLE: public.user_consent_pending
 CREATE POLICY "user_consent_pending_select" ON public.user_consent_pending
