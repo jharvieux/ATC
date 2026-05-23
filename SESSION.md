@@ -1,35 +1,43 @@
 # Session state — last updated 2026-05-23
 
 ## Just completed
-- BP28 PR #79 merged into dev (squash). One follow-up commit fixed a Next.js App Router bundler error in `apps/main/src/inngest/abuse-state-transition-notify.ts` — switched to a dynamic import of `react-dom/server` to match the existing pattern in `lib/email/send-breach-notifications.ts` and `inngest/precruise-generate-and-send.ts`. All CI checks passed before merge (including RLS Snapshot Diff).
-- Feature branch `feature/bp28-abuse-dashboard` deleted (local + remote).
+- BP28 PR #79 merged into dev (squash) after fixing the Next.js bundler error in `abuse-state-transition-notify.ts` (dynamic `react-dom/server` import).
+- BP29 §28 env-var reconciliation done on `feature/bp29-env-vars`:
+  - `docs/env-audit.md` — spec-vs-code cross-reference, naming-drift waivers logged
+  - `apps/main/src/lib/env.ts` — +38 vars, tightened ANTHROPIC/Stripe/Resend/OpenAI shape, conditional MS Graph superRefine, accumulated-error verifyEnvAtBoot, BACKUP_VERIFIED_AT staleness warning
+  - `apps/rag/src/lib/env.ts` — +8 vars, OPENAI_EMBEDDING_DIMENSIONS .refine(===1536), SERVICE_JWT_PUBLIC_KEY_PREVIOUS rotation overlap
+  - `apps/main/.env.example` + `apps/rag/.env.example` — full coverage grouped by §28 subsection
+  - `apps/main/test/unit/env/bp29-schema-discipline.test.ts` — 14 meta-tests guarding NEXT_PUBLIC_* discipline, no-pricing-in-env, .env.example parity, multi-error surfacing
+  - 4 runbooks shipped: `docs/runbooks/{stripe-price-ids,secret-rotation,feature-flags}.md` + `docs/local-development.md`
+  - `.github/CODEOWNERS` — routes env.ts + .env.example + secret-rotation through operator review
+  - MEMORY D-062 added
+- Local verification: typecheck clean, lint clean, lint:migrations clean, 560 tests passing (16 new).
 
 ## In flight
-- Nothing in flight — clean checkpoint on `dev`. Ready to start BP29.
+- BP29 changes committed on `feature/bp29-env-vars` (4 commits). Next: push + open PR.
 
 ## Next step
-- Start **BP29 — Environment variables reference (§28)**: Zod boot-time validation for main + RAG, `.env.example` parity, structured Stripe price-ID convention, secret rotation runbook.
-- BP29 calls for **Sonnet 4.6**. Switch with `/model claude-sonnet-4-6` before starting.
-- Create `feature/bp29-env-vars` branch off `dev`.
-- Prompt source: `specs/BuildPrompts/build-prompts-part-7-prompt-29.md`.
+- Push `feature/bp29-env-vars` to origin and open PR into `dev`.
 
 ## Blocked on user
-- Model switch to Sonnet (Claude can't run `/model` itself).
+- Nothing.
 
 ## Open questions
-- Untracked / modified spec files in working tree (specs/TechSpec/index.html, section-32-self-service-help.html, build-prompts-33.md, section-33 addendum HTML/MD, specs/Review/) are unrelated to BP28/BP29 — appears to be spec-side authoring done outside session. Leaving them alone; user should commit separately when ready.
+- Untracked / modified spec files in working tree (specs/TechSpec/index.html, section-32-self-service-help.html, build-prompts-33.md, section-33 addendum HTML/MD) are unrelated to BP28/BP29 — appears to be spec-side authoring done outside session. Left alone.
+- **BP29 spec-amendment follow-up:** §28 has naming drift (INTER_SERVICE_JWT_* vs SERVICE_JWT_*, RAG_SUPABASE_* vs SUPABASE_RAG_*, _PRO_ vs _PROFESSIONAL_, _SEAT_ vs _SEATS_, IMAGE_GEN_DAILY_LIMIT_PER_TENANT vs IMAGE_GEN_RATE_LIMIT_DAILY, ABUSE_AI_COST_RECOMPUTE_INTERVAL_SECONDS vs ABUSE_RECOMPUTE_CRON_SCHEDULE, forensics _PRIOR_N two-step grace). Operator chose to keep code names and propose spec amendments later.
+- BP29 deferred:
+  - CI workflow does not include the new spec-required vars (ANTHROPIC_API_KEY etc.) because `verifyEnvAtBoot()` does not run during `next build`. Tests provide their own via baseEnv helpers. If CI Test step ever runs verifyEnvAtBoot at module scope, ci.yml will need `ANTHROPIC_API_KEY=sk-ant-ci-placeholder` etc.
+  - Vercel env var population for the new optional vars (RESEND_FROM_*, SENTRY_*, MICROSOFT_GRAPH_*, etc.) is operator work — defaults handle the absence gracefully.
 - BP28 follow-ups (deferred intentionally):
   - RAG-side `current_tenant_chunks_count` reconciliation in abuse-recompute-nightly — needs service-to-service call to RAG; `TODO(rag-service-count)` marker in code
   - BP27's counter/enforcement integration sweep (chat/email/invite/RAG call sites) still pending — BP28 scope was the operational layer only
   - In-app notifications (besides email) for state transitions — email-only for v1
 - Operator follow-ups from BP27 (carried forward):
   - Apply migration 20260606000000_abuse_monitoring.sql + 20260607000000_abuse_dashboard.sql to atc-main
-  - Confirm AI pricing values in lib/ai/pricing.ts when commercial agreement freezes (currently illustrative)
-  - Optionally adjust the 7 BP27 env vars (defaults match §27.4 percentages)
-  - Optionally adjust the 3 BP28 env vars (cron schedule, override duration days, refresh seconds)
-  - **Follow-on PRs deferred from BP27:**
-    - Wire counter increments + enforcement helpers into call sites (chat handler post-assistant-turn, lib/email/send.ts post-send, group invite endpoints, RAG chunk lifecycle)
-    - Migrate the 4 fetch-based AI call sites (customer-limit, tone-drift, forum-moderation-retry, precruise-generate-and-send)
+  - Confirm AI pricing values in lib/ai/pricing.ts when commercial agreement freezes
+  - Optionally adjust the 7 BP27 env vars + 3 BP28 env vars
+  - Wire counter increments + enforcement helpers into call sites
+  - Migrate the 4 fetch-based AI call sites
 - Operator follow-ups from BP26 (still pending):
   - Provision OPERATOR_SLACK_WEBHOOK_URL (optional)
   - Provision NEXT_PUBLIC_SENTRY_DSN + SENTRY_DSN to start shipping Sentry events

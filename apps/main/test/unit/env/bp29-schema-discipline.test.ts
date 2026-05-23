@@ -24,7 +24,8 @@ function readSchemaKeys(): string[] {
   const keys: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = re.exec(src)) !== null) {
-    keys.push(match[1]);
+    const k = match[1];
+    if (k) keys.push(k);
   }
   return keys;
 }
