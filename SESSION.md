@@ -1,35 +1,44 @@
 # Session state — last updated 2026-05-23
 
 ## Just completed
-- BP25: CCPA retention closeout, free-text anonymization, forensics capture (§25) — PR #73 merged to dev
-  - Migration 20260604000000_retention_ccpa_forensics.sql: ccpa_deletion_executions, forensics_log (BP26 owns decrypt), bookings/commissions anonymized_customer_hash, quotes.narrative (new column), contacts.notes + contacts.anonymized_customer_hash (Category 3 surface), users phone + deleted_purged_at + cookie_preferences + performance_analytics_opt_out + status='purged', staging_cron_skips
-  - 4 new env vars + boot-time guard: PLATFORM_PEPPER (never-rotate), FORENSICS_ENCRYPTION_KEY_CURRENT/_PRIOR_1/_PRIOR_2, key separation check per §26.5a
-  - lib/privacy/customer-hash + forensics/capture + purge-user-data (10-step purge with forensics-snapshot-on-dispute, three-category anonymization, transaction-shape per-step error handling)
-  - user-data-purge-after-grace cron wired to real purge; fans out notifications to affected tenants
-  - 4 retention crons: anonymous-session-cleanup (60d), rag-rejected-items-purge (90d), booking-commission-retention-purge (7y with dispute guard), subprocessors-annual-review (Jan 1) — all with STAGING_MODE skip
-  - Cookie consent banner wired into root layout + /settings/privacy + /settings/privacy/cookies + cookie_preferences mirror
-  - /tenant-admin/crm/anonymized-notes review page with inline redaction
-  - Breach response runbook + BreachNotificationUser/TenantAdmin templates + sendBreachNotifications helper
-  - Staging outbound isolation wired in lib/email/send.ts; staging-pii-risk-acceptance runbook
-  - /legal/sub-processors public page
-  - 4 new test files, 16 new tests; all 483 tests pass; typecheck/lint/lint:migrations all clean
-  - MEMORY D-058 added with 16 decisions
+- BP26: §26 four-layer auth + service-role discipline + audit_log live + forensics access + vendor health + monitoring — PR #75 merged to dev
+  - Migration 20260605000000_audit_log_and_security.sql: audit_log canonical (§26.5) + partial GIN WHERE actor_type='admin', complaints, security_incidents, auth_attempts, tenant_settings.forensics_on_export
+  - Sweep of 21 [audit-log:STUB] sites to real INSERTs via lib/audit/write.ts
+  - withPlatformAdminAudit reconciled per §26.3a.3; platformAdminClient() ALS reader exported
+  - assertPermission auth_time re-auth check (§26.3) for sensitive routes
+  - Webhook context factories (Stripe + Resend) with audit-on-resolve
+  - Service-role discipline: 3 new lint rules (1 error + 2 staged off until BP27 sweep) + exception flow at docs/exceptions-service-role.md
+  - 5 grandfathered direct-service-role files (BP19 auth/groups); hero-image.ts refactored mid-PR
+  - Inngest event registry with 20 events + validator
+  - Forensics decrypt path + key-rotation grace + 90-day retention cron + legal-hold helper + manual-access runbook
+  - Vendor health registry + every-minute probe + /admin/vendor-status; chat handler wired with §26.9 Anthropic fallback
+  - 3 monitoring crons (auth-failure, permission-denied, cross-tenant RLS bypass) + sendOperatorAlert
+  - @sentry/nextjs installed + PII-scrubbing beforeSend (5 standalone unit tests)
+  - Anti-prompt-injection verification (3 tests pinning BP18 addendum delimiter integrity)
+  - Runbooks: incident-response, forensics-manual-access; docs/architecture/four-layer-auth.md
+  - 5 new test files, 22 new tests; all 502 tests pass
+  - **Operator follow-up during PR:** RLS snapshot regenerated from atc-main (cleared accumulated drift since BP19); BP20 forums migration fix-in-place (CHECK with subquery → trigger). MEMORY D-059 + the BP20 fix commit document both.
 
 ## In flight
 - Nothing in flight — clean checkpoint
 
 ## Next step
-- BP26 — second prompt in Part 6 (security §26). Uses Opus 4.7 — stay on current model.
+- Begin BP27 — Part 6 prompt 3 (SaaS abuse monitoring + cost controls §27). Per build prompt: stay on Opus 4.7.
 
 ## Blocked on user
 - Nothing
 
 ## Open questions
-- Operator tasks for BP25 (not code):
-  - Generate `PLATFORM_PEPPER` (256-bit random) and `FORENSICS_ENCRYPTION_KEY_CURRENT` (32-byte base64); set in Vercel staging + production
-  - **NEVER rotate `PLATFORM_PEPPER`** — store in 1Password with explicit "do not rotate" note (D-058 #1)
-  - Apply migration 20260604000000_retention_ccpa_forensics.sql to atc-main
-  - Set `STAGING_MODE=true` + `TEST_OVERRIDE_EMAIL` in the staging Vercel project
-  - Engage counsel on breach notification template wording (TODO(legal-counsel))
-  - Populate `docs/runbooks/breach-response.md` contact list + `docs/cookies-inventory.md` stub
-- Carry-over: audit_log table real-INSERT swap when §26 lands (D-036, D-053, D-056, D-057, D-058), retrieval-log aggregation needs RAG-side Inngest (D-058), no formal tenant_admin role yet (RBAC ships in §26), no SMS sender yet so TEST_OVERRIDE_PHONE is reserved
+- Operator follow-ups from BP26 (carried forward):
+  - Provision `OPERATOR_SLACK_WEBHOOK_URL` (optional) for operator alert fan-out
+  - Provision `NEXT_PUBLIC_SENTRY_DSN` + `SENTRY_DSN` to start shipping events
+  - Set `FORENSICS_ENCRYPTION_KEY_PRIOR_1/2` + matching `_ID_PRIOR_N` env vars if you intend to rotate FORENSICS_ENCRYPTION_KEY_CURRENT
+  - When BP27 ships `lib/ai/call-wrapper.ts`: sweep existing direct Anthropic/OpenAI imports + flip `atc/no-direct-anthropic-or-openai-import` rule to error
+  - Follow-on PR: sweep the 5 grandfathered direct-service-role files (BP19 auth/groups routes) to use createServiceRoleClient()
+  - Follow-on PR: audit tenant_id-string parameters and flip `atc/no-ad-hoc-tenant-id-string` to error
+- Operator follow-up from earlier BPs (still pending):
+  - Populate `platform_settings.supervisor_slur_deny_list` (still empty since BP24 — content task)
+  - Populate `port_info_chunks` content for 17 ports (BP23)
+  - Engage counsel on breach notification template wording (BP25)
+  - Counsel sign-off on ICA chunk-license-survival clause (BP16)
+  - Counsel sign-off on AI Liability Disclaimer (BP17)

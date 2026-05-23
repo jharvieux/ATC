@@ -65,6 +65,9 @@ importers:
       officeparser:
         specifier: ^7.0.3
         version: 7.0.3
+      openai:
+        specifier: ^6.38.0
+        version: 6.38.0(zod@3.25.76)
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5

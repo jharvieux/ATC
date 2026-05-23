@@ -10,10 +10,10 @@
 //   has a conversation that belongs to a different user, we fail loud.
 // ═══════════════════════════════════════════════════════════════
 
-import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { resolveAIBehavior } from "@/lib/personas/resolve-ai-behavior";
@@ -60,17 +60,8 @@ export interface ExtractionStep {
   sendEvent(id: string, events: unknown): Promise<unknown>;
 }
 
-// ── Anthropic client ──────────────────────────────────────────────────────────
-
-let _anthropic: Anthropic | null = null;
-function getAnthropicClient(): Anthropic {
-  if (!_anthropic) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-    _anthropic = new Anthropic({ apiKey });
-  }
-  return _anthropic;
-}
+// Anthropic SDK access goes through instrumentedClaudeCall for cost
+// attribution; no local client cache needed.
 
 // ── Core extraction logic (exported for unit testing) ────────────────────────
 
@@ -179,8 +170,6 @@ export async function runExtractMemory({
 
   // ── 7. Haiku extraction call (wrapped in step.run for durability) ──
   const extracted = await step.run("haiku-extraction", async () => {
-    const client = getAnthropicClient();
-
     const currentMemorySummary = memoryRow
       ? JSON.stringify({
           preferences: memoryRow.preferences,
@@ -215,16 +204,15 @@ Valid fields: preferences, travel_history, family_composition, accessibility_nee
 loyalty_programs entries must include a "program_code" string key.
 Return valid JSON only, no prose.`;
 
-    const response = await client.messages.create({
+    const { text: rawText } = await instrumentedClaudeCall({
+      tenant_id,
+      conversation_id,
+      user_id,
       model: "claude-haiku-4-5-20251001",
+      purpose: "memory_extraction",
       max_tokens: 1024,
       messages: [{ role: "user", content: prompt }],
     });
-
-    const rawText = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
 
     let parsed: unknown;
     try {

@@ -4,18 +4,7 @@
 //
 // First-draft screening prompt — operator should review before launch.
 
-import Anthropic from "@anthropic-ai/sdk";
-
-let _client: Anthropic | null = null;
-
-function getClient(): Anthropic {
-  if (!_client) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-    _client = new Anthropic({ apiKey });
-  }
-  return _client;
-}
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type ScreeningResult =
   | { approved: true }
@@ -41,11 +30,14 @@ APPROVE the addendum if it:
 
 Respond with a JSON object ONLY: { "approved": true } or { "approved": false, "reasons": ["reason 1", "reason 2"] }`;
 
-export async function screenPersonaAddendum(addendum: string): Promise<ScreeningResult> {
-  const client = getClient();
-
-  const response = await client.messages.create({
+export async function screenPersonaAddendum(
+  addendum: string,
+  ctx: { tenant_id: string } = { tenant_id: "00000000-0000-0000-0000-000000000000" },
+): Promise<ScreeningResult> {
+  const { text } = await instrumentedClaudeCall({
+    tenant_id: ctx.tenant_id,
     model: "claude-haiku-4-5-20251001",
+    purpose: "persona_addendum_screen",
     max_tokens: 256,
     system: SCREENING_SYSTEM_PROMPT,
     messages: [
@@ -55,8 +47,6 @@ export async function screenPersonaAddendum(addendum: string): Promise<Screening
       },
     ],
   });
-
-  const text = response.content.find((b) => b.type === "text")?.text ?? "";
 
   try {
     const parsed = JSON.parse(text) as { approved: boolean; reasons?: string[] };

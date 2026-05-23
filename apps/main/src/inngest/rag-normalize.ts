@@ -53,7 +53,7 @@ export const ragNormalize = inngest.createFunction(
 
     const content_hash = createHash("sha256").update(content).digest("hex");
 
-    const norm = await haikuNormalize(content);
+    const norm = await haikuNormalize(content, { tenant_id });
     if (norm.status === "failed") {
       const isLastAttempt = attempt >= 3;
       if (!isLastAttempt) {
@@ -75,6 +75,71 @@ export const ragNormalize = inngest.createFunction(
 
     const threshold = Number(process.env.RAG_INGEST_GLOBAL_RELEVANCE_AUTOFLAG_THRESHOLD ?? 0.6);
     const autoFlag = norm.result.global_relevance_score >= threshold;
+
+    // §27.4.2 auto-delete check — only for LOW-relevance submissions that
+    // would land as tenant-scoped chunks. Queue-eligible (auto-flagged)
+    // items don't count against the cap while pending review.
+    if (!autoFlag) {
+      const { resolveThresholds } = await import("@/lib/abuse/thresholds");
+      const { data: quotaRow } = await db
+        .from("tenant_rag_quotas")
+        .select("current_tenant_chunks_count, promoted_chunks_count")
+        .eq("tenant_id", tenant_id)
+        .maybeSingle();
+      const currentCount = Number((quotaRow as { current_tenant_chunks_count?: number } | null)?.current_tenant_chunks_count ?? 0);
+      const promoted = Number((quotaRow as { promoted_chunks_count?: number } | null)?.promoted_chunks_count ?? 0);
+
+      // Resolve tenant tier for thresholds.
+      const { data: tenantRow } = await db
+        .from("tenants")
+        .select("id, tier_id, seat_count, billing_period")
+        .eq("id", tenant_id)
+        .maybeSingle();
+      const tr = tenantRow as { tier_id?: string; seat_count?: number; billing_period?: "monthly" | "annual" } | null;
+      let tier_code: "byo_research" | "byo_professional" | "byo_agency" | "sub_starter" | "sub_pro" | "sub_agency" = "byo_research";
+      if (tr?.tier_id) {
+        const { data: td } = await db.from("tier_definitions").select("code").eq("id", tr.tier_id).maybeSingle();
+        const code = (td as { code?: string } | null)?.code;
+        if (code && ["byo_research","byo_professional","byo_agency","sub_starter","sub_pro","sub_agency"].includes(code)) {
+          tier_code = code as typeof tier_code;
+        }
+      }
+
+      const thresholds = await resolveThresholds(db, {
+        tenant_id,
+        tier_code,
+        seat_count: tr?.seat_count ?? 1,
+        billing_period: tr?.billing_period ?? "monthly",
+      }, promoted);
+
+      if (currentCount >= thresholds.rag_cap_total.effective) {
+        // Auto-delete the submission per §27.4.2.
+        await db
+          .from("rag_submissions")
+          .update({
+            normalization_status: "normalized",
+            normalization_result: norm.result,
+            auto_flagged_for_global: false,
+            content_hash,
+            review_status: "auto_deleted",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", submission_id);
+
+        await db.from("tenant_rag_cap_events").insert({
+          tenant_id,
+          event_type: "submission_auto_deleted",
+          queue_id: submission_id,
+          cap_before: thresholds.rag_cap_total.effective,
+          cap_after: thresholds.rag_cap_total.effective,
+          count_before: currentCount,
+          count_after: currentCount,
+          reason: `over_cap (score=${norm.result.global_relevance_score.toFixed(2)}, current=${currentCount}, cap=${thresholds.rag_cap_total.effective})`,
+        });
+
+        return { ok: true, auto_deleted: true, reason: "over_cap_low_relevance" };
+      }
+    }
 
     await db
       .from("rag_submissions")

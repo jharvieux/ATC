@@ -6,7 +6,7 @@
     "atc/platform-admin-functions-must-use-audit-wrapper": "error",
     "atc/no-money-math": "error",
     "atc/no-direct-service-role-env-import": "error",
-    "atc/no-direct-anthropic-or-openai-import": "off",
+    "atc/no-direct-anthropic-or-openai-import": "error",
     "atc/no-ad-hoc-tenant-id-string": "off"
   }
 }

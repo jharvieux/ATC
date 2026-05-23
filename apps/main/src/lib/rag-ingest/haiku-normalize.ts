@@ -11,7 +11,7 @@
 // caller (Inngest job) retries up to 3 times; further failures route the
 // item to manual review without AI metadata per §22.13.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export interface NormalizationOutput {
   suggested_category: string;
@@ -53,33 +53,24 @@ for a retrieval-augmented chat system. Return JSON ONLY matching this schema:
 
 Do not invent details. If a field is unclear, return null / 0.5.`;
 
-let _client: Anthropic | null = null;
-function getClient(): Anthropic | null {
-  if (_client) return _client;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  _client = new Anthropic({ apiKey });
-  return _client;
-}
-
-export async function haikuNormalize(content: string): Promise<NormalizationResult> {
-  const client = getClient();
-  if (!client) {
+export async function haikuNormalize(
+  content: string,
+  ctx: { tenant_id: string } = { tenant_id: "00000000-0000-0000-0000-000000000000" },
+): Promise<NormalizationResult> {
+  if (!process.env.ANTHROPIC_API_KEY) {
     return { status: "failed", error: "no_anthropic_api_key" };
   }
   const model = process.env.RAG_INGEST_NORMALIZATION_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
   try {
-    const response = await client.messages.create({
+    const { text } = await instrumentedClaudeCall({
+      tenant_id: ctx.tenant_id,
       model,
+      purpose: "rag_normalization",
       max_tokens: 1024,
       system: NORMALIZATION_PROMPT,
       messages: [{ role: "user", content }],
     });
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
     const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
     const obj = JSON.parse(cleaned) as Partial<NormalizationOutput>;
 

@@ -213,6 +213,15 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/auth-failure-monitor.ts",
   "/inngest/permission-denied-monitor.ts",
   "/inngest/cross-tenant-rls-bypass-monitor.ts",
+  // BP27: AI call wrapper — writes ai_call_log + UPSERTs tenant_usage_metrics
+  // for every Anthropic/OpenAI call. Constructs its own service-role db. §27.12.
+  "/lib/ai/call-wrapper.ts",
+  // BP27: abuse-monitoring crons + consumers — cross-tenant, no user session.
+  "/inngest/ai-pricing-cache-refresh.ts",
+  "/inngest/email-bounce-rate-monitor.ts",
+  "/inngest/quality-low-approval-signal.ts",
+  "/inngest/duplicate-high-rate-signal.ts",
+  "/inngest/abuse-signal-consumers.ts",
   // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
   "/inngest/rag-tenant-approval-rate-nightly.ts",
 ];

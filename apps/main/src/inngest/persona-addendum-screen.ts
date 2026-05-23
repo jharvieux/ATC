@@ -34,7 +34,7 @@ export const personaAddendumScreen = inngest.createFunction(
     }
 
     const a = row as { id: string; content: string; status: string; tenant_id: string };
-    const result = await screenAddendumHaiku(a.content);
+    const result = await screenAddendumHaiku(a.content, { tenant_id: a.tenant_id });
 
     const newStatus = result.pass ? "approved" : "rejected";
 

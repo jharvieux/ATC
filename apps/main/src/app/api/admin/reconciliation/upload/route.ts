@@ -14,7 +14,7 @@
 //
 // Requires x-admin-user-id header (TODO §26 replace with full session check).
 
-import Anthropic from "@anthropic-ai/sdk";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { z } from "zod";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -71,10 +71,10 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 503 });
   }
 
-  const client = new Anthropic({ apiKey });
-
-  const haikusResponse = await client.messages.create({
+  const haikuResult = await instrumentedClaudeCall({
+    tenant_id: String(tenantId),
     model: "claude-haiku-4-5-20251001",
+    purpose: "content_normalization",
     max_tokens: 4096,
     messages: [
       {
@@ -114,14 +114,14 @@ Return only the JSON, no other text.`,
     ],
   });
 
-  const rawContent = haikusResponse.content[0];
-  if (!rawContent || rawContent.type !== "text") {
+  const rawText2 = haikuResult.text;
+  if (!rawText2 || rawText2.length === 0) {
     return Response.json({ error: "Haiku returned no parseable content" }, { status: 502 });
   }
 
   let parsed: z.infer<typeof ParsedStatementSchema>;
   try {
-    const jsonText = rawContent.text.trim();
+    const jsonText = rawText2.trim();
     const jsonStart = jsonText.indexOf("{");
     const jsonEnd = jsonText.lastIndexOf("}");
     if (jsonStart === -1 || jsonEnd === -1) throw new Error("no JSON object found");

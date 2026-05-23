@@ -46,6 +46,10 @@ export type CheckInput = {
   tenant_tone_max_level?: number | undefined;
   tenant_allow_profanity?: boolean | undefined;
   customer_prior_message?: string | undefined;
+  // §27.12 — context for AI cost attribution. Populated by run-supervisor.
+  tenant_id?: string | undefined;
+  conversation_id?: string | undefined;
+  user_id?: string | undefined;
 };
 
 export type AsyncCheck = (input: CheckInput) => Promise<SupervisorFinding>;
