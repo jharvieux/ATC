@@ -12,8 +12,10 @@
 -- public.conversations (rls_enabled)
 -- public.customer_memories (rls_enabled)
 -- public.escalation_topics (rls_enabled)
+-- public.groups (rls_enabled)
 -- public.host_adapters (rls_enabled)
 -- public.host_booking_fee_configs (rls_enabled)
+-- public.invitations (rls_enabled)
 -- public.legal_consents (rls_enabled)
 -- public.legal_documents (rls_enabled)
 -- public.messages (rls_enabled)
@@ -40,6 +42,9 @@
 -- public.users (rls_enabled)
 --
 -- Tables with RLS disabled:
+-- public.destination_images (rls_disabled)
+-- public.destination_images_cache (rls_disabled)
+-- public.email_log (rls_disabled)
 -- public.reconciliation_review_queue (rls_disabled)
 -- public.schema_migrations (rls_disabled)
 -- public.tier_definitions (rls_disabled)
@@ -170,6 +175,26 @@ CREATE POLICY "escalation_topics_update_policy" ON public.escalation_topics
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.groups
+CREATE POLICY "groups_delete" ON public.groups
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "groups_insert" ON public.groups
+  FOR INSERT TO PUBLIC
+  WITH CHECK ((tenant_id IN ( SELECT users.tenant_id
+   FROM users
+  WHERE users.auth_user_id = auth.uid())));
+CREATE POLICY "groups_select" ON public.groups
+  FOR SELECT TO PUBLIC
+  USING ((tenant_id IN ( SELECT users.tenant_id
+   FROM users
+  WHERE users.auth_user_id = auth.uid())));
+CREATE POLICY "groups_update" ON public.groups
+  FOR UPDATE TO PUBLIC
+  USING ((tenant_id IN ( SELECT users.tenant_id
+   FROM users
+  WHERE users.auth_user_id = auth.uid())));
+
 -- TABLE: public.host_adapters
 CREATE POLICY "host_adapters_select_policy" ON public.host_adapters
   FOR SELECT TO PUBLIC
@@ -179,6 +204,32 @@ CREATE POLICY "host_adapters_select_policy" ON public.host_adapters
 CREATE POLICY "host_booking_fee_configs_select_policy" ON public.host_booking_fee_configs
   FOR SELECT TO PUBLIC
   USING (auth.role() = 'authenticated'::text OR auth.role() = 'service_role'::text);
+
+-- TABLE: public.invitations
+CREATE POLICY "invitations_delete" ON public.invitations
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "invitations_insert" ON public.invitations
+  FOR INSERT TO PUBLIC
+  WITH CHECK ((group_id IN ( SELECT groups.id
+   FROM groups
+  WHERE (groups.tenant_id IN ( SELECT users.tenant_id
+           FROM users
+          WHERE users.auth_user_id = auth.uid())))));
+CREATE POLICY "invitations_select" ON public.invitations
+  FOR SELECT TO PUBLIC
+  USING ((group_id IN ( SELECT groups.id
+   FROM groups
+  WHERE (groups.tenant_id IN ( SELECT users.tenant_id
+           FROM users
+          WHERE users.auth_user_id = auth.uid())))));
+CREATE POLICY "invitations_update" ON public.invitations
+  FOR UPDATE TO PUBLIC
+  USING ((group_id IN ( SELECT groups.id
+   FROM groups
+  WHERE (groups.tenant_id IN ( SELECT users.tenant_id
+           FROM users
+          WHERE users.auth_user_id = auth.uid())))));
 
 -- TABLE: public.legal_consents
 CREATE POLICY "legal_consents_delete" ON public.legal_consents
@@ -476,3 +527,4 @@ CREATE POLICY "users_update_policy" ON public.users
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
