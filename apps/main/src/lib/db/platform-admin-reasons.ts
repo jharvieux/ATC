@@ -75,6 +75,11 @@ export const PLATFORM_ADMIN_REASONS = [
 
   // Deny-list quarterly review / additions / removals (per §24.5 / §26.11).
   "denylist_management",
+
+  // SaaS abuse override workflow (§27.11 / §27.14).
+  "abuse_override_create",
+  "abuse_override_revoke",
+  "abuse_override_request_review",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

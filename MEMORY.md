@@ -4,6 +4,55 @@ Newest entries on top.
 
 ---
 
+## D-061 — 2026-05-23 — BP28: SaaS abuse dashboard + override workflow + nightly recompute (§27.7 / §27.8 / §27.11 / §27.14) — key decisions
+
+**Decision:**
+
+1. **Migration `20260607000000_abuse_dashboard.sql` adds three concerns + a seed.** New tables: `abuse_recompute_drift_log` (visibility into nightly recompute corrections, service-role only) and `tenant_override_requests` (tenant-initiated request surface, tenant INSERT+SELECT via `auth_user_in_tenant`, admin handles UPDATE). New column: `tenant_usage_overrides.expiry_notified_at` so the daily expiry sweep is idempotent. Seeded `platform_settings.abuse_notification_copy` JSONB with per-(dimension,state) `subject_template`+`body_intro` for 14 keys. ON CONFLICT DO NOTHING so re-running the migration never clobbers operator wording edits.
+
+2. **Four new Inngest functions registered** in `app/api/inngest/route.ts`:
+   - `abuse-recompute-nightly` (cron `0 3 * * *`) — sweeps every active/sandbox tenant, recomputes ai_cost (SUM ai_call_log) + chat_messages + email_sent + group_invitees + promoted_chunks_count from ground-truth tables, corrects drift > 1¢/1row, logs to abuse_recompute_drift_log, re-evaluates state machine for all four monthly dimensions. RAG-side `current_tenant_chunks_count` reconciliation is deferred (`TODO(rag-service-count)`) — it requires a service-to-service call to the RAG service.
+   - `billing-period-rollover` (cron `5 0 1 * *`) — on the 1st of each month UTC, pre-creates a fresh tenant_usage_metrics row (state='ok') for every active tenant and inserts a `from_state='rollover',to_state='ok'` audit row per dimension for visibility. Counters naturally upsert on first event; pre-creation lets the dashboard show "current period: ok" from day 1.
+   - `threshold-recompute-on-subscription-change` (triggers on `tenant.subscription_changed`) — when tier/seats/billing-period changes, re-reads the snapshot, resolves new thresholds, and re-evaluates all five dimensions. **Allows downgrades in state here** (tier upgrade can push 'hard'→'ok'). Monotonic rule only applies inside a stable threshold regime; subscription change is an exogenous reset. Emits `abuse.state_transition` per actual change.
+   - `abuse-override-expiry-sweep` (cron `30 3 * * *`) — finds overrides with `effective_to < today AND expiry_notified_at IS NULL`, stamps `expiry_notified_at`, audits as `from_state='override_active',to_state='override_expired'` event, and fires `tenant.subscription_changed` so caps revert immediately.
+
+3. **State-transition notification consumer** (`abuse-state-transition-notify`) subscribes to `abuse.state_transition`. Resolves operator copy from `platform_settings.abuse_notification_copy` (falls back to a generic template if a key is missing). Looks up tenant admins (`role IN ('tenant_admin','owner')`), renders the new `AbuseStateTransition.tsx` email through the existing `BrandedLayout`, sends via `sendTenantEmail` (Pattern A/B aware), and stamps `usage_limit_events.notification_sent_to` with the recipient list. **Skips notify when to_state='ok'** — notifications are upward-only.
+
+4. **3 new platform-admin reasons registered** in `lib/db/platform-admin-reasons.ts`: `abuse_override_create`, `abuse_override_revoke`, `abuse_override_request_review`. Each new admin endpoint uses the appropriate reason. (The dashboard summary + tenant detail GETs use the pre-existing `abuse_threshold_breach_review`.)
+
+5. **Override workflow — admin endpoints:**
+   - `POST /api/admin/abuse/overrides` — creates an override; default duration is `ABUSE_OVERRIDE_DEFAULT_DURATION_DAYS` (default 30) when `effective_to` omitted. If linked to a pending request via `resulting_request_id`, atomically flips that request to approved + sets `resulting_override_id`. After create, fires `tenant.subscription_changed` so state recomputes within seconds.
+   - `GET  /api/admin/abuse/overrides?tenant_id=…` — admin list of recent overrides for one tenant.
+   - `DELETE /api/admin/abuse/overrides/[id]` — sets `effective_to=today` + `expiry_notified_at=now`; recompute fires.
+   - `GET  /api/admin/abuse/override-requests?status=…` — admin queue of tenant-initiated requests.
+   - `PATCH /api/admin/abuse/override-requests/[id]` — deny with `deny_reason`. Approve goes through POST overrides (atomic link). This keeps "create the cap" and "mark request approved" in one place.
+
+6. **Override workflow — tenant endpoints:**
+   - `POST /api/tenant/override-requests` — tenant admin creates a request. Uses `assertPermission` + `tenantClient`; RLS scopes the insert via `auth_user_in_tenant`. tenant_id is derived from `ctx.tenant_id`, NOT taken from the body (defense-in-depth — even if RLS were misconfigured, the body can't lie).
+   - `GET  /api/tenant/override-requests` — caller's own request history.
+   - `GET  /api/tenant/usage` — current-period metrics + caps + state per dimension + RAG snapshot, for the `/settings/usage` page.
+
+7. **Tenant `/settings/usage` page** renders four dimension rows (current vs soft1/soft2/hard, color-coded state) + RAG state + a request form + request history. Color scheme: ok=green, soft1/approaching=amber, soft2=orange, hard/at_cap/over_cap=red. authFetch reads `sb-access-token` from localStorage for the Bearer header — matches the pattern used in other tenant client pages.
+
+8. **Platform admin dashboard at `/admin/abuse-monitoring`** uses 5 tabs (Overview / Tenants at risk / Override queue / Active overrides / Drift log). Backed by a single `GET /api/admin/abuse/summary` endpoint that returns: at-risk monthly tenants (any non-ok state), at-risk RAG tenants, pending-request count, active overrides, recent drift (7d), recent transitions (7d). Per-tenant drilldown at `/admin/abuse-monitoring/[tenant_id]` shows 6 most recent metric periods, RAG row, active+historical overrides, recent events, recent requests, and an inline form to create a new override. Pending count surfaces as a red badge on the Override-queue tab.
+
+9. **3 new env vars** in `lib/env.ts`: `ABUSE_RECOMPUTE_CRON_SCHEDULE` (default `'0 3 * * *'`), `ABUSE_OVERRIDE_DEFAULT_DURATION_DAYS` (default 30), `ABUSE_TENANT_USAGE_REFRESH_SECONDS` (default 60 — reserved for /settings/usage client refresh; not yet enforced in client).
+
+10. **3 new test files (28 tests):** `bp28-env-vars.test.ts` (defaults + reject 0), `bp28-notification-copy.test.ts` (each of 14 keys present with both subject_template and body_intro, ON CONFLICT DO NOTHING preserved), `bp28-override-endpoint.test.ts` (input-validation contract for POST /api/admin/abuse/overrides via mocked withPlatformAdminAudit). All 28 pass.
+
+11. **What was deferred (intentionally):**
+    - RAG-side `current_tenant_chunks_count` reconciliation in the nightly recompute — needs service-to-service.
+    - BP27's counter/enforcement integration sweep (chat/email/invite/RAG call sites) — BP28's scope is the operational layer (notifications/dashboard/overrides), not the integration sweep.
+    - In-app notifications (besides email) for state transitions — email-only for v1.
+
+**What was rejected:**
+- Adding an Approve action UI button in the Override queue — clearer to keep approval as POST `/api/admin/abuse/overrides` with `resulting_request_id` (one place creates the cap row, atomic linking) than to duplicate creation logic in two endpoints. The deny button in the UI handles the negative path; approval is described in the row's actions hint.
+- A per-tenant RLS-side update policy on tenant_override_requests — keep status changes service-role only so a malicious tenant can't fake an approval.
+
+**Artifacts:** `20260607000000_abuse_dashboard.sql`, `inngest/{abuse-recompute-nightly,billing-period-rollover,threshold-recompute-on-subscription-change,abuse-state-transition-notify,abuse-override-expiry-sweep}.ts`, `emails/AbuseStateTransition.tsx`, `app/api/admin/abuse/{summary,overrides,overrides/[id],override-requests,override-requests/[id],tenant/[tenant_id]}/route.ts`, `app/api/tenant/{override-requests,usage}/route.ts`, `app/(admin)/admin/abuse-monitoring/{page,[tenant_id]/page}.tsx`, `app/(tenant)/settings/usage/page.tsx`, env+reasons additions, 3 new test files. PR #?? open.
+
+---
+
 ## D-060 — 2026-05-23 — BP27: SaaS abuse monitoring + cost controls (§27) — key decisions
 
 **Decision:**

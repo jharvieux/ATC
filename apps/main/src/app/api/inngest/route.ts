@@ -71,6 +71,12 @@ import { emailBounceRateMonitor } from "@/inngest/email-bounce-rate-monitor";
 import { qualityLowApprovalSignal } from "@/inngest/quality-low-approval-signal";
 import { duplicateHighRateSignal } from "@/inngest/duplicate-high-rate-signal";
 import { abuseSignalRagPiiRecurring, abuseSignalAnonChatBurst } from "@/inngest/abuse-signal-consumers";
+// BP28: SaaS abuse — dashboard / overrides / nightly recompute (§27.7 / §27.9 / §27.11 / §27.14)
+import { abuseRecomputeNightly } from "@/inngest/abuse-recompute-nightly";
+import { billingPeriodRollover } from "@/inngest/billing-period-rollover";
+import { thresholdRecomputeOnSubscriptionChange } from "@/inngest/threshold-recompute-on-subscription-change";
+import { abuseStateTransitionNotify } from "@/inngest/abuse-state-transition-notify";
+import { abuseOverrideExpirySweep } from "@/inngest/abuse-override-expiry-sweep";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -146,5 +152,11 @@ export const { GET, POST, PUT } = serve({
     duplicateHighRateSignal,
     abuseSignalRagPiiRecurring,
     abuseSignalAnonChatBurst,
+    // BP28: SaaS abuse — dashboard / overrides / nightly recompute (§27.7 / §27.9 / §27.11 / §27.14)
+    abuseRecomputeNightly,
+    billingPeriodRollover,
+    thresholdRecomputeOnSubscriptionChange,
+    abuseStateTransitionNotify,
+    abuseOverrideExpirySweep,
   ],
 });
