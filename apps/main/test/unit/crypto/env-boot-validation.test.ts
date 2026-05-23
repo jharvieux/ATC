@@ -33,6 +33,13 @@ function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     INVITATION_TOKEN_HMAC_KEY: HMAC_KEY_B64,
     PLATFORM_PEPPER: "test-pepper",
     FORENSICS_ENCRYPTION_KEY_CURRENT: FORENSICS_KEY_B64,
+    // BP29 §28.5 — ANTHROPIC_API_KEY is required at boot with sk-ant- prefix.
+    ANTHROPIC_API_KEY: "sk-ant-test-placeholder",
+    // BP29 §28.9 — Microsoft OAuth is enabled by default; tests that don't
+    // explicitly disable it need placeholder Graph creds to satisfy the
+    // conditional refinement.
+    MICROSOFT_GRAPH_CLIENT_ID: "ms-test-client-id",
+    MICROSOFT_GRAPH_CLIENT_SECRET: "ms-test-client-secret",
     ...overrides,
   };
 }
@@ -76,7 +83,7 @@ describe("verifyEnvAtBoot — forensics key separation (§26.5a)", () => {
     const shortKey = Buffer.from("tooshort").toString("base64");
     process.env = baseEnv({ FORENSICS_ENCRYPTION_KEY_CURRENT: shortKey });
     const { verifyEnvAtBoot } = await import("@/lib/env");
-    expect(() => verifyEnvAtBoot()).toThrow(/FORENSICS_ENCRYPTION_KEY_CURRENT must decode/);
+    expect(() => verifyEnvAtBoot()).toThrow(/FORENSICS_ENCRYPTION_KEY_CURRENT: must decode/);
   });
 
   it("accepts distinct 32-byte forensics + app keys", async () => {
