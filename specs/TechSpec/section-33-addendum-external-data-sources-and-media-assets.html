@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 33 - Addendum — External Data Sources &amp; Media Assets — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 33</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s33">Section 33 - Addendum — External Data Sources &amp; Media Assets</h1>
+<p><strong>Status:</strong> Addendum. Lands after all Part 1–9 build prompts are complete. References existing sections by number; does not modify them in place.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> This work adds external pricing data ingestion, a CruiseMapper-sourced platform corpus for RAG, and a new media-asset retrieval surface. Each touches existing sections (<a class="xref" href="section-06-rag-service-schema.html">§6</a>, <a class="xref" href="section-08-rag-service-architecture.html">§8</a>, <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a>, <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html">§21</a>, <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a>, <a class="xref" href="section-28-environment-variables-reference.html">§28</a>) but the existing sections are stable and have build prompts already written. Threading these changes back into completed work would invalidate that work. The addendum keeps Part 1–9 intact and lands the new behavior as a clearly-scoped extension.</p>
+
+<h2 id="s33-1">33.1 Overview <a class="anchor-link" href="#s33-1" aria-label="Permalink">¶</a></h2>
+<p>The platform consumes two categories of external data:</p>
+<ol>
+<li><strong>Cruise pricing data</strong> — used to give AI agents directional pricing context and to power subscriber-configurable price-watch notifications on existing bookings. Sourced via Apify actors that scrape per-cruise-line booking sites and the Booking.com Cruises aggregator. Not used for booking transactions; bookings under prong 2 (BYO host agency at launch) flow through the booking widget per <a class="xref" href="section-20-booking-flow.html">§20</a>.</li>
+<li><strong>CruiseMapper reference data</strong> — ship registry, port detail, cruise line, and deck plan content. Ingested into the RAG service at <code>global</code> scope per <a class="xref" href="section-08-rag-service-architecture.html#s8-9">§8.9</a>. Provides factual grounding for AI agents on ship layouts, port details, and operator metadata. Two ingestion paths: Apify-backed for itineraries (because itineraries cross-cut with pricing) and direct HTTP fetch for static reference content (because CruiseMapper has no anti-bot protection and DIY is cheaper).</li>
+</ol>
+<p>A new media-asset surface — deck plan images, ship photos, port maps — is added to the RAG service. Chunks link to assets via a new column; the consumer-side chat UI renders linked assets inline when AI responses include the display markup.</p>
+<p>This section defines:</p>
+<ul>
+<li>The <code>PricingDataSource</code> adapter interface (<a class="xref" href="#s33-2">§33.2</a>) and its Apify implementation (<a class="xref" href="#s33-3">§33.3</a>)</li>
+<li>The CruiseMapper ingest pipeline (<a class="xref" href="#s33-4">§33.4</a> Apify itinerary path, <a class="xref" href="#s33-5">§33.5</a> DIY static path)</li>
+<li>The new <code>rag_media_assets</code> table and <code>knowledge_chunks.related_asset_ids</code> column (<a class="xref" href="#s33-6">§33.6</a>)</li>
+<li>The consumer-side display markup convention (<a class="xref" href="#s33-7">§33.7</a>)</li>
+<li>The price-watch subscription mechanism (<a class="xref" href="#s33-8">§33.8</a>)</li>
+<li>Operator obligations: ToS, robots.txt, rate limiting, budget caps (<a class="xref" href="#s33-9">§33.9</a>)</li>
+<li>Environment variables added (<a class="xref" href="#s33-10">§33.10</a>)</li>
+</ul>
+
+<h2 id="s33-2">33.2 PricingDataSource Adapter Interface <a class="anchor-link" href="#s33-2" aria-label="Permalink">¶</a></h2>
+<p>Mirrors the <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a> HostAgencyClient pattern: an interface defined in the main app, multiple potential implementations, swappable behind the abstraction.</p>
+<pre class="codeblock" data-lang="ts"><code>interface PricingDataSource {
+  // Bulk refresh for general directional pricing context. Writes to cache.
+  // Called by monthly scheduled Inngest job.
+  refreshGeneralPricing(opts: {
+    lines: CruiseLineCode[];
+    regions: RegionCode[];
+    dateRange: { from: Date; to: Date };
+  }): Promise&lt;RefreshResult&gt;;
+
+  // Targeted refresh for specific tracked sailings. Groups by (line, region,
+  // date-window) and dispatches minimum actor runs. Writes to cache.
+  // Called by daily scheduled Inngest job, fed by active price_watches rows.
+  refreshTrackedSailings(sailings: SailingKey[]): Promise&lt;RefreshResult&gt;;
+
+  // Read-only cache access. Returns cached price with staleness metadata.
+  // Used by AI agents (read-only — agents never trigger refresh) and by the
+  // price-watch comparator.
+  getCachedPrice(key: SailingKey): Promise&lt;CachedPriceQuote | null&gt;;
+}</code></pre>
+<p><strong>Key types:</strong></p>
+<pre class="codeblock" data-lang="ts"><code>type SailingKey = {
+  line: CruiseLineCode;       // e.g., 'RCL', 'NCL', 'CCL'
+  ship: string;                // canonical ship slug
+  sailDate: string;            // ISO date
+  departurePort: string;       // IATA-like port code
+  durationNights: number;
+};
+
+type CachedPriceQuote = {
+  key: SailingKey;
+  cabinPrices: Record&lt;CabinClass, { amount: number; currency: string }&gt;;
+  fetchedAt: Date;
+  source: 'apify' | 'manual' | 'host_adapter';
+  stalenessHours: number;     // computed at read time
+  freshnessFlag: 'fresh' | 'stale' | 'expired';  // derived from stalenessHours
+};
+
+type CabinClass = 'interior' | 'oceanview' | 'balcony' | 'mini_suite' | 'suite';</code></pre>
+<p><strong>Discipline points:</strong></p>
+<ul>
+<li>AI agents and the price-watch comparator MUST only call <code>getCachedPrice</code>. They MUST NOT trigger refresh operations directly. This protects cost and rate limits.</li>
+<li>The <code>freshnessFlag</code> is computed at read time from <code>stalenessHours</code> against per-line freshness thresholds (configurable; default 72h = fresh, 168h = stale, beyond = expired).</li>
+<li>The <a class="xref" href="section-06-rag-service-schema.html#s6-8">§6.8</a> pricing-authority cap still applies. When pricing data flows into a RAG chunk (e.g., for general context), the chunk's authority caps at 0.55 regardless of source. AI prompts that include cached prices outside of RAG attribute them as "approximate, last seen {fetchedAt}" per <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-7">§21.7</a>.</li>
+</ul>
+
+<h2 id="s33-3">33.3 ApifyPricingAdapter <a class="anchor-link" href="#s33-3" aria-label="Permalink">¶</a></h2>
+<p>Default implementation of <code>PricingDataSource</code>. Routes per-line requests to the appropriate Apify actor; normalizes outputs to the internal <code>CachedPriceQuote</code> shape.</p>
+<p><strong>Per-line actor routing</strong> (verified actor catalog at time of writing — re-verify before build):</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Line</strong></th><th><strong>Actor (Apify ID)</strong></th><th><strong>Notes</strong></th></tr></thead><tbody>
+<tr><td>Royal Caribbean</td><td><code>sercul/royal-caribbean</code></td><td>6 markets, cabin-level pricing</td></tr>
+<tr><td>Norwegian</td><td><code>sercul/norwegian-cruise-scraper</code></td><td>5 markets, cabin-level pricing</td></tr>
+<tr><td>Princess</td><td><code>sercul/princess-cruise-scraper</code></td><td>US, UK</td></tr>
+<tr><td>Celebrity</td><td><code>sercul/celebrity-cruises</code></td><td>6 markets</td></tr>
+<tr><td>Costa</td><td><code>sercul/costa-cruises</code></td><td>6 markets</td></tr>
+<tr><td>Carnival</td><td>(see Apify catalog)</td><td>US, AU</td></tr>
+<tr><td>Holland America</td><td>(see Apify catalog)</td><td>7 markets</td></tr>
+<tr><td>MSC</td><td>(see Apify catalog)</td><td>5 markets</td></tr>
+<tr><td>Disney</td><td>(see Apify catalog)</td><td>5 markets</td></tr>
+<tr><td>Booking.com Cruises (aggregator fallback)</td><td><code>vulnv/booking-cruises-scraper</code></td><td>Used for lines without direct actors</td></tr>
+</tbody></table></div>
+<p><strong>Lines not covered by Apify actors at time of writing</strong> (Virgin, Viking, Oceania, Regent, Silversea, Seabourn): adapter returns <code>null</code> from <code>getCachedPrice</code> for these. AI agents handle null per <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-9">§21.9</a> (no-result handling). When booking a customer on an uncovered line, no price-watch is available; this is surfaced to subscribers in the price-watch UI.</p>
+<p><strong>Adapter responsibilities:</strong></p>
+<ol>
+<li><strong>Per-line actor routing.</strong> A failed actor run for one line does not affect others.</li>
+<li><strong>Batching for daily tracked-sailings refresh.</strong> Groups active <code>price_watches</code> rows by (line, region, sail-date-window) and dispatches one actor run per group. The result set is then matched to individual watches by <code>SailingKey</code>.</li>
+<li><strong>Normalization.</strong> Maps each actor's bespoke output shape to <code>CachedPriceQuote</code>. Adapter-specific mapping code per actor.</li>
+<li><strong>Cache writes.</strong> Upserts on <code>(line, ship, sail_date, departure_port, duration_nights, cabin_class)</code> composite key. Stamps <code>fetched_at = now()</code>.</li>
+<li><strong>Cost ceilings.</strong> Adapter accepts a per-run budget cap (env var <code>APIFY_RUN_BUDGET_USD_CEILING</code>). On approach, returns partial results with a flag rather than running over.</li>
+<li><strong>Kill switch.</strong> Env var <code>APIFY_ADAPTER_ENABLED</code> (default true). When false, adapter no-ops all refresh operations. Reads still served from cache. Used during cost incidents or ToS reviews.</li>
+</ol>
+<p><strong>Caching substrate:</strong> Postgres table <code>pricing_cache</code> in the main app DB. Reuses existing Supabase project. Redis was considered (per Session 3 open item) but rejected for now — pricing data is read-modestly and the write volume is well within Postgres's comfort zone. Revisit if read volume from AI agents creates pressure.</p>
+<p><strong>Test seam:</strong> A <code>MockPricingDataSource</code> implementation lives alongside the adapter. Returns deterministic fixtures. Used by tests and by local development without burning Apify credits.</p>
+
+<h2 id="s33-4">33.4 CruiseMapper Itinerary Ingest (Apify Path) <a class="anchor-link" href="#s33-4" aria-label="Permalink">¶</a></h2>
+<p>Itineraries cross-cut with pricing data, so they ride the Apify pipeline alongside the per-line scrapers.</p>
+<p><strong>Actor:</strong> <code>crawlerbros/cruisemapper-cruises-scraper</code> (HTTP-only, no proxy required per actor docs).</p>
+<p><strong>Schedule:</strong> Monthly, Inngest scheduled function, coordinated with the general-pricing pull to avoid redundant fetches.</p>
+<p><strong>Output handling:</strong> Itinerary records (ship, line, departure date, route, ports of call, duration) are written to:</p>
+<ol>
+<li><code>pricing_cache</code> for the pricing flow (joined to per-line cabin pricing where available)</li>
+<li>A new <code>itineraries</code> table in the RAG service DB (see <a class="xref" href="#s33-6">§33.6</a>) for retrieval as RAG context</li>
+</ol>
+<p><strong>Authority tier:</strong> <code>low</code> (0.30-0.54) per <a class="xref" href="section-06-rag-service-schema.html#s6-3">§6.3</a>. Itinerary data is community-aggregated; ship/line/port factual fields are reliable, but the data should not outweigh tenant-verified or official-source content during retrieval ranking.</p>
+
+<h2 id="s33-5">33.5 CruiseMapper Static Reference Ingest (DIY Path) <a class="anchor-link" href="#s33-5" aria-label="Permalink">¶</a></h2>
+<p>Ship registry, port detail pages, and deck plan pages are fetched directly via HTTP. CruiseMapper publishes these as static HTML with no anti-bot protection.</p>
+<p><strong>Why DIY:</strong> ~20,000 reference pages quarterly. Apify per-result fees would add unnecessary cost for content that needs no proxy infrastructure. Direct fetch keeps cost near-zero and gives the platform full control over parser logic.</p>
+<p><strong>Targets and URL patterns</strong> (verify against CruiseMapper at build time):</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Content type</strong></th><th><strong>URL pattern (approx.)</strong></th><th><strong>Volume</strong></th></tr></thead><tbody>
+<tr><td>Ship detail</td><td><code>cruisemapper.com/ships/{ship-slug}-{id}</code></td><td>~1,500 ships</td></tr>
+<tr><td>Deck plan page</td><td><code>cruisemapper.com/deckplans/{ship-slug}-{ship-id}/deck{NN}-{deck-id}</code></td><td>~18,000 deck pages</td></tr>
+<tr><td>Port detail</td><td><code>cruisemapper.com/ports/{port-slug}</code></td><td>~700 ports</td></tr>
+</tbody></table></div>
+<p><strong>Ingest pipeline:</strong></p>
+<pre class="codeblock"><code>[Inngest scheduled function — quarterly]
+  │
+  ▼
+[robots.txt check — verify allowed paths]
+  │
+  ▼
+[Enumerate target URLs — from existing ship/port discovery]
+  │
+  ▼
+[For each URL: HTTP GET with rate limit + ETag/hash check]
+  │
+  ▼
+[Parse HTML (cheerio or equivalent), extract text + image URLs]
+  │
+  ▼
+[Download referenced images, normalize, store in Supabase Storage]
+  │
+  ▼
+[Generate text chunks via §22.4 normalization pipeline]
+  │
+  ▼
+[Write knowledge_chunks (global scope, authority = low) + rag_media_assets]
+  │
+  ▼
+[Link chunks to assets via related_asset_ids]</code></pre>
+<p><strong>Polite-scraping discipline (mandatory):</strong></p>
+<ul>
+<li><strong>Rate limit:</strong> ≤1 request/second during initial backfill. ≤0.5 request/second on quarterly refreshes.</li>
+<li><strong>User-Agent:</strong> Must identify the platform and provide a contact email. Format: <code>{PlatformBrand}-RAG-Ingest/1.0 (+mailto:{operations-email})</code>.</li>
+<li><strong>robots.txt:</strong> Checked at the start of every scheduled run. If a previously-allowed path is newly disallowed, the run halts for that path and alerts platform admin.</li>
+<li><strong>Change detection:</strong> SHA-256 hash of the response body stored per URL. On refresh, hash unchanged = skip re-parsing and re-embedding. Saves both compute and OpenAI embedding cost.</li>
+<li><strong>Backoff:</strong> On any 4xx or 5xx response, exponential backoff with jitter; after 3 retries, defer to next run and alert if the failure rate exceeds 5% of the run.</li>
+<li><strong>Concurrency:</strong> Single-threaded for the initial implementation. Concurrency added only if a quarterly refresh fails to complete within its scheduled window.</li>
+</ul>
+<p><strong>Parser failure handling:</strong> If the parser breaks (CruiseMapper changes HTML structure), the run logs which URL pattern failed, halts further processing of that content type, and alerts platform admin. Other content types continue. The platform admin updates the parser; the next scheduled run resumes.</p>
+
+<h2 id="s33-6">33.6 Media Assets — Schema &amp; Storage <a class="anchor-link" href="#s33-6" aria-label="Permalink">¶</a></h2>
+<p>Adds a new asset surface to the RAG service. Assets are first-class objects, retrievable alongside chunks.</p>
+<h3 id="s33-6-1">33.6.1 <code>rag_media_assets</code> Table <a class="anchor-link" href="#s33-6-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE rag.rag_media_assets (
+  asset_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind              TEXT NOT NULL CHECK (kind IN ('deck_plan','ship_photo','port_map','other')),
+  entity_type       TEXT NOT NULL CHECK (entity_type IN ('ship','port','deck','cruise_line')),
+  entity_id         TEXT NOT NULL,        -- e.g., ship slug, port slug
+  scope             TEXT NOT NULL DEFAULT 'global' CHECK (scope IN ('global','tenant')),
+  tenant_id         UUID NULL,            -- non-null only for tenant-scope assets
+  source_url        TEXT NOT NULL,        -- original URL on source site
+  storage_path      TEXT NOT NULL,        -- path in Supabase Storage bucket
+  public_url        TEXT NULL,            -- if public bucket; else null and signed-URL generation used
+  caption           TEXT NULL,            -- human-readable caption
+  content_type      TEXT NOT NULL,        -- e.g., 'image/png', 'image/jpeg'
+  width_px          INT NULL,
+  height_px         INT NULL,
+  file_bytes        INT NULL,
+  file_hash         TEXT NOT NULL,        -- sha256 of file bytes, for change detection
+  fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source            TEXT NOT NULL,        -- 'cruisemapper','tenant_upload', etc.
+  CONSTRAINT tenant_id_when_tenant_scope
+    CHECK ((scope = 'tenant' AND tenant_id IS NOT NULL)
+        OR (scope = 'global' AND tenant_id IS NULL))
+);
+
+CREATE INDEX idx_assets_entity ON rag.rag_media_assets (entity_type, entity_id);
+CREATE INDEX idx_assets_kind ON rag.rag_media_assets (kind);
+CREATE INDEX idx_assets_tenant ON rag.rag_media_assets (tenant_id) WHERE tenant_id IS NOT NULL;</code></pre>
+<h3 id="s33-6-2">33.6.2 <code>knowledge_chunks.related_asset_ids</code> Column <a class="anchor-link" href="#s33-6-2" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE rag.knowledge_chunks
+  ADD COLUMN related_asset_ids UUID[] NOT NULL DEFAULT '{}'::UUID[];</code></pre>
+<p>When a chunk has linked assets, retrieval returns the asset metadata alongside the chunk. Consumers of the retrieve API may then either ignore the metadata (text-only flows) or feed it into the system prompt for display markup (chat UI flow).</p>
+<h3 id="s33-6-3">33.6.3 Storage Bucket <a class="anchor-link" href="#s33-6-3" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Bucket name:</strong> <code>rag-media-public</code> (Supabase Storage)</li>
+<li><strong>Access:</strong> Public read. Deck plans, ship photos, and port maps are non-PII reference content; public access simplifies serving and avoids signed-URL generation overhead.</li>
+<li><strong>Tenant uploads</strong> (future): a separate <code>rag-media-tenant</code> private bucket with signed URLs is reserved for the tenant-scope asset case, but is <strong>not implemented in this addendum</strong>. Tenant-scope asset upload is a follow-up.</li>
+<li><strong>CDN:</strong> Supabase Storage's built-in CDN is sufficient at expected volumes. Cloudflare R2 / a separate CDN is a future optimization if egress regularly approaches the included 250 GB/month allowance.</li>
+</ul>
+<h3 id="s33-6-4">33.6.4 Retrieval API Extension <a class="anchor-link" href="#s33-6-4" aria-label="Permalink">¶</a></h3>
+<p>The <code>/api/retrieve</code> endpoint from <a class="xref" href="section-08-rag-service-architecture.html#s8-4">§8.4</a> returns an extended response that includes asset metadata for any linked assets on returned chunks:</p>
+<pre class="codeblock" data-lang="jsonc"><code>{
+  "chunks": [
+    {
+      "chunk_id": "...",
+      "text": "Deck 7 of Explorer of the Seas...",
+      "authority": 0.55,
+      "recency": 0.85,
+      "match": 0.91,
+      "confidence": 0.79,
+      "category": "cabin_intel",
+      "source": "cruisemapper.com/deckplans/...",
+      "related_asset_ids": ["asset-uuid-1"]
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "asset-uuid-1",
+      "kind": "deck_plan",
+      "entity_type": "deck",
+      "entity_id": "explorer-of-the-seas-deck-7",
+      "public_url": "https://...supabase.co/.../deck07.png",
+      "caption": "Explorer of the Seas — Deck 7 plan",
+      "width_px": 1200,
+      "height_px": 800
+    }
+  ]
+}</code></pre>
+<p>Asset metadata in the response is keyed by <code>asset_id</code> so multiple chunks referencing the same asset don't duplicate the entry.</p>
+
+<h2 id="s33-7">33.7 Consumer-Side Display Markup <a class="anchor-link" href="#s33-7" aria-label="Permalink">¶</a></h2>
+<p>Extends <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-4">§21.4</a>'s RAG knowledge block format with a displayable-assets layer. Does not modify <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-4">§21.4</a>; appends a new instruction block when assets are present.</p>
+<h3 id="s33-7-1">33.7.1 Extended System Prompt Block <a class="anchor-link" href="#s33-7-1" aria-label="Permalink">¶</a></h3>
+<p>When at least one retrieved chunk has linked assets, the system prompt includes an additional section:</p>
+<pre class="codeblock"><code>DISPLAYABLE ASSETS (available for this turn):
+- [[display_asset:asset-uuid-1]] — Explorer of the Seas, Deck 7 plan (deck_plan)
+- [[display_asset:asset-uuid-2]] — Explorer of the Seas, Deck 7 plan, cabin detail view (deck_plan)
+
+DISPLAY INSTRUCTIONS:
+- When your answer references the layout of a specific deck, cabin, or port,
+  include the markup `[[display_asset:&lt;id&gt;]]` inline at the point where the
+  customer would want to see the image.
+- Use sparingly — only when the visual genuinely aids the answer.
+- Do not invent asset IDs. Only use IDs from the DISPLAYABLE ASSETS list above.
+- One image per response is usually sufficient; do not include more than 3.</code></pre>
+<h3 id="s33-7-2">33.7.2 Client-Side Rendering <a class="anchor-link" href="#s33-7-2" aria-label="Permalink">¶</a></h3>
+<p>The chat UI parses AI output for <code>[[display_asset:&lt;uuid&gt;]]</code> markup. For each match:</p>
+<ol>
+<li>Look up the asset in the <code>assets</code> array returned by the retrieve call for that turn.</li>
+<li>Render an inline image element with <code>src = public_url</code>, <code>alt = caption</code>.</li>
+<li>If the asset is not in the available set (AI hallucinated an ID), drop the markup silently. Log to telemetry for prompt-tuning.</li>
+<li>The image displays with the AI's existing source-indicator UI (<a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-6">§21.6</a>) — same hover-to-expand pattern, showing source URL and freshness.</li>
+</ol>
+<h3 id="s33-7-3">33.7.3 Fallback to Tool-Call Shape <a class="anchor-link" href="#s33-7-3" aria-label="Permalink">¶</a></h3>
+<p>If during build it is found that AI agents do not reliably emit <code>[[display_asset:&lt;id&gt;]]</code> inline markup, the implementation may fall back to a structured tool-call shape (e.g., AI calls a <code>displayAsset(id)</code> function). The wire format is an implementation detail; the user-visible behavior is identical.</p>
+<h3 id="s33-7-4">33.7.4 Hallucination Defense Integration <a class="anchor-link" href="#s33-7-4" aria-label="Permalink">¶</a></h3>
+<p>Adds one new check to <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-10">§21.10</a>'s hallucination defense:</p>
+<ul>
+<li><strong>Layer (new):</strong> Asset ID validation. AI-emitted display markup with IDs not in the per-turn available set is dropped silently and logged. Prevents AI from inventing image references.</li>
+</ul>
+
+<h2 id="s33-8">33.8 Price-Watch Subscriptions <a class="anchor-link" href="#s33-8" aria-label="Permalink">¶</a></h2>
+<p>A subscriber (travel agent) may attach a price-watch to any booking they manage. When pricing for that sailing drops by a configurable amount or percentage, the subscriber is notified.</p>
+<h3 id="s33-8-1">33.8.1 <code>price_watches</code> Table (main app DB) <a class="anchor-link" href="#s33-8-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.price_watches (
+  watch_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  subscriber_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  booking_id        UUID NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  -- Sailing identification (denormalized; survives booking deletion if NULL booking_id)
+  cruise_line       TEXT NOT NULL,
+  ship              TEXT NOT NULL,
+  sail_date         DATE NOT NULL,
+  departure_port    TEXT NOT NULL,
+  cabin_class       TEXT NOT NULL,
+  -- Baseline (the price the subscriber is comparing against)
+  baseline_price    NUMERIC(10,2) NOT NULL,
+  baseline_currency TEXT NOT NULL,
+  baseline_set_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Trigger configuration (set by subscriber when creating the watch)
+  threshold_kind    TEXT NOT NULL CHECK (threshold_kind IN ('dollar_drop','percent_drop','either')),
+  dollar_threshold  NUMERIC(10,2) NULL,
+  percent_threshold NUMERIC(5,2) NULL,        -- e.g., 10.00 means 10%
+  -- Lifecycle
+  status            TEXT NOT NULL DEFAULT 'active'
+                      CHECK (status IN ('active','triggered','paused','expired','cancelled')),
+  triggered_at      TIMESTAMPTZ NULL,
+  notified_at       TIMESTAMPTZ NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT threshold_present
+    CHECK ((threshold_kind = 'dollar_drop' AND dollar_threshold IS NOT NULL)
+        OR (threshold_kind = 'percent_drop' AND percent_threshold IS NOT NULL)
+        OR (threshold_kind = 'either' AND dollar_threshold IS NOT NULL AND percent_threshold IS NOT NULL))
+);
+
+CREATE INDEX idx_watches_tenant_status ON public.price_watches (tenant_id, status);
+CREATE INDEX idx_watches_sailing ON public.price_watches (cruise_line, ship, sail_date) WHERE status = 'active';</code></pre>
+<h3 id="s33-8-2">33.8.2 Watch Lifecycle <a class="anchor-link" href="#s33-8-2" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock"><code>active ──┬──► (price check matches threshold) ──► triggered ──► notified
+         ├──► (subscriber pauses) ──► paused
+         ├──► (sail_date passes) ──► expired
+         └──► (subscriber cancels or booking deleted) ──► cancelled</code></pre>
+<h3 id="s33-8-3">33.8.3 Daily Price Check Job (Inngest) <a class="anchor-link" href="#s33-8-3" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock"><code>[Inngest daily scheduled function]
+  │
+  ▼
+[SELECT active price_watches → distinct SailingKeys]
+  │
+  ▼
+[PricingDataSource.refreshTrackedSailings(sailingKeys)]
+  │
+  ▼
+[For each active watch: compare new cached price to baseline]
+  │
+  ▼
+[If threshold met: status='triggered', enqueue notification]
+  │
+  ▼
+[Notification fans out per §23 notification routing]</code></pre>
+<h3 id="s33-8-4">33.8.4 Notification Target <a class="anchor-link" href="#s33-8-4" aria-label="Permalink">¶</a></h3>
+<p>Notifications go <strong>only to the subscriber</strong> (the travel agent who created the watch). The subscriber decides whether and how to contact their customer. The platform does not contact the customer directly under prong 2. This is a deliberate decision to preserve the subscriber-owns-the-customer-relationship boundary.</p>
+<h3 id="s33-8-5">33.8.5 Re-Arming a Watch <a class="anchor-link" href="#s33-8-5" aria-label="Permalink">¶</a></h3>
+<p>Once a watch is <code>triggered</code> and <code>notified</code>, it does not auto-re-arm. The subscriber may re-arm via the UI, which resets <code>baseline_price</code> to the current cached price and sets status back to <code>active</code>. This prevents spam from a sailing that's on a sustained discount.</p>
+<h3 id="s33-8-6">33.8.6 Booking Re-Pricing Flow <a class="anchor-link" href="#s33-8-6" aria-label="Permalink">¶</a></h3>
+<p>When the subscriber acts on a triggered watch:</p>
+<ol>
+<li>Subscriber opens the booking in the platform UI.</li>
+<li>UI offers "Open booking widget to adjust" — same widget flow as <a class="xref" href="section-20-booking-flow.html">§20</a> (booking widget receives auto-populated fields and a flag indicating this is a rebook/re-price action).</li>
+<li>Subscriber completes the action in the booking widget. The platform observes the new booking reference and updates the booking record per existing <a class="xref" href="section-20-booking-flow.html">§20</a> flows.</li>
+</ol>
+<p>The platform does not directly modify host-system bookings even when a price drop is detected. This is consistent with the <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a> host-adapter discipline.</p>
+
+<h2 id="s33-9">33.9 Operator Obligations <a class="anchor-link" href="#s33-9" aria-label="Permalink">¶</a></h2>
+<h3 id="s33-9-1">33.9.1 ToS &amp; Legal Posture <a class="anchor-link" href="#s33-9-1" aria-label="Permalink">¶</a></h3>
+<p>This addendum adds operational responsibilities that did not previously exist for the platform:</p>
+<ul>
+<li><strong>Per-cruise-line scraping (via Apify):</strong> The platform is the operator; Apify and the actor authors are not. The platform accepts the ToS risk of each cruise line whose actor it uses. Before launch, platform counsel reviews this posture and documents the risk acceptance. Cease-and-desist or IP blocking are the realistic worst-case outcomes; the adapter must handle being blocked gracefully (<code>PricingDataSource.getCachedPrice</code> returns stale data with <code>freshnessFlag = 'expired'</code> rather than failing the AI agent).</li>
+<li><strong>CruiseMapper scraping (DIY):</strong> Lower-risk than direct cruise-line scraping (aggregator, publicly published reference data) but still subject to CruiseMapper's ToS. Counsel reviews before launch.</li>
+</ul>
+<h3 id="s33-9-2">33.9.2 robots.txt Compliance <a class="anchor-link" href="#s33-9-2" aria-label="Permalink">¶</a></h3>
+<p>The DIY ingest pipeline (<a class="xref" href="#s33-5">§33.5</a>) checks robots.txt at the start of every scheduled run. The Apify-mediated flows rely on the actors to respect their target sites; platform admin reviews this stance per actor.</p>
+<h3 id="s33-9-3">33.9.3 Budget Caps <a class="anchor-link" href="#s33-9-3" aria-label="Permalink">¶</a></h3>
+<p>Apify has no native hard cap; overage rolls to the next invoice. The platform enforces caps in two layers:</p>
+<ol>
+<li><strong>Per-run ceiling:</strong> <code>APIFY_RUN_BUDGET_USD_CEILING</code> env var. The adapter halts a run that projects to exceed this and emits a partial-result flag.</li>
+<li><strong>Monthly ceiling:</strong> Inngest scheduler observes accumulated spend and pauses scheduled refresh jobs when the monthly cap (env var <code>APIFY_MONTHLY_BUDGET_USD_CEILING</code>) is reached. Cached reads continue to work; only new refreshes pause.</li>
+</ol>
+<p>Both are operator-configured and surface in the platform admin dashboard.</p>
+<h3 id="s33-9-4">33.9.4 Kill Switches <a class="anchor-link" href="#s33-9-4" aria-label="Permalink">¶</a></h3>
+<p>Independent kill switches for each external dependency, configurable without code deploy:</p>
+<ul>
+<li><code>APIFY_ADAPTER_ENABLED</code> — when false, all Apify-mediated refresh halts; cache reads continue.</li>
+<li><code>CRUISEMAPPER_DIY_INGEST_ENABLED</code> — when false, CruiseMapper DIY refreshes halt; existing chunks remain in RAG.</li>
+<li><code>PRICE_WATCH_NOTIFICATIONS_ENABLED</code> — when false, watches continue to evaluate but no notifications are sent. Used during notification provider outages or spam-control situations.</li>
+</ul>
+
+<h2 id="s33-10">33.10 Environment Variables (Additions) <a class="anchor-link" href="#s33-10" aria-label="Permalink">¶</a></h2>
+<p>Per <a class="xref" href="section-28-environment-variables-reference.html">§28</a>'s conventions:</p>
+<div class="table-wrap"><table><thead><tr><th><strong>Variable</strong></th><th><strong>Scope</strong></th><th><strong>Required</strong></th><th><strong>Secret</strong></th><th><strong>Description</strong></th></tr></thead><tbody>
+<tr><td><code>APIFY_API_TOKEN</code></td><td>main</td><td>Yes</td><td>Yes</td><td>Apify API token for the platform account.</td></tr>
+<tr><td><code>APIFY_ADAPTER_ENABLED</code></td><td>main</td><td>No (default true)</td><td>No</td><td>Kill switch for all Apify-mediated operations.</td></tr>
+<tr><td><code>APIFY_RUN_BUDGET_USD_CEILING</code></td><td>main</td><td>No (default 50)</td><td>No</td><td>Per-run budget ceiling in USD.</td></tr>
+<tr><td><code>APIFY_MONTHLY_BUDGET_USD_CEILING</code></td><td>main</td><td>No (default 500)</td><td>No</td><td>Monthly aggregate budget ceiling for all Apify operations.</td></tr>
+<tr><td><code>CRUISEMAPPER_DIY_USER_AGENT</code></td><td>main</td><td>Yes</td><td>No</td><td>User-Agent header for DIY ingest. Format: <code>{Brand}-RAG-Ingest/1.0 (+mailto:{ops-email})</code>.</td></tr>
+<tr><td><code>CRUISEMAPPER_DIY_INGEST_ENABLED</code></td><td>main</td><td>No (default true)</td><td>No</td><td>Kill switch for DIY ingest.</td></tr>
+<tr><td><code>CRUISEMAPPER_DIY_RATE_LIMIT_RPS</code></td><td>main</td><td>No (default 1.0)</td><td>No</td><td>Rate limit for DIY HTTP requests.</td></tr>
+<tr><td><code>PRICE_WATCH_NOTIFICATIONS_ENABLED</code></td><td>main</td><td>No (default true)</td><td>No</td><td>Kill switch for price-watch notifications.</td></tr>
+<tr><td><code>PRICE_FRESHNESS_FRESH_HOURS</code></td><td>main, rag</td><td>No (default 72)</td><td>No</td><td>Hours before cached price flips from <code>fresh</code> to <code>stale</code>.</td></tr>
+<tr><td><code>PRICE_FRESHNESS_EXPIRED_HOURS</code></td><td>main, rag</td><td>No (default 168)</td><td>No</td><td>Hours before cached price flips from <code>stale</code> to <code>expired</code>.</td></tr>
+<tr><td><code>RAG_MEDIA_STORAGE_BUCKET</code></td><td>rag</td><td>Yes</td><td>No</td><td>Supabase Storage bucket name for RAG media assets (default <code>rag-media-public</code>).</td></tr>
+</tbody></table></div>
+
+<h2 id="s33-11">33.11 Build Order <a class="anchor-link" href="#s33-11" aria-label="Permalink">¶</a></h2>
+<p>When this addendum is implemented, the recommended prompt sequence is:</p>
+<ol>
+<li><strong>Schema migration prompt:</strong> Adds <code>pricing_cache</code>, <code>price_watches</code>, <code>rag_media_assets</code>, the <code>knowledge_chunks.related_asset_ids</code> column, and the Supabase Storage bucket configuration. Pure migration; no behavior.</li>
+<li><strong>PricingDataSource interface + ApifyPricingAdapter (per-line scrapers):</strong> Implements <a class="xref" href="#s33-2">§33.2</a> and <a class="xref" href="#s33-3">§33.3</a> for the major lines. Includes per-line normalization. MockPricingDataSource for tests.</li>
+<li><strong>CruiseMapper itinerary Apify ingest:</strong> <a class="xref" href="#s33-4">§33.4</a>. Inngest scheduled job; writes to pricing_cache and itinerary chunks.</li>
+<li><strong>CruiseMapper DIY static ingest (no images yet):</strong> <a class="xref" href="#s33-5">§33.5</a> text-only path. Ship registry and port detail pages. Validates the fetcher + parser + rate-limit + robots.txt machinery before adding image complexity.</li>
+<li><strong>CruiseMapper DIY deck plan ingest + image asset storage:</strong> <a class="xref" href="#s33-5">§33.5</a> image path, <a class="xref" href="#s33-6">§33.6</a> media asset table population. Stores images in Supabase Storage; links chunks to assets.</li>
+<li><strong>RAG retrieve API extension for assets:</strong> <a class="xref" href="#s33-6-4">§33.6.4</a>. Extends the existing endpoint shape without breaking existing consumers.</li>
+<li><strong>Consumer-side display markup:</strong> <a class="xref" href="#s33-7">§33.7</a>. System prompt extension, client-side parsing, hallucination defense layer.</li>
+<li><strong>Price-watch subscriptions:</strong> <a class="xref" href="#s33-8">§33.8</a>. UI for creating/managing watches, Inngest daily check, notification integration via <a class="xref" href="section-23-email-notifications.html">§23</a>.</li>
+<li><strong>Sample-OCR evaluation (gated decision):</strong> Per session-4 decision, run Haiku vision on a 200-image sample. Evaluate uplift over text-only descriptions. If approved, an additional prompt adds Haiku vision OCR to step 5's ingest, generating additional chunks linked to the same assets.</li>
+</ol>
+<p>Steps 1–4 deliver text-only RAG enrichment and pricing data without any image work. Steps 5–7 deliver the deck plan image surface. Step 8 delivers the subscriber-facing price-watch feature. Step 9 is the OCR uplift, conditional on sample evaluation.</p>
+
+<h2 id="s33-12">33.12 Open Items (Pending Resolution) <a class="anchor-link" href="#s33-12" aria-label="Permalink">¶</a></h2>
+<p>Items deferred to build time or to a later session:</p>
+<ul>
+<li><strong>AI display-markup final syntax.</strong> <code>[[display_asset:&lt;id&gt;]]</code> is the working form; tool-call shape is the fallback if reliability is poor.</li>
+<li><strong>Per-line actor coverage gaps.</strong> Confirm Carnival, Holland America, MSC, Disney actor IDs at build time. The Royal Caribbean, Norwegian, Princess, Celebrity, Costa actors are verified.</li>
+<li><strong>Lines without any actor</strong> (Virgin, Viking, Oceania, Regent, Silversea, Seabourn): adapter returns null; UX surfacing of "no price-watch available" is a UI-design decision.</li>
+<li><strong>Sample-OCR evaluation criteria.</strong> Quantitative bar for "good enough" set when the eval is designed.</li>
+<li><strong>Tenant-scope asset uploads</strong> (e.g., a tenant uploads their own port maps or curated deck photos): reserved for a future addendum. The <code>rag_media_assets.scope = 'tenant'</code> path exists in the schema but no UI or ingest flow is built in this addendum.</li>
+<li><strong>CDN headroom monitoring.</strong> Alerting threshold and migration plan if Supabase Storage egress approaches the included 250 GB/month allowance.</li>
+<li><strong>Authority-elevation UI for platform admin.</strong> <a class="xref" href="#s33-5">§33.5</a> says CruiseMapper chunks default to <code>low</code> and may be selectively elevated; the UI for that action is an existing platform-admin surface, but per-category bulk elevation (e.g., "elevate all ship-spec chunks") may warrant a small UI addition. Decided at build time.</li>
+<li><strong>Counsel ToS review.</strong> Required before launch. Tracked separately as a launch-gate item.</li>
+</ul>
+<p><strong>End of addendum.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-32-self-service-help.html">← §32: Self-Service Help</a><a class="toc-link" href="index.html">Table of Contents</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>
