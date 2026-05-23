@@ -1,0 +1,33 @@
+# Defense-in-depth: keep documentation, specs, scripts, and tests out of
+# any `vercel deploy` upload bundle.
+#
+# The CI/CD pipeline (`.github/workflows/deploy.yml`) already uses
+# `vercel deploy --prebuilt`, which uploads only `.vercel/output/` build
+# artifacts — source files (including this list) are NOT included by that
+# flow. This file guards against an accidental `vercel deploy` without
+# `--prebuilt`, which WOULD upload the entire source tree.
+#
+# Patterns use gitignore syntax: a leading `/` anchors to the repo root,
+# so the dir entries below WILL NOT match same-named directories nested
+# inside apps/main/src/ or apps/rag/src/ (e.g., apps/rag/src/lib/db/).
+
+/specs/
+/docs/
+/scripts/
+/tests/
+/db/
+
+# Repo-level metadata that doesn't belong in deploy bundles
+/MEMORY.md
+/SESSION.md
+/README.md
+
+# Editor / OS noise (these patterns are intentionally NOT root-anchored —
+# we want to ignore them at every depth).
+.DS_Store
+*.swp
+*~
+
+# Workflows, CI, and local-dev orchestration
+/.github/
+/.husky/
