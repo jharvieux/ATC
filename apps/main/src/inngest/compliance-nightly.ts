@@ -6,22 +6,53 @@
 //      TODO(prompt-17): legal_documents / legal_consents tables land in §17.
 //      Until then, this check is a no-op stub logged for traceability.
 //
-//   2. Inactivity nudges: at 30/60/90 days write tenant_inactivity_nudges and
-//      send email template. At 180 days: suspend tenant.
+//   2. Inactivity reminders: at 30/60/90 days, write tenant_inactivity_nudges
+//      AND send the InactivityReminder email pointing the admin at features
+//      they're missing and the Help AI.
 //
-// 180-day inactivity → suspend is the shipped behavior per §15.13.
-// Auto-downgrade is deferred to Phase 1. See MEMORY D-049.
+// What this cron does NOT do anymore (policy change from #121):
+//   - No 180-day auto-suspend for inactive PAYING tenants. The user's
+//     framing: paying customers shouldn't lose access because they're not
+//     using the app. The 180d level row stays in NUDGE_LEVELS as a final
+//     reminder; the suspend branch is gone.
+//   - Past-grace non-paying tenants are skipped here entirely — the
+//     middleware redirect + cron filter handle them.
 
+import * as React from "react";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
+import { sendEmail } from "@/lib/email/send";
+import { InactivityReminder, type InactivityNudgeLevel } from "@/emails/InactivityReminder";
 
-const NUDGE_LEVELS: { days: number; level: "30d" | "60d" | "90d" | "180d" }[] = [
+type NudgeLevel = "30d" | "60d" | "90d" | "180d";
+
+const NUDGE_LEVELS: { days: number; level: NudgeLevel }[] = [
   { days: 30,  level: "30d"  },
   { days: 60,  level: "60d"  },
   { days: 90,  level: "90d"  },
   { days: 180, level: "180d" },
 ];
+
+// Only the first three reminders carry an email body — 180d is now a
+// log-only final breadcrumb (the cron sees that an admin has been silent
+// for half a year; nothing more to say without becoming pushy).
+const EMAIL_LEVELS: ReadonlySet<NudgeLevel> = new Set(["30d", "60d", "90d"]);
+
+interface TenantContactRow {
+  id: string;
+  status: string;
+  support_email: string | null;
+  legal_name: string | null;
+  display_name: string | null;
+  mailing_address: Record<string, unknown> | null;
+  email_send_pattern: "platform_resend" | "tenant_resend" | null;
+  tenant_resend_api_key_encrypted: string | null;
+  email_from_address: string | null;
+  email_from_name: string | null;
+  subscription_status: string | null;
+  non_paying_since: string | null;
+}
 
 export const complianceNightly = inngest.createFunction(
   {
@@ -41,7 +72,11 @@ export const complianceNightly = inngest.createFunction(
     // ── Active tenants ─────────────────────────────────────────────────────
     const { data: tenantsRaw, error: tenantErr } = await db
       .from("tenants")
-      .select("id, status, requires_ica_reacceptance, subscription_status, non_paying_since")
+      .select(
+        "id, status, support_email, legal_name, display_name, mailing_address, " +
+        "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
+        "email_from_name, subscription_status, non_paying_since",
+      )
       .eq("status", "active");
 
     if (tenantErr) {
@@ -49,42 +84,47 @@ export const complianceNightly = inngest.createFunction(
       return;
     }
 
-    // §15.16 — skip past-grace tenants. Inactivity nudges go to PAYING
-    // customers (the spec change captured in PR #121); past-grace is its
-    // own gate handled by the middleware redirect.
+    // §15.16 — skip past-grace tenants. Inactivity reminders go to PAYING
+    // customers; past-grace is the middleware redirect's job.
     const tenants = excludeNonPayingPastGrace(
-      (tenantsRaw ?? []) as Array<{
-        id: string;
-        status: string;
-        requires_ica_reacceptance?: boolean;
-        subscription_status: string | null;
-        non_paying_since: string | null;
-      }>,
+      (tenantsRaw ?? []) as unknown as TenantContactRow[],
     );
 
+    let sentEmails = 0;
+    let levelLoggedNoEmail = 0;
     for (const tenant of tenants) {
-      await checkInactivity(db, tenant.id, now);
+      const result = await checkInactivity(db, tenant, now);
+      if (result === "email_sent") sentEmails++;
+      else if (result === "level_logged_no_email") levelLoggedNoEmail++;
     }
+
+    return {
+      tenants_processed: tenants.length,
+      reminders_sent: sentEmails,
+      level_logged_no_email: levelLoggedNoEmail,
+    };
   },
 );
 
+type InactivityResult = "no_activity_data" | "below_threshold" | "already_sent" | "email_sent" | "level_logged_no_email";
+
 async function checkInactivity(
   db: ReturnType<typeof createServiceRoleClient>,
-  tenantId: string,
+  tenant: TenantContactRow,
   now: Date,
-): Promise<void> {
-  // Determine last activity: use MAX(created_at) across conversations + bookings.
+): Promise<InactivityResult> {
+  // Determine last activity: MAX(created_at) across conversations + bookings.
   const [convResult, bookingResult] = await Promise.all([
     db
       .from("conversations")
       .select("created_at")
-      .eq("tenant_id", tenantId)
+      .eq("tenant_id", tenant.id)
       .order("created_at", { ascending: false })
       .limit(1),
     db
       .from("bookings")
       .select("created_at")
-      .eq("tenant_id", tenantId)
+      .eq("tenant_id", tenant.id)
       .order("created_at", { ascending: false })
       .limit(1),
   ]);
@@ -95,51 +135,125 @@ async function checkInactivity(
   ].filter(Boolean).map((d) => new Date(d!));
 
   if (dates.length === 0) {
-    // No activity ever recorded — use epoch as last activity.
-    // This means freshly-approved tenants won't immediately get nudged;
-    // they get nudged only if they haven't done ANYTHING in 30 days.
-    return;
+    // No activity ever recorded — freshly-approved tenants don't get nudged
+    // until they've existed for 30 days without doing anything.
+    return "no_activity_data";
   }
 
   const lastActivity = new Date(Math.max(...dates.map((d) => d.getTime())));
   const daysSinceActivity = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24);
 
-  for (const { days, level } of NUDGE_LEVELS) {
+  // Walk the levels in reverse so we trip the MOST severe applicable one
+  // (avoids sending a 30d reminder to a tenant who's already at 90d).
+  for (const { days, level } of [...NUDGE_LEVELS].reverse()) {
     if (daysSinceActivity < days) continue;
 
-    // Check if we already sent this nudge level.
+    // Already sent this level? Skip.
     const { data: existing } = await db
       .from("tenant_inactivity_nudges")
       .select("id")
-      .eq("tenant_id", tenantId)
+      .eq("tenant_id", tenant.id)
       .eq("nudge_level", level)
       .maybeSingle();
+    if (existing) return "already_sent";
 
-    if (existing) continue;
-
-    // Write nudge record.
+    // Record the nudge regardless of whether we end up sending the email,
+    // so the "only send once per level" guard still works.
     await db.from("tenant_inactivity_nudges").insert({
-      tenant_id: tenantId,
+      tenant_id: tenant.id,
       nudge_level: level,
       sent_at: now.toISOString(),
     });
+    console.info(
+      "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
+      level, tenant.id, Math.floor(daysSinceActivity),
+    );
 
-    console.info("[compliance-nightly] Nudge level=%s sent for tenant=%s (days_inactive=%d)", level, tenantId, Math.floor(daysSinceActivity));
-
-    // TODO(notifications): send email template for nudge level.
-
-    // At 180 days: suspend the tenant.
-    if (level === "180d") {
-      await db.from("tenants").update({
-        status: "suspended",
-        suspended_at: now.toISOString(),
-        suspended_reason: "inactivity_180d",
-      }).eq("id", tenantId);
-
-      console.info("[compliance-nightly] Tenant=%s suspended due to 180-day inactivity", tenantId);
+    if (!EMAIL_LEVELS.has(level)) {
+      // 180d — no email, just the breadcrumb above. Replaces the prior
+      // auto-suspend behaviour (deliberate policy change — paying tenants
+      // don't lose access for inactivity).
+      return "level_logged_no_email";
     }
 
-    // Only apply the most severe applicable nudge per run.
-    break;
+    if (!tenant.support_email) {
+      console.warn(
+        "[compliance-nightly] Skipping reminder for tenant=%s — no support_email on row",
+        tenant.id,
+      );
+      return "level_logged_no_email";
+    }
+
+    await sendReminderEmail({ db, tenant, level: level as InactivityNudgeLevel, daysSinceActivity });
+    return "email_sent";
   }
+
+  return "below_threshold";
+}
+
+async function sendReminderEmail(args: {
+  db: ReturnType<typeof createServiceRoleClient>;
+  tenant: TenantContactRow;
+  level: InactivityNudgeLevel;
+  daysSinceActivity: number;
+}): Promise<void> {
+  const { db, tenant, level, daysSinceActivity } = args;
+  const appUrl = process.env.MAIN_APP_URL ?? "https://ai-travelconcierge.com";
+  const helpUrl = `${appUrl.replace(/\/$/, "")}/help`;
+  const unsubscribeUrl = `${appUrl.replace(/\/$/, "")}/api/email/unsubscribe?email=${encodeURIComponent(tenant.support_email!)}&category=marketing`;
+
+  const tenantLegalName = tenant.legal_name ?? tenant.display_name ?? "Your business";
+  const businessAddress = formatAddress(tenant.mailing_address);
+
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const html = "<!doctype html>" + renderToStaticMarkup(
+    React.createElement(InactivityReminder, {
+      branding: {},
+      tenant_legal_name: tenantLegalName,
+      tenant_business_address: businessAddress,
+      recipient_name: tenantLegalName,
+      nudge_level: level,
+      days_inactive: Math.floor(daysSinceActivity),
+      app_url: appUrl,
+      help_url: helpUrl,
+      unsubscribe_url: unsubscribeUrl,
+    }),
+  );
+
+  await sendEmail({
+    db,
+    tenant: {
+      id: tenant.id,
+      legal_name: tenantLegalName,
+      mailing_address: businessAddress,
+      email_send_pattern: tenant.email_send_pattern ?? "platform_resend",
+      tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted,
+      email_from_address: tenant.email_from_address,
+      email_from_name: tenant.email_from_name,
+    },
+    to: tenant.support_email!,
+    subject: SUBJECT_BY_LEVEL[level],
+    template_id: `inactivity_reminder_${level}`,
+    category: "marketing",
+    html,
+  });
+}
+
+const SUBJECT_BY_LEVEL: Record<InactivityNudgeLevel, string> = {
+  "30d": "It's been a few weeks — anything we can help with?",
+  "60d": "Checking in on your AI Travel Concierge account",
+  "90d": "Still here whenever you're ready",
+};
+
+function formatAddress(addr: Record<string, unknown> | null): string {
+  if (!addr) return "";
+  const parts = [
+    addr.line1,
+    addr.line2,
+    addr.city,
+    addr.state,
+    addr.postal_code,
+    addr.country,
+  ].filter((p): p is string => typeof p === "string" && p.length > 0);
+  return parts.join(", ");
 }
