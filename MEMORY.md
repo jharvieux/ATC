@@ -4,6 +4,45 @@ Newest entries on top.
 
 ---
 
+## D-064 — 2026-05-23 — BP30 Phase B: skeletal fixtures + loader + db-setup scaffold + k6 + runbooks — key decisions
+
+**Decision:**
+
+1. **Fixtures are SKELETAL by deliberate choice** (operator-confirmed). Spec §30.4 asks for exhaustive fixtures (every booking status, every commission state, RAG chunks with `terminated_origin_tenant_id`, 10 invitations across RSVP states). Current PR ships only the 3 foundational seeds (`tier_definitions` × 6, `tenants` × 5, `legal_documents` × 8) — the rest are header-only stub files (`01_users.sql` through `09_forum_messages.sql`) that document target rows but contain no INSERTs. Rationale: no integration tests consume fixtures today; exhaustive content would be maintenance burden against 45 active migrations; grow as the first integration test demands a specific shape. Documented in `test-data/fixtures/EXPECTED_COUNTS.md`.
+
+2. **`users`-and-downstream tables defer to a per-test seeder** (not raw SQL). `public.users.auth_user_id` FKs to Supabase Auth's `auth.users` — inserting via raw SQL bypasses Supabase Auth triggers and produces inconsistent state. Header comments in `01_users.sql` / `02_contacts.sql` / `03_bookings.sql` etc. point the next engineer at `apps/main/src/test/db-setup.ts` and `supabase.auth.admin.createUser()` as the right surface.
+
+3. **`scripts/load-fixtures.ts` CLI** applies SQL files in lexicographic order against `SUPABASE_DB_URL`, then asserts row counts vs `EXPECTED_COUNTS.md`. Header-only stub files (no INSERT/UPDATE/DELETE/WITH/SELECT) are silently skipped. `(TODO ...)` entries in EXPECTED_COUNTS skip count assertion (informational). `--dry-run` validates file structure + EXPECTED_COUNTS parsing without a DB — runs offline in CI for the structural check.
+
+4. **`apps/main/src/test/db-setup.ts` is a SCAFFOLD; throws until testcontainers is installed.** Operator opt-in: when the first integration test lands, the operator (1) adds `testcontainers` to root devDependencies, (2) replaces the `_acquireContainer` throw with the real `GenericContainer("postgres:16-alpine").start()` chain, (3) ensures Docker is available on the CI runner. Until then `withTestDatabase()` throws with a structured guide-the-operator message; integration tests use `it.skipIf(!process.env.INTEGRATION_DB)` to opt in.
+
+5. **Test DB choice: testcontainers** (operator default; documented in module header). Alternative was a dedicated long-lived test Supabase project — rejected for cost and for the per-run cleanliness testcontainers gives.
+
+6. **6 k6 load scripts ship + README** (`apps/main/load-tests/`): `sustained-chat-load.js`, `burst-signups.js`, `group-invite-blast.js`, `rag-retrieval-load.js`, `stripe-webhook-flood.js`, `multi-tenant-fanout.js`. Each declares §30.7 thresholds (chat p95 < 5s, RAG p95 < 500ms, error rate < 0.1%) inline. **NOT wired into CI per §30.7.** README documents per-script env vars, smoke-validate command, sidecar JSON files required for Stripe + multi-tenant scenarios. `stripe-webhook-flood.js` requires a pre-generated payload+signature sidecar (`scripts/build-stripe-sigset.ts` is a TODO follow-on).
+
+7. **Load-test environment is operator-provisioned, not auto-provisioned.** `docs/runbooks/load-testing.md` includes the 5-step provisioning checklist (separate Supabase + Vercel + service-JWT keypair + tenant token set + Stripe sigset). Run cadence: monthly first 6 months post-launch, then 4-8 weeks (§30.13). Cost warning: sustained-chat run = ~$450/run in real Anthropic calls; budget accordingly. Scale-down variant documented.
+
+8. **`docs/runbooks/flaky-test-policy.md`** codifies the §30.10 7-day rule: any test `.skip`ped for > 7 days is itself a CI failure. Quarantine = `.skip` + `flaky-test`-tagged issue + a `// quarantined: YYYY-MM-DD` comment. The CI-side enforcement script (`scripts/check-skipped-tests-stale.ts`) is **not yet wired** — operator does a weekly sweep in the interim. Policy is in force as human discipline today.
+
+9. **`docs/testing-scope.md`** documents what is and isn't tested. Explicit non-coverage list per §30.11: pixel-perfect rendering, i18n, mobile native, email-client matrix, automated a11y, AI evaluation (deferred entirely per BP30 cost decision), SLA contract testing. Includes the Vitest config audit (Task 23): single shared root config, 30s timeout, coverage informational on `scripts/`, no unit/integration/security environment split (categorized by directory).
+
+10. **`tests/fixtures/load-fixtures-self-test.test.ts`** — 11 self-tests covering the loader's pure helpers: `parseExpectedCounts` (plain entries, TODO marker, trailing # comment, prose-between-fences, duplicate detection, empty-input rejection, bullet/blank-line tolerance), `enumerateFixtureFiles` (sort order, non-.sql exclusion), and a real-file integration that the committed `EXPECTED_COUNTS.md` parses + the 10 spec-named files are present.
+
+11. **`package.json` scripts:** `fixtures:load` and `fixtures:dry-run`. CI wiring (a new `fixture-load` job) is **deferred** — script runs offline today.
+
+12. **Vitest config audit (Task 23) is doc-only.** No code changes — current shape (`testTimeout: 30000`, single shared config, no environment split) is reasonable for the suite's actual shape (605 → 616 tests, ~1.5s wall-clock — well under the §30.5 15-min PR budget). Documented in `docs/testing-scope.md`.
+
+**What was rejected:**
+- Exhaustive realistic fixtures per spec — would require careful coordination with 45 active migrations and produce a maintenance treadmill no one consumes yet.
+- Installing testcontainers + Docker-in-CI in this PR — opt-in when the first integration test demands it (avoids unnecessary CI dependency until needed).
+- Writing the `scripts/build-stripe-sigset.ts` helper for k6 webhook flood — defer until first actual load run needs it.
+- Wiring `scripts/check-skipped-tests-stale.ts` into CI — defer until the script exists.
+- Adding `pnpm fixtures:load` to CI — no test consumes the fixtures yet; dry-run validation is sufficient.
+
+**Artifacts:** `test-data/fixtures/{00_tenants,07_legal_documents}.sql` (populated) + 8 header-only stubs + `EXPECTED_COUNTS.md`, `scripts/load-fixtures.ts`, `apps/main/src/test/db-setup.ts`, `apps/main/load-tests/{README,sustained-chat-load,burst-signups,group-invite-blast,rag-retrieval-load,stripe-webhook-flood,multi-tenant-fanout}.{md,js}`, `docs/runbooks/{load-testing,flaky-test-policy}.md`, `docs/testing-scope.md`, `tests/fixtures/load-fixtures-self-test.test.ts`, `package.json` (+2 scripts). 11 new tests (605 → 616). PR #?? open.
+
+---
+
 ## D-063 — 2026-05-23 — BP30 Phase A: static security probes + service-role lint guard — key decisions
 
 **Decision:**

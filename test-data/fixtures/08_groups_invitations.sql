@@ -1,0 +1,10 @@
+-- BP30 §30.4 fixture: groups + invitations (TODO — populated when integration tests demand).
+--
+-- Target when populated:
+--   - one active group with 10 invitations across the §18.5 RSVP states
+--     (pending, accepted, declined, expired, revoked, first-use-bound)
+--   - anonymity floor variations
+--
+-- Depends on users + contacts. Group invitations also use the HMAC-signed
+-- token shape — see lib/groups/invitation-tokens.ts for the test helper
+-- to mint test tokens against INVITATION_TOKEN_HMAC_KEY.

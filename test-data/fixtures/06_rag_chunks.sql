@@ -1,0 +1,12 @@
+-- BP30 §30.4 fixture: RAG chunks (TODO — populated when integration tests demand).
+--
+-- IMPORTANT: RAG chunks live in the RAG service's separate Supabase project
+-- (§6.1), NOT in the main app DB. The fixture loader applies this file
+-- only when --target=rag is passed (or when it detects the connection
+-- string points to the RAG project).
+--
+-- Target when populated:
+--   - global chunks across all §22 categories
+--   - tenant-scoped chunks for byohost_a and subhost_b
+--   - one chunk with terminated_origin_tenant_id set (BP17 chunk-license-survival)
+--   - chunks at various promotion / quality states
