@@ -3,6 +3,11 @@
 // Server-side render of every doc concatenated. The user invokes browser
 // print (Cmd-P / Ctrl-P) — no server PDF generation needed for this path.
 
+// Force dynamic — the docs loader reads from the filesystem at request
+// time; prerendering at build time would resolve relative paths to the
+// bundled output dir which doesn't contain the source markdown.
+export const dynamic = "force-dynamic";
+
 import { renderAllDocsConcatenated } from "@/lib/help-ai/markdown-render";
 
 export default async function HelpPrintPage(): Promise<JSX.Element> {

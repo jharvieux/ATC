@@ -1,5 +1,7 @@
 // BP31 §32.6.1 — Search across help docs (in-memory fuzzy).
 
+export const dynamic = "force-dynamic";
+
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { searchDocs } from "@/lib/help-ai/docs-loader";
 

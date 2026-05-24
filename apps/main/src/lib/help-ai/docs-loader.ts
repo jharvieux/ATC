@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 export interface HelpDoc {
   /** From front-matter; e.g., 'getting-started' */
@@ -26,7 +26,28 @@ export interface HelpDoc {
   file_name: string;
 }
 
-const DOCS_DIR = resolve(__dirname, "..", "..", "..", "content", "help");
+// Use process.cwd() so the path resolves correctly across:
+//   - Vitest (cwd = repo root, so we look at apps/main/content/help)
+//   - Next.js dev/build (cwd = apps/main, so we look at content/help)
+// Both lookups are tried in order; the first that exists wins.
+function resolveDocsDir(): string {
+  const candidates = [
+    join(process.cwd(), "content", "help"),
+    join(process.cwd(), "apps", "main", "content", "help"),
+  ];
+  for (const c of candidates) {
+    try {
+      readdirSync(c);
+      return c;
+    } catch {
+      // try next
+    }
+  }
+  // Fall back to the Next.js-build cwd shape so error messages point at
+  // the expected location.
+  return candidates[0]!;
+}
+const DOCS_DIR = resolveDocsDir();
 
 /** Bare-bones YAML front-matter parser — only handles the 4 string/number
  *  keys we declare. Avoids pulling in a full YAML dependency. */
