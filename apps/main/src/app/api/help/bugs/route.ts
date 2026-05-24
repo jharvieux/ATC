@@ -20,6 +20,15 @@ import {
   PIIZeroToleranceQuarantineError,
   type BugSubmissionInput,
 } from "@/lib/github/issues";
+import {
+  checkCustomerBugLimit,
+  recordCustomerBugSubmission,
+  getPoliteRefusalMessage,
+} from "@/lib/help-ai/customer-rate-limit";
+import {
+  checkHelpSubmissionRate,
+  incrementHelpSubmissionCounter,
+} from "@/lib/abuse/help-submission-rate";
 
 interface SubmitBugBody {
   help_session_id?: string;
@@ -45,6 +54,27 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const db = tenantClient(ctx);
+
+    // ── BP32 §32.11.4 — per-customer rate limit (customer source_type only)
+    if (body.source_type === "customer") {
+      const limit = await checkCustomerBugLimit(db, user.id, ctx.tenant_id);
+      if (!limit.allowed) {
+        return Response.json(
+          { error: "rate_limited", message: getPoliteRefusalMessage(), count_today: limit.count_today, limit: limit.limit },
+          { status: 429 },
+        );
+      }
+    }
+
+    // ── BP32 §32.11.2 — tenant-wide help_submission_rate gate. Returns
+    //    soft2 throttle / hard block messages when exceeded.
+    const rateCheck = await checkHelpSubmissionRate(db, ctx.tenant_id);
+    if (!rateCheck.allowed) {
+      return Response.json(
+        { error: "rate_limited", message: rateCheck.message, state: rateCheck.state, count_today: rateCheck.count_today },
+        { status: 429 },
+      );
+    }
 
     // Tenant slug for the issue body (we hash tenant_id in the visible portion;
     // slug is platform-internal identifier still safe to show).
@@ -124,6 +154,11 @@ export async function POST(req: Request): Promise<Response> {
         name: "help.bug_submitted",
         data: { tenant_id: ctx.tenant_id, submission_id, issue_number: result.issue_number },
       });
+      // BP32 §32.11 — increment counters on SUCCESSFUL submission (not on quarantine).
+      await incrementHelpSubmissionCounter(db, ctx.tenant_id);
+      if (body.source_type === "customer") {
+        await recordCustomerBugSubmission(db, user.id, ctx.tenant_id);
+      }
       return Response.json({ id: submission_id, github_issue_state: "open", issue_url: result.issue_url }, { status: 201 });
     } catch (err) {
       if (err instanceof PIIZeroToleranceQuarantineError) {
@@ -169,6 +204,14 @@ export async function POST(req: Request): Promise<Response> {
             attempt: 0,
           },
         });
+        // BP32 §32.11 — "increment on successful submission, not on attempt"
+        // means: row was accepted (we own a bug_submissions id). GitHub
+        // transient failure with retry queued still counts. Only the
+        // PII quarantine path (above) skips the counter.
+        await incrementHelpSubmissionCounter(db, ctx.tenant_id);
+        if (body.source_type === "customer") {
+          await recordCustomerBugSubmission(db, user.id, ctx.tenant_id);
+        }
         return Response.json(
           { id: submission_id, github_issue_state: "pending", message: "Your report was received; we'll file it on GitHub shortly." },
           { status: 202 },

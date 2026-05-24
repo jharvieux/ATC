@@ -18,7 +18,7 @@ import {
   type TenantRevenueSnapshot,
 } from "./revenue";
 
-export type AbuseDimension = "ai_cost" | "chat_volume" | "email_volume" | "group_invite" | "rag_cap";
+export type AbuseDimension = "ai_cost" | "chat_volume" | "email_volume" | "group_invite" | "rag_cap" | "help_submission_rate";
 
 export interface ResolvedThresholds {
   ai_cost_cents:               { soft1: bigint; soft2: bigint; hard: bigint };
@@ -26,8 +26,21 @@ export interface ResolvedThresholds {
   email_volume_daily:          { soft1: number; soft2: number; hard: number };
   group_invite_monthly:        { soft1: number; soft2: number; hard: number; per_group_max: number };
   rag_cap_total:               { base: number; effective: number; approaching: number };
+  /**
+   * BP32 §32.11.2 — help/bug/feature submissions per tenant per DAY.
+   * Tier-independent flat values; overrides supported via the standard
+   * tenant_usage_overrides mechanism (tier_override = soft1/soft2/hard).
+   * **Per-day semantics** — unlike the other 5 dimensions which are
+   * per-billing-period, help_submission_rate resets daily at 00:05 UTC
+   * via the `help-submission-daily-reset` cron. MEMORY D-068.
+   */
+  help_submission_rate_daily:  { soft1: number; soft2: number; hard: number };
   effective_monthly_revenue_cents: bigint;
 }
+
+// BP32 §32.11.2 — initial flat values, tier-independent. Recalibrate
+// after first 90 days of usage.
+const HELP_SUBMISSION_DEFAULT = { soft1: 20, soft2: 50, hard: 100 } as const;
 
 // §27.4.3 base monthly chat messages per tier (reference values).
 // TODO(tier_definitions): move into tier_definitions table once it's
@@ -126,6 +139,11 @@ function applyOverrides(
           base.rag_cap_total.approaching = Math.floor(base.rag_cap_total.effective * 0.85);
         }
         break;
+      case "help_submission_rate":
+        if (row.tier_override === "soft1") base.help_submission_rate_daily.soft1 = Number(v);
+        else if (row.tier_override === "soft2") base.help_submission_rate_daily.soft2 = Number(v);
+        else if (row.tier_override === "hard") base.help_submission_rate_daily.hard = Number(v);
+        break;
     }
   }
   return base;
@@ -201,6 +219,9 @@ export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedTh
     email_volume_daily,
     group_invite_monthly,
     rag_cap_total,
+    // BP32 — help_submission_rate is tier-independent (flat values); overrides
+    // still flow through applyOverrides if an admin set one.
+    help_submission_rate_daily: { ...HELP_SUBMISSION_DEFAULT },
     effective_monthly_revenue_cents: monthlyRevenueCents,
   };
 
