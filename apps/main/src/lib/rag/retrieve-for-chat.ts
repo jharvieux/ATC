@@ -13,7 +13,7 @@
 import { extractEntities, type EntitySet } from "./entity-extraction";
 import { filterChunks } from "./filter-chunks";
 import { formatKnowledgeBlock, type FormattedBlock } from "./format-block";
-import type { RetrievedChunk, RetrievedAsset } from "./chunk-types";
+import { RetrieveResponseSchema, type RetrievedChunk, type RetrievedAsset } from "@atc/contracts";
 
 export interface RetrieveForChatInput {
   message: string;
@@ -148,18 +148,17 @@ async function callRagRetrieve(
       console.warn(`[retrieve-for-chat] RAG service ${res.status}`);
       return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
     }
-    const json = (await res.json()) as {
-      chunks?: RetrievedChunk[];
-      assets?: RetrievedAsset[];
-      retrieval_id?: string | null;
-      retrieval_latency_ms?: number | null;
-    };
-    return {
-      chunks: json.chunks ?? [],
-      assets: json.assets ?? [],
-      retrieval_id: json.retrieval_id ?? null,
-      retrieval_latency_ms: json.retrieval_latency_ms ?? null,
-    };
+    // BP38 — validate the response shape at the boundary. A schema mismatch
+    // means rag added/changed a field the contract hasn't caught up to;
+    // surface it as a warning and fall back to empty rather than letting a
+    // bad shape propagate downstream.
+    const raw = await res.json();
+    const parsed = RetrieveResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn("[retrieve-for-chat] RAG response failed contract validation:", parsed.error.message);
+      return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
+    }
+    return parsed.data;
   } catch (err) {
     console.warn("[retrieve-for-chat] RAG service unreachable:", String(err));
     return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
