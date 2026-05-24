@@ -10,6 +10,7 @@
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import type { TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
 import { inngest } from "./client";
+import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 
 // D-041 follow-up — events whose receiver lives at /api/platform-settings-events
 // rather than /api/tenant-events. Branch by event-type prefix at delivery time.
@@ -105,12 +106,20 @@ export const ragSyncRetry = inngest.createFunction(
         }).eq("id", row.id);
 
         if (newCount >= 10) {
-          // TODO(platform-alert): replace with real alert when alerting infra lands
-          console.error("[rag-sync-retry] row exceeded 10 attempts — manual intervention needed", {
-            id: row.id,
-            tenant_id: row.tenant_id,
-            event_type: row.event_type,
-            last_error: lastError,
+          await sendOperatorAlert({
+            severity: "high",
+            signal: "rag_sync_exhausted_retries",
+            detail:
+              `pending_rag_sync row ${row.id} exceeded 10 retry attempts. ` +
+              `Manual intervention needed — investigate why the rag service ` +
+              `rejected this event.`,
+            payload: {
+              pending_rag_sync_id: row.id,
+              tenant_id: row.tenant_id,
+              event_type: row.event_type,
+              last_error: lastError,
+              attempt_count: newCount,
+            },
           });
         }
 

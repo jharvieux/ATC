@@ -17,6 +17,7 @@ import { inngest } from "./client";
 import { env } from "@/lib/env";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credential-cipher";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 
 export const reEncryptOldRecords = inngest.createFunction(
   {
@@ -87,13 +88,53 @@ export const reEncryptOldRecords = inngest.createFunction(
       `re-encrypt-old-records: re-encrypted=${reencryptedCount}, failed=${failedCount}, remaining_at_old_key=${remaining}`,
     );
 
-    // §13.5.3: alert if non-zero for more than 7 days.
-    // TODO(alert-infra §26): wire this metric to an alerting system.
+    // §13.5.3: alert if non-zero for more than 7 days. The cron runs daily,
+    // so one alert per day per non-zero state is the natural cadence — operator
+    // sees a consistent presence in the channel for as long as the backlog
+    // persists. Severity escalates if the backlog passes the 7-day mark.
+    // First-seen timestamp persists in platform_settings (no new table needed).
     if (remaining > 0) {
-      console.warn(
-        `[metric] credentials_at_previous_key_count=${remaining} ` +
-          `— if non-zero for >7 days after rotation, investigate immediately.`,
-      );
+      const { data: markerRow } = await db
+        .from("platform_settings")
+        .select("value")
+        .eq("key", "re_encrypt_backlog_first_seen_at")
+        .maybeSingle();
+      const firstSeen = (markerRow as { value?: string | null } | null)?.value ?? null;
+      const now = new Date();
+      let daysSinceFirstSeen = 0;
+      if (!firstSeen) {
+        await db
+          .from("platform_settings")
+          .upsert({
+            key: "re_encrypt_backlog_first_seen_at",
+            value: now.toISOString(),
+            description: "§13.5.3 — set by re-encrypt-old-records cron when remaining > 0; cleared when remaining returns to 0.",
+          });
+      } else {
+        daysSinceFirstSeen = (now.getTime() - new Date(firstSeen).getTime()) / (1000 * 60 * 60 * 24);
+      }
+      await sendOperatorAlert({
+        severity: daysSinceFirstSeen > 7 ? "critical" : "low",
+        signal: "credentials_at_previous_key",
+        detail:
+          `${remaining} encrypted record(s) still at the previous key after rotation.` +
+          (daysSinceFirstSeen > 7
+            ? ` Backlog has persisted for ${daysSinceFirstSeen.toFixed(1)} days — past the §13.5.3 7-day threshold. Investigate immediately.`
+            : ` Cron will re-encrypt incrementally; alert escalates if non-zero past day 7.`),
+        payload: {
+          remaining_count: remaining,
+          reencrypted_this_run: reencryptedCount,
+          failed_this_run: failedCount,
+          days_since_first_seen: Math.round(daysSinceFirstSeen * 10) / 10,
+        },
+      });
+    } else {
+      // Backlog cleared — delete the marker so the next non-zero day starts
+      // a fresh count.
+      await db
+        .from("platform_settings")
+        .delete()
+        .eq("key", "re_encrypt_backlog_first_seen_at");
     }
 
     return { credentials_at_previous_key_count: remaining, reencryptedCount, failedCount };
