@@ -86,6 +86,8 @@ function runInsidePlatformAdminAudit<T>(
   return auditStorage.run(ctx, fn);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function writeAuditRow(row: {
   tenant_id: string | null;
   actor_user_id: string;
@@ -96,6 +98,19 @@ async function writeAuditRow(row: {
   changes: Record<string, unknown>;
   context: Record<string, unknown>;
 }): Promise<void> {
+  // System callers (cron jobs, queue workers) pass sentinel strings like
+  // "system-cron" rather than a real user UUID. The actor_user_id column
+  // is UUID-typed and rejects strings — coerce to NULL and flip actor_type
+  // to "system" so the audit row still lands. The sentinel is preserved
+  // in the context blob for diagnostics. BP30 live-dispatch surfaced that
+  // every cron audit_log write was silently failing before this fix.
+  const isUuid = UUID_RE.test(row.actor_user_id);
+  const actor_user_id = isUuid ? row.actor_user_id : null;
+  const actor_type = isUuid ? row.actor_type : "system";
+  const context = isUuid
+    ? row.context
+    : { ...row.context, system_actor_label: row.actor_user_id };
+
   // Dedicated service-role client so this commits even if the wrapped
   // function rolled back its own transaction. If the audit insert itself
   // fails, log to console and continue — we never throw from finally to
@@ -104,13 +119,13 @@ async function writeAuditRow(row: {
     const auditDb = createServiceRoleClient();
     const { error } = await auditDb.from("audit_log").insert({
       tenant_id: row.tenant_id,
-      actor_user_id: row.actor_user_id,
-      actor_type: row.actor_type,
+      actor_user_id,
+      actor_type,
       action: row.action,
       resource_type: row.resource_type,
       resource_id: row.resource_id,
       changes: row.changes,
-      context: row.context,
+      context,
     });
     if (error) {
       console.warn("[audit-log:write-failed] " + JSON.stringify({ error: error.message, action: row.action }));

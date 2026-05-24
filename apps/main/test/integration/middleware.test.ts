@@ -23,7 +23,13 @@ import {
 } from "../../src/lib/tenancy/resolve-tenant";
 
 const DB_URL = process.env.SUPABASE_DB_URL;
-const haveDB = Boolean(DB_URL);
+// The integration suite also calls createServiceRoleClient via the
+// tenant-resolver path, which requires NEXT_PUBLIC_SUPABASE_URL +
+// SUPABASE_SERVICE_ROLE_KEY too — gate on all three so a partial
+// Tier-2 setup doesn't silently start failing.
+const haveDB = Boolean(
+  DB_URL && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
+);
 const describeIf = haveDB ? describe : describe.skip;
 
 // Unique run tag — keeps fixtures isolated per test run.
