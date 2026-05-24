@@ -270,6 +270,14 @@ const envSchema = z.object({
   // CruiseMapper itinerary path specifically.
   CRUISEMAPPER_ITINERARY_INGEST_ENABLED: z.coerce.boolean().optional().default(false),
   CRUISEMAPPER_ITINERARY_ACTOR_ID:       z.string().optional().default("crawlerbros/cruisemapper-cruises-scraper"),
+  // BP36 §33.5 — CruiseMapper DIY (text-only) scraper. Default-OFF cost-deferral.
+  // The User-Agent header MUST identify the platform with a real ops contact
+  // email so CruiseMapper can reach us before blocking. Optional at boot — the
+  // scraper job logs and no-ops if it isn't set.
+  CRUISEMAPPER_DIY_USER_AGENT:           z.string().optional(),
+  CRUISEMAPPER_DIY_INGEST_ENABLED:       z.coerce.boolean().optional().default(false),
+  CRUISEMAPPER_DIY_RATE_LIMIT_RPS:       z.coerce.number().positive().optional().default(1.0),
+  CRUISEMAPPER_DIY_BASE_URL:             z.string().url().optional().default("https://www.cruisemapper.com"),
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
   ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),

@@ -84,6 +84,8 @@ import { helpDocVersionsPurge } from "@/inngest/help-doc-versions-purge";
 import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset";
 // BP35 §33.4 — CruiseMapper itinerary monthly refresh
 import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-itineraries";
+// BP36 §33.5 — CruiseMapper DIY static quarterly refresh
+import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -175,5 +177,7 @@ export const { GET, POST, PUT } = serve({
     helpSubmissionDailyReset,
     // BP35: CruiseMapper itinerary monthly refresh (§33.4)
     refreshCruisemapperItineraries,
+    // BP36: CruiseMapper DIY static quarterly refresh (§33.5)
+    refreshCruisemapperStatic,
   ],
 });

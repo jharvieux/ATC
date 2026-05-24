@@ -22,3 +22,4 @@ reconciliation_review_queue # platform-admin reconciliation queue. No authentica
 email_log # cross-tenant rate-limit log; reads and writes are service_role only (Inngest cron reminder cadence). No authenticated-user access paths. tenant_id is nullable (NULL for platform-level sends). Per §18.8.
 apify_spend_ledger # BP34 §33.9.3 — platform-scoped Apify spend ledger; no tenant_id; service-role-only writes by the ApifyPricingAdapter
 pricing_cache # BP33 §33.3 — platform-scoped pricing reference; no tenant_id; service-role-only reads/writes by the adapter
+cruisemapper_url_inventory # BP36 §33.5 — platform-scoped URL inventory for the DIY CruiseMapper scraper; no tenant_id; service-role-only writes by the Inngest scraper job

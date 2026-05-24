@@ -1,0 +1,144 @@
+// BP36 §33.5 — POST /api/ingest/reference
+//
+// Trusted batch reference ingest for scraped CruiseMapper static content
+// (ships, ports, future categories). Bypasses the human-review queue;
+// idempotent on `source_identifier` (deterministic key set by the
+// scraper, e.g. 'cruisemapper:ship:<slug>').
+//
+// Behaviour:
+//   - PII screen (same zero-tolerance gate as /api/ingest); on hit, 422.
+//   - Look up existing chunk by source_url. If existing.content_hash
+//     equals incoming SHA-256(text), return {status:'unchanged'} (no
+//     embedding cost, no DB write).
+//   - Otherwise embed + upsert the chunk.
+//
+// Authority defaults to 0.88 ('official' tier per §6.3) — CruiseMapper
+// static reference is authoritative factual specification data. Caller
+// can override via `authority` in the request.
+
+export const dynamic = "force-dynamic";
+
+import { createHash } from "node:crypto";
+import { withServiceAuth } from "@/lib/auth/with-service-auth";
+import { getRagDb } from "@/lib/db/supabase";
+import { embed } from "@/lib/embeddings/openai";
+import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
+import { ReferenceIngestRequestSchema } from "@/lib/schemas/reference-ingest";
+
+interface IngestOutcome {
+  status: "ingested" | "updated" | "unchanged" | "quarantined";
+  chunk_id?: string | null;
+  reason?: string;
+}
+
+export const POST = withServiceAuth(async (req, ctx) => {
+  if (ctx.scope !== "write") {
+    return Response.json({ error: "insufficient_scope" }, { status: 403 });
+  }
+  if (ctx.service_identifier !== "platform-admin") {
+    return Response.json({ error: "reference_ingest_requires_platform_admin" }, { status: 403 });
+  }
+
+  let body: ReturnType<typeof ReferenceIngestRequestSchema.parse>;
+  try {
+    const raw = await req.json();
+    body = ReferenceIngestRequestSchema.parse(raw);
+  } catch {
+    return Response.json({ error: "invalid_request" }, { status: 400 });
+  }
+
+  const pii = detectZeroTolerancePII(body.text);
+  if (pii.detected) {
+    const out: IngestOutcome = { status: "quarantined", reason: `zero_tolerance_pii_detected: ${pii.categories.join(", ")}` };
+    return Response.json(out, { status: 422 });
+  }
+
+  const contentHash = createHash("sha256").update(body.text).digest("hex");
+  const db = getRagDb();
+
+  // Idempotency lookup by source_url (the scraper guarantees source_url
+  // uniqueness per source_identifier).
+  let existing: { id: string; content_hash: string } | null = null;
+  if (body.source_url) {
+    const { data } = await db
+      .from("knowledge_chunks")
+      .select("id, content_hash")
+      .eq("source_url", body.source_url)
+      .eq("scope", "global")
+      .maybeSingle();
+    existing = (data as { id: string; content_hash: string } | null) ?? null;
+  }
+
+  if (existing && existing.content_hash === contentHash) {
+    const out: IngestOutcome = { status: "unchanged", chunk_id: existing.id };
+    return Response.json(out);
+  }
+
+  let embedding: number[];
+  try {
+    embedding = await embed(body.text);
+  } catch (err) {
+    console.error("[ingest/reference] embedding failed:", err);
+    return Response.json({ error: "embedding_failed" }, { status: 500 });
+  }
+
+  const nowIso = new Date().toISOString();
+  const authority = body.authority ?? 0.88;
+  const sourceUrl = body.source_url ?? null;
+  const sourceDomain = body.source_domain ?? null;
+
+  if (existing) {
+    const { data: updated, error: updErr } = await db
+      .from("knowledge_chunks")
+      .update({
+        content: body.text,
+        content_hash: contentHash,
+        embedding: `[${embedding.join(",")}]`,
+        category: body.category,
+        cruise_line_or_supplier: body.cruise_line ?? null,
+        ship_or_property: body.ship ?? null,
+        destination: body.destination ?? null,
+        ingested_at: nowIso,
+        status: "approved",
+      })
+      .eq("id", existing.id)
+      .select("id")
+      .single();
+    if (updErr || !updated) {
+      console.error("[ingest/reference] chunk update failed:", updErr);
+      return Response.json({ error: "chunk_update_failed" }, { status: 500 });
+    }
+    const out: IngestOutcome = { status: "updated", chunk_id: updated.id as string };
+    return Response.json(out);
+  }
+
+  const { data: inserted, error: insErr } = await db
+    .from("knowledge_chunks")
+    .insert({
+      content: body.text,
+      content_hash: contentHash,
+      embedding: `[${embedding.join(",")}]`,
+      scope: "global",
+      tenant_id: null,
+      category: body.category,
+      cruise_line_or_supplier: body.cruise_line ?? null,
+      ship_or_property: body.ship ?? null,
+      destination: body.destination ?? null,
+      source_type: "scraped_reference",
+      source_url: sourceUrl,
+      source_domain: sourceDomain,
+      authority_auto: authority,
+      contains_pricing: false,
+      status: "approved",
+      ingested_at: nowIso,
+      approved_at: nowIso,
+    })
+    .select("id")
+    .single();
+  if (insErr || !inserted) {
+    console.error("[ingest/reference] chunk insert failed:", insErr);
+    return Response.json({ error: "chunk_insert_failed" }, { status: 500 });
+  }
+  const out: IngestOutcome = { status: "ingested", chunk_id: inserted.id as string };
+  return Response.json(out);
+});
