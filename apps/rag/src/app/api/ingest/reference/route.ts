@@ -56,6 +56,32 @@ export const POST = withServiceAuth(async (req, ctx) => {
   const contentHash = createHash("sha256").update(body.text).digest("hex");
   const db = getRagDb();
 
+  // BP37 §33.6.2 — validate related_asset_ids: each must exist AND its
+  // scope must match the chunk's scope (this endpoint creates `global`
+  // chunks, so any tenant-scope asset reference is rejected).
+  if (body.related_asset_ids.length > 0) {
+    const { data: assets } = await db
+      .from("rag_media_assets")
+      .select("asset_id, scope")
+      .in("asset_id", body.related_asset_ids);
+    const assetRows = (assets ?? []) as Array<{ asset_id: string; scope: "global" | "tenant" }>;
+    const found = new Set(assetRows.map((a) => a.asset_id));
+    const missing = body.related_asset_ids.filter((id) => !found.has(id));
+    if (missing.length > 0) {
+      return Response.json(
+        { error: "related_asset_ids_not_found", missing },
+        { status: 400 },
+      );
+    }
+    const tenantScopeIds = assetRows.filter((a) => a.scope !== "global").map((a) => a.asset_id);
+    if (tenantScopeIds.length > 0) {
+      return Response.json(
+        { error: "asset_scope_mismatch", detail: "global chunk cannot reference tenant-scope assets", tenant_scope_ids: tenantScopeIds },
+        { status: 400 },
+      );
+    }
+  }
+
   // Idempotency lookup by source_url (the scraper guarantees source_url
   // uniqueness per source_identifier).
   let existing: { id: string; content_hash: string } | null = null;
@@ -100,6 +126,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
         destination: body.destination ?? null,
         ingested_at: nowIso,
         status: "approved",
+        related_asset_ids: body.related_asset_ids,
       })
       .eq("id", existing.id)
       .select("id")
@@ -132,6 +159,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
       status: "approved",
       ingested_at: nowIso,
       approved_at: nowIso,
+      related_asset_ids: body.related_asset_ids,
     })
     .select("id")
     .single();

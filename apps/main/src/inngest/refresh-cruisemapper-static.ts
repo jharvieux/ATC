@@ -17,12 +17,14 @@
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
-import { discoverShipUrls, discoverPortUrls } from "@/lib/external/cruisemapper/discovery";
+import { discoverShipUrls, discoverPortUrls, discoverDeckPlanUrls } from "@/lib/external/cruisemapper/discovery";
 import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
 import { parseShipPage } from "@/lib/external/cruisemapper/parsers/ship-parser";
 import { parsePortPage } from "@/lib/external/cruisemapper/parsers/port-parser";
+import { parseDeckPlanPage } from "@/lib/external/cruisemapper/parsers/deck-parser";
 import { screenForPromptInjection } from "@/lib/external/cruisemapper/prompt-injection-screen";
 import { ingestReferenceToRag } from "@/lib/external/cruisemapper/rag-reference-ingest";
+import { recordDeckPlanImage } from "@/lib/external/cruisemapper/image-asset-recorder";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
@@ -68,13 +70,18 @@ export const refreshCruisemapperStatic = inngest.createFunction(
         const shipUrls = await discoverShipUrls(db);
         const portUrls = await discoverPortUrls(db);
 
+        // BP37: deck plan discovery must happen AFTER ships are in the
+        // inventory so deck links can be enumerated per ship.
         const ship = await processKind(db, shipUrls, "ship");
         const port = await processKind(db, portUrls, "port");
+        const deckUrls = await discoverDeckPlanUrls(db);
+        const deck = await processKind(db, deckUrls, "deck_plan");
 
         return {
-          discovered: { ship: shipUrls.length, port: portUrls.length },
+          discovered: { ship: shipUrls.length, port: portUrls.length, deck_plan: deckUrls.length },
           ship,
           port,
+          deck,
         };
       },
     );
@@ -84,7 +91,7 @@ export const refreshCruisemapperStatic = inngest.createFunction(
 async function processKind(
   db: SupabaseClient,
   urls: string[],
-  kind: "ship" | "port",
+  kind: "ship" | "port" | "deck_plan",
 ): Promise<KindRunResult> {
   const result: KindRunResult = {
     attempted: 0, fetched: 0, unchanged_fetch: 0, parse_failed: 0,
@@ -155,7 +162,9 @@ async function processKind(
 
     const parsed = kind === "ship"
       ? parseShipPage(fetched.body, url)
-      : parsePortPage(fetched.body, url);
+      : kind === "port"
+        ? parsePortPage(fetched.body, url)
+        : parseDeckPlanPage(fetched.body, url);
 
     if (!parsed) {
       result.parse_failed += 1;
@@ -190,7 +199,7 @@ async function processKind(
         ship: ship.shipName,
         ...(ship.cruiseLine ? { cruise_line: ship.cruiseLine } : {}),
       };
-    } else {
+    } else if (kind === "port") {
       const port = parsed as NonNullable<ReturnType<typeof parsePortPage>>;
       payload = {
         source_identifier: `cruisemapper:port:${port.portSlug}`,
@@ -199,6 +208,33 @@ async function processKind(
         source_url: url,
         source_domain: "cruisemapper.com",
         destination: port.portName,
+      };
+    } else {
+      // BP37 deck plans: record each image as a hot-linked asset,
+      // collect the asset IDs, then ingest the chunk with related_asset_ids.
+      const deck = parsed as NonNullable<ReturnType<typeof parseDeckPlanPage>>;
+      const assetIds: string[] = [];
+      for (const img of deck.images) {
+        const rec = await recordDeckPlanImage({
+          imageUrl: img.imageUrl,
+          sourcePageUrl: url,
+          shipSlug: deck.shipSlug,
+          deckNumber: deck.deckNumber,
+          caption: img.caption,
+          width: img.width,
+          height: img.height,
+        });
+        if (rec.status === "recorded" && rec.asset_id) assetIds.push(rec.asset_id);
+      }
+      const deckSlug = `${deck.shipSlug}-deck-${String(deck.deckNumber ?? "?").padStart(2, "0")}`;
+      payload = {
+        source_identifier: `cruisemapper:deck:${deckSlug}`,
+        category: "deck_intel" as const,
+        text: deck.text,
+        source_url: url,
+        source_domain: "cruisemapper.com",
+        ship: deck.shipName,
+        related_asset_ids: assetIds,
       };
     }
 

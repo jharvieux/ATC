@@ -19,6 +19,10 @@ export const ReferenceIngestRequestSchema = z.object({
   cruise_line: z.string().optional(),
   ship: z.string().optional(),
   destination: z.string().optional(),
+  // BP37 §33.6.2 — UUIDs of rag_media_assets rows the new chunk references.
+  // Validated for existence + scope compatibility (global chunk → global assets only,
+  // tenant chunk → tenant assets of the same tenant).
+  related_asset_ids: z.array(z.string().uuid()).optional().default([]),
 });
 
 export type ReferenceIngestRequest = z.infer<typeof ReferenceIngestRequestSchema>;

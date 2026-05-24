@@ -64,6 +64,47 @@ export async function discoverPortUrls(db: SupabaseClient): Promise<string[]> {
   return await loadInventoryByKind(db, "port");
 }
 
+/**
+ * BP37 §33.5 — discover deck plan URLs by visiting every ship page in
+ * the inventory and extracting links whose paths look like deck plans
+ * (e.g., `/ships/<slug>/deck-09`). Subject to the rate limiter and
+ * robots.txt check via fetchCruiseMapperPage.
+ *
+ * Returns the full deck-plan inventory after upsert.
+ */
+export async function discoverDeckPlanUrls(db: SupabaseClient): Promise<string[]> {
+  const shipUrls = await loadInventoryByKind(db, "ship");
+  for (const shipUrl of shipUrls) {
+    const res = await fetchCruiseMapperPage(shipUrl);
+    if (res.status !== "ok") continue;
+    const fresh = extractDeckPlanLinks(res.body, shipUrl);
+    if (fresh.length > 0) {
+      await upsertInventory(db, fresh, "deck_plan");
+    }
+  }
+  return await loadInventoryByKind(db, "deck_plan");
+}
+
+function extractDeckPlanLinks(html: string, shipUrl: string): string[] {
+  const $ = cheerio.load(html);
+  const out = new Set<string>();
+  const base = baseUrl();
+  $("a[href]").each((_, el) => {
+    const href = $(el).attr("href");
+    if (!href) return;
+    let abs: string;
+    try { abs = new URL(href, shipUrl).toString(); } catch { return; }
+    const u = new URL(abs);
+    if (u.host !== new URL(base).host) return;
+    // Match /<...>/deck-NN segments only.
+    if (!/\/deck-\d+(?:[\/.]|$)/i.test(u.pathname)) return;
+    u.hash = "";
+    u.search = "";
+    out.add(u.toString());
+  });
+  return [...out];
+}
+
 async function upsertInventory(db: SupabaseClient, urls: string[], kind: "ship" | "port" | "deck_plan"): Promise<void> {
   if (urls.length === 0) return;
   const nowIso = new Date().toISOString();
