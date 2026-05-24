@@ -4,6 +4,67 @@ Newest entries on top.
 
 ---
 
+## D-068 — 2026-05-23 — BP32: customer bug flow + help_submission_rate (per-DAY) + issue-closure webhook + per-customer rate limit — key decisions
+
+**Decision:**
+
+1. **Single-PR BP32 per the BP31 cost pattern.** All 12 deliverables in one PR (~21 new tests, 743 total). Real runtime cost is one Anthropic call per Help AI chat turn (BP31 Phase C) — no new AI surfaces in BP32. The screenshot vision-PII detector is **stubbed** (warn-only is a no-op without the Haiku vision call); operator wires the real call later.
+
+2. **`help_submission_rate` is per-DAY, not per-billing-period.** This is the single dimension divergence from the BP27 five-dimension framework. The state machine for this dimension lives in its own file (`lib/abuse/help-submission-rate.ts`) — NOT the BP27 `state-machine.ts`. The shared `MONTHLY_DIM_META` table now uses `Record<Exclude<AbuseDimension, "rag_cap" | "help_submission_rate">, DimMeta>`; the shared `checkStateTransitionIfNeeded` throws if invoked with `dimension='help_submission_rate'` (the dedicated module is the only correct entry point).
+
+3. **Daily reset cron at 00:05 UTC** (`help-submission-daily-reset.ts`). The 5-minute offset gives the previous day's last submissions time to finalize their `tenant_usage_metrics` writes before the wipe. Runs via `withPlatformAdminAudit` (cross-tenant operation) with reason `abuse_threshold_breach_review`. Without this cron, tenants that hit `hard` would stay blocked forever — the state machine is monotonic-within-the-day.
+
+4. **Migration `20260610000000_help_abuse_monitoring.sql`:**
+   - Extends `tenant_usage_metrics` with 3 columns (`help_submission_count`, `help_submission_limit_state`, `help_submission_state_changed_at`).
+   - Extends 3 existing `dimension` CHECK constraints (`tenant_usage_overrides`, `abuse_recompute_drift_log`, `tenant_override_requests`) to allow `'help_submission_rate'`.
+   - Creates `customer_bug_submission_counters` table (UNIQUE on `(user_id, tenant_id, day_anchor)`) with standard 4-policy RLS.
+
+5. **Initial threshold values per §32.11.2 are tier-independent flat:** soft1=20, soft2=50, hard=100. Override support via the standard `tenant_usage_overrides` flow still applies (`tier_override = 'soft1'/'soft2'/'hard'`). Operator recalibrates after 90 days of usage data.
+
+6. **Three enforcement actions per state transition:**
+   - **soft1:** `sendOperatorAlert(severity: 'low')`. No tenant notification, no throttle.
+   - **soft2:** `sendOperatorAlert(severity: 'medium')`. **Throttle:** caller's next attempt within 10 min returns the §32.11.2 friendly refusal. The throttle uses `last_recomputed_at` as the marker for "last submission" — a slight overload of that column but sidesteps a separate `last_submission_at` column.
+   - **hard:** `sendOperatorAlert(severity: 'high')`. **Block:** all further help/bug/feature submissions for the tenant return the §32.11.2 "paused until tomorrow" banner.
+
+7. **Per-customer rate limit (§32.11.4):** `CUSTOMER_BUG_PER_DAY_LIMIT` default 5. `checkCustomerBugLimit` is a pre-submit gate (read-only); `recordCustomerBugSubmission` is the post-success bump. **Two-step shape so quarantined submissions DON'T count** — the caller skips `recordCustomerBugSubmission` on PII zero-tolerance per the §32.13 UX spirit. Reads `CUSTOMER_BUG_PER_DAY_LIMIT` from `process.env` directly (not via the Zod `env()` helper) so tests can run without the full boot validation.
+
+8. **Bug-intent recognizer is deterministic + DB-tunable.** Phrase-match pre-check on every customer message; built-in list at `SEED_PHRASES`, extensible via `platform_settings.bug_intent_phrases` JSONB. Gated by `PHASE_2_CUSTOMER_BUG_FLOW_ENABLED` env + `tenant_settings.customer_bug_flow_enabled` (default TRUE when platform flag is TRUE — tenants opt their customers out). Wiring the recognizer into the customer chat handler is a follow-on PR — the lib is ready, the chat handler call site isn't yet patched.
+
+9. **Customer flow handoff = wording overlay on the existing flow controller.** Phase B's bug-flow state machine is reused identically; the new `BUG_FLOW_QUESTIONS_CUSTOMER` map provides the §32.10.3 friendly question phrasings. `bugQuestionForState(state, source_surface)` is the single dispatcher.
+
+10. **Rate-limit + abuse-dimension wired into BOTH `/api/help/bugs` and `/api/help/features` POSTs.** A tenant pinned at `hard` can't bypass via the feature endpoint. Per-customer limit applies only to `source_type='customer'`. Increments happen on row-accepted (even when GitHub creation fails and gets queued for retry); only the PII quarantine path skips counter bumps.
+
+11. **GitHub closure webhook** at `POST /api/webhooks/github` — HMAC-SHA256 signature verification with timing-safe compare; failure-closed on missing/malformed signature OR missing `GITHUB_WEBHOOK_SECRET`. Wrapped in `withPlatformAdminAudit` (reason `bug_submission_review`) for the cross-tenant lookup so a spoofed-with-real-id event is forensically detectable. **No customer notification on closure** per §32.10.7 — the §32.6.3 status route reflects the closed state for tenant admins + platform staff; the customer was told upfront they'd only be contacted if more info is needed.
+
+12. **3 new env vars** (`PHASE_2_CUSTOMER_BUG_FLOW_ENABLED`, `CUSTOMER_BUG_PER_DAY_LIMIT`, `GITHUB_WEBHOOK_SECRET` optional). 3 new Inngest events (`help.customer_bug_triggered`, `help.customer_bug_completed`, `help.issue_closed`). 1 new Inngest function (`helpSubmissionDailyReset`).
+
+13. **Screenshot vision-PII is a STUB** (`lib/help-ai/screenshot-pii-detector.ts`) returning `{detected: false}` regardless of input — equivalent to "warn-only with no signal", which is the spec's Phase 2 behavior in the absence of detection capability. The CONTRACT (`{detected, categories, stubbed, rationale}`) is stable so wiring the real Haiku vision call is a 1-file swap. EXIF stripping (Phase A) is the active screenshot safety surface.
+
+14. **Phase 2 readiness check page at `/admin/help/phase-2-readiness`.** Platform_super_admin only. Two gates per §32.15.3: (a) ≥1 customer-reported bug row, (b) ≥1 non-PLATFORM tenant with help-session activity. Operator uses this page to gate flipping `PHASE_2_CUSTOMER_BUG_FLOW_ENABLED` to true.
+
+15. **21 new tests:**
+    - `help-ai/bug-intent-recognizer.test.ts` (7) — phrase matching, case-insensitivity, OFFER_MESSAGE shape
+    - `help-ai/customer-rate-limit.test.ts` (5) — 5 then refuse, env-driven limit, quarantine-doesn't-count
+    - `abuse/help-submission-rate.test.ts` (3) — default thresholds, tier-independence, override
+    - `webhooks/github-closure.test.ts` (6) — signature verification + altered payload + missing header
+
+**What was rejected:**
+- Wiring the Haiku screenshot vision-PII call — explicit cost-deferral. Stub matches "warn-only with no signal" semantics.
+- Wiring the bug-intent recognizer into the actual customer chat handler — the recognizer + offer-button structure exists; the chat handler patch is a follow-on so the BP32 PR stays focused on the abuse + closure + rate-limit machinery.
+- Splitting BP32 across phases — single PR per the user's BP31 Phase C pattern.
+- Email-to-tenant-owner at soft2 — placeholder via `sendOperatorAlert`; the operator content for the tenant-owner email is deferred.
+
+**Operator follow-ups (D-068):**
+- Provision `GITHUB_WEBHOOK_SECRET` when wiring the GitHub App webhook delivery.
+- Wire the bug-intent recognizer into the customer chat handler (`POST /api/chat`) — small patch.
+- Operator content: tenant-owner email template for soft2 (currently operator alert only).
+- Flip `PHASE_2_CUSTOMER_BUG_FLOW_ENABLED=true` after the `/admin/help/phase-2-readiness` gates pass.
+- Wire the real Haiku screenshot vision-PII call when ready.
+
+**Artifacts:** migration `20260610000000_help_abuse_monitoring.sql`, `lib/help-ai/{customer-rate-limit,bug-intent-recognizer,screenshot-pii-detector}.ts`, `lib/help-ai/flow-controller.ts` (+customer wording overlay), `lib/abuse/{thresholds,help-submission-rate,state-machine}.ts` (extensions), `inngest/help-submission-daily-reset.ts`, `app/api/webhooks/github/route.ts`, `app/api/help/bugs/route.ts` + `app/api/help/features/route.ts` (rate-limit + counter wiring), `app/(admin)/admin/help/phase-2-readiness/page.tsx`, `lib/inngest/event-registry.ts` (+3 events), `lib/env.ts` + `.env.example` (+3 vars), Inngest route registration (+1 fn), 4 new test files (21 tests). 743 total tests passing (+21 vs Phase C). PR #?? open.
+
+---
+
 ## D-067 — 2026-05-23 — BP31 Phase C: help docs viewer + PDF/Word export + slide-over chat (SSE with real Anthropic) + admin triage + sync CLI — key decisions
 
 **Decision:**

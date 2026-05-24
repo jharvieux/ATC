@@ -81,6 +81,7 @@ import { githubIssueRetry } from "@/inngest/github-issue-retry";
 import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
 import { helpDocsDocxGenerate } from "@/inngest/help-docs-docx-generate";
 import { helpDocVersionsPurge } from "@/inngest/help-doc-versions-purge";
+import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -168,5 +169,7 @@ export const { GET, POST, PUT } = serve({
     helpDocsPdfGenerate,
     helpDocsDocxGenerate,
     helpDocVersionsPurge,
+    // BP32: help_submission_rate daily reset (§32.11.2 per-day semantics)
+    helpSubmissionDailyReset,
   ],
 });

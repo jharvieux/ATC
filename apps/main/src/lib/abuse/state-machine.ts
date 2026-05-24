@@ -28,7 +28,11 @@ type DimMeta = {
   monotonic: boolean;
 };
 
-const MONTHLY_DIM_META: Record<Exclude<AbuseDimension, "rag_cap">, DimMeta> = {
+// BP32 — help_submission_rate has per-day semantics (NOT per-billing-period)
+// and a dedicated state machine in lib/abuse/help-submission-rate.ts.
+// Excluded from this table; checkStateTransitionIfNeeded throws if invoked
+// with that dimension.
+const MONTHLY_DIM_META: Record<Exclude<AbuseDimension, "rag_cap" | "help_submission_rate">, DimMeta> = {
   ai_cost:      { state_col: "ai_cost_limit_state",       state_changed_col: "ai_cost_state_changed_at",       monotonic: true },
   chat_volume:  { state_col: "chat_volume_limit_state",   state_changed_col: "chat_volume_state_changed_at",   monotonic: true },
   email_volume: { state_col: "email_volume_limit_state",  state_changed_col: "email_volume_state_changed_at",  monotonic: true },
@@ -73,13 +77,22 @@ export async function checkStateTransitionIfNeeded(input: CheckTransitionInput):
     await transitionRag(db, tenant, Number(metric_value), thresholds);
     return;
   }
+  if (dimension === "help_submission_rate") {
+    // BP32 §32.11 — help_submission_rate has per-day semantics and its
+    // own state machine in lib/abuse/help-submission-rate.ts. Routing
+    // through this function is a programmer error.
+    throw new Error(
+      "checkStateTransitionIfNeeded: 'help_submission_rate' is handled by " +
+        "lib/abuse/help-submission-rate.ts (per-day semantics; not per-billing-period).",
+    );
+  }
   await transitionMonthly(db, tenant, dimension, metric_value as bigint, thresholds);
 }
 
 async function transitionMonthly(
   db: SupabaseClient,
   tenant: TenantRevenueSnapshot & { tenant_id: string },
-  dimension: Exclude<AbuseDimension, "rag_cap">,
+  dimension: Exclude<AbuseDimension, "rag_cap" | "help_submission_rate">,
   value: bigint,
   thresholds: ResolvedThresholds,
 ): Promise<void> {
@@ -91,6 +104,9 @@ async function transitionMonthly(
       case "email_volume": return { soft1: BigInt(thresholds.email_volume_daily.soft1), soft2: BigInt(thresholds.email_volume_daily.soft2), hard: BigInt(thresholds.email_volume_daily.hard) };
       case "group_invite": return { soft1: BigInt(thresholds.group_invite_monthly.soft1), soft2: BigInt(thresholds.group_invite_monthly.soft2), hard: BigInt(thresholds.group_invite_monthly.hard) };
     }
+    // Unreachable — exhaustive switch above covers every value of the
+    // narrowed dimension type.
+    throw new Error(`unreachable: unknown monthly dimension ${dimension as string}`);
   })();
 
   const newState = classifyAbuse(value, t);

@@ -87,6 +87,10 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   // BP31 Phase C — help-docs export pipeline (§32.3.3)
   "help/docs.export.pdf":              { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "help/docs.export.docx":             { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  // BP32 §32.10 / §32.10.7 — customer bug flow + GitHub closure recording
+  "help.customer_bug_triggered":       { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "help.customer_bug_completed":       { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "help.issue_closed":                 { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 };
 
 // Silence the unused-variable warning until a platform_admin event ships.

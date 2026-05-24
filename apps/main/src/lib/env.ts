@@ -246,6 +246,13 @@ const envSchema = z.object({
   GITHUB_REPO_NAME:            z.string().min(1),
   // PDF / Word cache TTL for the help docs export. Default 1 hour per §32.3.3.
   HELP_DOCS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().optional().default(3600),
+  // BP32 §32.14 — Phase 2 customer bug flow toggles. Ship dark by default;
+  // operator flips to true per the §32.15 Phase 2 alignment.
+  PHASE_2_CUSTOMER_BUG_FLOW_ENABLED: z.coerce.boolean().optional().default(false),
+  CUSTOMER_BUG_PER_DAY_LIMIT:        z.coerce.number().int().positive().optional().default(5),
+  // BP32 §32.10.7 — GitHub webhook secret used to verify issues.closed events.
+  // Optional because Phase 2 ships dark; the webhook route 401s without it.
+  GITHUB_WEBHOOK_SECRET: z.string().optional(),
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
   ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),

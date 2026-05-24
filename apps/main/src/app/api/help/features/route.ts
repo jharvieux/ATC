@@ -14,6 +14,10 @@ import {
   PIIZeroToleranceQuarantineError,
   type FeatureRequestInput,
 } from "@/lib/github/issues";
+import {
+  checkHelpSubmissionRate,
+  incrementHelpSubmissionCounter,
+} from "@/lib/abuse/help-submission-rate";
 
 interface SubmitFeatureBody {
   help_session_id?: string;
@@ -33,6 +37,18 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const db = tenantClient(ctx);
+
+    // BP32 §32.11.2 — tenant-wide help_submission_rate gate. Same shape as
+    // POST /api/help/bugs so a tenant pinned at hard or throttled at
+    // soft2 can't bypass via the feature endpoint.
+    const rateCheck = await checkHelpSubmissionRate(db, ctx.tenant_id);
+    if (!rateCheck.allowed) {
+      return Response.json(
+        { error: "rate_limited", message: rateCheck.message, state: rateCheck.state, count_today: rateCheck.count_today },
+        { status: 429 },
+      );
+    }
+
     const { data: tRow } = await db.from("tenants").select("slug").eq("id", ctx.tenant_id).maybeSingle();
     const tenant_slug = (tRow as { slug?: string } | null)?.slug ?? "unknown";
 
@@ -91,6 +107,8 @@ export async function POST(req: Request): Promise<Response> {
         name: "help.feature_submitted",
         data: { tenant_id: ctx.tenant_id, submission_id, issue_number: result.issue_number },
       });
+      // BP32 §32.11 — increment help_submission_rate on successful submission.
+      await incrementHelpSubmissionCounter(db, ctx.tenant_id);
       return Response.json({ id: submission_id, github_issue_state: "open", issue_url: result.issue_url }, { status: 201 });
     } catch (err) {
       if (err instanceof PIIZeroToleranceQuarantineError) {
@@ -129,6 +147,8 @@ export async function POST(req: Request): Promise<Response> {
             attempt: 0,
           },
         });
+        // BP32 §32.11 — row accepted; counter increments per spec.
+        await incrementHelpSubmissionCounter(db, ctx.tenant_id);
         return Response.json({ id: submission_id, github_issue_state: "pending" }, { status: 202 });
       }
       throw err;

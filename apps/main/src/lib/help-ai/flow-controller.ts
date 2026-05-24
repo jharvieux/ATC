@@ -123,6 +123,40 @@ export function bugStepFor(state: BugFlowState): (typeof BUG_FLOW_STEPS)[number]
   return BUG_FLOW_STEPS.find((s) => s.state === state);
 }
 
+/**
+ * BP32 §32.10.3 — customer-chat wording for each bug-flow state.
+ *
+ * When `source_surface = 'customer_chat'`, the chat handler injects
+ * these phrasings instead of the tenant-admin defaults. The state
+ * machine + capture fields are identical — only the prompt text changes.
+ */
+export const BUG_FLOW_QUESTIONS_CUSTOMER: Record<BugFlowState, string> = {
+  gathering_location: "Where were you when you noticed this?",
+  gathering_actual: "What happened?",
+  gathering_expected: "What did you expect to happen?",
+  gathering_steps: "Can you walk me through exactly what you did?",
+  gathering_frequency: "Did this happen once, or has it happened more than once?",
+  confirming_environment: "I'll grab your browser info — does this look right?",
+  optional_screenshots: "Want to send a screenshot? Drag it into the chat or upload.",
+  showing_summary: "{{summary_view}}",
+  submitted: "",
+};
+
+/**
+ * Get the question text for a state, source-surface aware.
+ * Source 'customer_chat' → the §32.10.3 friendly phrasings above.
+ * Source 'admin' → the tenant-admin defaults from BUG_FLOW_STEPS.
+ */
+export function bugQuestionForState(
+  state: BugFlowState,
+  source_surface: "admin" | "customer_chat",
+): string {
+  if (source_surface === "customer_chat") {
+    return BUG_FLOW_QUESTIONS_CUSTOMER[state] ?? "";
+  }
+  return bugStepFor(state)?.question ?? "";
+}
+
 /** Advance a bug draft + state in response to a user reply. */
 export function advanceBugFlow(
   state: BugFlowState,
