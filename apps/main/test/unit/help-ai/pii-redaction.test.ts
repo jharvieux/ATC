@@ -1,0 +1,185 @@
+// BP31 §32.7.6 — PII redaction tests.
+//
+// Zero-tolerance regex must catch SSN / Luhn-valid CC / passport patterns
+// AND must avoid false positives on shaped-but-not-PII strings (booking
+// refs, order IDs, internal UUIDs). Tolerable redaction in Phase A is
+// regex-only — email and phone replaced with [REDACTED-*] markers;
+// Haiku-driven name redaction is deferred.
+
+import { describe, it, expect } from "vitest";
+import {
+  BUG_FIELDS,
+  PIIZeroToleranceQuarantineError,
+  assertNoZeroTolerancePii,
+  luhnValid,
+  redactTolerablePii,
+  redactSubmission,
+  scanZeroTolerance,
+} from "@/lib/help-ai/pii-redaction";
+
+describe("luhnValid", () => {
+  it("returns true for well-known valid test numbers", () => {
+    // Stripe and Visa test numbers — both Luhn-valid.
+    expect(luhnValid("4242424242424242")).toBe(true);
+    expect(luhnValid("4111111111111111")).toBe(true);
+    // With hyphens/spaces (should still validate after strip).
+    expect(luhnValid("4242-4242-4242-4242")).toBe(true);
+    expect(luhnValid("4111 1111 1111 1111")).toBe(true);
+  });
+
+  it("returns false for sequential digits and other invalid runs", () => {
+    expect(luhnValid("1234567890123456")).toBe(false);
+    expect(luhnValid("0000000000000000")).toBe(true); // valid Luhn but rare
+    expect(luhnValid("9999999999999999")).toBe(false);
+  });
+
+  it("returns false for runs outside 13–19 digits", () => {
+    expect(luhnValid("123456789012")).toBe(false);   // 12 digits
+    expect(luhnValid("12345678901234567890")).toBe(false); // 20 digits
+  });
+});
+
+describe("scanZeroTolerance — SSN", () => {
+  it("matches the canonical 3-2-4 hyphenated shape", () => {
+    const hits = scanZeroTolerance("actual_behavior", "My SSN is 123-45-6789 and I can't login");
+    expect(hits.length).toBe(1);
+    expect(hits[0]?.kind).toBe("ssn");
+    expect(hits[0]?.redacted_excerpt).toBe("****6789");
+  });
+
+  it("matches the space-separated shape", () => {
+    const hits = scanZeroTolerance("actual_behavior", "SSN: 123 45 6789");
+    expect(hits.length).toBe(1);
+  });
+
+  it("does NOT match a continuous 9-digit run (no separators)", () => {
+    // 123456789 — easily a booking ref / order ID; spec only catches the
+    // SSN-shaped 3-2-4 with separators.
+    const hits = scanZeroTolerance("actual_behavior", "Order #123456789 broken");
+    expect(hits).toEqual([]);
+  });
+
+  it("does NOT match a 10-digit phone-looking shape", () => {
+    const hits = scanZeroTolerance("actual_behavior", "Call 555-1234567");
+    // The 555-1234567 doesn't fit the 3-2-4 SSN shape.
+    expect(hits).toEqual([]);
+  });
+});
+
+describe("scanZeroTolerance — credit card", () => {
+  it("matches a Luhn-valid Visa test number with spaces", () => {
+    const hits = scanZeroTolerance("steps_to_reproduce", "Tried with card 4242 4242 4242 4242");
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(hits.some((h) => h.kind === "credit_card")).toBe(true);
+  });
+
+  it("matches a Luhn-valid card with hyphens", () => {
+    const hits = scanZeroTolerance("steps_to_reproduce", "Card: 4111-1111-1111-1111");
+    expect(hits.some((h) => h.kind === "credit_card")).toBe(true);
+  });
+
+  it("does NOT match a 16-digit Luhn-INVALID run", () => {
+    const hits = scanZeroTolerance("steps_to_reproduce", "Ref 1234567812345678");
+    expect(hits.filter((h) => h.kind === "credit_card")).toEqual([]);
+  });
+});
+
+describe("scanZeroTolerance — passport", () => {
+  it("matches the high-confidence 1-letter + 8-digit shape", () => {
+    const hits = scanZeroTolerance("expected_behavior", "Passport A12345678 was rejected");
+    expect(hits.some((h) => h.kind === "passport")).toBe(true);
+  });
+
+  it("matches the high-confidence 2-letter + 7-digit UK-style shape", () => {
+    const hits = scanZeroTolerance("expected_behavior", "Passport AB1234567 not recognized");
+    expect(hits.some((h) => h.kind === "passport")).toBe(true);
+  });
+
+  it("matches the 9-digit shape ONLY when 'passport' appears in context", () => {
+    // 9-digit alone — no passport context → no match (avoids order-ID false-positive).
+    const hits1 = scanZeroTolerance("expected_behavior", "Order 123456789 broken");
+    expect(hits1.filter((h) => h.kind === "passport")).toEqual([]);
+
+    // 9-digit with "passport" nearby → matches.
+    const hits2 = scanZeroTolerance("expected_behavior", "My passport number 123456789 was rejected");
+    expect(hits2.some((h) => h.kind === "passport")).toBe(true);
+  });
+});
+
+describe("assertNoZeroTolerancePii", () => {
+  it("returns silently when no fields contain zero-tolerance PII", () => {
+    expect(() =>
+      assertNoZeroTolerancePii({
+        where_in_platform: "/admin/branding",
+        actual_behavior: "Custom domain stuck on Pending",
+        expected_behavior: "Should verify within a few minutes",
+        steps_to_reproduce: "Add CNAME, refresh page",
+      }),
+    ).not.toThrow();
+  });
+
+  it("throws PIIZeroToleranceQuarantineError when any field has PII", () => {
+    const fn = () =>
+      assertNoZeroTolerancePii({
+        where_in_platform: "/admin/branding",
+        actual_behavior: "Custom domain stuck",
+        expected_behavior: "Verify",
+        steps_to_reproduce: "Card: 4242 4242 4242 4242 didn't work",
+      });
+    expect(fn).toThrow(PIIZeroToleranceQuarantineError);
+    try {
+      fn();
+    } catch (err) {
+      expect(err).toBeInstanceOf(PIIZeroToleranceQuarantineError);
+      const e = err as PIIZeroToleranceQuarantineError;
+      expect(e.hits.length).toBeGreaterThan(0);
+      expect(e.hits[0]?.field).toBe("steps_to_reproduce");
+      expect(e.hits[0]?.kind).toBe("credit_card");
+    }
+  });
+});
+
+describe("redactTolerablePii", () => {
+  it("replaces emails with [REDACTED-EMAIL]", () => {
+    const out = redactTolerablePii("Reach me at jane.doe@example.com please");
+    expect(out).toBe("Reach me at [REDACTED-EMAIL] please");
+  });
+
+  it("replaces NA-shaped phone numbers with [REDACTED-PHONE]", () => {
+    expect(redactTolerablePii("Call +1 (555) 123-4567")).toBe("Call [REDACTED-PHONE]");
+    expect(redactTolerablePii("Phone: 555.123.4567")).toBe("Phone: [REDACTED-PHONE]");
+  });
+
+  it("returns empty string for null/undefined", () => {
+    expect(redactTolerablePii(null)).toBe("");
+    expect(redactTolerablePii(undefined)).toBe("");
+  });
+
+  it("leaves text without PII untouched", () => {
+    const text = "The custom domain stays in Pending state";
+    expect(redactTolerablePii(text)).toBe(text);
+  });
+});
+
+describe("redactSubmission", () => {
+  it("applies tolerable redaction to every BUG_FIELDS entry", () => {
+    const out = redactSubmission({
+      where_in_platform: "/admin (mail jane@example.com)",
+      actual_behavior: "Calls 555-123-4567 fail",
+      expected_behavior: "Should work",
+      steps_to_reproduce: "Email bob@example.com then call",
+    });
+    expect(out.where_in_platform).toBe("/admin (mail [REDACTED-EMAIL])");
+    expect(out.actual_behavior).toBe("Calls [REDACTED-PHONE] fail");
+    expect(out.expected_behavior).toBe("Should work");
+    expect(out.steps_to_reproduce).toBe("Email [REDACTED-EMAIL] then call");
+  });
+
+  it("preserves the input shape (BUG_FIELDS is the contract)", () => {
+    expect(BUG_FIELDS).toContain("where_in_platform");
+    expect(BUG_FIELDS).toContain("actual_behavior");
+    expect(BUG_FIELDS).toContain("expected_behavior");
+    expect(BUG_FIELDS).toContain("steps_to_reproduce");
+    expect(BUG_FIELDS.length).toBe(4);
+  });
+});

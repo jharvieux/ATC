@@ -31,8 +31,12 @@ yarn-error.log*
 # vercel
 .vercel
 
-# claude code local settings
-.claude/
+# claude code local settings — exclude the local-only contents but keep
+# the directory available so .claude/commands/ slash commands (a shared
+# workflow artifact per BP31 §32.9) can be tracked.
+.claude/settings*.json
+.claude/worktrees/
+.claude/projects/
 
 # operator's local spec-authoring workspace mirror — not tracked here
 /Review/

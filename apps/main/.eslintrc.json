@@ -7,6 +7,7 @@
     "atc/no-money-math": "error",
     "atc/no-direct-service-role-env-import": "error",
     "atc/no-direct-anthropic-or-openai-import": "error",
-    "atc/no-ad-hoc-tenant-id-string": "off"
+    "atc/no-ad-hoc-tenant-id-string": "off",
+    "atc/no-direct-octokit-import": "error"
   }
 }

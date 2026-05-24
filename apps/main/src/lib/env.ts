@@ -236,6 +236,16 @@ const envSchema = z.object({
   ABUSE_RECOMPUTE_CRON_SCHEDULE:        z.string().optional().default("0 3 * * *"),
   ABUSE_OVERRIDE_DEFAULT_DURATION_DAYS: z.coerce.number().int().positive().optional().default(30),
   ABUSE_TENANT_USAGE_REFRESH_SECONDS:   z.coerce.number().int().positive().optional().default(60),
+  // BP31 §32.14 — GitHub App for Self-Service Help issue creation. All
+  // required because the feature is server-side gated on these and a
+  // missing config means bug/feature submissions fail silently at runtime.
+  GITHUB_APP_ID:               z.string().min(1),
+  GITHUB_APP_PRIVATE_KEY:      z.string().includes("-----BEGIN", { message: "must be a PEM-format private key" }),
+  GITHUB_APP_INSTALLATION_ID:  z.string().min(1),
+  GITHUB_REPO_OWNER:           z.string().min(1),
+  GITHUB_REPO_NAME:            z.string().min(1),
+  // PDF / Word cache TTL for the help docs export. Default 1 hour per §32.3.3.
+  HELP_DOCS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().optional().default(3600),
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
   ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),

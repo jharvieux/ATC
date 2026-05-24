@@ -168,6 +168,11 @@ describe("§28.19 verifyEnvAtBoot surfaces multiple errors at once", () => {
       FORENSICS_ENCRYPTION_KEY_CURRENT: Buffer.from("b".repeat(32)).toString("base64"),
       MICROSOFT_GRAPH_CLIENT_ID: "ms-id",
       MICROSOFT_GRAPH_CLIENT_SECRET: "ms-secret",
+      GITHUB_APP_ID: "111111",
+      GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----",
+      GITHUB_APP_INSTALLATION_ID: "222222",
+      GITHUB_REPO_OWNER: "jharvieux",
+      GITHUB_REPO_NAME: "ATC",
       // Intentionally omit: ANTHROPIC_API_KEY and STRIPE_SECRET_KEY.
       ANTHROPIC_API_KEY: undefined,
       STRIPE_SECRET_KEY: undefined,
@@ -229,6 +234,11 @@ describe("§28.5 ANTHROPIC_API_KEY shape", () => {
       FORENSICS_ENCRYPTION_KEY_CURRENT: FORENSICS_KEY,
       MICROSOFT_GRAPH_CLIENT_ID: "ms-id",
       MICROSOFT_GRAPH_CLIENT_SECRET: "ms-secret",
+      GITHUB_APP_ID: "111111",
+      GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----",
+      GITHUB_APP_INSTALLATION_ID: "222222",
+      GITHUB_REPO_OWNER: "jharvieux",
+      GITHUB_REPO_NAME: "ATC",
       ANTHROPIC_API_KEY: "hello-not-an-anthropic-key",
     } as NodeJS.ProcessEnv;
     const { vi } = await import("vitest");
