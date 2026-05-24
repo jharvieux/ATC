@@ -4,6 +4,58 @@ Newest entries on top.
 
 ---
 
+## D-076 — 2026-05-24 — BP40: Price-watch subscriptions — backend, evaluator, daily Inngest, kill switch — key decisions
+
+**Decision:**
+
+1. **Default-OFF notifications** (`PRICE_WATCH_NOTIFICATIONS_ENABLED=false`). Continues the D-058+ cost-deferral pattern. **Status transitions still happen** even with the flag off — the UI reflects accurate watch state. Only email + in-app notification dispatch is suppressed. Operator flips the flag once notification templates + delivery channels are sign-off-ready.
+
+2. **Currency mismatch is `skip`, not `no_trigger`** (per spec §33.8.4 + my evaluator contract). Auto-conversion would introduce stale FX risk + silent-failure mode. Skip leaves the watch active for next-day re-evaluation; operator gets a log line. Distinct `skip` vs `no_trigger` matters because `no_trigger` is a successful evaluation (threshold not met yet) while `skip` is "couldn't evaluate, retry tomorrow."
+
+3. **`evaluateThreshold` is pure** — no IO, no DB, no logging. Caller (Inngest job, future UI inspector) does the IO + logs. Makes it trivially testable + reusable. 13 unit tests cover all three threshold kinds + currency mismatch + inactive watch + missing-price guards.
+
+4. **Daily Inngest cron at 04:00 UTC** — runs AFTER BP35's monthly itinerary cron (03:00 UTC on the 1st) so refreshed pricing flows in before the daily evaluation. Well before any user-facing daily traffic.
+
+5. **Batched refresh** via BP34's `PricingDataSource.refreshTrackedSailings()`. Watches grouped by composite SailingKey; 100 watches on the same RCL/MIA sailing dispatch one Apify actor run, not 100. The Inngest job de-dupes keys before invoking refresh.
+
+6. **Coverage check at watch-creation time** (BP40 task 9). `routeFor(line)` returns null when the line isn't covered by any enabled adapter → 422 `uncovered_line` with operator-facing message. Logged for platform-admin demand visibility.
+
+7. **Baseline set at creation from `pricing_cache`** — if no cache row exists for the (line, ship, sail_date, port, cabin_class), the API returns 422 `price_data_unavailable`. We refuse to create a watch against unknown baseline; otherwise the first trigger would be ambiguous (was there really a drop, or did the cache just start populating?).
+
+8. **`/api/price-watches/[id]/rearm`** — POST endpoint that resets baseline to the CURRENT cached price + flips status back to active. Cleaner than allowing PATCH to set arbitrary baseline (which would be a manipulation surface for "fake a drop later").
+
+9. **`tenantClient(ctx)` + RLS dual enforcement.** Added `price_watches` to `TENANT_SCOPED_TABLES` so the auto-filter applies. RLS policies from BP33 still enforce at DB level. Routes additionally check `subscriber_user_id === user.id` for ownership on PATCH/rearm — per-watch ownership stricter than per-tenant.
+
+10. **UI deferred** — backend ships first per BP scope discipline. The subscriber dashboard "Price watches" section, the booking-detail "Set price watch" modal, and the re-price flow opening the §20 booking widget are documented as operator follow-ups. The new SSE asset event from BP39 + the watch CRUD routes are sufficient backend surface for a UI build.
+
+11. **Inngest event `notifications.price_watch.triggered`** is the observable boundary for §23 notification routing. The event includes the data needed for any channel; the actual template + delivery wiring lands when operator flips the kill switch.
+
+**What was rejected:**
+
+- **Auto-converting currencies** — too easy to silently use stale FX rates; spec said skip + log; we followed.
+- **Allowing arbitrary baseline updates via PATCH** — opens manipulation; baselines are immutable except via the dedicated rearm path.
+- **Implementing the UI in this PR** — UI surface needs designer sign-off + multiple component reuses + Playwright E2E that needs a dev server. Document as follow-up.
+- **Sending notifications by default** — would create on-prem email noise without operator opt-in.
+
+**Operator follow-ups (D-076):**
+
+- Build the subscriber UI components: dashboard list, creation modal on booking detail page, status badges, per-row actions (pause/resume/cancel/rearm), re-price CTA opening the §20 widget pre-populated.
+- Add the §23 notification template ("Price drop alert: {ship} on {sail_date}") + wire the `notifications.price_watch.triggered` Inngest event consumer.
+- After flip-on, monitor: how often do watches trigger? Notification delivery rate? Subscriber action rate (rebooked vs ignored)?
+- Playwright E2E for the end-to-end flow (seed watch → manual price update → trigger → notification → rebook CTA).
+
+**Artifacts:**
+- `apps/main/src/lib/price-watches/{types,evaluate-threshold,schemas}.ts`.
+- `apps/main/src/app/api/price-watches/route.ts` (POST + GET).
+- `apps/main/src/app/api/price-watches/[id]/route.ts` (PATCH).
+- `apps/main/src/app/api/price-watches/[id]/rearm/route.ts` (POST).
+- `apps/main/src/inngest/evaluate-price-watches.ts` + registry hookup.
+- `apps/main/src/lib/db/tenant-scoped-tables.ts` (+price_watches).
+- `apps/main/src/lib/env.ts` + `.env.example` (+PRICE_WATCH_NOTIFICATIONS_ENABLED).
+- Tests: 13 new in apps/main (evaluator — 793 total).
+
+---
+
 ## D-075 — 2026-05-24 — BP39: consumer-side display markup + asset_id_validation hallucination layer — key decisions
 
 **Decision:**

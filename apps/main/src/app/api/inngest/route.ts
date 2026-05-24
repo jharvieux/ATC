@@ -86,6 +86,8 @@ import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset"
 import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-itineraries";
 // BP36 §33.5 — CruiseMapper DIY static quarterly refresh
 import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
+// BP40 §33.8 — Price-watch daily evaluator
+import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -179,5 +181,7 @@ export const { GET, POST, PUT } = serve({
     refreshCruisemapperItineraries,
     // BP36: CruiseMapper DIY static quarterly refresh (§33.5)
     refreshCruisemapperStatic,
+    // BP40: Price-watch daily evaluator (§33.8)
+    evaluatePriceWatches,
   ],
 });

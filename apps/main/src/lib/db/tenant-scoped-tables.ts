@@ -49,4 +49,6 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "forum_strikes",
   "booking_passengers",
   "booking_options",
+  // BP40: price-watch subscriptions (§33.8)
+  "price_watches",
 ]);
