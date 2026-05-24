@@ -25,7 +25,7 @@
 <li>Three AI-driven entry points for tenant admins: ‘I need help,’ ‘Report a bug,’ and ‘Request a feature.’</li>
 <li>A parallel customer bug-reporting path that runs through the existing travel concierge AI persona.</li>
 <li>GitHub integration for bug and feature-request issue creation.</li>
-<li>A bug-auto-fix evaluation pipeline that integrates with the existing CI/CD release pipeline.</li>
+<li>An interactive bug-triage workflow in which an operator runs Claude Code to reproduce, fix, and triage submitted bugs.</li>
 <li>Abuse monitoring extensions for help-flow submissions.</li>
 </ul>
 <p>Out of scope for this section (deferred):</p>
@@ -34,7 +34,7 @@
 <li>Non-English documentation. Per v6 <a class="xref" href="section-25-data-privacy-retention.html#s25-8">§25.8</a>, the platform is English-only at launch.</li>
 <li>Integration with bug trackers other than GitHub.</li>
 <li>Customer-facing feature-request voting or roadmap visibility.</li>
-<li>Email notifications for issue lifecycle events beyond standard GitHub notification flow.</li>
+<li>Notifications to customers for issue lifecycle events — in-app or email — beyond the standard GitHub notification flow.</li>
 </ul>
 <h3 id="s32-1-3">32.1.3 Personas Affected <a class="anchor-link" href="#s32-1-3" aria-label="Permalink">¶</a></h3>
 <p>This feature touches the personas defined in v6 <a class="xref" href="section-01-platform-overview.html#s1-3">§1.3</a> as follows:</p>
@@ -50,7 +50,7 @@
 <li><strong>v6 <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a></strong> — Ingestion pipeline / PII redaction. Bug-report bodies pass through this before issue creation.</li>
 <li><strong>v6 <a class="xref" href="section-26-security.html">§26</a></strong> — Roles and permissions.</li>
 <li><strong>v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a></strong> — Abuse monitoring. A new dimension is added.</li>
-<li><strong>CI/CD <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a>, <a class="xref" href="section-04-detailed-feature-matrix.html">§4</a>, <a class="xref" href="section-05-database-schema-main-app.html">§5</a></strong> — GitHub Environments, Actions workflow, staging DB copy. The auto-fix pipeline integrates here.</li>
+<li><strong>CI/CD <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a></strong> — the production approval gate. Fixes produced by interactive bug triage (<a class="xref" href="#s32-9">§32.9</a>) merge and deploy through the existing release pipeline.</li>
 </ul>
 <h2 id="s32-2">32.2 User Experience Overview <a class="anchor-link" href="#s32-2" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-2-1">32.2.1 Entry Points <a class="anchor-link" href="#s32-2-1" aria-label="Permalink">¶</a></h3>
@@ -67,7 +67,7 @@
 </ul>
 <h3 id="s32-2-2">32.2.2 The Documentation Viewer <a class="anchor-link" href="#s32-2-2" aria-label="Permalink">¶</a></h3>
 <p>The viewer renders a set of Markdown documents organized into sections. Each section corresponds to a major feature area of the tenant admin console (e.g., ‘Setting up branding,’ ‘Managing your CRM,’ ‘Understanding your usage and tier’). Source files live in apps/main/content/help/ in the platform repo and are rendered with a standard Markdown-to-HTML pipeline (e.g., remark/rehype).</p>
-<p>The viewer offers three output modes:</p>
+<p>The viewer offers four output modes:</p>
 <ul>
 <li><strong>Onscreen</strong> — default. Navigation in left sidebar, content in right pane. Search across all docs.</li>
 <li><strong>Print</strong> — applies a print-friendly stylesheet (single-column, no nav, page breaks at section boundaries). User invokes via browser print.</li>
@@ -103,8 +103,8 @@
 </ul>
 <p>Both downloads include the tenant’s branded header (logo, business name) if branding is configured. Otherwise default platform branding.</p>
 <h3 id="s32-3-4">32.3.4 Help Documentation as RAG Content <a class="anchor-link" href="#s32-3-4" aria-label="Permalink">¶</a></h3>
-<p>The help documentation IS indexed in the RAG service (v6 <a class="xref" href="section-06-rag-service-schema.html">§6</a>), scoped to a special ‘platform-docs’ scope visible to all tenants. The Help AI uses this RAG corpus when responding to ‘I need help’ queries. This is the only scope outside of ‘global’ and ‘tenant’ (v6 <a class="xref" href="section-06-rag-service-schema.html#s6-9">§6.9</a> establishes the strictly-two-level scope; the platform-docs scope is documented here as a third logical scope used only by the Help AI).</p>
-<p><strong>Note:</strong><strong> </strong>this is the one place where Section 32 extends v6 <a class="xref" href="section-06-rag-service-schema.html">§6</a>’s two-scope model. The platform-docs scope is read-only and managed entirely by the platform release pipeline. It is not visible to tenant admins as content they can submit or review.</p>
+<p>The help documentation IS indexed in the RAG service (v6 <a class="xref" href="section-06-rag-service-schema.html">§6</a>) at <code>global</code> scope, tagged with a retrieval audience of <code>help_ai</code> (the <code>knowledge_chunks.retrieval_audience</code> attribute, per v6 <a class="xref" href="section-06-rag-service-schema.html#s6-9">§6.9</a>). The Help AI retrieves with the <code>help_ai</code> audience; the customer-facing travel concierge retrieves with the default <code>all</code> audience, which excludes help documentation. The Help AI uses this corpus when responding to ‘I need help’ queries.</p>
+<p><strong>Note:</strong> the retrieval audience is orthogonal to scope — it does not introduce a third scope. §6’s two-value scope model (<code>global</code> / <code>tenant</code>) is unchanged. Help documentation is platform-managed content: read-only, maintained by the platform release pipeline, and not visible to tenant admins as content they can submit or review.</p>
 <h2 id="s32-4">32.4 Help AI Persona <a class="anchor-link" href="#s32-4" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-4-1">32.4.1 Role and Boundaries <a class="anchor-link" href="#s32-4-1" aria-label="Permalink">¶</a></h3>
 <p>The Help AI is a dedicated AI persona distinct from the customer-facing travel concierge personas. It has access to the platform-docs RAG scope and to a structured information-gathering protocol for bug and feature flows. It does NOT have access to tenant customer data, CRM contents, or commission data — its scope is the platform itself, not the tenant’s business.</p>
@@ -143,7 +143,7 @@
 <p>On submit: GitHub issue with label feature-request, awaiting human review.</p>
 <h3 id="s32-4-4">32.4.4 Cost Model <a class="anchor-link" href="#s32-4-4" aria-label="Permalink">¶</a></h3>
 <p>Help AI calls follow the same cost-attribution pattern as customer-facing AI (v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>). They attribute to the tenant whose user is interacting. The Help AI uses Sonnet for the main response and Haiku for the supervisor preflight, same as customer-facing chat.</p>
-<p>Customer-side bug flows attribute to the tenant that owns the customer, not to a platform pool. This matters for abuse monitoring (<a class="xref" href="section-11-customer-memory.html">§11</a>) and gives tenants visibility into help-related cost.</p>
+<p>Customer-side bug flows attribute to the tenant that owns the customer, not to a platform pool. This matters for abuse monitoring (<a class="xref" href="#s32-11">§32.11</a>) and gives tenants visibility into help-related cost.</p>
 <h2 id="s32-5">32.5 Database Schema <a class="anchor-link" href="#s32-5" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-5-1">32.5.1 help_sessions <a class="anchor-link" href="#s32-5-1" aria-label="Permalink">¶</a></h3>
 <p>One row per help-chat session. A session is opened when any help/bug/feature flow starts and closed when the user leaves the chat surface or submits.</p>
@@ -153,25 +153,25 @@
 <p>CREATE TABLE public.bug_submissions ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), help_session_id UUID NOT NULL REFERENCES public.help_sessions(id), tenant_id UUID NOT NULL REFERENCES public.tenants(id), submitter_user_id UUID NOT NULL REFERENCES public.users(id), source_type TEXT NOT NULL CHECK (source_type IN (‘tenant_admin’,‘tenant_agent’,‘customer’)),</p>
 <p>– Structured fields (gathered by Help AI; redacted of PII) where_in_platform TEXT, actual_behavior TEXT, expected_behavior TEXT, steps_to_reproduce TEXT, frequency TEXT CHECK (frequency IN (‘always’,‘sometimes’,‘once’,‘unknown’)), browser_info JSONB, screenshots JSONB, – array of storage URLs</p>
 <p>– Quality scoring confidence_score NUMERIC(3,2) CHECK (confidence_score &gt;= 0 AND confidence_score &lt;= 1), confidence_factors JSONB,</p>
-<p>– GitHub linkage github_issue_number INTEGER, github_issue_url TEXT, github_issue_state TEXT CHECK (github_issue_state IN (‘pending’,‘open’,‘closed’,‘failed’)), github_creation_error TEXT,</p>
-<p>– Lifecycle submitted_at TIMESTAMPTZ DEFAULT NOW(), closed_at TIMESTAMPTZ, resolution_summary TEXT );</p>
+<p>– GitHub linkage github_issue_number INTEGER, github_issue_url TEXT, github_issue_state TEXT CHECK (github_issue_state IN (‘pending’,‘open’,‘closed’,‘failed’,‘quarantined’)), github_creation_error TEXT, quarantine_reason TEXT,</p>
+<p>– Triage and lifecycle submitted_at TIMESTAMPTZ DEFAULT NOW(), triage_state TEXT NOT NULL DEFAULT ‘untriaged’ CHECK (triage_state IN (‘untriaged’,‘confirmed’,‘unconfirmed’,‘needs_human_fix’)), closed_at TIMESTAMPTZ, resolution_summary TEXT );</p>
 <p>CREATE INDEX bug_submissions_tenant_idx ON public.bug_submissions(tenant_id); CREATE INDEX bug_submissions_state_idx ON public.bug_submissions(github_issue_state, submitted_at DESC);</p>
 <h3 id="s32-5-3">32.5.3 feature_requests <a class="anchor-link" href="#s32-5-3" aria-label="Permalink">¶</a></h3>
 <p>CREATE TABLE public.feature_requests ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), help_session_id UUID NOT NULL REFERENCES public.help_sessions(id), tenant_id UUID NOT NULL REFERENCES public.tenants(id), submitter_user_id UUID NOT NULL REFERENCES public.users(id), source_type TEXT NOT NULL CHECK (source_type IN (‘tenant_admin’,‘tenant_agent’,‘customer’)),</p>
 <p>what TEXT, why TEXT, current_workaround TEXT, expected_usage_frequency TEXT,</p>
-<p>github_issue_number INTEGER, github_issue_url TEXT, github_issue_state TEXT CHECK (github_issue_state IN (‘pending’,‘open’,‘closed’,‘failed’)),</p>
+<p>github_issue_number INTEGER, github_issue_url TEXT, github_issue_state TEXT CHECK (github_issue_state IN (‘pending’,‘open’,‘closed’,‘failed’,‘quarantined’)),</p>
 <p>submitted_at TIMESTAMPTZ DEFAULT NOW(), decision TEXT CHECK (decision IN (‘accepted’,‘rejected’,‘deferred’,‘duplicate’)), decision_notes TEXT, decided_at TIMESTAMPTZ );</p>
 <p>CREATE INDEX feature_requests_tenant_idx ON public.feature_requests(tenant_id); CREATE INDEX feature_requests_decision_idx ON public.feature_requests(decision, submitted_at DESC);</p>
 <h3 id="s32-5-4">32.5.4 help_doc_versions <a class="anchor-link" href="#s32-5-4" aria-label="Permalink">¶</a></h3>
 <p>Caches generated PDF/.docx outputs keyed by code version and (optionally) tenant for branding.</p>
-<p>CREATE TABLE public.help_doc_versions ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code_version TEXT NOT NULL, tenant_id UUID REFERENCES public.tenants(id), – nullable format TEXT NOT NULL CHECK (format IN (‘pdf’,‘docx’)), storage_path TEXT NOT NULL, size_bytes BIGINT, generated_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, UNIQUE (code_version, tenant_id, format) );</p>
+<p>CREATE TABLE public.help_doc_versions ( id UUID PRIMARY KEY DEFAULT gen_random_uuid(), code_version TEXT NOT NULL, tenant_id UUID REFERENCES public.tenants(id), – nullable format TEXT NOT NULL CHECK (format IN (‘pdf’,‘docx’)), storage_path TEXT NOT NULL, size_bytes BIGINT, generated_at TIMESTAMPTZ DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, UNIQUE NULLS NOT DISTINCT (code_version, tenant_id, format) );</p>
 <p>CREATE INDEX help_doc_versions_expiry_idx ON public.help_doc_versions(expires_at);</p>
 <h3 id="s32-5-5">32.5.5 Row Level Security <a class="anchor-link" href="#s32-5-5" aria-label="Permalink">¶</a></h3>
 <p>All four tables enable RLS. Policies follow v6 <a class="xref" href="section-01-platform-overview.html#s1-5">§1.5</a> patterns:</p>
 <ul>
 <li>Tenant scope: rows visible only to users belonging to the tenant (auth_user_in_tenant).</li>
 <li>Platform admin override: platform_super_admin and platform_support roles can SELECT across all tenants.</li>
-<li>Customer access: a customer can read their own bug_submissions and feature_requests rows but not other customers’ rows in the same tenant.</li>
+<li>Customer access: a customer can read their own bug_submissions and feature_requests rows but not other customers’ rows in the same tenant. The feature_requests grant is currently inert — customers cannot submit feature requests in v1 (<a class="xref" href="#s32-12-2">§32.12.2</a>) — but is retained so the policy need not change if customer-direct feature requests are added later.</li>
 <li>Help_doc_versions: tenant-scoped if tenant_id is set; platform-wide read if tenant_id is NULL.</li>
 </ul>
 <h2 id="s32-6">32.6 API Routes <a class="anchor-link" href="#s32-6" aria-label="Permalink">¶</a></h2>
@@ -182,6 +182,7 @@
 <div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/help/sessions</td><td>Open a new help session; returns session_id</td></tr><tr><td>POST</td><td>/api/help/sessions/:id/message</td><td>Send a user message; returns SSE stream of AI response</td></tr><tr><td>POST</td><td>/api/help/sessions/:id/close</td><td>Close the session with outcome</td></tr><tr><td>POST</td><td>/api/help/sessions/:id/escalate</td><td>Escalate to platform support</td></tr></tbody></table></div>
 <h3 id="s32-6-3">32.6.3 Bug Submission Routes <a class="anchor-link" href="#s32-6-3" aria-label="Permalink">¶</a></h3>
 <div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/help/bugs</td><td>Submit a bug; creates GitHub issue async</td></tr><tr><td>GET</td><td>/api/help/bugs/:id</td><td>Get submission state including GitHub link</td></tr><tr><td>GET</td><td>/api/help/bugs</td><td>List submissions for the current tenant</td></tr></tbody></table></div>
+<p>Customer callers of <code>GET /api/help/bugs/:id</code> receive a redacted view: the GitHub issue URL and issue number, the help-session reference, and the internal triage state are omitted; the response carries only a short reference ID derived from the <code>bug_submissions</code> UUID (per <a class="xref" href="#s32-10-5">§32.10.5</a>). Tenant admins and platform staff see the full GitHub linkage.</p>
 <h3 id="s32-6-4">32.6.4 Feature Request Routes <a class="anchor-link" href="#s32-6-4" aria-label="Permalink">¶</a></h3>
 <div class="table-wrap"><table><thead><tr><th><strong>Method</strong></th><th><strong>Path</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>POST</td><td>/api/help/features</td><td>Submit a feature request</td></tr><tr><td>GET</td><td>/api/help/features/:id</td><td>Get submission state</td></tr><tr><td>GET</td><td>/api/help/features</td><td>List submissions for the current tenant</td></tr></tbody></table></div>
 <h3 id="s32-6-5">32.6.5 Platform Admin Routes <a class="anchor-link" href="#s32-6-5" aria-label="Permalink">¶</a></h3>
@@ -192,15 +193,13 @@
 <p>Required GitHub App permissions:</p>
 <ul>
 <li>Repository: Issues (Read &amp; Write) — create issues, add labels, post comments.</li>
-<li>Repository: Pull Requests (Read &amp; Write) — used by the auto-fix workflow.</li>
-<li>Repository: Contents (Read &amp; Write) — auto-fix branches need to push commits.</li>
-<li>Repository: Actions (Read) — to inspect workflow status.</li>
 </ul>
+<p>No Pull Requests, Contents, or Actions permissions are required. Interactive bug triage (<a class="xref" href="#s32-9">§32.9</a>) creates branches and pull requests through the operator’s own authenticated GitHub session, not through the platform App.</p>
 <h3 id="s32-7-2">32.7.2 Repository <a class="anchor-link" href="#s32-7-2" aria-label="Permalink">¶</a></h3>
 <p>Bug and feature-request issues are created in the same GitHub repository that holds the platform code. This is the same repo referenced in the CI/CD doc (CI/CD <a class="xref" href="section-04-detailed-feature-matrix.html">§4</a> onward). No separate repo is created for help submissions.</p>
 <h3 id="s32-7-3">32.7.3 Labels <a class="anchor-link" href="#s32-7-3" aria-label="Permalink">¶</a></h3>
 <p>The following labels are used. The platform creates any that don’t exist on first issue submission.</p>
-<div class="table-wrap"><table><thead><tr><th><strong>Label</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>bug</td><td>Identifies the issue as a defect.</td></tr><tr><td>feature-request</td><td>Identifies the issue as a feature ask.</td></tr><tr><td>customer-reported</td><td>Bug or feature originated from an end customer.</td></tr><tr><td>tenant-admin-reported</td><td>Bug or feature originated from a tenant admin or agent.</td></tr><tr><td>auto-fix-candidate</td><td>Bug confidence/clarity score exceeds threshold; eligible for auto-fix.</td></tr><tr><td>awaiting-staging-repro</td><td>Auto-fix pipeline is attempting to reproduce on staging.</td></tr><tr><td>repro-confirmed</td><td>Bug reproduced on staging; draft PR opened.</td></tr><tr><td>repro-failed</td><td>Bug could not be reproduced; awaiting human review.</td></tr><tr><td>pending-human-review</td><td>Submission below auto-fix threshold; needs human triage.</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th><strong>Label</strong></th><th><strong>Purpose</strong></th></tr></thead><tbody><tr><td>bug</td><td>Identifies the issue as a defect.</td></tr><tr><td>feature-request</td><td>Identifies the issue as a feature ask.</td></tr><tr><td>customer-reported</td><td>Bug or feature originated from an end customer.</td></tr><tr><td>tenant-admin-reported</td><td>Bug or feature originated from a tenant admin or agent.</td></tr><tr><td>confirmed</td><td>Bug reproduced during interactive triage (§32.9); a fix is in progress or in a draft PR.</td></tr><tr><td>unconfirmed</td><td>Bug could not be reproduced during triage; awaiting human review.</td></tr><tr><td>needs-human-fix</td><td>Bug reproduced, but the fix would touch sensitive code; a human must make the change.</td></tr></tbody></table></div>
 <h3 id="s32-7-4">32.7.4 Issue Body Format <a class="anchor-link" href="#s32-7-4" aria-label="Permalink">¶</a></h3>
 <p>Issues are created with a structured Markdown body. Example bug:</p>
 <h3>Source</h3>
@@ -263,66 +262,58 @@
 <p>Bug-report content can contain PII. Before any content is sent to GitHub:</p>
 <ul>
 <li>Run the v6 <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html#s22-4">§22.4</a> redaction pipeline over all free-text fields.</li>
-<li>Zero-tolerance items (SSN, full credit-card numbers, passport numbers) — quarantine the submission, do NOT create the issue, alert a platform admin.</li>
+<li>Zero-tolerance items (SSN, full credit-card numbers, passport numbers) — quarantine the submission (github_issue_state = ‘quarantined’, with quarantine_reason set), do NOT create the issue, alert a platform admin.</li>
 <li>Tolerable items (names, emails, phone numbers) — redact to [REDACTED-NAME] / [REDACTED-EMAIL] / [REDACTED-PHONE].</li>
 <li>Screenshots — strip EXIF metadata. Optionally run a vision-based PII check (Haiku vision pass) before upload. If detected, refuse upload and ask the user to redact and re-upload.</li>
 </ul>
 <h2 id="s32-8">32.8 Confidence and Clarity Scoring <a class="anchor-link" href="#s32-8" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-8-1">32.8.1 Why a Score <a class="anchor-link" href="#s32-8-1" aria-label="Permalink">¶</a></h3>
-<p>Not every bug report is actionable. A score lets the platform route high-quality reports into the auto-fix pipeline and lower-quality reports into the human-review queue without blocking either path.</p>
-<p>The score is a single number 0.00–1.00 stored in bug_submissions.confidence_score. The factors that contributed are stored in bug_submissions.confidence_factors as JSONB for later analysis and threshold tuning.</p>
+<p>Not every bug report is equally actionable. The score lets triage prioritize the clearest, most complete reports, and signals to submitters where a report is weak so they can strengthen it before submitting.</p>
+<p>The score is a single number 0.00–1.00 stored in bug_submissions.confidence_score. The factors that contributed are stored in bug_submissions.confidence_factors as JSONB for later analysis.</p>
 <h3 id="s32-8-2">32.8.2 Score Computation <a class="anchor-link" href="#s32-8-2" aria-label="Permalink">¶</a></h3>
 <p>The Help AI emits a structured assessment at the end of the bug flow. The score is the average of the following factor scores, each 0–1:</p>
 <div class="table-wrap"><table><thead><tr><th><strong>Factor</strong></th><th><strong>What it measures</strong></th></tr></thead><tbody><tr><td>specificity_of_location</td><td>How precisely ‘where in the platform’ identifies a route or feature</td></tr><tr><td>clarity_of_actual_behavior</td><td>Whether the actual behavior is described concretely</td></tr><tr><td>clarity_of_expected_behavior</td><td>Whether the expected behavior is described concretely</td></tr><tr><td>completeness_of_steps</td><td>Whether reproduction steps are complete and ordered</td></tr><tr><td>reproducibility_signal</td><td>Whether the user reports the bug as ‘always’ or ‘sometimes’ (always = higher)</td></tr><tr><td>environment_completeness</td><td>Whether browser/device info is captured</td></tr></tbody></table></div>
 <p>Weighting can be added later if a uniform average produces poor results. v1 uses uniform weighting.</p>
-<h3 id="s32-8-3">32.8.3 Threshold Configuration <a class="anchor-link" href="#s32-8-3" aria-label="Permalink">¶</a></h3>
-<p>The auto-fix threshold is an environment variable BUG_AUTOFIX_CONFIDENCE_THRESHOLD with an initial value of 0.7. It can be changed without code deploy. Recommend recalibrating after the first 30 days of real submissions, once a distribution of real-world scores is observed.</p>
-<h3 id="s32-8-4">32.8.4 Score Transparency <a class="anchor-link" href="#s32-8-4" aria-label="Permalink">¶</a></h3>
+<h3 id="s32-8-3">32.8.3 Score Transparency <a class="anchor-link" href="#s32-8-3" aria-label="Permalink">¶</a></h3>
 <p>The submitting user sees their confidence/clarity score after submission, with a brief explanation of factors that scored low. This encourages quality submissions and lets the user revise before submission if they want.</p>
 <p>Customers do not see the score — they see only ‘submitted’ confirmation with an issue link. This avoids putting non-technical users in a position of feeling judged by a number.</p>
-<h2 id="s32-9">32.9 Bug Auto-Fix Pipeline <a class="anchor-link" href="#s32-9" aria-label="Permalink">¶</a></h2>
+<h2 id="s32-9">32.9 Interactive Bug Triage and Fixing <a class="anchor-link" href="#s32-9" aria-label="Permalink">¶</a></h2>
+<p>The platform does not run an automated bug-fix pipeline. Bugs captured by the help flows (<a class="xref" href="#s32-1">§32.1</a>–<a class="xref" href="#s32-8">§32.8</a>) are triaged and fixed by an operator running Claude Code interactively against a local checkout of the platform repository. This preserves the one piece of the former design that carried real value — a reproduction gate that prevents effort being spent on non-reproducing reports and prevents ‘fixes’ that resolve nothing — while removing the autonomous CI workflow, its standing staging environments, the production-database copy used for reproduction, and the separate service credential. Every session is supervised by a human.</p>
 <h3 id="s32-9-1">32.9.1 Overview <a class="anchor-link" href="#s32-9-1" aria-label="Permalink">¶</a></h3>
-<p>Bugs that score above the threshold and pass staging reproduction are eligible for an automated fix attempt by Claude Code. This pipeline is gated, observable, and never deploys to production without human approval — the existing CI/CD <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a> production approval gate stands.</p>
+<p>Bugs filed through the help flows arrive as open GitHub issues labeled <code>bug</code>. On a regular cadence, an operator launches Claude Code in a local clone of the repository and runs the triage workflow, packaged as the <code>/fix-bugs</code> slash command (<a class="xref" href="#s32-9-2">§32.9.2</a>). For each open, un-triaged bug, Claude Code attempts a reproduction. Confirmed bugs proceed to a fix and a draft pull request; bugs that cannot be reproduced are labeled for human review. Nothing merges or deploys without human review — the CI/CD <a class="xref" href="section-03-multi-tenancy-tier-matrix.html">§3</a> production approval gate is unchanged.</p>
 <h3 id="s32-9-2">32.9.2 Workflow <a class="anchor-link" href="#s32-9-2" aria-label="Permalink">¶</a></h3>
-<p>A new GitHub Actions workflow .github/workflows/bug-auto-fix.yml is added. Triggered on issue events:</p>
+<p>The operator runs <code>/fix-bugs</code>, optionally scoped to a single issue number. For each issue, Claude Code:</p>
 <ul>
-<li>Issue opened with labels bug AND auto-fix-candidate.</li>
-<li>Workflow extracts the structured fields from the issue body (using a parser keyed on the section headers from <a class="xref" href="section-07-api-routes.html#s7-4">§7.4</a>).</li>
-<li>Workflow opens a fresh staging environment with the latest prod DB copy + fixups (per CI/CD <a class="xref" href="section-05-database-schema-main-app.html">§5</a>).</li>
-<li>Workflow runs a reproduction attempt — initially a Playwright script generated by Claude Code from the reproduction steps; future versions may use a dedicated bug-repro framework.</li>
-<li><strong>Pre-fix repro gate:</strong> the generated Playwright script is run against the CURRENT pre-fix code (on staging). The script MUST FAIL (i.e., demonstrate the bug). If the script passes against pre-fix code, the bug either doesn't reproduce or the script is faulty — in either case the auto-fix attempt is aborted. Add label <code>repro-script-faulty</code> and post a comment explaining the failure.</li>
-<li>If pre-fix repro fails as expected: add label <code>repro-confirmed</code>; invoke Claude Code via API to propose a fix; open a draft PR <code>fix/issue-{number} → dev</code> with the repro test included.</li>
-<li><strong>Post-fix repro gate:</strong> the proposed fix is applied; the same Playwright script is run against the now-modified code. The script MUST PASS (i.e., demonstrate the bug is no longer reproducible). If the script still fails, the fix didn't fix the bug — abort PR creation, add label <code>fix-ineffective</code>, post a comment.</li>
-<li>If both gates pass: the draft PR is opened with the repro test included. PR review then verifies the fix is sensible (review is human; auto-fix only verifies the test pass/fail behavior is correct).</li>
-<li>If reproduction script generation fails entirely (Claude Code cannot produce a valid Playwright script from the issue text): add label <code>repro-failed</code>; post a comment summarizing what was tried; the issue stays open for human review.</li>
+<li>Reads the issue and its comments and extracts the structured report fields.</li>
+<li>Reproduces the bug against a local instance (<a class="xref" href="#s32-9-3">§32.9.3</a>) by writing an explicit reproduction — a Playwright test for UI defects, or a unit/integration test or script otherwise — and running it against the current, unmodified code, where it MUST FAIL.</li>
+<li><strong>Reproduced:</strong> applies the <code>confirmed</code> label, makes the smallest fix scoped to the relevant application code, verifies the reproduction test now passes, runs the broader test suite, and opens a draft PR (<code>fix/issue-{number}</code> → <code>dev</code>) with the reproduction test included.</li>
+<li><strong>Not reproduced, or no reproduction possible:</strong> makes no code change, applies the <code>unconfirmed</code> label, and comments — distinguishing ‘could not reproduce’ from ‘insufficient detail’ so the human reviewer knows whether to close the issue or return it to the reporter.</li>
 </ul>
-<h3 id="s32-9-2a">32.9.2a Calls Worth Flagging <a class="anchor-link" href="#s32-9-2a" aria-label="Permalink">¶</a></h3>
+<p>The reproduction test ships in the same PR as the fix: it must fail before the change and pass after it. A fix that requires altering the reproduction test is treated as suspect.</p>
+<h3 id="s32-9-3">32.9.3 Reproduction Environment <a class="anchor-link" href="#s32-9-3" aria-label="Permalink">¶</a></h3>
+<p>Reproduction runs against a local instance of the application backed by a disposable, freshly seeded development database. It does NOT run against a shared or deployed environment — shared state shifts mid-reproduction, and a reproduction that creates or deletes records would mutate data other people depend on, including tenant data on a multi-tenant system. It does not run against anything holding production data or real credentials. The isolation the former design obtained from a fresh staging environment is obtained here from a local throwaway database, at far lower cost and operational weight.</p>
+<h3 id="s32-9-4">32.9.4 Labels and Triage State <a class="anchor-link" href="#s32-9-4" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table><thead><tr><th><strong>Label</strong></th><th><strong>Meaning</strong></th></tr></thead><tbody><tr><td>bug</td><td>Filed by the help flows; awaiting triage.</td></tr><tr><td>confirmed</td><td>Reproduced by Claude Code; a fix is in progress or in a draft PR.</td></tr><tr><td>unconfirmed</td><td>Could not be reproduced; awaiting human review.</td></tr><tr><td>needs-human-fix</td><td>Reproduced, but the fix would touch sensitive code (<a class="xref" href="#s32-9-5">§32.9.5</a>); a human must make the change.</td></tr></tbody></table></div>
+<p>The platform mirrors the triage outcome in <code>bug_submissions.triage_state</code> so the <a class="xref" href="#s32-6-3">§32.6.3</a> status route can report progress (untriaged / confirmed / unconfirmed / needs_human_fix). The auto-fix-specific labels of the former design (<code>auto-fix-candidate</code>, <code>awaiting-staging-repro</code>, <code>repro-confirmed</code>, <code>repro-failed</code>) are retired.</p>
+<h3 id="s32-9-5">32.9.5 Injection and Scope Safeguards <a class="anchor-link" href="#s32-9-5" aria-label="Permalink">¶</a></h3>
+<p>Bug reports contain free text written by tenant admins and end customers, and customer-submitted reports reach this workflow through the <a class="xref" href="#s32-10">§32.10</a> path. That text is untrusted input. Because Claude Code reads it and then runs code and edits the repository, the workflow applies the following safeguards, all encoded in the <code>/fix-bugs</code> slash command so they apply on every run:</p>
 <ul>
-<li><strong>The two-gate pattern (pre-fix MUST fail, post-fix MUST pass) is the defense against the "auto-fixed but didn't actually fix anything" loop.</strong> Without it, a faulty repro that passes against buggy code would let the auto-fixer "fix" nothing and the PR would CI-green its way through review.</li>
-<li><strong>The pre-fix gate runs against CURRENT staging code</strong>, not against a fresh checkout. If the bug was already fixed by an earlier release, the gate catches that ("repro doesn't reproduce — bug may be already fixed"). The issue is closed as not-reproducible.</li>
-<li><strong>The post-fix gate runs against the proposed fix applied locally to the workflow runner.</strong> Once the gate passes and the PR opens, normal CI runs against the full PR diff and may catch other regressions.</li>
-<li><strong>Both gates use the same Playwright script.</strong> A fix that requires changing the test is suspicious.</li>
+<li><strong>Issue content is data, not instructions.</strong> Every issue title, body, and comment is treated as a description of a problem, never as a directive. Instructions embedded in a report — including text that addresses the AI directly — are ignored and noted, not obeyed.</li>
+<li><strong>No execution of report-supplied code.</strong> Claude Code builds the reproduction itself from the codebase. It does not run commands, scripts, or code pasted into a report, and does not fetch URLs found in a report.</li>
+<li><strong>Isolated reproduction.</strong> Reproduction runs only in the local, disposable environment of <a class="xref" href="#s32-9-3">§32.9.3</a>. No production data or real credentials are in reach, so a hostile reproduction has minimal blast radius.</li>
+<li><strong>Scoped fixes.</strong> A fix is confined to application code for the specific bug. Any change that would touch authentication, row-level-security policies, database migrations, secrets handling, billing/commission/Stripe code, CI configuration, or dependency manifests is not made by Claude Code — the issue is labeled <code>needs-human-fix</code> instead.</li>
+<li><strong>No exfiltration.</strong> Claude Code does not send repository, issue, or environment content to any external destination. Outbound calls are limited to <code>gh</code> against the platform repository; no gists, no other remotes.</li>
+<li><strong>Secrets hygiene.</strong> Environment files and credential material are never read into, printed in, or committed to code, comments, PRs, or logs.</li>
+<li><strong>Human-in-the-loop as a control.</strong> The operator approves every file change. Unattended / accept-all mode is not used for this workflow — operator review of each change is itself a safeguard.</li>
+<li><strong>PR hygiene.</strong> Draft PRs only, targeting <code>dev</code>. Branch protection prevents direct pushes to <code>main</code> and <code>dev</code>; Claude Code pushes only <code>fix/issue-{number}</code> branches.</li>
 </ul>
-<h3 id="s32-9-3">32.9.3 PR Conventions <a class="anchor-link" href="#s32-9-3" aria-label="Permalink">¶</a></h3>
-<p>Auto-fix PRs are always:</p>
+<h3 id="s32-9-6">32.9.6 Changes From the Former Design <a class="anchor-link" href="#s32-9-6" aria-label="Permalink">¶</a></h3>
+<p>Retiring the automated auto-fix pipeline removed the following from the rest of <a class="xref" href="#s32">§32</a>: the <code>bug-auto-fix.yml</code> GitHub Actions workflow; fresh staging-environment provisioning and the production-database copy used for reproduction; the <code>BUG_AUTOFIX_*</code> and <code>CLAUDE_CODE_API_KEY</code> environment variables (<a class="xref" href="#s32-14">§32.14</a>); and the GitHub App’s Pull Requests, Contents, and Actions permissions (<a class="xref" href="#s32-7-1">§32.7.1</a>) — the App retains Issues access for issue creation only. Pull requests are created by the operator’s own authenticated <code>gh</code> session. The operator runs Claude Code under a personal Pro or Max subscription; no platform-held Anthropic API key is required for this workflow. Confidence/clarity scoring (<a class="xref" href="#s32-8">§32.8</a>) is retained as a triage-prioritization signal, not an automation gate.</p>
+<h3 id="s32-9-7">32.9.7 Calls Worth Flagging <a class="anchor-link" href="#s32-9-7" aria-label="Permalink">¶</a></h3>
 <ul>
-<li>Draft state (not ‘ready for review’).</li>
-<li>Include the reproduction test in the same PR as the fix.</li>
-<li>Title format: ‘fix: {first 80 chars of issue title} (#{issue_number})’.</li>
-<li>Body includes a link to the issue, a summary of the analysis, the proposed fix description, and a note that production deploy still requires human approval.</li>
-<li>Auto-fix PRs are flagged with a github label auto-fix-pr so the team can filter.</li>
-</ul>
-<h3 id="s32-9-4">32.9.4 Manual Override <a class="anchor-link" href="#s32-9-4" aria-label="Permalink">¶</a></h3>
-<p>A platform admin can add the label needs-human-fix to any issue, which removes auto-fix-candidate and prevents the auto-fix workflow from triggering. Useful when the admin knows the bug is sensitive (security, compliance, customer-impact heavy) or when a previous auto-fix attempt produced a poor result.</p>
-<h3 id="s32-9-5">32.9.5 Failure Modes and Their Handling <a class="anchor-link" href="#s32-9-5" aria-label="Permalink">¶</a></h3>
-<div class="table-wrap"><table><thead><tr><th><strong>Failure mode</strong></th><th><strong>Handling</strong></th></tr></thead><tbody><tr><td>Staging DB copy fails</td><td>Skip repro; label repro-failed with explanation; alert platform admin</td></tr><tr><td>Playwright script invalid</td><td>Comment on issue with error; label repro-failed</td></tr><tr><td>Claude Code fix attempt times out</td><td>Close any partial PR; comment on issue; label repro-confirmed remains; needs human intervention</td></tr><tr><td>Fix PR fails CI</td><td>PR remains draft; engineer takes over</td></tr><tr><td>Fix PR review rejected</td><td>Engineer closes PR; issue stays open</td></tr></tbody></table></div>
-<h3 id="s32-9-6">32.9.6 Cost Controls <a class="anchor-link" href="#s32-9-6" aria-label="Permalink">¶</a></h3>
-<p>The auto-fix pipeline can consume meaningful Claude API budget. Controls:</p>
-<ul>
-<li>Per-day cap on auto-fix attempts across the platform — initial value 10/day. Beyond cap, additional candidates queue.</li>
-<li>Per-tenant cap — initial value 3/day. Prevents a single tenant from dominating the pipeline.</li>
-<li>Claude API key for the auto-fix workflow has its own spending limit configured in the Anthropic Console (separate from the production app key).</li>
-<li>All auto-fix Claude calls log to the AI cost-attribution system (v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>) under a synthetic ‘platform-autofix’ tenant identifier.</li>
+<li><strong>Cadence depends on the operator.</strong> With no pipeline, triage happens when someone runs <code>/fix-bugs</code>. There is no SLA; if turnaround matters, set an explicit cadence.</li>
+<li><strong>UI-driven reproduction.</strong> Playwright-based reproduction does not cover bugs with no UI surface — background-job failures, API contract mismatches, and similar. These tend to land as <code>unconfirmed</code> or <code>needs-human-fix</code> and require a hand-built reproduction.</li>
+<li><strong>Operator discipline.</strong> The safeguards in <a class="xref" href="#s32-9-5">§32.9.5</a> are enforced by the slash-command prompt and by the operator watching the session. Both must hold; an operator who runs the workflow in accept-all mode has removed one layer.</li>
 </ul>
 <h2 id="s32-10">32.10 Customer Bug Flow <a class="anchor-link" href="#s32-10" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-10-1">32.10.1 Trigger <a class="anchor-link" href="#s32-10-1" aria-label="Permalink">¶</a></h3>
@@ -353,16 +344,17 @@
 <p>The issue is created in the same GitHub repo as tenant-reported bugs (D-002 in MEMORY.md). Labels applied: bug, customer-reported. The submitter_user_id is the customer’s user_id (visible only to platform staff via the bug_submissions row, never exposed in the public GitHub issue body). The tenant_slug appears in the issue body so engineering can identify which tenant’s customer is affected.</p>
 <h3 id="s32-10-5">32.10.5 Customer Confirmation <a class="anchor-link" href="#s32-10-5" aria-label="Permalink">¶</a></h3>
 <p>After submission, the customer sees: ‘Thanks — I’ve sent that to the engineering team. You’ll hear back if we need more info.’ The customer does not see the GitHub issue URL directly (it’s an internal artifact); they see a friendly reference ID.</p>
-<h3 id="s32-10-6">32.10.6 Confidence Threshold for Customer Bugs <a class="anchor-link" href="#s32-10-6" aria-label="Permalink">¶</a></h3>
-<p>Customer-reported bugs follow the same confidence threshold for auto-fix eligibility. However, customer-reported bugs tend to have lower clarity scores than tenant-admin-reported bugs (different vocabulary, less technical specificity). The threshold value can be set independently for customer-reported bugs if real-world data shows the uniform threshold is poorly calibrated; v1 uses a single threshold for simplicity.</p>
+<h3 id="s32-10-6">32.10.6 Confidence Scoring for Customer Bugs <a class="anchor-link" href="#s32-10-6" aria-label="Permalink">¶</a></h3>
+<p>Customer-reported bugs are scored the same way as tenant-admin reports (<a class="xref" href="#s32-8">§32.8</a>), but tend to score lower — customers use different vocabulary and less technical specificity. The score affects triage priority only; it gates no automated path. Triage should expect customer-reported bugs to score below tenant-admin reports and weight them accordingly rather than by raw score alone.</p>
 <h3 id="s32-10-7">32.10.7 Resolution Notification <a class="anchor-link" href="#s32-10-7" aria-label="Permalink">¶</a></h3>
-<p>When the corresponding GitHub issue is closed, the customer optionally receives an in-app or email notification (depending on their preferences). The notification phrasing avoids technical detail: ‘The issue you reported has been resolved. Thanks for letting us know.’</p>
+<p>Customers are not notified when the GitHub issue they reported is closed. Issue-lifecycle notifications are out of scope for this release (<a class="xref" href="#s32-1-2">§32.1.2</a>). The submission confirmation (<a class="xref" href="#s32-10-5">§32.10.5</a>) sets the expectation that the customer will be contacted only if more information is needed.</p>
 <h2 id="s32-11">32.11 Abuse Monitoring <a class="anchor-link" href="#s32-11" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-11-1">32.11.1 New Dimension <a class="anchor-link" href="#s32-11-1" aria-label="Permalink">¶</a></h3>
 <p>v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> defines an abuse-monitoring framework with multiple dimensions (AI cost, chat volume, email volume, group invitations, RAG submissions). This feature adds a new dimension: help_submission_rate.</p>
 <h3 id="s32-11-2">32.11.2 Initial Thresholds <a class="anchor-link" href="#s32-11-2" aria-label="Permalink">¶</a></h3>
 <p>Per-tenant per-day submission counts (bugs + feature requests combined). These are initial values; recalibrate after first 90 days of usage:</p>
 <div class="table-wrap"><table><thead><tr><th><strong>State</strong></th><th><strong>Threshold (submissions/day)</strong></th><th><strong>Action</strong></th></tr></thead><tbody><tr><td>ok</td><td>≤ 19</td><td>No action</td></tr><tr><td>soft1</td><td>20–49</td><td>In-app banner to platform admin; no tenant notification</td></tr><tr><td>soft2</td><td>50–99</td><td>Email to tenant owner; throttle to 1 submission per 10 minutes for that tenant</td></tr><tr><td>hard</td><td>≥ 100</td><td>Block further submissions for the rest of the day; alert platform admin</td></tr></tbody></table></div>
+<p>Like the other abuse-monitoring dimensions (Appendix A.1; v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-7">§27.7</a>), help_submission_rate state is monotonic within a calendar month: a tenant whose submission rate falls back below a threshold remains in the elevated state until the next month. This is deliberate anti-oscillation.</p>
 <h3 id="s32-11-3">32.11.3 Cost Attribution <a class="anchor-link" href="#s32-11-3" aria-label="Permalink">¶</a></h3>
 <p>Help AI calls attribute to the tenant whose user is interacting, exactly as customer-facing AI calls do (v6 <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html#s27-12">§27.12</a>). This means a tenant with many Help AI sessions will see those costs in their tier consumption.</p>
 <h3 id="s32-11-4">32.11.4 Customer-Bug-Specific Rate Limit <a class="anchor-link" href="#s32-11-4" aria-label="Permalink">¶</a></h3>
@@ -370,7 +362,7 @@
 <h2 id="s32-12">32.12 Permissions <a class="anchor-link" href="#s32-12" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-12-1">32.12.1 Role Mapping <a class="anchor-link" href="#s32-12-1" aria-label="Permalink">¶</a></h3>
 <p>Per v6 <a class="xref" href="section-26-security.html">§26</a>, the role model is:</p>
-<div class="table-wrap"><table><thead><tr><th><strong>Role</strong></th><th><strong>Can view docs</strong></th><th><strong>Can use help flow</strong></th><th><strong>Can submit bug</strong></th><th><strong>Can submit feature</strong></th></tr></thead><tbody><tr><td>tenant_owner</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>tenant_agent</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>tenant_billing_admin</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>customer (authenticated)</td><td>No</td><td>No</td><td>Yes (via concierge)</td><td>No</td></tr><tr><td>customer (anonymous)</td><td>No</td><td>No</td><td>No</td><td>No</td></tr><tr><td>platform_super_admin</td><td>Yes (all tenants)</td><td>Yes</td><td>Yes (tagged platform-internal)</td><td>Yes</td></tr><tr><td>platform_support</td><td>Yes (all tenants)</td><td>Yes (read-only view)</td><td>Yes (on behalf)</td><td>Yes</td></tr><tr><td>platform_compliance</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>platform_finance</td><td>Yes</td><td>No</td><td>Yes</td><td>Yes</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th><strong>Role</strong></th><th><strong>Can view docs</strong></th><th><strong>Can use ‘I need help’ Q&amp;A</strong></th><th><strong>Can submit bug</strong></th><th><strong>Can submit feature</strong></th></tr></thead><tbody><tr><td>tenant_owner</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>tenant_agent</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>tenant_billing_admin</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>customer (authenticated)</td><td>No</td><td>No</td><td>Yes (via concierge)</td><td>No</td></tr><tr><td>customer (anonymous)</td><td>No</td><td>No</td><td>No</td><td>No</td></tr><tr><td>platform_super_admin</td><td>Yes (all tenants)</td><td>Yes</td><td>Yes (tagged platform-internal)</td><td>Yes</td></tr><tr><td>platform_support</td><td>Yes (all tenants)</td><td>Yes (read-only view)</td><td>Yes (on behalf)</td><td>Yes</td></tr><tr><td>platform_compliance</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr><tr><td>platform_finance</td><td>Yes</td><td>No</td><td>Yes</td><td>Yes</td></tr></tbody></table></div>
 <h3 id="s32-12-2">32.12.2 Customer Feature Requests <a class="anchor-link" href="#s32-12-2" aria-label="Permalink">¶</a></h3>
 <p>Customers cannot directly submit feature requests via this v1 release. Their feedback can still reach the platform via the tenant’s existing escalation path, where a tenant agent may translate it into a feature request through the tenant admin flow. This is a deliberate scope choice; customer-direct feature requests can be added in a future version once the volume model for customer bugs is understood.</p>
 <h2 id="s32-13">32.13 Privacy and Security <a class="anchor-link" href="#s32-13" aria-label="Permalink">¶</a></h2>
@@ -394,20 +386,19 @@
 <li>Help session opened, closed, escalated.</li>
 <li>Bug or feature submitted (rows are themselves audit records).</li>
 <li>GitHub issue creation (success and failure).</li>
-<li>Auto-fix workflow triggered, succeeded, failed.</li>
-<li>Platform admin override (needs-human-fix label applied).</li>
 <li>Feature request decision (accepted/rejected/deferred/duplicate).</li>
 </ul>
+<p>Interactive bug triage (<a class="xref" href="#s32-9">§32.9</a>) runs in Claude Code and GitHub; its audit trail is the GitHub issue history, branch, and pull-request record, not the platform audit log.</p>
 <p>Retention follows v6 audit-log retention: 7 years.</p>
 <h3 id="s32-13-4">32.13.4 Tenant Isolation <a class="anchor-link" href="#s32-13-4" aria-label="Permalink">¶</a></h3>
 <p>Help sessions, bug submissions, and feature requests are tenant-scoped via RLS. A tenant admin can see only their own tenant’s submissions. Platform admins can see across tenants. GitHub issues are not tenant-scoped (they live in a single repo) but the tenant identifier is hashed in any externally-visible portion of the issue body, with the plaintext tenant ID stored only in the platform’s bug_submissions row.</p>
 <h2 id="s32-14">32.14 Environment Variables <a class="anchor-link" href="#s32-14" aria-label="Permalink">¶</a></h2>
 <p>New variables added by this feature. Follows the v6 <a class="xref" href="section-28-environment-variables-reference.html">§28</a> conventions.</p>
-<div class="table-wrap"><table><thead><tr><th><strong>Variable</strong></th><th><strong>Required</strong></th><th><strong>Secret</strong></th><th><strong>Description</strong></th></tr></thead><tbody><tr><td>GITHUB_APP_ID</td><td>Yes</td><td>No</td><td>GitHub App identifier</td></tr><tr><td>GITHUB_APP_PRIVATE_KEY</td><td>Yes</td><td>Yes</td><td>GitHub App private key (PEM)</td></tr><tr><td>GITHUB_APP_INSTALLATION_ID</td><td>Yes</td><td>No</td><td>GitHub App installation identifier (per-repo install)</td></tr><tr><td>GITHUB_REPO_OWNER</td><td>Yes</td><td>No</td><td>Owner of the issues repo</td></tr><tr><td>GITHUB_REPO_NAME</td><td>Yes</td><td>No</td><td>Name of the issues repo</td></tr><tr><td>BUG_AUTOFIX_CONFIDENCE_THRESHOLD</td><td>Yes</td><td>No</td><td>Score threshold for auto-fix eligibility (default 0.7)</td></tr><tr><td>BUG_AUTOFIX_DAILY_PLATFORM_CAP</td><td>Yes</td><td>No</td><td>Platform-wide daily cap on auto-fix attempts (default 10)</td></tr><tr><td>BUG_AUTOFIX_DAILY_TENANT_CAP</td><td>Yes</td><td>No</td><td>Per-tenant daily cap on auto-fix attempts (default 3)</td></tr><tr><td>CLAUDE_CODE_API_KEY</td><td>Yes</td><td>Yes</td><td>API key for auto-fix Claude Code invocations; separate from main app key</td></tr><tr><td>HELP_DOCS_CACHE_TTL_SECONDS</td><td>No</td><td>No</td><td>TTL for cached PDF/.docx exports (default 3600)</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th><strong>Variable</strong></th><th><strong>Required</strong></th><th><strong>Secret</strong></th><th><strong>Description</strong></th></tr></thead><tbody><tr><td>GITHUB_APP_ID</td><td>Yes</td><td>No</td><td>GitHub App identifier</td></tr><tr><td>GITHUB_APP_PRIVATE_KEY</td><td>Yes</td><td>Yes</td><td>GitHub App private key (PEM)</td></tr><tr><td>GITHUB_APP_INSTALLATION_ID</td><td>Yes</td><td>No</td><td>GitHub App installation identifier (per-repo install)</td></tr><tr><td>GITHUB_REPO_OWNER</td><td>Yes</td><td>No</td><td>Owner of the issues repo</td></tr><tr><td>GITHUB_REPO_NAME</td><td>Yes</td><td>No</td><td>Name of the issues repo</td></tr><tr><td>HELP_DOCS_CACHE_TTL_SECONDS</td><td>No</td><td>No</td><td>TTL for cached PDF/.docx exports (default 3600)</td></tr></tbody></table></div>
 <h2 id="s32-15">32.15 Phased Rollout <a class="anchor-link" href="#s32-15" aria-label="Permalink">¶</a></h2>
 <h3 id="s32-15-1">32.15.1 Phase Alignment <a class="anchor-link" href="#s32-15-1" aria-label="Permalink">¶</a></h3>
 <p>v6 <a class="xref" href="section-31-implementation-phasing.html">§31</a> defines four phases (0–3). This feature lands in phases as follows:</p>
-<div class="table-wrap"><table><thead><tr><th><strong>Phase</strong></th><th><strong>What ships</strong></th></tr></thead><tbody><tr><td>Phase 1</td><td>Tenant admin help flows (help / bug / feature). Documentation viewer with onscreen + print + PDF download. GitHub integration. No auto-fix yet — manual triage for all submissions.</td></tr><tr><td>Phase 2</td><td>Customer bug flow via the travel concierge persona. .docx download. Auto-fix pipeline enabled. Abuse monitoring dimension turned on with enforcement.</td></tr><tr><td>Phase 3</td><td>Threshold recalibration based on real submission data. Optional customer feature requests if data shows volume warrants. Vision-based screenshot PII detection moves from warn to block if calibration supports it.</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th><strong>Phase</strong></th><th><strong>What ships</strong></th></tr></thead><tbody><tr><td>Phase 1</td><td>Tenant admin help flows (help / bug / feature). Documentation viewer with onscreen + print + PDF download. GitHub integration. Interactive bug triage (§32.9) — operator runs Claude Code to reproduce and fix confirmed bugs.</td></tr><tr><td>Phase 2</td><td>Customer bug flow via the travel concierge persona. .docx download. Abuse monitoring dimension turned on with enforcement.</td></tr><tr><td>Phase 3</td><td>Optional customer feature requests if data shows volume warrants. Vision-based screenshot PII detection moves from warn to block if calibration supports it.</td></tr></tbody></table></div>
 <h3 id="s32-15-2">32.15.2 Phase 1 Done Definition <a class="anchor-link" href="#s32-15-2" aria-label="Permalink">¶</a></h3>
 <ul>
 <li>At least 5 doc sections written and approved.</li>
@@ -415,27 +406,23 @@
 <li>At least one real bug filed via the flow and visible as a GitHub issue.</li>
 <li>PDF download produces a readable, branded document.</li>
 <li>PII redaction verified by submitting a test bug containing fake SSN.</li>
+<li>Interactive bug-triage workflow (<a class="xref" href="#s32-9">§32.9</a>) available; at least one bug taken through reproduce → fix → draft PR.</li>
 </ul>
 <h3 id="s32-15-3">32.15.3 Phase 2 Done Definition <a class="anchor-link" href="#s32-15-3" aria-label="Permalink">¶</a></h3>
 <ul>
 <li>Customer bug flow tested with a real authenticated test customer.</li>
-<li>Auto-fix workflow successfully reproduces a synthetic bug on staging.</li>
-<li>Auto-fix workflow opens a draft PR with proposed fix; engineer review confirms the fix is reasonable.</li>
 <li>Abuse monitoring dimension active and enforcing for non-platform tenants.</li>
 </ul>
 <h2 id="s32-16">32.16 Calls Worth Flagging <a class="anchor-link" href="#s32-16" aria-label="Permalink">¶</a></h2>
 <p>Design trade-offs in this section that may need revisiting:</p>
 <ul>
 <li><strong>GitHub as the issue system.</strong><strong> </strong>Locks bug/feature handling to GitHub. If the engineering team ever migrates to Linear, Jira, or another tracker, the issue-creation layer (<a class="xref" href="section-07-api-routes.html">§7</a>) has to be re-implemented. The repository abstraction is concentrated in apps/main/src/lib/github/, so the swap is contained — but it is a swap, not a config toggle.</li>
-<li><strong>Uniform confidence threshold for customer vs tenant-admin bugs.</strong><strong> </strong>Customers and tenant admins have different bug-reporting fluency. A single threshold may be miscalibrated for one side. Phase 3 may want a per-source threshold.</li>
-<li><strong>Auto-fix Playwright reproduction.</strong><strong> </strong>Bugs that don’t involve UI interaction (e.g., a background-job failure, an API contract mismatch) won’t reproduce in a UI-driven script. The reproduction layer needs to support multiple reproduction types over time. v1 supports UI-driven repro only.</li>
 <li><strong>Customer-reported feature requests are not in v1.</strong><strong> </strong>May create frustration if customers see they can report bugs but not request features. Worth measuring tenant feedback after Phase 2.</li>
 <li><strong>Help docs as part of the release pipeline.</strong><strong> </strong>Means a doc typo correction requires a release. Acceptable while the team is small; revisit if docs become a frequent edit surface.</li>
 <li><strong>Screenshot PII detection starts in warn-only mode.</strong><strong> </strong>If a customer attaches an image with PII visible (e.g., a passport photo by accident), the platform allows the upload with a warning. A later phase may flip this to block-by-default.</li>
 <li><strong>Help_doc_versions cache invalidation on every release.</strong><strong> </strong>Cache key includes the code version. Every deploy invalidates the cache. Acceptable while deploys are weekly or less frequent; if deploys become daily, cached generation cost becomes nontrivial.</li>
-<li><strong>No SLA on auto-fix turnaround.</strong><strong> </strong>An auto-fix PR may sit in draft for a long time before a human picks it up. The PR queue can grow. v6 doesn’t have an SLA framework; if one is added later, auto-fix PRs should be included.</li>
 </ul>
-<h1 id="s32">Appendix A — Fresh-Build Notes</h1>
+<h1 id="s32-appendix-a">Appendix A — Fresh-Build Notes</h1>
 <p>This appendix is for the engineer who picks up the codebase six months from now and asks ‘why was this done this way?’ or who’s tasked with building it from scratch. It captures the choices, conventions, and traps that aren’t obvious from the per-section spec text but matter for getting the implementation right.</p>
 <h2>A.1 Things That Look Like Bugs But Aren’t</h2>
 <p>A short list of behaviors that will look wrong if you don’t know they’re deliberate:</p>
@@ -583,7 +570,7 @@
 <li>If MEMORY contains a decision that the spec contradicts, MEMORY wins (it’s more recent). Update the spec to match.</li>
 </ul>
 <p>The spec is a living document. Out-of-date specs are worse than no specs.</p>
-<h1 id="s32">Appendix B — Glossary</h1>
+<h1 id="s32-appendix-b">Appendix B — Glossary</h1>
 <p>Quick-reference definitions for terminology used throughout the spec. Entries grouped by domain rather than alphabetized — closely-related terms appear together for context.</p>
 <h2>B.1 Platform Structure</h2>
 <p><strong>Platform</strong> — The system as a whole, operated by the platform owner. Hosts multiple tenants. Also the legal entity that has the relationship with the host agency, Stripe, Anthropic, and other vendors.</p>
@@ -716,15 +703,15 @@
 <p><strong>Help AI</strong> — The AI persona that runs the help / bug / feature chat flows defined in <a class="xref" href="#s32">§32</a>. Distinct from the travel concierge personas.</p>
 <p><strong>Help flow</strong> — One of three modes the Help AI runs in: ‘help’ (open Q&amp;A), ‘bug’ (structured bug-info gathering), ‘feature’ (structured feature-request gathering).</p>
 <p><strong>Help session</strong> — A single user session in any help flow. One row in the help_sessions table.</p>
-<p><strong>Auto-fix</strong> — A pipeline that attempts to reproduce a bug on staging and propose a fix via Claude Code, gated by a confidence/clarity threshold.</p>
+<p><strong>Interactive bug triage</strong> — The operator-run workflow (<a class="xref" href="#s32-9">§32.9</a>) in which Claude Code reproduces open bugs against a local instance, fixes the confirmed ones as draft pull requests, and flags the rest for human review. Replaces the former automated auto-fix pipeline.</p>
 <p><strong>Confidence/clarity score</strong> — A 0–1 score computed by the Help AI at the end of the bug flow, capturing how actionable the bug report is.</p>
 <p><strong>Customer-reported bug</strong> — A bug filed by an end customer through the travel concierge persona. Labeled ‘customer-reported’ on the corresponding GitHub issue.</p>
 <p><strong>Tenant-admin-reported bug</strong> — A bug filed by a tenant admin or agent through the admin console help flow. Labeled ‘tenant-admin-reported’.</p>
-<p><strong>Repro-confirmed</strong> — Label applied when the auto-fix pipeline reproduced the bug on staging.</p>
-<p><strong>Repro-failed</strong> — Label applied when the auto-fix pipeline could not reproduce the bug; awaiting human review.</p>
+<p><strong>confirmed</strong> — GitHub label applied during interactive bug triage (<a class="xref" href="#s32-9">§32.9</a>) when a bug is reproduced; a fix is in progress or in a draft PR.</p>
+<p><strong>unconfirmed</strong> — GitHub label applied during interactive bug triage (<a class="xref" href="#s32-9">§32.9</a>) when a bug cannot be reproduced; awaiting human review.</p>
   </main>
   <footer class="page-footer">
-    <nav class="pagenav"><a class="prev" href="section-31-implementation-phasing.html">← §31: Implementation Phasing</a><a class="toc-link" href="index.html">Table of Contents</a></nav>
+    <nav class="pagenav"><a class="prev" href="section-31-implementation-phasing.html">← §31: Implementation Phasing</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-33-addendum-external-data-sources-and-media-assets.html">§33: Addendum — External Data Sources &amp; Media Assets →</a></nav>
     <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
   </footer>
 </body>
