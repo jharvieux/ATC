@@ -4,6 +4,110 @@ Newest entries on top.
 
 ---
 
+## D-076 — 2026-05-24 — BP40: Price-watch subscriptions — backend, evaluator, daily Inngest, kill switch — key decisions
+
+**Decision:**
+
+1. **Default-OFF notifications** (`PRICE_WATCH_NOTIFICATIONS_ENABLED=false`). Continues the D-058+ cost-deferral pattern. **Status transitions still happen** even with the flag off — the UI reflects accurate watch state. Only email + in-app notification dispatch is suppressed. Operator flips the flag once notification templates + delivery channels are sign-off-ready.
+
+2. **Currency mismatch is `skip`, not `no_trigger`** (per spec §33.8.4 + my evaluator contract). Auto-conversion would introduce stale FX risk + silent-failure mode. Skip leaves the watch active for next-day re-evaluation; operator gets a log line. Distinct `skip` vs `no_trigger` matters because `no_trigger` is a successful evaluation (threshold not met yet) while `skip` is "couldn't evaluate, retry tomorrow."
+
+3. **`evaluateThreshold` is pure** — no IO, no DB, no logging. Caller (Inngest job, future UI inspector) does the IO + logs. Makes it trivially testable + reusable. 13 unit tests cover all three threshold kinds + currency mismatch + inactive watch + missing-price guards.
+
+4. **Daily Inngest cron at 04:00 UTC** — runs AFTER BP35's monthly itinerary cron (03:00 UTC on the 1st) so refreshed pricing flows in before the daily evaluation. Well before any user-facing daily traffic.
+
+5. **Batched refresh** via BP34's `PricingDataSource.refreshTrackedSailings()`. Watches grouped by composite SailingKey; 100 watches on the same RCL/MIA sailing dispatch one Apify actor run, not 100. The Inngest job de-dupes keys before invoking refresh.
+
+6. **Coverage check at watch-creation time** (BP40 task 9). `routeFor(line)` returns null when the line isn't covered by any enabled adapter → 422 `uncovered_line` with operator-facing message. Logged for platform-admin demand visibility.
+
+7. **Baseline set at creation from `pricing_cache`** — if no cache row exists for the (line, ship, sail_date, port, cabin_class), the API returns 422 `price_data_unavailable`. We refuse to create a watch against unknown baseline; otherwise the first trigger would be ambiguous (was there really a drop, or did the cache just start populating?).
+
+8. **`/api/price-watches/[id]/rearm`** — POST endpoint that resets baseline to the CURRENT cached price + flips status back to active. Cleaner than allowing PATCH to set arbitrary baseline (which would be a manipulation surface for "fake a drop later").
+
+9. **`tenantClient(ctx)` + RLS dual enforcement.** Added `price_watches` to `TENANT_SCOPED_TABLES` so the auto-filter applies. RLS policies from BP33 still enforce at DB level. Routes additionally check `subscriber_user_id === user.id` for ownership on PATCH/rearm — per-watch ownership stricter than per-tenant.
+
+10. **UI deferred** — backend ships first per BP scope discipline. The subscriber dashboard "Price watches" section, the booking-detail "Set price watch" modal, and the re-price flow opening the §20 booking widget are documented as operator follow-ups. The new SSE asset event from BP39 + the watch CRUD routes are sufficient backend surface for a UI build.
+
+11. **Inngest event `notifications.price_watch.triggered`** is the observable boundary for §23 notification routing. The event includes the data needed for any channel; the actual template + delivery wiring lands when operator flips the kill switch.
+
+**What was rejected:**
+
+- **Auto-converting currencies** — too easy to silently use stale FX rates; spec said skip + log; we followed.
+- **Allowing arbitrary baseline updates via PATCH** — opens manipulation; baselines are immutable except via the dedicated rearm path.
+- **Implementing the UI in this PR** — UI surface needs designer sign-off + multiple component reuses + Playwright E2E that needs a dev server. Document as follow-up.
+- **Sending notifications by default** — would create on-prem email noise without operator opt-in.
+
+**Operator follow-ups (D-076):**
+
+- Build the subscriber UI components: dashboard list, creation modal on booking detail page, status badges, per-row actions (pause/resume/cancel/rearm), re-price CTA opening the §20 widget pre-populated.
+- Add the §23 notification template ("Price drop alert: {ship} on {sail_date}") + wire the `notifications.price_watch.triggered` Inngest event consumer.
+- After flip-on, monitor: how often do watches trigger? Notification delivery rate? Subscriber action rate (rebooked vs ignored)?
+- Playwright E2E for the end-to-end flow (seed watch → manual price update → trigger → notification → rebook CTA).
+
+**Artifacts:**
+- `apps/main/src/lib/price-watches/{types,evaluate-threshold,schemas}.ts`.
+- `apps/main/src/app/api/price-watches/route.ts` (POST + GET).
+- `apps/main/src/app/api/price-watches/[id]/route.ts` (PATCH).
+- `apps/main/src/app/api/price-watches/[id]/rearm/route.ts` (POST).
+- `apps/main/src/inngest/evaluate-price-watches.ts` + registry hookup.
+- `apps/main/src/lib/db/tenant-scoped-tables.ts` (+price_watches).
+- `apps/main/src/lib/env.ts` + `.env.example` (+PRICE_WATCH_NOTIFICATIONS_ENABLED).
+- Tests: 13 new in apps/main (evaluator — 793 total).
+
+---
+
+## D-075 — 2026-05-24 — BP39: consumer-side display markup + asset_id_validation hallucination layer — key decisions
+
+**Decision:**
+
+1. **HYPERLINK rendering, not inline `<img>` — operator override of the addendum spec.** The addendum §33.7.2 says "Render an inline image element with src = image_url..." but the operator directed during the BP34–41 scope review to use a hyperlink approach instead (see the user-direction trail in the conversation). Rationale (operator): keeps the chat UI surface small, avoids the cross-domain image loading + referrer-policy + max-size-cap UI surface, and aligns with the "we are hot-linking, not hosting" posture more honestly (a link to CruiseMapper is unambiguous about who owns the image). **Spec inconsistency flagged here** so future readers don't try to "fix" the discrepancy by re-implementing inline images. The prompt block's DISPLAY INSTRUCTIONS reflect this — the model emits `[[display_asset:<uuid>]]` markup but is told the client will render it as a hyperlink, not an image.
+
+2. **Inline markup over tool-call shape.** Spec'd as a build-time choice based on dev-test reliability (≥80% emission accuracy threshold). For this build I shipped inline markup — the per-turn payload is small (typically <10 assets), the syntax is unambiguous, and streaming-safe (markup self-contained inside one streamed token block). If dev metrics show emission unreliability below 80%, switch to a `display_asset({"id":"..."})` tool-call. Tool-call wrapper deferred to a follow-up when telemetry shows it's needed.
+
+3. **Server-side validation IS the security boundary.** The `asset_id_validation` layer:
+   - Finds every `[[display_asset:<id>]]` in the AI output.
+   - Strips any ID not in the per-turn `availableAssetIds` set (hallucinated).
+   - Strips malformed (non-UUID) markup.
+   - Self-healing — caller streams the sanitized output. NO regen triggered (the layer reports `warning` severity for telemetry only).
+   - Returns metrics: `displayed_count`, `dropped_count`, `malformed_count`. Logged when non-zero so prompt-tuning operators see the rate.
+
+4. **Layer placement in the §21.10 stack:** after generation, after the supervisor regen loop (so a regen doesn't reset the asset-id state), before the streaming-to-client step. The layer is local to display markup — placement relative to other layers (tone, grounding) is independent.
+
+5. **Hyperlink approach also obviates the "max 3 images per response" cap.** The spec mandated that for inline `<img>` rendering. With hyperlinks the constraint is preserved in the SYSTEM PROMPT instruction ("Use sparingly, at most 3 per reply") — the model honors it; if it doesn't, the displayed UX is just a few extra inline links, not a wall of images. Lower-stakes failure mode.
+
+6. **`retrieveForChat` filters assets to those referenced by surviving chunks.** A chunk dropped by §21.3 confidence floor or dedup means its assets are also dropped from the available set. The AI never sees an asset whose referencing chunk isn't in the knowledge_block.
+
+7. **Tenant disable-source-display toggle** (deferred). §21.6 establishes the toggle for source citations; extending it to also gate `[[display_asset:...]]` rendering is a one-line client-side gate (when the toggle is off, the client renders the markup as plain text instead of an `<a>`). I did NOT implement this client-side wiring in BP39 — the chat UI's React layer wasn't touched. Flagged as operator follow-up.
+
+8. **New SSE event `{ type: "assets", assets: RetrievedAsset[] }`** added to the chat route stream. The client consumes this before rendering the message body so it has the asset metadata available when it encounters the markup sentinels.
+
+**What was rejected:**
+
+- **Implementing inline `<img>` rendering** per the addendum literal — operator overrode in scope review.
+- **Triggering a regen when hallucinated IDs are detected** — would burn the regen budget on a self-healable problem.
+- **Storing the dropped IDs in a DB table for later analysis** — `console.warn` with counts is sufficient; we can structure logs later if pattern emerges.
+- **Implementing the tool-call fallback now** — premature without dev metrics; ship the simpler form first.
+- **Touching the chat UI's React renderer in this PR** — out of build-time scope without a dev-server smoke; documented as follow-up.
+
+**Operator follow-ups (D-075):**
+
+- Wire the SSE `assets` event in the consumer chat UI: when the AI message renders, parse `[[display_asset:<uuid>]]` and replace with `<a href={image_url} target="_blank" rel="noopener noreferrer">View {kind} ↗</a>` plus an `attribution` sub-line. HTML-escape all asset-derived text.
+- Extend the §21.6 tenant source-display toggle to also suppress asset hyperlinks (treat them as plain text when off).
+- After 50 dev-test turns measure: % of replies emitting markup correctly, % with hallucinated IDs, % missed (asset would have helped but model omitted it). If correct-emission < 80%, switch to tool-call shape.
+- Update the §21.10 layer enumeration in code comments to reflect the new layer count (one-line doc update).
+
+**Artifacts:**
+- `apps/main/src/lib/ai/display-assets-block.ts` — DISPLAYABLE ASSETS prompt block builder.
+- `apps/main/src/lib/ai/parse-display-markup.ts` — server-side parser/validator.
+- `apps/main/src/lib/ai/hallucination-defense/asset-id-validation.ts` — §21.10 layer.
+- `apps/main/src/lib/rag/chunk-types.ts` — added `RetrievedAsset` type + `related_asset_ids` on chunks.
+- `apps/main/src/lib/rag/retrieve-for-chat.ts` — surfaces filtered assets.
+- `apps/main/src/lib/personas/build-system-prompt.ts` — accepts `displayable_assets_block`.
+- `apps/main/src/app/api/chat/route.ts` — full wire-up: build block, validate output, emit SSE event.
+- Tests: 18 new in apps/main (parse-display-markup ×7, asset-id-validation ×5, display-assets-block ×6 — 780 total).
+
+---
+
 ## D-074 — 2026-05-24 — BP38: /api/retrieve hydrates related_asset_ids + adds top-level assets array — key decisions
 
 **Decision:**

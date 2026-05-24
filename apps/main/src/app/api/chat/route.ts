@@ -49,6 +49,8 @@ import {
   buildSystemPrompt,
   DEFAULT_PERSONA_SLUG,
 } from "@/lib/personas/build-system-prompt";
+import { buildDisplayableAssetsBlock } from "@/lib/ai/display-assets-block";
+import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-id-validation";
 import {
   runSupervisor,
   HATE_SPEECH_REGEN_INSTRUCTION,
@@ -70,6 +72,7 @@ type SseEvent =
   | { type: "delta"; text: string }
   | { type: "message_id"; message_id: string; conversation_id: string }
   | { type: "sources"; citations: unknown[] }
+  | { type: "assets"; assets: unknown[] }
   | { type: "persona"; slug: string; display_name: string }
   | { type: "hard_limit"; body: string; reset_at: string }
   | { type: "signup_wall"; body: string }
@@ -411,6 +414,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     ...(retrieval.entities.intent === "support" ? { topic: "cancellation_complaint" as const } : {}),
   });
 
+  // BP39 §33.7.1 — build the DISPLAYABLE ASSETS prompt block from the
+  // assets retrieveForChat surfaced (already scope-filtered + chunk-filtered).
+  const displayableAssetsBlock = buildDisplayableAssetsBlock(retrieval.assets);
+  const availableAssetIds = retrieval.assets.map((a) => a.asset_id);
+
   const systemPromptBase = await buildSystemPrompt({
     persona_slug: personaSlug,
     tenant_id: tenantId,
@@ -418,6 +426,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     tone_level: tone.level,
     db: svc,
     knowledge_block: retrieval.knowledge_block,
+    ...(displayableAssetsBlock ? { displayable_assets_block: displayableAssetsBlock } : {}),
   });
 
   // Append the §24.9 persona augmentation if Soft1/Soft2 fired.
@@ -566,6 +575,29 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     await send({ type: "done" });
     await close();
     return;
+  }
+
+  // BP39 §33.7.4 — asset_id_validation hallucination defense layer.
+  // Strips any [[display_asset:<uuid>]] markup whose UUID wasn't in the
+  // per-turn available set (or was malformed). Self-healing: caller streams
+  // the sanitized output directly. Telemetry counters in `assetValidation`.
+  const assetValidation = runAssetIdValidationLayer(candidate, availableAssetIds);
+  candidate = assetValidation.output;
+  if (assetValidation.severity === "warning") {
+    console.warn("[chat] asset_id_validation stripped markup", {
+      conversation_id: conversationId,
+      message_id: assistantMessageId,
+      dropped: assetValidation.metrics.dropped_count,
+      malformed: assetValidation.metrics.malformed_count,
+    });
+    // Persist the sanitized content over the original candidate.
+    await svc.from("messages").update({ content: candidate }).eq("id", assistantMessageId!);
+  }
+
+  // Surface assets to the client so it can render the [[display_asset:<id>]]
+  // sentinels (BP39 hyperlink approach — see MEMORY D-075).
+  if (retrieval.assets.length > 0) {
+    await send({ type: "assets", assets: retrieval.assets });
   }
 
   // Stream the approved response word-by-word.

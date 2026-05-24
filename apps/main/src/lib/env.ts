@@ -278,6 +278,12 @@ const envSchema = z.object({
   CRUISEMAPPER_DIY_INGEST_ENABLED:       z.coerce.boolean().optional().default(false),
   CRUISEMAPPER_DIY_RATE_LIMIT_RPS:       z.coerce.number().positive().optional().default(1.0),
   CRUISEMAPPER_DIY_BASE_URL:             z.string().url().optional().default("https://www.cruisemapper.com"),
+  // BP40 §33.8 — price-watch subscriptions. Default-OFF cost-deferral:
+  // when false, the daily Inngest job STILL runs and updates statuses
+  // (active → triggered) so the UI reflects reality, but no notification
+  // is sent. Operator flips to true to actually email/in-app-notify
+  // subscribers.
+  PRICE_WATCH_NOTIFICATIONS_ENABLED:     z.coerce.boolean().optional().default(false),
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
   ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),

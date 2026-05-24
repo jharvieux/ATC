@@ -1,0 +1,143 @@
+// BP40 §33.8.3 — Daily price-watch evaluator.
+//
+// Cron: 04:00 UTC. Runs AFTER BP35's monthly itinerary cron (03:00 UTC
+// on the 1st of every month) so refreshed pricing flows in before the
+// daily evaluation. Well before user-facing daily traffic.
+//
+// Flow:
+//   1. SELECT all price_watches WHERE status='active'.
+//   2. Group by SailingKey, batch-refresh via BP34's PricingDataSource
+//      (one actor run per (line, port, month) bucket regardless of how
+//      many watches reference it).
+//   3. For each watch, read the now-fresh pricing_cache row + evaluate
+//      threshold. On trigger: UPDATE status='triggered', triggered_at=NOW().
+//   4. Notification: enqueued only when PRICE_WATCH_NOTIFICATIONS_ENABLED=true
+//      (default false per cost-deferral). When off, status flips still
+//      happen — the UI reflects reality even without sending email.
+
+import { inngest } from "./client";
+import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { ApifyPricingAdapter } from "@/lib/pricing/apify-pricing-adapter";
+import { evaluateThreshold } from "@/lib/price-watches/evaluate-threshold";
+import { sailingKeyForWatch, type PriceWatch } from "@/lib/price-watches/types";
+import type { CabinClass, SailingKey } from "@/lib/pricing/types";
+
+export const evaluatePriceWatches = inngest.createFunction(
+  {
+    id: "evaluate-price-watches",
+    triggers: [{ cron: "0 4 * * *" }],
+  },
+  async () => {
+    if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
+
+    return withPlatformAdminAudit(
+      {
+        admin_user_id: "system-cron",
+        reason: "external_pricing_refresh",
+        operation: "evaluate_price_watches",
+      },
+      async (db, recordQuery) => {
+        recordQuery({ op: "select", table: "price_watches" });
+
+        const { data: watchRows } = await db
+          .from("price_watches")
+          .select("*")
+          .eq("status", "active")
+          .limit(10_000);
+        const watches = (watchRows ?? []) as PriceWatch[];
+        if (watches.length === 0) {
+          return { active_watches: 0, refreshed: 0, triggered: 0, notified: 0 };
+        }
+
+        // De-dup sailing keys so we refresh each underlying price once.
+        const keyMap = new Map<string, SailingKey>();
+        for (const w of watches) {
+          const partial = sailingKeyForWatch(w);
+          // The pricing cache key requires durationNights; we use 0 here only
+          // as a lookup placeholder. The cache layer keys on the composite
+          // (line, ship, sailDate, departurePort, durationNights); for the
+          // refresh batch the duration is a no-op upstream input.
+          const k: SailingKey = { ...partial, durationNights: 0 };
+          const id = `${k.line}|${k.ship}|${k.sailDate}|${k.departurePort}`;
+          if (!keyMap.has(id)) keyMap.set(id, k);
+        }
+
+        const adapter = new ApifyPricingAdapter(db);
+        const refresh = await adapter.refreshTrackedSailings([...keyMap.values()]);
+        // refresh result includes spend, partials, etc. — useful in logs.
+
+        let triggered = 0;
+        let notified = 0;
+        const notificationsEnabled = process.env.PRICE_WATCH_NOTIFICATIONS_ENABLED === "true";
+
+        for (const w of watches) {
+          // Read current cached price for the specific cabin class.
+          const { data: cachedRows } = await db
+            .from("pricing_cache")
+            .select("price_amount, price_currency")
+            .eq("cruise_line", w.cruise_line)
+            .eq("ship", w.ship)
+            .eq("sail_date", w.sail_date)
+            .eq("departure_port", w.departure_port)
+            .eq("cabin_class", w.cabin_class)
+            .limit(1);
+          const row = ((cachedRows ?? []) as Array<{ price_amount: number; price_currency: string }>)[0] ?? null;
+          let current: { amount: number; currency: string } | null = null;
+          if (row) {
+            const raw: unknown = row.price_amount;
+            const dollars = typeof raw === "number" ? raw : Number(raw);
+            current = { amount: dollars, currency: row.price_currency };
+          }
+
+          const outcome = evaluateThreshold(w, current);
+          if (outcome.decision !== "trigger") continue;
+
+          const nowIso = new Date().toISOString();
+          const updatePayload: Record<string, unknown> = {
+            status: "triggered",
+            triggered_at: nowIso,
+          };
+          if (notificationsEnabled) {
+            updatePayload.notified_at = nowIso;
+          }
+          await db.from("price_watches").update(updatePayload).eq("watch_id", w.watch_id);
+          triggered += 1;
+
+          if (notificationsEnabled) {
+            // Enqueue notification. The full §23 notification template
+            // wiring lands when operator flips the flag; the event is the
+            // observable boundary.
+            await inngest.send({
+              name: "notifications.price_watch.triggered",
+              data: {
+                tenant_id: w.tenant_id,
+                subscriber_user_id: w.subscriber_user_id,
+                watch_id: w.watch_id,
+                cruise_line: w.cruise_line,
+                ship: w.ship,
+                sail_date: w.sail_date,
+                cabin_class: w.cabin_class as CabinClass,
+                baseline_price: w.baseline_price,
+                current_price: current?.amount ?? null,
+                currency: w.baseline_currency,
+                reason: outcome.reason,
+              },
+            });
+            notified += 1;
+          }
+        }
+
+        return {
+          active_watches: watches.length,
+          refreshed: refresh.sailings_refreshed,
+          partial: refresh.partial,
+          refresh_reason: refresh.reason ?? null,
+          spend_usd: refresh.spend_usd,
+          triggered,
+          notified,
+          notifications_enabled: notificationsEnabled,
+        };
+      },
+    );
+  },
+);

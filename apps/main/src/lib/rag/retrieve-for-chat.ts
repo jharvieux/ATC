@@ -13,7 +13,7 @@
 import { extractEntities, type EntitySet } from "./entity-extraction";
 import { filterChunks } from "./filter-chunks";
 import { formatKnowledgeBlock, type FormattedBlock } from "./format-block";
-import type { RetrievedChunk } from "./chunk-types";
+import type { RetrievedChunk, RetrievedAsset } from "./chunk-types";
 
 export interface RetrieveForChatInput {
   message: string;
@@ -38,6 +38,8 @@ export interface RetrieveForChatResult {
   entities: EntitySet;
   retrieval_id: string | null;
   retrieval_latency_ms: number | null;
+  // BP38/39 §33.6.4 — assets surfaced alongside the chunks.
+  assets: RetrievedAsset[];
 }
 
 export async function retrieveForChat(
@@ -86,6 +88,13 @@ export async function retrieveForChat(
     ...(input.categoryHalflives !== undefined && { categoryHalflives: input.categoryHalflives }),
   });
 
+  // BP38/39 §33.6.4 / §33.7 — drop any retrieved asset that isn't
+  // referenced by a chunk that survived filtering. Avoids surfacing
+  // hot-links for content the customer never sees.
+  const survivingChunkAssetIds = new Set<string>();
+  for (const c of filtered) for (const id of (c.related_asset_ids ?? [])) survivingChunkAssetIds.add(id);
+  const filteredAssets = ragChunks.assets.filter((a) => survivingChunkAssetIds.has(a.asset_id));
+
   return {
     knowledge_block: formatted.knowledge_block,
     citations: formatted.citations,
@@ -93,6 +102,7 @@ export async function retrieveForChat(
     entities,
     retrieval_id: ragChunks.retrieval_id,
     retrieval_latency_ms: ragChunks.retrieval_latency_ms,
+    assets: filteredAssets,
   };
 }
 
@@ -108,6 +118,7 @@ interface RagRetrieveCallInput {
 
 interface RagRetrieveCallResult {
   chunks: RetrievedChunk[];
+  assets: RetrievedAsset[];
   retrieval_id: string | null;
   retrieval_latency_ms: number | null;
 }
@@ -118,7 +129,7 @@ async function callRagRetrieve(
   const ragServiceUrl = process.env.RAG_SERVICE_URL;
   if (!ragServiceUrl) {
     // No RAG service configured (e.g., in tests) — return empty.
-    return { chunks: [], retrieval_id: null, retrieval_latency_ms: null };
+    return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
   }
 
   // TODO(bp24-chat-service-jwt): replace with RS256-signed JWT per BP09 contract.
@@ -135,20 +146,22 @@ async function callRagRetrieve(
     });
     if (!res.ok) {
       console.warn(`[retrieve-for-chat] RAG service ${res.status}`);
-      return { chunks: [], retrieval_id: null, retrieval_latency_ms: null };
+      return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
     }
     const json = (await res.json()) as {
       chunks?: RetrievedChunk[];
+      assets?: RetrievedAsset[];
       retrieval_id?: string | null;
       retrieval_latency_ms?: number | null;
     };
     return {
       chunks: json.chunks ?? [],
+      assets: json.assets ?? [],
       retrieval_id: json.retrieval_id ?? null,
       retrieval_latency_ms: json.retrieval_latency_ms ?? null,
     };
   } catch (err) {
     console.warn("[retrieve-for-chat] RAG service unreachable:", String(err));
-    return { chunks: [], retrieval_id: null, retrieval_latency_ms: null };
+    return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
   }
 }
