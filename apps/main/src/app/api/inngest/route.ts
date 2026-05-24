@@ -78,6 +78,9 @@ import { thresholdRecomputeOnSubscriptionChange } from "@/inngest/threshold-reco
 import { abuseStateTransitionNotify } from "@/inngest/abuse-state-transition-notify";
 import { abuseOverrideExpirySweep } from "@/inngest/abuse-override-expiry-sweep";
 import { githubIssueRetry } from "@/inngest/github-issue-retry";
+import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
+import { helpDocsDocxGenerate } from "@/inngest/help-docs-docx-generate";
+import { helpDocVersionsPurge } from "@/inngest/help-doc-versions-purge";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -161,5 +164,9 @@ export const { GET, POST, PUT } = serve({
     abuseOverrideExpirySweep,
     // BP31: Self-Service Help — GitHub issue creation resilience (§32.7.5)
     githubIssueRetry,
+    // BP31 Phase C: Help docs export pipeline (§32.3.3)
+    helpDocsPdfGenerate,
+    helpDocsDocxGenerate,
+    helpDocVersionsPurge,
   ],
 });

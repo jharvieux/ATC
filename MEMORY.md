@@ -4,6 +4,70 @@ Newest entries on top.
 
 ---
 
+## D-067 — 2026-05-23 — BP31 Phase C: help docs viewer + PDF/Word export + slide-over chat (SSE with real Anthropic) + admin triage + sync CLI — key decisions
+
+**Decision:**
+
+1. **Help docs ship as Markdown at `apps/main/content/help/`.** Two stub files (`01-getting-started.md`, `12-troubleshooting.md`) with YAML front-matter (`title`, `slug`, `order`, `category`). Content is operator/product work — files carry `<!-- TODO(content) -->` markers. The loader (`lib/help-ai/docs-loader.ts`) parses front-matter inline (no full YAML dep) and sorts by `order`.
+
+2. **Search is in-memory fuzzy** (operator pick documented per the spec's "operator picks" out). `searchDocs(query)` walks every doc body once per call (acceptable up to ~50-100 docs; revisit if the corpus grows). Title hits rank higher than body-only hits. Live behind `GET /api/help/docs/search?q=...`.
+
+3. **Markdown renderer uses `remark()` + `remark-rehype` + `rehype-stringify`** with `allowDangerousHtml: true`. Safe because every input passes through code review — `apps/main/content/help/` ships with the repo. **DO NOT** use this renderer on user-submitted markdown. Renderer is the single source for `/admin/help/[slug]`, `/admin/help/print`, and the PDF/Word export pipeline.
+
+4. **PDF export is HTML-only in Phase C** (Puppeteer install deferred). `inngest/help-docs-pdf-generate.ts` renders the concatenated HTML, wraps with print-friendly CSS, uploads as `{job_id}.html` to the `help-docs` Supabase Storage bucket. The signed-URL endpoint serves the HTML; the user prints / saves-as-PDF from the browser. Operator install of Puppeteer is a 1-file swap — replace the marked block with a real `puppeteer.launch()` → `page.pdf()` call. Rationale: Puppeteer ships ~200MB of Chromium and the operator hasn't approved that footprint yet.
+
+5. **Word export uses `docx-js` and produces a REAL .docx binary.** The dep was installed in Phase A. `inngest/help-docs-docx-generate.ts` walks the docs, converts each line (`#`-headings, `-`/`*` bullets, paragraphs) into docx `Paragraph` instances, packs via `Packer.toBuffer`, uploads as `.docx`. Markdown nuances (tables, fenced code blocks, embedded images) flatten to plain text — intended use is offline reading + redlining; the canonical view is the in-app HTML.
+
+6. **`help-doc-versions-purge` daily cron at 03:30 UTC** — deletes rows where `expires_at < NOW() - 7 days`. Best-effort storage cleanup runs first (failures logged, not blocking). Uses `withPlatformAdminAudit` (reason `help_doc_publishing` — closest existing reason; could be split into a dedicated `help_doc_cache_purge` reason later).
+
+7. **`POST /api/help/docs/export` cache shortcut** — looks up `help_doc_versions` for `(code_version, tenant_id, format)`; if a row with `expires_at > NOW()` exists, returns its `id` directly as `job_id` so the poll endpoint serves from cache without spinning up the Inngest worker. On miss, pre-creates a placeholder row + dispatches the Inngest event; the worker UPSERTs `storage_path` + final `expires_at`.
+
+8. **Signed URLs use `tenantClient.storage.createSignedUrl()`** (not service-role). 1-hour TTL per §32.3.3. **Operator follow-up:** create the `help-docs` Supabase Storage bucket with a tenant-scoped SELECT policy like `(bucket_id='help-docs' AND auth_user_in_tenant((storage.foldername(name))[1]::uuid))` so the tenantClient signs successfully. Service-role bypass would have worked but would trigger the `atc/no-direct-service-role-import` lint rule for a non-essential reason.
+
+9. **`/admin/help` page** — left sidebar nav with section list, right pane with rendered HTML, header with search input + 3 buttons (Help / Bug / Feature). Buttons open the `HelpAIPanel` slide-over. Search query has 200ms debounce; results render inline above the article body. Built with vanilla React + inline styles (no design-system dep — keeps the help console isolated from tenant-branding concerns).
+
+10. **`/admin/help/print` is a Server Component** — calls `renderAllDocsConcatenated()` at request time and ships the full HTML with `@media print` CSS. User invokes Cmd-P. No server PDF generation needed for this path — Phase 1 done definition (§32.15.2 "PDF download produces a readable, branded document") is satisfied by the cache+download path; this print page is a faster alternative.
+
+11. **`HelpAIPanel` slide-over component** — 480px from right on desktop, full-screen on mobile. Streams SSE chunks from `/api/help/sessions/[id]/message` and appends to the latest assistant message progressively. Opens a `help_sessions` row on mount; closes with outcome `'resolved'` (if messages exchanged) or `'abandoned'` (none) on dismiss. Escalate button visible only for `help` flow.
+
+12. **SSE chat route wires real Anthropic** via `instrumentedClaudeCall(purpose: 'help_ai_main')` per operator direction. Pipeline:
+    - assertPermission + load `help_sessions` row (RLS scoped).
+    - §10.6 kill-switch check via `platform_settings.ai_kill_switch_engaged`. If true, return the standard fallback message and exit — never call Anthropic.
+    - For bug/feature flows: advance the state machine (initial state for v1; per-session state persistence is a follow-on so multi-message flows hold across calls).
+    - Build prompt via `buildSystemPrompt(persona_slug='help_ai')` — the `kind='platform_help'` bypass skips tenant addendums.
+    - Append the next-question instruction for structured flows.
+    - `instrumentedClaudeCall` (non-streaming today); response chunked into ~80-char frames for progressive disclosure. **Real token-streaming requires the call wrapper to grow a streaming variant — TODO follow-on.**
+    - Vendor failure → standard fallback message; never bubbles to the client.
+
+13. **Migration `20260609000000_help_ai_purposes.sql`** extends `ai_call_log.purpose` CHECK to include `help_ai_main` + `help_ai_supervisor`. `AICallPurpose` TS type updated to match. Required because `instrumentedClaudeCall` inserts `ai_call_log` rows with the purpose enum — without this migration the SSE route would crash on its first call.
+
+14. **Per-session draft state is NOT persisted across messages in v1.** The flow controller is invoked per request from `currentState = 'gathering_location'` (or `'gathering_what'`) — meaning multi-message bug/feature flows don't accumulate the draft on the server side. The Help AI is instructed to ask the next question; the user-visible conversation transcript carries the prior context. **Follow-on:** persist draft + state on `help_sessions` or a sidecar table so server state matches client expectation.
+
+15. **`/admin/help-triage` page** — 3 tabs (bugs / features / sessions). Feature requests get inline decision actions (Accept / Reject / Defer / Duplicate) with a notes prompt; `PATCH /api/admin/help/features/[id]` writes back via `withPlatformAdminAudit(reason: 'help_feature_decision')`. Reads `localStorage['admin-user-id']` as the admin id source (same convention as the BP28 abuse dashboard).
+
+16. **`scripts/sync-help-docs-to-rag.ts` ships with pure chunking + hashing wired; embedding + RAG POST is TODO.** Reads docs, chunks ~500 tokens (paragraph-boundary preferring; sentence fallback for oversized paragraphs), stable `content_hash = sha256(slug|i|content).slice(0,16)` so re-runs UPSERT idempotently. `--dry-run` works today and exercises the chunking. The actual OpenAI embedding + `POST /api/admin/ingest/platform-docs` call site is a marked TODO — operator opt-in when ready to spend ~$0.0001/chunk × N chunks per release.
+
+17. **3 new Inngest functions + 2 new events registered:** `helpDocsPdfGenerate`, `helpDocsDocxGenerate`, `helpDocVersionsPurge` (cron). Events: `help/docs.export.pdf` and `help/docs.export.docx` (tenant_scoped).
+
+18. **5 docs API routes + 1 SSE route + 1 admin triage page.** All routes pass the BP30 auth-bypass static probe.
+
+19. **18 new tests:**
+    - `help-docs/docs-loader.test.ts` (7) — front-matter parsing, sort order, slug lookup, search title-vs-body ranking
+    - `help-docs/markdown-render.test.ts` (5) — headings, code spans, ordered lists, HTML comment preservation, all-docs concat ordering
+    - `help-docs/sync-cli.test.ts` (6) — `parseFrontMatter`, `splitIntoChunks`, `buildChunks` deterministic hash + retrieval_audience='help_ai'
+
+**What was rejected:**
+- Wiring Puppeteer for real PDF generation — install footprint not approved; HTML-with-CSS works for the print path and the cache UPSERT shape stays identical when Puppeteer lands.
+- Real token-streaming from Anthropic — would require a streaming variant of the call wrapper (not in the current scope). The 80-char-frame chunking is good-enough UX; tokens stream in 0.5s bursts rather than letter-by-letter.
+- Per-session draft persistence — adds a sidecar table or `help_sessions.flow_state JSONB` column. Deferred to a follow-on because v1 multi-message flows are workable when the model has the conversation transcript in context.
+- Service-role for storage signed URLs — would trigger BP26 lint rule for no real gain; tenantClient + bucket policy is cleaner architecturally.
+- Wiring the real OpenAI embedding + RAG POST in `sync-help-docs-to-rag.ts` — release-pipeline integration is operator's call; the chunking output is deterministic and ready when they wire it.
+- Full hallucination check + tone drift on Help AI responses — these check-suites are oriented at customer-facing chat. The Help AI's outputs are operator-facing and lower-stakes; the kill-switch + assertNoZeroTolerancePii on bug bodies are the active safety surfaces. Documented as a follow-on.
+
+**Artifacts:** `apps/main/content/help/{01-getting-started,12-troubleshooting}.md`, `apps/main/src/lib/help-ai/{docs-loader,markdown-render}.ts`, 5 routes under `apps/main/src/app/api/help/docs/*`, `apps/main/src/app/api/help/sessions/[id]/message/route.ts` (SSE), `apps/main/src/app/(admin)/admin/help/{page,print/page}.tsx`, `apps/main/src/app/(admin)/admin/help-triage/page.tsx`, `apps/main/src/components/help-ai/HelpAIPanel.tsx`, 3 Inngest functions (`help-docs-pdf-generate`, `help-docs-docx-generate`, `help-doc-versions-purge`), `apps/main/src/app/api/inngest/route.ts` (+3 registrations), `apps/main/src/lib/inngest/event-registry.ts` (+2 events), migration `20260609000000_help_ai_purposes.sql`, `apps/main/src/lib/ai/call-wrapper.ts` (+2 AICallPurpose values), `apps/main/scripts/sync-help-docs-to-rag.ts`, 3 test files (18 tests). 680 total tests passing (+18 vs Phase B). PR #?? open.
+
+---
+
 ## D-066 — 2026-05-23 — BP31 Phase B: Help AI persona + flow controllers + API routes (confidence scorer STUBBED) — key decisions
 
 **Decision:**
