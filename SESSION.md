@@ -1,88 +1,67 @@
-# Session state — last updated 2026-05-23
+# Session state — last updated 2026-05-24 ~19:30 UTC
 
-## Just completed
+## Just completed (this session)
 
-**Spec / build prompt updates (all merged):**
-- PR #82 — §33 spec addendum check-in + `.vercelignore` (with root-anchor fix)
-- PR #86 — §32 Self-Service Help rewrite + index.html refresh (operator-authored rewrite that retired the automated auto-fix pipeline in favor of operator-run interactive triage via `/fix-bugs`)
-- PR #87 — BP31 + BP32 build prompts updated to match the revised §32 spec
+Massive session. Two epics shipped + cascade-merged a backlog of 8 PRs.
 
-**Code work merged:**
-- PR #79 — BP28 fix (dynamic `react-dom/server` import in `abuse-state-transition-notify`)
-- PR #80 — BP29 §28 env-var Zod schema reconciliation + 4 runbooks + 14 meta-tests
-- PR #81 — SESSION.md post-BP29
-- PR #83 — BP30 Phase A: static security probes (45 tests)
-- PR #84 — BP30 Phase B: skeletal fixtures + loader + db-setup scaffold + k6 + runbooks (11 tests)
-- PR #85 — SESSION.md post-BP30
-- PR #88 — **BP31 Phase A: §32 Self-Service Help foundation** (25 tests)
-  - Migration `20260608000000_self_service_help.sql` — 4 tables + RLS
-  - `lib/help-ai/pii-redaction.ts` — zero-tolerance regex (SSN/Luhn-CC/passport) + tolerable regex (emails/phones)
-  - `lib/github/{auth,issues}.ts` — GitHub App installation token + createBugIssue/createFeatureIssue/closeIssue
-  - `inngest/github-issue-retry.ts` — §32.7.5 exponential backoff resilience
-  - `.claude/commands/fix-bugs.md` — operator-run interactive triage workflow (§32.9)
-  - New lint rule `atc/no-direct-octokit-import`
-  - 4 npm packages installed: @octokit/{auth-app,rest}, remark + rehype-stringify + remark-rehype + unified, docx
-  - MEMORY D-065
+### Pre-go-live hygiene + foundational refactors (8 PRs merged into dev)
 
-**Test suite:** 641 passing, 42 skipped, ~1.5s wall-clock. Typecheck + lint + lint:migrations clean.
+- PR #103 — E2E tier 1+2+2.5 plumbing + 17 specs + bug-intent + asset renderer + CI workflow (incl. PostgREST v12 → v14 install fix)
+- PR #104 — RLS snapshot tooling extended to cover rag DB
+- PR #105 — BP22 platform-admin-configurable retrieval composite weights
+- PR #106 — BP38 `@atc/contracts` zod package (single source of truth for main↔rag)
+- PR #107 — BP24 streaming foundation (`instrumentedClaudeStream` + `bufferToSentences`)
+- PR #108 — D-041 platform_settings cross-project sync (sender + receiver + retry + reconcile)
+- PR #112 — BP24 chat-route streaming wiring (option B UX, `delta_start`/`rewriting`/`message_revised` events)
+- PR #113 — BP24 help-AI streaming wiring (`[REWRITE]` sentinel)
+- PR #114 — chat-route stale streaming comment refresh
+
+### Pre-go-live no-cost items
+
+- PR #115 — RS256 service JWT signer + 2 tenant-scoped wire-ups *(open, blocked by Vercel rate limit)*
+- PR #116 — rag-service-count cron wire-up (stacked on #115) *(open)*
+- PR #117 — Migrate 4 TODO(platform-alert) sites to `sendOperatorAlert` *(open)*
+
+### Payment gate epic — 4 stacked PRs
+
+- PR #118 — `tenants.subscription_status` + `non_paying_since` + Stripe webhook wires + `derivePaymentState` helper + 21 tests
+- PR #119 — Middleware redirect past 7-day grace + persistent banner (stacked on #118)
+- PR #120 — `excludeNonPayingPastGrace` cron helper + 5 bulk crons migrated + 9 tests (stacked on #119)
+- PR #121 — `InactivityReminder` email + `compliance-nightly` rewire; **180d auto-suspend removed for paying tenants** (stacked on #120)
+
+### Policy changes captured
+
+- Paying-but-inactive tenants no longer auto-suspend at 180d. Suspension follows non-payment only (via the middleware gate). Captured in PR #121's description and reflected in the `compliance-nightly` rewrite.
 
 ## In flight
-- Nothing committed in-flight. About to start **BP31 Phase B** on a fresh branch.
+
+- Nothing committed in flight on a working branch. All work is in open PRs above.
 
 ## Next step
-- **BP31 Phase B** — server-side wiring of the Help AI persona and routes:
-  - Help AI persona registration in `lib/personas/registry.ts` with `kind='platform_help'` (bypasses tenant addendums + display-name overrides)
-  - Supervisor wiring (kill switch, hallucination check, audit trail) using existing BP11 supervisor
-  - 3-flow controller (`lib/help-ai/flow-controller.ts`) with explicit state machines for help / bug / feature
-  - ~10 API routes under `/api/help/*` + `/api/admin/help/*`
-  - Confidence/clarity scorer (§32.8) **STUBBED** per cost-deferral — returns uniform 0.5 across the 6 factors with a TODO marker pointing to the Haiku call site. Real Anthropic burn deferred until operator opts in.
-  - Audit logging on session lifecycle + GitHub issue events per §32.13.3
-  - Tenant isolation tests added to BP30's cross-tenant route probe
-- After Phase B: **Phase C** — docs viewer, PDF/Word export, slide-over chat panel, admin triage queues.
+
+1. **Work the JWT cross-tenant follow-up** (#115's flagged design question). Recommended hybrid: seed PLATFORM sentinel tenant in `tenant_registry_shadow`, switch genuinely-cross-tenant callers to use it; tenant-scoped callers (post-termination, rag-tenant-scoped-purge) use the affected tenant's id. Wires the remaining 6 admin/cron sites that PR #115 didn't touch.
+2. **Event-driven cron migration** — add `assertTenantStillPaying` (from PR #120's helper) to the per-tenant Inngest handlers that aren't bulk loops: `precruise-generate-and-send`, `tenant-on-terminated`, `group-reminder-cadence`, etc.
+3. When Vercel quota clears: merge cascade for the 11 open PRs (#115 → #116 → #117 → #118 → #119 → #120 → #121).
 
 ## Blocked on user
-- **GitHub App provisioning (operator task).** BP31 Phase A wired the env vars + auth + issues lib but the runtime path can't actually file issues until you create the GitHub App in the `jharvieux` org, install it on the `ATC` repo (Issues R/W only per the revised §32.7.1), and populate the 5 `GITHUB_APP_*` env vars in Vercel + local. Phase B and C don't block on this — they ship code that uses the wiring.
+
+- **Vercel build quota** — required check `Vercel – atc-main` failing with `Deployment rate limited — retry in 24 hours`. Blocks merges of #115/116/117/118/119/120/121. Options: (A) Vercel Pro upgrade, (B) wait ~24h, (C) temporarily remove `Vercel – atc-main` from required checks in repo settings.
+- **`OPERATOR_SLACK_WEBHOOK_URL` env var** — must be set for PR #117's alerts to surface beyond `audit_log`.
+- **`SUPABASE_RAG_TEST_DB_URL` GH secret** — needed for PR #104's rag CI drift check.
+- **Migrations to run when promoting**: `20260613000000_retrieval_weights.sql`, `20260614000000_platform_settings_sync.sql`, `20260615000000_tenant_payment_state.sql` (main) + `0014_composite_weights.sql`, `0014_platform_settings_sync.sql` (rag).
+- **JWT design decision** — three options for the cross-tenant admin JWT path were laid out in PR #115's description; the recommended hybrid (A + C) is what the next session would default to absent further direction.
 
 ## Open questions
 
-### BP31 — deferred per cost (re-enable triggers)
+### #6 from the original pre-go-live list — auto-downgrade for paying inactive tenants
 
-- **Haiku tolerable-PII redaction** (§32.7.6): regex-only today catches emails/phones but not names + obfuscated PII. Wire the Haiku call when first leaked-name-into-public-issue incident demands it.
-- **Confidence/clarity scorer Haiku call** (§32.8): stubbed to return uniform 0.5 across the 6 factors in Phase B. Wire when operator wants triage prioritization signal vs the current "all submissions look equal" behavior.
+Resolved as: **don't do auto-downgrade**. User confirmed: "For inactive paying subscribers there shouldn't be an auto-downgrade but friendly reminder email." PR #121 implements that. The original D-049 deferral is effectively closed; if you want a MEMORY entry capturing the resolution, that's worth doing.
 
-### BP31 — non-cost follow-ons
+### Carried forward from earlier sessions (not addressed this session)
 
-- Customer bug flow (§32.10) — Phase 2 work in BP32, not in current Phase A/B/C scope
-- Screenshot vision-PII detector (§32.13.2) — Phase 2 work in BP32
-- `help_submission_rate` abuse dimension (§32.11) — Phase 2 work in BP32
-- `/api/webhooks/github` `issues.closed` handler (§32.10.7) — Phase 2 work in BP32
-
-### Spec-amendment follow-ups (BP29)
-
-§28 has documented naming drift between code and spec (INTER_SERVICE_JWT_* vs SERVICE_JWT_*, RAG_SUPABASE_* vs SUPABASE_RAG_*, _PRO_ vs _PROFESSIONAL_, _SEAT_ vs _SEATS_, IMAGE_GEN_DAILY_LIMIT_PER_TENANT vs IMAGE_GEN_RATE_LIMIT_DAILY, ABUSE_AI_COST_RECOMPUTE_INTERVAL_SECONDS vs ABUSE_RECOMPUTE_CRON_SCHEDULE, forensics _PRIOR_N two-step grace vs single _PREVIOUS). Operator chose to keep code names and propose spec amendments later.
-
-### BP30 — non-cost follow-ons
-
-- `scripts/build-stripe-sigset.ts` — pre-generate signed webhook payload bundle for k6 `stripe-webhook-flood.js`
-- `scripts/check-skipped-tests-stale.ts` — CI enforcement for the §30.10 7-day quarantine rule
-- CI workflow job invoking `pnpm fixtures:load`
-- CI workflow job invoking `pnpm rls:coverage` against the test DB
-
-### BP30 — deferred entirely per cost
-
-- AI behavior eval harness (`apps/main/evals/`, judge prompt, baseline.json, regression detection) — real Anthropic per snapshot + judge call
-- Continuous-sampling cron + `ai_sampling_results` migration
-- Dedicated test Supabase project (use testcontainers when needed)
-- Percy/Chromatic visual regression (skip at launch per spec)
-
-### Operator follow-ups carried forward (older BPs)
-
-- BP28: RAG-side `current_tenant_chunks_count` reconciliation in `abuse-recompute-nightly` (`TODO(rag-service-count)` marker)
-- BP27: wire counter increments + enforcement helpers into call sites; migrate 4 fetch-based AI sites
-- BP27: apply migrations 20260606000000 + 20260607000000 to atc-main; confirm AI pricing values
-- BP26: provision OPERATOR_SLACK_WEBHOOK_URL, NEXT_PUBLIC_SENTRY_DSN, SENTRY_DSN; refactor 5 grandfathered service-role files
-- BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE documentation
+- BP31: Haiku tolerable-PII redaction + confidence/clarity scorer Haiku call (cost-deferred)
+- BP30: AI behavior eval harness, continuous-sampling cron, dedicated test Supabase project, Percy/Chromatic (cost-deferred)
+- BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc
 - BP24: populate `platform_settings.supervisor_slur_deny_list`
 - BP23: populate `port_info_chunks` content for 17 ports
-- BP25: counsel sign-off on breach notification template wording
-- BP16/BP17: counsel sign-off on ICA chunk-license-survival clause + AI Liability Disclaimer
+- BP16/17: counsel sign-off on ICA + AI Liability Disclaimer
