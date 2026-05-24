@@ -80,10 +80,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install PostgREST
+        # PostgREST renamed release assets to use "x86-64" instead of "x64" and
+        # tagged the latest LTS as v14.12. -fL on curl fails loudly on 404 so
+        # we don't pipe a stub into tar (which fails silently otherwise).
         run: |
           set -eux
           mkdir -p $HOME/.local/bin
-          curl -sL https://github.com/PostgREST/postgrest/releases/download/v12.2.13/postgrest-v12.2.13-linux-static-x64.tar.xz \
+          curl -fL https://github.com/PostgREST/postgrest/releases/download/v14.12/postgrest-v14.12-linux-static-x86-64.tar.xz \
             | tar -xJ -C $HOME/.local/bin
           chmod +x $HOME/.local/bin/postgrest
           echo "$HOME/.local/bin" >> $GITHUB_PATH
