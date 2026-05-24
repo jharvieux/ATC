@@ -66,40 +66,114 @@ export const POST = withServiceAuth(async (req, ctx) => {
       outcome: "success",
     });
 
-    const result = (chunks ?? []).map((c: Record<string, unknown>) => ({
-      id: c.id,
-      content: c.content,
-      content_hash: c.content_hash,
-      scope: c.scope,
-      tenant_id: c.tenant_id,
-      category: c.category,
-      cruise_line_or_supplier: c.cruise_line_or_supplier,
-      ship_or_property: c.ship_or_property,
-      destination: c.destination,
-      agent_scope: c.agent_scope,
-      tags: c.tags,
-      source_type: c.source_type,
-      source_url: c.source_url,
-      source_domain: c.source_domain,
-      ingested_at: c.ingested_at,
-      expires_at: c.expires_at,
-      contains_pricing: c.contains_pricing,
-      scoring: {
-        match_score: c.match_score,
-        authority: c.authority_score,
-        authority_tier: c.authority_manual_override ?? c.authority_auto,
-        recency: c.recency_score,
-        composite_confidence: c.composite_confidence,
-      },
-      metadata: {
+    // BP38 §33.6.4 — hydrate related_asset_ids per chunk (the RPC does not
+    // return that column). One additional SELECT keyed by chunk IDs.
+    const chunkRows = (chunks ?? []) as Array<Record<string, unknown>>;
+    const chunkIds = chunkRows.map((c) => c.id as string);
+    const assetIdsByChunk = new Map<string, string[]>();
+    if (chunkIds.length > 0) {
+      const { data: assetLinks } = await db
+        .from("knowledge_chunks")
+        .select("id, related_asset_ids, scope")
+        .in("id", chunkIds);
+      for (const row of (assetLinks ?? []) as Array<{ id: string; related_asset_ids: string[] | null; scope: "global" | "tenant" }>) {
+        assetIdsByChunk.set(row.id, row.related_asset_ids ?? []);
+      }
+    }
+
+    // Collect union of all asset IDs across chunks and batch-fetch metadata.
+    // Scope filter at retrieve time: a global chunk surfaces only global assets,
+    // a tenant chunk only its own tenant's assets (matches ingest invariant —
+    // defense-in-depth in case a row got upserted out of band).
+    const allAssetIds = new Set<string>();
+    for (const ids of assetIdsByChunk.values()) for (const id of ids) allAssetIds.add(id);
+
+    interface AssetMetadata {
+      asset_id: string;
+      kind: string;
+      entity_type: string;
+      entity_id: string;
+      image_url: string;
+      source_page_url: string;
+      attribution: string;
+      caption: string | null;
+      width_px: number | null;
+      height_px: number | null;
+    }
+    const assets: AssetMetadata[] = [];
+    const validAssetIds = new Set<string>();
+    if (allAssetIds.size > 0) {
+      const { data: assetRows } = await db
+        .from("rag_media_assets")
+        .select("asset_id, kind, entity_type, entity_id, scope, tenant_id, image_url, source_page_url, attribution, caption, width_px, height_px")
+        .in("asset_id", [...allAssetIds]);
+      for (const r of (assetRows ?? []) as Array<{ asset_id: string; kind: string; entity_type: string; entity_id: string; scope: "global" | "tenant"; tenant_id: string | null; image_url: string; source_page_url: string; attribution: string; caption: string | null; width_px: number | null; height_px: number | null }>) {
+        // Scope filter — drop a tenant-scope asset the caller shouldn't see.
+        if (r.scope === "tenant" && r.tenant_id !== ctx.tenant_id) continue;
+        validAssetIds.add(r.asset_id);
+        assets.push({
+          asset_id: r.asset_id,
+          kind: r.kind,
+          entity_type: r.entity_type,
+          entity_id: r.entity_id,
+          image_url: r.image_url,
+          source_page_url: r.source_page_url,
+          attribution: r.attribution,
+          caption: r.caption,
+          width_px: r.width_px,
+          height_px: r.height_px,
+        });
+      }
+    }
+
+    // Log any dropped IDs once per request — caller may have stale links.
+    const droppedAssetIds: string[] = [];
+    for (const id of allAssetIds) if (!validAssetIds.has(id)) droppedAssetIds.push(id);
+    if (droppedAssetIds.length > 0) {
+      console.warn(`[retrieve] dropped ${droppedAssetIds.length} asset id(s) — missing or out-of-scope`, { retrieval_id, dropped_count: droppedAssetIds.length });
+    }
+
+    const result = chunkRows.map((c) => {
+      const linked = assetIdsByChunk.get(c.id as string) ?? [];
+      // Filter chunk's related_asset_ids to only those we resolved.
+      const resolved = linked.filter((id) => validAssetIds.has(id));
+      return {
+        id: c.id,
+        content: c.content,
+        content_hash: c.content_hash,
+        scope: c.scope,
+        tenant_id: c.tenant_id,
+        category: c.category,
+        cruise_line_or_supplier: c.cruise_line_or_supplier,
+        ship_or_property: c.ship_or_property,
+        destination: c.destination,
+        agent_scope: c.agent_scope,
+        tags: c.tags,
+        source_type: c.source_type,
+        source_url: c.source_url,
+        source_domain: c.source_domain,
         ingested_at: c.ingested_at,
         expires_at: c.expires_at,
-        is_promo: c.sell_by_at != null,
-      },
-    }));
+        contains_pricing: c.contains_pricing,
+        related_asset_ids: resolved,
+        scoring: {
+          match_score: c.match_score,
+          authority: c.authority_score,
+          authority_tier: c.authority_manual_override ?? c.authority_auto,
+          recency: c.recency_score,
+          composite_confidence: c.composite_confidence,
+        },
+        metadata: {
+          ingested_at: c.ingested_at,
+          expires_at: c.expires_at,
+          is_promo: c.sell_by_at != null,
+        },
+      };
+    });
 
     return Response.json({
       chunks: result,
+      assets,
       retrieval_id,
       retrieval_latency_ms: latency_ms,
     });

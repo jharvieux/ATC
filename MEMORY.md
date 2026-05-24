@@ -4,6 +4,46 @@ Newest entries on top.
 
 ---
 
+## D-074 — 2026-05-24 — BP38: /api/retrieve hydrates related_asset_ids + adds top-level assets array — key decisions
+
+**Decision:**
+
+1. **Asset hydration is additive to the existing response shape.** Existing consumers that don't read `related_asset_ids` or `assets` are unaffected. The chunk objects gain `related_asset_ids: string[]`; the response gains a top-level `assets: AssetMetadata[]`.
+
+2. **No SQL change** to the `match_knowledge_chunks` RPC. Instead, after the RPC returns the top-K chunks, a single follow-up `SELECT id, related_asset_ids FROM knowledge_chunks WHERE id IN (...)` hydrates the asset-id arrays. This keeps the RPC contract stable + avoids needing to drop/recreate the function (which would touch indexes + grants). Cost: one extra ms-scale roundtrip per retrieve call.
+
+3. **Single batched lookup** to `rag_media_assets` for the union of asset IDs across returned chunks. If 3 chunks reference the same asset, we fetch it once and the `assets` array contains it once — chunks still list the ID in their `related_asset_ids`. Verified by test "scenario 3: shared asset across chunks".
+
+4. **Defense-in-depth scope filter at retrieve time.** A tenant-scope asset whose `tenant_id` doesn't match the caller's JWT context is silently dropped — both from the top-level `assets` array AND from the referencing chunk's `related_asset_ids`. The ingest path (BP37) already enforces "global chunks → global assets only", but a future code path that accidentally upserts otherwise gets caught here. Verified by test "scope filter: tenant-scope asset belonging to another tenant is dropped".
+
+5. **Stale-link tolerance.** If a chunk references an asset that no longer exists in `rag_media_assets` (deleted between ingest and retrieve), the chunk is returned normally with that ID stripped from `related_asset_ids`. A single `console.warn` per request logs the dropped-count (NOT the IDs themselves — keeps logs grep-able). Verified by test "scenario 4: missing asset".
+
+6. **Response fields deliberately exposed** (`AssetMetadata`): `asset_id`, `kind`, `entity_type`, `entity_id`, `image_url`, `source_page_url`, `attribution` (required for display credit), `caption`, `width_px`, `height_px`.
+
+7. **Response fields deliberately omitted**:
+   - `tenant_id` — the caller already knows their own tenant; surfacing it adds noise + risks leakage if a future code path mishandles it.
+   - `scope` — same reasoning; the retrieve API enforces scope on the way out, the response doesn't need it.
+   - `fetched_at` + `source` — internal-only provenance; the consumer surface (BP39) doesn't render them.
+   - `content_type` — currently unused at consumer surface; can be added when needed.
+
+8. **No effect on chunk ranking.** Asset hydration runs AFTER the §21.3 ranking, top-K selection, and dedup. Whether a chunk has 0 or 10 assets attached has zero impact on which chunks are returned.
+
+**What was rejected:**
+
+- **Modifying the RPC to return related_asset_ids** — would require a migration to drop+recreate the function; not worth the migration churn for one extra column lookup.
+- **Returning the full `rag_media_assets` row** — exposes `fetched_at`, `source`, internal tenant_id fields. Curated `AssetMetadata` keeps the contract tight.
+- **Embedding assets inside each chunk** — would duplicate shared assets across chunks in the JSON, bloating the response. The top-level dedup is more efficient + easier to render client-side.
+- **Throwing on missing asset references** — fragility for benign cause (operator deleted an asset, the chunk's still useful). Soft-drop + log instead.
+
+**Operator follow-ups (D-074):**
+
+- BP39's consumer-side display markup needs to consume the new `assets` array (hyperlink rendering per user direction).
+- Add OpenAPI/TypeScript shared types when the contracts package is next touched (out of BP38 scope; main app doesn't use OpenAPI today).
+
+**Artifacts:** `apps/rag/src/app/api/retrieve/route.ts` (extended); `apps/rag/test/unit/retrieve-assets.test.ts` (5 new tests, 42 RAG total). No schema changes, no main-app changes.
+
+---
+
 ## D-073 — 2026-05-24 — BP37: CruiseMapper deck plan ingest with hot-linked images + related_asset_ids — key decisions
 
 **Decision:**
