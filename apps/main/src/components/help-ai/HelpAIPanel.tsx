@@ -98,6 +98,20 @@ export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX
           if (line.startsWith("data: ")) {
             const piece = line.slice(6);
             if (piece === "[DONE]") continue;
+            // BP24 option B UX — server emits this sentinel before a
+            // fallback message when the per-sentence supervisor aborts a
+            // streamed draft. Clear what's on screen; the next data frame
+            // is the replacement.
+            if (piece === "[REWRITE]") {
+              assistantText = "";
+              setMessages((prev) => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last && last.role === "assistant") last.content = "";
+                return copy;
+              });
+              continue;
+            }
             assistantText += piece;
             setMessages((prev) => {
               const copy = [...prev];
