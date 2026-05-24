@@ -1,5 +1,6 @@
 -- AUTO-GENERATED RLS SNAPSHOT - DO NOT EDIT MANUALLY
--- Regenerate with: npx tsx scripts/rls-snapshot.ts > db/rls-snapshot.sql
+-- Target: main
+-- Regenerate with: npx tsx scripts/rls-snapshot.ts --target=main > db/rls-snapshot-main.sql
 -- Generated against schema: public
 
 -- Tables with RLS enabled:
@@ -14,18 +15,21 @@
 -- public.booking_options (rls_enabled)
 -- public.booking_passengers (rls_enabled)
 -- public.bookings (rls_enabled)
+-- public.bug_submissions (rls_enabled)
 -- public.ccpa_deletion_executions (rls_enabled)
 -- public.commissions (rls_enabled)
 -- public.complaints (rls_enabled)
 -- public.contact_relationships (rls_enabled)
 -- public.contacts (rls_enabled)
 -- public.conversations (rls_enabled)
+-- public.customer_bug_submission_counters (rls_enabled)
 -- public.customer_chat_counters (rls_enabled)
 -- public.customer_chat_tenant_overrides (rls_enabled)
 -- public.customer_memories (rls_enabled)
 -- public.email_log (rls_enabled)
 -- public.email_suppressions (rls_enabled)
 -- public.escalation_topics (rls_enabled)
+-- public.feature_requests (rls_enabled)
 -- public.forensics_log (rls_enabled)
 -- public.forum_messages (rls_enabled)
 -- public.forum_reactions (rls_enabled)
@@ -35,6 +39,8 @@
 -- public.forums (rls_enabled)
 -- public.group_invite_pending_approval (rls_enabled)
 -- public.groups (rls_enabled)
+-- public.help_doc_versions (rls_enabled)
+-- public.help_sessions (rls_enabled)
 -- public.host_adapters (rls_enabled)
 -- public.host_booking_fee_configs (rls_enabled)
 -- public.invitations (rls_enabled)
@@ -51,6 +57,7 @@
 -- public.platform_settings (rls_enabled)
 -- public.port_info_chunks (rls_enabled)
 -- public.pre_cruise_email_content (rls_enabled)
+-- public.price_watches (rls_enabled)
 -- public.quotes (rls_enabled)
 -- public.rag_global_promotions (rls_enabled)
 -- public.rag_submissions (rls_enabled)
@@ -78,8 +85,11 @@
 -- public.users (rls_enabled)
 --
 -- Tables with RLS disabled:
+-- public.apify_spend_ledger (rls_disabled)
+-- public.cruisemapper_url_inventory (rls_disabled)
 -- public.destination_images (rls_disabled)
 -- public.destination_images_cache (rls_disabled)
+-- public.pricing_cache (rls_disabled)
 -- public.reconciliation_review_queue (rls_disabled)
 -- public.schema_migrations (rls_disabled)
 -- public.tier_definitions (rls_disabled)
@@ -234,6 +244,26 @@ CREATE POLICY "bookings_update_policy" ON public.bookings
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.bug_submissions
+CREATE POLICY "bug_submissions_customer_self" ON public.bug_submissions
+  FOR SELECT TO PUBLIC
+  USING ((submitter_user_id IN ( SELECT users.id
+   FROM users
+  WHERE users.auth_user_id = auth.uid())));
+CREATE POLICY "bug_submissions_tenant_delete" ON public.bug_submissions
+  FOR DELETE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "bug_submissions_tenant_insert" ON public.bug_submissions
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+CREATE POLICY "bug_submissions_tenant_select" ON public.bug_submissions
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "bug_submissions_tenant_update" ON public.bug_submissions
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+
 -- TABLE: public.ccpa_deletion_executions
 CREATE POLICY "ccpa_executions_delete_service" ON public.ccpa_deletion_executions
   FOR DELETE TO PUBLIC
@@ -322,6 +352,21 @@ CREATE POLICY "conversations_update_policy" ON public.conversations
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.customer_bug_submission_counters
+CREATE POLICY "customer_bug_submission_counters_tenant_delete" ON public.customer_bug_submission_counters
+  FOR DELETE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "customer_bug_submission_counters_tenant_insert" ON public.customer_bug_submission_counters
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+CREATE POLICY "customer_bug_submission_counters_tenant_select" ON public.customer_bug_submission_counters
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "customer_bug_submission_counters_tenant_update" ON public.customer_bug_submission_counters
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+
 -- TABLE: public.customer_chat_counters
 CREATE POLICY "customer_chat_counters_delete_service" ON public.customer_chat_counters
   FOR DELETE TO PUBLIC
@@ -408,6 +453,26 @@ CREATE POLICY "escalation_topics_update_policy" ON public.escalation_topics
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.feature_requests
+CREATE POLICY "feature_requests_customer_self" ON public.feature_requests
+  FOR SELECT TO PUBLIC
+  USING ((submitter_user_id IN ( SELECT users.id
+   FROM users
+  WHERE users.auth_user_id = auth.uid())));
+CREATE POLICY "feature_requests_tenant_delete" ON public.feature_requests
+  FOR DELETE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "feature_requests_tenant_insert" ON public.feature_requests
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+CREATE POLICY "feature_requests_tenant_select" ON public.feature_requests
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "feature_requests_tenant_update" ON public.feature_requests
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id));
 
 -- TABLE: public.forensics_log
 CREATE POLICY "forensics_log_delete_service" ON public.forensics_log
@@ -548,6 +613,36 @@ CREATE POLICY "groups_update" ON public.groups
   USING ((tenant_id IN ( SELECT users.tenant_id
    FROM users
   WHERE users.auth_user_id = auth.uid())));
+
+-- TABLE: public.help_doc_versions
+CREATE POLICY "help_doc_versions_delete" ON public.help_doc_versions
+  FOR DELETE TO PUBLIC
+  USING (tenant_id IS NULL OR auth_user_in_tenant(tenant_id));
+CREATE POLICY "help_doc_versions_insert" ON public.help_doc_versions
+  FOR INSERT TO PUBLIC
+  WITH CHECK (tenant_id IS NULL OR auth_user_in_tenant(tenant_id));
+CREATE POLICY "help_doc_versions_select" ON public.help_doc_versions
+  FOR SELECT TO PUBLIC
+  USING (tenant_id IS NULL OR auth_user_in_tenant(tenant_id));
+CREATE POLICY "help_doc_versions_update" ON public.help_doc_versions
+  FOR UPDATE TO PUBLIC
+  USING (tenant_id IS NULL OR auth_user_in_tenant(tenant_id))
+  WITH CHECK (tenant_id IS NULL OR auth_user_in_tenant(tenant_id));
+
+-- TABLE: public.help_sessions
+CREATE POLICY "help_sessions_tenant_delete" ON public.help_sessions
+  FOR DELETE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "help_sessions_tenant_insert" ON public.help_sessions
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+CREATE POLICY "help_sessions_tenant_select" ON public.help_sessions
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "help_sessions_tenant_update" ON public.help_sessions
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id));
 
 -- TABLE: public.host_adapters
 CREATE POLICY "host_adapters_select_policy" ON public.host_adapters
@@ -755,6 +850,21 @@ CREATE POLICY "pce_content_select" ON public.pre_cruise_email_content
 CREATE POLICY "pce_content_update_service" ON public.pre_cruise_email_content
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: public.price_watches
+CREATE POLICY "price_watches_tenant_delete" ON public.price_watches
+  FOR DELETE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "price_watches_tenant_insert" ON public.price_watches
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id));
+CREATE POLICY "price_watches_tenant_select" ON public.price_watches
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "price_watches_tenant_update" ON public.price_watches
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id));
 
 -- TABLE: public.quotes
 CREATE POLICY "quotes_delete_policy" ON public.quotes

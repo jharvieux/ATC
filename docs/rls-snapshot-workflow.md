@@ -2,32 +2,49 @@
 
 ## What this is
 
-`db/rls-snapshot.sql` is a committed baseline of all Row Level Security (RLS) policies on the `public` schema. The `rls-snapshot-diff` CI job compares the live database against this baseline on every PR and push to `release/*`, failing the build if they diverge.
+`db/rls-snapshot-main.sql` and `db/rls-snapshot-rag.sql` are committed baselines of all Row Level Security (RLS) policies on each database's `public` schema. The `rls-snapshot-diff` CI job compares the live databases against these baselines on every PR and push to `release/*`, failing the build if they diverge.
 
 This catches accidental RLS changes: a policy accidentally dropped or modified in dev won't silently reach production.
 
-## When to regenerate the snapshot
+## When to regenerate
 
-Regenerate after **any migration that adds, removes, or modifies an RLS policy**, or after enabling/disabling RLS on a table.
+Regenerate after **any migration that adds, removes, or modifies an RLS policy** — or after enabling/disabling RLS on a table — in either database.
 
 If you don't regenerate, the CI job will fail on that PR.
 
-## Regeneration command
+## Regeneration commands
 
-Run against the dev/test Supabase instance (read-only query — safe to run on any environment):
+Run against the dev/test Supabase instances (read-only queries — safe on any environment):
 
 ```bash
-SUPABASE_DB_URL="<your-connection-string>" npm run rls:snapshot
+# Both databases at once (requires both env vars set)
+pnpm rls:snapshot
+
+# Or one at a time
+SUPABASE_DB_URL="<main-connection-string>"     pnpm rls:snapshot:main
+SUPABASE_RAG_DB_URL="<rag-connection-string>"  pnpm rls:snapshot:rag
 ```
 
-Find the connection string in Supabase dashboard → Project Settings → Database → Connection string (URI).
+Find connection strings in Supabase dashboard → Project Settings → Database → Connection string (URI).
 
-Then commit the updated snapshot alongside the migration in the same PR:
+Commit the updated snapshot(s) alongside the migration in the same PR:
 
 ```bash
-git add db/rls-snapshot.sql supabase/migrations/<new-migration>.sql
+git add db/rls-snapshot-main.sql apps/main/supabase/migrations/<new-migration>.sql
+# or for rag
+git add db/rls-snapshot-rag.sql apps/rag/supabase/migrations/<new-migration>.sql
 git commit -m "migration: <description> (update RLS snapshot)"
 ```
+
+## Checking for drift locally
+
+```bash
+pnpm rls:check              # both databases
+pnpm rls:check:main         # main only
+pnpm rls:check:rag          # rag only
+```
+
+A target whose env var is unset is **skipped with a warning**, not a failure. This means CI without the rag secret configured will still pass on main; once the secret is added, rag is checked automatically.
 
 ## Handling drift on dev
 
@@ -36,14 +53,13 @@ If someone ran a manual SQL change on dev that modified RLS (outside of a migrat
 1. If the drift was intentional — create a migration that captures the change, regenerate the snapshot, commit both.
 2. If the drift was accidental — revert the manual change in dev and regenerate the snapshot from the corrected state.
 
-## Handling a legitimate cross-schema policy
+## Secrets required
 
-If a policy references another schema (e.g., `auth.users`), it will appear in the snapshot as-is. No special handling needed — just commit the snapshot after adding the migration.
+The `rls-snapshot-diff` CI job requires:
 
-## Secret required
+- `SUPABASE_TEST_DB_URL` — direct Postgres URL for the main test/dev DB.
+- `SUPABASE_RAG_TEST_DB_URL` — direct Postgres URL for the rag test/dev DB. (Optional; if absent the rag check is skipped.)
 
-The `rls-snapshot-diff` CI job requires `SUPABASE_TEST_DB_URL` (a direct Postgres connection URL for the test/dev Supabase instance). Add this at:
-
-GitHub → Settings → Secrets and variables → Actions → New repository secret
+Add these at: GitHub → Settings → Secrets and variables → Actions → New repository secret.
 
 Format: `postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres`

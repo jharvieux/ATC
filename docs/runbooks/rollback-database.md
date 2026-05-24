@@ -147,8 +147,11 @@ For both approaches, the database rollback is confirmed when:
 
 3. **Prefer additive migrations going forward.** Adding a column, adding a table, or adding an index is trivially reversible. Dropping columns, renaming columns, or changing constraints is high-risk. When possible, use expand-and-contract: add the new thing, migrate data, then drop the old thing in a later release.
 
-4. **Update `db/rls-snapshot.sql`** if RLS policies were affected:
+4. **Update `db/rls-snapshot-{main,rag}.sql`** if RLS policies were affected:
 
    ```bash
-   npm run rls:snapshot
+   pnpm rls:snapshot          # both DBs
+   # or one at a time
+   pnpm rls:snapshot:main
+   pnpm rls:snapshot:rag
    ```
