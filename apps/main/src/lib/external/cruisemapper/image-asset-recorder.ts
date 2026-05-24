@@ -7,6 +7,12 @@
 // Host allowlist is enforced HERE before any network call. URLs not on
 // the allowlist (including private/loopback/link-local IPs) are logged
 // and skipped — never recorded, never surfaced to the customer.
+//
+// Auth (BP09): RS256 JWT, PLATFORM sentinel tenant — deck-plan images are
+// global reference content shared across tenants.
+
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 const HOST_ALLOWLIST = new Set<string>([
   "cruisemapper.com",
@@ -74,8 +80,18 @@ export async function recordDeckPlanImage(input: RecordImageInput): Promise<Reco
   }
 
   const ragUrl = process.env.RAG_SERVICE_URL;
-  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
   if (!ragUrl) return { status: "error", reason: "RAG_SERVICE_URL not set" };
+
+  let jwt: string;
+  try {
+    jwt = await signServiceJwt({
+      tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+      scope: "write",
+      service_identifier: "platform-admin",
+    });
+  } catch (err) {
+    return { status: "error", reason: `jwt_sign_failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 
   const entityId = `${input.shipSlug}-deck-${String(input.deckNumber ?? "?").padStart(2, "0")}`;
 
@@ -97,7 +113,7 @@ export async function recordDeckPlanImage(input: RecordImageInput): Promise<Reco
   try {
     res = await fetch(`${ragUrl}/api/admin/media-assets/upsert`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify(payload),
     });
   } catch (err) {

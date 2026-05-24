@@ -9,6 +9,7 @@
 // tenant's termination.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 
 interface Body {
   notes?: string;
@@ -39,7 +40,6 @@ export async function POST(
 
   const ragUrl = process.env.RAG_SERVICE_URL;
   if (!ragUrl) return Response.json({ error: "rag_service_not_configured" }, { status: 500 });
-  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
 
   try {
     const result = await withPlatformAdminAudit(
@@ -64,10 +64,18 @@ export async function POST(
           return { error: "submission_not_approved_or_no_chunk_id" };
         }
 
+        // BP09 — RS256 JWT, tenant-scoped to the origin tenant (we're
+        // promoting one of THIS tenant's chunks).
+        const jwt = await signServiceJwt({
+          tenant_id: row.tenant_id,
+          scope: "write",
+          service_identifier: "platform-admin",
+        });
+
         // Call the RAG service to promote.
         const approveRes = await fetch(`${ragUrl}/api/approve/global`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
           body: JSON.stringify({
             tenant_chunk_id: row.chunk_id_created,
             origin_tenant_id: row.tenant_id,

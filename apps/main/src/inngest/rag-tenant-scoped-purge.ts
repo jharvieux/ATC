@@ -4,6 +4,8 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
   {
@@ -32,14 +34,30 @@ export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
       return;
     }
 
-    const serviceJwt = process.env.SERVICE_JWT_PRIVATE_KEY;
-
     for (const tenant of tenants ?? []) {
+      // BP09 — RS256 JWT carries the PLATFORM sentinel. The tenant being
+      // purged has status='terminated' in tenant_registry_shadow, and the
+      // rag verifier rejects non-active tenants (verify-service-jwt.ts
+      // Step 6). The sentinel + body.tenant_id splits authorization
+      // (must be platform-admin) from target (the terminated tenant).
+      let jwt: string;
+      try {
+        jwt = await signServiceJwt({
+          tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+          scope: "write",
+          service_identifier: "platform-admin",
+        });
+      } catch (err) {
+        console.error("[rag-tenant-scoped-purge] JWT signing failed for tenant %s: %s",
+          tenant.id, err instanceof Error ? err.message : String(err));
+        continue;
+      }
+
       const response = await fetch(`${ragServiceUrl}/api/admin/purge-tenant-scoped-chunks`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${serviceJwt}`,
+          "Authorization": `Bearer ${jwt}`,
         },
         body: JSON.stringify({ tenant_id: tenant.id }),
       });

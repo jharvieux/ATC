@@ -4,6 +4,8 @@
 // All actions write to audit_log via withPlatformAdminAudit.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 interface ReviewActionBody {
   chunk_id: string;
@@ -22,21 +24,26 @@ export async function GET(req: Request): Promise<Response> {
   const ragServiceUrl = process.env.RAG_SERVICE_URL;
   if (!ragServiceUrl) return Response.json({ error: "rag_service_not_configured" }, { status: 500 });
 
-  const serviceJwt = process.env.SERVICE_JWT_PRIVATE_KEY;
-
   try {
     const result = await withPlatformAdminAudit(
       { admin_user_id: adminUserId, reason: "rag_quarantined_content_review", operation: "post_termination_queue.list" },
       async (_db, recordQuery) => {
         recordQuery({ op: "select", table: "knowledge_chunks (rag-side)" });
 
-        // Fetch pending chunks from the RAG service.
+        // BP09 — RS256 JWT, PLATFORM sentinel (cross-tenant: queue lists
+        // chunks from ALL terminated tenants).
+        const jwt = await signServiceJwt({
+          tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+          scope: "read",
+          service_identifier: "platform-admin",
+        });
+
         const res = await fetch(
           `${ragServiceUrl}/api/admin/post-termination-queue?from=${from}&limit=${pageSize}`,
           {
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${serviceJwt}`,
+              Authorization: `Bearer ${jwt}`,
             },
           },
         );
@@ -78,8 +85,6 @@ export async function POST(req: Request): Promise<Response> {
   const ragServiceUrl = process.env.RAG_SERVICE_URL;
   if (!ragServiceUrl) return Response.json({ error: "rag_service_not_configured" }, { status: 500 });
 
-  const serviceJwt = process.env.SERVICE_JWT_PRIVATE_KEY;
-
   try {
     const result = await withPlatformAdminAudit(
       {
@@ -90,11 +95,18 @@ export async function POST(req: Request): Promise<Response> {
       async (_db, recordQuery) => {
         recordQuery({ op: "update", table: "knowledge_chunks (rag-side)" });
 
+        // BP09 — RS256 JWT, PLATFORM sentinel (cross-tenant operation).
+        const jwt = await signServiceJwt({
+          tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+          scope: "write",
+          service_identifier: "platform-admin",
+        });
+
         const res = await fetch(`${ragServiceUrl}/api/admin/post-termination-review`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${serviceJwt}`,
+            Authorization: `Bearer ${jwt}`,
           },
           body: JSON.stringify({ chunk_id: body.chunk_id, action: body.action }),
         });

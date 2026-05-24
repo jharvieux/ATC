@@ -110,8 +110,14 @@ export const tenantRegistryReconcile = inngest.createFunction(
       }
     }
 
-    // Shadow rows absent from main — should never happen; investigate manually
-    for (const [tenant_id] of shadowMap) {
+    // Shadow rows absent from main — usually means tenant got deleted from
+    // main; investigate manually. The PLATFORM sentinel (all-zero UUID,
+    // tenant_type='platform') is intentional and does NOT live in main —
+    // skip it silently.
+    const PLATFORM_SENTINEL_ID = "00000000-0000-0000-0000-000000000000";
+    for (const [tenant_id, row] of shadowMap) {
+      if (tenant_id === PLATFORM_SENTINEL_ID) continue;
+      if (row.tenant_type === "platform") continue;
       if (!mainMap.has(tenant_id)) {
         console.warn("[reconcile] tenant in shadow but absent from main — investigate", { tenant_id });
       }

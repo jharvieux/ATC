@@ -4,10 +4,13 @@
 // /api/ingest/itinerary endpoint. The endpoint is idempotent on the
 // composite key + content-hash short-circuit.
 //
-// Auth: same SERVICE_JWT_PRIVATE_KEY-as-bearer pattern as the existing
-// admin/rag/promote route (TODO(bp24-service-jwt) lives over there too).
+// Auth (BP09): RS256-signed JWT via signServiceJwt, PLATFORM sentinel
+// tenant (genuinely cross-tenant — itinerary data is global reference
+// content read by every tenant's RAG retrieval).
 
 import type { MappedItinerary } from "./itinerary-mapper";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 export type IngestStatus = "ingested" | "updated" | "unchanged" | "quarantined" | "error";
 
@@ -21,8 +24,18 @@ export interface IngestOutcome {
 
 export async function ingestItineraryToRag(m: MappedItinerary): Promise<IngestOutcome> {
   const ragUrl = process.env.RAG_SERVICE_URL;
-  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
   if (!ragUrl) return { status: "error", reason: "RAG_SERVICE_URL not set" };
+
+  let jwt: string;
+  try {
+    jwt = await signServiceJwt({
+      tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+      scope: "write",
+      service_identifier: "platform-admin",
+    });
+  } catch (err) {
+    return { status: "error", reason: `jwt_sign_failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 
   const payload = {
     cruise_line: m.key.line,
@@ -42,7 +55,7 @@ export async function ingestItineraryToRag(m: MappedItinerary): Promise<IngestOu
   try {
     res = await fetch(`${ragUrl}/api/ingest/itinerary`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify(payload),
     });
   } catch (err) {

@@ -1,7 +1,11 @@
 // BP36 §33.5 — RAG-side client for reference content ingest.
 //
-// POSTs to /api/ingest/reference. Same SERVICE_JWT bearer pattern as the
-// itinerary endpoint (TODO bp24-service-jwt — RS256 signature deferred).
+// POSTs to /api/ingest/reference. Auth (BP09): RS256-signed JWT,
+// PLATFORM sentinel tenant (genuinely cross-tenant — reference content is
+// global, read by every tenant's RAG retrieval).
+
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 export type RefIngestStatus = "ingested" | "updated" | "unchanged" | "quarantined" | "error";
 
@@ -28,14 +32,24 @@ export interface RefIngestOutcome {
 
 export async function ingestReferenceToRag(payload: RefIngestPayload): Promise<RefIngestOutcome> {
   const ragUrl = process.env.RAG_SERVICE_URL;
-  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
   if (!ragUrl) return { status: "error", reason: "RAG_SERVICE_URL not set" };
+
+  let jwt: string;
+  try {
+    jwt = await signServiceJwt({
+      tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+      scope: "write",
+      service_identifier: "platform-admin",
+    });
+  } catch (err) {
+    return { status: "error", reason: `jwt_sign_failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 
   let res: Response;
   try {
     res = await fetch(`${ragUrl}/api/ingest/reference`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify(payload),
     });
   } catch (err) {

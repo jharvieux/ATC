@@ -12,6 +12,8 @@
 // tenant-scoped retention.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 interface Body {
   mode?: "to_tenant_scope" | "hard_delete";
@@ -38,7 +40,6 @@ export async function POST(
 
   const ragUrl = process.env.RAG_SERVICE_URL;
   if (!ragUrl) return Response.json({ error: "rag_service_not_configured" }, { status: 500 });
-  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
 
   try {
     const result = await withPlatformAdminAudit(
@@ -61,13 +62,21 @@ export async function POST(
         const row = promo as { id: string; global_chunk_id: string; demoted_at: string | null };
         if (row.demoted_at) return { error: "already_demoted" };
 
+        // BP09 — RS256 JWT, PLATFORM sentinel since demoting a global chunk
+        // isn't scoped to one tenant (affects all readers).
+        const jwt = await signServiceJwt({
+          tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+          scope: "write",
+          service_identifier: "platform-admin",
+        });
+
         // Call the RAG service to perform the actual chunk lifecycle change.
         // TODO(bp22-rag-demote): once /demote/chunk lands on the RAG side, swap
         // the success path here. Until then we record the intent and surface a
         // 501 so the operator knows the RAG-side hand-off is incomplete.
         const ragRes = await fetch(`${ragUrl}/api/admin/demote-chunk?id=${row.global_chunk_id}&mode=${mode}`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${bearer}` },
+          headers: { Authorization: `Bearer ${jwt}` },
         });
         if (!ragRes.ok && ragRes.status !== 404) {
           // 404 = endpoint not yet implemented; we still record the demotion
