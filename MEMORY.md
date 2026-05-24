@@ -4,6 +4,50 @@ Newest entries on top.
 
 ---
 
+## D-077 — 2026-05-24 — BP41: Haiku vision OCR sample-evaluation scripts ($25 hard cap) — key decisions
+
+**Decision:**
+
+1. **Three-script offline pipeline, NOT a runtime feature.** This build prompt produces operator-facing evaluation artifacts only — no migration, no API route, no Inngest job, no production code path. The output is a markdown report informing the operator's go/no-go call on funding a full ~18,000-image OCR pass.
+
+2. **Hard $25 cap with resumable run state.** `run-haiku-vision.ts` writes one JSONL line per processed image; on rerun it skips already-processed `asset_id`s and sums prior cost. When cumulative spend hits $25 the script exits loudly. Operator can rerun after raising the cap manually.
+
+3. **Stratified sample, capped at 30% per line.** Avoids the failure mode where the line with the most cached chunks dominates the sample. Proportional pass with a 30% per-line ceiling, then random top-up to exactly 200.
+
+4. **Per-image scoring is keyword-overlap (deliberately crude).** The aggregate is directional, not authoritative. Operator is expected to spot-check 20 random images by hand before flipping go/no-go. The report explicitly says so. Bayesian / embedding-based comparison was rejected as overengineered for a one-off eval.
+
+5. **`new_info` heuristic: OCR contributes ≥30% unique tokens beyond the chunk.** Below 30% means OCR is mostly restating what the chunk text already captured.
+
+6. **`contradiction` heuristic v1: deck-number mismatch only** (OCR says "Deck 8", chunk says "Deck 9" → flag). More sophisticated contradiction detection is out of scope; the rubric guides the operator to read the flagged samples by hand.
+
+7. **Rubric thresholds (default, operator-tweakable):**
+   - new-info rate ≥ 40%
+   - contradiction rate < 5%
+   - avg cost per image < $0.05
+   All three must be met for the report to recommend GO. Operator may relax or tighten in `compare-and-report.ts` before running.
+
+8. **No production code touched.** Per spec §33.11 step 9: this prompt produces eval artifacts; a separate (NOT-in-addendum) follow-up prompt implements OCR in the production ingest path IF operator approves.
+
+**What was rejected:**
+
+- **Embedding-based comparison** between OCR output and chunk text — overengineered for a one-off; report's purpose is to surface raw samples for human review.
+- **Per-image image-bytes download to local disk** — Anthropic accepts `{ type: "image", source: { type: "url", ... } }` directly; no need to stage bytes locally.
+- **Soft cost cap with auto-resume the next day** — operator should consciously opt in to additional spend. Hard cap + manual rerun is the right friction.
+- **Auto-flipping a "use OCR" feature flag based on report output** — operator decision, not script decision.
+
+**Operator follow-ups (D-077):**
+
+- Provision `SUPABASE_RAG_DB_URL` (read-only role acceptable) and `ANTHROPIC_API_KEY` before running.
+- Build the dataset: deck-plan asset rows must exist in `rag_media_assets` (depends on BP36/BP37 + a real CruiseMapper DIY ingest run with `CRUISEMAPPER_DIY_INGEST_ENABLED=true`).
+- Run the pipeline; review report. If GO, draft the follow-up prompt that adds OCR to the production deck-plan ingest path (likely an extension of BP37's deck plan parser).
+
+**Artifacts:**
+- `scripts/eval/ocr-deck-plans/{select-sample,run-haiku-vision,compare-and-report}.ts` + `README.md`.
+- `reports/ocr-eval-rubric.md` (operator-facing thresholds doc).
+- No tests (scripts are operator-run; the human review is the test).
+
+---
+
 ## D-076 — 2026-05-24 — BP40: Price-watch subscriptions — backend, evaluator, daily Inngest, kill switch — key decisions
 
 **Decision:**
