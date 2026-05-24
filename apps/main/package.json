@@ -20,6 +20,7 @@
     "cheerio": "^1.2.0",
     "docx": "^9.6.1",
     "inngest": "^4.4.0",
+    "jose": "^6.2.3",
     "mammoth": "^1.12.0",
     "next": "14.2.35",
     "officeparser": "^7.0.3",
