@@ -20,6 +20,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkRateLimit, type EmailCategory } from "./rate-limit";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
 import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementEmailSent } from "@/lib/abuse/counters";
 
 export interface SendEmailInput {
   db: SupabaseClient;
@@ -177,6 +179,17 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
 
   if (sendStatus === "failed") {
     return { status: "failed", reason: sendFailReason ?? null, email_log_id: emailLogId ?? null };
+  }
+
+  // BP27 §27.4 — bump the email-sent counter so the daily soft1/soft2/hard
+  // limits + state-machine transitions fire. Non-fatal: if the counter
+  // increment or snapshot load fails, the send still succeeds (an email
+  // already delivered to Resend MUST NOT be reported as failed).
+  try {
+    const snapshot = await loadTenantSnapshot(db, tenant.id);
+    await incrementEmailSent({ db, tenant: snapshot.tenant });
+  } catch (err) {
+    console.warn(`[email/send] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
   }
 
   return { status: "sent", email_log_id: emailLogId ?? null, resend_message_id: resendMessageId ?? null };

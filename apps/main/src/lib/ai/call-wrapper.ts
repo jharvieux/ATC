@@ -21,7 +21,12 @@ import {
   recordVendorSuccess,
 } from "@/lib/vendor-health/registry";
 import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
-import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
+import {
+  loadTenantSnapshot as loadSharedTenantSnapshot,
+  PLATFORM_TENANT_ID as SHARED_PLATFORM_TENANT_ID,
+  _resetSnapshotCacheForTests,
+  type CachedTenantSnapshot,
+} from "@/lib/abuse/snapshot";
 
 export type AICallPurpose =
   | "chat_main"
@@ -50,8 +55,9 @@ const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([
 ]);
 
 // PLATFORM_TENANT_ID — used for calls whose tenant attribution is genuinely
-// platform-wide (cross-tenant cron embeddings, etc.). Document in MEMORY.
-export const PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000000";
+// platform-wide (cross-tenant cron embeddings, etc.). Re-exported from the
+// shared snapshot module so existing imports of this constant still work.
+export const PLATFORM_TENANT_ID = SHARED_PLATFORM_TENANT_ID;
 
 // ─────────────────────────────────────────────────────────────────────
 // selectModelForPurpose — §27.6 AI cost enforcement, soft1+
@@ -80,81 +86,16 @@ export function selectModelForPurpose(input: ModelSelectionInput): string {
 // Tenant snapshot loading
 // ─────────────────────────────────────────────────────────────────────
 
-export interface CachedTenantSnapshot {
-  tenant: TenantRevenueSnapshot & { tenant_id: string };
-  ai_cost_state: "ok" | "soft1" | "soft2" | "hard";
-  fetched_at: number;
-}
-const TENANT_SNAPSHOT_TTL_MS = 30_000;
-const tenantSnapshotCache = new Map<string, CachedTenantSnapshot>();
-
+// loadTenantSnapshot now lives in lib/abuse/snapshot.ts so the §27 counter
+// helpers (lib/abuse/counters.ts) AND the BP24 streaming wrapper (stream-
+// wrapper.ts) can share the same loader + 30s in-process cache.
+// Re-exported here so existing imports (`from "./call-wrapper"`) keep working.
+export type { CachedTenantSnapshot };
 export async function loadTenantSnapshot(
   db: ReturnType<typeof createServiceRoleClient>,
   tenant_id: string,
 ): Promise<CachedTenantSnapshot> {
-  const cached = tenantSnapshotCache.get(tenant_id);
-  if (cached && Date.now() - cached.fetched_at < TENANT_SNAPSHOT_TTL_MS) return cached;
-
-  // Platform-tenant short-circuit — no row in tenants, treat as healthy.
-  if (tenant_id === PLATFORM_TENANT_ID) {
-    const fresh: CachedTenantSnapshot = {
-      tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
-      ai_cost_state: "ok",
-      fetched_at: Date.now(),
-    };
-    tenantSnapshotCache.set(tenant_id, fresh);
-    return fresh;
-  }
-
-  const { data: tenantRow } = await db
-    .from("tenants")
-    .select("id, tier_id, seat_count, billing_period")
-    .eq("id", tenant_id)
-    .maybeSingle();
-  if (!tenantRow) {
-    // Unknown tenant — fall back to safe defaults. The call still runs;
-    // attribution will be wrong but we don't want to block.
-    return {
-      tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
-      ai_cost_state: "ok",
-      fetched_at: Date.now(),
-    };
-  }
-  const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual" };
-
-  let tier_code: TenantRevenueSnapshot["tier_code"] = "byo_research";
-  if (tr.tier_id) {
-    const { data: tierRow } = await db
-      .from("tier_definitions")
-      .select("code")
-      .eq("id", tr.tier_id)
-      .maybeSingle();
-    const code = (tierRow as { code?: string } | null)?.code;
-    if (code && [
-      "byo_research", "byo_professional", "byo_agency",
-      "sub_starter", "sub_pro", "sub_agency",
-    ].includes(code)) {
-      tier_code = code as TenantRevenueSnapshot["tier_code"];
-    }
-  }
-
-  const { data: metricsRow } = await db
-    .from("tenant_usage_metrics")
-    .select("ai_cost_limit_state")
-    .eq("tenant_id", tenant_id)
-    .order("billing_period", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const ai_cost_state = ((metricsRow as { ai_cost_limit_state?: string } | null)?.ai_cost_limit_state ?? "ok") as
-    "ok" | "soft1" | "soft2" | "hard";
-
-  const fresh: CachedTenantSnapshot = {
-    tenant: { tenant_id, tier_code, seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
-    ai_cost_state,
-    fetched_at: Date.now(),
-  };
-  tenantSnapshotCache.set(tenant_id, fresh);
-  return fresh;
+  return loadSharedTenantSnapshot(db, tenant_id);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -354,6 +295,7 @@ export async function instrumentedOpenAIEmbedding(
 }
 
 // Test-only — clears the tenant snapshot cache so tests can vary state.
+// Delegates to the shared cache in lib/abuse/snapshot.ts.
 export function _resetTenantSnapshotCacheForTests(): void {
-  tenantSnapshotCache.clear();
+  _resetSnapshotCacheForTests();
 }

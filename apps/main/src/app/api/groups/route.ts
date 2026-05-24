@@ -13,6 +13,8 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { selectHeroImage } from "@/lib/groups/hero-image";
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementGroupInvitees } from "@/lib/abuse/counters";
 
 interface InviteeInput {
   email: string;
@@ -106,6 +108,16 @@ export async function POST(req: Request): Promise<Response> {
       const { error: invErr } = await svc.from("invitations").insert(rows);
       if (invErr) {
         return Response.json({ error: invErr.message }, { status: 500 });
+      }
+
+      // BP27 §27.4 — bump the group-invitees counter. Non-fatal on
+      // failure: the invitations already exist; we don't want to
+      // surface a 500 to the coordinator because attribution is sad.
+      try {
+        const snapshot = await loadTenantSnapshot(svc, ctx.tenant_id);
+        await incrementGroupInvitees({ db: svc, tenant: snapshot.tenant }, rows.length);
+      } catch (err) {
+        console.warn(`[groups] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

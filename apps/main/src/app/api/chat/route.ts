@@ -57,6 +57,9 @@ import { buildDisplayableAssetsBlock } from "@/lib/ai/display-assets-block";
 import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-id-validation";
 // BP32 §32.10.1 — bug-intent recognizer fires before LLM call.
 import { detectBugIntent } from "@/lib/help-ai/bug-intent-recognizer";
+// BP27 §27.4 — chat-message counter + state-machine wire-up.
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementChatMessages } from "@/lib/abuse/counters";
 import {
   runSupervisor,
   HATE_SPEECH_REGEN_INSTRUCTION,
@@ -368,6 +371,16 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     role: "user",
     content: userMessage,
   });
+
+  // BP27 §27.4 — bump chat-messages counter. Non-fatal: the message
+  // already persisted; we don't want to surface a 500 over usage
+  // attribution failure.
+  try {
+    const snapshot = await loadTenantSnapshot(svc, tenantId);
+    await incrementChatMessages({ db: svc, tenant: snapshot.tenant });
+  } catch (err) {
+    console.warn(`[chat] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // BP32 §32.10.1 — pre-LLM bug-intent check. Surfaces an offer for the
   // customer to file a bug; the regular chat flow still runs underneath
