@@ -4,6 +4,66 @@ Newest entries on top.
 
 ---
 
+## D-066 — 2026-05-23 — BP31 Phase B: Help AI persona + flow controllers + API routes (confidence scorer STUBBED) — key decisions
+
+**Decision:**
+
+1. **Help AI persona registered with `kind: 'platform_help'` discriminator** in `apps/main/src/lib/personas/base-blocks/help-ai.ts`. The 6 travel-concierge personas have no `kind` field; `buildSystemPrompt` does a `base.kind === 'platform_help'` check to bypass the Layer 3 tenant addendum path per §32.4.1. Display-name override doesn't apply because the help_ai persona's `display_name` field is the only source — there's no tenant_branding override path it consults today.
+
+2. **System prompt per §32.4.2** — role / capabilities / boundaries / tone / PII handling. Explicit instruction that the Help AI is NOT a travel agent and NEVER pretends to be Marcus/Marco/Priya/Dave/Maya/Jenny. PII redaction expectation written into the prompt body so the model is aware that any name/email/phone the user enters gets `[REDACTED-*]` before reaching GitHub.
+
+3. **Flow controllers are pure state-machine functions** in `lib/help-ai/flow-controller.ts`. Three flows:
+   - **bug:** 8 states (gathering_location → gathering_actual → gathering_expected → gathering_steps → gathering_frequency → confirming_environment → optional_screenshots → showing_summary → submitted). `BUG_FLOW_STEPS` table is the source of truth for which field captures on each reply; `advanceBugFlow` returns `{state, draft}` immutably.
+   - **feature:** 5 states. Same shape, lighter.
+   - **help:** open Q&A with `lowConfidenceStreak` tracking; advances to `should_escalate` after 3 consecutive low-confidence-RAG replies per §32.4.3.
+   - Browser_info + screenshots aren't captured from free-text — UI populates those directly. The state machine just sequences the questions.
+
+4. **Confidence scorer is a STUB** per the operator's cost-deferral decision (D-066): `scoreBugDraft` returns uniform `0.5` across the 6 §32.8.2 factors regardless of draft content. `stubbed: true` flag in the result + rationale string referencing D-066. The Haiku-driven scorer (§32.8.2 structured assessment) is wired by replacing the function body with an `instrumentedClaudeCall` (purpose `'help_ai_supervisor'`). The CONTRACT — `{score, factors, rationale, stubbed}` — is stable so wiring doesn't change schema or call sites.
+
+5. **10 new API routes** under `/api/help/*` and `/api/admin/help/*`:
+   - `POST /api/help/sessions` — open session; emits `help.session_opened`
+   - `POST /api/help/sessions/[id]/close` — close with outcome
+   - `POST /api/help/sessions/[id]/escalate` — escalate to platform support via `sendOperatorAlert(severity: 'low')`
+   - `POST /api/help/bugs` — submit bug; eager PII quarantine; on GitHub failure enqueues `help.github_issue_creation_failed` for retry
+   - `GET /api/help/bugs` + `GET /api/help/bugs/[id]` — list + read (with §32.6.3 customer-redacted view returning only `BR-XXXXXXXX` reference id when caller is the customer-submitter)
+   - `POST /api/help/features` + `GET /api/help/features` + `GET /api/help/features/[id]` — feature equivalents
+   - `GET /api/admin/help/{sessions,bugs,features}` — cross-tenant via `withPlatformAdminAudit` (reason `'help_admin_view'`)
+   - `PATCH /api/admin/help/features/[id]` — decision (accepted/rejected/deferred/duplicate) via `withPlatformAdminAudit` (reason `'help_feature_decision'`)
+   - All non-admin routes use `assertPermission(req, { resource, action })`; admin routes use the audit wrapper. Auth-bypass static probe from BP30 Phase A still passes — all 17 new route files import an authority surface token.
+
+6. **2 new platform-admin reasons added** to `lib/db/platform-admin-reasons.ts`: `help_admin_view`, `help_feature_decision`. Both audited via `audit_log.action='platformAdmin.<reason>'`.
+
+7. **Customer-redacted view at `GET /api/help/bugs/[id]`** per §32.6.3. When the caller is the same user who submitted the row AND `source_type='customer'`, the response is just `{reference_id, state, submitted_at}` where `reference_id = "BR-" + sha256(bug_id).slice(0,8).toUpperCase()`. Tenant admins and platform staff see the full row.
+
+8. **Session-close + session-open + session-escalate all write audit_log rows** per §32.13.3. Bug/feature submissions are themselves audit records (no duplicate audit_log row at submission time); the GitHub issue creation success/failure writes `action='github.issue_created'` / `'github.issue_creation_failed'`. PII zero-tolerance quarantine writes `action='help.pii_zero_tolerance_quarantine'` with the matched kinds in `changes`.
+
+9. **3 new Inngest events emitted** (already registered in the registry by Phase A): `help.session_opened`, `help.session_closed`, `help.bug_submitted`, `help.feature_submitted` are now actually fired from the route handlers. No consumers yet beyond the existing `github-issue-retry` for the `_creation_failed` event.
+
+10. **42 new tests (641 → 662 → +21 net new since Phase A merge):**
+    - `flow-controller.test.ts` (13) — bug + feature + help flow state machines
+    - `confidence-scorer.test.ts` (4) — stub returns uniform 0.5; rationale references D-066
+    - `pii-redaction.test.ts` (already shipped Phase A, +0)
+    - `personas/help-ai-persona.test.ts` (4) — persona registration; tenant addendum is NOT applied even on agency tier; regression guard that the regular Marcus persona STILL applies addendum
+
+11. **Quarantine path is fully wired end-to-end.** A bug submission containing an SSN (or Luhn-valid CC, or passport in context):
+    1. `POST /api/help/bugs` inserts the row with `state='pending'`
+    2. Synchronous `createBugIssue` throws `PIIZeroToleranceQuarantineError`
+    3. Route handler catches → updates row to `state='quarantined'` + `quarantine_reason='pii_zero_tolerance:ssn'` (or similar)
+    4. Writes audit_log row with action `'help.pii_zero_tolerance_quarantine'`
+    5. Fires `sendOperatorAlert(severity: 'high', signal: 'bug_report_pii_quarantine')`
+    6. Returns `202 {state: 'quarantined', message: 'Your report contains information we can\\'t process safely...'}`
+    7. **GitHub issue is NEVER created.** No retry scheduled.
+
+**What was rejected:**
+- Wiring the Haiku confidence scorer in this PR — explicit cost-deferral per the operator. Stub is in place; replacing it is a 1-file change.
+- Building the SSE streaming chat endpoint (`POST /api/help/sessions/[id]/message`) — that's Phase C (slide-over panel). The bug-submission and session lifecycle routes are usable without a chat-streaming endpoint as long as the UI synthesizes the conversation client-side; Phase C wires the real SSE flow.
+- Building the documentation viewer at `/admin/help`, the PDF/Word export, and the admin triage console — Phase C.
+- Building the help-docs RAG sync CLI (`sync-help-docs-to-rag.ts`) — Phase C (depends on the docs viewer source files existing first).
+
+**Artifacts:** `apps/main/src/lib/personas/base-blocks/help-ai.ts` (new persona base), `apps/main/src/lib/personas/build-system-prompt.ts` (+kind discriminator, +Help AI registration in BASE_BLOCKS), `apps/main/src/lib/help-ai/{flow-controller,confidence-scorer}.ts`, 10 new route files under `apps/main/src/app/api/help/*` + `apps/main/src/app/api/admin/help/*`, `apps/main/src/lib/db/platform-admin-reasons.ts` (+2 reasons), 3 new test files (21 tests). 662 total tests passing (+21 vs Phase A), 42 skipped. PR #?? open.
+
+---
+
 ## D-065 — 2026-05-23 — BP31 Phase A: §32 Self-Service Help foundation (schema, GitHub App, PII redaction, /fix-bugs) — key decisions
 
 **Decision:**
