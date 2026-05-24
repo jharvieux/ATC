@@ -145,6 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -166,7 +167,7 @@ jobs:
 
       - name: Check RLS drift (warn on dev push)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-        run: pnpm rls:check || echo "::warning::RLS drift detected on dev — run pnpm rls:snapshot and commit db/rls-snapshot.sql"
+        run: pnpm rls:check || echo "::warning::RLS drift detected on dev — run pnpm rls:snapshot and commit db/rls-snapshot-{main,rag}.sql"
 
   contract-tests:
     name: Contract Tests
