@@ -19,6 +19,12 @@ const DRAFT_KEY = "atc-chat-draft";
 
 type SseEvent =
   | { type: "delta"; text: string }
+  // BP24 streaming events — see apps/main/src/app/api/chat/route.ts for
+  // semantics. Server falls back to fake-stream behaviour when streaming
+  // is disabled, so these only fire under CHAT_STREAMING_ENABLED=true.
+  | { type: "delta_start" }
+  | { type: "rewriting" }
+  | { type: "message_revised"; content: string }
   | { type: "message_id"; message_id: string; conversation_id: string }
   | { type: "sources"; citations: unknown[] }
   | { type: "persona"; slug: string; display_name: string }
@@ -109,6 +115,26 @@ export default function ChatPage(): JSX.Element {
               break;
             case "delta":
               assistantContent += ev.text;
+              setStreaming(assistantContent);
+              break;
+            case "delta_start":
+              // BP24: a fresh streamed attempt is starting. Reset the buffer
+              // so deltas overwrite anything from a prior aborted attempt.
+              assistantContent = "";
+              setStreaming("");
+              break;
+            case "rewriting":
+              // BP24: supervisor flagged the in-flight draft (mid-stream or
+              // post-stream). Clear what's shown; the next delta_start will
+              // begin the fresh draft.
+              assistantContent = "";
+              setStreaming("");
+              break;
+            case "message_revised":
+              // BP24: final text was sanitized after streaming (e.g.
+              // asset_id_validation stripped hallucinated markup). Replace
+              // the displayed bubble content with the supplied final string.
+              assistantContent = ev.content;
               setStreaming(assistantContent);
               break;
             case "signup_wall":

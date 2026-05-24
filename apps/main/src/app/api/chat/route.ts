@@ -25,6 +25,10 @@
 
 import { randomUUID } from "node:crypto";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
+import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
+import { bufferToSentences } from "@/lib/ai/sentence-buffer";
+import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
+import { checkSentence } from "@/lib/supervisor/per-sentence-check";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import { writeAuditLog } from "@/lib/audit/write";
@@ -70,6 +74,19 @@ const REGEN_HARD_CEILING = 6; // safety net; budget is also enforced inside supe
 // SSE event shape — mirrors what the client consumer expects.
 type SseEvent =
   | { type: "delta"; text: string }
+  // BP24 streaming additions (option B UX):
+  //   delta_start    — client should reset the assistant bubble (clear text,
+  //                    show typing indicator). Fires at the top of every
+  //                    streamed attempt, including post-rewriting regens.
+  //   rewriting      — supervisor flagged the draft (mid-stream or post-stream).
+  //                    Client should clear the bubble and wait for the next
+  //                    delta_start. Fires inside the regen loop.
+  //   message_revised — final text differs from what was streamed (e.g.
+  //                    asset_id_validation stripped markup). Client should
+  //                    replace bubble content with the supplied final string.
+  | { type: "delta_start" }
+  | { type: "rewriting" }
+  | { type: "message_revised"; content: string }
   | { type: "message_id"; message_id: string; conversation_id: string }
   | { type: "sources"; citations: unknown[] }
   | { type: "assets"; assets: unknown[] }
@@ -459,19 +476,43 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
 
   const generationModel = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
+  // BP24 — Streaming-mode opt-in. Default off; flip CHAT_STREAMING_ENABLED=true
+  // in the runtime env to route the chat reply through the streaming wrapper
+  // + per-sentence supervisor (§10 option B). When off, the existing whole-
+  // response + fake-stream path runs untouched.
+  const streamingEnabled = process.env.CHAT_STREAMING_ENABLED === "true";
+
+  // Per-sentence supervisor uses the same union deny-list runSupervisor
+  // uses. Load it once per turn (not per attempt) to avoid 2 extra reads
+  // on every regen.
+  const slurDenyList = streamingEnabled
+    ? await loadUnionSlurDenyList(svc, tenantId)
+    : [];
+
   let extraInstruction = "";
   let candidate = "";
   let supervisorOutcome: SupervisorOutcome | null = null;
   let assistantMessageId: string | null = null;
+  // BP24 telemetry — observability for the streaming-enabled cohort.
+  let perSentenceFires = 0;
+  let postStreamSupervisorFires = 0;
+  let streamedAttempts = 0;
 
   for (let attempt = 0; attempt < REGEN_HARD_CEILING; attempt++) {
     const sys = extraInstruction ? `${systemPrompt}\n\n${extraInstruction}` : systemPrompt;
 
     let candidateText: string;
-    try {
-      // instrumentedClaudeCall records vendor health + ai_call_log +
-      // tenant_usage_metrics increment + state-transition check.
-      const result = await instrumentedClaudeCall({
+
+    if (streamingEnabled) {
+      streamedAttempts++;
+      // ── BP24 streaming branch — option B UX ──
+      // Stream sentences directly to the client. On per-sentence flag, abort,
+      // send `rewriting`, regen. The done promise still resolves with usage
+      // so cost accounting stays correct even on aborted streams.
+      await send({ type: "delta_start" });
+
+      const abortController = new AbortController();
+      const { textStream, done } = instrumentedClaudeStream({
         tenant_id: tenantId,
         conversation_id: conversationId,
         user_id: userId,
@@ -480,18 +521,100 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         max_tokens: 1024,
         system: sys,
         messages: [{ role: "user", content: userMessage }],
+        signal: abortController.signal,
       });
-      candidateText = result.text;
-    } catch {
-      // Vendor failure was already recorded inside the wrapper.
-      await send({
-        type: "delta",
-        text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
-      });
-      await send({ type: "supervisor", action: "allow", regens: attempt });
-      await send({ type: "done" });
-      await close();
-      return;
+
+      let abortedByPerSentence = false;
+      let perSentenceHashedTerm: string | undefined;
+
+      try {
+        for await (const sentence of bufferToSentences(textStream)) {
+          const check = checkSentence(sentence, slurDenyList);
+          if (check.hit) {
+            abortController.abort();
+            abortedByPerSentence = true;
+            perSentenceFires++;
+            perSentenceHashedTerm = check.hashedTerm;
+            break;
+          }
+          // Append a trailing space — bufferToSentences strips inter-sentence
+          // whitespace, and the client concatenates deltas verbatim.
+          await send({ type: "delta", text: sentence + " " });
+        }
+      } catch (streamErr) {
+        // Vendor failure was already recorded inside the wrapper.
+        void streamErr;
+        await send({
+          type: "delta",
+          text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
+        });
+        await send({ type: "supervisor", action: "allow", regens: attempt });
+        await send({ type: "done" });
+        await close();
+        return;
+      }
+
+      if (abortedByPerSentence) {
+        // Let the wrapper finish its logging path (it catches the abort and
+        // surfaces it as a rejection on `done`). Cost may be partial.
+        try { await done; } catch { /* expected on abort */ }
+        console.warn("[chat-stream] per-sentence supervisor hit", {
+          conversation_id: conversationId,
+          attempt,
+          hashed_term: perSentenceHashedTerm,
+        });
+        await send({ type: "rewriting" });
+        extraInstruction = HATE_SPEECH_REGEN_INSTRUCTION;
+        continue;
+      }
+
+      // Stream completed cleanly. The wrapper's done promise gives us the
+      // canonical text + final usage; trust it over our locally-assembled
+      // string (the wrapper strips non-text content blocks consistently).
+      try {
+        const finalResult = await done;
+        candidateText = finalResult.text;
+      } catch (doneErr) {
+        // Stream looked clean but final-message resolution failed (network
+        // blip after last chunk). Fall back to vendor-down message rather
+        // than trying to recover with partial state.
+        void doneErr;
+        await send({
+          type: "delta",
+          text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
+        });
+        await send({ type: "supervisor", action: "allow", regens: attempt });
+        await send({ type: "done" });
+        await close();
+        return;
+      }
+    } else {
+      // ── Non-streaming branch — original behaviour, unchanged ──
+      try {
+        // instrumentedClaudeCall records vendor health + ai_call_log +
+        // tenant_usage_metrics increment + state-transition check.
+        const result = await instrumentedClaudeCall({
+          tenant_id: tenantId,
+          conversation_id: conversationId,
+          user_id: userId,
+          model: generationModel,
+          purpose: "chat_main",
+          max_tokens: 1024,
+          system: sys,
+          messages: [{ role: "user", content: userMessage }],
+        });
+        candidateText = result.text;
+      } catch {
+        // Vendor failure was already recorded inside the wrapper.
+        await send({
+          type: "delta",
+          text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
+        });
+        await send({ type: "supervisor", action: "allow", regens: attempt });
+        await send({ type: "done" });
+        await close();
+        return;
+      }
     }
 
     candidate = candidateText;
@@ -540,7 +663,12 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     if (supervisorOutcome.action === "allow") break;
     if (supervisorOutcome.action === "escalate") break;
 
-    // regenerate
+    // regenerate — in streaming mode the bad draft is already on the user's
+    // screen, so tell the client to clear it before the next attempt streams.
+    if (streamingEnabled) {
+      postStreamSupervisorFires++;
+      await send({ type: "rewriting" });
+    }
     const hitLexical = supervisorOutcome.findings.some(
       (f) => f.check === "tone_drift" && f.details.startsWith("lexical_match:"),
     );
@@ -582,6 +710,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // per-turn available set (or was malformed). Self-healing: caller streams
   // the sanitized output directly. Telemetry counters in `assetValidation`.
   const assetValidation = runAssetIdValidationLayer(candidate, availableAssetIds);
+  const preValidationCandidate = candidate;
   candidate = assetValidation.output;
   if (assetValidation.severity === "warning") {
     console.warn("[chat] asset_id_validation stripped markup", {
@@ -600,12 +729,31 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     await send({ type: "assets", assets: retrieval.assets });
   }
 
-  // Stream the approved response word-by-word.
   await send({ type: "message_id", message_id: assistantMessageId!, conversation_id: conversationId });
-  const words = candidate.split(/(\s+)/);
-  for (const w of words) {
-    if (!w) continue;
-    await send({ type: "delta", text: w });
+
+  if (streamingEnabled) {
+    // The content was streamed as it was generated. If asset_id_validation
+    // changed the text (stripped hallucinated markup), tell the client to
+    // replace the bubble with the sanitized version — option B continuity.
+    if (candidate !== preValidationCandidate) {
+      await send({ type: "message_revised", content: candidate });
+    }
+    if (streamedAttempts > 1 || perSentenceFires > 0 || postStreamSupervisorFires > 0) {
+      console.info("[chat-stream] turn complete", {
+        conversation_id: conversationId,
+        streamed_attempts: streamedAttempts,
+        per_sentence_fires: perSentenceFires,
+        post_stream_supervisor_fires: postStreamSupervisorFires,
+      });
+    }
+  } else {
+    // Non-streaming branch — fake-stream the approved response word-by-word
+    // so the client UX is identical regardless of which branch served the turn.
+    const words = candidate.split(/(\s+)/);
+    for (const w of words) {
+      if (!w) continue;
+      await send({ type: "delta", text: w });
+    }
   }
   await send({ type: "done" });
   await close();
