@@ -1,0 +1,74 @@
+// BP34 §33.2 — PricingDataSource interface + key types.
+//
+// Single source of truth for the adapter shape. Two implementations:
+//   - ApifyPricingAdapter (default, calls real Apify when ENABLED + token)
+//   - MockPricingDataSource (in-memory; every test that doesn't burn $$)
+
+export type CabinClass = "interior" | "oceanview" | "balcony" | "mini_suite" | "suite";
+export const ALL_CABIN_CLASSES: readonly CabinClass[] = [
+  "interior",
+  "oceanview",
+  "balcony",
+  "mini_suite",
+  "suite",
+] as const;
+
+// Cruise-line short codes used across the routing table + cache keys.
+export type CruiseLineCode =
+  | "RCL" | "NCL" | "PCL" | "CEL" | "COS"
+  | "CCL" | "HAL" | "MSC" | "DSY"
+  // Aggregator fallback (booking.com cruises) for uncovered lines.
+  | "BCK";
+
+// Region grouping for batched refresh (line × region × date-window).
+export type RegionCode = "caribbean" | "alaska" | "mediterranean" | "europe_other" | "asia" | "other";
+
+export interface SailingKey {
+  line: CruiseLineCode;
+  ship: string;          // canonical ship slug
+  sailDate: string;      // ISO date
+  departurePort: string; // IATA-like code
+  durationNights: number;
+}
+
+export type FreshnessFlag = "fresh" | "stale" | "expired";
+
+export interface CachedPriceQuote {
+  key: SailingKey;
+  cabinPrices: Partial<Record<CabinClass, { amount: number; currency: "USD" }>>;
+  fetchedAt: Date;
+  source: "apify" | "manual" | "host_adapter";
+  stalenessHours: number;
+  freshnessFlag: FreshnessFlag;
+}
+
+/**
+ * Cache lookup outcome. The `'unsupported'` arm is distinct from `'miss'`
+ * so callers don't retry uncoverable lines (§33.2 / §33.3 discipline point).
+ */
+export type CachedPriceLookup =
+  | { status: "hit"; quote: CachedPriceQuote }
+  | { status: "miss" }
+  | { status: "unsupported" };
+
+export interface RefreshResult {
+  sailings_refreshed: number;
+  sailings_failed: number;
+  actor_run_id: string | null;
+  spend_usd: number;
+  /** True when a budget cap or kill switch halted the run early. */
+  partial: boolean;
+  reason?: string;
+}
+
+export interface PricingDataSource {
+  refreshGeneralPricing(opts: {
+    lines: CruiseLineCode[];
+    regions: RegionCode[];
+    dateRange: { from: Date; to: Date };
+  }): Promise<RefreshResult>;
+
+  refreshTrackedSailings(sailings: SailingKey[]): Promise<RefreshResult>;
+
+  getCachedPrice(key: SailingKey): Promise<CachedPriceLookup>;
+}
