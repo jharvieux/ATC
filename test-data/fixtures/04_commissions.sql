@@ -1,0 +1,8 @@
+-- BP30 §30.4 fixture: commissions (TODO — populated when integration tests demand).
+--
+-- Target when populated (one per §14.2 state):
+--   - expected, invoiced, received, partial, overdue, disputed, waived
+--   - At least one with dispute_status='open'
+--   - One with negative platform_revenue (clawback case from BP15)
+--
+-- commissions row-shape depends on bookings rows — wait for bookings before populating.

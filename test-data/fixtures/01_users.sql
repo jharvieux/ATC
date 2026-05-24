@@ -1,0 +1,23 @@
+-- BP30 §30.4 fixture: users (TODO — populated when integration tests demand).
+--
+-- Why this file is empty today:
+-- public.users.auth_user_id REFERENCES auth.users(id), and auth.users is
+-- managed by Supabase Auth — inserting via raw SQL requires also seeding
+-- the auth schema, which bypasses Supabase Auth triggers and produces
+-- inconsistent state across migrations.
+--
+-- The integration-test setup helper (apps/main/src/test/db-setup.ts) should
+-- seed users via supabase.auth.admin.createUser() and then UPSERT
+-- public.users rows referencing the resulting auth_user_id. That helper is
+-- the right place to put per-test-suite user fixtures — most suites need
+-- their own specific role + tenant assignments anyway.
+--
+-- Per BP30 §30.4 the target distribution when populated is:
+--   1  platform_super_admin
+--   1  platform_compliance
+--   4  tenant_admins (one per of the four operating tenants)
+--   2  tenant_billing_admins
+--   4  tenant_members
+--   ~8 customers
+-- PII uses obvious placeholders: test.user.NNNN@example.test and
+-- +1-555-0100 through +1-555-0199.

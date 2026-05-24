@@ -1,0 +1,9 @@
+-- BP30 §30.4 fixture: quotes (TODO — populated when integration tests demand).
+--
+-- Target when populated:
+--   - estimate (current) — tests the §21.10 ESTIMATE validity-day expiry path
+--   - estimate (expired) — past QUOTE_ESTIMATE_VALIDITY_DAYS
+--   - confirmed (price-locked)
+--   - accepted with customer_accepted_audit_id populated (BP21 audit-snapshot path)
+--
+-- Depends on tenants + users + contacts to resolve FK refs cleanly.

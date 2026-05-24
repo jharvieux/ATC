@@ -1,0 +1,9 @@
+-- BP30 §30.4 fixture: forum threads + messages (TODO — populated when integration tests demand).
+--
+-- Target when populated:
+--   - threads with messages in every §19.3 moderation state:
+--     visible, pending_moderation (with retry count > 0), flagged_review, hidden
+--   - one message containing a credit-card pattern that should trigger
+--     zero-tolerance auto-hide
+--
+-- Depends on users + groups (forums are scoped to groups).

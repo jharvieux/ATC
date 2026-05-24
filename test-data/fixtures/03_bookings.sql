@@ -1,0 +1,10 @@
+-- BP30 §30.4 fixture: bookings (TODO — populated when integration tests demand).
+--
+-- Target when populated (one per §20.5 status):
+--   - draft, submitted, pending_host_review, pending_customer_reconfirmation,
+--     confirmed, rejected, cancelled, no_show, refunded
+--   - At least one booking with an OPEN commission dispute (commissions.dispute_status='open'),
+--     to exercise the BP25 forensics-snapshot-before-deletion path.
+--
+-- bookings.user_id FKs into public.users — same auth.users dependency as
+-- 01_users.sql. Populated via db-setup helper.

@@ -1,0 +1,12 @@
+-- BP30 §30.4 fixture: contacts (TODO — populated when integration tests demand).
+--
+-- Target when populated (~50 rows):
+--   - lead contacts attached to each tenant
+--   - secondary travelers
+--   - anonymized contacts (testing BP25 anonymization — anonymized_customer_hash
+--     populated, user_id NULL, name/email/phone cleared)
+--   - contacts in various opt-in/opt-out states (CAN-SPAM addendum, TCPA)
+--
+-- contacts.tenant_id FK and the BP25 anonymization shape both require users
+-- to be in place first. Lives in the db-setup helper for the same reason
+-- 01_users.sql does.
