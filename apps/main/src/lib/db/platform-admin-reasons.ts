@@ -57,6 +57,10 @@ export const PLATFORM_ADMIN_REASONS = [
   // Feedback settings (per §6.10)
   "feedback_settings_change",
 
+  // BP22 §6 — retrieval composite-weight knobs in platform_settings
+  // (match/authority/recency exponents + feedback coefficient).
+  "retrieval_weights_change",
+
   // AI Supervisor kill switch (§10.6)
   "ai_kill_switch_global_pause",
   "ai_kill_switch_global_resume",
