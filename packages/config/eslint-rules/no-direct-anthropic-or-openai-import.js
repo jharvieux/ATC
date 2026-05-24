@@ -13,6 +13,11 @@
 
 const ALLOWED_PATH_SUFFIXES = [
   "/lib/ai/call-wrapper.ts",
+  // BP24 — streaming companion. Same governance (model selection, vendor
+  // health, ai_call_log + tenant_usage_metrics increment). Lives in its
+  // own file because the lifecycle is different (token deltas during
+  // generation; cost/usage only at end).
+  "/lib/ai/stream-wrapper.ts",
   // The pricing catalog imports vendor types only, not the SDK client.
   // Listed here so a future operator adding `import { ... } from "openai"`
   // for typed pricing structures doesn't get blocked.

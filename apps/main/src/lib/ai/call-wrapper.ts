@@ -80,7 +80,7 @@ export function selectModelForPurpose(input: ModelSelectionInput): string {
 // Tenant snapshot loading
 // ─────────────────────────────────────────────────────────────────────
 
-interface CachedTenantSnapshot {
+export interface CachedTenantSnapshot {
   tenant: TenantRevenueSnapshot & { tenant_id: string };
   ai_cost_state: "ok" | "soft1" | "soft2" | "hard";
   fetched_at: number;
@@ -88,7 +88,7 @@ interface CachedTenantSnapshot {
 const TENANT_SNAPSHOT_TTL_MS = 30_000;
 const tenantSnapshotCache = new Map<string, CachedTenantSnapshot>();
 
-async function loadTenantSnapshot(
+export async function loadTenantSnapshot(
   db: ReturnType<typeof createServiceRoleClient>,
   tenant_id: string,
 ): Promise<CachedTenantSnapshot> {
