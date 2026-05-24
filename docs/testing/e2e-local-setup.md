@@ -66,9 +66,10 @@ pnpm exec playwright test tests/e2e/price-watch.spec.ts
 ```env
 PLATFORM_PRIMARY_DOMAIN=localhost
 PLATFORM_DOMAIN_REGEX=^([a-z0-9-]+)\.localhost$
-NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=anon-key-placeholder
-SUPABASE_SERVICE_ROLE_KEY=service-role-placeholder
+# Tier 2.5 — these JWTs must match scripts/local-postgrest.conf's jwt-secret.
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRpZXIyLWxvY2FsIn0.Pz-8BVTsRIUC81JWFUXQyvCjid981wZGKiag9Z2GF34
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoidGllcjItbG9jYWwifQ.88tFBcM9_intifembBjlhAE04uCnr0M2GbV_rTuxH3o
 SUPABASE_DB_URL=postgresql://YOUR_USER@localhost:5432/atc_main_test
 STRIPE_SECRET_KEY=sk_test_placeholder
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_placeholder
@@ -122,21 +123,55 @@ $PG/dropdb -h localhost atc_rag_test  && $PG/createdb -h localhost atc_rag_test
 # … then re-run steps 3, 4, 5 above.
 ```
 
-## Tier 2.5 — PostgREST for DB-backed specs (next)
+## Tier 2.5 — PostgREST for DB-backed specs (live)
 
-The remaining 5 `test.skip` price-watch specs (and most other specs) read/write the DB via the Supabase JS client, which talks PostgREST. To unskip them:
+All 8 price-watch specs pass — the Supabase JS client (used by `tenantClient` and `createServiceRoleClient`) talks to PostgREST, which talks to local Postgres. No GoTrue, no Docker.
+
+Three pieces:
+1. **PostgREST** on port 54331 (config: `scripts/local-postgrest.conf`).
+2. **Tiny path-rewriting proxy** on port 54321 (`scripts/local-supabase-proxy.ts`) — Supabase JS hits `${URL}/rest/v1/<table>`; PostgREST serves at `/<table>`. The proxy strips the prefix and forwards. It also returns 401 for `/auth/v1/*` so any code path that tries to call GoTrue surfaces loudly (the bypass should cover everything; a 401 here means a missing bypass site).
+3. **Table grants** (`scripts/local-pg-grants.sql`) — `service_role` gets `BYPASSRLS` (matches Supabase Cloud); `anon` and `authenticated` get the standard CRUD grants with RLS still gating.
+
+### Setup (one-time, after Tier 2 setup)
 
 ```bash
 brew install postgrest
-# Write /tmp/postgrest.conf with db-uri, db-schemas=public, db-anon-role=anon,
-# jwt-secret=<32-byte secret>, server-port=54321, db-pre-request settings as needed.
-postgrest /tmp/postgrest.conf &
-# Then NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321 (already in .env.local).
+
+# Apply grants to atc_main_test
+PG=/opt/homebrew/opt/postgresql@17/bin
+$PG/psql -h localhost -d atc_main_test -f scripts/local-pg-grants.sql
 ```
 
-The bypass path skips DB lookups in the auth layer, but downstream `tenantClient().from(...)` calls still hit PostgREST. Specs that exercise read/write logic against the cache, watches table, etc. need PostgREST up.
+The JWT secret + the anon/service-role JWTs are committed in `scripts/local-postgrest.conf` and the `.env.local` template (local-test values only — must never be used in production).
 
-Alternative: use `supabase start` (Docker) for full-fidelity local Supabase including GoTrue, PostgREST, and Storage. Heavier (~2GB RAM, Docker daemon required) but matches production exactly. If going this route, drop the bypass and use real fixture-user JWTs.
+### Run
+
+Playwright's `webServer` block auto-starts PostgREST, the proxy, and Next.js dev in the right order — just run:
+
+```bash
+pnpm exec playwright test
+# → 9 passed, 29 skipped (most other specs still skeletons)
+```
+
+Manual mode (independent of Playwright):
+
+```bash
+postgrest scripts/local-postgrest.conf &
+pnpm tsx scripts/local-supabase-proxy.ts &
+pnpm --filter @atc/main dev
+```
+
+### Reset
+
+PostgREST notices schema changes automatically. After dropping + re-applying migrations, also re-run the grants script:
+
+```bash
+$PG/psql -h localhost -d atc_main_test -f scripts/local-pg-grants.sql
+```
+
+### Alternative
+
+`supabase start` (Docker) for full-fidelity local Supabase including GoTrue, PostgREST, and Storage. Heavier (~2GB RAM, Docker daemon required) but matches production exactly. Drop the bypass and use real fixture-user JWTs if going this route.
 
 ## Tier 3 — CI (later)
 

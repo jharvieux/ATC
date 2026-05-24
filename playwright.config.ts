@@ -22,12 +22,34 @@ export default defineConfig({
   // Skipped when an external BASE_URL is set (CI against a preview deploy).
   webServer: process.env.BASE_URL
     ? undefined
-    : {
-        command: "pnpm --filter @atc/main dev",
-        url: "http://localhost:3000/api/health",
-        timeout: 180_000,
-        reuseExistingServer: !process.env.CI,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
+    : [
+        // Tier-2.5: PostgREST + a tiny path-rewriting proxy that turns
+        // `/rest/v1/<table>` (what the Supabase JS client emits) into the
+        // `/{table}` shape PostgREST serves. See scripts/local-postgrest.conf,
+        // scripts/local-supabase-proxy.ts, and docs/testing/e2e-local-setup.md.
+        {
+          command: "postgrest scripts/local-postgrest.conf",
+          url: "http://127.0.0.1:54331/",
+          timeout: 30_000,
+          reuseExistingServer: !process.env.CI,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+        {
+          command: "pnpm tsx scripts/local-supabase-proxy.ts",
+          url: "http://127.0.0.1:54321/health",
+          timeout: 30_000,
+          reuseExistingServer: !process.env.CI,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+        {
+          command: "pnpm --filter @atc/main dev",
+          url: "http://localhost:3000/api/health",
+          timeout: 180_000,
+          reuseExistingServer: !process.env.CI,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      ],
 });
