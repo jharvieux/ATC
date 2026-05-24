@@ -11,6 +11,7 @@
 import * as React from "react";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
@@ -56,6 +57,18 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     };
 
     const svc = createServiceRoleClient();
+
+    // §15.16 — Skip past-grace tenants. We don't send tenant-branded emails
+    // on behalf of a non-paying tenant; their customers would receive mail
+    // from a tenant that effectively lost service days ago.
+    const paymentCheck = await assertTenantStillPayingById(svc, tenant_id);
+    if (!paymentCheck.ok) {
+      console.info(
+        "[precruise] skipping past-grace tenant",
+        { tenant_id, booking_id, phase, reason: paymentCheck.reason, days: paymentCheck.days_since_non_paying },
+      );
+      return;
+    }
 
     // Idempotency: if already sent, skip
     const { data: existing } = await svc
