@@ -80,6 +80,10 @@ export const PLATFORM_ADMIN_REASONS = [
   "abuse_override_create",
   "abuse_override_revoke",
   "abuse_override_request_review",
+
+  // Self-Service Help triage (§32.6.5).
+  "help_admin_view",
+  "help_feature_decision",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

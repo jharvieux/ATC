@@ -11,15 +11,23 @@ import { personaBase as priya } from "./base-blocks/priya";
 import { personaBase as dave } from "./base-blocks/dave";
 import { personaBase as maya } from "./base-blocks/maya";
 import { personaBase as jenny } from "./base-blocks/jenny";
+import { personaBase as helpAi } from "./base-blocks/help-ai";
 
-const BASE_BLOCKS = new Map([
+// BP31 §32.4 — Help AI is registered alongside the travel concierge personas
+// but the prompt builder treats it specially via the `kind: 'platform_help'`
+// discriminator below.
+const BASE_BLOCKS = new Map<string, { slug: string; system_prompt: string; tone_calibration_placeholder: string; kind?: string }>([
   [marcus.slug, marcus],
   [marco.slug, marco],
   [priya.slug, priya],
   [dave.slug, dave],
   [maya.slug, maya],
   [jenny.slug, jenny],
+  [helpAi.slug, helpAi],
 ]);
+
+/** §32.4.1 — Help AI bypasses tenant addendums + display-name overrides. */
+const KIND_PLATFORM_HELP = "platform_help";
 
 // Default fallback persona slug per §9.1
 export const DEFAULT_PERSONA_SLUG = "marcus-cole";
@@ -115,8 +123,13 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // are applied. Rejected/suspended/pending_screen revert to base prompt.
   // The addendum content is rendered with the EXPLICIT WRAPPING per §16.6
   // — the framing text is FIXED and must not be alterable by tenant content.
+  //
+  // §32.4.1 / BP31: the Help AI persona (kind='platform_help') is scoped to
+  // the platform itself, not the tenant's business — tenant addendums must
+  // NOT be applied. Falsy / missing `kind` means a regular travel-concierge
+  // persona and addendum lookup runs as before.
   let addendumVersion = 0;
-  if (AGENCY_TIERS.has(tenant_tier)) {
+  if (base.kind !== KIND_PLATFORM_HELP && AGENCY_TIERS.has(tenant_tier)) {
     const { data } = await db
       .from("persona_addendums")
       .select("content, updated_at, status")
