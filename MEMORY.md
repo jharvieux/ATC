@@ -4,6 +4,44 @@ Newest entries on top.
 
 ---
 
+## D-069 — 2026-05-23 — BP33: §33 addendum schema — pricing_cache + price_watches + rag_media_assets + related_asset_ids — key decisions
+
+**Decision:**
+
+1. **First of 9 addendum prompts (BP33–BP41).** BP33 is pure schema/configuration: 4 migrations, RLS, no business logic. Subsequent prompts (Apify adapter, per-line scrapers, DIY CruiseMapper scraper, consumer surface, UX, OCR eval) assume these tables exist.
+
+2. **`pricing_cache` is platform-scoped (no `tenant_id`).** Reference data shared across all tenants. RLS deliberately disabled — only the Apify adapter (service-role) reads/writes. Documented in the migration header so future readers don't try to "fix" the missing RLS. US-market only at launch: `price_currency CHECK = 'USD'`; the UNIQUE constraint has no market dimension. If a tenant-scoped variant ever ships, it goes in a separate table.
+
+3. **`price_watches` is tenant-scoped** with the standard §1.5 RLS pattern (4 policies via `auth_user_in_tenant`). `threshold_present` CHECK enforces dollar/percent presence per `threshold_kind`. FK `booking_id ON DELETE SET NULL` so a watch row survives booking deletion (the §33.8.2 lifecycle then sets `status='cancelled'`); FK `subscriber_user_id ON DELETE CASCADE` because the watch can't outlive its owner.
+
+4. **`rag_media_assets` ships in `public.` not `rag.`** despite the spec's `CREATE TABLE rag.rag_media_assets` — all RAG migrations live in `public.` per the existing repo convention. The `rag.` prefix in the spec is presentational. Hot-linked images only: `image_url` + `source_page_url` + `attribution` are the storage surface; no `storage_path` / `public_url` / `file_bytes` / `file_hash` per §33.6.3 (avoids SSRF + malicious-file surface + copyright posture).
+
+5. **RAG media assets RLS uses JWT-claim filtering** (`current_setting('request.jwt.claim.tenant_id', true)`) — RAG service has no `auth_user_in_tenant()` helper (different auth model — inter-service JWT). SELECT policy allows `scope='global'` OR matching tenant claim. No INSERT/UPDATE/DELETE policies — service-role only (the ingest pipeline). RLS-deny-by-default for non-service-role callers.
+
+6. **`tenant_id_when_tenant_scope` CHECK constraint** enforces the scope/tenant_id invariant at the row level: `scope='tenant'` requires non-null tenant_id; `scope='global'` requires null. Prevents the half-formed row shape from ever existing.
+
+7. **`knowledge_chunks.related_asset_ids` is `UUID[] NOT NULL DEFAULT '{}'`.** No FK to `rag_media_assets` — Postgres doesn't support FKs on array elements, AND the retrieval path (BP38) tolerates a broken-link missing-asset case gracefully (per §33.6.3 broken-source handling). GIN index for the inverse query "find chunks referencing this asset."
+
+8. **No Supabase Storage bucket** in BP33 per the revised spec (`build-prompts-33.md` Prerequisites table). The reserved `rag-media-tenant` bucket for the future tenant-scope asset path is out of scope.
+
+9. **Migration lint passes** (50 migrations, 85 tables). The platform-scoped `pricing_cache` doesn't trigger the lint's tenant-id-requires-RLS check because it has no `tenant_id` column. `price_watches` has standard 4-policy RLS; `rag_media_assets` lives in the RAG service so it's not subject to the main-app lint script.
+
+**What was rejected:**
+- Adding `tenant_id` to `pricing_cache` to satisfy a uniform "every table is tenant-scoped" reflex — pricing is reference data; tenant_id would be wrong by design.
+- Using `auth_user_in_tenant()` for `rag_media_assets` RLS — that helper lives in the main app DB, not the RAG service. JWT-claim filtering is the canonical RAG-side pattern.
+- Wiring an FK from `knowledge_chunks.related_asset_ids` to `rag_media_assets` — Postgres array-element FKs aren't supported, and §33.6.3 explicitly designs the consumer path to handle broken asset links.
+- Provisioning the Supabase Storage bucket — revised spec says none required for this addendum; the future tenant-scope bucket lands when tenant uploads do.
+
+**Operator follow-ups (D-069):**
+- Decide on per-line Apify actor slugs (RC, NCL, Princess, Celebrity, Costa verified; Carnival/HAL/MSC/Disney TBC) before BP34.
+- Confirm starting values for `APIFY_RUN_BUDGET_USD_CEILING` (default 50) + `APIFY_MONTHLY_BUDGET_USD_CEILING` (default 500).
+- Provision the operations-contact email for the CruiseMapper DIY `User-Agent` header (BP36).
+- Counsel sign-off on ToS posture for Apify scraping + CruiseMapper DIY scraping — launch-gate item, not build-time blocker.
+
+**Artifacts:** `apps/main/supabase/migrations/{20260611000000_pricing_cache,20260611000001_price_watches}.sql`, `apps/rag/supabase/migrations/{0010_rag_media_assets,0011_knowledge_chunks_related_asset_ids}.sql`. 4 new migrations, 0 new tests (pure schema). 50 migrations / 85 tables / 743 tests passing post-merge.
+
+---
+
 ## D-068 — 2026-05-23 — BP32: customer bug flow + help_submission_rate (per-DAY) + issue-closure webhook + per-customer rate limit — key decisions
 
 **Decision:**
