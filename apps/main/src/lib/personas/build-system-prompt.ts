@@ -86,6 +86,10 @@ type BuildSystemPromptOpts = {
   // INSTRUCTIONS block carries §21.5 citation rules and (in the empty form)
   // the §21.9 no-result don't-fabricate guard.
   knowledge_block?: string;
+  // BP39 §33.7.1 — DISPLAYABLE ASSETS block built by
+  // buildDisplayableAssetsBlock(assets). Optional; when omitted or empty,
+  // the section is omitted from the prompt entirely.
+  displayable_assets_block?: string;
 };
 
 export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<SystemPromptResult> {
@@ -97,6 +101,7 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     customer_context,
     db,
     knowledge_block,
+    displayable_assets_block,
   } = opts;
 
   const base = BASE_BLOCKS.get(persona_slug);
@@ -150,6 +155,13 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // and §21.9 (no-result fabrication guard) so no extra prose is needed here.
   if (knowledge_block) {
     layers.push(`\n\n${knowledge_block}`);
+  }
+
+  // BP39 §33.7.1 — DISPLAYABLE ASSETS block, immediately after the
+  // knowledge block so the model sees the displayable IDs while still
+  // in the "facts" section of the prompt. Omitted when empty.
+  if (displayable_assets_block) {
+    layers.push(`\n\n${displayable_assets_block}`);
   }
 
   // Tone calibration (already substituted in layer 1, also append as a reminder)
