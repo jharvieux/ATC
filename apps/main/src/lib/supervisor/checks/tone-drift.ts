@@ -17,6 +17,7 @@
 
 import { createHash } from "node:crypto";
 import type { CheckInput, SupervisorFinding } from "../types";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type ToneDriftInput = CheckInput & {
   slurDenyList: string[];
@@ -49,10 +50,12 @@ type HeuristicVerdict = {
 };
 
 async function heuristicTone(input: ToneDriftInput): Promise<HeuristicVerdict> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { drift: "none", reasons: ["haiku_unavailable"] };
+  if (!process.env.ANTHROPIC_API_KEY) return { drift: "none", reasons: ["haiku_unavailable"] };
   if (input.candidate_response.length < 40) {
     return { drift: "none", reasons: ["response_too_short_to_judge"] };
+  }
+  if (!input.tenant_id) {
+    return { drift: "none", reasons: ["tenant_id_missing"] };
   }
 
   const model = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
@@ -80,24 +83,15 @@ Rules (apply to the candidate):
   }
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 256,
-        system,
-        messages: [{ role: "user", content: userBlocks.join("\n\n") }],
-      }),
+    const { text } = await instrumentedClaudeCall({
+      tenant_id: input.tenant_id,
+      model,
+      purpose: "chat_supervisor",
+      max_tokens: 256,
+      system,
+      messages: [{ role: "user", content: userBlocks.join("\n\n") }],
     });
-    if (!res.ok) return { drift: "none", reasons: [`haiku_${res.status}`] };
-    const body = await res.json() as { content?: Array<{ text?: string }> };
-    const raw = body.content?.[0]?.text ?? "{}";
-    const match = raw.match(/\{[\s\S]*\}/);
+    const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { drift: "none", reasons: ["haiku_unparseable"] };
     const parsed = JSON.parse(match[0]) as { drift?: string; reasons?: string[] };
     const drift: HeuristicVerdict["drift"] =

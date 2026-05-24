@@ -14,6 +14,8 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { adjustRagChunkCount } from "@/lib/abuse/counters";
 
 interface RagIngestResponse {
   queue_item_id?: string;
@@ -140,6 +142,16 @@ export async function POST(
       .eq("id", id);
     if (updateErr) {
       return Response.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    // BP27 §27.4 — bump the rag-chunks counter (+1 for this approval).
+    // Non-fatal: the chunk already exists in RAG; we don't want to surface
+    // a 500 to the user over usage attribution failure.
+    try {
+      const snapshot = await loadTenantSnapshot(db, ctx.tenant_id);
+      await adjustRagChunkCount({ db, tenant: snapshot.tenant }, 1, 0);
+    } catch (err) {
+      console.warn(`[rag/queue/approve] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return Response.json({ chunk_id: approved.chunk_id, status: "approved" });

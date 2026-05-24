@@ -42,7 +42,7 @@ describe("withPlatformAdminAudit", () => {
   it("emits an audit row on the success path", async () => {
     const result = await withPlatformAdminAudit(
       {
-        admin_user_id: "admin-1",
+        admin_user_id: "00000000-0000-4000-8000-00000000a001",
         reason: "tenant_listing_for_admin_dashboard",
         operation: "platformAdminListTenants",
       },
@@ -55,7 +55,7 @@ describe("withPlatformAdminAudit", () => {
     expect(result).toBe(42);
     const row = lastAuditRow();
     expect(row).not.toBeNull();
-    expect(row!.actor_user_id).toBe("admin-1");
+    expect(row!.actor_user_id).toBe("00000000-0000-4000-8000-00000000a001");
     expect(row!.action).toBe("platformAdmin.tenant_listing_for_admin_dashboard");
     expect((row!.changes as Record<string, unknown>).outcome).toBe("success");
     expect((row!.changes as Record<string, unknown>).queries).toEqual([
@@ -67,7 +67,7 @@ describe("withPlatformAdminAudit", () => {
     await expect(
       withPlatformAdminAudit(
         {
-          admin_user_id: "admin-2",
+          admin_user_id: "00000000-0000-4000-8000-00000000a002",
           reason: "tenant_status_change",
           operation: "platformAdminSuspendTenant",
         },
@@ -89,7 +89,7 @@ describe("withPlatformAdminAudit", () => {
 
     await withPlatformAdminAudit(
       {
-        admin_user_id: "admin-3",
+        admin_user_id: "00000000-0000-4000-8000-00000000a003",
         reason: "tenant_detail_lookup",
         operation: "platformAdminGetTenant",
       },
@@ -97,7 +97,7 @@ describe("withPlatformAdminAudit", () => {
         outerDb = db;
         await withPlatformAdminAudit(
           {
-            admin_user_id: "admin-3",
+            admin_user_id: "00000000-0000-4000-8000-00000000a003",
             reason: "tenant_detail_lookup",
             operation: "platformAdminGetTenantInner",
           },
@@ -112,6 +112,28 @@ describe("withPlatformAdminAudit", () => {
     const auditInserts = capturedInserts.filter((c) => c.table === "audit_log");
     expect(auditInserts.length).toBe(1);
     expect(outerDb).toBe(innerDb);
+  });
+
+  it("non-UUID admin_user_id coerces to actor_type=system + preserves label", async () => {
+    // BP30 live-dispatch surfaced that crons pass sentinel strings like
+    // "system-cron" instead of a real admin UUID. Pre-fix, the audit_log
+    // INSERT silently failed (UUID column rejects strings). The coercion
+    // path turns these into actor_type='system' with the sentinel
+    // preserved in context.system_actor_label.
+    await withPlatformAdminAudit(
+      {
+        admin_user_id: "system-cron",
+        reason: "abuse_override_revoke",
+        operation: "abuse_override_expiry_sweep",
+      },
+      async () => undefined,
+    );
+
+    const row = lastAuditRow();
+    expect(row).not.toBeNull();
+    expect(row!.actor_user_id).toBeNull();
+    expect(row!.actor_type).toBe("system");
+    expect((row!.context as Record<string, unknown>).system_actor_label).toBe("system-cron");
   });
 
   it("manual_emergency_intervention without reason_detail throws", async () => {

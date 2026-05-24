@@ -1,0 +1,153 @@
+name: E2E (Playwright)
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - "release/*"
+
+jobs:
+  e2e:
+    name: Playwright (Tier 1 + 2 + 2.5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # All env vars Playwright + Next.js need at boot, mirroring
+      # apps/main/.env.local in docs/testing/e2e-local-setup.md.
+      # The JWTs match scripts/local-postgrest.conf's jwt-secret.
+      PLATFORM_PRIMARY_DOMAIN: localhost
+      PLATFORM_DOMAIN_REGEX: '^([a-z0-9-]+)\.localhost$'
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRpZXIyLWxvY2FsIn0.Pz-8BVTsRIUC81JWFUXQyvCjid981wZGKiag9Z2GF34
+      SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoidGllcjItbG9jYWwifQ.88tFBcM9_intifembBjlhAE04uCnr0M2GbV_rTuxH3o
+      SUPABASE_DB_URL: postgresql://postgres@localhost:5432/atc_main_test
+      STRIPE_SECRET_KEY: sk_test_ci-placeholder
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci-placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
+      STRIPE_CONNECT_WEBHOOK_SECRET: whsec_ci-placeholder-connect
+      INNGEST_SIGNING_KEY: signkey-ci-placeholder
+      INNGEST_EVENT_KEY: eventkey-ci-placeholder
+      SERVICE_JWT_PRIVATE_KEY: ci-placeholder-service-jwt-private-key
+      SERVICE_JWT_KEY_ID: v1
+      RAG_SERVICE_URL: http://localhost:3001
+      RAG_WEBHOOK_SECRET: ci-placeholder-rag-webhook-secret
+      APP_ENCRYPTION_KEY_CURRENT: YoOSb0MA3sHr9bR5Li7pLTkMNLfF01LbENEGOrYN99Y=
+      APP_ENCRYPTION_KEY_ID_CURRENT: app-v1
+      INVITATION_TOKEN_HMAC_KEY: ci-placeholder-invitation-hmac
+      ANTHROPIC_API_KEY: sk-ant-ci-placeholder
+      PLATFORM_PEPPER: ci-placeholder-pepper
+      FORENSICS_ENCRYPTION_KEY_CURRENT: p4zfG+1D1S1KXF33Z9wqwfybOnOVGWe4L1dmRDmVk7s=
+      FORENSICS_ENCRYPTION_KEY_ID_CURRENT: forensics-v1
+      OAUTH_MICROSOFT_ENABLED: 'false'
+      # Tier-2 auth bypass
+      TEST_AUTH_BYPASS_TOKEN: tier2-local-test-secret
+      TEST_AUTH_BYPASS_TENANT_ID: 22222222-0000-0000-0000-0000000000a1
+      TEST_AUTH_BYPASS_USER_ID: a0000000-0000-0000-0000-0000000000a1
+      TEST_AUTH_BYPASS_PUBLIC_USER_ID: b0000000-0000-0000-0000-0000000000b1
+      # PostgREST reads PGRST_* env vars that override scripts/local-postgrest.conf
+      # (so the committed conf can stay hard-coded for local Mac use).
+      PGRST_DB_URI: postgresql://postgres@localhost:5432/atc_main_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install PostgREST
+        # PostgREST renamed release assets to use "x86-64" instead of "x64" and
+        # tagged the latest LTS as v14.12. -fL on curl fails loudly on 404 so
+        # we don't pipe a stub into tar (which fails silently otherwise).
+        run: |
+          set -eux
+          mkdir -p $HOME/.local/bin
+          curl -fL https://github.com/PostgREST/postgrest/releases/download/v14.12/postgrest-v14.12-linux-static-x86-64.tar.xz \
+            | tar -xJ -C $HOME/.local/bin
+          chmod +x $HOME/.local/bin/postgrest
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          $HOME/.local/bin/postgrest --version
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Create test databases
+        env:
+          PGUSER: postgres
+          PGHOST: localhost
+          PGPORT: 5432
+        run: |
+          set -eux
+          createdb atc_main_test
+          createdb atc_rag_test
+          psql -d atc_rag_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Bootstrap auth-schema stubs
+        env:
+          PGUSER: postgres
+          PGHOST: localhost
+          PGPORT: 5432
+        run: |
+          set -eux
+          psql -d atc_main_test -f scripts/local-pg-bootstrap.sql
+          psql -d atc_rag_test  -f scripts/local-pg-bootstrap.sql
+
+      - name: Apply migrations
+        env:
+          PGUSER: postgres
+        run: |
+          set -eux
+          SUPABASE_DB_URL="postgresql://postgres@localhost:5432/atc_main_test" pnpm db:migrate
+          SUPABASE_DB_URL="postgresql://postgres@localhost:5432/atc_rag_test" MIGRATIONS_DIR=apps/rag/supabase/migrations pnpm db:migrate
+
+      - name: Apply Tier-2.5 grants
+        env:
+          PGUSER: postgres
+          PGHOST: localhost
+        run: psql -d atc_main_test -f scripts/local-pg-grants.sql
+
+      - name: Seed Tier-2 fixtures
+        run: SUPABASE_DB_URL="postgresql://postgres@localhost:5432/atc_main_test" pnpm tsx scripts/seed-tier2-test.ts
+
+      - name: RLS coverage check (§30.8)
+        env:
+          SUPABASE_DB_URL: postgresql://postgres@localhost:5432/atc_main_test
+        run: pnpm rls:coverage
+
+      - name: Run Playwright specs
+        run: pnpm exec playwright test
+        # webServer in playwright.config.ts auto-starts postgrest + proxy + next dev.
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

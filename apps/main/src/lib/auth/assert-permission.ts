@@ -16,6 +16,7 @@ import {
   isSensitiveRoute,
   SENSITIVE_SESSION_MAX_AGE_MS,
 } from "./sensitive-routes";
+import { tryTestBypass } from "./test-bypass";
 
 export type User = {
   id: string;
@@ -48,6 +49,25 @@ export async function assertPermission(
 ): Promise<{ ctx: TenantContext; user: User }> {
   // TODO(rbac): evaluate against the permission matrix when §26.2 RBAC lands.
   console.log("[assertPermission] resource=%s action=%s", opts.resource, opts.action);
+
+  // Tier-2 E2E auth bypass — only fires when NODE_ENV !== production AND
+  // TEST_AUTH_BYPASS_TOKEN is set AND the request carries the matching
+  // Bearer. Skips both the GoTrue call AND the post-bypass users-row
+  // lookup (the lookup would need PostgREST in front of local Postgres,
+  // which Tier-2 deliberately avoids — the seed script is the source of
+  // truth that the user exists; tests that need richer user state should
+  // assert it themselves). See lib/auth/test-bypass.ts.
+  const bypass = tryTestBypass(req);
+  if (bypass) {
+    const ctxBypass = await tenantContextFromRequest(req);
+    const syntheticUser: User = {
+      id: process.env.TEST_AUTH_BYPASS_PUBLIC_USER_ID ?? bypass.auth_user_id,
+      auth_user_id: bypass.auth_user_id,
+      tenant_id: bypass.tenant_id,
+      status: "active",
+    };
+    return { ctx: ctxBypass, user: syntheticUser };
+  }
 
   const ctx = await tenantContextFromRequest(req);
 

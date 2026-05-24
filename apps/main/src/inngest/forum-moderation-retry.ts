@@ -14,6 +14,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyEnvAtBoot } from "@/lib/env";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
+import { instrumentedClaudeCall, type AICallPurpose } from "@/lib/ai/call-wrapper";
 
 interface ModerationScores {
   spam: number;
@@ -34,53 +35,37 @@ interface ModerationResult {
 
 async function callHaikuModeration(
   content: string,
-  timeoutMs: number,
+  _timeoutMs: number,
   model: string,
+  tenant_id: string,
 ): Promise<ModerationResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("haiku_api_error: ANTHROPIC_API_KEY not set");
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 512,
-        messages: [
-          {
-            role: "user",
-            content: `Score the following forum message for moderation. Return ONLY valid JSON with this exact structure:
+  // Wrapped via instrumentedClaudeCall so cost attribution, vendor-health
+  // breadcrumbs, and AI-cost state transitions all fire. _timeoutMs is
+  // ignored — the SDK uses its own connection timeout; callers wanting a
+  // hard upper bound can race a Promise.race.
+  void _timeoutMs;
+  const { text } = await instrumentedClaudeCall({
+    tenant_id,
+    model,
+    purpose: "forum_moderation",
+    max_tokens: 512,
+    messages: [
+      {
+        role: "user",
+        content: `Score the following forum message for moderation. Return ONLY valid JSON with this exact structure:
 {"scores":{"spam":0.0,"abuse":0.0,"pii_leak":0.0,"off_topic":0.0,"misinformation":0.0,"solicitation":0.0,"prompt_injection":0.0},"credit_card_pattern":false,"max_score":0.0,"reasoning":"..."}
 
 Message to moderate:
 """
 ${content.slice(0, 2000)}
 """`,
-          },
-        ],
-      }),
-    });
-
-    clearTimeout(timer);
-    if (!res.ok) {
-      const errText = await res.text().catch(() => res.status.toString());
-      throw new Error(`haiku_api_error: ${res.status} ${errText.slice(0, 200)}`);
-    }
-    const body = await res.json() as { content?: { text?: string }[] };
-    const raw = body.content?.[0]?.text ?? "";
-    return JSON.parse(raw) as ModerationResult;
+      },
+    ],
+  });
+  try {
+    return JSON.parse(text) as ModerationResult;
   } catch (err) {
-    clearTimeout(timer);
-    throw err;
+    throw new Error(`haiku_api_error: invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -164,6 +149,7 @@ export const forumModerationRetry = inngest.createFunction(
         msg.content as string,
         env.FORUM_MODERATION_HAIKU_TIMEOUT_MS,
         env.HAIKU_FORUM_MODERATION_MODEL,
+        tenant_id,
       );
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);

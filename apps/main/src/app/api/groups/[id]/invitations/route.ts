@@ -5,7 +5,7 @@
 // POST /api/groups/[id]/invitations/reissue-all — bulk re-issue (revoke old + new rows)
 
 import { assertPermission } from "@/lib/auth/assert-permission";
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 
 type RouteProps = { params: { id: string } };
@@ -14,11 +14,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
   try {
     const { ctx, user } = await assertPermission(req, { resource: "group.invitations", action: "list" });
 
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const svc = createServiceRoleClient();
 
     // Confirm requester is coordinator or admin.
     const { data: group, error: gErr } = await svc
@@ -51,11 +47,7 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
     const { ctx, user } = await assertPermission(req, { resource: "group.invitations", action: "manage" });
     const body = await req.json() as { action: string; invitation_id?: string };
 
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const svc = createServiceRoleClient();
 
     // Confirm requester is coordinator.
     const { data: group, error: gErr } = await svc

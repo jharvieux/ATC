@@ -17,7 +17,14 @@ CREATE TABLE public.apify_spend_ledger (
   status          TEXT NOT NULL CHECK (status IN ('succeeded','failed','partial','estimated_skipped'))
 );
 
-CREATE INDEX idx_apify_spend_ledger_month
-  ON public.apify_spend_ledger (date_trunc('month', invoked_at));
+-- Postgres rejects non-IMMUTABLE functions in index expressions (error
+-- 42P17). date_trunc(text, timestamptz) is STABLE (depends on session
+-- TimeZone), not IMMUTABLE — so an index on date_trunc('month', invoked_at)
+-- can't be created on stock Postgres. Same root cause as the BP27 fix
+-- in 9361e2b. The Apify spend code paths use
+--   WHERE invoked_at >= date_trunc('month', NOW())
+-- which Postgres serves from a plain B-tree on invoked_at via range scan.
+CREATE INDEX idx_apify_spend_ledger_invoked_at
+  ON public.apify_spend_ledger (invoked_at DESC);
 CREATE INDEX idx_apify_spend_ledger_actor
   ON public.apify_spend_ledger (actor_id, invoked_at DESC);

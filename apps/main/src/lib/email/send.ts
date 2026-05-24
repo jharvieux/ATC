@@ -19,6 +19,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkRateLimit, type EmailCategory } from "./rate-limit";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
+import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementEmailSent } from "@/lib/abuse/counters";
 
 export interface SendEmailInput {
   db: SupabaseClient;
@@ -138,13 +141,18 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     if (!res.ok) {
       sendStatus = "failed";
       sendFailReason = `resend_${res.status}`;
+      // BP26 §26.9 vendor-health: any non-2xx counts as a failure so the
+      // probe + circuit breaker have signal.
+      recordVendorFailure("resend", `${res.status}`);
     } else {
       const body = await res.json() as { id?: string };
       resendMessageId = body.id;
+      recordVendorSuccess("resend");
     }
   } catch (err) {
     sendStatus = "failed";
     sendFailReason = `resend_throw: ${String(err)}`;
+    recordVendorFailure("resend", err instanceof Error ? err.message : String(err));
   }
 
   // 6 — Write email_log row
@@ -171,6 +179,17 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
 
   if (sendStatus === "failed") {
     return { status: "failed", reason: sendFailReason ?? null, email_log_id: emailLogId ?? null };
+  }
+
+  // BP27 §27.4 — bump the email-sent counter so the daily soft1/soft2/hard
+  // limits + state-machine transitions fire. Non-fatal: if the counter
+  // increment or snapshot load fails, the send still succeeds (an email
+  // already delivered to Resend MUST NOT be reported as failed).
+  try {
+    const snapshot = await loadTenantSnapshot(db, tenant.id);
+    await incrementEmailSent({ db, tenant: snapshot.tenant });
+  } catch (err) {
+    console.warn(`[email/send] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
   }
 
   return { status: "sent", email_log_id: emailLogId ?? null, resend_message_id: resendMessageId ?? null };

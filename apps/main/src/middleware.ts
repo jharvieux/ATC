@@ -14,6 +14,24 @@ const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const RESOLVED_TENANT_TYPE_HEADER = "x-resolved-tenant-type";
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
+  // Tier-2 E2E auth bypass — short-circuits tenant resolution when a
+  // request carries the bypass Bearer. Gated behind NODE_ENV !== production
+  // AND the bypass env vars being set; mirrors lib/auth/test-bypass.ts.
+  if (process.env.NODE_ENV !== "production") {
+    const expected = process.env.TEST_AUTH_BYPASS_TOKEN;
+    const bypassTenant = process.env.TEST_AUTH_BYPASS_TENANT_ID;
+    if (expected && bypassTenant) {
+      const auth = req.headers.get("authorization");
+      const token = auth?.startsWith("Bearer ") ? auth.slice(7) : auth;
+      if (token === expected) {
+        const res = NextResponse.next();
+        res.headers.set(RESOLVED_TENANT_ID_HEADER, bypassTenant);
+        res.headers.set(RESOLVED_TENANT_TYPE_HEADER, "byo_host");
+        return res;
+      }
+    }
+  }
+
   const host = req.headers.get("host") ?? "";
   // Strip port for local dev comparisons.
   const hostname = host.replace(/:\d+$/, "");

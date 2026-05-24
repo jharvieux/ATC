@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import { MessageSources, type MessageCitation } from "./MessageSources";
+import { renderMessageContent, type DisplayAsset } from "./renderMessageContent";
 
 export interface ChatMessage {
   id: string;
@@ -15,6 +16,11 @@ export interface ChatMessage {
   created_at?: string;
   feedback_score?: -1 | 0 | 1 | null;
   used_memory?: boolean;
+  // BP39 §33.7.2 — assets surfaced by the chat SSE `assets` event.
+  // Used to expand `[[display_asset:<uuid>]]` markers in `content`
+  // to hyperlinks (operator override of the spec's inline-image
+  // rendering — see MEMORY D-075).
+  assets?: DisplayAsset[];
 }
 
 function relativeTime(iso: string | undefined): string {
@@ -29,10 +35,15 @@ function relativeTime(iso: string | undefined): string {
 export function MessageBubble({
   msg,
   showMemoryIndicator,
+  showSources = true,
   onFeedback,
 }: {
   msg: ChatMessage;
   showMemoryIndicator: boolean;
+  /** §21.6 tenant source-display toggle. When false: hides the source
+   *  expand-panel under MessageSources AND strips display_asset markup
+   *  from the rendered body (per BP39 §33.7.4 follow-up). */
+  showSources?: boolean;
   onFeedback?: (messageId: string, score: -1 | 1) => void;
 }): JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -111,12 +122,14 @@ export function MessageBubble({
             whiteSpace: "pre-wrap",
           }}
         >
-          {msg.content}
+          {isAssistant
+            ? renderMessageContent(msg.content, msg.assets, { showAssetLinks: showSources })
+            : msg.content}
         </div>
         {isAssistant && (
           <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#6b7280" }}>
             {msg.citations && msg.citations.length > 0 && (
-              <MessageSources citations={msg.citations} />
+              <MessageSources citations={msg.citations} visible={showSources} />
             )}
             <button type="button" onClick={copy} aria-label="Copy message"
               style={{ border: "none", background: "transparent", cursor: "pointer", color: "#6b7280" }}>

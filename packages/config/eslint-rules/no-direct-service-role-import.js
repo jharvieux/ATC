@@ -233,6 +233,16 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/abuse-signal-consumers.ts",
   // BP22: Nightly tenant-approval-rate cron — cross-tenant scan. §22.11.
   "/inngest/rag-tenant-approval-rate-nightly.ts",
+  // BP19 follow-on: the 5 group/invitation + auth-callback files that
+  // previously read SUPABASE_SERVICE_ROLE_KEY directly now route through
+  // createServiceRoleClient(). They're tenant-context callers (every
+  // operation is filtered by ctx.tenant_id at the call site) but pre-date
+  // the tenantClient proxy. Migrating to tenantClient is a follow-on.
+  "/app/api/auth/callback/route.ts",
+  "/app/api/groups/route.ts",
+  "/app/api/groups/[id]/invitations/route.ts",
+  "/app/api/groups/invite/[token]/route.ts",
+  "/app/api/groups/invite/[token]/rsvp/route.ts",
 ];
 
 function endsWithAllowed(filename) {

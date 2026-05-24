@@ -1,7 +1,7 @@
 // §18.7 — RSVP state update (form-submit and JSON handler from the invitee page).
 
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 const VALID_RSVP = new Set(["pending", "interested", "not_going", "booked"]);
 
@@ -24,11 +24,7 @@ export async function POST(req: Request, { params }: { params: { token: string }
   const { invitation_id, ok } = parseAndVerifyHmac(params.token);
   if (!ok) return Response.json({ error: "invalid_token" }, { status: 400 });
 
-  const svc = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const svc = createServiceRoleClient();
 
   const { error } = await svc
     .from("invitations")

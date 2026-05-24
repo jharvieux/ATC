@@ -1,7 +1,28 @@
-import { test } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { HEADERS, HEADERS_NO_AUTH } from "./_helpers";
 
-// TODO: implement per ATC_CICD_Pipeline_v4_REVISED.docx §7.2
-// Covers: sign-in, sign-out, session persistence, OAuth redirect
+// §7.1 — /api/auth/me. Stub (501) but auth-gated. Tests verify the
+// auth-gate behaviour; if the stub graduates to a real handler the
+// 501 assertion should be tightened.
+
+test("GET /api/auth/me without auth → 401", async ({ request }) => {
+  const res = await request.get("/api/auth/me", { headers: HEADERS_NO_AUTH });
+  expect(res.status()).toBe(401);
+});
+
+test("GET /api/auth/me with bypass → past the auth gate", async ({ request }) => {
+  const res = await request.get("/api/auth/me", { headers: HEADERS });
+  expect([200, 501]).toContain(res.status());
+});
+
+test("GET /api/auth/me with bogus Bearer → 401", async ({ request }) => {
+  const res = await request.get("/api/auth/me", {
+    headers: { ...HEADERS, Authorization: "Bearer not-the-bypass-token" },
+  });
+  expect(res.status()).toBe(401);
+});
+
+// TODO when GoTrue / OAuth flows are wired locally:
 test.skip("sign in with valid credentials", async () => {});
 test.skip("sign out clears session", async () => {});
 test.skip("unauthenticated access redirects to sign-in", async () => {});

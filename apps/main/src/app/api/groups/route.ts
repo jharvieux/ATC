@@ -10,9 +10,11 @@
 // invitation rows inserted. Returns { group_id, invitation_count }.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { selectHeroImage } from "@/lib/groups/hero-image";
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementGroupInvitees } from "@/lib/abuse/counters";
 
 interface InviteeInput {
   email: string;
@@ -52,11 +54,7 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "Maximum 50 invitees per group" }, { status: 400 });
     }
 
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const svc = createServiceRoleClient();
 
     // Select hero image via priority chain.
     const heroUrl = await selectHeroImage({
@@ -111,6 +109,16 @@ export async function POST(req: Request): Promise<Response> {
       if (invErr) {
         return Response.json({ error: invErr.message }, { status: 500 });
       }
+
+      // BP27 §27.4 — bump the group-invitees counter. Non-fatal on
+      // failure: the invitations already exist; we don't want to
+      // surface a 500 to the coordinator because attribution is sad.
+      try {
+        const snapshot = await loadTenantSnapshot(svc, ctx.tenant_id);
+        await incrementGroupInvitees({ db: svc, tenant: snapshot.tenant }, rows.length);
+      } catch (err) {
+        console.warn(`[groups] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     return Response.json({ group_id: group.id, invitation_count: invitees.length }, { status: 201 });
@@ -124,11 +132,7 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const { ctx } = await assertPermission(req, { resource: "groups", action: "list" });
 
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const svc = createServiceRoleClient();
 
     const { data, error } = await svc
       .from("groups")
