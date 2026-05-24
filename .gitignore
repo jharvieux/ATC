@@ -34,6 +34,9 @@ yarn-error.log*
 # claude code local settings
 .claude/
 
+# operator's local spec-authoring workspace mirror — not tracked here
+/Review/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
