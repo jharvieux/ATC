@@ -221,6 +221,10 @@ const ALLOWED_PATH_SUFFIXES = [
   // BP27: AI call wrapper — writes ai_call_log + UPSERTs tenant_usage_metrics
   // for every Anthropic/OpenAI call. Constructs its own service-role db. §27.12.
   "/lib/ai/call-wrapper.ts",
+  // BP24: AI streaming wrapper — same governance as call-wrapper but with a
+  // streaming lifecycle (text deltas during generation; cost/usage logged at
+  // end). Constructs its own service-role db.
+  "/lib/ai/stream-wrapper.ts",
   // BP27: abuse-monitoring crons + consumers — cross-tenant, no user session.
   "/inngest/ai-pricing-cache-refresh.ts",
   "/inngest/email-bounce-rate-monitor.ts",
