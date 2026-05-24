@@ -31,8 +31,13 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/dob-estimate-reprompt-eligible.ts",
   // RAG sync publisher: fires after DB write commits, outside user request scope. §8.7.
   "/lib/rag-sync/publish-tenant-event.ts",
+  // D-041 follow-up — platform_settings sync publisher, same shape as tenant publisher.
+  "/lib/rag-sync/publish-platform-event.ts",
   // Platform-internal admin endpoint: bearer-token auth, no user JWT. §8.3.
   "/api/admin/tenants/route.ts",
+  // D-041 follow-up — platform_settings list endpoint for rag reconcile cron.
+  // Same bearer-token auth pattern as /api/admin/tenants.
+  "/api/admin/platform-settings/route.ts",
   // Supervisor dashboard: platform admin Server Component — reads cross-tenant
   // metrics. TODO(§26): replace with withPlatformAdminAudit once admin session
   // auth lands. Until then, this page is gated by the admin route group layout.

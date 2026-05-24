@@ -8,8 +8,12 @@
 // session. This file is in the no-direct-service-role-import allowlist.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { publishTenantEvent, type TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
+import type { TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
 import { inngest } from "./client";
+
+// D-041 follow-up — events whose receiver lives at /api/platform-settings-events
+// rather than /api/tenant-events. Branch by event-type prefix at delivery time.
+const PLATFORM_EVENT_TYPES = new Set<string>(["platform_settings.updated"]);
 
 const BACKOFF_MINUTES = [1, 5, 15, 30, 60, 120, 240]; // cap at 4h
 
@@ -43,18 +47,28 @@ export const ragSyncRetry = inngest.createFunction(
 
     for (const row of rows) {
       try {
-        const event: TenantEvent = {
-          event_type: row.event_type as TenantEvent["event_type"],
-          tenant_id: row.tenant_id,
-          source_revision: row.source_revision,
-          payload: row.payload as TenantEvent["payload"],
-        };
-
-        // publishTenantEvent handles its own retries; here we call it directly
-        // bypassing the queue-on-failure logic to avoid infinite recursion.
         const ragUrl = process.env.RAG_SERVICE_URL;
         const secret = process.env.RAG_WEBHOOK_SECRET;
         if (!ragUrl || !secret) throw new Error("RAG env vars not set");
+
+        const isPlatformEvent = PLATFORM_EVENT_TYPES.has(row.event_type);
+        const path = isPlatformEvent ? "/api/platform-settings-events" : "/api/tenant-events";
+
+        // Reconstruct the payload-shaped body. Both event families share the
+        // same envelope (event_type, source_revision, payload); tenant events
+        // additionally carry tenant_id at the top level.
+        const event = isPlatformEvent
+          ? {
+              event_type: row.event_type,
+              source_revision: row.source_revision,
+              payload: row.payload,
+            }
+          : ({
+              event_type: row.event_type as TenantEvent["event_type"],
+              tenant_id: row.tenant_id,
+              source_revision: row.source_revision,
+              payload: row.payload as TenantEvent["payload"],
+            } satisfies TenantEvent);
 
         const body = JSON.stringify(event);
         const enc = new TextEncoder();
@@ -65,7 +79,7 @@ export const ragSyncRetry = inngest.createFunction(
         const sig = await crypto.subtle.sign("HMAC", key, enc.encode(body));
         const sigHex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-        const res = await fetch(`${ragUrl}/api/tenant-events`, {
+        const res = await fetch(`${ragUrl}${path}`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-webhook-signature": sigHex },
           body,
