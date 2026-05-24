@@ -27,7 +27,9 @@ export function hashTerm(term: string): string {
   return createHash("sha256").update(term.toLowerCase()).digest("hex").slice(0, 12);
 }
 
-function findLexicalMatch(response: string, denyList: string[]): string | null {
+// Exported so the per-sentence streaming supervisor (BP24 chat-route wiring)
+// can reuse the same word-boundary matching logic against in-flight sentences.
+export function findLexicalMatch(response: string, denyList: string[]): string | null {
   if (denyList.length === 0) return null;
   const lower = response.toLowerCase();
   for (const term of denyList) {

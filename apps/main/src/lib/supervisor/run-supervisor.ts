@@ -31,6 +31,7 @@ import { checkComplianceKeyword } from "./checks/compliance-keyword";
 import { checkToneDrift } from "./checks/tone-drift";
 import { checkTopicEscalation } from "./checks/topic-escalation";
 import { writeAuditLog } from "@/lib/audit/write";
+import { loadUnionSlurDenyList } from "./load-deny-list";
 
 const CHECKS_RUN = [
   "hallucination_risk",
@@ -136,42 +137,9 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
   }
 
   // Step 3: Load union of platform + tenant supplemental deny lists (§24.5).
-  // Platform list (BP11 key: 'supervisor_slur_deny_list') is non-removable
-  // by tenants; supplemental is tenant-additive only. We dedupe by
-  // lowercase value.
-  const { data: slurSetting } = await db
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "supervisor_slur_deny_list")
-    .single();
-
-  const platformDenyList: string[] = Array.isArray(slurSetting?.value)
-    ? (slurSetting.value as string[])
-    : [];
-
-  const { data: tenantSupplemental } = await db
-    .from("tenant_settings")
-    .select("supplemental_hate_speech_denylist")
-    .eq("tenant_id", input.ctx.tenant_id)
-    .maybeSingle();
-
-  const supplemental: string[] = Array.isArray(
-    (tenantSupplemental as { supplemental_hate_speech_denylist?: unknown } | null)
-      ?.supplemental_hate_speech_denylist,
-  )
-    ? ((tenantSupplemental as { supplemental_hate_speech_denylist: unknown[] })
-        .supplemental_hate_speech_denylist as string[])
-    : [];
-
-  const seen = new Set<string>();
-  const slurDenyList: string[] = [];
-  for (const term of [...platformDenyList, ...supplemental]) {
-    const key = String(term).toLowerCase();
-    if (!seen.has(key) && term) {
-      seen.add(key);
-      slurDenyList.push(term);
-    }
-  }
+  // See lib/supervisor/load-deny-list.ts — extracted so the BP24 streaming
+  // chat path can use the same loader without invoking this whole function.
+  const slurDenyList = await loadUnionSlurDenyList(db, input.ctx.tenant_id);
 
   // Step 4: Run all seven preflight checks.
   // hallucination_risk and tone_drift are async (Haiku calls); the rest are sync.
