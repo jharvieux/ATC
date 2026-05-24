@@ -4,6 +4,52 @@ Newest entries on top.
 
 ---
 
+## D-073 — 2026-05-24 — BP37: CruiseMapper deck plan ingest with hot-linked images + related_asset_ids — key decisions
+
+**Decision:**
+
+1. **Hot-linked only — zero image bytes pass through the platform.** No download, no Supabase Storage upload, no proxy. The customer's browser fetches the image directly from CruiseMapper, after the platform validates the image URL against a host allowlist. This is the §33.6.3 SSRF + malicious-file + copyright posture, restated.
+
+2. **Host allowlist enforced in `image-asset-recorder.ts`** before any network call. Currently includes `cruisemapper.com`, `www.cruisemapper.com`, `cdn.cruisemapper.com`. Any other host (including private/loopback/link-local IP literals like `127.0.0.1`, `192.168.x.x`, `10.x.x.x`, `169.254.x.x`) → rejected, logged, never recorded. The recorder also requires an explicit image file extension (`.png|.jpg|.jpeg|.webp`) in the URL path — `.svg` is rejected (XSS surface).
+
+3. **New endpoint `/api/admin/media-assets/upsert`** on the RAG service. Service-role + platform-admin only. Upserts on `(entity_id, image_url)` — added as a new UNIQUE constraint via migration `0013_rag_media_assets_dedup_key.sql`. Idempotency: re-running the scraper after CruiseMapper republishes the same image produces a no-op upsert, not a duplicate row.
+
+4. **Extended `/api/ingest/reference` to accept `related_asset_ids: UUID[]`** (defaults to empty). Validation in the endpoint:
+   - All provided IDs must exist in `rag_media_assets` (400 with `related_asset_ids_not_found` + the missing list).
+   - All referenced assets must have compatible scope. The endpoint creates global chunks today, so any tenant-scope asset reference is rejected (400 with `asset_scope_mismatch` + the offending IDs).
+   - On chunk create or update, the IDs are written to `knowledge_chunks.related_asset_ids` (added in BP33's 0011 migration).
+
+5. **Deck plan parser sanity gate**: must extract h1 + at least one of (cabin number ranges, cabin categories, images). If none, return null → caller marks `parse_failed` and contributes to the 5% halt threshold. Thumbnails below 200px width are filtered out before image-URL recording — avoids polluting `rag_media_assets` with sidebar/decorative images.
+
+6. **Deck URL discovery (`discoverDeckPlanUrls`) runs AFTER ship discovery** in the cron — deck links are enumerated by visiting each ship page in `cruisemapper_url_inventory` (kind='ship'). This means BP37 is monotonically dependent on BP36 having populated the inventory first; the BP37 cron extension processes deck plans LAST in the run (after ships + ports).
+
+7. **Asset-ID array is per-chunk authoritative** — when a deck plan re-ingests with different images, the chunk update REPLACES the `related_asset_ids` array entirely. Old asset rows linger (harmless; could be GC'd by a future sweeper if storage matters). The BP38 retrieval surface (next prompt) only follows IDs present on the current chunk version.
+
+8. **Category `'deck_intel'`** added alongside BP36's `'ship_intel'`/`'port_intel'`. No schema change (category column is free-text); operator-side BP38 retrieval filters need to know about it.
+
+9. **All BP37 deck-plan ingest pays the OpenAI embedding cost** (one embed per new/changed deck plan). At ~12k decks across ~1.5k ships, this is a one-time backfill cost of ~$1-2 in embedding spend (text-embedding-3-small is cheap). Operator-flippable via `CRUISEMAPPER_DIY_INGEST_ENABLED` from BP36.
+
+**What was rejected:**
+
+- **Storing image bytes (Supabase Storage upload)** — directly contradicts §33.6.3 design intent.
+- **Allowing inline images in the consumer surface** — addendum says hyperlink approach per user direction (BP39 will enforce this).
+- **Validating image URLs via DNS resolution / IP-allowlist** — overly fragile, adds a network round-trip per image, and the host-allowlist is already strict.
+- **Sharing the BP35 `/api/ingest/itinerary` endpoint** — that path writes a sibling itineraries table; reference ingest writes only knowledge_chunks. Distinct endpoints keep contracts tight.
+- **Using the existing BP22 `/api/ingest` for deck plans** — would queue 12k items for human review. Same reasoning as BP35 itineraries.
+
+**Operator follow-ups (D-073):**
+
+- Confirm `cdn.cruisemapper.com` is the actual CDN host. If CruiseMapper uses a different CDN (e.g., a CloudFront domain), extend the allowlist in `image-asset-recorder.ts` HOST_ALLOWLIST.
+- After first quarterly run, record (a) avg images per ship (recalibrate ~18k estimate), (b) total asset rows created, (c) parser failure-rate per ship.
+
+**Artifacts:**
+- Migration: `apps/rag/supabase/migrations/0013_rag_media_assets_dedup_key.sql` (UNIQUE on entity_id+image_url).
+- RAG endpoints: `apps/rag/src/app/api/admin/media-assets/upsert/route.ts` + `apps/rag/src/lib/schemas/media-asset-upsert.ts`; extended `apps/rag/src/app/api/ingest/reference/route.ts` + schema.
+- Main app: `apps/main/src/lib/external/cruisemapper/parsers/deck-parser.ts`, `apps/main/src/lib/external/cruisemapper/image-asset-recorder.ts`; extended `discovery.ts` + `refresh-cruisemapper-static.ts` + `rag-reference-ingest.ts`.
+- Tests: 9 new in apps/main (deck-parser ×3, image-asset-recorder ×6 — 762 total). 3 new in apps/rag (37 total). Migration lint: 52 main, 87 tables.
+
+---
+
 ## D-072 — 2026-05-24 — BP36: CruiseMapper DIY scraper — fetcher + robots + rate limiter + parsers + reference ingest — key decisions
 
 **Decision:**

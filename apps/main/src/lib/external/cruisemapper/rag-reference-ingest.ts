@@ -7,7 +7,7 @@ export type RefIngestStatus = "ingested" | "updated" | "unchanged" | "quarantine
 
 export interface RefIngestPayload {
   source_identifier: string;
-  category: "ship_intel" | "port_intel" | string;
+  category: "ship_intel" | "port_intel" | "deck_intel" | string;
   text: string;
   source_url?: string;
   source_domain?: string;
@@ -15,6 +15,8 @@ export interface RefIngestPayload {
   cruise_line?: string;
   ship?: string;
   destination?: string;
+  // BP37 §33.6.2 — asset UUIDs the chunk references (deck plan images, etc.).
+  related_asset_ids?: string[];
 }
 
 export interface RefIngestOutcome {

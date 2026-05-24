@@ -1,0 +1,118 @@
+// BP37 §33.6.3 — image asset recorder.
+//
+// Hot-linked only — no image fetch, no Supabase Storage upload. Records
+// rag_media_assets rows in the RAG service via a dedicated endpoint
+// (/api/admin/media-assets/upsert). Idempotency by (entity_id, image_url).
+//
+// Host allowlist is enforced HERE before any network call. URLs not on
+// the allowlist (including private/loopback/link-local IPs) are logged
+// and skipped — never recorded, never surfaced to the customer.
+
+const HOST_ALLOWLIST = new Set<string>([
+  "cruisemapper.com",
+  "www.cruisemapper.com",
+  // CruiseMapper CDN hosts (observed in field; extend via env var when needed).
+  "cdn.cruisemapper.com",
+]);
+
+const IMAGE_EXT_RE = /\.(png|jpg|jpeg|webp)(\?.*)?$/i;
+
+export interface RecordImageInput {
+  imageUrl: string;
+  sourcePageUrl: string;
+  shipSlug: string;
+  deckNumber: number | null;
+  caption?: string | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+export interface RecordImageOutcome {
+  status: "recorded" | "skipped" | "error";
+  asset_id?: string;
+  reason?: string;
+}
+
+function isHostAllowed(url: string): { allowed: boolean; reason?: string } {
+  let u: URL;
+  try { u = new URL(url); } catch { return { allowed: false, reason: "invalid_url" }; }
+
+  // Reject schemes other than https/http.
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    return { allowed: false, reason: `bad_scheme:${u.protocol}` };
+  }
+
+  const host = u.hostname.toLowerCase();
+  if (!HOST_ALLOWLIST.has(host)) {
+    return { allowed: false, reason: `host_not_allowlisted:${host}` };
+  }
+
+  // Reject IP-literal hosts entirely (private/loopback/link-local guard).
+  // The allowlist above already restricts to known FQDNs, but belt + braces.
+  if (/^[\d.]+$/.test(host) || host.includes(":")) {
+    return { allowed: false, reason: "ip_literal_host" };
+  }
+
+  if (!IMAGE_EXT_RE.test(u.pathname)) {
+    return { allowed: false, reason: "missing_image_extension" };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Record a hot-linked deck plan image. Calls the RAG service to upsert
+ * a rag_media_assets row.
+ */
+export async function recordDeckPlanImage(input: RecordImageInput): Promise<RecordImageOutcome> {
+  const validation = isHostAllowed(input.imageUrl);
+  if (!validation.allowed) {
+    console.warn(`[cm-diy] image rejected: ${input.imageUrl} (${validation.reason})`);
+    const out: RecordImageOutcome = { status: "skipped" };
+    if (validation.reason) out.reason = validation.reason;
+    return out;
+  }
+
+  const ragUrl = process.env.RAG_SERVICE_URL;
+  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
+  if (!ragUrl) return { status: "error", reason: "RAG_SERVICE_URL not set" };
+
+  const entityId = `${input.shipSlug}-deck-${String(input.deckNumber ?? "?").padStart(2, "0")}`;
+
+  const payload = {
+    kind: "deck_plan",
+    entity_type: "deck",
+    entity_id: entityId,
+    scope: "global",
+    image_url: input.imageUrl,
+    source_page_url: input.sourcePageUrl,
+    attribution: "Image: CruiseMapper",
+    caption: input.caption ?? null,
+    width_px: input.width ?? null,
+    height_px: input.height ?? null,
+    source: "cruisemapper.com",
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(`${ragUrl}/api/admin/media-assets/upsert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return { status: "error", reason: err instanceof Error ? err.message : String(err) };
+  }
+
+  let json: Record<string, unknown> = {};
+  try { json = (await res.json()) as Record<string, unknown>; } catch { /* tolerate */ }
+
+  if (!res.ok) {
+    return { status: "error", reason: typeof json.error === "string" ? json.error : `HTTP ${res.status}` };
+  }
+  const assetId = typeof json.asset_id === "string" ? json.asset_id : undefined;
+  return assetId ? { status: "recorded", asset_id: assetId } : { status: "error", reason: "no_asset_id_returned" };
+}
+
+// Test-only export.
+export const _isHostAllowedForTests = isHostAllowed;
