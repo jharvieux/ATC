@@ -22,7 +22,7 @@ These extend the Part 1 + Part 3 prerequisites lists. None of this is code work;
 | Service | What you need | Used in prompts |
 |---|---|---|
 | **Apify account** | Single platform Apify account on the **Starter plan** ($29/mo + $29 prepaid). Generate an API token. Scale plan ($199) is the upgrade path when tracked-booking volume justifies — not needed at launch. | 33, 34, 35 |
-| **Supabase Storage bucket** | A public bucket named `rag-media-public` in the RAG service's Supabase project. Created in Build Prompt 33. | 33, 37 |
+| **Supabase Storage bucket** | None required for this addendum. CruiseMapper images are hot-linked, not re-hosted (§33.6.3); the future tenant-scope asset bucket is out of scope. | — |
 
 ### 2. Decisions to make before Build Prompt 33
 
@@ -33,7 +33,7 @@ These extend the Part 1 + Part 3 prerequisites lists. None of this is code work;
 
 ### 3. Open items the spec leaves to implementation
 
-- **Lines without any Apify actor** (Virgin, Viking, Oceania, Regent, Silversea, Seabourn): the adapter returns `null` for these. The UX surface for "no price-watch available on this line" is a UI-design decision deferred to Prompt 40.
+- **Lines without any Apify actor** (Virgin, Viking, Oceania, Regent, Silversea, Seabourn): `getCachedPrice` returns an `unsupported` status for these (distinct from a cache `miss`). The UX surface for "no price-watch available on this line" is a UI-design decision deferred to Prompt 40.
 - **Display markup syntax:** `[[display_asset:<id>]]` is the working form. If the AI agents do not emit this markup reliably during Prompt 39 dev testing, the fallback is a tool-call shape. Decided at build time in Prompt 39.
 - **Sample-OCR uplift criteria:** What does "good enough" mean for Haiku vision output on the 200-image sample? Decided when the eval is set up in Prompt 41.
 
@@ -67,32 +67,30 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
    - UNIQUE constraint on `(cruise_line, ship, sail_date, departure_port, duration_nights, cabin_class)` — this is the upsert key for the adapter.
    - Indexes: `idx_pricing_cache_lookup (cruise_line, ship, sail_date, cabin_class)`, `idx_pricing_cache_fetched_at (fetched_at)` for staleness queries.
    - This table is **platform-scoped, not tenant-scoped.** Pricing is reference data shared across all tenants. No tenant_id column. RLS: disabled (service-role only access; comment in migration explaining the exception).
+   - **US market only.** Pricing is US-market (USD); add a CHECK that `price_currency = 'USD'`. There is no market dimension in the table or the upsert key.
 
 2. **Main app migration: `price_watches` table.** New migration, exactly the schema in addendum §33.8.1. Pay attention to:
    - The `threshold_present` CHECK constraint that enforces dollar/percent presence depending on `threshold_kind`.
    - Both indexes (`idx_watches_tenant_status` and `idx_watches_sailing`).
    - The FK on `subscriber_user_id` REFERENCES `users(id) ON DELETE CASCADE`.
-   - The FK on `booking_id` REFERENCES `bookings(id) ON DELETE CASCADE` and is NULLABLE (a watch may exist for a sailing without a booking yet, e.g., subscriber pre-watches a sailing they intend to book).
+   - The FK on `booking_id` REFERENCES `bookings(id) ON DELETE SET NULL` (per addendum §33.8.1 — the watch row survives booking deletion; app logic or a trigger then sets `status='cancelled'`). It is NULLABLE (a watch may also exist for a sailing without a booking yet).
    - RLS enabled: tenant-scoped table, so policies follow the standard tenant_id pattern from Prompt 02.
 
 3. **RAG service migration: `rag_media_assets` table.** New migration in `apps/rag/supabase/migrations/`. Schema exactly as addendum §33.6.1:
-   - Five columns of metadata (kind, entity_type, entity_id, scope, tenant_id) plus the storage pointer (storage_path, public_url), file metadata (content_type, width_px, height_px, file_bytes, file_hash), and timing/provenance (fetched_at, source).
+   - Metadata columns (kind, entity_type, entity_id, scope, tenant_id) plus the hot-link pointer (`image_url`, `source_page_url`), `attribution`, optional descriptive fields (caption, content_type, width_px, height_px), and timing/provenance (fetched_at, source). Images are hot-linked, not re-hosted — there is no `storage_path` / `public_url` / `file_bytes` / `file_hash` column.
    - The `tenant_id_when_tenant_scope` CHECK constraint enforces that tenant_id is non-null iff scope='tenant'.
    - All three indexes from the spec (`idx_assets_entity`, `idx_assets_kind`, `idx_assets_tenant`).
-   - No RLS — RAG service is service-role-only per Prompt 06 decision. Add SQL comment explaining; document in `apps/rag/db/rls-exceptions.txt`.
+   - **RLS enabled** per addendum §33.6.1: `ENABLE ROW LEVEL SECURITY`. The SELECT policy follows the §8.9 retrieval-scope pattern — `scope='global'` rows readable by any caller, `scope='tenant'` rows only by the owning tenant; writes are service-role only. Document in `apps/rag/db/rls-exceptions.txt`.
 
-4. **RAG service migration: `knowledge_chunks.related_asset_ids` column.** New migration adding `related_asset_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]` to `rag.knowledge_chunks`. Add a comment on the column noting that asset IDs MUST reference rows in `rag_media_assets` of compatible scope (a global chunk should not reference a tenant-scope asset, and vice versa). The compatibility check is enforced in application code, not by FK — UUID arrays don't support FK constraints cleanly.
+4. **RAG service migration: `knowledge_chunks.related_asset_ids` column + `itineraries` table.** New migration adding `related_asset_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]` to `rag.knowledge_chunks`. Add a comment on the column noting that asset IDs MUST reference rows in `rag_media_assets` of compatible scope (a global chunk should not reference a tenant-scope asset, and vice versa). The compatibility check is enforced in application code, not by FK — UUID arrays don't support FK constraints cleanly.
+   - The same migration creates the `rag.itineraries` table per addendum §33.4 — structured itinerary records (`cruise_line`, `ship`, `departure_date`, `duration_nights`, `departure_port`, `ports_of_call`, `source_url`, `content_hash`, `fetched_at`), `UNIQUE (cruise_line, ship, departure_date, departure_port)` for idempotent re-ingest, RLS enabled with service-role-only writes.
 
 5. **Main app migration: `apify_spend_ledger` table.** New migration. Used by Prompt 34's monthly-budget-cap enforcement:
    - Table `public.apify_spend_ledger` with columns: `id UUID PK DEFAULT gen_random_uuid()`, `occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, `actor_id TEXT NOT NULL`, `actor_run_id TEXT NULL`, `amount_usd NUMERIC(10,4) NOT NULL`, `context TEXT NOT NULL` (e.g., 'general_refresh', 'tracked_refresh', 'itinerary_refresh'), `cruise_line TEXT NULL` (when the spend is attributable to a specific line).
    - Index: `idx_apify_spend_ledger_month (occurred_at)` to support the monthly-sum query the adapter runs before every actor invocation.
    - Platform-scoped, no tenant_id. RLS disabled (service-role only access; comment in migration explaining the exception).
 
-6. **Supabase Storage bucket configuration.** In the RAG service's Supabase project, create the `rag-media-public` bucket via Supabase CLI or migration script:
-   - Bucket policy: public read, authenticated write (service role only in practice).
-   - MIME types allowed: `image/png`, `image/jpeg`, `image/webp`.
-   - File size limit: 5 MB per file.
-   - Document the bucket creation in a new file `apps/rag/db/storage-buckets.md` listing bucket name, purpose, access policy, and the migration commit it was created in.
+6. **No media storage bucket.** CruiseMapper deck plans, ship photos, and port maps are hot-linked from their source URL with attribution (addendum §33.6.3) — the platform does not download or re-host them, so no Supabase Storage bucket is created in this addendum. The `rag-media-tenant` private bucket for future tenant-uploaded assets is out of scope. Record this decision (and the rationale — SSRF surface, malicious-file risk, copyright posture) in `apps/rag/db/storage-buckets.md`.
 
 7. **Type generation.** Re-run the Supabase type generation for both main app and RAG service so the new tables and columns appear in the TypeScript types. Verify nothing else regenerated unexpectedly.
 
@@ -108,7 +106,7 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
 - All five migrations applied cleanly in fresh local Supabase reset for both projects.
 - `pricing_cache`, `price_watches`, `apify_spend_ledger`, `rag_media_assets` visible in their respective projects.
 - `knowledge_chunks.related_asset_ids` column present.
-- Supabase Storage bucket `rag-media-public` exists with the correct policy.
+- No media storage bucket is created (images are hot-linked); the decision is recorded in `storage-buckets.md`.
 - Migration smoke tests pass.
 - TypeScript types regenerated and committed.
 - `pnpm typecheck` and `pnpm test` green in both apps.
@@ -136,15 +134,15 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
 
 **Prerequisite check:** Prompt 33 committed (pricing_cache table exists). Apify account is provisioned and the API token is in env vars per the addendum prerequisites. The per-line actor slugs have been confirmed in the Apify store and are documented in MEMORY.md.
 
-**Goal:** Implement the `PricingDataSource` interface, the Apify-backed implementation that routes per-line, the cache write path, the per-run and monthly budget cap enforcement, the kill switch, and a `MockPricingDataSource` for tests.
+**Goal:** Implement the `PricingDataSource` interface, the Apify-backed implementation that routes per-line, the cache write path, the per-run and monthly budget cap enforcement, the kill switch, and a `MockPricingDataSource` for tests. All pricing is US-market (USD) only per addendum §33.3 — actor inputs request the US market exclusively and the cache carries no market/currency dimension.
 
 **Tasks:**
 
-1. **Env vars.** Extend `apps/main/src/lib/env.ts` with the four new vars from addendum §33.10: `APIFY_API_TOKEN` (required, secret), `APIFY_ADAPTER_ENABLED` (default true), `APIFY_RUN_BUDGET_USD_CEILING` (default 50), `APIFY_MONTHLY_BUDGET_USD_CEILING` (default 500). Plus the two freshness vars: `PRICE_FRESHNESS_FRESH_HOURS` (default 72) and `PRICE_FRESHNESS_EXPIRED_HOURS` (default 168). All validated at boot via the existing `verifyEnvAtBoot()` mechanism from Prompt 01.
+1. **Env vars.** Extend `apps/main/src/lib/env.ts` with the four new vars from addendum §33.10: `APIFY_API_TOKEN` (required, secret), `APIFY_ADAPTER_ENABLED` (default true), `APIFY_RUN_BUDGET_USD_CEILING` (default 50), `APIFY_MONTHLY_BUDGET_USD_CEILING` (default 500). Plus the two freshness vars: `PRICE_FRESHNESS_FRESH_HOURS` (default 72) and `PRICE_FRESHNESS_EXPIRED_HOURS` (default 744 — 31 days, spanning the monthly refresh cadence per addendum §33.2). All validated at boot via the existing `verifyEnvAtBoot()` mechanism from Prompt 01.
 
 2. **Interface definition.** Create `apps/main/src/lib/pricing/types.ts`:
    - Exports `PricingDataSource` interface exactly as addendum §33.2.
-   - Exports the key types: `SailingKey`, `CachedPriceQuote`, `CabinClass`, `CruiseLineCode`, `RegionCode`, `RefreshResult`.
+   - Exports the key types: `SailingKey`, `CachedPriceQuote`, `CachedPriceLookup`, `CabinClass`, `CruiseLineCode`, `RegionCode`, `RefreshResult`. Per addendum §33.2, `getCachedPrice` returns `CachedPriceLookup` — a tagged union of `hit` / `miss` / `unsupported` — not `CachedPriceQuote | null`, so callers can tell an unsupported line from a not-yet-fetched one.
    - `RefreshResult` includes counts (sailings refreshed, sailings failed), the actor_run_id when applicable, the dollar amount spent on the run, and a `partial: boolean` flag set when a budget cap halted the run early.
 
 3. **MockPricingDataSource.** Create `apps/main/src/lib/pricing/mock-pricing-data-source.ts`:
@@ -164,7 +162,7 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
    - `inputBuilder` takes a refresh request and produces the actor's specific input JSON.
    - `outputMapper` takes one item from the actor's output dataset and produces a normalized `CachedPriceQuote` (or null if the item is unmappable — log and skip).
    - Initial coverage: Royal Caribbean, Norwegian, Princess, Celebrity, Costa (the five verified `sercul` actors). Add Carnival, Holland America, MSC, Disney behind feature flags so they can be enabled as their actor IDs are confirmed.
-   - For unmapped lines, the routing returns null; adapter returns null from `getCachedPrice` for these and skips them in refresh operations with a log entry.
+   - For unmapped lines the routing has no entry; `getCachedPrice` returns `{ status: 'unsupported' }` (distinct from a cache `miss`) and refresh operations skip them with a log entry.
 
 6. **Cache writes.** Create `apps/main/src/lib/pricing/pricing-cache.ts`:
    - `upsertPriceQuote(quote: CachedPriceQuote): Promise<void>` — upserts on the unique key from Prompt 33.
@@ -240,7 +238,7 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
 
 4. **Inngest scheduled function.** Create `apps/main/src/inngest/functions/refresh-cruisemapper-itineraries.ts`:
    - Cron: 1st of every month at 03:00 UTC (low-traffic window).
-   - Calls the actor wrapper, applies the mapper, writes to `pricing_cache`, ingests into RAG.
+   - Calls the actor wrapper, applies the mapper, writes to `pricing_cache` and the `rag.itineraries` table (per addendum §33.4), and ingests itinerary text into RAG.
    - Respects the budget caps from Prompt 34.
    - Logs counts (items received, items mapped to cache, items ingested to RAG, items skipped with reasons).
    - Emits a completion event with structured metadata for observability.
@@ -287,7 +285,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 
 **Prerequisite check:** Prompts 33–35 committed. Confirm CruiseMapper's `robots.txt` allows access to `/ships/*` and `/ports/*` paths. (If it doesn't, halt and escalate to operator before proceeding.) Confirm `CRUISEMAPPER_DIY_USER_AGENT` env var is set to a value identifying the platform with a real contact email.
 
-**Goal:** Build the DIY scraping machinery — fetcher, parser, rate limiter, robots.txt checker, change detection, backoff, kill switch — and use it to ingest CruiseMapper ship registry and port detail pages into RAG. **No image work in this prompt** — that lands in Prompt 37, using the same machinery. Text-only chunks at `global` scope, `low` authority.
+**Goal:** Build the DIY scraping machinery — fetcher, parser, rate limiter, robots.txt checker, change detection, backoff, kill switch — and use it to ingest CruiseMapper ship registry and port detail pages into RAG. **No image work in this prompt** — that lands in Prompt 37, using the same machinery. Text-only chunks at `global` scope, `official` authority (CruiseMapper static reference is authoritative factual specification data per addendum §33.5).
 
 **Tasks:**
 
@@ -297,7 +295,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
    - Single exported function `fetchCruiseMapperPage(url: string, options: { previousHash?: string }): Promise<FetchResult>`.
    - Sends GET with the `CRUISEMAPPER_DIY_USER_AGENT` header. No cookies, no proxy, no JavaScript execution.
    - Internal rate limiter (token bucket) enforces `CRUISEMAPPER_DIY_RATE_LIMIT_RPS` across ALL concurrent callers in the process. Use a process-wide singleton.
-   - Computes SHA-256 of the response body. If `previousHash` matches, returns `{ status: 'unchanged', hash }` without re-parsing.
+   - Returns the response body for parsing. The change-detection hash is SHA-256 over the *extracted, normalized content* (parsed text + image-URL list), computed downstream of the parser — not the raw response body, which carries ads and rotating tokens that would defeat the skip (addendum §33.5). When that hash matches `previousHash`, re-embedding is skipped.
    - On 4xx (except 429), returns `{ status: 'client_error', code, url }` and does NOT retry.
    - On 5xx or 429, exponential backoff with jitter: 1s, 2s, 4s. After 3 retries, returns `{ status: 'server_error', code, url }`.
    - On network error, same backoff policy as 5xx.
@@ -334,7 +332,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
    - On parse failure: skip the URL, log, increment a failure counter. If failure rate > 5%, halt the run and alert admin (parser likely broken).
    - Idempotent: re-ingestion uses a deterministic source identifier (`cruisemapper:ship:{ship-id}` or `cruisemapper:port:{port-id}`) so chunks update in place.
 
-9. **RAG ingest call.** Posts to the RAG service's `/api/ingest` with `scope: 'global'`, `authority: 0.45`, `category` matching the content type (`ship_intel` or `port_intel` — extend category enum if needed), `source: 'cruisemapper.com/...'`.
+9. **RAG ingest call.** Scraped text is screened for prompt injection (§26.8) before chunk creation, per addendum §33.5 — scraped content is untrusted input and RAG chunk text is consumed strictly as data. Posts to the RAG service's `/api/ingest` with `scope: 'global'`, `authority: 0.88` (`official` tier per §6.3 — CruiseMapper static reference is authoritative), `category` matching the content type (`ship_intel` or `port_intel` — extend category enum if needed), `source: 'cruisemapper.com/...'`.
 
 10. **Tests.**
     - Unit tests for both parsers with representative HTML fixtures (download a few real CruiseMapper pages, anonymize if needed, commit as fixtures).
@@ -361,7 +359,7 @@ END OF PROMPT — SWITCH BACK TO: claude-sonnet-4-6
 
 -----
 
-# BUILD PROMPT 37 — CruiseMapper DIY deck plan ingest with image storage (text descriptions + image assets)
+# BUILD PROMPT 37 — CruiseMapper DIY deck plan ingest with hot-linked image references
 
 ```
 ═══════════════════════════════════════════════════════════════
@@ -370,11 +368,11 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
 ═══════════════════════════════════════════════════════════════
 ```
 
-**Spec references:** Addendum §33.5 (DIY pipeline for deck plans), §33.6 (rag_media_assets schema, storage bucket, related_asset_ids). Reuses the machinery from Prompt 36.
+**Spec references:** Addendum §33.5 (DIY pipeline for deck plans), §33.6 (rag_media_assets schema, hot-linked images, related_asset_ids). Reuses the machinery from Prompt 36.
 
-**Prerequisite check:** Prompt 36 committed (DIY fetcher, robots.txt check, rate limiter, parser pattern all working for ships and ports). Storage bucket `rag-media-public` exists from Prompt 33.
+**Prerequisite check:** Prompt 36 committed (DIY fetcher, robots.txt check, rate limiter, parser pattern all working for ships and ports).
 
-**Goal:** Extend the DIY ingest to handle deck plan pages — extract the structured text description (cabin number ranges, cabin categories, deck-level notes), download the deck plan images, store images in Supabase Storage as `rag_media_assets`, and link the text chunks to their images via `related_asset_ids`.
+**Goal:** Extend the DIY ingest to handle deck plan pages — extract the structured text description (cabin number ranges, cabin categories, deck-level notes), record the deck plan image URLs as hot-linked `rag_media_assets` (validated against a host allowlist; not downloaded or re-hosted, per addendum §33.6.3), and link the text chunks to their images via `related_asset_ids`.
 
 **Tasks:**
 
@@ -384,13 +382,13 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
    - Extracts the deck plan image URL(s) from the page. Some pages have one image, some have multiple views.
    - Returns the structured data plus the image URLs as a separate array.
 
-2. **Image download + storage.** Create `apps/main/src/lib/external/cruisemapper/image-uploader.ts`:
-   - Function `uploadDeckPlanImage(imageUrl: string, metadata: {...}): Promise<AssetRecord>`.
-   - Downloads the image via the DIY fetcher (subject to the same rate limit and robots.txt check).
-   - Computes SHA-256 of the bytes. If a `rag_media_assets` row with this `file_hash` already exists, return the existing asset_id without re-uploading.
-   - Otherwise: upload to `rag-media-public/deck-plans/{ship-slug}/deck{NN}-{hash-prefix}.{ext}`. Use the file extension matching the response Content-Type.
-   - Insert a `rag_media_assets` row with kind='deck_plan', entity_type='deck', entity_id=`{ship-slug}-deck-{NN}`, scope='global', the storage path, the public URL, content type, dimensions (parsed from response or computed), file_bytes, file_hash, fetched_at=NOW(), source='cruisemapper.com'.
-   - Return the new asset_id.
+2. **Image asset recording (hot-linked).** Create `apps/main/src/lib/external/cruisemapper/image-asset-recorder.ts`:
+   - Function `recordDeckPlanImage(imageUrl: string, sourcePageUrl: string, metadata: {...}): Promise<AssetRecord>`.
+   - Images are **hot-linked, not downloaded** (addendum §33.6.3). No fetch of image bytes, no Supabase Storage upload.
+   - **Validate `imageUrl` before recording:** the host must be on an allowlist (cruisemapper.com and its known image CDNs); reject any other host, including private, loopback, and link-local addresses. A rejected URL is logged and skipped.
+   - Idempotency: a `rag_media_assets` row is keyed by (`entity_id`, `image_url`); re-ingest of the same image upserts rather than inserting a duplicate.
+   - Insert/upsert a `rag_media_assets` row with kind='deck_plan', entity_type='deck', entity_id=`{ship-slug}-deck-{NN}`, scope='global', `image_url`, `source_page_url`, `attribution` (e.g., 'Image: CruiseMapper'), caption, dimensions if available from the page's `<img>` attributes, fetched_at=NOW(), source='cruisemapper.com'.
+   - Return the asset_id.
 
 3. **Chunk + asset linking.** When ingesting deck plan text:
    - Create the text document for §22.4 normalization as before.
@@ -406,20 +404,20 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
 
 6. **Inngest function extension.** Extend `refresh-cruisemapper-static.ts` from Prompt 36 to also process deck plan URLs in the same quarterly run. Order: ships first (so deck plans can reference them), then ports, then deck plans. Deck plans depend on ship discovery having run.
 
-7. **Image format handling.** Store images as-is (the addendum confirms "originals" over WebP normalization). The bucket's MIME types from Prompt 33 allow PNG, JPEG, WebP — accept any of these from CruiseMapper. Reject and log anything else.
+7. **Image-URL hygiene.** No image bytes are stored, so there is no format normalization. The recorder validates only that `image_url` is on the host allowlist (Task 2) and that the URL path carries an image extension (`.png` / `.jpg` / `.jpeg` / `.webp`); anything else is logged and skipped. The customer's browser, not the platform, ultimately fetches the image (addendum §33.7.2).
 
 8. **Tests.**
    - Unit tests for the deck parser with HTML fixtures.
-   - Unit test for image-uploader with a mock storage client: verifies hash dedup works (uploading same image twice produces one asset row).
-   - Integration test (gated): scrape 3 deck plans for one ship, verify chunks land in RAG with non-empty `related_asset_ids`, verify images are accessible via the public URLs.
+   - Unit test for the image-asset recorder: a non-allowlisted image-URL host is rejected; recording the same image twice produces exactly one asset row (idempotent upsert).
+   - Integration test (gated): scrape 3 deck plans for one ship, verify chunks land in RAG with non-empty `related_asset_ids`, and verify each asset row carries a valid allowlisted `image_url`.
    - Validation test for the RAG ingest extension: rejects mismatched-scope asset references, accepts matched-scope ones.
 
 **Definition of done:**
 
 - A dev run ingests at least 3 ships' full deck plan sets (~30-50 chunks + same number of asset rows).
 - Each chunk has non-empty `related_asset_ids`.
-- Each referenced asset is publicly accessible via its `public_url`.
-- Re-running produces zero net changes (idempotency by file_hash for images, by source identifier for chunks).
+- Each referenced asset row carries a valid, allowlisted `image_url` and an `attribution` string.
+- Re-running produces zero net changes (idempotency by (entity_id, image_url) for assets, by source identifier for chunks).
 - `pnpm typecheck` and `pnpm test` green.
 
 **After completion:** MEMORY.md entry covering (a) average images per ship (so we can recalibrate the ~18,000 estimate), (b) average image size, (c) total storage used after the dev backfill, (d) any parser failure modes encountered.
@@ -452,7 +450,7 @@ SWITCH-BACK-AT-END: (already sonnet — no switch needed)
 1. **Response schema extension.** Modify the RAG service's `/api/retrieve` handler:
    - Each chunk object in the response gains `related_asset_ids: string[]` (passes through what's in the row).
    - The response gains a top-level `assets: AssetMetadata[]` array.
-   - `AssetMetadata` shape: `{ asset_id, kind, entity_type, entity_id, public_url, caption, width_px, height_px, content_type }`. Includes only fields safe to expose to consumers (no internal paths, no file hashes).
+   - `AssetMetadata` shape: `{ asset_id, kind, entity_type, entity_id, image_url, source_page_url, attribution, caption, width_px, height_px }`. `image_url` is the hot-linked source URL; `attribution` is the required display credit. Includes only fields safe to expose to consumers.
 
 2. **Asset lookup.** After computing the final retrieved chunks (post-filtering, post-deduplication per §21.3), collect the union of all `related_asset_ids` across them. Single batched query to `rag_media_assets`. Map results to the response.
 
@@ -533,7 +531,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 4. **Client-side rendering.** Modify the consumer chat UI's message renderer:
    - When rendering an AI message, parse for asset sentinels.
    - For each, find the asset in the turn's retrieve response (the chat UI already has this context since it shows source indicators per §21.6).
-   - Render an `<img src={public_url} alt={caption} />` inline at the markup position.
+   - Render an `<img src={image_url} alt={caption} referrerpolicy="no-referrer" />` inline at the markup position, with the `attribution` text shown as a visible credit beneath it. HTML-escape all asset-derived text (caption, attribution). If the image fails to load, drop it silently — no broken-image placeholder. Enforce a hard cap of 3 rendered images per response.
    - Apply existing tenant branding / chat styling (image max-width, rounded corners — whatever matches existing media patterns in the UI).
    - Hover/click on the image surfaces the same source-attribution UI as §21.6 text source indicators: source URL, fetched_at, the chunk caption.
 

@@ -37,7 +37,10 @@ export type AICallPurpose =
   | "quote_narrative"
   | "embedding"
   | "content_normalization"
-  | "other";
+  | "other"
+  // BP31 §32.4.4 — Help AI cost attribution.
+  | "help_ai_main"
+  | "help_ai_supervisor";
 
 // Purposes that run customer-facing turns. NOT downgraded at soft1.
 const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([
