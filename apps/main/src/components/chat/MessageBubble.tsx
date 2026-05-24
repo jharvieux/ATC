@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import { MessageSources, type MessageCitation } from "./MessageSources";
+import { renderMessageContent, type DisplayAsset } from "./renderMessageContent";
 
 export interface ChatMessage {
   id: string;
@@ -15,6 +16,11 @@ export interface ChatMessage {
   created_at?: string;
   feedback_score?: -1 | 0 | 1 | null;
   used_memory?: boolean;
+  // BP39 §33.7.2 — assets surfaced by the chat SSE `assets` event.
+  // Used to expand `[[display_asset:<uuid>]]` markers in `content`
+  // to hyperlinks (operator override of the spec's inline-image
+  // rendering — see MEMORY D-075).
+  assets?: DisplayAsset[];
 }
 
 function relativeTime(iso: string | undefined): string {
@@ -111,7 +117,7 @@ export function MessageBubble({
             whiteSpace: "pre-wrap",
           }}
         >
-          {msg.content}
+          {isAssistant ? renderMessageContent(msg.content, msg.assets) : msg.content}
         </div>
         {isAssistant && (
           <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#6b7280" }}>

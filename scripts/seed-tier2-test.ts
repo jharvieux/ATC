@@ -13,6 +13,7 @@ import postgres from "postgres";
 const TENANT_ID = "22222222-0000-0000-0000-0000000000a1";
 const AUTH_USER_ID = "a0000000-0000-0000-0000-0000000000a1";
 const PUBLIC_USER_ID = "b0000000-0000-0000-0000-0000000000b1";
+const CONTACT_ID = "c0000000-0000-0000-0000-0000000000c1";
 
 async function main(): Promise<void> {
   const url = process.env.SUPABASE_DB_URL;
@@ -63,6 +64,13 @@ async function main(): Promise<void> {
       ON CONFLICT (id) DO NOTHING
     `;
 
+    // 5. One contact for the tenant — quotes routes require contact_id.
+    await sql`
+      INSERT INTO public.contacts (id, tenant_id, first_name, last_name, email)
+      VALUES (${CONTACT_ID}, ${TENANT_ID}, 'Test', 'Contact', 'contact@e2e.local')
+      ON CONFLICT (id) DO NOTHING
+    `;
+
     console.log("✓ Tier-2 test fixtures seeded.");
     console.log("");
     console.log("Add these to apps/main/.env.local:");
@@ -72,6 +80,8 @@ async function main(): Promise<void> {
     console.log("");
     console.log("Public user row id (for fixtures that need it):");
     console.log(`  ${PUBLIC_USER_ID}`);
+    console.log("Test contact id (for routes that take contact_id):");
+    console.log(`  ${CONTACT_ID}`);
   } finally {
     await sql.end();
   }
