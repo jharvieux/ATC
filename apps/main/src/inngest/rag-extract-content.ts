@@ -10,6 +10,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { extractContent } from "@/lib/rag-ingest/extract-content";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 export const ragExtractContent = inngest.createFunction(
   {
@@ -20,6 +21,15 @@ export const ragExtractContent = inngest.createFunction(
     const submission_id = event.data.submission_id as string;
     const tenant_id = event.data.tenant_id as string;
     const db = createServiceRoleClient();
+
+    // §15.16 — Skip past-grace tenants. Extract is the first step of the
+    // ingest pipeline; gating here also short-circuits the downstream
+    // normalize/pii-redact steps.
+    const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[rag-extract-content] skipping past-grace tenant", { tenant_id, submission_id, reason: paymentCheck.reason });
+      return { ok: false, reason: paymentCheck.reason ?? "past_grace" };
+    }
 
     const { data: sub, error } = await db
       .from("rag_submissions")

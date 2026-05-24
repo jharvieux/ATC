@@ -6,6 +6,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 const RETRY_DELAYS_HOURS = [6, 12, 24];
 
@@ -17,6 +18,17 @@ export const emailSoftBounceRetry = inngest.createFunction(
       tenant_id: string;
       attempt: number;
     };
+
+    // §15.16 — Don't keep retrying email sends for a past-grace tenant.
+    {
+      const svc = createServiceRoleClient();
+      const paymentCheck = await assertTenantStillPayingById(svc, tenant_id);
+      if (!paymentCheck.ok) {
+        console.info("[email-soft-bounce-retry] skipping past-grace tenant",
+          { tenant_id, email_log_id, reason: paymentCheck.reason });
+        return;
+      }
+    }
 
     if (attempt > RETRY_DELAYS_HOURS.length) {
       // Exceeded retry budget — treat as hard bounce.

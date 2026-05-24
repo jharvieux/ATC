@@ -15,6 +15,7 @@
 // their SELECT, or the derivation falls back to the lenient backfill path
 // (treats unknown subscription_status as within-grace).
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { derivePaymentState, type TenantPaymentFields } from "./payment-state";
 
 /** Rows must carry the three fields derivePaymentState reads. */
@@ -41,9 +42,11 @@ export function excludeNonPayingPastGrace<T extends WithPaymentFields>(
   return out;
 }
 
+export type PaymentAssertionReason = "past_grace" | "tenant_not_found";
+
 export interface PaymentAssertion {
   ok: boolean;
-  reason?: "past_grace";
+  reason?: PaymentAssertionReason;
   days_since_non_paying?: number;
 }
 
@@ -62,4 +65,32 @@ export function assertTenantStillPaying(t: TenantPaymentFields): PaymentAssertio
     };
   }
   return { ok: true };
+}
+
+/**
+ * Fetch-and-check helper for event-driven Inngest handlers that have a
+ * tenant_id from event.data but no tenant row in scope. Returns the same
+ * shape as assertTenantStillPaying — the 'tenant_not_found' reason fires
+ * when the tenant was hard-deleted between event emit and handler firing.
+ *
+ * Fails open on DB errors — better to occasionally process a past-grace
+ * tenant than to silently drop legitimate events on a transient blip.
+ */
+export async function assertTenantStillPayingById(
+  db: SupabaseClient,
+  tenant_id: string,
+): Promise<PaymentAssertion> {
+  const { data, error } = await db
+    .from("tenants")
+    .select("status, subscription_status, non_paying_since")
+    .eq("id", tenant_id)
+    .maybeSingle();
+  if (error) {
+    console.warn("[assertTenantStillPayingById] DB error — failing open", { tenant_id, error: error.message });
+    return { ok: true };
+  }
+  if (!data) {
+    return { ok: false, reason: "tenant_not_found" };
+  }
+  return assertTenantStillPaying(data as TenantPaymentFields);
 }
