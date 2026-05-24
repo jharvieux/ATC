@@ -31,6 +31,10 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
+import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
+import { bufferToSentences } from "@/lib/ai/sentence-buffer";
+import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
+import { checkSentence } from "@/lib/supervisor/per-sentence-check";
 import { env } from "@/lib/env";
 import {
   advanceBugFlow,
@@ -57,6 +61,16 @@ function sseLine(text: string): string {
 
 const KILL_SWITCH_MESSAGE =
   "Our AI is paused right now. Please leave a message and we'll be in touch.";
+
+// BP24 option B UX — sentinel value the HelpAIPanel client recognises to
+// clear the in-flight assistant bubble. Sent before a fallback message when
+// the per-sentence supervisor aborts a streamed draft. Unlike the chat
+// route, help-AI has no regen loop, so a per-sentence hit is terminal and
+// the fallback is the user's final answer for this turn.
+const REWRITE_SENTINEL = "[REWRITE]";
+
+const PER_SENTENCE_FALLBACK_MESSAGE =
+  "Sorry — that response didn't come out right. Please rephrase or try again.";
 
 export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
   let ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"];
@@ -153,33 +167,117 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
       const model = env().ANTHROPIC_SONNET_MODEL;
 
+      // BP24 — Help-AI streaming opt-in. Default off; flip
+      // HELP_AI_STREAMING_ENABLED=true to use the streaming wrapper +
+      // per-sentence deny-list check. The chat route has its own flag
+      // (CHAT_STREAMING_ENABLED) so help-AI can roll out independently.
+      const streamingEnabled = process.env.HELP_AI_STREAMING_ENABLED === "true";
+
       let assistantText = "";
-      try {
-        const result = await instrumentedClaudeCall({
+
+      if (streamingEnabled) {
+        // Per-sentence deny-list — same source of truth the customer-chat
+        // supervisor uses (loaded once per turn).
+        const slurDenyList = await loadUnionSlurDenyList(db, ctx.tenant_id);
+        const abortController = new AbortController();
+
+        const { textStream, done } = instrumentedClaudeStream({
           tenant_id: ctx.tenant_id,
           model,
           purpose: "help_ai_main",
           max_tokens: 800,
           system: promptedSystem,
           messages: [{ role: "user", content: userMessage }],
+          signal: abortController.signal,
         });
-        assistantText = result.text;
-      } catch {
-        await writer.write(encoder.encode(sseLine("Our AI is temporarily unavailable. Please try again in a moment.")));
+
+        let aborted = false;
+        let perSentenceHashedTerm: string | undefined;
+
+        try {
+          for await (const sentence of bufferToSentences(textStream)) {
+            const check = checkSentence(sentence, slurDenyList);
+            if (check.hit) {
+              abortController.abort();
+              aborted = true;
+              perSentenceHashedTerm = check.hashedTerm;
+              break;
+            }
+            // Stream each clean sentence (with a trailing space — the buffer
+            // strips inter-sentence whitespace).
+            await writer.write(encoder.encode(sseLine(sentence + " ")));
+            assistantText += sentence + " ";
+          }
+        } catch (streamErr) {
+          void streamErr;
+          await writer.write(encoder.encode(sseLine("Our AI is temporarily unavailable. Please try again in a moment.")));
+          await writer.write(encoder.encode(sseLine("[DONE]")));
+          await writer.close();
+          return;
+        }
+
+        if (aborted) {
+          // Let the wrapper finish its cost-accounting path (rejects on abort).
+          try { await done; } catch { /* expected */ }
+          console.warn("[help-ai-stream] per-sentence supervisor hit", {
+            session_id: sessionId,
+            tenant_id: ctx.tenant_id,
+            hashed_term: perSentenceHashedTerm,
+          });
+          // Tell the client to clear what's on screen, then deliver the
+          // fallback. Help-AI has no regen loop — the fallback is final.
+          await writer.write(encoder.encode(sseLine(REWRITE_SENTINEL)));
+          await writer.write(encoder.encode(sseLine(PER_SENTENCE_FALLBACK_MESSAGE)));
+          await writer.write(encoder.encode(sseLine("[DONE]")));
+          await writer.close();
+          // Skip the help_sessions update — this turn didn't produce a valid
+          // assistant message.
+          return;
+        }
+
+        // Clean stream complete — trust the wrapper's done promise for the
+        // canonical text (cost accounting parity with the non-streaming branch).
+        try {
+          const finalResult = await done;
+          assistantText = finalResult.text;
+        } catch (doneErr) {
+          void doneErr;
+          await writer.write(encoder.encode(sseLine("Our AI is temporarily unavailable. Please try again in a moment.")));
+          await writer.write(encoder.encode(sseLine("[DONE]")));
+          await writer.close();
+          return;
+        }
+
         await writer.write(encoder.encode(sseLine("[DONE]")));
         await writer.close();
-        return;
-      }
+      } else {
+        // ── Non-streaming branch — original behaviour, unchanged ──
+        try {
+          const result = await instrumentedClaudeCall({
+            tenant_id: ctx.tenant_id,
+            model,
+            purpose: "help_ai_main",
+            max_tokens: 800,
+            system: promptedSystem,
+            messages: [{ role: "user", content: userMessage }],
+          });
+          assistantText = result.text;
+        } catch {
+          await writer.write(encoder.encode(sseLine("Our AI is temporarily unavailable. Please try again in a moment.")));
+          await writer.write(encoder.encode(sseLine("[DONE]")));
+          await writer.close();
+          return;
+        }
 
-      // Chunk the final text into ~80-char frames so the UI shows
-      // progressive rendering. (Real token-streaming requires the call
-      // wrapper to grow a streaming variant — follow-on.)
-      const CHUNK = 80;
-      for (let i = 0; i < assistantText.length; i += CHUNK) {
-        await writer.write(encoder.encode(sseLine(assistantText.slice(i, i + CHUNK))));
+        // Chunk the final text into ~80-char frames so the UI shows
+        // progressive rendering.
+        const CHUNK = 80;
+        for (let i = 0; i < assistantText.length; i += CHUNK) {
+          await writer.write(encoder.encode(sseLine(assistantText.slice(i, i + CHUNK))));
+        }
+        await writer.write(encoder.encode(sseLine("[DONE]")));
+        await writer.close();
       }
-      await writer.write(encoder.encode(sseLine("[DONE]")));
-      await writer.close();
 
       // Bump the session's ai_messages_count + record the draft snapshot
       // out-of-band. RLS-scoped update.
