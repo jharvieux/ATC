@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-078 — 2026-05-24 — D-041 follow-up shipped: platform_settings cross-project sync
+
+**Decision:** Built the deferred sync mechanism from D-041. Same webhook + retry + reconcile pattern already in production for tenant events, generalised to a second event family.
+
+**Architecture:**
+
+1. **Sender** (`apps/main/src/lib/rag-sync/publish-platform-event.ts`) — HMAC-signed POST to `/api/platform-settings-events`, 3-retry exponential backoff (1s/5s/30s), falls back to `pending_rag_sync` queue with `tenant_id=NULL`.
+2. **Allowlist filter** (`SYNC_ELIGIBLE_KEYS`) — only keys rag actually reads are forwarded. Today: the four `feedback_*` knobs. `supervisor_slur_deny_list` is explicitly excluded for privacy (raw slurs).
+3. **Receiver** (`apps/rag/src/app/api/platform-settings-events/route.ts`) — HMAC verify, per-key stale-revision guard (each key has its own monotonic source_revision derived from main's `updated_at`), upsert into rag's `platform_settings` replica.
+4. **Retry cron** (`apps/main/src/inngest/rag-sync-retry.ts`) — generalised to route by event-type prefix: `tenant.*` → `/api/tenant-events`, `platform_settings.*` → `/api/platform-settings-events`.
+5. **Reconcile cron** (`apps/rag/src/inngest/platform-settings-reconcile.ts`) — nightly at 03:30, fetches `/api/admin/platform-settings` from main, diffs against the replica, corrects drift (applies the same allowlist filter).
+6. **Schema changes:** BEFORE UPDATE trigger on main.platform_settings auto-bumps `updated_at` (so source_revision is monotonic without caller discipline). rag.platform_settings gains `source_revision`, `last_webhook_sync_at`, `last_reconcile_sync_at`. pending_rag_sync.tenant_id becomes nullable; event_type CHECK extended.
+
+**Why:** PR #105 (BP22) added 4 new platform-admin knobs to `platform_settings` (`retrieval_weight_*`) and the admin UI warned operators they had to manually mirror values into rag. That manual-mirror friction made automating this worth it now; before, with only 4 rarely-changed feedback knobs and no admin UI, it wasn't.
+
+**Wire-in status:**
+
+- Today (this PR): infrastructure landed; deny-list route deliberately NOT wired (deny-list isn't sync-eligible).
+- After PR #105 lands: add `retrieval_weight_*` keys to both `SYNC_ELIGIBLE_KEYS` constants (sender + reconcile cron), wire `publishPlatformEvent` into `/api/admin/retrieval-weights/route.ts`. The BP22 admin UI's manual-mirror reminder can then be removed.
+
+**What was rejected:**
+
+- **Direct cross-DB queries** (postgres_fdw, dblink) — Supabase project boundaries don't allow it; the option was never viable.
+- **A second dedicated queue table for platform events** — generalising `pending_rag_sync` with a nullable tenant_id is one CHECK constraint instead of a new table + new cron logic.
+- **Auto-syncing every platform_settings key** — privacy concern for deny-list; surface-area concern in general (rag becomes a denormalised cache of platform config it doesn't use).
+
+**Artifacts:** `apps/main/supabase/migrations/20260614000000_platform_settings_sync.sql`, `apps/rag/supabase/migrations/0014_platform_settings_sync.sql`, `apps/main/src/lib/rag-sync/publish-platform-event.ts`, `apps/rag/src/app/api/platform-settings-events/route.ts`, `apps/rag/src/inngest/platform-settings-reconcile.ts`, `apps/main/src/app/api/admin/platform-settings/route.ts`, `apps/main/test/unit/rag-sync/publish-platform-event.test.ts`, lint-rule allowlist updates.
+
+---
+
 ## D-077 — 2026-05-24 — BP41: Haiku vision OCR sample-evaluation scripts ($25 hard cap) — key decisions
 
 **Decision:**
