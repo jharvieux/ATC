@@ -76,4 +76,32 @@ describe("renderMessageContent", () => {
     const out = html(renderMessageContent(`X [[display_asset:${A_ID.toUpperCase()}]]`, [A]));
     expect(out).toContain('href="https://www.cruisemapper.com/x.jpg"');
   });
+
+  it("strips all markup when showAssetLinks is false (source-display toggle off)", () => {
+    const out = html(
+      renderMessageContent(
+        `Look at this  [[display_asset:${A_ID}]]  it's great.`,
+        [A],
+        { showAssetLinks: false },
+      ),
+    );
+    expect(out).not.toContain("href");
+    expect(out).not.toContain("display_asset");
+    expect(out).not.toContain("View deck plan");
+    expect(out).toContain("Look at this");
+    expect(out).toContain("it&#x27;s great");
+    expect(out).not.toMatch(/  /);
+  });
+
+  it("strips even unknown / malformed markup when showAssetLinks is false", () => {
+    const out = html(
+      renderMessageContent(`A [[display_asset:not-a-uuid]] B`, [A], { showAssetLinks: false }),
+    );
+    expect(out).not.toContain("display_asset");
+  });
+
+  it("showAssetLinks=true is the default", () => {
+    const out = html(renderMessageContent(`X [[display_asset:${A_ID}]]`, [A]));
+    expect(out).toContain("href=");
+  });
 });

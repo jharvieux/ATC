@@ -25,6 +25,13 @@ export interface DisplayAsset {
 const MARKUP_RE = /\[\[display_asset:([^\]]{1,80})\]\]/g;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+export interface RenderOptions {
+  /** §21.6 tenant source-display toggle. When false, asset markup is
+   *  stripped entirely (no link, no attribution) — the model may still
+   *  emit `[[display_asset:...]]`, but the client doesn't surface it. */
+  showAssetLinks?: boolean;
+}
+
 /**
  * Render an assistant message body with inline display-asset hyperlinks.
  * Pure function — no DOM, easily testable.
@@ -32,7 +39,21 @@ const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0
 export function renderMessageContent(
   content: string,
   assets: DisplayAsset[] | undefined,
+  options: RenderOptions = {},
 ): React.ReactNode {
+  const showAssetLinks = options.showAssetLinks ?? true;
+
+  // Source-display toggle off → strip every well-formed marker and any
+  // surrounding whitespace, return the cleaned content as plain text.
+  if (!showAssetLinks) {
+    const cleaned = content
+      .replace(MARKUP_RE, "")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return <>{cleaned}</>;
+  }
+
   const byId = new Map<string, DisplayAsset>();
   for (const a of assets ?? []) byId.set(a.asset_id.toLowerCase(), a);
 

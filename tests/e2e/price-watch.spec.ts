@@ -65,8 +65,11 @@ async function clearCacheRow(): Promise<void> {
 }
 
 async function clearWatches(): Promise<void> {
+  // Only delete watches for the ships THIS spec uses, so parallel
+  // workers from other spec files don't fight us.
   await sql`
-    DELETE FROM public.price_watches WHERE tenant_id = ${TENANT}::uuid
+    DELETE FROM public.price_watches
+    WHERE tenant_id = ${TENANT}::uuid AND ship IN (${VALID_BODY.ship}, 'norwegian-encore-e2e')
   `;
 }
 

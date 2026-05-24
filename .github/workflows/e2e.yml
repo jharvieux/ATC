@@ -130,6 +130,11 @@ jobs:
       - name: Seed Tier-2 fixtures
         run: SUPABASE_DB_URL="postgresql://postgres@localhost:5432/atc_main_test" pnpm tsx scripts/seed-tier2-test.ts
 
+      - name: RLS coverage check (§30.8)
+        env:
+          SUPABASE_DB_URL: postgresql://postgres@localhost:5432/atc_main_test
+        run: pnpm rls:coverage
+
       - name: Run Playwright specs
         run: pnpm exec playwright test
         # webServer in playwright.config.ts auto-starts postgrest + proxy + next dev.
