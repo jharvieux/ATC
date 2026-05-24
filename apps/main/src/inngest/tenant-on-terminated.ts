@@ -18,6 +18,8 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 interface TenantTerminationScheduledPayload {
   tenant_id: string;
@@ -97,14 +99,21 @@ async function onTerminated(
     return;
   }
 
-  const serviceJwt = process.env.SERVICE_JWT_PRIVATE_KEY;
+  // BP09 — RS256 JWT. The tenant being terminated has shadow status
+  // transitioning to 'terminated', which the rag verifier rejects (Step 6).
+  // Use the PLATFORM sentinel; body.tenant_id still identifies the target.
+  const jwt = await signServiceJwt({
+    tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+    scope: "write",
+    service_identifier: "platform-admin",
+  });
   const postTermStatus = kind === "involuntary_content" ? "pending" : "reviewed_retained";
 
   const response = await fetch(`${ragServiceUrl}/api/admin/post-termination-mark`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${serviceJwt}`,
+      "Authorization": `Bearer ${jwt}`,
     },
     body: JSON.stringify({
       tenant_id: tenantId,
