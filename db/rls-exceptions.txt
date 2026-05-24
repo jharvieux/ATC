@@ -20,3 +20,5 @@ host_booking_fee_configs # platform-scoped (no tenant_id column). SELECT to auth
 host_adapters # platform-scoped adapter registry (no tenant_id column). SELECT to authenticated so tenants can browse adapters. INSERT/UPDATE/DELETE service_role only (platform admin). Per §13.3.
 reconciliation_review_queue # platform-admin reconciliation queue. No authenticated-user access paths. All reads and writes via service_role through withPlatformAdminAudit. Per §14.8.
 email_log # cross-tenant rate-limit log; reads and writes are service_role only (Inngest cron reminder cadence). No authenticated-user access paths. tenant_id is nullable (NULL for platform-level sends). Per §18.8.
+apify_spend_ledger # BP34 §33.9.3 — platform-scoped Apify spend ledger; no tenant_id; service-role-only writes by the ApifyPricingAdapter
+pricing_cache # BP33 §33.3 — platform-scoped pricing reference; no tenant_id; service-role-only reads/writes by the adapter

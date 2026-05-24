@@ -253,6 +253,16 @@ const envSchema = z.object({
   // BP32 §32.10.7 — GitHub webhook secret used to verify issues.closed events.
   // Optional because Phase 2 ships dark; the webhook route 401s without it.
   GITHUB_WEBHOOK_SECRET: z.string().optional(),
+  // BP34 §33.10 — Apify integration. Default-OFF cost-deferral: the adapter
+  // kill switch defaults to false; operator flips ENABLED to true AND provides
+  // the API token to activate spend. With this default, just provisioning
+  // APIFY_API_TOKEN does NOT immediately trigger spend.
+  APIFY_API_TOKEN:                     z.string().optional(),
+  APIFY_ADAPTER_ENABLED:               z.coerce.boolean().optional().default(false),
+  APIFY_RUN_BUDGET_USD_CEILING:        z.coerce.number().positive().optional().default(50),
+  APIFY_MONTHLY_BUDGET_USD_CEILING:    z.coerce.number().positive().optional().default(500),
+  PRICE_FRESHNESS_FRESH_HOURS:         z.coerce.number().int().positive().optional().default(72),
+  PRICE_FRESHNESS_EXPIRED_HOURS:       z.coerce.number().int().positive().optional().default(744), // 31 days
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
   ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),
