@@ -8,10 +8,10 @@ Part 9’s single section (§32 Self-Service Help) adds the **customer- and tena
 
 - Tenant admins have a `/admin/help` console with three buttons (I need help / Report a bug / Request a feature) plus a documentation viewer rendering Markdown docs co-located with code at `apps/main/content/help/`. The docs can be downloaded as PDF or Word.
 - A new **Help AI persona** runs distinct from the customer-facing travel concierge personas, scoped to platform documentation only. It runs under the existing supervisor (Part 3 Prompt 11) — same kill switch, same audit, same hallucination defense.
-- Tenant-side documentation is indexed in the RAG service under a new **`platform-docs` scope**, the single deviation from §6.9’s strict two-level (global / tenant) scope model. Read-only and managed by the release pipeline.
+- Tenant-side documentation is indexed in the RAG service at **`global` scope** with a **`help_ai` retrieval-audience tag** — retrieved only by the Help AI, kept out of customer-facing retrieval. §6.9’s two-level (global / tenant) scope model is unchanged. Read-only and managed by the release pipeline.
 - The Help AI runs three distinct flows — open Q&A, structured bug capture, structured feature request — each generating GitHub issues for the platform engineering team via the GitHub App authentication path.
 - The customer-facing travel concierge persona (Part 5 Prompt 24) gains a bug-report intent recognizer that hands off to the Help AI bug flow within the same chat surface, after an OAuth authentication gate.
-- A bug auto-fix pipeline triggers on issues meeting a confidence threshold: spins up a fresh staging environment, runs a two-gate reproduction contract (pre-fix MUST fail; post-fix MUST pass), and only on both passing does it open a draft PR. Human review still gates the production deploy.
+- Bugs are triaged and fixed by an operator running Claude Code interactively (the `/fix-bugs` slash command) — reproducing each bug against a local instance, fixing confirmed ones as draft PRs, and flagging the rest for human review. There is no automated pipeline; every session is human-supervised.
 - A new abuse-monitoring dimension `help_submission_rate` per Part 6 Prompt 27 covers help/bug/feature submission volume with tenant + per-customer limits.
 
 The two Part 9 prompts assume Build Prompts 01–30 are committed.
@@ -22,10 +22,10 @@ The two Part 9 prompts assume Build Prompts 01–30 are committed.
 
 ### 1. New cloud services and external dependencies
 
-- **GitHub App** — provisioned in the GitHub organization that owns the platform repo. Required permissions per §32.7.1: Issues (R/W), Pull Requests (R/W), Contents (R/W), Actions (R). Installation ID captured per the platform repo.
+- **GitHub App** — provisioned in the GitHub organization that owns the platform repo. Required permission per §32.7.1: Issues (R/W) only. Installation ID captured per the platform repo.
 - **`docx-js`** — npm package for Word document generation. Build Prompt 31 installs.
 - **Puppeteer** — already in place from earlier prompts (Part 5 Prompt 21 quote PDF rendering). Reused here for help docs PDF generation.
-- **Claude Code API access** — for the auto-fix pipeline (Build Prompt 32). Operator obtains a separate API key with its own Anthropic Console spending limit per §32.9.6.
+- **Claude Code** — for interactive bug triage (§32.9). The operator runs Claude Code under a personal Pro or Max subscription; no platform-held Anthropic API key is required.
 
 ### 2. New keys to add to env before Build Prompt 31
 
@@ -38,7 +38,7 @@ GITHUB_REPO_NAME (required)
 HELP_DOCS_CACHE_TTL_SECONDS (optional; default 3600)
 ```
 
-The Part 7 Prompt 29 Zod env schema gets extended here. Build Prompt 32 adds the auto-fix-pipeline env vars.
+The Part 7 Prompt 29 Zod env schema gets extended here. Build Prompt 32 adds the Phase 2 customer-flow env vars.
 
 ### 3. Decisions to make before Build Prompt 31
 
@@ -55,7 +55,7 @@ The Part 7 Prompt 29 Zod env schema gets extended here. Build Prompt 32 adds the
 
 ## How to use the build prompts below
 
-Same as Parts 1–7. **Both Part 9 prompts call for Opus.** Even though the feature surface is bounded, two pieces are correctness-critical with public exposure: PII redaction before GitHub (a leak ships data into a public-or-semi-public issue tracker) and the two-gate auto-fix reproduction contract (a wrong implementation either rubber-stamps non-fixes or makes engineers disable the gate). Both deserve Opus.
+Same as Parts 1–7. **Both Part 9 prompts call for Opus.** Even though the feature surface is bounded, the correctness-critical, publicly-exposed pieces — PII redaction before GitHub (a leak ships data into a public-or-semi-public issue tracker) and the customer bug flow’s compliance surface — deserve Opus.
 
 -----
 
@@ -68,13 +68,13 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 ═══════════════════════════════════════════════════════════════
 ```
 
-**Why Opus:** Two pieces of this prompt are correctness-critical. The §32.7.6 PII redaction before GitHub uses the Part 5 Prompt 22 §22.4 redaction pipeline; running it correctly against the bug-report fields means hooking the same zero-tolerance quarantine path (SSN, full credit card, passport number → DO NOT create the issue; quarantine + alert) and the tolerable-PII redaction (`[REDACTED-NAME]` etc.). A leak from a tenant admin’s help session into a public GitHub issue body is the same shape of compliance event as a CCPA violation. The §32.3.4 `platform-docs` scope is the single deviation from §6.9’s strictly-two-level (global / tenant) RAG model — adding it carelessly (e.g., letting tenants submit to it, or letting the Help AI accidentally retrieve other tenants’ chunks) breaks the §6.9 invariant the whole platform leans on.
+**Why Opus:** Two pieces of this prompt are correctness-critical. The §32.7.6 PII redaction before GitHub uses the Part 5 Prompt 22 §22.4 redaction pipeline; running it correctly against the bug-report fields means hooking the same zero-tolerance quarantine path (SSN, full credit card, passport number → DO NOT create the issue; quarantine + alert) and the tolerable-PII redaction (`[REDACTED-NAME]` etc.). A leak from a tenant admin’s help session into a public GitHub issue body is the same shape of compliance event as a CCPA violation. The §32.3.4 help-docs RAG indexing must set the `help_ai` retrieval audience correctly — a mistake (letting the customer-facing concierge retrieve help docs, or letting the Help AI retrieve another tenant’s chunks) breaks the retrieval-isolation invariant the platform leans on.
 
-**Spec references:** Part 9 §32.1 (purpose and scope), §32.2 (user experience), §32.3 (tenant admin console documentation), §32.4 (Help AI persona — role, system prompt, three flows, cost model), §32.5 (database schema — 4 tables + RLS), §32.6 (API routes), §32.7 (GitHub integration — App auth, repo, labels, issue body format, resilience, PII redaction), §32.8 (confidence and clarity scoring), §32.12 (permissions / role mapping), §32.13 (privacy and security — PII handling, screenshots, audit logging, tenant isolation), §32.14 (environment variables — Phase 1 subset), §32.15.2 (Phase 1 done definition). Depends on Part 3 Prompts 10 + 11 (persona registry + supervisor with kill switch), Part 4 Prompt 18 (`platformAdminClient`, BrandedLayout for docs PDF), Part 5 Prompt 21 (`puppeteer` for PDF rendering, Help AI uses RAG retrieval), Part 5 Prompt 22 (§22.4 PII redaction pipeline — the same pipeline runs against bug-report content), Part 5 Prompt 24 (`assertPermission` patterns), Part 6 Prompt 26 (`withPlatformAdminAudit` for admin-side cross-tenant routes), Part 7 Prompt 29 (Zod env schema — extends here).
+**Spec references:** Part 9 §32.1 (purpose and scope), §32.2 (user experience), §32.3 (tenant admin console documentation), §32.4 (Help AI persona — role, system prompt, three flows, cost model), §32.5 (database schema — 4 tables + RLS), §32.6 (API routes), §32.7 (GitHub integration — App auth, repo, labels, issue body format, resilience, PII redaction), §32.8 (confidence and clarity scoring), §32.9 (interactive bug triage), §32.12 (permissions / role mapping), §32.13 (privacy and security — PII handling, screenshots, audit logging, tenant isolation), §32.14 (environment variables — Phase 1 subset), §32.15.2 (Phase 1 done definition). Depends on Part 3 Prompts 10 + 11 (persona registry + supervisor with kill switch), Part 4 Prompt 18 (`platformAdminClient`, BrandedLayout for docs PDF), Part 5 Prompt 21 (`puppeteer` for PDF rendering, Help AI uses RAG retrieval), Part 5 Prompt 22 (§22.4 PII redaction pipeline — the same pipeline runs against bug-report content), Part 5 Prompt 24 (`assertPermission` patterns), Part 6 Prompt 26 (`withPlatformAdminAudit` for admin-side cross-tenant routes), Part 7 Prompt 29 (Zod env schema — extends here).
 
 **Prerequisite check:** Build Prompts 01–30 are committed. GitHub App provisioned and installed per Part 9 prerequisites. `GITHUB_APP_*` env vars set.
 
-**Goal:** Build the Phase 1 Self-Service Help feature end-to-end: env vars, schema (4 tables with RLS), Help AI persona registered in the existing persona system, three flows (help / bug / feature) with the supervisor wired in, documentation viewer at `/admin/help` rendering Markdown from `apps/main/content/help/`, PDF + Word export with caching, the `platform-docs` RAG scope (read-only, managed by release), GitHub App authentication and issue creation with PII redaction and zero-tolerance quarantine, confidence/clarity scoring, in-flow user-visible score transparency, the resilience pattern (retry on GitHub failure), and the platform-admin triage queues. Stop short of the customer bug flow and the auto-fix pipeline (Build Prompt 32).
+**Goal:** Build the Phase 1 Self-Service Help feature end-to-end: env vars, schema (4 tables with RLS), Help AI persona registered in the existing persona system, three flows (help / bug / feature) with the supervisor wired in, documentation viewer at `/admin/help` rendering Markdown from `apps/main/content/help/`, PDF + Word export with caching, help-docs RAG indexing (global scope with the `help_ai` retrieval audience, read-only, managed by release), GitHub App authentication and issue creation with PII redaction and zero-tolerance quarantine, confidence/clarity scoring, in-flow user-visible score transparency, the resilience pattern (retry on GitHub failure), the platform-admin triage queues, and the interactive bug-triage artifacts (the `/fix-bugs` Claude Code command and the triage labels). Stop short of the customer bug flow (Build Prompt 32).
 
 **Tasks:**
 
@@ -87,13 +87,12 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
    GITHUB_REPO_OWNER (required)
    GITHUB_REPO_NAME (required)
    HELP_DOCS_CACHE_TTL_SECONDS (optional, default 3600)
-   BUG_AUTOFIX_CONFIDENCE_THRESHOLD (required, default 0.7) — referenced here so confidence scoring works; actually consumed by Build Prompt 32 auto-fix
    ```
    
    Update `.env.example` to match.
 1. **Schema — four tables + RLS.** Migration `apps/main/supabase/migrations/0029_self_service_help.sql`:
 - `public.help_sessions` exactly per §32.5.1 schema. Indexes per spec.
-- `public.bug_submissions` exactly per §32.5.2 schema. Indexes per spec.
+- `public.bug_submissions` exactly per §32.5.2 schema — note this includes `triage_state`, the `quarantined` value in the `github_issue_state` check, and `quarantine_reason`. Indexes per spec.
 - `public.feature_requests` exactly per §32.5.3 schema. Indexes per spec.
 - `public.help_doc_versions` exactly per §32.5.4 schema (PDF/.docx cache table).
 - **RLS policies per §32.5.5:**
@@ -127,11 +126,11 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 - Same audit trail (`messages` and `conversations` rows, supervisor findings persisted).
 - The supervisor preflight call uses Haiku per the established pattern; the Help AI response itself uses Sonnet per §32.4.4.
 - **Cost attribution per §32.4.4 + Part 6 Prompt 27:** Help AI calls attribute to the tenant whose user is interacting via the instrumented `instrumentedClaudeCall` wrapper. The `purpose` enum gets two new values (extend the Part 6 Prompt 27 CHECK constraint): `help_ai_main` and `help_ai_supervisor`.
-1. **`platform-docs` RAG scope — single deviation from §6.9.** This is the careful part.
-- On the RAG service side (`apps/rag/`): extend the `knowledge_chunks.scope` CHECK constraint to include `'platform-docs'`. Document the deviation in MEMORY with the §32.3.4 rationale.
-- Add a new admin-only RAG endpoint: `POST /api/admin/ingest/platform-docs` (RAG service side) — accepts a batch of chunks with `scope='platform-docs'`, ingested under the same authority/recency framework but without tenant_id (NULL). Auth: requires the inter-service JWT (Part 3 Prompt 09) PLUS a header `X-Platform-Docs-Source: release-pipeline` (the release pipeline is the only caller; document in MEMORY that this header is operational discipline, not a security control — the JWT is the security control).
-- Read path: when the Help AI calls the retrieval endpoint, it passes `scope_filter='platform-docs'`. The retrieval code returns ONLY `platform-docs` chunks; never returns global or tenant chunks for Help AI queries. Verify this with an integration test: a Help AI query with a deliberately-leading prompt (e.g., asking about a specific tenant’s commission rate) returns no tenant-scoped chunks.
-- Tenant admins cannot submit to `platform-docs`. The existing RAG submission UI from Part 5 Prompt 22 must NOT show the scope as an option. Update the submission flow to omit `platform-docs` from any scope selector.
+1. **Help-docs RAG indexing — `retrieval_audience` tag.** Help documentation is indexed without changing §6.9’s two-level scope model. This is the careful part.
+- On the RAG service side (`apps/rag/`): help-doc chunks are ingested at `scope='global'` with the `retrieval_audience` column (per §6.4 / §6.9) set to `'help_ai'`. No new `scope` value is introduced.
+- Add a new admin-only RAG endpoint: `POST /api/admin/ingest/platform-docs` (RAG service side) — accepts a batch of help-doc chunks, ingests them at `scope='global'`, `retrieval_audience='help_ai'`, `tenant_id=NULL`, under the same authority/recency framework. Auth: requires the inter-service JWT (Part 3 Prompt 09) PLUS a header `X-Platform-Docs-Source: release-pipeline` (the release pipeline is the only caller; document in MEMORY that this header is operational discipline, not a security control — the JWT is the security control).
+- Read path: the Help AI retrieves with `caller_audience='help_ai'`, so retrieval returns `all`- and `help_ai`-audience content. Customer-facing personas retrieve with `caller_audience='all'` and never see help docs. Verify with integration tests: a customer-facing retrieval call never returns `help_ai`-audience chunks, and a Help AI query with a deliberately-leading prompt (e.g., asking about a specific tenant’s commission rate) returns no tenant-scoped chunks.
+- Tenant admins cannot submit help docs. The existing RAG submission UI from Part 5 Prompt 22 must NOT expose `retrieval_audience` — tenant submissions always default to `'all'`.
 - Build a CLI tool `apps/main/scripts/sync-help-docs-to-rag.ts`:
   - Reads all files under `apps/main/content/help/`.
   - For each file: splits into ~500-token chunks following the same chunking approach from Part 3 Prompt 09.
@@ -174,7 +173,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
      - **Haiku redaction pass for tolerable PII:** names, emails, phone numbers — replace with `[REDACTED-NAME]`, `[REDACTED-EMAIL]`, `[REDACTED-PHONE]`. The redacted text is what gets posted to GitHub AND what gets persisted in `bug_submissions` (per §32.13.1 “redacted form is stored; raw form is discarded”).
    1. **Strip EXIF from screenshot attachments** (per §32.13.2). If a Haiku vision-PII pass is wired (warn-only at launch per §32.15 Phase 3): on detection, attach the screenshot WITH a warning comment in the issue body; do NOT block.
    1. **Build the issue body** per §32.7.4 with all required fields. Hash the `tenant_id` for the visible portion (`tenant_id_hash = sha256(tenant_id + PLATFORM_PEPPER).slice(0,12)`, reusing the Part 6 Prompt 25 PLATFORM_PEPPER). The plaintext `tenant_id` stays only in `bug_submissions`.
-   1. **Labels:** `bug`, plus `tenant-admin-reported` or `customer-reported` based on `source_type`. If confidence_score >= `BUG_AUTOFIX_CONFIDENCE_THRESHOLD`: also `auto-fix-candidate`. Otherwise: `pending-human-review`.
+   1. **Labels:** `bug`, plus `tenant-admin-reported` or `customer-reported` based on `source_type`. Triage labels (`confirmed` / `unconfirmed` / `needs-human-fix`) are applied later during interactive triage (§32.9), not at issue creation.
    1. Call GitHub Issues API with the installation token. On success: write `github_issue_number`, `github_issue_url`, `github_issue_state='open'`. On failure: throw `GitHubAPIError` — caller handles per §32.7.5 resilience.
 - `createFeatureIssue(feature_request)` — same shape, lighter body, label `feature-request` plus `tenant-admin-reported` or `customer-reported`.
 - `closeIssue(issue_number, reason)` — for the resolution-notification flow (Task 14).
@@ -222,12 +221,13 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
   - **Feature requests:** same shape. Each row has the decision action (Accept / Reject / Defer / Duplicate) with notes. Decision writes back via `PATCH /api/admin/help/features/:id` and updates the GitHub issue label.
   - **Help sessions:** list of `help_sessions` across tenants. Useful for forensic review when a bug submission needs context.
 - All views wrapped in `withPlatformAdminAudit`.
+- **Interactive bug-triage artifacts (§32.9).** Ship the operator triage workflow as a Claude Code slash command at `.claude/commands/fix-bugs.md` — the `/fix-bugs` command an operator runs to reproduce, fix, and triage open bugs, with injection and scope safeguards encoded in the command per §32.9.5. Ensure the GitHub labels `confirmed`, `unconfirmed`, and `needs-human-fix` exist in the platform repo, created alongside `bug` / `feature-request` / the source labels per §32.7.3.
 1. **Audit logging — §32.13.3.** Every audited event per §32.13.3:
 - Help session opened, closed, escalated → `audit_log` rows.
 - Bug or feature submitted → the submission rows themselves serve as the audit (no duplicate `audit_log` rows).
 - GitHub issue creation success and failure → `audit_log` rows with `action = 'github.issue_created'` / `'github.issue_creation_failed'`.
 - PII zero-tolerance quarantine → `audit_log` row with `action = 'help.pii_zero_tolerance_quarantine'`.
-- Platform admin override (`needs-human-fix` label applied) — Phase 2; document the future hook.
+- Interactive bug triage (§32.9) runs in Claude Code and GitHub; its audit trail is the GitHub issue, branch, and PR history, not the platform audit log.
 - Feature request decision → `audit_log` row.
 - All retain per the Part 6 §26.5 7-year audit-log retention.
 1. **Tenant isolation tests — §32.13.4.** Add test cases to the cross-tenant route probe from Part 7 Prompt 30:
@@ -239,10 +239,10 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 - **Customer access:** an authenticated customer SELECTs their own `bug_submissions` but not another customer’s in the same tenant.
 - **Help AI persona registration:** the persona renders with the correct system prompt; tenant addendum is NOT applied; display name override is NOT applied even if tenant_branding has one.
 - **Help AI under supervisor:** kill switch engaged → Help AI returns fallback message; supervisor hallucination check fires on an ungrounded claim → regeneration triggered.
-- **`platform-docs` scope isolation:**
-  - A Help AI retrieval call with `scope_filter='platform-docs'` returns only platform-docs chunks; never tenant or global chunks.
-  - A customer-facing persona retrieval call NEVER returns platform-docs chunks (the retrieval code excludes them unless `scope_filter` explicitly requests).
-  - The RAG submission UI does NOT show `platform-docs` as a scope option for tenants.
+- **Help-docs retrieval-audience isolation:**
+  - A Help AI retrieval call (`caller_audience='help_ai'`) returns `help_ai`- and `all`-audience chunks; a deliberately-leading prompt returns no tenant-scoped chunks.
+  - A customer-facing persona retrieval call (`caller_audience='all'`) NEVER returns `help_ai`-audience chunks.
+  - The RAG submission UI does NOT expose `retrieval_audience`; tenant submissions default to `'all'`.
 - **Bug flow happy path:** all seven fields gathered → confidence score computed → user-visible summary → submit → GitHub issue created with the structured body → labels applied.
 - **PII redaction zero-tolerance:** a bug body containing `123-45-6789` (SSN pattern) triggers `PIIZeroToleranceQuarantineError`; the GitHub issue is NOT created; `bug_submissions.github_issue_state='failed'`; admin alert fired; user sees the friendly error message.
 - **PII redaction tolerable:** a bug body containing an email is replaced with `[REDACTED-EMAIL]` in both the persisted row AND the GitHub issue body.
@@ -251,7 +251,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 - **PDF export:** triggering an export for tenant A produces a PDF cached at the right key; tenant A immediately retrieving uses the cache; tenant B requesting the same `code_version` gets their own tenant-branded PDF (not tenant A’s).
 - **Tenant ID hashing in GitHub issue:** the issue body contains `tenant_id_hash`; the plaintext `tenant_id` UUID is NOT in the body.
 1. **Add to MEMORY.md at end of run:**
-- The `platform-docs` scope is the single deviation from §6.9’s strict two-level RAG scope model. It is read-only and managed by the release pipeline via `sync-help-docs-to-rag.ts`.
+- Help documentation is indexed at `global` scope with `retrieval_audience='help_ai'` (not a separate scope) — §6.9’s two-level scope model is unchanged. It is read-only and managed by the release pipeline via `sync-help-docs-to-rag.ts`.
 - The Help AI persona has `kind='platform_help'` and bypasses tenant addendums + display-name overrides at the prompt-builder level.
 - GitHub App authentication: tokens are in-memory only, refreshed 10 minutes before expiry. The `no-direct-octokit-import` lint rule restricts SDK imports to `apps/main/src/lib/github/`.
 - The `tenant_id_hash` formula uses `sha256(tenant_id + PLATFORM_PEPPER).slice(0,12)` per Part 6 Prompt 25 PLATFORM_PEPPER. Deterministic; never rotates with the pepper itself per the pepper rotation rule.
@@ -267,7 +267,7 @@ SWITCH-BACK-AT-END: claude-sonnet-4-6
 - Three buttons open the Help AI slide-over panel with the right flow type.
 - Each flow’s state machine drives the conversation through gathering and submission.
 - Help AI calls run through the supervisor with the same hallucination check, kill switch, and audit pattern as customer chat.
-- The `platform-docs` RAG scope returns only platform docs; no cross-scope leakage.
+- Help docs are retrieved only by the Help AI (`help_ai` audience); customer-facing retrieval never returns them.
 - Bug submissions go through the §22.4 PII redaction pipeline; zero-tolerance triggers quarantine; tolerable PII is redacted before GitHub.
 - GitHub issues are created with structured body, labels, and hashed tenant_id. Plaintext tenant_id is never in the issue body.
 - Resilience: GitHub failures retry up to 24 hours; eventual failures alert admin.
