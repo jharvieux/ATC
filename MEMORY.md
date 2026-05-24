@@ -4,6 +4,58 @@ Newest entries on top.
 
 ---
 
+## D-072 — 2026-05-24 — BP36: CruiseMapper DIY scraper — fetcher + robots + rate limiter + parsers + reference ingest — key decisions
+
+**Decision:**
+
+1. **Reused `/api/ingest/reference` (new) instead of stretching `/api/ingest`** — trusted batch reference data needs to skip the human-review queue. The endpoint accepts `source_identifier` + `text` + category + authority and writes directly into `knowledge_chunks`. Idempotency: `(source_url, scope='global')` lookup; if content_hash matches → `{status:'unchanged'}` (zero-cost no-op). This endpoint is also the target for BP37 deck plans and any future scraper.
+
+2. **No `robots-parser` npm dependency** despite the spec recommending it. CLAUDE.md says runtime deps need explicit operator approval; the robots.txt grammar is small enough to handle inline (`robots-check.ts`, ~120 lines, includes Allow/Disallow/User-agent groups with `*` wildcards + `$` anchors + longest-match-wins semantics matching Google's modern interpretation). The parser has its own unit tests against a representative robots.txt.
+
+3. **Three-flag kill switch** for the cron path (continues D-070 pattern):
+   - `CRUISEMAPPER_DIY_INGEST_ENABLED=true` (default false — cost-deferral + ToS-defer).
+   - `CRUISEMAPPER_DIY_USER_AGENT` set to an identifying string with a real ops contact email. **The scraper REFUSES to send a request without this set** — no anonymous scraping under any circumstance, even if INGEST_ENABLED=true. This is a deliberate hard floor on politeness.
+   - robots.txt must be fetchable AND must allow our UA on the URL. On robots.txt fetch failure → conservatively disallows AND fires a high-severity operator alert (the platform never scrapes a site it can't authoritatively check).
+
+4. **Token-bucket rate limiter is process-wide singleton.** Captures the case where the Inngest job parallelizes per-URL fetches via `Promise.all` — concurrent callers don't bypass the RPS cap. Default 1 RPS. Test proves 5 concurrent acquires at 2 RPS take ~1.5s elapsed (the math: 2-token initial burst, then 1 token every 500ms).
+
+5. **Exponential backoff with jitter (1s/2s/4s + ±25%)** on 5xx + 429 + network errors; 3 retries then give up. 4xx (non-429) is terminal — don't retry a 404/403/410, log and move on. Backoff is *inside* the rate-limited section, so a retry doesn't bypass the bucket.
+
+6. **Parser failure rate > 5% halts the run** (after a 20-page warm-up). When CruiseMapper changes their page layout, our selectors will silently produce null on every page; the halt + operator alert catches this before we spend a quarter ingesting noise. Per-kind (ships vs ports halt independently). Verified by integration logic, not by unit test — the parsers have a "must extract ≥half of expected spec fields" sanity gate that surfaces layout drift.
+
+7. **Inline prompt-injection screen** (`prompt-injection-screen.ts`) — defense-in-depth even though chunk text is consumed strictly as data downstream. Conservative on false positives (we'd rather quarantine a few legit pages than ingest a poisoned one). Counted separately in Inngest run metrics so operator can review patterns.
+
+8. **`cruisemapper_url_inventory` table** persists discovered URLs + their last successful `content_hash`. Subsequent runs feed `previousBodyHash` into the fetcher; when the page is byte-identical, the fetcher short-circuits before any parse or RAG call. Three statuses tracked beyond ok/unchanged: `robots_disallowed`, `client_error`, `server_error`, `parse_failed`, `quarantined`. Operator can query inventory to see which URLs need investigation. Platform-scoped, RLS disabled, listed in rls-exceptions.
+
+9. **`scope='global'` + `authority=0.88`** (`official` tier per §6.3) for ship/port reference. Spec'd this way because CruiseMapper static reference is contractually-grade ship-spec data — the kind of thing trade publications cite. Tenant-uploaded notes can still outweigh it in retrieval (their `authority_manual_override` floor wins).
+
+10. **Categories `ship_intel` and `port_intel`** — like BP35's `itinerary`, the RAG `category` column is free-text TEXT NOT NULL with no enum, so no schema change is needed. New category values just land in the column. BP38 retrieval-side filters will need to surface these so the consumer can request them.
+
+11. **Cron `0 2 1 1,4,7,10 *`** — 02:00 UTC on the 1st of January/April/July/October. Quarterly per spec. Low-traffic window; doesn't overlap with BP35's monthly itinerary cron (03:00 UTC).
+
+**What was rejected:**
+
+- **Installing `robots-parser`** — CLAUDE.md gate requires operator approval for runtime deps; the inline parser is small + tested.
+- **Per-URL retry counters that persist between runs** — adds operational complexity without obvious value; URLs that hard-fail get re-attempted next quarter.
+- **Allowing scraping without an identifying User-Agent if "everything else is set"** — hard floor on politeness. Refuse silently.
+- **Using the existing `/api/ingest` with a new `auto_approve=true` flag** — would broaden the surface of a queue endpoint with a path that fundamentally doesn't queue. Dedicated `/api/ingest/reference` keeps the contract explicit.
+- **Treating an empty `robots.txt` fetch as "allow all"** — could be a transient network blip and we don't want to start hammering. Conservatively disallow + alert.
+
+**Operator follow-ups (D-072):**
+
+- Provision `CRUISEMAPPER_DIY_USER_AGENT` env var with the platform identification + ops contact email before flipping `CRUISEMAPPER_DIY_INGEST_ENABLED=true`.
+- Verify the platform's robots.txt allow-list (Disallow on `/admin/`, `/private/` is typical; should NOT block `/ships/*` or `/ports/*`). Spec'd to halt if blocked.
+- After first quarterly run, record (a) the actual robots.txt content at the date, (b) discovered URL counts by kind, (c) compute + bandwidth cost. Update this memory with measured values.
+
+**Artifacts:**
+- Migration: `apps/main/supabase/migrations/20260612000000_cruisemapper_url_inventory.sql`.
+- DIY scraper: `apps/main/src/lib/external/cruisemapper/{rate-limiter,robots-check,diy-fetcher,discovery,prompt-injection-screen,rag-reference-ingest}.ts` + `parsers/{ship-parser,port-parser}.ts`.
+- RAG endpoint: `apps/rag/src/app/api/ingest/reference/route.ts` + `apps/rag/src/lib/schemas/reference-ingest.ts`.
+- Inngest: `apps/main/src/inngest/refresh-cruisemapper-static.ts` + registry hookup.
+- Tests: 22 new in apps/main (rate-limiter ×3, robots-check ×6, ship-parser ×5, port-parser ×3, prompt-injection ×5 — 753 total). Migration lint: 52 main migrations, 87 tables.
+
+---
+
 ## D-071 — 2026-05-24 — BP35: CruiseMapper itinerary ingest — monthly Inngest + dedicated RAG endpoint + full embedding — key decisions
 
 **Decision:**
