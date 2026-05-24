@@ -263,6 +263,13 @@ const envSchema = z.object({
   APIFY_MONTHLY_BUDGET_USD_CEILING:    z.coerce.number().positive().optional().default(500),
   PRICE_FRESHNESS_FRESH_HOURS:         z.coerce.number().int().positive().optional().default(72),
   PRICE_FRESHNESS_EXPIRED_HOURS:       z.coerce.number().int().positive().optional().default(744), // 31 days
+  // BP35 §33.4 — CruiseMapper itinerary monthly Inngest ingest. Default-OFF
+  // cost-deferral (real OpenAI embedding cost when on). Requires the BP34
+  // Apify guard fence (APIFY_ADAPTER_ENABLED + APIFY_API_TOKEN) before any
+  // actor dispatch — this flag is the *additional* opt-in for the
+  // CruiseMapper itinerary path specifically.
+  CRUISEMAPPER_ITINERARY_INGEST_ENABLED: z.coerce.boolean().optional().default(false),
+  CRUISEMAPPER_ITINERARY_ACTOR_ID:       z.string().optional().default("crawlerbros/cruisemapper-cruises-scraper"),
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
   ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),

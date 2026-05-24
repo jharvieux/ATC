@@ -84,6 +84,9 @@ export const PLATFORM_ADMIN_REASONS = [
   // Self-Service Help triage (§32.6.5).
   "help_admin_view",
   "help_feature_decision",
+
+  // BP35 §33.4 — CruiseMapper itinerary refresh (cross-tenant reference data).
+  "external_pricing_refresh",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

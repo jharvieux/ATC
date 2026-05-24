@@ -82,6 +82,8 @@ import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
 import { helpDocsDocxGenerate } from "@/inngest/help-docs-docx-generate";
 import { helpDocVersionsPurge } from "@/inngest/help-doc-versions-purge";
 import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset";
+// BP35 §33.4 — CruiseMapper itinerary monthly refresh
+import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-itineraries";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -171,5 +173,7 @@ export const { GET, POST, PUT } = serve({
     helpDocVersionsPurge,
     // BP32: help_submission_rate daily reset (§32.11.2 per-day semantics)
     helpSubmissionDailyReset,
+    // BP35: CruiseMapper itinerary monthly refresh (§33.4)
+    refreshCruisemapperItineraries,
   ],
 });

@@ -4,6 +4,56 @@ Newest entries on top.
 
 ---
 
+## D-071 — 2026-05-24 — BP35: CruiseMapper itinerary ingest — monthly Inngest + dedicated RAG endpoint + full embedding — key decisions
+
+**Decision:**
+
+1. **Per-user direction, the full RAG ingest is wired** — real OpenAI embeddings on every new/changed itinerary chunk. This is a deliberate cost departure from the cost-deferral standing rule because itinerary text is the foundation of every cruise-related retrieval; stubbing it would leave the consumer surface untestable. The cost is gated by a **double kill switch** (see #2), so no spend happens until operator opts in twice.
+
+2. **Double kill switch** for the cron path:
+   - `APIFY_ADAPTER_ENABLED=true` (BP34 fence — required for any Apify dispatch).
+   - `APIFY_API_TOKEN` set (BP34 fence).
+   - **`CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true`** — additional opt-in specifically for this surface. Distinct from the general Apify flag so operator can run per-line scrapers (BP34) without committing to monthly CruiseMapper spend.
+   - Shared monthly budget cap (`APIFY_MONTHLY_BUDGET_USD_CEILING`) sums across both surfaces via `apify_spend_ledger`. Itinerary refresh respects the cap and fires the operator alert if exhausted.
+
+3. **`public.itineraries` lives in the RAG service** (apps/rag migration `0012_itineraries.sql`), not the main app. The Inngest function in apps/main never writes to it directly — it POSTs to a new RAG endpoint that owns the write. This keeps the cross-service data flow one-way (main → RAG) and stops main from needing two Supabase clients. Spec said `rag.itineraries`; per D-069 we live in `public.` schema.
+
+4. **New endpoint `/api/ingest/itinerary`** bypasses the human-review queue. Itineraries are batch reference data from a known source — running 50K records/month through pending_review would drown the queue and provide zero value (no human is going to review a Royal Caribbean itinerary). Endpoint enforces `service_identifier === 'platform-admin'` and `scope === 'write'`. Re-uses the same zero-tolerance PII gate as the generic `/api/ingest` route (defense-in-depth even though itinerary text shouldn't contain PII).
+
+5. **Two-tier idempotency** on the endpoint, both required:
+   - **Composite UNIQUE** `(cruise_line, ship, departure_date, departure_port)` on `itineraries`.
+   - **Content-hash short-circuit**: if existing row's `content_hash` matches incoming SHA-256 of `text`, return `{status:'unchanged'}` *without re-embedding* — saves the OpenAI cost on no-op re-ingests. Verified by unit test (`ingest-itinerary.test.ts`).
+
+6. **Determinism in the mapper** is load-bearing for content-hash idempotency. `renderText()` produces byte-identical output given the same input. Ports-of-call order, region tag, price presence — any change shifts the hash. Verified by unit test ("text is deterministic for the same input").
+
+7. **Authority `0.45`** (mid-`low` tier per §6.3) per the BP35 spec. CruiseMapper itinerary data is reference-grade but not contractually authoritative (cruise lines occasionally change itineraries; the actor scrapes their public listings). Low authority means tenant-uploaded brochures or host-uploaded notes can still outweigh it in retrieval.
+
+8. **Category `'itinerary'`** — not previously used in the RAG schema's category enum (well, the schema is free-text TEXT NOT NULL, no enum). So no schema change needed; the new category just lands in the column. Document in MEMORY because retrieval-side filters in BP38 will need to know about it.
+
+9. **Cron `0 3 1 * *`** — 03:00 UTC on the 1st of every month per spec. Low-traffic window aligned with other monthly crons (`billingPeriodRollover` runs around the same time but operates on different tables; no contention).
+
+10. **Audit reason `external_pricing_refresh`** added to the `PlatformAdminReason` enum. The cron runs cross-tenant (writes to platform-scoped `pricing_cache` and to RAG-side global chunks), so it needs the `withPlatformAdminAudit` wrapper and a reason value.
+
+11. **Cache-write failures don't block RAG ingest** — chunk text is still valuable for retrieval even when the price didn't land in `pricing_cache`. Both writes are best-effort per item; the Inngest function returns counts so operator can see partial-success states.
+
+**What was rejected:**
+
+- **Reusing `/api/ingest` with `scope='global'`**: would queue 50K items in `pending_review`. Dedicated endpoint is cleaner.
+- **Storing itineraries in the main app's `pricing_cache` only**: loses the RAG retrieval path that's the whole point of BP35.
+- **Auto-promoting the human-reviewed queue path**: would couple itinerary ingest velocity to platform-admin review throughput.
+- **Treating CruiseMapper as `official` authority (0.88)**: would override tenant content. CruiseMapper is reference data, not contractually authoritative.
+- **Storing the rendered text on the `itineraries` row**: redundant — `knowledge_chunks.content` already holds it. The `content_hash` on the itineraries row is the cheap dedup key.
+
+**Operator follow-ups (D-071):**
+
+- Confirm Apify actor slug `crawlerbros/cruisemapper-cruises-scraper` exists and matches expected output shape before flipping `CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true`.
+- After first real run, record (a) actor output volume (count + cost), (b) typical itinerary text length (token estimate). Update this memory with measured values.
+- Verify the RAG retrieval surface returns itinerary chunks with category filter (BP38 dependency).
+
+**Artifacts:** `apps/rag/supabase/migrations/0012_itineraries.sql`; `apps/rag/src/app/api/ingest/itinerary/route.ts`; `apps/rag/src/lib/schemas/itinerary-ingest.ts`; `apps/main/src/lib/external/cruisemapper/{cruisemapper-actor,itinerary-mapper,rag-itinerary-ingest}.ts`; `apps/main/src/inngest/refresh-cruisemapper-itineraries.ts`; plus the inngest registry hookup + env additions. Tests: 13 new unit tests in apps/main (731 total) + 7 new in apps/rag (34 total). Migration lint: 51 main migrations.
+
+---
+
 ## D-070 — 2026-05-24 — BP34: PricingDataSource interface + ApifyPricingAdapter + apify_spend_ledger — key decisions
 
 **Decision:**
