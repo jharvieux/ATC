@@ -12,16 +12,16 @@
 //   4. Load / create conversation; persist user message.
 //   5. Entity extraction → RAG retrieve.
 //   6. Build system prompt (with §24.9 persona augmentation if Soft1/Soft2).
-//   7. Anthropic non-streaming call → full candidate response.
+//   7. Anthropic call: streaming if CHAT_STREAMING_ENABLED=true (BP24,
+//      sentence-boundary buffer + per-sentence supervisor — see
+//      lib/ai/stream-wrapper.ts and lib/supervisor/per-sentence-check.ts);
+//      otherwise non-streaming → full candidate response.
 //   8. runSupervisor() — may regenerate (loops up to budget) or escalate.
+//      Whole-response checks (grounding, persona drift, asset_id_validation)
+//      always run on the assembled text — sentence-level can't see them.
 //   9. Persist assistant message with supervisor_findings + rag_chunks_used.
-//  10. SSE-stream the approved text word-by-word back to the client.
-//
-// True Anthropic token-by-token streaming is deferred — the supervisor must
-// see the full response BEFORE the customer does (else hate-speech or
-// hallucination text leaks). Word-replay satisfies §24.3 streaming UX.
-// TODO(bp24-true-stream): explore buffered streaming once supervisor latency
-// is acceptable.
+//  10. Streaming mode: deltas already flushed; emit `done`. Non-streaming
+//      mode: SSE-stream the approved text word-by-word back to the client.
 
 import { randomUUID } from "node:crypto";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
