@@ -17,4 +17,17 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
+  // Auto-start the apps/main dev server. Local devs may also start it
+  // manually in another terminal — reuseExistingServer respects that.
+  // Skipped when an external BASE_URL is set (CI against a preview deploy).
+  webServer: process.env.BASE_URL
+    ? undefined
+    : {
+        command: "pnpm --filter @atc/main dev",
+        url: "http://localhost:3000/api/health",
+        timeout: 180_000,
+        reuseExistingServer: !process.env.CI,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
 });
