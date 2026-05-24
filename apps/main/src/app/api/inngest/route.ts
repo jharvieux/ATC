@@ -77,6 +77,7 @@ import { billingPeriodRollover } from "@/inngest/billing-period-rollover";
 import { thresholdRecomputeOnSubscriptionChange } from "@/inngest/threshold-recompute-on-subscription-change";
 import { abuseStateTransitionNotify } from "@/inngest/abuse-state-transition-notify";
 import { abuseOverrideExpirySweep } from "@/inngest/abuse-override-expiry-sweep";
+import { githubIssueRetry } from "@/inngest/github-issue-retry";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -158,5 +159,7 @@ export const { GET, POST, PUT } = serve({
     thresholdRecomputeOnSubscriptionChange,
     abuseStateTransitionNotify,
     abuseOverrideExpirySweep,
+    // BP31: Self-Service Help — GitHub issue creation resilience (§32.7.5)
+    githubIssueRetry,
   ],
 });

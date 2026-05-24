@@ -15,6 +15,8 @@ const noMoneyMath = require("../config/eslint-rules/no-money-math");
 const noDirectServiceRoleEnvImport = require("../config/eslint-rules/no-direct-service-role-env-import");
 const noAdHocTenantIdString = require("../config/eslint-rules/no-ad-hoc-tenant-id-string");
 const noDirectAnthropicOrOpenaiImport = require("../config/eslint-rules/no-direct-anthropic-or-openai-import");
+// BP31 (§32.7.1) — GitHub Octokit discipline.
+const noDirectOctokitImport = require("../config/eslint-rules/no-direct-octokit-import");
 
 module.exports = {
   rules: {
@@ -26,5 +28,7 @@ module.exports = {
     "no-direct-service-role-env-import": noDirectServiceRoleEnvImport,
     "no-ad-hoc-tenant-id-string": noAdHocTenantIdString,
     "no-direct-anthropic-or-openai-import": noDirectAnthropicOrOpenaiImport,
+    // BP31
+    "no-direct-octokit-import": noDirectOctokitImport,
   },
 };

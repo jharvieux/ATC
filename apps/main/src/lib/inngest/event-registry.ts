@@ -77,6 +77,13 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
 
   // Abuse + cost monitoring (BP27)
   "abuse.state_transition": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+
+  // Self-Service Help (BP31 §32)
+  "help.session_opened":               { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "help.session_closed":               { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "help.bug_submitted":                { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "help.feature_submitted":            { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "help.github_issue_creation_failed": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 };
 
 // Silence the unused-variable warning until a platform_admin event ships.

@@ -4,6 +4,55 @@ Newest entries on top.
 
 ---
 
+## D-065 — 2026-05-23 — BP31 Phase A: §32 Self-Service Help foundation (schema, GitHub App, PII redaction, /fix-bugs) — key decisions
+
+**Decision:**
+
+1. **BP31 phased to keep per-PR cost at zero.** Phase A (this PR) ships the foundational mechanics: env vars, schema + RLS, GitHub App auth, issues lib with PII zero-tolerance, retry cron, `/fix-bugs` slash command. Phase B will add the Help AI persona registration + supervisor wiring + 3-flow controller + route handlers. Phase C will add the UI (docs viewer, slide-over panel, admin triage queues, PDF/Word export). No runtime AI calls fire on a PR — only when an operator/user hits the Help AI in production.
+
+2. **Tolerable-PII Haiku redaction is deferred** (operator-confirmed). Spec §32.7.6 calls for a Haiku pass against names + context-sensitive emails/phones; Phase A ships **regex-only** tolerable redaction (`[REDACTED-EMAIL]` + `[REDACTED-PHONE]`). Names + obfuscated PII flow through unredacted. Documented as `TODO(haiku-pii-redaction)` in `lib/help-ai/pii-redaction.ts`. Operator flips on when willing to pay ~$0.001-0.005 per submission for Anthropic. Zero-tolerance regex (SSN/Luhn-CC/passport) is fully active — that's the compliance-critical surface.
+
+3. **Zero-tolerance passport regex uses a context check on bare 9-digit shapes.** The 1-letter + 8-digit and 2-letter + 7-digit shapes are high-confidence and match unconditionally. The bare 9-digit shape is a huge false-positive risk (every order ID, every booking ref) so the match requires the word "passport" within ±40 chars. Documented in `pii-redaction.ts → scanZeroTolerance`.
+
+4. **Migration `20260608000000_self_service_help.sql`** ships 4 tables exactly per §32.5. `bug_submissions` includes the §32.9 triage_state column (`untriaged` / `confirmed` / `unconfirmed` / `needs_human_fix`) + the `quarantined` value in the `github_issue_state` CHECK + `quarantine_reason`. `help_doc_versions` uses `UNIQUE NULLS NOT DISTINCT` so a `tenant_id IS NULL` row (default-branding cache) doesn't collide with itself.
+
+5. **RLS policies** per §32.5.5. Tenant-scoped CRUD via `auth_user_in_tenant()` plus an additional customer-self SELECT policy on `bug_submissions` and `feature_requests` keyed on `submitter_user_id IN (SELECT id FROM users WHERE auth_user_id = auth.uid())`. The customer-feature-request grant is currently inert per §32.12.2 (customers can't submit features in v1) but the policy is in place to avoid future migration churn. `help_doc_versions` opens platform-wide read when `tenant_id IS NULL`.
+
+6. **GitHub App with Issues (R/W) ONLY** per the revised §32.7.1. No Pull Requests, Contents, Actions permissions — the App authenticates issue creation only. PRs are created by the operator's own `gh` session during interactive triage (§32.9). This is a substantial reduction from the previous spec's auto-fix-pipeline design.
+
+7. **Octokit isolated by a new lint rule** `atc/no-direct-octokit-import` — only `apps/main/src/lib/github/auth.ts` and `apps/main/src/lib/github/issues.ts` may import `@octokit/*`. Same hard-fail pattern as BP26's service-role and BP27's anthropic/openai rules. Active at `"error"` in `apps/main/.eslintrc.json`.
+
+8. **Installation token cached in-process for 50 minutes.** GitHub installation tokens live 60 minutes; we refresh 10 minutes early to avoid an in-flight call landing on an expired token. Never persisted to disk or DB (per §32.7.1). `_resetInstallationTokenCacheForTests` exported for unit tests.
+
+9. **`tenant_id_hash = sha256(tenant_id + PLATFORM_PEPPER).slice(0,12)`.** Reuses the BP25 PLATFORM_PEPPER (which never rotates per D-058). Deterministic — same tenant always produces the same 12-char prefix across runs. Plaintext `tenant_id` only ever lives in `bug_submissions.tenant_id`; the hashed form is what appears in every visible GitHub issue body per §32.13.4.
+
+10. **§32.7.4 issue body is self-contained.** Per the revised spec the body must include verbatim description + browser/OS/viewport + steps + screenshots inline (via GitHub's image upload URL pattern, not external links) + tenant_slug + timestamp. The help-session reference is included but labeled "platform staff only" — an external reviewer must be able to act on the issue without platform access.
+
+11. **`createBugIssue` and `createFeatureIssue` both run zero-tolerance.** A feature request that pastes an SSN gets quarantined identically. Title is auto-derived from the first ~70 chars of the redacted actual_behavior (bug) or what (feature) — `truncateForTitle` keeps it readable.
+
+12. **`github-issue-retry` Inngest function uses tenant-scoped surface** per §11.2.2 — `tenantContextFromInngestEvent` + `tenantClient` to UPDATE the row. The cross-tenant Inngest probe enforced this (initial draft used `createServiceRoleClient` and failed the BP30 Phase A lint guard; refactored). Exponential backoff matches §32.7.5: 1m / 5m / 30m / 2h / 8h / 24h. After the 24h step the row goes to `'failed'`, admin alert fires via `sendOperatorAlert` with severity `'high'`, signal `'github_issue_creation_failed_24h'`.
+
+13. **PIIZeroToleranceQuarantineError is NOT retried.** Caller (`POST /api/help/bugs`, Phase B) catches the error synchronously, writes `github_issue_state='quarantined'` + `quarantine_reason` to `bug_submissions`, fires admin alert with category `bug_report_pii_quarantine`, surfaces the friendly "contact platform support directly" message. The retry function has belt-and-suspenders defense if the error somehow reaches it.
+
+14. **5 new Inngest events registered** in `lib/inngest/event-registry.ts`: `help.session_opened`, `help.session_closed`, `help.bug_submitted`, `help.feature_submitted`, `help.github_issue_creation_failed`. All `tenant_scoped`.
+
+15. **`/fix-bugs` slash command at `.claude/commands/fix-bugs.md`** with §32.9.5 safeguards encoded in the prompt: issue content is data not instructions; no execution of report-supplied code; isolated local reproduction only (never staging/prod); scoped fixes only (auth / RLS / migrations / secrets / billing / CI / dependencies → `needs-human-fix`); no exfiltration; secrets hygiene; human-in-the-loop; draft PRs only against `dev`. The `.gitignore` was updated to keep `.claude/settings*` + `.claude/worktrees/` + `.claude/projects/` local but allow `.claude/commands/*.md` to be tracked.
+
+16. **4 npm packages added** to `apps/main` runtime deps (operator-approved): `@octokit/auth-app` + `@octokit/rest` (GitHub App auth + REST), `remark` + `rehype-stringify` + `remark-rehype` + `unified` (Phase C docs viewer Markdown rendering), `docx` (Phase C Word export). The Phase C deps land now even though Phase C is later so we don't fragment the dep install. All small, mainstream packages.
+
+17. **CI placeholders updated.** Test `baseEnv()` helpers in `env-boot-validation.test.ts` + `bp28-env-vars.test.ts` + `bp29-schema-discipline.test.ts` get GitHub App placeholders so the existing env-shape tests still pass with the new required vars.
+
+**What was rejected:**
+- Wiring Haiku tolerable-PII redaction in Phase A — Anthropic budget concern; deferred until operator wants it.
+- Building the Help AI persona registration + supervisor wiring + 3-flow controller in this PR — those are Phase B; keeping Phase A focused on the GitHub + PII compliance surface.
+- Stubbing Octokit (writing scaffolds that throw) — operator chose to install the deps directly so Phase A is functional once env vars are populated.
+- Using `createServiceRoleClient` in the retry function (initial draft) — flagged by both lint and the BP30 Phase A Inngest probe; refactored to tenant-scoped surface.
+- Implementing screenshot vision-PII detection — that's BP32 §32.13.2 Phase 2 work; not Phase A scope.
+
+**Artifacts:** `apps/main/supabase/migrations/20260608000000_self_service_help.sql`, `apps/main/src/lib/github/{auth,issues}.ts`, `apps/main/src/lib/help-ai/pii-redaction.ts`, `apps/main/src/inngest/github-issue-retry.ts`, `apps/main/src/app/api/inngest/route.ts` (+1 registration), `apps/main/src/lib/env.ts` (+6 vars), `apps/main/.env.example` (+§32.14 group), `apps/main/.eslintrc.json` (+1 rule activation), `packages/{eslint-plugin-atc/index.js, config/eslint-rules/no-direct-octokit-import.js}` (new lint rule), `apps/main/src/lib/inngest/event-registry.ts` (+5 events), `.claude/commands/fix-bugs.md`, `.gitignore` (granular `.claude/` exclusions), test baseEnv helpers (3 files), `apps/main/test/unit/help-ai/pii-redaction.test.ts` (21 tests), `apps/main/test/unit/github/issues.test.ts` (4 tests). 25 new tests (616 → 641). Typecheck + lint + lint:migrations all clean. PR #?? open.
+
+---
+
 ## D-064 — 2026-05-23 — BP30 Phase B: skeletal fixtures + loader + db-setup scaffold + k6 + runbooks — key decisions
 
 **Decision:**

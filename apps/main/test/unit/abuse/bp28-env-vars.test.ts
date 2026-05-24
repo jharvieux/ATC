@@ -38,6 +38,12 @@ function baseEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pro
     // conditional Graph credential refinement.
     MICROSOFT_GRAPH_CLIENT_ID: "ms-test-client-id",
     MICROSOFT_GRAPH_CLIENT_SECRET: "ms-test-client-secret",
+    // BP31 §32.14 — GitHub App config required at boot.
+    GITHUB_APP_ID: "111111",
+    GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nTEST_PLACEHOLDER\n-----END PRIVATE KEY-----",
+    GITHUB_APP_INSTALLATION_ID: "222222",
+    GITHUB_REPO_OWNER: "jharvieux",
+    GITHUB_REPO_NAME: "ATC",
   };
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete env[k];
