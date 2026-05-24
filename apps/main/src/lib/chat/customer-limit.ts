@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 
 export type CustomerLimitDecision =
   | { tier: "below"; resolved: ResolvedCaps; current_count: number }
@@ -283,25 +284,17 @@ export async function generateHardLimitSummary(
 
   const model = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 512,
-        system: `Summarize the customer's chat activity over the past ${windowDays} days. Return JSON only:
+    const { text } = await instrumentedClaudeCall({
+      tenant_id: args.tenant_id,
+      user_id: args.user_id,
+      model,
+      purpose: "other",
+      max_tokens: 512,
+      system: `Summarize the customer's chat activity over the past ${windowDays} days. Return JSON only:
 {"topics_discussed":[...up to 6 short topics...],"booking_intent_signal":"low|medium|high"}.`,
-        messages: [{ role: "user", content: transcript.slice(0, 12000) }],
-      }),
+      messages: [{ role: "user", content: transcript.slice(0, 12000) }],
     });
-    if (!res.ok) return null;
-    const body = await res.json() as { content?: Array<{ text?: string }> };
-    const raw = body.content?.[0]?.text ?? "";
-    const match = raw.match(/\{[\s\S]*\}/);
+    const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as { topics_discussed?: string[]; booking_intent_signal?: string };
 

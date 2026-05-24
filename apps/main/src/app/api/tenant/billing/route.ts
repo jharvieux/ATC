@@ -9,6 +9,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { priceIdFor } from "@/lib/stripe/price-ids";
 import { inngest } from "@/inngest/client";
+import { withVendorHealthGate } from "@/lib/vendor-health/gate";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
 
 function getStripe(): Stripe {
@@ -33,10 +34,12 @@ export async function GET(req: Request): Promise<Response> {
     if (tenant.stripe_customer_id) {
       try {
         const stripe = getStripe();
-        const inv = await stripe.invoices.list({
-          customer: tenant.stripe_customer_id,
-          limit: 24,
-        });
+        const inv = await withVendorHealthGate("stripe", () =>
+          stripe.invoices.list({
+            customer: tenant.stripe_customer_id as string,
+            limit: 24,
+          }),
+        );
         invoices = inv.data.map((i) => ({
           id: i.id,
           amount_due: i.amount_due,
@@ -170,7 +173,9 @@ export async function POST(req: Request): Promise<Response> {
         let effectiveAt: string | null = null;
         if (tenant.stripe_subscription_id) {
           try {
-            const sub = await stripe.subscriptions.retrieve(tenant.stripe_subscription_id);
+            const sub = await withVendorHealthGate("stripe", () =>
+              stripe.subscriptions.retrieve(tenant.stripe_subscription_id as string),
+            );
             effectiveAt = new Date((sub as unknown as { current_period_end: number }).current_period_end * 1000).toISOString();
           } catch { /* non-fatal */ }
         }

@@ -11,6 +11,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { recoverMicrosoftEmail } from "@/lib/auth/microsoft-email-recovery";
 import { tenantContextFromRequest } from "@/lib/db/factories";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -56,9 +57,7 @@ export async function GET(req: Request): Promise<Response> {
   // Upsert public.users row for the resolved tenant context.
   try {
     const ctx = await tenantContextFromRequest(req);
-    const svc = createClient(supabaseUrl, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
+    const svc = createServiceRoleClient();
     await svc.from("users").upsert(
       { auth_user_id: authUser.id, tenant_id: ctx.tenant_id, email: email ?? "", status: "active" },
       { onConflict: "auth_user_id,tenant_id", ignoreDuplicates: false },

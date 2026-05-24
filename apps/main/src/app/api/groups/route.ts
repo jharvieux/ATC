@@ -10,7 +10,7 @@
 // invitation rows inserted. Returns { group_id, invitation_count }.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { selectHeroImage } from "@/lib/groups/hero-image";
 
@@ -52,11 +52,7 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "Maximum 50 invitees per group" }, { status: 400 });
     }
 
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const svc = createServiceRoleClient();
 
     // Select hero image via priority chain.
     const heroUrl = await selectHeroImage({
@@ -124,11 +120,7 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const { ctx } = await assertPermission(req, { resource: "groups", action: "list" });
 
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } },
-    );
+    const svc = createServiceRoleClient();
 
     const { data, error } = await svc
       .from("groups")

@@ -8,6 +8,7 @@
 //   Updates the invitee's RSVP for this invitation.
 
 import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { effectiveVisibility } from "@/lib/groups/visibility";
 
@@ -47,11 +48,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     return Response.json({ error: "invalid_token", message: "This invitation link is invalid. Please contact the trip coordinator for a new one." }, { status: 400 });
   }
 
-  const svc = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const svc = createServiceRoleClient();
 
   // Check 2 — Token exists.
   const { data: inv, error: invErr } = await svc
@@ -174,11 +171,7 @@ export async function PATCH(req: Request, { params }: RouteProps): Promise<Respo
     return Response.json({ error: "Invalid visibility_choice" }, { status: 400 });
   }
 
-  const svc = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
+  const svc = createServiceRoleClient();
 
   const updates: Record<string, string> = {};
   if (rsvp_state) updates.rsvp_state = rsvp_state;

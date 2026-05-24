@@ -17,14 +17,9 @@ const ALLOWED_PATH_SUFFIXES = [
   // wrapper for this endpoint shape). The file is already on the
   // service-role-import allowlist; the env read here mirrors that exception.
   "/inngest/user-data-export-build.ts",
-  // BP19 — group / invitation handlers and the auth callback construct
-  // service-role clients inline. Grandfathered here pending a follow-on
-  // refactor PR to route through createServiceRoleClient. See MEMORY D-059.
-  "/app/api/auth/callback/route.ts",
-  "/app/api/groups/route.ts",
-  "/app/api/groups/[id]/invitations/route.ts",
-  "/app/api/groups/invite/[token]/route.ts",
-  "/app/api/groups/invite/[token]/rsvp/route.ts",
+  // BP19 grandfathered entries removed: the 5 group/invitation + auth-
+  // callback files now route through createServiceRoleClient() and live
+  // on the no-direct-service-role-import allowlist instead.
 ];
 
 function endsWithAllowed(filename) {

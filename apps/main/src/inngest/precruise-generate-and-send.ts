@@ -11,6 +11,7 @@
 import * as React from "react";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
@@ -24,28 +25,25 @@ const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
 type Phase = "t_90" | "t_30" | "t_7" | "t_1";
 
-async function haikuGenerate(systemPrompt: string, userPrompt: string): Promise<string> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return "Content generation unavailable — ANTHROPIC_API_KEY not set.";
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
+async function haikuGenerate(
+  tenant_id: string,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  if (!process.env.ANTHROPIC_API_KEY) return "Content generation unavailable — ANTHROPIC_API_KEY not set.";
+  try {
+    const { text } = await instrumentedClaudeCall({
+      tenant_id,
       model: HAIKU_MODEL,
+      purpose: "precruise_generation",
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
-    }),
-  });
-
-  if (!res.ok) return "Content generation temporarily unavailable.";
-  const body = await res.json() as { content?: Array<{ text?: string }> };
-  return body.content?.[0]?.text ?? "";
+    });
+    return text;
+  } catch {
+    return "Content generation temporarily unavailable.";
+  }
 }
 
 export const precruiseGenerateAndSend = inngest.createFunction(
@@ -191,7 +189,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       contentId = (existingContent as { id: string } | null)?.id;
     } else {
       generatedContent = await generateContent(phase, {
-        customerName, shipName, cruiseLine, sailingDate, ports,
+        tenant_id, customerName, shipName, cruiseLine, sailingDate, ports,
       });
 
       const { data: inserted } = await svc
@@ -269,6 +267,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
 async function generateContent(
   phase: Phase,
   ctx: {
+    tenant_id: string;
     customerName: string;
     shipName: string;
     cruiseLine: string;
@@ -276,6 +275,7 @@ async function generateContent(
     ports: string[];
   },
 ): Promise<Record<string, unknown>> {
+  const tenant_id = ctx.tenant_id;
   const sys = `You are a travel concierge generating pre-cruise email content for ${ctx.customerName}.
 The cruise is on ${ctx.shipName} (${ctx.cruiseLine}), sailing ${ctx.sailingDate}.
 Ports: ${ctx.ports.join(", ") || "TBD"}.
@@ -284,11 +284,11 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
   switch (phase) {
     case "t_90": {
       const [docReminder, teaser, didYouKnow] = await Promise.all([
-        haikuGenerate(sys, "Write a friendly documentation reminder (passport validity, travel insurance, visa check) in 2 sentences."),
-        haikuGenerate(sys, "Write an exciting destination teaser for the ports in 2-3 sentences."),
-        haikuGenerate(sys, "Share one fascinating did-you-know fact about cruising or the ports in 1-2 sentences."),
+        haikuGenerate(tenant_id, sys, "Write a friendly documentation reminder (passport validity, travel insurance, visa check) in 2 sentences."),
+        haikuGenerate(tenant_id, sys, "Write an exciting destination teaser for the ports in 2-3 sentences."),
+        haikuGenerate(tenant_id, sys, "Share one fascinating did-you-know fact about cruising or the ports in 1-2 sentences."),
       ]);
-      const experiences = await haikuGenerate(sys, "List 3 must-do experiences at these ports, one per line, no bullet points.");
+      const experiences = await haikuGenerate(tenant_id, sys, "List 3 must-do experiences at these ports, one per line, no bullet points.");
       return {
         documentation_reminder: docReminder,
         destination_teaser: teaser,
@@ -299,10 +299,10 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
     }
     case "t_30": {
       const [checkin, packInspiration] = await Promise.all([
-        haikuGenerate(sys, "Explain the online check-in window and why to do it early, in 2 sentences."),
-        haikuGenerate(sys, "Give packing inspiration / style tips for this cruise, in 2-3 sentences."),
+        haikuGenerate(tenant_id, sys, "Explain the online check-in window and why to do it early, in 2 sentences."),
+        haikuGenerate(tenant_id, sys, "Give packing inspiration / style tips for this cruise, in 2-3 sentences."),
       ]);
-      const recs = await haikuGenerate(sys, "List 3 personalized recommendations (specialty dining, excursions, spa) one per line, no bullet points.");
+      const recs = await haikuGenerate(tenant_id, sys, "List 3 personalized recommendations (specialty dining, excursions, spa) one per line, no bullet points.");
       return {
         reservation_reminders: ["Specialty dining reservations", "Shore excursions", "Spa appointments"],
         checkin_window: checkin,
@@ -313,12 +313,12 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
     }
     case "t_7": {
       const [packingRaw, embarkation, firstDay] = await Promise.all([
-        haikuGenerate(sys, "Generate a concise packing checklist of 8 essential items, one per line, no bullet points."),
-        haikuGenerate(sys, "Describe what to expect on embarkation day in 2-3 sentences."),
-        haikuGenerate(sys, "Describe the magic of the first day aboard in 2 sentences."),
+        haikuGenerate(tenant_id, sys, "Generate a concise packing checklist of 8 essential items, one per line, no bullet points."),
+        haikuGenerate(tenant_id, sys, "Describe what to expect on embarkation day in 2-3 sentences."),
+        haikuGenerate(tenant_id, sys, "Describe the magic of the first day aboard in 2 sentences."),
       ]);
-      const highlights = await haikuGenerate(sys, "List 3 ship highlights one per line, no bullet points.");
-      const tips = await haikuGenerate(sys, "Give 3 cruise-line-specific tips one per line, no bullet points.");
+      const highlights = await haikuGenerate(tenant_id, sys, "List 3 ship highlights one per line, no bullet points.");
+      const tips = await haikuGenerate(tenant_id, sys, "Give 3 cruise-line-specific tips one per line, no bullet points.");
       return {
         packing_checklist: packingRaw.split("\n").filter(Boolean).slice(0, 8),
         ship_highlights: highlights.split("\n").filter(Boolean).slice(0, 3),
@@ -329,8 +329,8 @@ Return concise, enthusiastic, and practical content. Keep each field to 1-3 sent
     }
     case "t_1": {
       const [firstPort, dayOf] = await Promise.all([
-        haikuGenerate(sys, "Write an exciting preview of the first port of call in 2 sentences."),
-        haikuGenerate(sys, "Describe what to expect on departure day: check-in time, muster drill, sail-away in 2-3 sentences."),
+        haikuGenerate(tenant_id, sys, "Write an exciting preview of the first port of call in 2 sentences."),
+        haikuGenerate(tenant_id, sys, "Describe what to expect on departure day: check-in time, muster drill, sail-away in 2-3 sentences."),
       ]);
       return {
         first_port_preview: firstPort,

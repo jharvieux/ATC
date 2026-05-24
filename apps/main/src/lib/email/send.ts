@@ -19,6 +19,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkRateLimit, type EmailCategory } from "./rate-limit";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
+import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
 
 export interface SendEmailInput {
   db: SupabaseClient;
@@ -138,13 +139,18 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     if (!res.ok) {
       sendStatus = "failed";
       sendFailReason = `resend_${res.status}`;
+      // BP26 §26.9 vendor-health: any non-2xx counts as a failure so the
+      // probe + circuit breaker have signal.
+      recordVendorFailure("resend", `${res.status}`);
     } else {
       const body = await res.json() as { id?: string };
       resendMessageId = body.id;
+      recordVendorSuccess("resend");
     }
   } catch (err) {
     sendStatus = "failed";
     sendFailReason = `resend_throw: ${String(err)}`;
+    recordVendorFailure("resend", err instanceof Error ? err.message : String(err));
   }
 
   // 6 — Write email_log row
