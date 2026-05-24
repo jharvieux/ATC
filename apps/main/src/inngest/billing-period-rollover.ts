@@ -8,6 +8,7 @@
 
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 
 function newPeriodRange(): string {
   const now = new Date();
@@ -34,15 +35,29 @@ export const billingPeriodRollover = inngest.createFunction(
       async (db, recordQuery) => {
         const period = newPeriodRange();
         recordQuery({ op: "select", table: "tenants" });
-        const { data: tenants } = await db
+        const { data: tenantsRaw } = await db
           .from("tenants")
-          .select("id")
+          .select("id, status, subscription_status, non_paying_since")
           .in("status", ["active", "sandbox"])
           .limit(5000);
 
+        // §15.16 — past-grace tenants don't need a fresh period row; the
+        // counter UPSERT pattern creates rows lazily on first event, and
+        // they shouldn't be generating events.
+        let skippedNonPaying = 0;
+        const tenants = excludeNonPayingPastGrace(
+          (tenantsRaw ?? []) as Array<{
+            id: string;
+            status: string;
+            subscription_status: string | null;
+            non_paying_since: string | null;
+          }>,
+          () => { skippedNonPaying++; },
+        );
+
         let createdRows = 0;
         let rolloverEvents = 0;
-        for (const t of ((tenants ?? []) as Array<{ id: string }>)) {
+        for (const t of tenants) {
           // INSERT … ON CONFLICT DO NOTHING via upsert + ignoreDuplicates.
           const { error: upsertErr } = await db
             .from("tenant_usage_metrics")
@@ -83,6 +98,7 @@ export const billingPeriodRollover = inngest.createFunction(
         return {
           new_period: period,
           tenants_seeded: createdRows,
+          tenants_skipped_non_paying: skippedNonPaying,
           rollover_events: rolloverEvents,
         };
       },

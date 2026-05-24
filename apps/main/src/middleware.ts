@@ -10,10 +10,7 @@ import {
   getTenantByCustomDomain,
   type Tenant,
 } from "@/lib/tenancy/resolve-tenant";
-import {
-  derivePaymentState,
-  type SubscriptionStatus,
-} from "@/lib/billing/payment-state";
+import { derivePaymentState } from "@/lib/billing/payment-state";
 
 const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const RESOLVED_TENANT_TYPE_HEADER = "x-resolved-tenant-type";
@@ -43,11 +40,7 @@ function applyPaymentGate(
   req: NextRequest,
   tenant: Tenant,
 ): NextResponse {
-  const state = derivePaymentState({
-    subscription_status: tenant.subscription_status as SubscriptionStatus | null,
-    non_paying_since: tenant.non_paying_since,
-    status: tenant.status,
-  });
+  const state = derivePaymentState(tenant);
   if (state.isPaying) {
     res.headers.set(PAYMENT_BANNER_HEADER, "");
     return res;

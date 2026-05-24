@@ -32,7 +32,10 @@ export const PAYING_STATUSES: ReadonlySet<SubscriptionStatus> = new Set([
 ]);
 
 export interface TenantPaymentFields {
-  subscription_status: SubscriptionStatus | null;
+  // Loose-typed (string | null) so callers selecting the column with
+  // a generic Supabase query don't need to cast — the CHECK constraint
+  // in the migration enforces the values at the database edge.
+  subscription_status: SubscriptionStatus | string | null;
   non_paying_since: string | null;
   // Onboarding tenants haven't paid yet by design; they shouldn't get
   // gated out of the onboarding flow.
@@ -68,7 +71,8 @@ export function derivePaymentState(t: TenantPaymentFields, now: Date = new Date(
     return { isPaying: false, isPastGrace: true, isWithinGrace: false, daysSinceNonPaying: 0 };
   }
 
-  const isPaying = t.subscription_status !== null && PAYING_STATUSES.has(t.subscription_status);
+  const isPaying =
+    t.subscription_status !== null && PAYING_STATUSES.has(t.subscription_status as SubscriptionStatus);
   if (isPaying) {
     return { isPaying: true, isPastGrace: false, isWithinGrace: false, daysSinceNonPaying: 0 };
   }

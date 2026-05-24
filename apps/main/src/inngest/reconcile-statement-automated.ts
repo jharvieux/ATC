@@ -14,6 +14,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapter } from "@/lib/host-adapters/select-adapter";
 import { writeAuditLog } from "@/lib/audit/write";
+import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;   // $5
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;  // $50
@@ -32,6 +33,10 @@ type TenantRow = {
   tenant_type: string;
   stripe_connect_account_id: string | null;
   tier_id: string | null;
+  // §15.16 — fields excludeNonPayingPastGrace reads.
+  status: string;
+  subscription_status: string | null;
+  non_paying_since: string | null;
 };
 
 type CommissionRow = {
@@ -55,13 +60,19 @@ export const reconcileStatementAutomated = inngest.createFunction(
     const periodStart = yesterday.toISOString().split("T")[0]!;
     const periodEnd = periodStart;
 
-    const { data: tenants } = await db
+    const { data: tenantsRaw } = await db
       .from("tenants")
-      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id")
+      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id, status, subscription_status, non_paying_since")
       .in("tenant_type", ["sub_host"])
       .eq("status", "active");
 
-    if (!tenants || tenants.length === 0) {
+    if (!tenantsRaw || tenantsRaw.length === 0) {
+      return { ok: true, processed: 0 };
+    }
+
+    // §15.16 — past-grace tenants don't get new commission rows.
+    const tenants = excludeNonPayingPastGrace(tenantsRaw as TenantRow[]);
+    if (tenants.length === 0) {
       return { ok: true, processed: 0 };
     }
 

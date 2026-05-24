@@ -14,6 +14,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 
 const NUDGE_LEVELS: { days: number; level: "30d" | "60d" | "90d" | "180d" }[] = [
   { days: 30,  level: "30d"  },
@@ -38,9 +39,9 @@ export const complianceNightly = inngest.createFunction(
     console.info("[compliance-nightly] ICA version check: stub (awaiting §17)");
 
     // ── Active tenants ─────────────────────────────────────────────────────
-    const { data: tenants, error: tenantErr } = await db
+    const { data: tenantsRaw, error: tenantErr } = await db
       .from("tenants")
-      .select("id, status, requires_ica_reacceptance")
+      .select("id, status, requires_ica_reacceptance, subscription_status, non_paying_since")
       .eq("status", "active");
 
     if (tenantErr) {
@@ -48,7 +49,20 @@ export const complianceNightly = inngest.createFunction(
       return;
     }
 
-    for (const tenant of tenants ?? []) {
+    // §15.16 — skip past-grace tenants. Inactivity nudges go to PAYING
+    // customers (the spec change captured in PR #121); past-grace is its
+    // own gate handled by the middleware redirect.
+    const tenants = excludeNonPayingPastGrace(
+      (tenantsRaw ?? []) as Array<{
+        id: string;
+        status: string;
+        requires_ica_reacceptance?: boolean;
+        subscription_status: string | null;
+        non_paying_since: string | null;
+      }>,
+    );
+
+    for (const tenant of tenants) {
       await checkInactivity(db, tenant.id, now);
     }
   },
