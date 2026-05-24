@@ -19,6 +19,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import type { TenantContext } from "./tenant-context";
+import { tryTestBypass } from "../auth/test-bypass";
 
 const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 
@@ -47,6 +48,21 @@ export async function tenantContextFromRequest(
       "tenantContextFromRequest: x-resolved-tenant-id is 'platform'. " +
         "Platform admin routes must use withPlatformAdminAudit instead of tenantClient.",
     );
+  }
+
+  // Tier-2 E2E auth bypass — see lib/auth/test-bypass.ts.
+  const bypass = tryTestBypass(req);
+  if (bypass) {
+    if (bypass.tenant_id !== tenantId) {
+      throw new Error(
+        `tenantContextFromRequest [test-bypass]: header tenant_id (${tenantId}) ` +
+          `does not match TEST_AUTH_BYPASS_TENANT_ID (${bypass.tenant_id}).`,
+      );
+    }
+    return {
+      tenant_id: tenantId,
+      source: { kind: "http_request", user_id: bypass.auth_user_id },
+    };
   }
 
   const authHeader = req.headers.get("authorization");
