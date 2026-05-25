@@ -30,6 +30,8 @@ import {
 import { crownJewelAnnualAudit } from "@/inngest/crown-jewel-annual-audit";
 import { personaAddendumScreen } from "@/inngest/persona-addendum-screen";
 import { personaAddendumRescreenNightly } from "@/inngest/persona-addendum-rescreen-nightly";
+// BP34: Inbound import pipeline (§34.3)
+import { importPipeline } from "@/inngest/import-pipeline";
 // BP19: Group bookings (§18)
 import { invitationTokensNaturalExpirySweep } from "@/inngest/invitation-tokens-natural-expiry-sweep";
 import { groupsMarkSailed } from "@/inngest/groups-mark-sailed";
@@ -121,6 +123,8 @@ export const { GET, POST, PUT } = serve({
     crownJewelAnnualAudit,
     personaAddendumScreen,
     personaAddendumRescreenNightly,
+    // BP34: Inbound import pipeline (§34.3)
+    importPipeline,
     // BP19: Group bookings (§18)
     invitationTokensNaturalExpirySweep,
     groupsMarkSailed,
