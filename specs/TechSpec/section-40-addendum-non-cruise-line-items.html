@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 40 - Addendum — Non-Cruise Line Items — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 40</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s40">Section 40 - Addendum — Non-Cruise Line Items</h1>
+<p><strong>Status:</strong> Addendum. Lands after Part 1–9 build prompts and the preceding addenda. Extends the booking record to support tracking of non-cruise ancillary items (flights, hotels, transfers, excursions, insurance) sold alongside or independently of a cruise. References existing sections by number; does not modify them in place.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> The core platform is cruise-centric. Real-world agents sell flights, hotels, and transfers as supplemental items — sometimes through cruise-line packages, sometimes through other suppliers. Tracking these matters for commission accounting, customer service, and the itinerary display. This addendum adds the data model without building a full multi-product booking flow (out of scope).</p>
+
+<h2 id="s40-1">40.1 Overview <a class="anchor-link" href="#s40-1" aria-label="Permalink">¶</a></h2>
+<p>A booking (per <a class="xref" href="section-05-database-schema-main-app.html">§5</a> and <a class="xref" href="section-20-booking-flow.html">§20</a>) is anchored to one cruise. The booking can have ancillary <strong>line items</strong> representing other components of the trip:</p>
+<ul>
+<li>Flights (one or more flight segments to/from embarkation/disembarkation ports)</li>
+<li>Hotels (pre-cruise night, post-cruise night, mid-cruise hotels if applicable)</li>
+<li>Transfers (airport-to-port shuttles, private car services)</li>
+<li>Shore excursions (port-day activities — booked directly with cruise line OR with an independent operator)</li>
+<li>Travel insurance (if separate from the cruise line's policy)</li>
+<li>Other (visa fees, parking, miscellaneous)</li>
+</ul>
+<p>Each line item is tracked with: supplier, cost, commissionability, sale price, commission rate (if applicable), booking reference, and commission lifecycle (matching the cruise's commission model where the line item carries commission).</p>
+<p>This is NOT a full booking flow for non-cruise items. The agent typically books these directly with the supplier and records the result in the platform for tracking. A future addendum could add direct booking integrations for major suppliers (Sabre/Amadeus for flights, Expedia partners for hotels). For now, this section captures the data model and basic UI for manual entry.</p>
+
+<h2 id="s40-2">40.2 Schema <a class="anchor-link" href="#s40-2" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s40-2-1">40.2.1 booking_line_items table <a class="anchor-link" href="#s40-2-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.booking_line_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES public.tenants(id),
+  booking_id UUID NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+
+  -- Type and description
+  item_type TEXT NOT NULL CHECK (item_type IN (
+    'flight','hotel','transfer','excursion','insurance','other'
+  )),
+  description TEXT NOT NULL,           -- "United UA 123 LAX→FLL", "Hyatt Regency Miami 1 night"
+
+  -- Supplier
+  supplier_name TEXT,                  -- "United Airlines", "Hyatt", "Viator"
+  supplier_booking_ref TEXT,           -- airline confirmation, hotel confirmation, etc.
+  is_cruise_line_supplied BOOLEAN NOT NULL DEFAULT FALSE,
+                                       -- TRUE when the cruise line itself sold the item
+                                       -- (e.g., cruise-line flights, cruise-line excursions)
+
+  -- Dates (semantically per-item)
+  start_date DATE,
+  end_date   DATE,
+  -- For flights: start_date=departure, end_date=arrival
+  -- For hotels: start_date=check-in, end_date=check-out
+  -- For excursions: start_date=end_date=activity date
+  -- For insurance: start_date=coverage start, end_date=coverage end
+
+  -- Money (cents — §14.0 rules)
+  customer_cost_cents BIGINT NOT NULL DEFAULT 0,        -- what the customer paid
+  supplier_net_cents  BIGINT,                           -- what the supplier received (when known)
+  commissionable BOOLEAN NOT NULL DEFAULT FALSE,
+  commission_rate NUMERIC(5,4),                          -- rate for this item, e.g., 0.10 for 10%
+  expected_commission_cents BIGINT,                      -- computed: customer_cost * commission_rate
+  received_commission_cents BIGINT NOT NULL DEFAULT 0,   -- updated on §14.8 reconciliation
+  currency TEXT NOT NULL DEFAULT 'USD',
+
+  -- Lifecycle
+  status TEXT NOT NULL DEFAULT 'planned'
+    CHECK (status IN ('planned','booked','confirmed','cancelled','completed')),
+  cancellation_reason TEXT,
+
+  -- Item-specific structured data (JSONB to avoid type-per-table sprawl)
+  -- Shape varies by item_type — see §40.3
+  item_details JSONB,
+
+  -- Audit
+  created_by_user_id UUID REFERENCES public.users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX bli_booking_idx ON public.booking_line_items(booking_id);
+CREATE INDEX bli_tenant_type_idx ON public.booking_line_items(tenant_id, item_type);
+CREATE INDEX bli_supplier_ref_idx
+  ON public.booking_line_items(tenant_id, supplier_booking_ref)
+  WHERE supplier_booking_ref IS NOT NULL;
+
+ALTER TABLE public.booking_line_items ENABLE ROW LEVEL SECURITY;
+-- RLS per §5.1.
+</code></pre>
+
+<h3 id="s40-2-2">40.2.2 Why a single table with type discriminator <a class="anchor-link" href="#s40-2-2" aria-label="Permalink">¶</a></h3>
+<p>Alternative was a table per item type (booking_flights, booking_hotels, etc.). Rejected because:</p>
+<ul>
+<li>Aggregating across types (total ancillary revenue, total commission) requires UNION queries.</li>
+<li>Type set will expand over time (cruise-only line, package, prepaid gratuities); per-table approach forces schema migrations.</li>
+<li>Item-specific fields are bounded and JSONB-friendly. Indexed where queried; otherwise carried.</li>
+</ul>
+
+<h2 id="s40-3">40.3 item_details JSONB Shape by item_type <a class="anchor-link" href="#s40-3" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s40-3-1">40.3.1 Flight <a class="anchor-link" href="#s40-3-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "airline_code": "UA",
+  "flight_number": "UA1234",
+  "depart_airport": "LAX",
+  "arrive_airport": "FLL",
+  "depart_datetime": "2026-03-14T08:00:00-07:00",
+  "arrive_datetime": "2026-03-14T16:30:00-04:00",
+  "cabin_class": "economy",                     // economy | premium_economy | business | first
+  "passenger_count": 2,
+  "seat_assignments": ["12A", "12B"],            // optional
+  "loyalty_program_used": null,                  // or program name
+  "is_round_trip": false,                        // round-trip flights have two line items or one with return_* fields
+  "return_depart_airport": null,
+  "return_arrive_airport": null,
+  "return_depart_datetime": null,
+  "return_arrive_datetime": null
+}
+</code></pre>
+
+<h3 id="s40-3-2">40.3.2 Hotel <a class="anchor-link" href="#s40-3-2" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "hotel_name": "Hyatt Regency Miami",
+  "address": "400 SE 2nd Ave, Miami, FL 33131",
+  "check_in_date": "2026-03-13",
+  "check_out_date": "2026-03-14",
+  "room_type": "King City View",
+  "guest_count": 2,
+  "nights": 1,
+  "loyalty_program_used": "World of Hyatt",
+  "purpose": "pre_cruise"                        // pre_cruise | post_cruise | mid_cruise | other
+}
+</code></pre>
+
+<h3 id="s40-3-3">40.3.3 Transfer <a class="anchor-link" href="#s40-3-3" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "transfer_type": "private_car",                // private_car | shared_shuttle | rideshare | taxi
+  "pickup_location": "MIA Airport - Arrivals",
+  "dropoff_location": "Port of Miami Terminal G",
+  "pickup_datetime": "2026-03-14T11:00:00-04:00",
+  "passenger_count": 2,
+  "luggage_count": 4,
+  "supplier_contact_phone": "+1-305-555-0100"
+}
+</code></pre>
+
+<h3 id="s40-3-4">40.3.4 Excursion <a class="anchor-link" href="#s40-3-4" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "excursion_name": "Tulum Ruins &amp; Cenote Swim",
+  "port_name": "Cozumel",
+  "activity_date": "2026-03-17",
+  "duration_hours": 7,
+  "participant_count": 2,
+  "departure_time": "08:30",
+  "meeting_point": "Pier 4 — operator signage",
+  "operator_name": "Viator",
+  "is_cruise_line_excursion": false             // duplicates is_cruise_line_supplied for the excursion case
+}
+</code></pre>
+
+<h3 id="s40-3-5">40.3.5 Insurance <a class="anchor-link" href="#s40-3-5" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "policy_provider": "Allianz",
+  "policy_number": "TR12345678",
+  "coverage_type": "trip_cancellation_and_medical",
+  "coverage_amount_cents": 5000000,             // $50,000
+  "covered_persons_count": 2,
+  "claims_url": "https://www.allianztravelinsurance.com/claims",
+  "claims_phone": "+1-800-555-0100"
+}
+</code></pre>
+
+<h3 id="s40-3-6">40.3.6 Other <a class="anchor-link" href="#s40-3-6" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="json"><code>{
+  "free_form_label": "Port parking - 7 days",
+  "notes": "Reserved at miamiparking.com",
+  "url": "https://www.miamiparking.com"          // optional reference link
+}
+</code></pre>
+
+<h2 id="s40-4">40.4 Commission Handling <a class="anchor-link" href="#s40-4" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s40-4-1">40.4.1 When line items carry commission <a class="anchor-link" href="#s40-4-1" aria-label="Permalink">¶</a></h3>
+<p>Whether a line item is commissionable depends on supplier and the agent's relationship with that supplier:</p>
+<ul>
+<li><strong>Cruise-line-supplied items</strong> (<code>is_cruise_line_supplied = TRUE</code>) — flights, transfers, excursions, hotels booked through the cruise line typically generate commission, often at the same rate as the cruise itself or at a separate published rate. The host adapter (per <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a>) may provide the rate, or the agent enters it.</li>
+<li><strong>Third-party items</strong> — flights booked through Sabre, hotels through Booking.com or Expedia TAAP, etc. Commissionable if the agent has an account with that supplier. The agent enters the rate manually for now (future adapter integration could automate).</li>
+<li><strong>Non-commissionable items</strong> — direct-purchase items the customer bought themselves (the agent records for itinerary purposes but earns nothing).</li>
+</ul>
+
+<h3 id="s40-4-2">40.4.2 Commission rollup into the cruise booking commission <a class="anchor-link" href="#s40-4-2" aria-label="Permalink">¶</a></h3>
+<p>The cruise booking's <code>commissions</code> row tracks the cruise commission. Non-cruise line item commissions are tracked separately per line item (<code>booking_line_items.expected_commission_cents</code> and <code>received_commission_cents</code>). The booking's total commission view in the CRM is the SUM:</p>
+<pre class="codeblock" data-lang="sql"><code>SELECT
+  b.id AS booking_id,
+  -- Cruise commission (existing per §14)
+  c.gross_commission_cents AS cruise_gross_cents,
+  c.net_commission_cents   AS cruise_net_cents,
+  -- Ancillary commission (this addendum)
+  COALESCE((
+    SELECT SUM(expected_commission_cents)
+    FROM public.booking_line_items
+    WHERE booking_id = b.id AND commissionable = TRUE
+  ), 0) AS ancillary_expected_cents,
+  COALESCE((
+    SELECT SUM(received_commission_cents)
+    FROM public.booking_line_items
+    WHERE booking_id = b.id
+  ), 0) AS ancillary_received_cents,
+  -- Combined
+  c.gross_commission_cents
+    + COALESCE((SELECT SUM(expected_commission_cents) FROM public.booking_line_items
+                WHERE booking_id = b.id AND commissionable = TRUE), 0)
+    AS total_expected_cents
+FROM public.bookings b
+LEFT JOIN public.commissions c ON c.booking_id = b.id
+WHERE b.id = :booking_id;
+</code></pre>
+
+<h3 id="s40-4-3">40.4.3 Line-item commission reconciliation <a class="anchor-link" href="#s40-4-3" aria-label="Permalink">¶</a></h3>
+<p>For cruise-line-supplied items where the host pays commission on the entire package (cruise + flights + excursions), the host's statement may aggregate everything into one cruise-level commission amount. In that case, the line items are tracked for visibility but their individual <code>received_commission_cents</code> values remain 0 — the cruise's <code>commissions.received_commission_cents</code> captures the aggregate.</p>
+<p>For third-party items (Viator excursion, separate hotel through Booking.com), commission is paid separately by that supplier directly to the agent. Statement reconciliation per <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a> applies the same matching pattern — provider_booking_ref exact match preferred, fuzzy match fallback — but matches against <code>booking_line_items.supplier_booking_ref</code> rather than (or in addition to) <code>commissions.booking_id</code>.</p>
+
+<h3 id="s40-4-4">40.4.4 Commission state on line items <a class="anchor-link" href="#s40-4-4" aria-label="Permalink">¶</a></h3>
+<p>Simplified compared to the cruise commission state machine in <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a>:</p>
+<ul>
+<li><strong>expected_commission_cents</strong> is computed when the line item is set to commissionable with a rate</li>
+<li><strong>received_commission_cents</strong> is updated by the reconciliation flow (manual or imported statement)</li>
+<li>Variance between expected and received is surfaced in the CRM but doesn't have the formal <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a> hold-states; line item commission is lower-value and lower-volume than cruise commission</li>
+</ul>
+<p>Clawbacks: the <a class="xref" href="section-34-addendum-inbound-import.html#s34-8">§34.8</a> clawback fields (<code>clawback_amount_cents</code>, <code>clawback_at</code>, <code>clawback_reason</code>) added to the <code>commissions</code> table are NOT mirrored on <code>booking_line_items</code> in v1. If a third-party supplier claws back commission on a line item, the agent decreases <code>received_commission_cents</code> manually and notes the reason in the line item's description or via audit_log. Adequate for v1 volume; revisit if line-item clawback frequency increases.</p>
+
+<h2 id="s40-5">40.5 UI / Agent Workflow <a class="anchor-link" href="#s40-5" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s40-5-1">40.5.1 On the booking detail page <a class="anchor-link" href="#s40-5-1" aria-label="Permalink">¶</a></h3>
+<p>A "Trip Components" section lists all line items grouped by type. Each row shows description, dates, supplier, status, customer cost, commission (if applicable). "+ Add component" button opens a modal:</p>
+<ol>
+<li>Pick item_type (flight / hotel / transfer / excursion / insurance / other)</li>
+<li>Form adapts to the type-specific fields (per <a class="xref" href="#s40-3">§40.3</a> shapes)</li>
+<li>Supplier dropdown — autocomplete from known suppliers; "+ new supplier" to add one not in the list</li>
+<li>Commission section — commissionable toggle, rate input, auto-computed expected commission</li>
+<li>Save</li>
+</ol>
+
+<h3 id="s40-5-2">40.5.2 AI-assisted entry <a class="anchor-link" href="#s40-5-2" aria-label="Permalink">¶</a></h3>
+<p>The AI co-pilot can extract line item data from forwarded confirmation emails (hooks into the <a class="xref" href="section-34-addendum-inbound-import.html">§34</a> import pipeline). A forwarded "United UA1234 confirmation" email with IMPORT trigger is classified as a booking-related document, and if the platform detects an associated cruise booking for the same customer, the parsed flight data is offered as a new line item. The agent accepts/edits/rejects per <a class="xref" href="section-34-addendum-inbound-import.html#s34-6">§34.6</a> review queue.</p>
+
+<h3 id="s40-5-3">40.5.3 Bulk view across bookings <a class="anchor-link" href="#s40-5-3" aria-label="Permalink">¶</a></h3>
+<p>A "Components" view in the CRM nav (separate from the bookings list) shows all line items across the agent's bookings with filters by type, status, supplier, date range. Useful for end-of-month commission planning ("which suppliers do I expect commission from?") and for tracking suppliers' performance.</p>
+
+<h2 id="s40-6">40.6 Display on the Itinerary <a class="anchor-link" href="#s40-6" aria-label="Permalink">¶</a></h2>
+<p>The trip itinerary per <a class="xref" href="section-39-addendum-client-facing-deliverables.html#s39-2">§39.2</a> integrates non-cruise line items:</p>
+<ul>
+<li><strong>Flights</strong> — appear in a "Getting there &amp; back" section at the start (outbound) and end (return) of the itinerary</li>
+<li><strong>Pre-cruise hotels</strong> — appear in "Getting there" alongside flights</li>
+<li><strong>Transfers</strong> — appear in transition zones (airport-to-port, port-to-airport)</li>
+<li><strong>Excursions</strong> — appear on the corresponding port day in the day-by-day itinerary</li>
+<li><strong>Post-cruise hotels</strong> — appear in "Heading home" section</li>
+<li><strong>Insurance</strong> — appears in the trip resources page (per <a class="xref" href="section-39-addendum-client-facing-deliverables.html#s39-3">§39.3</a>), not in the itinerary body, since it's a reference document rather than an itinerary event</li>
+<li><strong>Other</strong> — agent decides where to show it via item-level "include in itinerary" toggle; defaults to suppressed</li>
+</ul>
+
+<h2 id="s40-7">40.7 Cancellation Handling <a class="anchor-link" href="#s40-7" aria-label="Permalink">¶</a></h2>
+<p>When a cruise booking is cancelled, the agent is prompted to decide what to do with each line item:</p>
+<ul>
+<li><strong>Cancel</strong> — set line item status to <code>cancelled</code>, record cancellation_reason</li>
+<li><strong>Keep</strong> — line item retained as-is (e.g., a hotel booking the customer still wants to use)</li>
+<li><strong>Convert to standalone</strong> — line item detached from the cancelled booking and attached to a new placeholder booking representing the customer's adjusted travel plans. Implementation: requires a "trip-only" booking type that has no cruise; deferred to a future iteration. v1: leave the line item on the cancelled booking and let the agent handle outside the platform.</li>
+</ul>
+<p>Cancelled line items affect the <a class="xref" href="section-36-addendum-source-of-business-reporting.html#s36-7">§36.7</a> "Lost revenue from cancellations" report:</p>
+<ul>
+<li>Lost ancillary expected commission contributes to the total lost-expected measure</li>
+<li>If line item commission was already received and is now clawed back, the agent updates <code>received_commission_cents</code> downward and the change flows to the report's net financial impact</li>
+</ul>
+
+<h2 id="s40-8">40.8 Tenant-Type Applicability <a class="anchor-link" href="#s40-8" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feature</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Add line items manually</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>AI-assisted extraction from confirmations</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Commission tracking on line items</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Components bulk view</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Line items shown on itinerary</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Standalone trip-only bookings (no cruise)</td><td>N</td><td>N</td><td>N</td><td>N</td><td>N</td><td>N</td></tr>
+</tbody>
+</table></div>
+<p>BYO Research excluded (no booking flow). Standalone trip-only bookings excluded for all tiers in v1 — the platform remains cruise-anchored.</p>
+
+<h2 id="s40-9">40.9 Calls Worth Flagging <a class="anchor-link" href="#s40-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Cruise-line-supplied items vs third-party items create an accounting fork.</strong> Cruise-line packages typically pay one aggregate commission; third-party items pay separately. Tenants need to understand this when entering data, or the totals will mislead them. The line item form should make <code>is_cruise_line_supplied</code> prominent with a clear explainer.</li>
+<li><strong>No standalone trip bookings in v1.</strong> An agent who sells a flight without a cruise has no place to put it in v1. They could record a "ghost" cruise booking but that pollutes booking metrics. Acceptable v1 limitation; revisit if user demand emerges.</li>
+<li><strong>JSONB item_details</strong> is unindexed for arbitrary querying. Reports that need to filter on, say, "all flights to LAX" require a JSONB path expression and won't be fast at scale. Tradeoff accepted for schema flexibility; if specific dimensions become hot, promote them to columns.</li>
+<li><strong>Supplier-name normalization.</strong> "United Airlines" vs "United" vs "UAL" — without normalization, reports group inconsistently. v1 stores whatever the agent types. A normalized supplier table is a candidate for a future addendum.</li>
+<li><strong>Date semantics differ by item_type.</strong> The <code>start_date</code>/<code>end_date</code> columns mean different things for different types. The validation layer should enforce type-appropriate populations (e.g., excursion must have start_date = end_date).</li>
+<li><strong>Commission reconciliation for third-party items</strong> may require fetching statements from Viator, Booking.com, etc. — none of which have the structured integrations cruise host adapters provide. v1: agents enter received commission manually. Future: per-supplier statement parsing per <a class="xref" href="section-34-addendum-inbound-import.html#s34-5-4">§34.5.4</a>.</li>
+<li><strong>Round-trip flights</strong> can be entered as one line item (with return_* fields) or two separate line items. Both shapes valid; UI should pick a default and let the agent override. Recommend: single round-trip line item by default for simpler totals.</li>
+<li><strong>Excursion bookings</strong> are often paid for directly by the customer on-board. Tracking them in the platform is useful for itinerary completeness but the commission situation is muddy (cruise line may pay agent commission on shipboard excursion sales, depending on host policy). Document carefully.</li>
+<li><strong>Insurance is a special case.</strong> Some insurers pay commission, some don't. Some are sold as part of the cruise (commissionable through the host), some as separate policies. The shape supports both; agent enters as appropriate.</li>
+<li><strong>Itinerary display ordering</strong> (per <a class="xref" href="#s40-6">§40.6</a>) is a UX recommendation, not a hard schema rule. The itinerary renderer in <a class="xref" href="section-39-addendum-client-facing-deliverables.html">§39</a> needs to interleave cruise itinerary days with non-cruise line items based on their dates. Build coordination required.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-39-addendum-client-facing-deliverables.html">← §39: Client-Facing Deliverables</a><a class="toc-link" href="index.html">Table of Contents</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

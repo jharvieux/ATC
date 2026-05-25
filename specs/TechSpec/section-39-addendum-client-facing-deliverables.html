@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 39 - Addendum — Client-Facing Deliverables — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 39</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s39">Section 39 - Addendum — Client-Facing Deliverables (Itinerary &amp; Trip Resources)</h1>
+<p><strong>Status:</strong> Addendum. Lands after Part 1–9 build prompts. Adds two client-facing surfaces — a consolidated trip itinerary and a curated trip resources page — that agents can share with their booked customers. References existing sections by number; does not modify them in place.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> These deliverables are post-booking customer touchpoints that didn't exist in Part 1–9. They draw from existing booking, conversation, and RAG data without modifying those structures. An earlier proposal for a "document vault" (storing customer PII docs like passport scans) was rejected on PII-minimization grounds; this section captures the link-curation-only approach that replaced it.</p>
+
+<h2 id="s39-1">39.1 Overview <a class="anchor-link" href="#s39-1" aria-label="Permalink">¶</a></h2>
+<p>Two client-facing surfaces share a common structure (tokenized URL, tenant-branded, mobile-responsive, AI-enabled for questions):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Deliverable</th><th>Purpose</th><th>Data sources</th></tr></thead>
+<tbody>
+<tr><td>Trip Itinerary</td><td>Consolidated view of the booked cruise — sail dates, ship details, ports, cabin info, what's included, agent's personal notes. PDF and shareable web page.</td><td><code>bookings</code>, <code>commissions</code> (only non-financial fields), <code>contacts</code>, ship/port RAG (<a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html">§33</a>)</td></tr>
+<tr><td>Trip Resources Page</td><td>Curated external links for the customer to bookmark — cruise line check-in URL, insurer claims page, port authority info, agent contact card. NO file uploads, NO PII storage on the platform.</td><td>Agent-entered URLs, cruise-line metadata, RAG-derived port-authority links</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="s39-2">39.2 Trip Itinerary <a class="anchor-link" href="#s39-2" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s39-2-1">39.2.1 What it contains <a class="anchor-link" href="#s39-2-1" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Cover</strong> — tenant logo &amp; branding, cruise line, ship, sail date, primary passenger name(s), agent name and contact</li>
+<li><strong>At a glance</strong> — embarkation port + date/time, disembarkation port + date/time, duration nights, cabin category, cabin number (if known)</li>
+<li><strong>Day-by-day itinerary</strong> — for each day: port name, arrival time, departure time, "At Sea" days marked. Each port has a brief description sourced from RAG (CruiseMapper port content per <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-5">§33.5</a>)</li>
+<li><strong>Ship overview</strong> — ship name, year built, capacity, notable features. Sourced from RAG.</li>
+<li><strong>What's included</strong> — derived from the booking's line items (per <a class="xref" href="section-38-addendum-multi-option-quote-builder.html#s38-5">§38.5</a> categories): "Beverage package included", "Gratuities pre-paid", etc.</li>
+<li><strong>Travel documentation reminders</strong> — generic checklist: passport validity, visa requirements (RAG-sourced for the itinerary's countries), required vaccinations (if any). No PII stored — just the checklist for the customer.</li>
+<li><strong>Agent's personal notes</strong> — free-text section the agent writes for this specific customer (e.g., "Don't miss the chef's table on Symphony — book day one")</li>
+<li><strong>Next steps timeline</strong> — automatically computed dates: final payment due, online check-in opens, embarkation. Surfaces upcoming dates relative to "today" when the page is loaded.</li>
+</ul>
+
+<h3 id="s39-2-2">39.2.2 What it does NOT contain <a class="anchor-link" href="#s39-2-2" aria-label="Permalink">¶</a></h3>
+<ul>
+<li>Commission amounts or any commission-related data</li>
+<li>Other customers' information</li>
+<li>Internal pricing markup, host adapter details, or agency-internal data</li>
+<li>Customer's passport number, DOB, or other documents (per <a class="xref" href="#s39-4">§39.4</a> PII posture)</li>
+</ul>
+
+<h3 id="s39-2-3">39.2.3 Itinerary access <a class="anchor-link" href="#s39-2-3" aria-label="Permalink">¶</a></h3>
+<p>Same tokenized URL pattern as the quote-send flow (<a class="xref" href="section-12-crm.html#s12-4">§12.4</a> token-based access). The agent generates the itinerary from the booking's detail page; the system creates a unique tokenized URL and sends it to the customer via email per <a class="xref" href="section-23-email-notifications.html">§23</a>. Token is single-purpose (this one itinerary), tenant-scoped, and rotatable from the booking page.</p>
+<p>PDF export is also generated at the time of itinerary creation; the email contains both the web link and the PDF attachment. PDF is regenerated when the agent edits the itinerary (the previously-sent PDF is not invalidated; if the customer keeps the PDF, it remains accurate to the moment of sending, while the web URL always reflects the latest state).</p>
+
+<h3 id="s39-2-4">39.2.4 Itinerary lifecycle <a class="anchor-link" href="#s39-2-4" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="text"><code>[Booking confirmed (§20)]
+        │
+        ▼
+[Agent (or system) generates itinerary]
+        │
+        ▼
+[Itinerary row created; status='draft']
+        │
+        ▼
+[Agent reviews; edits notes; clicks Send]
+        │
+        ▼
+[Status='sent'; email dispatched; PDF generated]
+        │
+        ▼
+[Customer views via tokenized URL]
+        │
+        ▼
+[Agent can edit and re-send at any time prior to sailing]
+        │
+        ▼
+[After sailing return: status='archived'; URL still works for the customer]
+        │
+        ▼
+[Per §25 retention: archived itineraries retained for the same window as the booking]
+</code></pre>
+
+<h3 id="s39-2-5">39.2.5 Schema <a class="anchor-link" href="#s39-2-5" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.trip_itineraries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES public.tenants(id),
+  booking_id UUID NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+
+  -- Access
+  access_token TEXT NOT NULL UNIQUE,    -- generated; URL-safe; rotated on agent action
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','sent','archived')),
+
+  -- Content
+  agent_notes TEXT,
+  cover_image_url TEXT,                 -- optional, references rag_media_assets or tenant uploads
+
+  -- Day-by-day overrides (agent can adjust the auto-generated itinerary)
+  day_overrides JSONB,                  -- array indexed by day_number
+
+  -- Travel docs checklist (computed, not stored verbatim — populated at render time)
+  -- Computed fields not persisted; derived from booking's itinerary at render
+
+  -- Lifecycle
+  sent_at      TIMESTAMPTZ,
+  archived_at  TIMESTAMPTZ,
+  last_pdf_generated_at TIMESTAMPTZ,
+  pdf_storage_key TEXT,                 -- Supabase storage key for the current PDF
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (booking_id)                    -- one itinerary per booking
+);
+
+CREATE INDEX trip_itineraries_token_idx
+  ON public.trip_itineraries(access_token)
+  WHERE status &lt;&gt; 'draft';
+
+ALTER TABLE public.trip_itineraries ENABLE ROW LEVEL SECURITY;
+-- RLS per §5.1 for authenticated agent access.
+-- Public token-based access uses a service-role-mediated endpoint per §26.3a:
+-- a token lookup runs server-side, returns only the itinerary row + booking
+-- view-projection (no commission/PII fields).
+</code></pre>
+
+<h3 id="s39-2-6">39.2.6 Tokenized public access endpoint <a class="anchor-link" href="#s39-2-6" aria-label="Permalink">¶</a></h3>
+<p>The public itinerary URL pattern is <code>/i/&lt;access_token&gt;</code>. The endpoint:</p>
+<ol>
+<li>Validates the token against <code>trip_itineraries.access_token</code> with <code>status &lt;&gt; 'draft'</code>.</li>
+<li>Loads the itinerary row, its booking, and the booking's primary contacts (names only, not full PII).</li>
+<li>Loads RAG content for ports and ship.</li>
+<li>Renders the itinerary page server-side via the existing Next.js routing; no client-side authentication is required.</li>
+<li>Records access in an audit log (token, IP, user-agent timestamp) for the agent to see who's viewed it.</li>
+</ol>
+<p>Token rotation: agent can rotate the token from the booking page if they suspect it's been forwarded inappropriately. Old token immediately invalidated.</p>
+
+<h2 id="s39-3">39.3 Trip Resources Page <a class="anchor-link" href="#s39-3" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s39-3-1">39.3.1 Purpose <a class="anchor-link" href="#s39-3-1" aria-label="Permalink">¶</a></h3>
+<p>A separate page (linked from the itinerary) collecting external resources the customer will need throughout the booking-to-sailing journey: cruise line check-in URL, insurer claims page, port authority links, agent's contact info, packing list, etc.</p>
+
+<h3 id="s39-3-2">39.3.2 What's in scope <a class="anchor-link" href="#s39-3-2" aria-label="Permalink">¶</a></h3>
+<p>Only <strong>links and metadata</strong>. No file uploads. No PII storage. Examples:</p>
+<ul>
+<li>Royal Caribbean's online check-in URL (auto-populated from cruise line metadata)</li>
+<li>The customer's insurance policy provider's claims page (if agent enters the URL)</li>
+<li>Port authority for embarkation port (RAG-sourced)</li>
+<li>Travel advisory page for destination country (US State Department for US-based tenants)</li>
+<li>Agent's contact card (email, phone, "best time to reach me")</li>
+<li>Embedded packing checklist (text-only, derived from itinerary type — cold-weather cruise vs Caribbean)</li>
+</ul>
+
+<h3 id="s39-3-3">39.3.3 What's explicitly out of scope <a class="anchor-link" href="#s39-3-3" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Document storage.</strong> The platform does not store customer documents (passport scans, insurance policy PDFs, visa documents). An earlier design proposed this and was rejected on PII-minimization grounds: storing identity documents creates a significant security liability without commensurate value. Customers can hold their own documents in their own storage (Google Drive, Dropbox, etc.) — the trip resources page can link to a customer's own storage if they share a link, but the platform itself stores no files.</li>
+<li><strong>Live document collaboration.</strong> No shared workspace, no annotations on documents, no version history of customer-uploaded files.</li>
+<li><strong>Customer-uploaded photos or trip artifacts.</strong> Out of scope for v1; a future "post-trip memory book" deliverable could be added but is not part of this addendum.</li>
+</ul>
+
+<h3 id="s39-3-4">39.3.4 Schema <a class="anchor-link" href="#s39-3-4" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.trip_resources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES public.tenants(id),
+  booking_id UUID NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+
+  access_token TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','published','archived')),
+
+  -- Curated link sections (JSONB to avoid table-per-section sprawl)
+  -- Shape: { section_label: string, links: [{label, url, description?, source: 'auto'|'agent'}] }
+  sections JSONB,
+
+  -- Agent's contact card (snapshot at publication time so it's stable)
+  agent_contact JSONB,                  -- { name, email, phone, hours, photo_url? }
+
+  -- Packing checklist (text body)
+  packing_checklist TEXT,
+
+  -- Lifecycle
+  published_at TIMESTAMPTZ,
+  archived_at  TIMESTAMPTZ,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (booking_id)                    -- one resources page per booking
+);
+
+CREATE INDEX trip_resources_token_idx
+  ON public.trip_resources(access_token)
+  WHERE status = 'published';
+
+ALTER TABLE public.trip_resources ENABLE ROW LEVEL SECURITY;
+</code></pre>
+
+<h3 id="s39-3-5">39.3.5 Auto-population sources <a class="anchor-link" href="#s39-3-5" aria-label="Permalink">¶</a></h3>
+<p>When the resources page is generated, the system auto-populates the sections JSONB from:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Section</th><th>Default content source</th></tr></thead>
+<tbody>
+<tr><td>Cruise line</td><td>Per-line metadata: check-in URL, customer service phone, mobile app link. Maintained as platform-admin config per <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a> adapter pattern, or as static reference data.</td></tr>
+<tr><td>Ports</td><td>RAG-sourced port authority URLs and key info per <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-5">§33.5</a></td></tr>
+<tr><td>Travel advisories</td><td>State Department links for destination countries (US tenants); equivalent for other tenant countries when supported</td></tr>
+<tr><td>Insurance</td><td>Empty by default; agent fills in if they sold the customer a policy</td></tr>
+<tr><td>Agent contact</td><td>From <code>users</code> table for the assigned agent</td></tr>
+<tr><td>Packing checklist</td><td>Generated from itinerary type (Caribbean / Alaska / Europe / etc.) using a curated template library</td></tr>
+</tbody>
+</table></div>
+<p>Agent can edit any auto-populated content, add or remove sections, and re-publish.</p>
+
+<h2 id="s39-4">39.4 PII Posture <a class="anchor-link" href="#s39-4" aria-label="Permalink">¶</a></h2>
+<p>This section's deliberate posture: the platform <strong>does not</strong> become a custodian of customer identity documents. Reasons:</p>
+<ul>
+<li>Storing passport scans, IDs, and visas turns the platform into a regulated identity document repository in many jurisdictions.</li>
+<li>The security overhead (encryption at rest with separate keys, access logging at field level, breach notification obligations, retention policy with destruction proof) is disproportionate to the value of storing the documents centrally.</li>
+<li>Customers already have their documents; the agent already has working processes outside the platform for collecting them. The platform's value is the link-curation, not the document custody.</li>
+</ul>
+<p>What the platform DOES store: structured booking data (passenger names, sail date, ship — required for the booking itself), agent notes about the customer (no documents), and external URLs the customer can use to access their own documents wherever they store them.</p>
+<p>If a future addendum revisits this decision, it would need a full PII-impact assessment, encryption-at-rest design with field-level keys, jurisdiction-specific compliance review (US, EU, UK at minimum), and a clear scoping of which document types the platform would accept. Not in v1 scope.</p>
+
+<h2 id="s39-5">39.5 Customer-Side AI <a class="anchor-link" href="#s39-5" aria-label="Permalink">¶</a></h2>
+<p>Both the itinerary and the resources page embed an AI chat panel. The AI persona is the same one assigned to the booking's contact. Context loaded into the AI:</p>
+<ul>
+<li>The booking's itinerary details (ship, ports, sail date, cabin, what's included)</li>
+<li>The customer memory (per <a class="xref" href="section-11-customer-memory.html">§11</a>)</li>
+<li>The agent's notes from the itinerary</li>
+<li>RAG retrieval enabled for ports and ship</li>
+</ul>
+<p>The AI cannot make changes to the booking, cannot quote new bookings (per AI persona scoping in <a class="xref" href="section-09-ai-personas.html">§9</a>), and cannot expose commission or pricing-internal data. It can answer "what should I pack?", "tell me about the port of Cozumel", "what time do we sail?" — questions grounded in either the booking data or RAG content.</p>
+
+<h2 id="s39-6">39.6 PDF Generation <a class="anchor-link" href="#s39-6" aria-label="Permalink">¶</a></h2>
+<p>Itinerary PDF: full content of the web itinerary in print-friendly layout, multi-page. Cover, day-by-day, ship/port detail, agent notes, contact card, packing checklist. Generated via Puppeteer or react-pdf at the time of sending (or re-sending). Stored in Supabase storage; the email's PDF attachment is the latest generated version. Old PDFs are not retained server-side (the customer's email copy is the historical record); only the latest <code>pdf_storage_key</code> is referenced from <code>trip_itineraries</code>.</p>
+<p>Resources page does NOT generate a PDF — its value is in the live, clickable links. Customers bookmark the URL or it lives in their inbox.</p>
+
+<h2 id="s39-7">39.7 Editing and Re-sending <a class="anchor-link" href="#s39-7" aria-label="Permalink">¶</a></h2>
+<p>From the booking detail page in the CRM, agents see two buttons: "Edit Itinerary" and "Edit Resources Page." Editing either:</p>
+<ol>
+<li>Opens an edit view with full content controls.</li>
+<li>"Save Draft" persists changes without re-notifying the customer.</li>
+<li>"Save &amp; Re-send" persists changes, regenerates the PDF (itinerary only), and sends a fresh notification email to the customer indicating the deliverable has been updated.</li>
+</ol>
+<p>Edit history is kept in <code>audit_log</code> per <a class="xref" href="section-26-security.html#s26-5">§26.5</a> — who edited what and when. Versioned content storage (full snapshots of each version) is not in v1; the audit log is action-level only.</p>
+
+<h2 id="s39-8">39.8 Branding <a class="anchor-link" href="#s39-8" aria-label="Permalink">¶</a></h2>
+<p>Both surfaces respect the tenant's branding configuration per <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a> (logo, primary/accent colors, font family). For sub-host tenants, the platform applies the white-label theme. The agent's photo and contact card appear on both surfaces unless the agent has explicitly suppressed them in their profile.</p>
+
+<h2 id="s39-9">39.9 Tenant-Type Applicability <a class="anchor-link" href="#s39-9" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feature</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Trip itinerary (web + PDF)</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Trip resources page</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Customer-side AI on deliverables</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Custom branding on deliverables</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+</tbody>
+</table></div>
+<p>BYO Research tier doesn't get client-facing deliverables — that tier has no booking flow per the broader spec (research only). Other tiers all get the full deliverable suite.</p>
+
+<h2 id="s39-10">39.10 Calls Worth Flagging <a class="anchor-link" href="#s39-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Token-based public access</strong> means the URL itself is the credential. Customers forwarding the URL to spouses, family, etc. is expected and acceptable; forwarding to an adversary would expose the itinerary content. The content is non-sensitive by design (no PII beyond names, no financial data), but agent should be told that the URL is shareable.</li>
+<li><strong>RAG content quality</strong> affects port descriptions and ship overviews. Stale or wrong CruiseMapper content surfaces directly to customers. Per <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html">§33</a>, refresh cadence and quality monitoring apply.</li>
+<li><strong>PDF generation cost.</strong> Each booking generates at least one PDF; high-volume tenants could see meaningful Puppeteer costs (or alternative library costs). Track per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>.</li>
+<li><strong>Packing checklist accuracy.</strong> Generic templates by itinerary type are a starting point; agents should review before sending. The customer-side AI can answer follow-up questions to fill gaps.</li>
+<li><strong>Customer-side AI cost</strong> per session is unbounded if customers chat extensively. Per-deliverable session budget caps (per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>) should apply.</li>
+<li><strong>"What's included" derivation</strong> from line items requires the booking to have populated line_items per <a class="xref" href="section-38-addendum-multi-option-quote-builder.html#s38-5">§38.5</a>. If a booking was created from a single-option quote without line items, the itinerary's "What's included" section shows only the high-level total with a generic "Contact your travel agent for inclusion details" note.</li>
+<li><strong>Resources page section ordering and visual design</strong> is not specified in detail here — defer to the build's design phase. Recommend section weights: cruise line, ports, agent contact, packing, advisory, insurance, other.</li>
+<li><strong>Agent contact snapshot</strong> at publication time (vs live read) means if the agent's contact info changes after publish, the customer sees stale info. Acceptable tradeoff: agent contact rarely changes; live read would require an additional DB query per public view. Re-publish updates the snapshot.</li>
+<li><strong>Travel advisory link integration</strong> needs per-country source mapping. US State Department is the obvious default for US tenants; international tenants need equivalents. Out of scope to fully map in v1; the field is free-text URL the agent can populate.</li>
+<li><strong>Reaffirming the no-PII-document-storage posture</strong> is critical at build time. The temptation to "just let customers upload their passports for safe keeping" will arise; the answer is: not in v1, and any future revisit requires the full PII assessment outlined in <a class="xref" href="#s39-4">§39.4</a>.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-38-addendum-multi-option-quote-builder.html">← §38: Multi-Option Quote Builder</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-40-addendum-non-cruise-line-items.html">§40: Non-Cruise Line Items →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>
