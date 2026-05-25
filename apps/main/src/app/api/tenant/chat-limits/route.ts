@@ -148,7 +148,7 @@ export async function PUT(req: Request): Promise<Response> {
       });
     }
 
-    // §24.9 audit (stub until §26 audit_log lands).
+    // §24.9 audit.
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
       actor_user_id: userId,

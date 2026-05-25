@@ -17,6 +17,7 @@ import { canPost } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { inngest } from "@/inngest/client";
 import { verifyEnvAtBoot } from "@/lib/env";
+import { writeAuditLog } from "@/lib/audit/write";
 
 interface ModerationScores {
   spam: number;
@@ -214,13 +215,14 @@ export async function POST(
         moderationError = `haiku_malformed_response: ${errMsg.slice(0, 200)}`;
         // Engineering attention for malformed responses
         console.error("[forum-moderation] ENGINEERING ALERT: malformed Haiku response for message", msg.id);
-        try {
-          await svc.from("audit_log").insert({
-            tenant_id: ctx.tenant_id,
-            category: "engineering_attention_required",
-            details: { message_id: msg.id, error: moderationError },
-          });
-        } catch { /* audit_log may not exist yet — TODO(audit-log §26) */ }
+        await writeAuditLog({
+          tenant_id: ctx.tenant_id,
+          actor_type: "system",
+          action: "forum.moderation_engineering_alert",
+          resource_type: "forum_message",
+          resource_id: msg.id,
+          changes: { error: moderationError },
+        });
       }
     }
 
@@ -247,13 +249,14 @@ export async function POST(
     const scores = moderationResult.scores as ModerationScores & { credit_card_pattern?: boolean };
     if (scores.pii_leak > 0.95 && scores.credit_card_pattern) {
       status = "hidden";
-      try {
-        await svc.from("audit_log").insert({
-          tenant_id: ctx.tenant_id,
-          category: "pii_quarantine",
-          details: { message_id: msg.id, reason: "credit_card_pattern_detected" },
-        });
-      } catch { /* audit_log may not exist yet — TODO(audit-log §26) */ }
+      await writeAuditLog({
+        tenant_id: ctx.tenant_id,
+        actor_type: "system",
+        action: "forum.pii_quarantine",
+        resource_type: "forum_message",
+        resource_id: msg.id,
+        changes: { reason: "credit_card_pattern_detected" },
+      });
     }
 
     await svc.from("forum_messages").update({

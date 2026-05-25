@@ -3,11 +3,10 @@
 // linked commission rows) preserve the booking indefinitely until the
 // dispute closes.
 //
-// Audit-log integration uses console.warn stubs until §26 lands audit_log
-// (D-036). The cross-tenant operation pattern would normally wrap each
-// tenant in withPlatformAdminAudit; once §26 ships we'll thread that
-// through. For now, the per-tenant scope is implicit via the cron's
-// service-role scan.
+// Audit-log row is a single platform-wide summary (action =
+// retention.bookings_purged). Per-tenant rows would multiply audit_log
+// volume by an order of magnitude with no forensic gain — the summary
+// row plus the deleted booking IDs in `changes` is sufficient.
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";

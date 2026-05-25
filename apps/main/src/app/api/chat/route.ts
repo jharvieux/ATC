@@ -253,7 +253,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         `Your quota resets ${resetAtPretty}.`;
       await send({ type: "hard_limit", body: sysBody, reset_at: decision.reset_at });
 
-      // Best-effort: generate Haiku summary and write audit + admin alert (stubs).
+      // Best-effort: generate Haiku summary and write audit + admin alert.
       const summary = await generateHardLimitSummary(svc, {
         user_id: userId,
         tenant_id: tenantId,

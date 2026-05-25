@@ -279,10 +279,10 @@ export function tenantContextFromInngestEvent(event: {
 }
 
 /**
- * STUB — implementation lands alongside the audit_log table (Section 26).
- * When implemented, verifies admin identity, attaches the platform_admin
- * source discriminant, and records construction to audit_log with the
- * supplied reason.
+ * Superseded by `withPlatformAdminAudit` in
+ * `@/lib/db/platform-admin-client`, which wraps the same admin-context
+ * + audit_log write pattern. Kept as a throwing stub to surface any
+ * caller still on the old API.
  */
 export async function tenantContextForPlatformAdmin(
   _admin: { user_id: string },
@@ -290,6 +290,6 @@ export async function tenantContextForPlatformAdmin(
   _reason: string,
 ): Promise<TenantContext> {
   throw new Error(
-    "tenantContextForPlatformAdmin: not implemented (lands with audit_log in §26 work).",
+    "tenantContextForPlatformAdmin: superseded by withPlatformAdminAudit.",
   );
 }
