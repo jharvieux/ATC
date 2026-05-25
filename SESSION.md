@@ -1,63 +1,64 @@
-# Session state — last updated 2026-05-25 ~14:00 UTC
+# Session state — last updated 2026-05-25 ~14:55 UTC
 
-## Just completed (this push)
+## Just completed — full security audit wave is closed
 
-### Security audits — 2026-05-25
-
-Ran three parallel Agent audits over the BP34–BP40 codebase (auth boundary, tenant isolation, Stripe/payments) plus a fourth on the RAG service. Documented findings and fixed every HIGH-confidence one.
+Three parallel Agent audits (auth boundary, tenant isolation, Stripe/payments) plus a fourth on the RAG service surfaced 16 findings across 4 subsystems. Every HIGH-confidence finding has been fixed, every MEDIUM has been fixed, the one LOW has been fixed, and CodeQL is now live for continuous coverage.
 
 ### Security PRs landed on `dev`
 
 | PR | What |
 |---|---|
-| #162 | CodeQL workflow — continuous TS/JS security analysis (security-extended query set), runs on every PR + weekly cron |
-| #163 | Stripe webhook column-name production bug (`raw_payload` → `raw_event`) — schema mismatch meant every insert was failing with 500. Not yet exposed in prod (pre-customer) so no recovery needed |
-| #164 | Stop-the-world admin gate at middleware + request-headers propagation fix + Tier-2 bypass hardened with VERCEL_ENV check |
-| #165 | `tenantClient` fail-closed: throws `UnregisteredTenantTableError` for tables in neither set, plus 49 tenant-scoped tables registered, plus new `PLATFORM_READABLE_TABLES` set for cross-tenant reads with caller self-scoping |
+| #162 | CodeQL workflow — TS/JS security-extended query suite, every PR + weekly cron |
+| #163 | Stripe webhook column-name production bug (`raw_payload` → `raw_event`) — discovered during the audit, prevented every webhook from inserting |
+| #164 | Stop-the-world admin gate at middleware + request-headers propagation fix + Tier-2 bypass hardened with `VERCEL_ENV` check |
+| #165 | `tenantClient` fail-closed: throws on unregistered tables, registers 49 tenant-scoped + 8 platform-readable tables |
+| #166 | First docs checkpoint (D-083) |
+| #167 | CCPA tenant scope (Auth #4) + 4 RAG admin platform-admin gates + Inngest signing-key fail-loud (5 audit findings) |
+| #168 | Real §26 admin session gate: `platform_admins` table + `assertPlatformAdmin` helper + 26 admin routes converted off `x-admin-user-id` |
+| #169 | RBAC matrix in `assertPermission` (Auth #5) — 3 roles × 51 grants, `users.role` column, fail-closed on unknown |
+| #170 | Auth #6 (reason-detail tightening) + `respondToAuthError` helper used by 66 routes + 9 admin React pages migrated to Supabase session bearer |
+| #171 | Role-assignment UI: `/settings/users` page + `GET /api/tenant/users` + `PATCH /api/tenant/users/[id]/role` |
 
-### Audit findings status
+### Final audit findings status
 
 | # | Source | Severity | Status |
 |---|---|---|---|
-| Auth #1 | Auth boundary | HIGH (10) | Fixed by #164 (stop-the-world bearer gate) — needs real §26 admin session gate to restore admin UI |
-| Auth #2 | Auth boundary | HIGH (9) | Fixed by #164 (request-headers propagation) |
-| Auth #3 | Auth boundary | MEDIUM | Hardened by #164 (VERCEL_ENV check on Tier-2 bypass) |
-| Auth #4 | Auth boundary | MEDIUM | Open — CCPA cross-tenant delete |
-| Auth #5 | Auth boundary | MEDIUM | Open — `assertPermission` is a stub |
-| Auth #6 | Auth boundary | LOW | Open — `withPlatformAdminAudit` reason-detail bypass |
-| Tenant #1 | Tenant isolation | HIGH (10) | Fixed by #165 (fail-closed proxy) |
-| Tenant #2 | Tenant isolation | HIGH (10) | Fixed by #165 (tasks now properly scoped) |
-| Tenant #3 | Tenant isolation | HIGH (10) | Fixed by #165 (task mutations now scoped) |
-| Tenant #4 | Tenant isolation | HIGH (10) | Fixed by #164 (admin gate) |
-| Tenant #5 | Tenant isolation | HIGH (7) | Fixed by #164 (request-headers propagation) |
-| Stripe audit | Payments | (no HIGH findings) | All defense-in-depth observations noted in audit; raw_payload bug fixed in #163 |
-| RAG audit | (in flight) | TBD | Agent running in background |
+| Auth #1 (admin gate) | Auth | HIGH | Fixed (#164 stop-the-world; #168 real session gate; #170 admin UI migration) |
+| Auth #2 (middleware header) | Auth | HIGH | Fixed (#164) |
+| Auth #3 (Tier-2 bypass) | Auth | MEDIUM | Hardened (#164) |
+| Auth #4 (CCPA tenant scope) | Auth | MEDIUM | Fixed (#167) |
+| Auth #5 (RBAC stub) | Auth | MEDIUM | Fixed (#169) — role-assignment UI shipped in #171 |
+| Auth #6 (audit reason-detail bypass) | Auth | LOW | Fixed (#170) |
+| Tenant #1 (proxy fail-open) | Tenant | HIGH | Fixed (#165) |
+| Tenant #2-3 (tasks cross-tenant) | Tenant | HIGH | Fixed (#165 by closing #1) |
+| Tenant #4-5 (admin/header) | Tenant | HIGH | Fixed (#164) |
+| Stripe (raw_payload prod bug) | Stripe | n/a (correctness) | Fixed (#163) |
+| RAG #1-4 (admin gate misses) | RAG | HIGH | Fixed (#167) |
+| RAG #5 (Inngest signing key) | RAG | MEDIUM | Fixed (#167) |
 
-## Conflict + bug patterns observed during the cascade
+### Manual step required after deploy
 
-Worth remembering for future merge waves:
+Seed the first platform admin. From the dev DB (or whichever environment):
 
-1. **`packages/config/eslint-rules/no-direct-service-role-import.js`** conflicts on every rebase — keep both lists.
-2. **`apps/main/src/app/api/inngest/route.ts`** conflicts on every rebase — keep both function registrations.
-3. **`db/rls-exceptions.sql` ≠ `db/rls-exceptions.txt`** — RLS coverage check reads `.sql`, migration lint reads `.txt`. Keep in sync.
-4. **Storage-bucket migrations** need `IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='storage') THEN ... END IF;` because CI's DB lacks the storage schema.
-5. **`SECURITY DEFINER` migrations** must use `SET search_path = ''` + `REVOKE EXECUTE ... FROM public`.
-6. **RLS coverage lint** scans only static `CREATE POLICY` blocks — no `DO $$ ... EXECUTE format() $$;` loops.
-7. **Helper functions that take `svc` as a parameter** can route through `tenantClient` — every `.from(table)` they make must have the table in `TENANT_SCOPED_TABLES` or `PLATFORM_READABLE_TABLES`. Easy to miss in static grep.
+```sql
+INSERT INTO platform_admins (auth_user_id, role, email)
+VALUES ('<your-supabase-auth-user-uuid>', 'superadmin', '<your-email>');
+```
+
+Once that row exists, you can log into the admin React pages with that Supabase account and the new session gate (#168) will recognize you. Until you seed at least one row, only the service-to-service Bearer (RAG cron, etc.) can call `/api/admin/*`.
 
 ## In flight
 
-- **RAG-side security audit** — Agent running in background.
-- **Auth #4 (CCPA tenant scope), §26 admin session gate, Auth #5 (RBAC)** — to be implemented this session.
+**Nothing in flight.** Working tree clean.
 
 ## Next step
 
-Continue the security fix wave:
-1. Fix Auth #4 (CCPA cross-tenant delete) — quick (~30 min).
-2. Build §26 admin session gate — restores admin UI.
-3. Fix Auth #5 (assertPermission RBAC) — biggest impact, touches many routes.
-4. Process RAG audit findings when agent reports.
-5. Merge everything.
+Whatever's next on the product backlog. The security audit follow-ups are closed.
+
+A few low-priority artifacts worth queuing whenever:
+- **Test-environment gating gaps** — the Stripe webhook integration test + cross-tenant probe both `describe.skip` silently when their credentials aren't set. Worth either failing CI loudly on PRs touching their domain, or wiring the credentials in CI secrets.
+- **Ownership transfer endpoint** — the `/api/tenant/users/[id]/role` route blocks self-demotion. Long-term, owners need a way to hand the tenant off to someone else. Out of scope for the RBAC PR; will land when there's a product use case.
+- **Required-check promotion for CodeQL** — currently CodeQL runs on every PR but isn't required. Observe a few runs before promoting to required.
 
 ## Blocked on user
 
@@ -65,10 +66,10 @@ Nothing.
 
 ## Open questions
 
-- After §26 admin gate ships, decide whether the bearer-token path stays (for service-to-service like RAG crons) or moves to a dedicated `/api/internal/*` namespace.
-- After Auth #5 (real RBAC) ships, decide whether to enforce `withPlatformAdminAudit` reason-detail on all destructive reasons (Auth #6) or close the finding as wontfix.
+- After the §26 admin session gate ships (#168), should the bearer-token Bearer path stay (RAG crons use it) or move to a dedicated `/api/internal/*` namespace? Today both paths share `/api/admin/*`. Cosmetic.
+- Should Playwright become a required check after the BP38 quotes regression and supervisor-sampling flake stayed fixed for several PRs? Both have been green for the last ~8 merges.
 
-## Carried forward (deferred work)
+## Carried forward (deferred work, not security)
 
 - BP39 follow-up: retroactive react-pdf wire-up to unblock help-docs PDF deferral
 - BP31: Haiku tolerable-PII redaction + confidence/clarity scorer Haiku call (cost-deferred)
