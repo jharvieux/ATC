@@ -4,6 +4,49 @@ Newest entries on top.
 
 ---
 
+## D-084 — 2026-05-25 — Security audit follow-ups closed; full audit wave done
+
+**Decision:** Completed every remaining audit follow-up in one continuous push after D-083's first half. End state: all 16 audit findings (5 HIGH, 5 MEDIUM, 1 LOW + 5 from the RAG-side audit) are closed. PRs #166–#171 finished the work D-083 started.
+
+**What the follow-up wave added:**
+
+1. **Real §26 admin session gate (#168).** Replaced the D-083 stop-the-world bearer-only gate with proper Supabase-session verification + `platform_admins` table lookup. New helper `assertPlatformAdmin(req)` accepts EITHER the service-to-service Bearer (RAG crons) OR a verified user session JWT whose `auth_user_id` exists in `platform_admins`. All 26 admin route handlers swept off the unauthenticated `x-admin-user-id` pattern. Middleware shape-checks the Bearer; full verification (signature + table lookup) happens in the handler.
+
+2. **CCPA + RAG fixes (#167).** Single PR closed 5 audit findings: Auth #4 (CCPA delete crossing tenants for users with multi-tenant rows — fixed by adding `tenant_id` scope from `x-resolved-tenant-id`, now reliable since #164); RAG #1-4 (every admin route on the RAG side was accepting any active tenant JWT — fixed by adding `service_identifier === 'platform-admin'` gate to the four that were missing it); RAG #5 (Inngest serve endpoint relied on the SDK's silent env-var read — now throws at module evaluation in production if `INNGEST_SIGNING_KEY` is missing).
+
+3. **Real RBAC (#169).** Closed Auth #5: `assertPermission` was a stub. Now: `users.role` column with three roles (`tenant_owner | agent | viewer`), `permission-grants.ts` matrix with 51 (resource, action) entries, fail-closed on unknown role OR unknown grant. Existing users backfill to `tenant_owner`. Tier-2 E2E bypass synthesizes `tenant_owner`.
+
+4. **Auth #6 + 403/401 mapping + admin UI migration (#170).** Tightened `withPlatformAdminAudit` reason-detail to require detail for every destructive reason (terminate, suspend, demote, revoke, deletion, kill-switch). Centralized `respondToAuthError` helper used by 66 route handlers — `AuthForbidden` now correctly surfaces as 403 (was 401), `AuthReauthRequired` keeps its existing 401 shape. All 9 admin React pages migrated off the unauthenticated `x-admin-user-id` header to a new shared `adminFetch` helper that reads the Supabase session from the browser client and sends `Authorization: Bearer <jwt>`.
+
+5. **Role-assignment UI (#171).** Without this, the RBAC matrix had no UI. Now: `/(tenant)/settings/users` page shows all active members with inline role dropdowns for tenant owners (degrades to read-only for non-owners on 403). `GET /api/tenant/users` lists members. `PATCH /api/tenant/users/[id]/role` is owner-only via `team_members:update_role`. Self-demote returns 409 `cannot_demote_self` to avoid the "lock yourself out" footgun; ownership transfer is a future endpoint.
+
+**Cumulative architectural deltas (D-083 + D-084):**
+
+- Three identity-management primitives now in code:
+  - `assertPermission(req, { resource, action })` — tenant-user gate. Verifies auth + active membership + RBAC.
+  - `assertPlatformAdmin(req)` — platform-admin gate. Verifies session JWT + `platform_admins` row.
+  - `withPlatformAdminAudit({...}, fn)` — service-role wrapper that records every operation to `audit_log` with deliberate reason-detail friction for destructive ops.
+- `tenantClient(ctx)` is fail-closed on unregistered tables. `PLATFORM_READABLE_TABLES` is the explicit opt-in set for cross-tenant reads (8 tables).
+- CodeQL runs on every PR and weekly. Not yet required-gated; observe a few runs first.
+- Middleware properly propagates resolution headers to route handlers (was a response-header set, exploitable for tenant spoofing).
+- Tier-2 E2E bypass requires both `NODE_ENV !== production` AND `VERCEL_ENV !== production` — survives one env var misconfiguration.
+
+**Manual seed step after deploy:**
+```sql
+INSERT INTO platform_admins (auth_user_id, role, email)
+VALUES ('<supabase-auth-user-uuid>', 'superadmin', '<email>');
+```
+Until at least one row exists, only the service Bearer can hit `/api/admin/*`.
+
+**Test-environment gating gaps surfaced during the wave (worth fixing later):**
+The Stripe webhook integration test and the cross-tenant probe both `describe.skip` silently when their credentials aren't set in CI. That's how the `raw_payload`/`raw_event` mismatch evaded test coverage for 4 days. Worth either: (a) failing CI loudly on PRs touching those domains, or (b) wiring credentials in CI secrets. Cataloged as a deferred hardening, not urgent.
+
+**Rejected for future:**
+- Treating `withPlatformAdminAudit` reason-detail as required for EVERY reason (including reads). Would force `detail: "list"` on every benign tenant-listing call — too much friction for too little forensic value. Kept the required set scoped to destructive reasons.
+- Splitting `/api/admin/*` into `/api/internal/*` for service-to-service vs `/api/admin/*` for UI. Cosmetic — both paths use the same handler-level guard. Defer until there's a concrete reason to differentiate.
+
+---
+
 ## D-083 — 2026-05-25 — Security audit wave + stop-the-world fixes
 
 **Decision:** Ran three parallel Agent security audits (auth boundary, tenant isolation, Stripe/payments) immediately after the BP34–BP40 merge cascade landed. Treated all HIGH-confidence findings as urgent and shipped four PRs (#162-#165) the same day. The "stop-the-world" patches deliberately broke the admin React UI until the proper §26 session gate ships, on the principle that "intentionally non-functional" beats "wide-open to the internet."
