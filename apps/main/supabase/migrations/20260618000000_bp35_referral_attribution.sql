@@ -73,11 +73,16 @@ CREATE POLICY attribution_touches_insert ON public.attribution_touches
   FOR INSERT TO authenticated
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+CREATE POLICY attribution_touches_update ON public.attribution_touches
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
 CREATE POLICY attribution_touches_delete ON public.attribution_touches
   FOR DELETE TO authenticated
   USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
-GRANT SELECT, INSERT, DELETE ON public.attribution_touches TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.attribution_touches TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.attribution_touches TO service_role;
 
 -- ── 35.4.2 trigger: trim to 10 most recent per contact ────────────────
