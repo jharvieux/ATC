@@ -8,7 +8,7 @@
 // (§35.7.3). Other tiers permitted.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { tenantClient } from "@/lib/db/tenant-client";
 import { recordIdentificationTouch } from "@/lib/attribution/record-touch";
 import { writeAuditLog } from "@/lib/audit/write";
 import { channelFromManualCategory } from "@/lib/attribution/channel-map";
@@ -23,10 +23,10 @@ export async function POST(
   const { ctx, user } = await assertPermission(req, { resource: "crm.contacts", action: "edit_source" });
   const { id: contactId } = await params;
 
-  const svc = createServiceRoleClient();
+  const db = tenantClient(ctx);
 
   // §35.9 tier gate.
-  const { data: tenantData } = await svc
+  const { data: tenantData } = await db
     .from("tenants")
     .select("tier_definitions!inner(code)")
     .eq("id", ctx.tenant_id)
@@ -47,7 +47,7 @@ export async function POST(
   const manual_category = typeof body.manual_category === "string" ? body.manual_category.trim() : null;
 
   // Verify contact belongs to tenant.
-  const { data: c } = await svc
+  const { data: c } = await db
     .from("contacts")
     .select("id, tenant_id")
     .eq("id", contactId)
@@ -72,7 +72,7 @@ export async function POST(
       editor_user_id: user.id,
       payload,
     },
-    svc,
+    db,
   );
   if (!result.ok) return Response.json({ error: result.error }, { status: 500 });
 

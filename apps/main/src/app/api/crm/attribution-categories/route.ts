@@ -5,16 +5,16 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import type { TenantContext } from "@/lib/db/tenant-context";
 
 const CUSTOMISATION_BLOCKED_TIERS: ReadonlySet<string> = new Set(["byo_research"]);
 
-async function tenantTier(tenant_id: string): Promise<string | null> {
-  const svc = createServiceRoleClient();
-  const { data } = await svc
+async function tenantTier(ctx: TenantContext): Promise<string | null> {
+  const db = tenantClient(ctx);
+  const { data } = await db
     .from("tenants")
     .select("tier_definitions!inner(code)")
-    .eq("id", tenant_id)
+    .eq("id", ctx.tenant_id)
     .maybeSingle();
   const t = (data as { tier_definitions?: { code?: string } | { code?: string }[] | null } | null)?.tier_definitions;
   return Array.isArray(t) ? t[0]?.code ?? null : t?.code ?? null;
@@ -36,7 +36,7 @@ export async function POST(req: Request): Promise<Response> {
   const { ctx } = await assertPermission(req, { resource: "crm.attribution_categories", action: "create" });
 
   // §35.9 tier gate.
-  const tier = await tenantTier(ctx.tenant_id);
+  const tier = await tenantTier(ctx);
   if (tier && CUSTOMISATION_BLOCKED_TIERS.has(tier)) {
     return Response.json({ error: `tier_does_not_permit_customisation:${tier}` }, { status: 403 });
   }
