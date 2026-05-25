@@ -37,7 +37,29 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "./service-role-client";
 import type { TenantContext } from "./tenant-context";
-import { TENANT_SCOPED_TABLES } from "./tenant-scoped-tables";
+import {
+  TENANT_SCOPED_TABLES,
+  PLATFORM_READABLE_TABLES,
+} from "./tenant-scoped-tables";
+
+// FAIL-CLOSED CONTRACT (added 2026-05-25 after the security audit):
+// `tenantClient(ctx).from(table)` throws if `table` is in neither the
+// tenant-scoped nor platform-readable set. Surfaced by the audit finding
+// that the proxy previously fell through to raw service-role access for
+// any unknown table — e.g., `tasks` and `quote_options` were reachable
+// cross-tenant from authenticated handlers.
+export class UnregisteredTenantTableError extends Error {
+  constructor(table: string) {
+    super(
+      `tenantClient: refusing to access table '${table}'. ` +
+        `Add it to TENANT_SCOPED_TABLES (and ensure 4 RLS policies exist) ` +
+        `or to PLATFORM_READABLE_TABLES (if it is genuinely platform-wide). ` +
+        `Until added, this access is blocked to prevent silent service-role passthrough. ` +
+        `See apps/main/src/lib/db/tenant-scoped-tables.ts.`,
+    );
+    this.name = "UnregisteredTenantTableError";
+  }
+}
 
 type AnyRecord = Record<string, unknown>;
 
@@ -89,11 +111,16 @@ export function tenantClient(ctx: TenantContext): SupabaseClient {
     get(target, prop, receiver) {
       if (prop === "from") {
         return (table: string) => {
-          const qb = target.from(table);
-          if (!TENANT_SCOPED_TABLES.has(table)) {
-            return qb;
+          if (TENANT_SCOPED_TABLES.has(table)) {
+            return wrapQueryBuilder(target.from(table), ctx.tenant_id);
           }
-          return wrapQueryBuilder(qb, ctx.tenant_id);
+          if (PLATFORM_READABLE_TABLES.has(table)) {
+            // Platform-wide table — callers self-scope. The proxy intentionally
+            // does NOT inject a tenant_id filter (the column may not exist or
+            // may not equal ctx.tenant_id for tables like `tenants` keyed by id).
+            return target.from(table);
+          }
+          throw new UnregisteredTenantTableError(table);
         };
       }
       return Reflect.get(target, prop, receiver);
