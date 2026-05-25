@@ -24,6 +24,7 @@
 //      mode: SSE-stream the approved text word-by-word back to the client.
 
 import { randomUUID } from "node:crypto";
+import { redactPii } from "@/lib/pii/redact";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
 import { bufferToSentences } from "@/lib/ai/sentence-buffer";
@@ -126,9 +127,27 @@ export async function POST(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
   }
 
-  const userMessage = (body.message ?? "").toString().trim();
-  if (!userMessage) {
+  const rawUserMessage = (body.message ?? "").toString().trim();
+  if (!rawUserMessage) {
     return new Response(JSON.stringify({ error: "empty_message" }), { status: 400 });
+  }
+
+  // §25.1 / audit pass 2 Finding 1 — PII redaction.
+  // Customers occasionally paste SSNs, credit cards, etc. The redactor
+  // replaces them with [REDACTED_<KIND>] placeholders before the text
+  // reaches the LLM or the database. The downstream LLM tends to
+  // respond with "I can't process sensitive numbers, please call us"
+  // which is the right outcome. See lib/pii/redact.ts for design notes.
+  const { redacted: userMessage, hits: piiHits } = redactPii(rawUserMessage);
+  if (Object.values(piiHits).some((n) => n > 0)) {
+    // Metric-style log — counts only, never the matched text.
+    console.info(
+      "[chat:pii] redacted=%s",
+      Object.entries(piiHits)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${k}=${n}`)
+        .join(","),
+    );
   }
 
   const tenantId = req.headers.get("x-resolved-tenant-id");
