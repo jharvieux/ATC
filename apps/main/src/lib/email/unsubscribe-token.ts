@@ -14,11 +14,21 @@
 //   - Finding 2 (Med): companion tokens had no expiration. A leaked link
 //     was viewable for the life of the platform. Now carries `exp` (90d
 //     by default) and verify rejects past-expiry tokens.
+//   - Finding 12 (Low): no version field meant a future v2 schema couldn't
+//     selectively invalidate v1 cohorts. New tokens carry `v: 1`. verify
+//     accepts unversioned tokens (backward compat with anything issued
+//     before this change) and any token whose `v` matches CURRENT_TOKEN_VERSION;
+//     rejects unknown future versions.
+
+const CURRENT_TOKEN_VERSION = 1;
 
 import { createHmac, timingSafeEqual } from "crypto";
 
-type UnsubscribePayload = { email: string; tenant_id: string; category: string };
-type CompanionPayload = { booking_id: string; phase: string; exp?: number };
+// `v` is the token-schema version. Tokens signed before the field was
+// added simply lack it — verify() accepts them for backward compat.
+type Versioned = { v?: number };
+type UnsubscribePayload = Versioned & { email: string; tenant_id: string; category: string };
+type CompanionPayload = Versioned & { booking_id: string; phase: string; exp?: number };
 
 // Default companion-token lifetime: 90 days from sign time. Most cruises
 // reference T-30/T-7/T+7 phases relative to sailing; 90d covers the
@@ -43,13 +53,16 @@ function hmacKey(purpose: "unsubscribe" | "companion"): string {
 
 function sign(payload: object, purpose: "unsubscribe" | "companion"): string {
   const key = hmacKey(purpose);
-  const data = JSON.stringify(payload);
+  // Always stamp the current schema version. Verify() accepts the missing
+  // case for backward compat with anything signed before this field existed.
+  const versioned = { v: CURRENT_TOKEN_VERSION, ...payload };
+  const data = JSON.stringify(versioned);
   const mac = createHmac("sha256", key).update(`${purpose}:${data}`).digest("hex");
   const token = Buffer.from(JSON.stringify({ payload: data, mac })).toString("base64url");
   return token;
 }
 
-function verify<T>(token: string, purpose: "unsubscribe" | "companion"): T | null {
+function verify<T extends Versioned>(token: string, purpose: "unsubscribe" | "companion"): T | null {
   try {
     const raw = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as {
       payload: string;
@@ -62,7 +75,14 @@ function verify<T>(token: string, purpose: "unsubscribe" | "companion"): T | nul
     if (expectedBuf.length !== actualBuf.length || !timingSafeEqual(expectedBuf, actualBuf)) {
       return null;
     }
-    return JSON.parse(raw.payload) as T;
+    const decoded = JSON.parse(raw.payload) as T;
+    // Reject unknown future versions. Missing `v` is treated as v0
+    // (pre-versioning) and accepted for backward compat — those tokens
+    // naturally roll off as new ones are issued.
+    if (decoded.v !== undefined && decoded.v !== CURRENT_TOKEN_VERSION) {
+      return null;
+    }
+    return decoded;
   } catch {
     return null;
   }

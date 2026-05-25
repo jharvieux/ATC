@@ -77,16 +77,31 @@ NOTHING` clause means re-running for an existing admin is a no-op.
 INSERT INTO public.platform_admins (auth_user_id, role, email, notes)
 VALUES (
   '<another-auth-user-uuid>',
-  'reviewer',  -- or 'finance', 'support', 'superadmin' — your roster convention
+  'reviewer',  -- one of: superadmin, reviewer, finance, support
   '<their-email>',
   '<one-line context — ticket link, decision date, etc>'
 );
 ```
 
-The `role` column accepts any non-empty string today. The RBAC matrix (#169)
-treats different roles equivalently from the platform-admin perspective —
-all rows in `platform_admins` are "a platform admin." Finer-grained
-platform-admin RBAC is future work.
+### Roster
+
+The `role` column is constrained to a known set (per migration
+`20260625000002_platform_admins_role_enum.sql`). Inserting any other
+value fails the CHECK constraint:
+
+| Role | Intended scope |
+|---|---|
+| `superadmin` | Full platform admin. Can manage other admins (future). |
+| `reviewer` | Content moderation, RAG demotion, abuse review. |
+| `finance` | Reconciliation, payouts, commission overrides. |
+| `support` | Read-only access for customer-support tasks. |
+
+Adding a new role requires both updating the CHECK constraint
+(`20260625000002_*.sql`) and adding the role to the table above.
+
+Today the application treats all `platform_admins` rows equivalently —
+no call site branches on `role`. The enum exists to lock the roster
+before that branching ships, not because it's enforced today.
 
 ## Revoking an admin
 

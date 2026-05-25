@@ -55,4 +55,47 @@ describe("Unsubscribe tokens — §23.3", () => {
     delete process.env.COMPANION_TOKEN_HMAC_KEY;
     expect(verifyCompanionToken(token)).toBeNull();
   });
+
+  // 2026-05-25 audit pass 2 hardenings.
+
+  it("hmacKey() throws if neither env var is set (audit Finding 3)", () => {
+    delete process.env.INVITATION_TOKEN_HMAC_KEY;
+    expect(() => signUnsubscribeToken({ email: "a@b.com", tenant_id: "t", category: "x" })).toThrow(
+      /Missing HMAC key/,
+    );
+  });
+
+  it("companion token verify rejects past-expiry tokens (audit Finding 2)", () => {
+    // Sign with a custom exp in the past.
+    const past = Math.floor(Date.now() / 1000) - 10;
+    const token = signCompanionToken({ booking_id: "b", phase: "t_1", exp: past });
+    expect(verifyCompanionToken(token)).toBeNull();
+  });
+
+  it("freshly signed tokens carry v=1 (audit Finding 12)", () => {
+    const token = signCompanionToken({ booking_id: "b", phase: "t_1" });
+    const decoded = verifyCompanionToken(token);
+    expect(decoded?.v).toBe(1);
+  });
+
+  it("verify rejects tokens with an unknown future version (audit Finding 12)", () => {
+    // Hand-craft a token with v=2 to simulate a future schema.
+    const key = "test-hmac-key-32-bytes-long-pad!!";
+    const payload = JSON.stringify({ v: 2, booking_id: "b", phase: "t_1" });
+    const crypto = require("crypto") as typeof import("crypto");
+    const mac = crypto.createHmac("sha256", key).update(`companion:${payload}`).digest("hex");
+    const token = Buffer.from(JSON.stringify({ payload, mac })).toString("base64url");
+    expect(verifyCompanionToken(token)).toBeNull();
+  });
+
+  it("verify still accepts pre-versioning tokens (no v field) for backward compat", () => {
+    // Hand-craft an unversioned token.
+    const key = "test-hmac-key-32-bytes-long-pad!!";
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const payload = JSON.stringify({ booking_id: "b", phase: "t_1", exp: future });
+    const crypto = require("crypto") as typeof import("crypto");
+    const mac = crypto.createHmac("sha256", key).update(`companion:${payload}`).digest("hex");
+    const token = Buffer.from(JSON.stringify({ payload, mac })).toString("base64url");
+    expect(verifyCompanionToken(token)).toMatchObject({ booking_id: "b", phase: "t_1" });
+  });
 });
