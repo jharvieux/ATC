@@ -46,6 +46,18 @@ describe("isPermitted", () => {
       expect(isPermitted("agent", "rag_submissions", "approve")).toBe(false);
     });
 
+    it("CANNOT update team member roles (owner-only)", () => {
+      expect(isPermitted("agent", "team_members", "update_role")).toBe(false);
+      expect(isPermitted("viewer", "team_members", "update_role")).toBe(false);
+      expect(isPermitted("tenant_owner", "team_members", "update_role")).toBe(true);
+    });
+
+    it("CAN list team members (everyone can see who's in the tenant)", () => {
+      expect(isPermitted("agent", "team_members", "list")).toBe(true);
+      expect(isPermitted("viewer", "team_members", "list")).toBe(true);
+      expect(isPermitted("tenant_owner", "team_members", "list")).toBe(true);
+    });
+
     it("CAN read tenant settings (just not write)", () => {
       expect(isPermitted("agent", "host_config", "read")).toBe(true);
       expect(isPermitted("agent", "tenant_branding", "read")).toBe(true);
@@ -60,6 +72,7 @@ describe("isPermitted", () => {
       expect(isPermitted("viewer", "tasks", "list")).toBe(true);
       expect(isPermitted("viewer", "host_config", "read")).toBe(true);
       expect(isPermitted("viewer", "tenant_branding", "read")).toBe(true);
+      expect(isPermitted("viewer", "team_members", "list")).toBe(true);
     });
 
     it("CANNOT create/update/delete anything", () => {
