@@ -7,6 +7,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
+import { respondCsvOrJson } from "@/lib/reporting/csv";
 
 export async function GET(req: Request): Promise<Response> {
   const { ctx } = await assertPermission(req, { resource: "reports.leads_by_source", action: "read" });
@@ -46,5 +47,10 @@ export async function GET(req: Request): Promise<Response> {
     buckets.set(key, b);
   }
   const items = Array.from(buckets.values()).sort((a, b) => b.count - a.count);
-  return Response.json({ items, filters });
+  return respondCsvOrJson({
+    format: new URL(req.url).searchParams.get("format"),
+    items,
+    csv_filename: `leads-by-source_${filters.start}_${filters.end}.csv`,
+    json_body: { items, filters },
+  });
 }
