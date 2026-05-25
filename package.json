@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "@supabase/supabase-js": "^2.105.4",
+    "@supabase/supabase-js": "^2.106.1",
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^1.6.0",
     "msw": "^2.14.6",
