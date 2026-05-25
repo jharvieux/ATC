@@ -4,10 +4,18 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
 interface ExportPayload {
   auth_user_id: string;
   export_request_id: string;
+}
+
+interface RagExportResponse {
+  ok?: boolean;
+  chunks?: Array<Record<string, unknown>>;
+  error?: string;
 }
 
 export const userDataExportBuild = inngest.createFunction(
@@ -32,8 +40,36 @@ export const userDataExportBuild = inngest.createFunction(
       db.from("legal_consents").select("*").eq("auth_user_id", auth_user_id),
     ]);
 
-    // TODO(rag-export): include knowledge_chunks where ingest_user_id = auth_user_id
-    // via RAG service call once ingest_user_id column is populated from BP17 migration.
+    // Knowledge-chunks live on the RAG service; fetch via signed service JWT.
+    // Failures are non-fatal — we record an empty array + the error so the
+    // user still gets the rest of their data within the 45-day SLA.
+    let knowledgeChunks: Array<Record<string, unknown>> = [];
+    let knowledgeChunksError: string | null = null;
+    const ragUrl = process.env.RAG_SERVICE_URL;
+    if (ragUrl) {
+      try {
+        const jwt = await signServiceJwt({
+          tenant_id: PLATFORM_SENTINEL_TENANT_ID,
+          scope: "read",
+          service_identifier: "platform-admin",
+        });
+        const res = await fetch(`${ragUrl}/api/admin/export-user-chunks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ auth_user_id }),
+        });
+        if (res.ok) {
+          const json = (await res.json()) as RagExportResponse;
+          knowledgeChunks = json.chunks ?? [];
+        } else {
+          knowledgeChunksError = `rag_export_http_${res.status}`;
+        }
+      } catch (e) {
+        knowledgeChunksError = e instanceof Error ? e.message : String(e);
+      }
+    } else {
+      knowledgeChunksError = "rag_service_url_unset";
+    }
 
     const payload = {
       exported_at: new Date().toISOString(),
@@ -41,15 +77,18 @@ export const userDataExportBuild = inngest.createFunction(
       conversations: convRows ?? [],
       bookings: bookingRows ?? [],
       legal_consents: consentRows ?? [],
+      knowledge_chunks: knowledgeChunks,
+      ...(knowledgeChunksError ? { knowledge_chunks_error: knowledgeChunksError } : {}),
     };
 
     const jsonContent = JSON.stringify(payload, null, 2);
 
-    // Upload to Supabase Storage. The bucket 'user-exports' must exist.
-    // TODO(storage-bucket): create user-exports bucket in Supabase dashboard.
     const storagePath = `${auth_user_id}/${export_request_id}.json`;
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    // Ensure the bucket exists. Idempotent: 409 (already exists) is fine.
+    await ensureBucket(supabaseUrl, serviceKey, "user-exports");
 
     const uploadRes = await fetch(
       `${supabaseUrl}/storage/v1/object/user-exports/${storagePath}`,
@@ -133,3 +172,20 @@ export const userDataExportBuild = inngest.createFunction(
     return { ok: true, signed_url: signedUrl };
   },
 );
+
+async function ensureBucket(supabaseUrl: string, serviceKey: string, bucketId: string): Promise<void> {
+  const res = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id: bucketId, name: bucketId, public: false }),
+  });
+  // 200/201 created; 409/400 already-exists; 4xx anything else is logged but
+  // not fatal — the subsequent upload will surface the real failure.
+  if (!res.ok && res.status !== 409 && res.status !== 400) {
+    const text = await res.text().catch(() => "");
+    console.warn("[user-data-export-build] ensureBucket non-fatal: %s %s", res.status, text);
+  }
+}
