@@ -24,6 +24,7 @@
 
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { TEST_ANON_JWT, TEST_SERVICE_ROLE_JWT } from "./_test-jwt-fixtures";
 
 // Gated: requires the Tier-2 + Tier-2.5 local stack (Postgres + PostgREST
 // + proxy + fixtures). When SUPABASE_DB_URL is unset, skip — same gate
@@ -39,10 +40,8 @@ const describeIf = haveTier2 ? describe : describe.skip;
 // so we don't poison sibling test files that expect these unset.
 if (haveTier2) {
   process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??=
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRpZXIyLWxvY2FsIn0.Pz-8BVTsRIUC81JWFUXQyvCjid981wZGKiag9Z2GF34";
-  process.env.SUPABASE_SERVICE_ROLE_KEY ??=
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoidGllcjItbG9jYWwifQ.88tFBcM9_intifembBjlhAE04uCnr0M2GbV_rTuxH3o";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= TEST_ANON_JWT;
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??= TEST_SERVICE_ROLE_JWT;
   process.env.INNGEST_EVENT_KEY ??= "tier2-test-eventkey";
 }
 

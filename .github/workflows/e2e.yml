@@ -30,12 +30,12 @@ jobs:
     env:
       # All env vars Playwright + Next.js need at boot, mirroring
       # apps/main/.env.local in docs/testing/e2e-local-setup.md.
-      # The JWTs match scripts/local-postgrest.conf's jwt-secret.
+      # SUPABASE_*_KEY values are injected in the "Generate test JWTs"
+      # step below — kept out of this static env block so committed
+      # workflow YAML never contains JWT literals (GitGuardian noise).
       PLATFORM_PRIMARY_DOMAIN: localhost
       PLATFORM_DOMAIN_REGEX: '^([a-z0-9-]+)\.localhost$'
       NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRpZXIyLWxvY2FsIn0.Pz-8BVTsRIUC81JWFUXQyvCjid981wZGKiag9Z2GF34
-      SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoidGllcjItbG9jYWwifQ.88tFBcM9_intifembBjlhAE04uCnr0M2GbV_rTuxH3o
       SUPABASE_DB_URL: postgresql://postgres@localhost:5432/atc_main_test
       STRIPE_SECRET_KEY: sk_test_ci-placeholder
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci-placeholder
@@ -78,6 +78,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Generate test JWTs
+        # Tier-2 test JWTs are minted from tests/security/_test-jwt-fixtures.ts
+        # (same secret PostgREST validates against). Output is two
+        # `KEY=value` lines we append to $GITHUB_ENV so all subsequent
+        # steps see SUPABASE_ANON_KEY + SUPABASE_SERVICE_ROLE_KEY.
+        run: pnpm tsx scripts/print-test-jwts.ts >> $GITHUB_ENV
 
       - name: Install PostgREST
         # PostgREST renamed release assets to use "x86-64" instead of "x64" and
