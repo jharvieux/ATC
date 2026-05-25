@@ -107,6 +107,37 @@ export async function PATCH(
         }
       }
 
+      // §40.6 — non-cruise line items for itinerary integration.
+      // Soft-fail when BP40 table isn't on dev yet (env without #139 merged).
+      let lineItems: import("@/lib/deliverables/itinerary-pdf").ItineraryLineItem[] = [];
+      const { data: liData, error: liErr } = await svc
+        .from("booking_line_items")
+        .select("id, item_type, description, supplier_name, start_date, end_date, include_in_itinerary")
+        .eq("booking_id", r.booking_id);
+      if (liErr && liErr.code !== "42P01") {
+        console.warn("[itinerary-send] booking_line_items load failed:", liErr.message);
+      } else if (liData) {
+        type LiRow = {
+          id: string;
+          item_type: "flight" | "hotel" | "transfer" | "excursion" | "insurance" | "other";
+          description: string;
+          supplier_name: string | null;
+          start_date: string | null;
+          end_date: string | null;
+          include_in_itinerary: boolean;
+        };
+        lineItems = (liData as LiRow[])
+          .filter((it) => it.include_in_itinerary)
+          .map((it) => ({
+            id: it.id,
+            item_type: it.item_type,
+            description: it.description,
+            supplier_name: it.supplier_name,
+            start_date: it.start_date,
+            end_date: it.end_date,
+          }));
+      }
+
       const pdfData: ItineraryPdfData = {
         tenant: { display_name: (tenantRow as { display_name?: string } | null)?.display_name ?? "" },
         cruise_line: booking.cruise_line,
@@ -129,6 +160,7 @@ export async function PATCH(
           email: (agentRow as { email: string | null } | null)?.email ?? null,
           phone: (agentRow as { phone: string | null } | null)?.phone ?? null,
         },
+        line_items: lineItems,
       };
 
       try {
