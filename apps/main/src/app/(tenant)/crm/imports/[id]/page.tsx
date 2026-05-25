@@ -3,10 +3,10 @@
 // BP34 §34.6 — Per-item review screen.
 //
 // Shows extracted fields (editable), source preview (text or signed-URL
-// PDF link), validation flags, and the four actions: Accept as-is, Edit
-// and accept, Merge with existing, Reject. The "merge" path is a stub
-// today — when the agent picks it, we surface a contact-picker dialog
-// in a follow-up.
+// PDF link), validation flags, and four actions: Accept as-is, Accept
+// with edits, Merge with existing, Reject. Merge opens a contact-picker
+// dialog and posts to /api/imports/review/:id/merge (field-level
+// non-destructive merge — see the route docstring).
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -38,6 +38,10 @@ export default function ImportReviewItemPage() {
   const [retainForFollowup, setRetainForFollowup] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeSearch, setMergeSearch] = useState("");
+  const [mergeResults, setMergeResults] = useState<Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null }>>([]);
 
   const fetchItem = useCallback(async () => {
     // The review API only lists items; we re-use the list endpoint with no
@@ -101,6 +105,38 @@ export default function ImportReviewItemPage() {
       setError(j.reason ?? j.error ?? "accept_failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onSearchContacts = useCallback(async (q: string) => {
+    if (q.trim().length < 2) {
+      setMergeResults([]);
+      return;
+    }
+    const r = await fetch(`/api/crm/contacts?search=${encodeURIComponent(q)}&limit=10`);
+    if (!r.ok) return;
+    const data = (await r.json()) as { contacts: Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null }> };
+    setMergeResults(data.contacts ?? []);
+  }, []);
+
+  const onMerge = async (target_contact_id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/imports/review/${id}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_contact_id }),
+      });
+      if (r.ok) {
+        router.push("/crm/imports");
+        return;
+      }
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      setError(j.error ?? "merge_failed");
+    } finally {
+      setBusy(false);
+      setMergeOpen(false);
     }
   };
 
@@ -266,7 +302,60 @@ export default function ImportReviewItemPage() {
           >
             Accept with edits
           </button>
+          <button
+            disabled={busy || item.document_type === "commission_statement"}
+            onClick={() => setMergeOpen(true)}
+            className="bg-slate-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
+            title={item.document_type === "commission_statement" ? "Merge isn't available for commission statements" : "Merge with an existing contact"}
+          >
+            Merge with existing
+          </button>
         </div>
+
+        {mergeOpen && (
+          <div className="mt-4 border border-slate-300 rounded-md p-4 bg-slate-50">
+            <h3 className="text-sm font-semibold mb-2">Pick a contact to merge into</h3>
+            <p className="text-xs text-gray-600 mb-2">
+              Field-level merge: blank fields on the existing contact get filled from the import; non-blank fields are left alone. Notes are appended with a timestamp line.
+            </p>
+            <input
+              type="text"
+              autoFocus
+              placeholder="Search by name or email…"
+              value={mergeSearch}
+              onChange={(e) => {
+                setMergeSearch(e.target.value);
+                void onSearchContacts(e.target.value);
+              }}
+              className="w-full border border-gray-300 rounded-md px-2 py-1 text-sm mb-2"
+            />
+            <div className="max-h-48 overflow-auto space-y-1">
+              {mergeResults.length === 0 ? (
+                <p className="text-xs text-gray-500">Type at least 2 characters.</p>
+              ) : (
+                mergeResults.map((c) => (
+                  <button
+                    key={c.id}
+                    disabled={busy}
+                    onClick={() => void onMerge(c.id)}
+                    className="block w-full text-left bg-white border border-gray-200 rounded px-2 py-1 text-sm hover:bg-blue-50 disabled:opacity-50"
+                  >
+                    <span className="font-medium">
+                      {[c.first_name, c.last_name].filter(Boolean).join(" ") || "(no name)"}
+                    </span>
+                    {c.email && <span className="text-gray-500 ml-2">— {c.email}</span>}
+                  </button>
+                ))
+              )}
+            </div>
+            <button
+              onClick={() => setMergeOpen(false)}
+              className="mt-2 text-xs text-gray-600 hover:underline"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         <div className="mt-6 border-t border-gray-200 pt-4">
           <h3 className="text-sm font-semibold mb-2">Reject</h3>
