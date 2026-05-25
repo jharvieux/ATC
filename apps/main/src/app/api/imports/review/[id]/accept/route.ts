@@ -15,6 +15,9 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { promoteImport } from "@/lib/import/promote";
+import { matchStatementLineItems } from "@/lib/import/match-statement-line-items";
+import type { CommissionStatementFields } from "@/lib/import/extractors/types";
+import { writeAuditLog } from "@/lib/audit/write";
 
 type Body = {
   edited_fields?: Record<string, unknown>;
@@ -64,6 +67,51 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       .from("import_queue")
       .update({ raw_extracted_fields: merged, parse_failure_reason: null })
       .eq("id", queueRowId);
+  }
+
+  // §34.5.4 — commission_statement doesn't go through promoteImport (no
+  // contact/booking/commission writes). Instead we run the §34.5.4 +
+  // §14.8 matcher and return the report; the §14.8 admin flow surfaces
+  // it for line-by-line reconciliation. Mark the queue row accepted.
+  if (row.document_type === "commission_statement") {
+    const fields = merged as unknown as CommissionStatementFields;
+    const report = await matchStatementLineItems({
+      tenant_id: ctx.tenant_id,
+      statement: fields,
+      svc,
+    });
+
+    const purgable_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await svc
+      .from("import_queue")
+      .update({
+        status: "accepted",
+        accepted_at: new Date().toISOString(),
+        accepted_by_user_id: user.id,
+        purgable_at,
+        // Stash the match report on the row so the §14.8 UI can render it
+        // without re-running matching.
+        raw_extracted_fields: { ...(merged as object), _match_report: report },
+      })
+      .eq("id", queueRowId);
+
+    await writeAuditLog({
+      tenant_id: ctx.tenant_id,
+      actor_user_id: user.id,
+      actor_type: "user",
+      action: "import.accepted",
+      resource_type: "import_queue",
+      resource_id: queueRowId,
+      context: {
+        document_type: "commission_statement",
+        total_lines: report.total_lines,
+        exact_ref_matches: report.exact_ref_matches,
+        fuzzy_matches: report.fuzzy_matches,
+        orphans: report.orphans,
+      },
+    });
+
+    return Response.json({ accepted: true, document_type: "commission_statement", match_report: report });
   }
 
   const result = await promoteImport({
