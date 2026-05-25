@@ -55,7 +55,7 @@ export async function handleStripeWebhook(
     endpoint,
     // tenant_id is NULL for platform events; connect events may set it after dispatch
     tenant_id: null,
-    raw_payload: event as unknown as Record<string, unknown>,
+    raw_event: event as unknown as Record<string, unknown>,
     processing_started_at: new Date().toISOString(),
   });
 
