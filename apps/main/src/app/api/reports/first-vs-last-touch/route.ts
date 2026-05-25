@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
+import { respondCsvOrJson } from "@/lib/reporting/csv";
 
 export async function GET(req: Request): Promise<Response> {
   const { ctx } = await assertPermission(req, { resource: "reports.first_vs_last_touch", action: "read" });
@@ -44,5 +45,10 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const items = Array.from(pairs.values()).sort((a, b) => b.count - a.count);
-  return Response.json({ items, filters });
+  return respondCsvOrJson({
+    format: new URL(req.url).searchParams.get("format"),
+    items,
+    csv_filename: `first-vs-last-touch_${filters.start}_${filters.end}.csv`,
+    json_body: { items, filters },
+  });
 }

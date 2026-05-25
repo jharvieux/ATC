@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
+import { respondCsvOrJson } from "@/lib/reporting/csv";
 
 const VALID_SECONDARY = new Set(["channel", "cruise_line", "sail_quarter"]);
 
@@ -87,7 +88,12 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const items = Array.from(buckets.values()).sort((a, b) => b.net_impact_cents - a.net_impact_cents);
-  return Response.json({ items, group_by: groupBy, filters });
+  return respondCsvOrJson({
+    format: url.searchParams.get("format"),
+    items,
+    csv_filename: `cancellations_${groupBy}_${filters.start}_${filters.end}.csv`,
+    json_body: { items, group_by: groupBy, filters },
+  });
 }
 
 function sailQuarter(iso: string): string {

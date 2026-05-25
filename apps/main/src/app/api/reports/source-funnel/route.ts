@@ -4,6 +4,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
+import { respondCsvOrJson } from "@/lib/reporting/csv";
 
 export async function GET(req: Request): Promise<Response> {
   const { ctx } = await assertPermission(req, { resource: "reports.source_funnel", action: "read" });
@@ -43,5 +44,10 @@ export async function GET(req: Request): Promise<Response> {
     quote_to_booking_pct: b.quotes > 0 ? Math.round((b.bookings / b.quotes) * 1000) / 10 : null,
     contact_to_booking_pct: b.contacts > 0 ? Math.round((b.bookings / b.contacts) * 1000) / 10 : null,
   })).sort((a, b) => b.contacts - a.contacts);
-  return Response.json({ items, filters });
+  return respondCsvOrJson({
+    format: new URL(req.url).searchParams.get("format"),
+    items,
+    csv_filename: `source-funnel_${filters.start}_${filters.end}.csv`,
+    json_body: { items, filters },
+  });
 }

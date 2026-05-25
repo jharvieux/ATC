@@ -6,6 +6,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
+import { respondCsvOrJson } from "@/lib/reporting/csv";
 
 export async function GET(req: Request): Promise<Response> {
   const { ctx } = await assertPermission(req, { resource: "reports.campaigns", action: "read" });
@@ -82,7 +83,12 @@ export async function GET(req: Request): Promise<Response> {
     };
   }).sort((a, b) => b.bookings - a.bookings);
 
-  return Response.json({ items, filters });
+  return respondCsvOrJson({
+    format: new URL(req.url).searchParams.get("format"),
+    items,
+    csv_filename: `campaigns_${filters.start}_${filters.end}.csv`,
+    json_body: { items, filters },
+  });
 }
 
 export async function POST(req: Request): Promise<Response> {
