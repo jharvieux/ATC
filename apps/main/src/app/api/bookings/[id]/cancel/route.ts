@@ -19,6 +19,8 @@ type CommissionRow = {
   platform_retained_cents: bigint;
   currency: string;
   platform_split_rate: number;
+  received_commission_cents: bigint | null;
+  gross_commission_cents: bigint;
 };
 
 type PayoutRow = {
@@ -30,6 +32,32 @@ type PayoutRow = {
 };
 
 const CLAWBACK_WINDOW_DAYS = 60;
+
+/**
+ * §34.8.2 — Write clawback fields onto the commissions row so §36's
+ * "Lost revenue from cancellations" report can query them. Called from
+ * each branch in §14.9 cancellation that produces a clawback (pending
+ * payout zeroed, Stripe reversal, contractual recovery required).
+ *
+ * `amount` is the cents value clawed back (BigInt to match the
+ * commissions money columns). `reason` is free text; commonly populated
+ * from the cancellation context.
+ */
+async function writeClawbackFields(
+  adminDb: ReturnType<typeof createServiceRoleClient>,
+  commissionId: string,
+  amount: bigint,
+  reason: string,
+): Promise<void> {
+  await adminDb
+    .from("commissions")
+    .update({
+      clawback_amount_cents: amount.toString(),
+      clawback_at: new Date().toISOString(),
+      clawback_reason: reason,
+    })
+    .eq("id", commissionId);
+}
 
 export async function POST(
   req: Request,
@@ -65,7 +93,7 @@ export async function POST(
     // Load commissions
     const { data: commissionData } = await db
       .from("commissions")
-      .select("id, status, platform_retained_cents, currency, platform_split_rate")
+      .select("id, status, platform_retained_cents, currency, platform_split_rate, received_commission_cents, gross_commission_cents")
       .eq("booking_id", bookingId)
       .maybeSingle();
 
@@ -119,6 +147,9 @@ export async function POST(
         notes: "clawback_within_hold_period",
       });
 
+      // §34.8.2 — record clawback for §36 "Lost revenue from cancellations" report.
+      await writeClawbackFields(adminDb, commission.id, commission.gross_commission_cents, "cancelled_during_hold");
+
       await transitionCommissionState(commission.id, "waived", { reason: "cancelled_during_hold" });
       return Response.json({ ok: true, clawback: "cancelled_pending_payout" });
     }
@@ -147,6 +178,10 @@ export async function POST(
             days_since_settlement: daysSinceSettlement,
           },
         });
+        // §34.8.2 — record the clawback intent even though recovery is manual,
+        // so §36's report counts the canceled-but-not-recovered amount.
+        const receivedAmount = commission.received_commission_cents ?? commission.gross_commission_cents;
+        await writeClawbackFields(adminDb, commission.id, receivedAmount, "contractual_recovery_required_post_60d");
         return Response.json({ ok: true, clawback: "contractual_recovery_required" });
       }
 
@@ -171,6 +206,10 @@ export async function POST(
           tier_rate_applied: commission.platform_split_rate,
           notes: `stripe_reversal:${reversalKey}`,
         });
+
+        // §34.8.2 — record clawback for §36 report.
+        const receivedAmount = commission.received_commission_cents ?? commission.gross_commission_cents;
+        await writeClawbackFields(adminDb, commission.id, receivedAmount, `stripe_reversal:${reversalKey}`);
 
         await transitionCommissionState(commission.id, "waived", { reason: "stripe_reversal" });
         return Response.json({ ok: true, clawback: "stripe_reversal_initiated" });

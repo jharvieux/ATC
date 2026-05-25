@@ -45,7 +45,10 @@ export type AICallPurpose =
   | "other"
   // BP31 §32.4.4 — Help AI cost attribution.
   | "help_ai_main"
-  | "help_ai_supervisor";
+  | "help_ai_supervisor"
+  // BP34 §34.3.2-3.3 — Inbound import parsing pipeline.
+  | "import_classify"
+  | "import_extract";
 
 // Purposes that run customer-facing turns. NOT downgraded at soft1.
 const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([

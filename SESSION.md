@@ -1,63 +1,81 @@
-# Session state — last updated 2026-05-24 ~19:30 UTC
+# Session state — last updated 2026-05-24 ~21:40 UTC
 
-## Just completed (this session)
+## Just completed (this session, after specs were dropped in)
 
-Massive session. Two epics shipped + cascade-merged a backlog of 8 PRs.
+### BP34 Phases A + B + C — 9 commits on `feature/bp34-phase-a-schema`, ready for PR
 
-### Pre-go-live hygiene + foundational refactors (8 PRs merged into dev)
+After the user added the missing §34–§40 tech-spec addenda manually, I re-verified Phase B against the real §34 spec (one alignment fix: retention windows for accepted/rejected from 7d/30d → 24h per §34.4) and built Phase C end-to-end as backend.
 
-- PR #103 — E2E tier 1+2+2.5 plumbing + 17 specs + bug-intent + asset renderer + CI workflow (incl. PostgREST v12 → v14 install fix)
-- PR #104 — RLS snapshot tooling extended to cover rag DB
-- PR #105 — BP22 platform-admin-configurable retrieval composite weights
-- PR #106 — BP38 `@atc/contracts` zod package (single source of truth for main↔rag)
-- PR #107 — BP24 streaming foundation (`instrumentedClaudeStream` + `bufferToSentences`)
-- PR #108 — D-041 platform_settings cross-project sync (sender + receiver + retry + reconcile)
-- PR #112 — BP24 chat-route streaming wiring (option B UX, `delta_start`/`rewriting`/`message_revised` events)
-- PR #113 — BP24 help-AI streaming wiring (`[REWRITE]` sentinel)
-- PR #114 — chat-route stale streaming comment refresh
+**Code added (Phase C, 8 commits):**
 
-### Pre-go-live no-cost items
+| Concern | File |
+|---|---|
+| Retention sweep (§34.4) | `apps/main/src/inngest/purge-parsed-documents.ts` |
+| Rate resolver (§34.7.3) | `apps/main/src/lib/import/resolve-commission-rate.ts` |
+| Acceptance promotion (§34.5, §34.7) | `apps/main/src/lib/import/promote.ts` |
+| Tier gating helper (§34.9) | `apps/main/src/lib/import/tier-gate.ts` |
+| Statement matching (§34.5.4, §14.8) | `apps/main/src/lib/import/match-statement-line-items.ts` |
+| Gmail trigger glue (§34.2) | `apps/main/src/lib/import/process-gmail-message.ts` |
+| Manual entry route | `apps/main/src/app/api/imports/manual/route.ts` |
+| Document upload route (PDF-only) | `apps/main/src/app/api/imports/upload/route.ts` |
+| Review queue list | `apps/main/src/app/api/imports/review/route.ts` |
+| Review accept (edit + agent rate) | `apps/main/src/app/api/imports/review/[id]/accept/route.ts` |
+| Review reject | `apps/main/src/app/api/imports/review/[id]/reject/route.ts` |
+| Gmail Pub/Sub webhook (real) | `apps/main/src/app/api/webhooks/gmailpubsub/route.ts` |
+| Gmail health endpoint (§34.2.4) | `apps/main/src/app/api/integrations/gmail/health/route.ts` |
+| Gmail health banner component | `apps/main/src/components/integrations/GmailHealthBanner.tsx` |
+| §14.9 clawback writes (§34.8.2) | `apps/main/src/app/api/bookings/[id]/cancel/route.ts` |
+| Schema: gmail tables + storage bucket | `apps/main/supabase/migrations/20260617000000_bp34_phase_c_gmail_storage.sql` |
 
-- PR #115 — RS256 service JWT signer + 2 tenant-scoped wire-ups *(open, blocked by Vercel rate limit)*
-- PR #116 — rag-service-count cron wire-up (stacked on #115) *(open)*
-- PR #117 — Migrate 4 TODO(platform-alert) sites to `sendOperatorAlert` *(open)*
+**Tests:** 83 unit tests in `apps/main/test/unit/import/` (was 17 → 83). Typecheck clean throughout (every commit).
 
-### Payment gate epic — 4 stacked PRs
-
-- PR #118 — `tenants.subscription_status` + `non_paying_since` + Stripe webhook wires + `derivePaymentState` helper + 21 tests
-- PR #119 — Middleware redirect past 7-day grace + persistent banner (stacked on #118)
-- PR #120 — `excludeNonPayingPastGrace` cron helper + 5 bulk crons migrated + 9 tests (stacked on #119)
-- PR #121 — `InactivityReminder` email + `compliance-nightly` rewire; **180d auto-suspend removed for paying tenants** (stacked on #120)
-
-### Policy changes captured
-
-- Paying-but-inactive tenants no longer auto-suspend at 180d. Suspension follows non-payment only (via the middleware gate). Captured in PR #121's description and reflected in the `compliance-nightly` rewrite.
+**Cross-section wires:**
+- §14.9 `/api/bookings/:id/cancel` now writes `clawback_amount_cents` + `clawback_at` + `clawback_reason` on three branches (hold cancel, Stripe reversal, contractual recovery). Required by §36 reports.
+- `/api/inngest` now serves `importPipeline` + `purgeParsedDocuments`.
+- `inngest/events.ts` now declares `import.queued` event.
 
 ## In flight
 
-- Nothing committed in flight on a working branch. All work is in open PRs above.
+**Nothing in flight on a working branch.** Phase A merged in PR #133. Phases B + C are committed + pushed on `feature/bp34-phase-a-schema` (HEAD = `8f5a16a`). PR not yet opened — recommendation in Q1.
 
 ## Next step
 
-1. **Work the JWT cross-tenant follow-up** (#115's flagged design question). Recommended hybrid: seed PLATFORM sentinel tenant in `tenant_registry_shadow`, switch genuinely-cross-tenant callers to use it; tenant-scoped callers (post-termination, rag-tenant-scoped-purge) use the affected tenant's id. Wires the remaining 6 admin/cron sites that PR #115 didn't touch.
-2. **Event-driven cron migration** — add `assertTenantStillPaying` (from PR #120's helper) to the per-tenant Inngest handlers that aren't bulk loops: `precruise-generate-and-send`, `tenant-on-terminated`, `group-reminder-cadence`, etc.
-3. When Vercel quota clears: merge cascade for the 11 open PRs (#115 → #116 → #117 → #118 → #119 → #120 → #121).
+**Open the BP34 PR** (`feature/bp34-phase-a-schema` → `dev`) as draft so the user can see scope at a glance. Then handle morning Q&A on deferred Phase D items.
 
-## Blocked on user
+## Blocked on user (morning questions)
 
-- **Vercel build quota** — required check `Vercel – atc-main` failing with `Deployment rate limited — retry in 24 hours`. Blocks merges of #115/116/117/118/119/120/121. Options: (A) Vercel Pro upgrade, (B) wait ~24h, (C) temporarily remove `Vercel – atc-main` from required checks in repo settings.
-- **`OPERATOR_SLACK_WEBHOOK_URL` env var** — must be set for PR #117's alerts to surface beyond `audit_log`.
-- **`SUPABASE_RAG_TEST_DB_URL` GH secret** — needed for PR #104's rag CI drift check.
-- **Migrations to run when promoting**: `20260613000000_retrieval_weights.sql`, `20260614000000_platform_settings_sync.sql`, `20260615000000_tenant_payment_state.sql` (main) + `0014_composite_weights.sql`, `0014_platform_settings_sync.sql` (rag).
-- **JWT design decision** — three options for the cross-tenant admin JWT path were laid out in PR #115's description; the recommended hybrid (A + C) is what the next session would default to absent further direction.
+**Q1 — Open the BP34 PR now?** Branch has ~3000 LOC across Phases B+C. Recommend opening as **draft** so CI runs and you can see scope; we mark ready-for-review after Phase D's UI lands or you decide UI is a separate PR.
 
-## Open questions
+**Q2 — Phase D scope split.** Phase D as-listed contains a mix: Gmail health surfacing (DONE), tier gating (DONE), final tests. Plus what I deferred from Phase C: review queue UI, OAuth connect/callback, watch renewal cron, PDF OCR for document path. How do you want this split? Options:
+- (A) One big "BP34 finishing" PR with everything deferred.
+- (B) Three smaller PRs: (i) Review queue UI, (ii) Gmail OAuth + watch cron, (iii) PDF OCR.
+- Recommend (B). Each piece has different risk profile + dependency.
 
-### #6 from the original pre-go-live list — auto-downgrade for paying inactive tenants
+**Q3 — PDF OCR dependency.** The document-upload path stores the PDF + emits import.queued but the pipeline's `resolveText('document')` returns null, so the row goes to parse_failed (correctly fail-loud). To fix it I need either:
+- (A) `pdf-parse` npm dep (lightweight, text-only PDFs)
+- (B) `pdfjs-dist` + OCR worker (handles scanned PDFs but heavier)
+- (C) External service (Google Document AI, AWS Textract) — costs $$$
+- Recommend (A) for v1; tenants forwarding scanned-PDF lead-board screenshots will see parse_failed and can re-submit as manual entry or images via Gmail.
 
-Resolved as: **don't do auto-downgrade**. User confirmed: "For inactive paying subscribers there shouldn't be an auto-downgrade but friendly reminder email." PR #121 implements that. The original D-049 deferral is effectively closed; if you want a MEMORY entry capturing the resolution, that's worth doing.
+**Q4 — Gmail OAuth setup.** The Pub/Sub webhook is wired and the trigger-detection + emit-to-pipeline flow is in. What's still needed to make Gmail import end-to-end functional:
+- (A) GCP project + OAuth client + Pub/Sub topic creation (per `docs/runbooks/gmail-inbound-setup.md`) — **your task**
+- (B) OAuth connect/callback endpoints (apps/main/src/app/api/integrations/gmail/connect/route.ts is still a 501 stub) — Phase D
+- (C) 7-day Pub/Sub watch renewal cron — Phase D
+- (D) Disconnect endpoint — Phase D
+- Need (A) confirmed before (B)–(D) are testable. Will you run the runbook this week or should I defer all Gmail wiring to a later session?
 
-### Carried forward from earlier sessions (not addressed this session)
+**Q5 — Match-report persistence.** Commission-statement matching currently stashes the report on `import_queue.raw_extracted_fields._match_report` rather than its own table. Spec §14.8 will need a proper `commission_statement_matches` table eventually but there's no §14.8 build prompt in the repo. Acceptable to defer until §14.8 lands, or do you want a follow-up table now?
+
+**Q6 — BP35 + beyond after BP34 PR opens.** Per your "one PR per BP" direction, BP35–40 are next. Should I start BP35 (Referral Attribution) tonight or wait for morning?
+
+## Open questions / observations
+
+- **Sub-host import block:** `promoteBooking()` enforces §34.7.4 by rejecting non-byo_host tenants. The intake routes (manual/upload) don't pre-check tenant_type because intake content type isn't known until classifier runs (a manual entry could be a lead, not a booking). The block is at the right layer but a more graceful UX would be to surface in the review queue with reason='sub_host_cannot_import_booking'. Phase D / UX call.
+- **`gmail_inbound_messages` for non-IMPORT mail:** Phase B's `resolveText()` for email path reads from this table, which is now populated by the webhook. Non-IMPORT messages also get rows here. The "normal Gmail conversation handling" path (§23.1) doesn't exist yet — when it does, it'll read from the same table.
+- **PR strategy reminder:** From D-079 — one PR per BP, all phases inside. BP34 PR will contain Phases B+C (Phase A is already merged separately as #133). That's the intent.
+- **Spec re-check found one bug (retention windows).** I'm glad I read §34 before resuming. Future Phase work should re-read the relevant spec section before starting; conversation memory drift on detail values is real.
+
+## Carried forward from earlier sessions
 
 - BP31: Haiku tolerable-PII redaction + confidence/clarity scorer Haiku call (cost-deferred)
 - BP30: AI behavior eval harness, continuous-sampling cron, dedicated test Supabase project, Percy/Chromatic (cost-deferred)
@@ -65,3 +83,4 @@ Resolved as: **don't do auto-downgrade**. User confirmed: "For inactive paying s
 - BP24: populate `platform_settings.supervisor_slur_deny_list`
 - BP23: populate `port_info_chunks` content for 17 ports
 - BP16/17: counsel sign-off on ICA + AI Liability Disclaimer
+- Retroactive react-pdf wire-up to unblock help-docs PDF deferral (after BP39 lands)

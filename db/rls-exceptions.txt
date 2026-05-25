@@ -23,3 +23,5 @@ email_log # cross-tenant rate-limit log; reads and writes are service_role only 
 apify_spend_ledger # BP34 §33.9.3 — platform-scoped Apify spend ledger; no tenant_id; service-role-only writes by the ApifyPricingAdapter
 pricing_cache # BP33 §33.3 — platform-scoped pricing reference; no tenant_id; service-role-only reads/writes by the adapter
 cruisemapper_url_inventory # BP36 §33.5 — platform-scoped URL inventory for the DIY CruiseMapper scraper; no tenant_id; service-role-only writes by the Inngest scraper job
+gmail_oauth_tokens # BP34 §34.2 — OAuth tokens written exclusively by the callback route + watch renewal cron via service_role; SELECT to authenticated is enough for the §34.2.4 health endpoint. INSERT/UPDATE/DELETE service_role only.
+gmail_inbound_messages # BP34 §34.2 — Pub/Sub webhook persists inbound Gmail messages (no user session); SELECT to authenticated for the §34 review queue context. INSERT/UPDATE/DELETE service_role only.

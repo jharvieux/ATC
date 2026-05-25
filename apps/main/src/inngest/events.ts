@@ -115,4 +115,10 @@ export type InngestEvents = {
   "persona_addendum.submitted": {
     data: { tenant_id: string; persona_slug: string; addendum_id: string };
   };
+  // §34.3 — Inbound import queued for processing (email, document, or manual).
+  // Emitted by Gmail webhook, document upload route, and manual-entry form
+  // submission. Consumed by the import-pipeline orchestrator.
+  "import.queued": {
+    data: { tenant_id: string; import_queue_id: string };
+  };
 };

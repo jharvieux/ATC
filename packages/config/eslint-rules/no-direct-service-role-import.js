@@ -246,6 +246,22 @@ const ALLOWED_PATH_SUFFIXES = [
   // BP40 §40.5 — booking line items list/create (tier-gate read +
   // cross-table validation under user's tenant context).
   "/app/api/bookings/[id]/line-items/route.ts",
+  // BP34: import pipeline (§34.3) — Inngest function with no user session.
+  "/inngest/import-pipeline.ts",
+  // BP34: purge-parsed-documents (§34.4) — Inngest cron, cross-tenant scan.
+  "/inngest/purge-parsed-documents.ts",
+  // BP34: Gmail Pub/Sub webhook (§34.2) — public webhook, no user session.
+  "/app/api/webhooks/gmailpubsub/route.ts",
+  // BP34: import intake routes — user-authenticated but helpers (promoteImport,
+  // statement-matching) write cross-table under ctx.tenant_id from assertPermission.
+  "/app/api/imports/manual/route.ts",
+  "/app/api/imports/upload/route.ts",
+  "/app/api/imports/review/route.ts",
+  "/app/api/imports/review/[id]/accept/route.ts",
+  "/app/api/imports/review/[id]/reject/route.ts",
+  "/app/api/imports/source-file/route.ts",
+  // BP34 §34.2.4: Gmail integration health endpoint — reads gmail_oauth_tokens.
+  "/app/api/integrations/gmail/health/route.ts",
 ];
 
 function endsWithAllowed(filename) {
