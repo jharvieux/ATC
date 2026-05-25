@@ -7,7 +7,9 @@
 //   Body: { id: string, action: 'accepted' | 'rejected', notes?: string }
 //   Reviews a single queue item.
 //
-// Requires x-admin-user-id header (platform-admin trusted header — TODO §26 replace).
+// Platform-admin gated via assertPlatformAdmin; every mutation is wrapped
+// in withPlatformAdminAudit so the audit_log row is written before the
+// state change commits.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
