@@ -59,27 +59,60 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "booking_options",
   // BP40: price-watch subscriptions (§33.8)
   "price_watches",
-  // 2026-05-25 audit catch-up — tables that were silently bypassing the
-  // proxy because they were missing from this list. Each has the 4-policy
-  // RLS set verified in db/rls-snapshot-main.sql.
-  "tasks",                          // BP37 §37
-  "task_reminders",                 // BP37 §37
-  "quote_options",                  // BP38 §38
-  "booking_line_items",             // BP40 §40.5
-  "campaigns",                      // BP35 attribution
-  "attribution_rollup",             // BP36 — materialized view, reads only
-  "tenant_attribution_categories",  // BP35
-  "notifications",                  // in-app notifications
-  "tenant_settings",                // tenant-scoped settings
-  "tenant_usage_metrics",           // BP27/BP28 usage tracking
-  "tenant_override_requests",       // BP28
-  "tenant_rag_quotas",              // RAG quotas
-  "customer_chat_tenant_overrides", // BP24 chat limits
-  "rag_submissions",                // RAG tenant submissions
-  "help_sessions",                  // §32 self-service help
-  "help_doc_versions",              // BP31 help docs
-  "bug_submissions",                // §32 help
-  "feature_requests",               // §32 help
+  // 2026-05-25 audit catch-up — every table with the 4-policy RLS set
+  // (per db/rls-snapshot-main.sql) that's reachable via tenantClient.
+  // Over-inclusion is fine: tables in here that lack a tenant_id column
+  // are blocked at the DB layer (the auto-injected filter returns 0 rows
+  // or RLS rejects the write). Under-inclusion is the security risk.
+  "tasks",                            // BP37 §37
+  "task_reminders",                   // BP37 §37
+  "task_sequences",                   // BP37
+  "task_sequence_steps",              // BP37
+  "task_sequence_runs",               // BP37
+  "quote_options",                    // BP38 §38
+  "booking_line_items",               // BP40 §40.5
+  "campaigns",                        // BP35 attribution
+  "attribution_rollup",               // BP36 — materialized view, reads only
+  "attribution_touches",              // BP35 §35.6
+  "tenant_attribution_categories",    // BP35
+  "notifications",                    // in-app notifications
+  "tenant_settings",                  // tenant-scoped settings
+  "tenant_usage_metrics",             // BP27/BP28 usage tracking
+  "tenant_usage_overrides",           // BP28 manual overrides
+  "tenant_override_requests",         // BP28
+  "tenant_rag_quotas",                // RAG quotas
+  "tenant_rag_cap_events",            // RAG cap events
+  "tenant_inactivity_nudges",         // inactivity nudges
+  "customer_chat_tenant_overrides",   // BP24 chat limits
+  "customer_chat_counters",           // BP24 counters
+  "customer_bug_submission_counters", // §32 customer bug counters
+  "anonymous_chat_counters",          // BP24 anonymous rate
+  "rag_submissions",                  // RAG tenant submissions
+  "rag_global_promotions",            // RAG global promotions (per-tenant promote)
+  "help_sessions",                    // §32 self-service help
+  "help_doc_versions",                // BP31 help docs
+  "bug_submissions",                  // §32 help
+  "feature_requests",                 // §32 help
+  "complaints",                       // tenant complaints
+  "import_queue",                     // BP34 inbound import
+  "contact_imports",                  // BP34
+  "trip_itineraries",                 // BP39
+  "trip_resources",                   // BP39
+  "pre_cruise_email_content",         // pre-cruise email content
+  "email_suppressions",               // tenant email suppression list
+  "legal_consents",                   // tenant consent records
+  "legal_documents",                  // tenant legal docs (versioned per spec)
+  "audit_log",                        // tenant audit log (writes service-role only)
+  "auth_attempts",                    // tenant auth attempt log
+  "abuse_signals",                    // BP27/28 abuse signals
+  "abuse_recompute_drift_log",        // BP28 abuse recompute drift
+  "ai_call_log",                      // tenant AI call audit
+  "ccpa_deletion_executions",         // CCPA deletion execution log
+  "forensics_log",                    // tenant forensics log (writes service-role only)
+  "security_incidents",               // tenant security incidents
+  "staging_cron_skips",               // staging cron skip tracking
+  "usage_limit_events",               // BP27/28 usage limit events
+  "group_invite_pending_approval",    // BP19 group invite approvals
 ]);
 
 // PLATFORM_READABLE_TABLES — accessible via tenantClient WITHOUT auto-scoping.
