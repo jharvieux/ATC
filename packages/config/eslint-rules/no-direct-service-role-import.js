@@ -283,6 +283,10 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/reports/campaigns/route.ts",
   "/app/api/reports/first-vs-last-touch/route.ts",
   "/app/api/reports/cancellations/route.ts",
+  // §12.4 — quote send route reads platform_settings + writes to quote-pdfs
+  // bucket. Both require service-role; the route still gates on
+  // assertPermission('quotes', 'send') for the tenant-user auth side.
+  "/app/api/quotes/[id]/send/route.ts",
 ];
 
 function endsWithAllowed(filename) {
