@@ -42,46 +42,27 @@ export interface ResolvedThresholds {
 // after first 90 days of usage.
 const HELP_SUBMISSION_DEFAULT = { soft1: 20, soft2: 50, hard: 100 } as const;
 
-// §27.4.3 base monthly chat messages per tier (reference values).
-// TODO(tier_definitions): move into tier_definitions table once it's
-// extended with the abuse-knob columns. For now, hardcoded per spec.
-const TIER_CHAT_BASE_MONTHLY: Record<TenantRevenueSnapshot["tier_code"], number> = {
-  byo_research:     500,
-  byo_professional: 2000,
-  byo_agency:       5000,
-  sub_starter:      1000,
-  sub_pro:          5000,
-  sub_agency:      15000,
-};
+/**
+ * §27.4 — Base counts per tier. Source of truth is `tier_definitions`
+ * (columns added in migration 20260625000004). The TIER_BASE_FALLBACK
+ * below is a defense-in-depth backup for the case where the DB hasn't
+ * been seeded yet (fresh local env, integration test that bypassed the
+ * full migration set). It mirrors the migration's seed values.
+ */
+export interface TierBaseCounts {
+  chat_base_monthly: number;
+  email_base_daily: number;
+  group_invite_base_monthly: number;
+  rag_base_chunks: number;
+}
 
-// §27.4.4 base daily email sends per tier.
-const TIER_EMAIL_BASE_DAILY: Record<TenantRevenueSnapshot["tier_code"], number> = {
-  byo_research:      50,
-  byo_professional: 150,
-  byo_agency:       500,
-  sub_starter:      100,
-  sub_pro:          500,
-  sub_agency:      1500,
-};
-
-// §27.4.5 base monthly group invitees per tier.
-const TIER_GROUP_INVITE_BASE_MONTHLY: Record<TenantRevenueSnapshot["tier_code"], number> = {
-  byo_research:      0,    // BYO Research doesn't run group bookings
-  byo_professional:  500,
-  byo_agency:       2000,
-  sub_starter:       500,
-  sub_pro:          1000,
-  sub_agency:       2000,
-};
-
-// §27.4.2 base RAG chunks per tier.
-const TIER_RAG_BASE_CHUNKS: Record<TenantRevenueSnapshot["tier_code"], number> = {
-  byo_research:      50,
-  byo_professional: 200,
-  byo_agency:       500,
-  sub_starter:      100,
-  sub_pro:          500,
-  sub_agency:      2000,
+const TIER_BASE_FALLBACK: Record<TenantRevenueSnapshot["tier_code"], TierBaseCounts> = {
+  byo_research:     { chat_base_monthly:   500, email_base_daily:   50, group_invite_base_monthly:    0, rag_base_chunks:   50 },
+  byo_professional: { chat_base_monthly:  2000, email_base_daily:  150, group_invite_base_monthly:  500, rag_base_chunks:  200 },
+  byo_agency:       { chat_base_monthly:  5000, email_base_daily:  500, group_invite_base_monthly: 2000, rag_base_chunks:  500 },
+  sub_starter:      { chat_base_monthly:  1000, email_base_daily:  100, group_invite_base_monthly:  500, rag_base_chunks:  100 },
+  sub_pro:          { chat_base_monthly:  5000, email_base_daily:  500, group_invite_base_monthly: 1000, rag_base_chunks:  500 },
+  sub_agency:       { chat_base_monthly: 15000, email_base_daily: 1500, group_invite_base_monthly: 2000, rag_base_chunks: 2000 },
 };
 
 const PROMOTION_BONUS_PER_CHUNK = 25; // §27.4.2
@@ -154,10 +135,20 @@ export interface ResolveThresholdsInput {
   promoted_chunks_count: number;
   // Caller supplies overrides — keeps this fn synchronous + testable.
   overrides?: OverrideRow[];
+  // Tier base counts from tier_definitions. Defaults to TIER_BASE_FALLBACK
+  // (the migration's seed values) when omitted, so tests that don't pass a
+  // row still get sensible numbers.
+  tier_bases?: TierBaseCounts;
 }
 
 export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedThresholds {
   const { tenant, promoted_chunks_count } = input;
+  const bases = input.tier_bases ?? TIER_BASE_FALLBACK[tenant.tier_code] ?? {
+    chat_base_monthly: 0,
+    email_base_daily: 0,
+    group_invite_base_monthly: 0,
+    rag_base_chunks: 0,
+  };
 
   // 1. Effective monthly revenue (the multiplier base).
   const monthlyRevenueCents = computeEffectiveMonthlyRevenue(tenant);
@@ -181,21 +172,21 @@ export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedTh
     return Number(scaled);
   }
 
-  const chatBase = TIER_CHAT_BASE_MONTHLY[tenant.tier_code] ?? 0;
+  const chatBase = bases.chat_base_monthly;
   const chat_volume_messages_monthly = {
     soft1: scale(chatBase),
     soft2: scale(Math.floor(chatBase * 1.5)),
     hard:  scale(chatBase * 2),
   };
 
-  const emailBase = TIER_EMAIL_BASE_DAILY[tenant.tier_code] ?? 0;
+  const emailBase = bases.email_base_daily;
   const email_volume_daily = {
     soft1: scale(emailBase),
     soft2: scale(Math.floor(emailBase * 1.5)),
     hard:  scale(emailBase * 2),
   };
 
-  const inviteBase = TIER_GROUP_INVITE_BASE_MONTHLY[tenant.tier_code] ?? 0;
+  const inviteBase = bases.group_invite_base_monthly;
   const group_invite_monthly = {
     soft1: scale(inviteBase),
     soft2: scale(Math.floor(inviteBase * 1.5)),
@@ -204,7 +195,7 @@ export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedTh
   };
 
   // 4. RAG cap.
-  const ragBase = scale(TIER_RAG_BASE_CHUNKS[tenant.tier_code] ?? 0);
+  const ragBase = scale(bases.rag_base_chunks);
   const ragEffective = ragBase + PROMOTION_BONUS_PER_CHUNK * Math.max(0, promoted_chunks_count);
   const approachingPct = Number(process.env.ABUSE_RAG_APPROACHING_PERCENT ?? 85) / 100;
   const rag_cap_total = {
@@ -238,13 +229,26 @@ export async function resolveThresholds(
   promoted_chunks_count: number,
 ): Promise<ResolvedThresholds> {
   const today = new Date().toISOString().slice(0, 10);
-  const { data } = await db
-    .from("tenant_usage_overrides")
-    .select("dimension, tier_override, threshold_value, effective_from, effective_to")
-    .eq("tenant_id", tenant.tenant_id)
-    .lte("effective_from", today);
-  const overrides = ((data ?? []) as OverrideRow[]).filter(
+  const [overridesRes, tierRes] = await Promise.all([
+    db
+      .from("tenant_usage_overrides")
+      .select("dimension, tier_override, threshold_value, effective_from, effective_to")
+      .eq("tenant_id", tenant.tenant_id)
+      .lte("effective_from", today),
+    db
+      .from("tier_definitions")
+      .select("chat_base_monthly, email_base_daily, group_invite_base_monthly, rag_base_chunks")
+      .eq("code", tenant.tier_code)
+      .maybeSingle(),
+  ]);
+  const overrides = ((overridesRes.data ?? []) as OverrideRow[]).filter(
     (r) => r.effective_to === null || r.effective_to >= today,
   );
-  return resolveThresholdsSync({ tenant, promoted_chunks_count, overrides });
+  const tier_bases = (tierRes.data ?? undefined) as TierBaseCounts | undefined;
+  return resolveThresholdsSync({
+    tenant,
+    promoted_chunks_count,
+    overrides,
+    ...(tier_bases ? { tier_bases } : {}),
+  });
 }
