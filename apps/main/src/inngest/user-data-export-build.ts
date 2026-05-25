@@ -96,8 +96,39 @@ export const userDataExportBuild = inngest.createFunction(
       expires_at: expiresAt,
     }).eq("id", export_request_id);
 
-    // TODO(notifications): email user via Resend with the signed URL.
-    console.info("[user-data-export-build] export complete for user=%s url=%s", auth_user_id, signedUrl);
+    // Email the user the signed URL. Best-effort: the row is already
+    // updated with signed_url so the user can also retrieve it from the
+    // /api/user/data/export-request poll endpoint if email fails.
+    if (signedUrl) {
+      try {
+        const { data: authUser } = await db.auth.admin.getUserById(auth_user_id);
+        const recipientEmail = authUser?.user?.email ?? null;
+        if (recipientEmail) {
+          const { sendPlatformUserEmail } = await import("@/lib/email/notifications");
+          await sendPlatformUserEmail({
+            to: recipientEmail,
+            subject: "Your data export is ready",
+            html: `
+              <h2>Your data export is ready</h2>
+              <p>Per your request, we've prepared an export of your account data.</p>
+              <p><a href="${signedUrl}">Download the ZIP</a> — the link expires
+              in 24 hours.</p>
+              <p>If you didn't request this, please reply to this email immediately.</p>
+            `,
+          });
+        }
+      } catch (notifyErr) {
+        console.warn(
+          "[user-data-export-build] email failed: %s",
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+        );
+      }
+    }
+    console.info(
+      "[user-data-export-build] export complete for user=%s url=%s",
+      auth_user_id,
+      signedUrl,
+    );
 
     return { ok: true, signed_url: signedUrl };
   },

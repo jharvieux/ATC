@@ -11,6 +11,15 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 interface TerminateBody {
   kind: "voluntary" | "involuntary_content" | "involuntary_other";
   reason: string;
@@ -115,7 +124,55 @@ export async function POST(
           },
         });
 
-        // TODO(notifications): email tenant with termination notice.
+        // Notify the tenant. Best-effort — termination already committed.
+        try {
+          const { data: ownerRows } = await db
+            .from("users")
+            .select("email")
+            .eq("tenant_id", tenantId)
+            .eq("status", "active");
+          const owners = (ownerRows ?? []) as Array<{ email: string }>;
+          if (owners.length > 0) {
+            const { sendTenantNotification } = await import(
+              "@/lib/email/notifications"
+            );
+            const kindLabel =
+              body.kind === "voluntary"
+                ? "voluntarily closed"
+                : body.kind === "involuntary_content"
+                  ? "terminated for content-policy reasons"
+                  : "terminated";
+            const html = `
+              <h2>Your AI Travel Concierge account has been ${kindLabel}.</h2>
+              <p>${escapeHtml(body.reason)}</p>
+              <p>Your account is now suspended. Data will be permanently
+              deleted on <strong>${escapeHtml(suspensionEndAt.slice(0, 10))}</strong>.</p>
+              <p>If you believe this is in error, reply to this email within
+              the 90-day window to appeal.</p>
+            `;
+            for (const owner of owners) {
+              await sendTenantNotification({
+                db,
+                tenant_id: tenantId,
+                to: owner.email,
+                subject: "Your account has been terminated",
+                html,
+                category: "transactional",
+                template_id: "tenant_termination_notice",
+                template_variables: {
+                  kind: body.kind,
+                  reason: body.reason,
+                  termination_at: suspensionEndAt,
+                },
+              });
+            }
+          }
+        } catch (notifyErr) {
+          console.warn(
+            "[admin/tenants/terminate] notification failed: %s",
+            notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+          );
+        }
       },
     );
 

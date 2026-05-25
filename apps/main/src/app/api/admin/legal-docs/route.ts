@@ -5,6 +5,10 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 interface PublishBody {
   document_type: string;
   content_markdown: string;
@@ -127,8 +131,43 @@ export async function POST(req: Request): Promise<Response> {
             }, { onConflict: "auth_user_id,document_type" });
           }
 
-          // TODO(notifications): email affected users with summary_of_changes via Resend.
           console.info("[legal-docs] Flagged %d users for re-consent on %s v%d", uniqueUsers.length, body.document_type, newVersion);
+
+          // Notify affected users. Best-effort — the user_consent_pending
+          // rows are the durable signal; the email is a convenience.
+          try {
+            const { sendPlatformUserEmail } = await import("@/lib/email/notifications");
+            const summary = body.summary_of_changes ?? "Please review the updated document.";
+            const subject = `Updated terms — please review (${body.document_type} v${newVersion})`;
+            // Look up email addresses via the auth admin API one-by-one.
+            for (const authUserId of uniqueUsers) {
+              try {
+                const { data: au } = await db.auth.admin.getUserById(authUserId);
+                const to = au?.user?.email;
+                if (!to) continue;
+                await sendPlatformUserEmail({
+                  to,
+                  subject,
+                  html: `<h2>Updated terms — your review is needed</h2>
+                    <p>We've published version ${newVersion} of our ${escapeHtml(body.document_type)}.</p>
+                    <p><strong>Summary of changes:</strong></p>
+                    <p>${escapeHtml(summary)}</p>
+                    <p>You'll be asked to re-consent the next time you sign in.</p>`,
+                });
+              } catch (perUserErr) {
+                console.warn(
+                  "[legal-docs] notification for user %s failed: %s",
+                  authUserId,
+                  perUserErr instanceof Error ? perUserErr.message : String(perUserErr),
+                );
+              }
+            }
+          } catch (notifyErr) {
+            console.warn(
+              "[legal-docs] notification pass failed: %s",
+              notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+            );
+          }
         }
 
         return { document_id: (newDoc as { id: string }).id, version: newVersion };

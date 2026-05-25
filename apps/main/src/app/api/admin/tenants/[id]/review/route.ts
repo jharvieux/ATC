@@ -11,6 +11,10 @@ import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
+function escapeReviewHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 interface ReviewBody {
   action: "approve" | "reject" | "request_more_info";
   reason?: string;
@@ -133,7 +137,40 @@ export async function POST(
           if (error) throw new Error(error.message);
 
           await revertTo(tenantId, body.revert_to_stage);
-          // TODO(notifications): send tenant notification that more info is needed.
+
+          // Notify tenant owners. Best-effort.
+          try {
+            const { data: owners } = await db
+              .from("users")
+              .select("email")
+              .eq("tenant_id", tenantId)
+              .eq("status", "active");
+            const recipients = ((owners ?? []) as Array<{ email: string }>).map((u) => u.email);
+            if (recipients.length > 0) {
+              const { sendTenantNotification } = await import("@/lib/email/notifications");
+              const html = `<h2>More information needed for your application</h2>
+                <p>Our review team needs more information before approving your account.</p>
+                <p><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the reviewer.")}</p>
+                <p>Please sign in and update the requested information in your onboarding flow.</p>`;
+              for (const to of recipients) {
+                await sendTenantNotification({
+                  db,
+                  tenant_id: tenantId,
+                  to,
+                  subject: "Action required: more information needed",
+                  html,
+                  category: "transactional",
+                  template_id: "tenant_review_more_info",
+                  template_variables: { reason: body.reason ?? "" },
+                });
+              }
+            }
+          } catch (notifyErr) {
+            console.warn(
+              "[admin/tenants/review] more-info notification failed: %s",
+              notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+            );
+          }
         }
       },
     );
