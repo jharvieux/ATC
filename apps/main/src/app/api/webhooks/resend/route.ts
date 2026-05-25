@@ -11,7 +11,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
-import { sanitizeForLog } from "@/lib/log/sanitize";
 
 function verifySignature(body: string, sig: string, secret: string): boolean {
   try {
@@ -129,7 +128,7 @@ export async function POST(req: Request): Promise<Response> {
     case "email.opened":
     case "email.clicked":
       // Engagement metric — log count, no PII stored beyond what's already in email_log.
-      console.info(`[resend-webhook] engagement: type=${sanitizeForLog(event.type)} log_id=${logId}`);
+      console.info(`[resend-webhook] engagement: type=${String(event.type).replace(/[\r\n]/g, " ")} log_id=${logId}`);
       break;
 
     case "email.sent":
@@ -137,7 +136,7 @@ export async function POST(req: Request): Promise<Response> {
       break;
 
     default:
-      console.warn(`[resend-webhook] unhandled event type: ${sanitizeForLog(event.type)}`);
+      console.warn(`[resend-webhook] unhandled event type: ${String(event.type).replace(/[\r\n]/g, " ")}`);
   }
 
   return new Response("OK", { status: 200 });

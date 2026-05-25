@@ -6,7 +6,6 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { sanitizeForLog } from "@/lib/log/sanitize";
 
 interface LegalAcceptBody {
   // List of document IDs (or types for stub) the user is accepting.
@@ -39,7 +38,7 @@ export async function POST(req: Request): Promise<Response> {
     //   for each type in accepted_types:
     //     const doc = await fetchCurrentLegalDocument(type);
     //     await db.from('legal_consents').insert({ auth_user_id, tenant_id, document_id, ... })
-    console.info("[onboarding/legal] Stub consent recorded for tenant=%s types=%s", ctx.tenant_id, sanitizeForLog(body.accepted_types));
+    console.info("[onboarding/legal] Stub consent recorded for tenant=%s types=%s", ctx.tenant_id, JSON.stringify(body.accepted_types).replace(/[\r\n]/g, " "));
 
     await progressTo(ctx.tenant_id, "ica");
 
