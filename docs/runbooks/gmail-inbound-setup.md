@@ -65,10 +65,20 @@ gcloud pubsub subscriptions create gmail-inbound-sub \
 
 ---
 
-## Step 4 — Store Pub/Sub verification token
+## Step 4 — Vercel environment variables
 
-Set `GMAIL_PUBSUB_VERIFICATION_TOKEN` in Vercel to a random 32-byte hex string.
-The webhook handler uses this to verify Pub/Sub push authenticity.
+Set the following in the project's Vercel environment (Production and Preview):
+
+| Variable | Source / value |
+|----------|---------------|
+| `GMAIL_OAUTH_CLIENT_ID` | From Step 2 (OAuth credentials JSON `client_id`) |
+| `GMAIL_OAUTH_CLIENT_SECRET` | From Step 2 (`client_secret`) — mark as Secret |
+| `GMAIL_OAUTH_CLIENT_SECRET_PREVIOUS` | Optional — populate during a rotation window so in-flight callbacks survive the rotation |
+| `GMAIL_PUBSUB_TOPIC` | The full topic name created in Step 3 (e.g. `projects/your-project/topics/gmail-inbound-atc`) |
+| `GMAIL_PUBSUB_VERIFICATION_TOKEN` | 32-byte hex string — generate with `openssl rand -hex 32` — used by older Pub/Sub auth flows |
+| `GMAIL_PUBSUB_AUDIENCE` | The webhook URL itself, e.g. `https://app.ai-travelconcierge.com/api/webhooks/gmailpubsub` — `gmailpubsub/route.ts` verifies Google's signed JWT against this audience |
+
+After setting, redeploy so the runtime picks up the new env.
 
 ---
 
