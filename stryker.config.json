@@ -2,6 +2,7 @@
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "_comment": "Initial broad scan — mutate every TS file under both apps' src/ except UI surfaces (page.tsx/layout.tsx/components/**) which mostly contain composition, not testable business logic. Re-scope per-PR via the --mutate CLI flag.",
   "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
   "vitest": {
     "configFile": "vitest.config.ts"
   },
