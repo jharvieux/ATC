@@ -94,6 +94,8 @@ import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
 // BP37 §37 — Tasks: sequence step firing + reminder cron
 import { taskSequenceStepFire } from "@/inngest/task-sequence-step-fire";
 import { taskRemindersFire } from "@/inngest/task-reminders-fire";
+// BP36 §36.6 — attribution_rollup nightly refresh
+import { attributionRollupRefresh } from "@/inngest/attribution-rollup-refresh";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -195,5 +197,7 @@ export const { GET, POST, PUT } = serve({
     // BP37: Tasks & follow-up (§37)
     taskSequenceStepFire,
     taskRemindersFire,
+    // BP36: attribution_rollup nightly refresh (§36.6)
+    attributionRollupRefresh,
   ],
 });
