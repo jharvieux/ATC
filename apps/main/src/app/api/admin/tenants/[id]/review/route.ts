@@ -9,6 +9,7 @@ import Stripe from "stripe";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface ReviewBody {
   action: "approve" | "reject" | "request_more_info";
@@ -20,9 +21,12 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) {
-    return Response.json({ error: "x-admin-user-id header required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
   }
 
   const { id: tenantId } = await params;

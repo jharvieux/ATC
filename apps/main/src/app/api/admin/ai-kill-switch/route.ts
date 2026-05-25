@@ -14,13 +14,17 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import type { PlatformAdminReason } from "@/lib/db/platform-admin-reasons";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function POST(req: Request): Promise<Response> {
   // Platform admin auth: expect admin_user_id in a trusted header set by
   // the admin middleware. TODO(§26): replace with full admin session check.
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
   }
 
   let body: unknown;

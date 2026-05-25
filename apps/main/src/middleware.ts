@@ -114,26 +114,42 @@ function applyPaymentGate(
   return res;
 }
 
-// §26 — Platform-admin API gate. STOP-THE-WORLD posture per the
-// 2026-05-25 audit: every /api/admin/* route is blocked at the middleware
-// layer unless the caller presents the platform admin Bearer token. Some
-// downstream routes do additional checks (`MAIN_APP_ADMIN_API_KEY` match
-// inside the handler); this gate is the front-door, not a replacement.
+// §26 — Platform-admin API gate.
 //
-// Until the real Supabase-session admin gate ships (§26 build prompt), the
-// admin React pages at /(admin)/admin/* that call these routes will be
-// non-functional. That is intentional — the prior state was "anyone on the
-// internet can take destructive admin actions by sending an arbitrary
-// x-admin-user-id header" (audit Finding 1, confidence 10).
+// Front-door check on /api/admin/*. The request must present one of:
+//   (a) Authorization: Bearer ${MAIN_APP_ADMIN_API_KEY} — service-to-service.
+//   (b) Authorization: Bearer <three-segment JWT> — a Supabase user session,
+//       whose full verification (signature + platform_admins lookup) happens
+//       in the route handler via assertPlatformAdmin().
+//
+// Middleware deliberately shape-checks but doesn't verify the JWT — full
+// verification would mean a DB lookup on every admin request. The handler
+// does the authoritative check. Prior unauthenticated x-admin-user-id
+// pattern (2026-05-25 audit Finding 1, confidence 10) is closed by the
+// combination of this gate + assertPlatformAdmin.
 function isAdminApiPath(pathname: string): boolean {
   return pathname.startsWith("/api/admin/") || pathname === "/api/admin";
 }
 
-function isValidAdminBearer(req: NextRequest): boolean {
-  const expected = process.env.MAIN_APP_ADMIN_API_KEY;
-  if (!expected) return false;
+function bearerToken(req: NextRequest): string | null {
   const auth = req.headers.get("authorization");
-  return auth === `Bearer ${expected}`;
+  if (!auth?.startsWith("Bearer ")) return null;
+  const t = auth.slice("Bearer ".length).trim();
+  return t.length > 0 ? t : null;
+}
+
+function looksLikeJwt(token: string): boolean {
+  // Shape check only — three base64-url segments. Handler verifies signature.
+  const parts = token.split(".");
+  return parts.length === 3 && parts.every((p) => p.length > 0 && /^[A-Za-z0-9_-]+$/.test(p));
+}
+
+function isAcceptableAdminBearer(req: NextRequest): boolean {
+  const token = bearerToken(req);
+  if (!token) return false;
+  const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
+  if (serviceKey && token === serviceKey) return true;
+  return looksLikeJwt(token);
 }
 
 function adminForbidden(): NextResponse {
@@ -141,9 +157,9 @@ function adminForbidden(): NextResponse {
     {
       error: "admin_gate_blocked",
       detail:
-        "This endpoint requires a verified platform admin session. " +
-        "Service-to-service callers must present the MAIN_APP_ADMIN_API_KEY " +
-        "bearer token. See §26 (admin gate).",
+        "This endpoint requires a verified platform admin credential — " +
+        "either the service-to-service Bearer token or a Supabase session " +
+        "JWT belonging to a row in platform_admins. See §26.",
     },
     { status: 403 },
   );
@@ -154,7 +170,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // 0. Admin API gate — runs BEFORE everything else so no later code path
   //    can leak a tenant header or attribution side-effect into an admin call.
-  if (isAdminApiPath(pathname) && !isValidAdminBearer(req)) {
+  if (isAdminApiPath(pathname) && !isAcceptableAdminBearer(req)) {
     return adminForbidden();
   }
 

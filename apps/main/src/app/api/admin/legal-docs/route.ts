@@ -3,6 +3,7 @@
 // POST: publish a new version (supersedes prior current version, flags affected users).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface PublishBody {
   document_type: string;
@@ -14,8 +15,13 @@ interface PublishBody {
 const VALID_TYPES = ["tou","privacy_policy","ai_disclaimer","cookie_policy","ica_subhost","can_spam_addendum","tcpa_addendum"];
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   try {
     const result = await withPlatformAdminAudit(
@@ -39,8 +45,13 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   let body: PublishBody;
   try {

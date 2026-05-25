@@ -14,6 +14,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface Body {
   mode?: "to_tenant_scope" | "hard_delete";
@@ -23,8 +24,13 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ promotion_id: string }> },
 ): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   const { promotion_id } = await params;
   let body: Body = {};

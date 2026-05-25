@@ -25,3 +25,4 @@ pricing_cache # BP33 §33.3 — platform-scoped pricing reference; no tenant_id;
 cruisemapper_url_inventory # BP36 §33.5 — platform-scoped URL inventory for the DIY CruiseMapper scraper; no tenant_id; service-role-only writes by the Inngest scraper job
 gmail_oauth_tokens # BP34 §34.2 — OAuth tokens written exclusively by the callback route + watch renewal cron via service_role; SELECT to authenticated is enough for the §34.2.4 health endpoint. INSERT/UPDATE/DELETE service_role only.
 gmail_inbound_messages # BP34 §34.2 — Pub/Sub webhook persists inbound Gmail messages (no user session); SELECT to authenticated for the §34 review queue context. INSERT/UPDATE/DELETE service_role only.
+platform_admins # §26 platform admin roster — no tenant_id (platform-scoped). All authenticated access policies deny; reads/writes are service_role only via assertPlatformAdmin helper. Manual seeding via SQL post-deploy.

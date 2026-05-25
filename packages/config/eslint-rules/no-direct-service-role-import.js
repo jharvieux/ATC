@@ -16,6 +16,9 @@
 const ALLOWED_PATH_SUFFIXES = [
   "/lib/db/tenant-client.ts",
   "/lib/db/platform-admin-client.ts",
+  // §26 platform-admin session gate: looks up auth_user_id in platform_admins,
+  // which is a service-role-only table (all RLS policies deny authenticated).
+  "/lib/auth/assert-platform-admin.ts",
   // Middleware tenant resolver: runs before any user context exists, so
   // service-role is the only viable client. See BP04 / spec §1.4.
   "/lib/tenancy/resolve-tenant.ts",

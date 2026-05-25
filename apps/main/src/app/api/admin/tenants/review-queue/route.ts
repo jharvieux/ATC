@@ -3,11 +3,15 @@
 // Visible only to platform_compliance and platform_super_admin roles.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) {
-    return Response.json({ error: "x-admin-user-id header required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
   }
 
   const url = new URL(req.url);

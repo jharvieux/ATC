@@ -18,6 +18,7 @@
 // job lands, or composite scoring will use stale weights.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 type WeightKey = "match" | "authority" | "recency" | "feedback";
 const WEIGHT_KEYS: readonly WeightKey[] = ["match", "authority", "recency", "feedback"];
@@ -60,8 +61,13 @@ async function loadCurrent(
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   try {
     const result = await withPlatformAdminAudit(
@@ -78,8 +84,13 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function PUT(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   let body: Partial<Record<WeightKey, unknown>>;
   try {

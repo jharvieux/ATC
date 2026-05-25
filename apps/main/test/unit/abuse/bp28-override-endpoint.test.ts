@@ -6,6 +6,26 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// §26 admin gate — mock the session gate so the validation tests can focus
+// on the input-shape contract rather than auth plumbing. Tests pass a
+// header to opt into "admin present" mode; an empty header object gets 401.
+vi.mock("@/lib/auth/assert-platform-admin", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/auth/assert-platform-admin")>(
+    "@/lib/auth/assert-platform-admin",
+  );
+  return {
+    ...actual,
+    assertPlatformAdmin: vi.fn(async (req: Request) => {
+      // Honor the legacy x-admin-user-id header for the validation tests.
+      const adminUserId = req.headers.get("x-admin-user-id");
+      if (!adminUserId) {
+        throw new actual.PlatformAdminError(401, "missing_bearer", "Missing Authorization: Bearer header.");
+      }
+      return { admin_user_id: adminUserId, role: "test", via: "session" as const };
+    }),
+  };
+});
+
 vi.mock("@/lib/db/platform-admin-client", () => ({
   withPlatformAdminAudit: vi.fn(async (_opts, fn: (db: unknown, rec: () => void) => Promise<unknown>) => {
     const db = {

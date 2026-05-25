@@ -1,12 +1,18 @@
 // BP31 §32.6.5 — Platform admin decision on a feature request.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 const DECISIONS = new Set(["accepted", "rejected", "deferred", "duplicate"]);
 
 export async function PATCH(req: Request, { params }: { params: { id: string } }): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   const body = (await req.json().catch(() => ({}))) as { decision?: string; decision_notes?: string };
   if (!body.decision || !DECISIONS.has(body.decision)) {

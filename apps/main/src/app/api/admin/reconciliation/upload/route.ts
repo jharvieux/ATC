@@ -19,6 +19,7 @@ import { z } from "zod";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;
@@ -39,8 +40,13 @@ const ParsedStatementSchema = z.object({
 type ParsedLineItem = z.infer<typeof ParsedLineItemSchema>;
 
 export async function POST(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   const formData = await req.formData();
   const file = formData.get("file");

@@ -10,6 +10,7 @@
 //   Lists active overrides for a tenant.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 const DIMENSIONS = new Set(["ai_cost", "rag_cap", "chat_volume", "email_volume", "group_invite"]);
 const TIER_OVERRIDES = new Set(["soft1", "soft2", "hard", "base_cap"]);
@@ -25,8 +26,13 @@ function defaultExpiryDate(days: number): string {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   let body: unknown;
   try { body = await req.json(); } catch { return Response.json({ error: "invalid_json" }, { status: 400 }); }
@@ -101,8 +107,13 @@ export async function POST(req: Request): Promise<Response> {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
   const tenant_id = new URL(req.url).searchParams.get("tenant_id");
   if (!tenant_id) return Response.json({ error: "tenant_id required" }, { status: 400 });
 

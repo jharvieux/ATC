@@ -5,10 +5,16 @@
 //   requested_threshold_kind, current_state, requester user, and requested_at.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
   const status = new URL(req.url).searchParams.get("status") ?? "pending";
   if (!["pending", "approved", "denied"].includes(status)) {
     return Response.json({ error: "invalid_status" }, { status: 400 });
