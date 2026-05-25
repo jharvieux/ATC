@@ -42,9 +42,16 @@ export const transferFinalize = inngest.createFunction(
     const db = tenantClient(ctx);
 
     // Re-read the session to check if the transfer was undone during the window.
+    // Audit pass 2, Finding 10: also re-verify that this session belongs to
+    // the tenant and was scheduled to transfer to the user named in the
+    // event payload. Without this check, a crafted Inngest event with
+    // mismatched IDs could commit a victim's session to an attacker's
+    // user_id, attributing victim conversations + memories to the attacker.
     const { data: session, error: readErr } = await db
       .from("anonymous_sessions")
-      .select("id, transfer_soft_commit_at, transfer_committed_at")
+      .select(
+        "id, transfer_soft_commit_at, transfer_committed_at, transferred_to_user_id, tenant_id",
+      )
       .eq("id", anonymous_session_id)
       .maybeSingle();
 
@@ -55,6 +62,32 @@ export const transferFinalize = inngest.createFunction(
 
     // Transfer was undone — no-op.
     if (!session?.transfer_soft_commit_at) return { status: "undone_noop" };
+
+    // Cross-check the event payload against the session row. If they
+    // diverge, the event was crafted or stale — refuse to commit.
+    const sessionRow = session as unknown as {
+      id: string;
+      tenant_id: string;
+      transferred_to_user_id: string | null;
+      transfer_soft_commit_at: string | null;
+      transfer_committed_at: string | null;
+    };
+    if (sessionRow.tenant_id !== tenant_id) {
+      console.warn(
+        "[transfer-finalize] tenant mismatch: event.tenant_id=%s, session.tenant_id=%s",
+        tenant_id,
+        sessionRow.tenant_id,
+      );
+      return { status: "tenant_mismatch_refused" };
+    }
+    if (sessionRow.transferred_to_user_id && sessionRow.transferred_to_user_id !== user_id) {
+      console.warn(
+        "[transfer-finalize] user mismatch: event.user_id=%s, session.transferred_to_user_id=%s",
+        user_id,
+        sessionRow.transferred_to_user_id,
+      );
+      return { status: "user_mismatch_refused" };
+    }
 
     // Commit the transfer.
     const now = new Date().toISOString();

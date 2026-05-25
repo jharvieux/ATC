@@ -1,9 +1,32 @@
 // §18.7 — RSVP state update (form-submit and JSON handler from the invitee page).
+//
+// Audit pass 2, Finding 4: when a token has been "bound" to a specific
+// authenticated email (first GET sets `token_bound_email`), subsequent
+// RSVP changes must come from that same email. Otherwise a leaked invite
+// link (forwarded email, shared screen) could flip the RSVP state and
+// poison cabin-grid totals after the legitimate invitee already claimed it.
 
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { createClient } from "@supabase/supabase-js";
 
 const VALID_RSVP = new Set(["pending", "interested", "not_going", "booked"]);
+
+async function authenticatedEmail(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const accessToken = authHeader.slice("Bearer ".length);
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anon) return null;
+  const sb = createClient(url, anon, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+  const { data, error } = await sb.auth.getUser();
+  if (error || !data?.user?.email) return null;
+  return data.user.email.toLowerCase();
+}
 
 export async function POST(req: Request, { params }: { params: { token: string } }): Promise<Response> {
   const contentType = req.headers.get("content-type") ?? "";
@@ -25,6 +48,23 @@ export async function POST(req: Request, { params }: { params: { token: string }
   if (!ok) return Response.json({ error: "invalid_token" }, { status: 400 });
 
   const svc = createServiceRoleClient();
+
+  // Token-bound-email check: mirror the GET handler. If the token has
+  // already been bound to an email, the caller must present a session for
+  // that email. Unbound tokens (first use) skip this check.
+  const { data: invitationRow } = await svc
+    .from("invitations")
+    .select("token_bound_email")
+    .eq("id", invitation_id)
+    .maybeSingle();
+  const bound =
+    (invitationRow as { token_bound_email?: string | null } | null)?.token_bound_email ?? null;
+  if (bound) {
+    const callerEmail = await authenticatedEmail(req);
+    if (!callerEmail || callerEmail !== bound.toLowerCase()) {
+      return Response.json({ error: "token_bound_to_different_email" }, { status: 403 });
+    }
+  }
 
   const { error } = await svc
     .from("invitations")

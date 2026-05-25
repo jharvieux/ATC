@@ -8,11 +8,13 @@
 //   - virus_detected:             30d
 //   - pending_review:        no purge (until agent acts)
 //
-// Per §34.4 the source document itself is discarded. In Phase B / early
-// Phase C the "document" is just `uploaded_file_path` on import_queue
-// (Supabase storage object path) — the row deletion implicitly drops the
-// reference. Storage cleanup is a follow-up: a deferred listener on this
-// cron will issue storage.remove() once the upload route is live.
+// Per §34.4 the source document itself is discarded. The Phase C upload
+// route writes the PDF to the `imported-documents` storage bucket and
+// stores the path on `import_queue.uploaded_file_path`. This cron now
+// issues `storage.remove([paths])` BEFORE deleting the queue rows so the
+// audit log's `document.purged` action accurately reflects reality.
+// Audit pass 2, Finding 7 flagged that prior versions deleted the row
+// but left the blob in storage, making the audit row a false signal.
 //
 // Audit: each purge writes an `audit_log` row with action='document.purged'
 // per §26.5. Batch-sized at 500 rows per run to keep the audit_log write
@@ -60,9 +62,28 @@ export const purgeParsedDocuments = inngest.createFunction(
 
     if (rows.length === 0) return { purged: 0 };
 
-    // Storage cleanup goes here when upload route lands. For now we only
-    // hard-delete the queue row; orphaned blobs are caught by a separate
-    // storage-sweep job (Phase D).
+    // Storage cleanup. Drop the blob BEFORE the row so the audit log's
+    // `document.purged` action accurately reflects what was removed. If
+    // storage.remove() fails, leave the row in place and re-queue on the
+    // next run (purgable_at is unchanged, so the row will reappear).
+    const paths = rows
+      .map((r) => r.uploaded_file_path)
+      .filter((p): p is string => p !== null && p.length > 0);
+
+    if (paths.length > 0) {
+      const { error: storageErr } = await svc.storage
+        .from("imported-documents")
+        .remove(paths);
+      if (storageErr) {
+        // Don't proceed with the row delete — the next cron run will retry.
+        // Better to leak rows for a day than to leak blobs forever.
+        console.error(
+          "[purge-parsed-documents] storage.remove failed: %s; will retry next run",
+          storageErr.message,
+        );
+        return { error: `storage_remove_failed: ${storageErr.message}` };
+      }
+    }
 
     const ids = rows.map((r) => r.id);
     const { error: delErr } = await svc.from("import_queue").delete().in("id", ids);

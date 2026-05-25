@@ -54,6 +54,27 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: `file_too_large`, max_bytes: MAX_BYTES }, { status: 413 });
   }
 
+  // Audit pass 2, Finding 6: the multipart MIME header is attacker-controlled.
+  // Read the first 5 bytes and require the %PDF- signature before the row
+  // ever lands in import_queue. This blocks polyglot uploads (a file that's
+  // a valid PDF AND a valid HTML/JS) that would slip past the MIME check.
+  const arrayBuffer = await file.arrayBuffer();
+  const head = new Uint8Array(arrayBuffer.slice(0, 5));
+  // %PDF- = 0x25 0x50 0x44 0x46 0x2D
+  const isPdf =
+    head.length === 5 &&
+    head[0] === 0x25 &&
+    head[1] === 0x50 &&
+    head[2] === 0x44 &&
+    head[3] === 0x46 &&
+    head[4] === 0x2d;
+  if (!isPdf) {
+    return Response.json(
+      { error: "magic_bytes_mismatch", detail: "file is not a PDF (missing %PDF- signature)" },
+      { status: 415 },
+    );
+  }
+
   // Insert queue row first to get the ID for the storage path.
   const { data: inserted, error: insErr } = await svc
     .from("import_queue")
@@ -75,7 +96,6 @@ export async function POST(req: Request): Promise<Response> {
   const queueRowId = (inserted as { id: string }).id;
   const objectPath = `${ctx.tenant_id}/${queueRowId}.pdf`;
 
-  const arrayBuffer = await file.arrayBuffer();
   const { error: upErr } = await svc.storage.from(BUCKET).upload(objectPath, new Uint8Array(arrayBuffer), {
     contentType: file.type,
     upsert: false,
