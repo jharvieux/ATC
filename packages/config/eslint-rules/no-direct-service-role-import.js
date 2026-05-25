@@ -247,9 +247,7 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/bookings/[id]/line-items/route.ts",
   // BP34: import pipeline (§34.3) — Inngest function with no user session.
   "/inngest/import-pipeline.ts",
-  // BP34: purge-parsed-documents (§34.4) — Inngest cron, cross-tenant scan.
   "/inngest/purge-parsed-documents.ts",
-  // BP34: Gmail Pub/Sub webhook (§34.2) — public webhook, no user session.
   "/app/api/webhooks/gmailpubsub/route.ts",
   // BP34: import intake routes — user-authenticated but helpers write cross-table.
   "/app/api/imports/manual/route.ts",
@@ -258,7 +256,6 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/imports/review/[id]/accept/route.ts",
   "/app/api/imports/review/[id]/reject/route.ts",
   "/app/api/imports/source-file/route.ts",
-  // BP34 §34.2.4: Gmail integration health endpoint — reads gmail_oauth_tokens.
   "/app/api/integrations/gmail/health/route.ts",
   // BP37 task system.
   "/inngest/task-reminders-fire.ts",
@@ -268,6 +265,13 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/quotes/[id]/options/route.ts",
   "/app/api/quote-options/[id]/select/route.ts",
   "/app/api/public/quote/[token]/select/route.ts",
+  // BP39 §39.2 / §39.3 — deliverable routes (cross-table reads + storage).
+  "/app/api/bookings/[id]/itinerary/route.ts",
+  "/app/api/bookings/[id]/resources/route.ts",
+  "/app/api/itineraries/[id]/route.ts",
+  "/app/api/resources/[id]/route.ts",
+  // BP39 §39.2.6 — public tokenized itinerary viewer (no user session).
+  "/app/i/[token]/page.tsx",
 ];
 
 function endsWithAllowed(filename) {
