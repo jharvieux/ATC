@@ -428,6 +428,21 @@ export async function POST(
       })
       .eq("id", bookingId);
 
+    // §35.6 — populate conversion_touch_* on the booking from the
+    // contact's most recent attribution touch. Per §35.6.2 this is read
+    // fresh, NOT copied from any related quote (a booking weeks after
+    // the quote should attribute to the most recent touch). Non-fatal.
+    if (booking.primary_contact_id) {
+      const { populateConversionTouch } = await import("@/lib/attribution/populate-conversion-touch");
+      await populateConversionTouch({
+        tenant_id: ctx.tenant_id,
+        contact_id: booking.primary_contact_id,
+        target_table: "bookings",
+        target_id: bookingId,
+        svc: adminDb,
+      });
+    }
+
     return Response.json({ ok: true, provider_booking_ref, status: "submitted" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unauthorized";

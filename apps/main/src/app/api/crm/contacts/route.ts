@@ -1,8 +1,13 @@
 // §12.1 — Contacts list + create.
+// §35.7.1 — Contact creation must capture source attribution.
 
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { recordIdentificationTouch } from "@/lib/attribution/record-touch";
+import { readPendingAttributionFromHeader, ATTRIBUTION_PENDING_COOKIE } from "@/lib/attribution/read-pending-cookie";
+import { channelFromManualCategory } from "@/lib/attribution/channel-map";
+import { emptyAttributionPayload } from "@/lib/attribution/types";
 
 const ContactCreateSchema = z.object({
   first_name: z.string().optional(),
@@ -24,6 +29,11 @@ const ContactCreateSchema = z.object({
   source_reference: z.string().optional(),
   pipeline_stage_key: z.string().optional(),
   user_id: z.string().uuid().optional(),
+  // §35.7.1 — manual source (required at contact creation per spec; the
+  // UI enforces requiredness, the API treats it as optional to preserve
+  // existing callers and falls back to 'Other' if absent).
+  attribution_manual_label: z.string().optional(),
+  attribution_manual_category: z.string().optional(),
 });
 
 export async function GET(req: Request): Promise<Response> {
@@ -69,14 +79,48 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "Invalid body", details: parsed.error.issues }, { status: 400 });
     }
 
+    // Pull attribution fields out of the schema's catch-all so they don't
+    // get serialised into the contacts row directly.
+    const { attribution_manual_label, attribution_manual_category, ...contactRow } = parsed.data;
+
     const { data, error } = await db
       .from("contacts")
-      .insert({ ...parsed.data, created_by_user_id: user.id })
+      .insert({ ...contactRow, created_by_user_id: user.id })
       .select()
       .single();
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
-    return Response.json(data, { status: 201 });
+
+    // §35.4.3 — write a touch row for the freshly-created contact.
+    // Manual entry path is source_origin='agent_set' with editor_user_id set.
+    // Pending UTM cookie wins if present (the agent might be creating from
+    // a UTM-bearing inbound link), otherwise we fall back to the manual
+    // category. Per §35.7.1 manual source is required — UI enforces.
+    const contactId = (data as { id: string }).id;
+    const pending = readPendingAttributionFromHeader(req.headers.get("cookie"));
+    const payload = pending
+      ? pending
+      : {
+          ...emptyAttributionPayload(),
+          manual_label: attribution_manual_label ?? null,
+          manual_category: attribution_manual_category ?? null,
+          channel: channelFromManualCategory(attribution_manual_category),
+        };
+    await recordIdentificationTouch(
+      {
+        tenant_id: ctx.tenant_id,
+        contact_id: contactId,
+        is_new_contact: true,
+        source_origin: pending ? "utm_parsed" : "agent_set",
+        editor_user_id: user.id,
+        payload,
+      },
+      db,
+    );
+
+    const res = Response.json(data, { status: 201 });
+    if (pending) res.headers.append("Set-Cookie", `${ATTRIBUTION_PENDING_COOKIE}=; Path=/; Max-Age=0`);
+    return res;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return Response.json({ error: msg }, { status: 401 });
