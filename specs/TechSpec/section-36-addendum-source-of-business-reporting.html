@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 36 - Addendum — Source-of-Business Reporting — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 36</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s36">Section 36 - Addendum — Source-of-Business Reporting</h1>
+<p><strong>Status:</strong> Addendum. Lands after <a class="xref" href="section-35-addendum-referral-attribution.html">§35</a> (which produces the underlying data). References existing sections by number; adds a new <code>cancellation_reason_category</code> enum to the bookings table.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> Reporting is downstream of attribution capture and cancellation tracking. Both data sources land in <a class="xref" href="section-35-addendum-referral-attribution.html">§35</a> and <a class="xref" href="#s36-5">§36.5</a> respectively. The reports themselves are a self-contained surface that does not modify any existing build-prompted section.</p>
+
+<h2 id="s36-1">36.1 Overview <a class="anchor-link" href="#s36-1" aria-label="Permalink">¶</a></h2>
+<p>The platform provides a Source-of-Business Reporting dashboard in the CRM, available to tenant owners and agents. Reports answer questions like:</p>
+<ul>
+<li>Which campaigns acquire the most leads?</li>
+<li>Which channels close the most bookings, by count and by commission?</li>
+<li>What is the conversion funnel from contact to quote to booking?</li>
+<li>How much revenue are we losing to cancellations, broken down by reason?</li>
+</ul>
+<p>Data sources:</p>
+<ul>
+<li><a class="xref" href="section-35-addendum-referral-attribution.html">§35</a> attribution data — <code>contacts.first_touch_*</code>, <code>quotes.conversion_touch_*</code>, <code>bookings.conversion_touch_*</code>, <code>attribution_touches</code></li>
+<li><a class="xref" href="section-12-crm.html">§12</a> CRM tables — <code>contacts</code>, <code>quotes</code></li>
+<li><a class="xref" href="section-14-commissions-splits-payouts.html">§14</a> commission tables — <code>bookings</code>, <code>commissions</code></li>
+<li><a class="xref" href="section-34-addendum-inbound-import.html#s34-8">§34.8</a> clawback fields — <code>commissions.clawback_*</code></li>
+<li>New cancellation category enum (<a class="xref" href="#s36-5">§36.5</a>)</li>
+</ul>
+
+<h2 id="s36-2">36.2 Standard Reports <a class="anchor-link" href="#s36-2" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Report</th><th>Dimensions</th><th>Measures</th><th>Data source</th></tr></thead>
+<tbody>
+<tr><td>Leads by source</td><td><code>first_touch_channel</code>, <code>first_touch_utm_source</code>, <code>first_touch_utm_campaign</code></td><td>Count of contacts acquired</td><td>attribution_rollup MV (<a class="xref" href="#s36-6">§36.6</a>)</td></tr>
+<tr><td>Bookings by source (last touch)</td><td><code>conversion_touch_channel</code>, <code>conversion_touch_utm_source</code>, <code>conversion_touch_utm_campaign</code></td><td>Count of bookings, gross commission, net commission</td><td>attribution_rollup MV</td></tr>
+<tr><td>Source funnel</td><td><code>first_touch_channel</code></td><td>Contacts → quotes → bookings; conversion rate at each step</td><td>attribution_rollup MV</td></tr>
+<tr><td>Campaign performance</td><td><code>conversion_touch_utm_campaign</code></td><td>Leads acquired, bookings closed, gross/net commission, cost-per-lead (if campaign_cost_cents set)</td><td>attribution_rollup MV + campaigns table</td></tr>
+<tr><td>First-touch vs last-touch comparison</td><td>(<code>first_touch_channel</code>, <code>conversion_touch_channel</code>) pair</td><td>Booking count; reveals influence of multi-touch journeys</td><td>Live query against bookings + contacts</td></tr>
+<tr><td>Lost revenue from cancellations</td><td><code>cancellation_reason_category</code>, <code>conversion_touch_channel</code>, sail-date quarter</td><td>Cancelled booking count, lost expected commission, clawed-back received commission, net financial impact</td><td>Live query against bookings + commissions</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="s36-3">36.3 Date Filters and Grouping <a class="anchor-link" href="#s36-3" aria-label="Permalink">¶</a></h2>
+<p>All reports support:</p>
+<ul>
+<li><strong>Date range</strong> — default trailing 90 days; user-adjustable. Date applies to:
+  <ul>
+    <li>Leads by source: <code>contacts.first_touch_at</code></li>
+    <li>Bookings/Campaigns/Funnel: <code>bookings.created_at</code></li>
+    <li>Cancellations: <code>bookings.cancelled_at</code></li>
+  </ul>
+</li>
+<li><strong>Grouping</strong> — day, week, month, quarter; default by month for ranges &gt; 30 days, by day for shorter ranges</li>
+<li><strong>Tenant scope</strong> — automatically scoped via RLS; no cross-tenant aggregation possible</li>
+<li><strong>Agent filter</strong> — Agency-tier tenants with multiple users can filter by which agent created the contact/quote/booking</li>
+</ul>
+<p>Maximum date range is bounded by the tenant's data retention horizon per <a class="xref" href="section-25-data-privacy-retention.html">§25</a>.</p>
+
+<h2 id="s36-4">36.4 Campaigns Table <a class="anchor-link" href="#s36-4" aria-label="Permalink">¶</a></h2>
+<p>The Campaign performance report needs per-campaign cost data for cost-per-lead calculations. A new optional table:</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.campaigns (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES public.tenants(id),
+  utm_campaign TEXT NOT NULL,
+  display_name TEXT,
+  campaign_cost_cents BIGINT,         -- nullable: agent may not record cost
+  currency TEXT NOT NULL DEFAULT 'USD',
+  campaign_start DATE,
+  campaign_end   DATE,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tenant_id, utm_campaign)
+);
+
+ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
+</code></pre>
+<p>Tenants register campaigns proactively (before sending traffic with a new <code>utm_campaign</code> value) or retroactively (after observing a campaign in their attribution data). The Campaign report joins <code>attribution_rollup</code> against <code>campaigns</code> on <code>(tenant_id, utm_campaign)</code>; campaigns not registered show up with NULL cost and the cost-per-lead column shows "not set" rather than zero.</p>
+<p>Money rules from <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0">§14.0</a> apply unchanged: <code>campaign_cost_cents</code> is BIGINT cents, computations go through the money utility module, currency stored on row.</p>
+
+<h2 id="s36-5">36.5 Cancellation Reason Category Enum <a class="anchor-link" href="#s36-5" aria-label="Permalink">¶</a></h2>
+<p>A new optional enum on <code>bookings</code> for structured cancellation reporting. The existing free-text <code>cancellation_reason</code> field (per <a class="xref" href="section-05-database-schema-main-app.html">§5</a>) is retained for nuance; the new category enum provides the grouping dimension for the cancellations report.</p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.bookings
+  ADD COLUMN cancellation_reason_category TEXT
+    CHECK (cancellation_reason_category IN (
+      'customer_change_of_mind',
+      'medical',
+      'family_emergency',
+      'financial',
+      'cruise_line_change',
+      'weather_or_natural_disaster',
+      'poor_prior_experience_with_line',
+      'other'
+    ));
+
+CREATE INDEX bookings_cancel_category_idx
+  ON public.bookings(tenant_id, cancellation_reason_category)
+  WHERE cancellation_reason_category IS NOT NULL;
+</code></pre>
+
+<h3 id="s36-5-1">36.5.1 Category definitions <a class="anchor-link" href="#s36-5-1" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Category</th><th>Meaning</th><th>Example free-text</th></tr></thead>
+<tbody>
+<tr><td><code>customer_change_of_mind</code></td><td>Customer decided not to travel for no specific external reason</td><td>"Decided to do a land trip instead"</td></tr>
+<tr><td><code>medical</code></td><td>Customer or traveling companion medical issue</td><td>"Husband's surgery scheduled"</td></tr>
+<tr><td><code>family_emergency</code></td><td>Non-medical family situation requiring attention</td><td>"Mother passed away"</td></tr>
+<tr><td><code>financial</code></td><td>Customer's financial situation changed</td><td>"Lost job"</td></tr>
+<tr><td><code>cruise_line_change</code></td><td>Cruise line changed itinerary, ship, or sailing in a way customer rejected</td><td>"Royal cancelled the Greek port"</td></tr>
+<tr><td><code>weather_or_natural_disaster</code></td><td>External event affecting feasibility or willingness</td><td>"Hurricane warning"</td></tr>
+<tr><td><code>poor_prior_experience_with_line</code></td><td>Customer's prior experience with the cruise line led them to cancel</td><td>"Bad service on last NCL trip; doesn't want to repeat"</td></tr>
+<tr><td><code>other</code></td><td>Doesn't fit above; free-text reason captures details</td><td>(any)</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="s36-5-2">36.5.2 Setting the category <a class="anchor-link" href="#s36-5-2" aria-label="Permalink">¶</a></h3>
+<p>Category is set by the agent during the cancellation flow (<a class="xref" href="section-20-booking-flow.html#s20-9">§20.9</a>). The cancellation UI presents:</p>
+<ul>
+<li>The free-text <code>cancellation_reason</code> field (existing, required)</li>
+<li>The new <code>cancellation_reason_category</code> dropdown (optional in v1; the agent can leave it null if no category fits)</li>
+<li>Optional AI suggestion: a Haiku call on the free-text reason proposes a category; the agent can accept or override</li>
+</ul>
+<p>If the agent does not set a category, the field stays NULL and the cancellations report groups it as <code>uncategorized</code> (a UI-derived label, not a DB value).</p>
+
+<h2 id="s36-6">36.6 Materialized View (attribution_rollup) <a class="anchor-link" href="#s36-6" aria-label="Permalink">¶</a></h2>
+<p>High-volume attribution reports query a nightly-refreshed materialized view. Live queries are used for the First-touch vs Last-touch comparison report (small result set with complex dimension pair) and the Cancellations report (low volume — cancellations are infrequent relative to bookings).</p>
+
+<h3 id="s36-6-1">36.6.1 View definition <a class="anchor-link" href="#s36-6-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE MATERIALIZED VIEW public.attribution_rollup AS
+  SELECT
+    c.tenant_id,
+    DATE_TRUNC('day', c.created_at) AS day,
+    c.first_touch_channel,
+    c.first_touch_utm_source,
+    c.first_touch_utm_medium,
+    c.first_touch_utm_campaign,
+    COUNT(DISTINCT c.id) AS contacts_acquired,
+    COUNT(DISTINCT q.id) AS quotes_created,
+    COUNT(DISTINCT b.id) FILTER (
+      WHERE b.status NOT IN ('cancelled','draft')
+    ) AS bookings_confirmed,
+    COUNT(DISTINCT b.id) FILTER (
+      WHERE b.status = 'cancelled'
+    ) AS bookings_cancelled,
+    COALESCE(SUM(cm.gross_commission_cents) FILTER (
+      WHERE b.status NOT IN ('cancelled','draft')
+    ), 0) AS gross_commission_cents,
+    COALESCE(SUM(cm.net_commission_cents) FILTER (
+      WHERE b.status NOT IN ('cancelled','draft')
+    ), 0) AS net_commission_cents
+  FROM public.contacts c
+  LEFT JOIN public.quotes      q  ON q.contact_id = c.id  AND q.tenant_id = c.tenant_id
+  LEFT JOIN public.bookings    b  ON b.contact_id = c.id  AND b.tenant_id = c.tenant_id
+  LEFT JOIN public.commissions cm ON cm.booking_id = b.id AND cm.tenant_id = c.tenant_id
+  GROUP BY 1, 2, 3, 4, 5, 6;
+
+-- Unique index required for CONCURRENTLY refresh
+CREATE UNIQUE INDEX attribution_rollup_pk
+  ON public.attribution_rollup(
+    tenant_id, day,
+    first_touch_channel,
+    first_touch_utm_source,
+    first_touch_utm_medium,
+    first_touch_utm_campaign
+  );
+
+-- Tenant-scoped query indexes
+CREATE INDEX attribution_rollup_tenant_day_idx
+  ON public.attribution_rollup(tenant_id, day);
+CREATE INDEX attribution_rollup_campaign_idx
+  ON public.attribution_rollup(tenant_id, first_touch_utm_campaign)
+  WHERE first_touch_utm_campaign IS NOT NULL;
+</code></pre>
+
+<h3 id="s36-6-2">36.6.2 Refresh cadence <a class="anchor-link" href="#s36-6-2" aria-label="Permalink">¶</a></h3>
+<p>Nightly refresh via Inngest scheduled function:</p>
+<pre class="codeblock" data-lang="ts"><code>export const refreshAttributionRollup = inngest.createFunction(
+  { id: 'attribution-rollup-refresh' },
+  { cron: '0 3 * * *' },           // 03:00 UTC nightly
+  async ({ step }) =&gt; {
+    await step.run('refresh', async () =&gt; {
+      // CONCURRENTLY so reports do not block during refresh.
+      // Service-role DB client required (per §26.3a discipline).
+      await serviceRoleClient().query(
+        'REFRESH MATERIALIZED VIEW CONCURRENTLY public.attribution_rollup'
+      );
+    });
+  }
+);
+</code></pre>
+<p><code>CONCURRENTLY</code> requires the unique index defined in <a class="xref" href="#s36-6-1">§36.6.1</a> and prevents read locks during refresh, so dashboards remain responsive overnight.</p>
+
+<h3 id="s36-6-3">36.6.3 Freshness expectations <a class="anchor-link" href="#s36-6-3" aria-label="Permalink">¶</a></h3>
+<p>Reports built on <code>attribution_rollup</code> show data as of the previous nightly refresh. The dashboard surfaces a freshness indicator: "Reports current as of [timestamp]." For tenants who want same-day data (e.g., to evaluate a campaign launched that morning), the First-touch vs Last-touch and Cancellations reports query base tables live and reflect the current state. Other reports remain on the MV.</p>
+
+<h3 id="s36-6-4">36.6.4 Why MV for some reports and live for others <a class="anchor-link" href="#s36-6-4" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Leads / Bookings / Funnel / Campaign</strong> — aggregate over many rows across long time windows. MV cost amortized over the day; query latency ~sub-second.</li>
+<li><strong>First-touch vs Last-touch comparison</strong> — dimension pair (first_channel, conversion_channel) has at most ~50 distinct value combinations. Live query is fast and benefits from same-day freshness.</li>
+<li><strong>Cancellations</strong> — low volume (cancellations are a minority of bookings). Live query handles drill-down to individual cancelled bookings without an MV-to-base-table hop.</li>
+</ul>
+
+<h2 id="s36-7">36.7 Lost Revenue from Cancellations — Report Detail <a class="anchor-link" href="#s36-7" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s36-7-1">36.7.1 Report measures <a class="anchor-link" href="#s36-7-1" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>Cancelled bookings count</strong> — <code>COUNT(*) WHERE bookings.status = 'cancelled' AND cancelled_at BETWEEN :date_range</code></li>
+<li><strong>Lost expected commission</strong> — sum of <code>gross_commission_cents</code> for cancelled bookings whose commission state was <code>expected</code> at cancellation time (commission never received). This is the commission that <em>would have</em> been earned. Calculated as: <code>SUM(commissions.gross_commission_cents) WHERE bookings.status = 'cancelled' AND commissions.received_commission_cents = 0</code>.</li>
+<li><strong>Clawed-back received commission</strong> — sum of <code>clawback_amount_cents</code> from the <a class="xref" href="section-34-addendum-inbound-import.html#s34-8">§34.8</a> clawback fields. Actual money out.</li>
+<li><strong>Net financial impact</strong> — sum of the above two: total lost agency revenue from cancellations in the period.</li>
+</ul>
+
+<h3 id="s36-7-2">36.7.2 Dimensional drill-down <a class="anchor-link" href="#s36-7-2" aria-label="Permalink">¶</a></h3>
+<p>The report defaults to grouping by <code>cancellation_reason_category</code> (or <code>uncategorized</code> for NULL values). Secondary grouping options:</p>
+<ul>
+<li>By <code>conversion_touch_channel</code> — reveals patterns like "Facebook leads cancel more often" </li>
+<li>By cruise line (<code>bookings.cruise_line</code>) — reveals patterns like "Royal cancellations spiked Q3"</li>
+<li>By sail-date quarter (<code>DATE_TRUNC('quarter', bookings.sailing_date)</code>) — reveals which future quarters have the most cancellation exposure</li>
+<li>By agent (Agency-tier) — workload distribution analysis</li>
+</ul>
+
+<h3 id="s36-7-3">36.7.3 Drill-down to bookings <a class="anchor-link" href="#s36-7-3" aria-label="Permalink">¶</a></h3>
+<p>Each aggregated row supports drill-down to the underlying bookings: clicking the count or amount opens a list of the bookings contributing to that cell, with links to each booking's detail page. Standard CRM permission gates apply.</p>
+
+<h3 id="s36-7-4">36.7.4 Query shape <a class="anchor-link" href="#s36-7-4" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>-- Tenant scope enforced via RLS; tenant_id in WHERE is defense-in-depth.
+SELECT
+  COALESCE(b.cancellation_reason_category, 'uncategorized') AS category,
+  b.conversion_touch_channel,
+  DATE_TRUNC('quarter', b.sailing_date) AS sail_quarter,
+  COUNT(*) AS cancelled_count,
+  COALESCE(SUM(cm.gross_commission_cents) FILTER (
+    WHERE cm.received_commission_cents = 0
+  ), 0) AS lost_expected_cents,
+  COALESCE(SUM(cm.clawback_amount_cents), 0) AS clawback_cents,
+  COALESCE(SUM(cm.gross_commission_cents) FILTER (
+    WHERE cm.received_commission_cents = 0
+  ), 0)
+    + COALESCE(SUM(cm.clawback_amount_cents), 0) AS net_impact_cents
+FROM public.bookings b
+LEFT JOIN public.commissions cm ON cm.booking_id = b.id AND cm.tenant_id = b.tenant_id
+WHERE b.tenant_id = :tenant_id
+  AND b.status = 'cancelled'
+  AND b.cancelled_at BETWEEN :start AND :end
+GROUP BY 1, 2, 3
+ORDER BY net_impact_cents DESC;
+</code></pre>
+
+<h2 id="s36-8">36.8 Export <a class="anchor-link" href="#s36-8" aria-label="Permalink">¶</a></h2>
+<p>Every report supports CSV export. Export contents are exactly what's visible in the report (respects current filters, date range, grouping). Money values export as plain decimal dollars (e.g., <code>1234.56</code>) with currency as a separate column, not as cents. This format matches what tenants expect when importing into spreadsheets or other accounting tools.</p>
+<p>Larger exports (&gt; 10,000 rows) are processed asynchronously: the tenant receives an in-app notification and email when the export is ready for download. Synchronous export ceiling: 10,000 rows.</p>
+
+<h2 id="s36-9">36.9 Dashboard UX <a class="anchor-link" href="#s36-9" aria-label="Permalink">¶</a></h2>
+<ul>
+<li>Single "Reports" entry in the CRM nav, with the six standard reports listed in <a class="xref" href="#s36-2">§36.2</a></li>
+<li>Each report is a single page with filters at top, visualization in the middle (chart appropriate to the data shape), data table below</li>
+<li>Charts default to bar charts for categorical dimensions and line charts for time-series</li>
+<li>Mobile-responsive (per <a class="xref" href="section-24-chat-ui.html">§24</a> general UX guidance), but reports are primarily a desktop experience</li>
+<li>"Last refreshed" indicator on MV-backed reports; "Live" indicator on live-query reports</li>
+</ul>
+
+<h2 id="s36-10">36.10 Tenant-Type Applicability <a class="anchor-link" href="#s36-10" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Report</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Leads by source</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Bookings by source</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Source funnel</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Campaign performance</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>First-touch vs last-touch</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Lost revenue from cancellations</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+</tbody>
+</table></div>
+<p>BYO Research tier doesn't get the reporting dashboard — it's a low-volume single-agent exploration tier and would have insufficient data for reports to be meaningful. Attribution data is still captured for Research tenants in case they upgrade.</p>
+
+<h2 id="s36-11">36.11 Calls Worth Flagging <a class="anchor-link" href="#s36-11" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Cancellation report depends on <a class="xref" href="section-14-commissions-splits-payouts.html#s14-9">§14.9</a> clawback handling writing to the new <code>clawback_*</code> fields</strong> per <a class="xref" href="section-34-addendum-inbound-import.html#s34-8">§34.8</a>. If §14.9 is implemented without writing those fields, the "Clawed-back received commission" measure will report zero for all bookings. Build coordination required: §14.9 implementation must populate clawback fields.</li>
+<li><strong>Materialized view stale by up to ~24h.</strong> A tenant launching a campaign at 9am may not see leads in the report until the next 03:00 UTC refresh. Documented in the freshness indicator. If demand for hourly refresh emerges, the tradeoff is increased DB load — defer until measured.</li>
+<li><strong>Cancellation category enum will evolve.</strong> The eight values in v1 may prove insufficient or have overlap (e.g., is a death in the family <code>medical</code> or <code>family_emergency</code>?). Plan a v1.1 review after 6 months of real data to add/refine categories. Schema migration to add an enum value is straightforward.</li>
+<li><strong>The Haiku-suggested category</strong> from <a class="xref" href="#s36-5-2">§36.5.2</a> needs validation against tenant patterns. If suggestions are routinely wrong, agents will ignore them and the field will stay sparse, degrading report value.</li>
+<li><strong>Cost-per-lead requires campaign cost entry.</strong> Tenants who don't track their ad spend in the platform get NULL cost-per-lead. The Campaign report should make missing cost data obviously visible ("Set cost to see CPL") to drive tenants to enter it.</li>
+<li><strong>Multi-tenant fairness in the MV refresh.</strong> If one tenant has 10x the data volume of others, the nightly refresh consumes proportionally more DB resources for that tenant. Acceptable at v1 scale; partitioning <code>attribution_rollup</code> by tenant_id is the answer if it becomes a problem.</li>
+<li><strong>Date-range edge cases for the cancellations report.</strong> A booking made in Q1 that's cancelled in Q3 will show up only when the report date range includes Q3 (because the filter is on <code>cancelled_at</code>). If a tenant wants "all cancellations that affected my Q1 revenue," that's a different report — flag for future enhancement.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-35-addendum-referral-attribution.html">← §35: Referral Attribution</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-37-addendum-tasks-and-follow-up.html">§37: Tasks &amp; Follow-up →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>
