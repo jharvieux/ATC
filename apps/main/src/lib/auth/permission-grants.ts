@@ -47,6 +47,7 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("price_watches", "list"),
   key("subcontractors", "read"),
   key("tasks", "list"),
+  key("team_members", "list"),
   key("tenant_branding", "read"),
 ]);
 
@@ -100,6 +101,8 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("host_config", "write"),
   key("tenant_branding", "write"),
   key("persona_addendum", "write"),
+  // Team management (owner-only — assigns roles to other tenant members)
+  key("team_members", "update_role"),
   // Subcontractors (owner-only — affects payout flow)
   key("subcontractors", "create"),
   key("subcontractors", "delete"),
