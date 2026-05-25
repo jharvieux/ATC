@@ -115,4 +115,14 @@ export type InngestEvents = {
   "persona_addendum.submitted": {
     data: { tenant_id: string; persona_slug: string; addendum_id: string };
   };
+  // §37.4.2 — sequence step scheduled to fire after a delay. Consumed by
+  // the task_sequence_step_fire Inngest function which materializes the
+  // task and any reminders from the snapshot.
+  "task_sequence.step_scheduled": {
+    data: {
+      tenant_id: string;
+      sequence_run_id: string;
+      step_index: number;
+    };
+  };
 };
