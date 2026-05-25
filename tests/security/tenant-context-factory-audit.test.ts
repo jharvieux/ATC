@@ -383,11 +383,12 @@ describe("tenantContextFromResendEvent — adversarial inputs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// tenantContextForPlatformAdmin — currently a stub that throws
+// tenantContextForPlatformAdmin — superseded by withPlatformAdminAudit,
+// kept as a throwing stub to flag callers still on the old API
 // ---------------------------------------------------------------------------
 
 describe("tenantContextForPlatformAdmin — current state", () => {
-  it("throws (stub awaiting §26 audit_log wiring; documented in source)", async () => {
+  it("throws to surface any caller still on the superseded API", async () => {
     const { tenantContextForPlatformAdmin } = await import(
       "../../apps/main/src/lib/db/factories"
     );
@@ -397,6 +398,6 @@ describe("tenantContextForPlatformAdmin — current state", () => {
         "target-tenant-uuid",
         "investigation: ticket-123",
       ),
-    ).rejects.toThrow(/not implemented/i);
+    ).rejects.toThrow(/superseded by withPlatformAdminAudit/i);
   });
 });
