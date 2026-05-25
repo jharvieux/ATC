@@ -11,6 +11,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 type CommissionRow = {
   id: string;
@@ -48,6 +49,17 @@ export const commissionSplitOnReceived = inngest.createFunction(
     }
 
     const commission = commData as CommissionRow;
+
+    // §15.16 — Skip past-grace tenants. Don't write new commission rows
+    // for a tenant whose subscription is past due — this is real money
+    // movement, and the platform shouldn't accumulate payable balances on
+    // a non-paying account.
+    const paymentCheck = await assertTenantStillPayingById(db, commission.tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[commission-split] skipping past-grace tenant",
+        { tenant_id: commission.tenant_id, commission_id, reason: paymentCheck.reason });
+      return { skipped: true, reason: paymentCheck.reason };
+    }
 
     // Get hold_period_days from the tenant's tier
     const { data: tenantData } = await db

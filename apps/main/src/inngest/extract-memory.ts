@@ -16,6 +16,7 @@ import { inngest } from "./client";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { resolveAIBehavior } from "@/lib/personas/resolve-ai-behavior";
 import { mergeMemory, type CustomerMemoryFields } from "@/lib/memory/merge";
 
@@ -317,6 +318,14 @@ export const extractMemory = inngest.createFunction(
       event as { id: string; name: string; data: Record<string, unknown> },
     );
     const db = tenantClient(ctx);
+
+    // §15.16 — Skip past-grace tenants. Memory extraction calls Anthropic;
+    // we don't burn AI spend on a tenant that's lost service.
+    const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[extract-memory] skipping past-grace tenant", { tenant_id, conversation_id, reason: paymentCheck.reason });
+      return { status: "ok" as const, extracted_fields: [] };
+    }
 
     return runExtractMemory({ tenant_id, conversation_id, user_id, db, step: step as unknown as ExtractionStep });
   },

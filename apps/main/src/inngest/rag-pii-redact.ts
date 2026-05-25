@@ -16,6 +16,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { detectZeroTolerancePII } from "@/lib/rag-ingest/pii-regex-prefilter";
 import { haikuPiiRedact } from "@/lib/rag-ingest/haiku-pii-redact";
 import { computeAggregation, type AggregationState } from "@/lib/rag-ingest/pii-quarantine-aggregator";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 export const ragPiiRedact = inngest.createFunction(
   {
@@ -26,6 +27,14 @@ export const ragPiiRedact = inngest.createFunction(
     const submission_id = event.data.submission_id as string;
     const tenant_id = event.data.tenant_id as string;
     const db = createServiceRoleClient();
+
+    // §15.16 — Skip past-grace tenants (also short-circuits the haiku redact
+    // call later in this function).
+    const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[rag-pii-redact] skipping past-grace tenant", { tenant_id, submission_id, reason: paymentCheck.reason });
+      return { skipped: true, reason: paymentCheck.reason };
+    }
 
     const { data: sub } = await db
       .from("rag_submissions")

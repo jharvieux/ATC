@@ -15,6 +15,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyEnvAtBoot } from "@/lib/env";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { instrumentedClaudeCall, type AICallPurpose } from "@/lib/ai/call-wrapper";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 interface ModerationScores {
   spam: number;
@@ -87,6 +88,16 @@ export const forumModerationRetry = inngest.createFunction(
     const { message_id, tenant_id, forum_id } = event.data;
     const env = verifyEnvAtBoot();
     const svc = createServiceRoleClient();
+
+    // §15.16 — Don't burn Haiku spend moderating posts for a past-grace
+    // tenant. The forum itself isn't reachable to customers either (the
+    // middleware gate redirects them to billing).
+    const paymentCheck = await assertTenantStillPayingById(svc, tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[forum-moderation-retry] skipping past-grace tenant",
+        { tenant_id, message_id, forum_id, reason: paymentCheck.reason });
+      return { skipped: true, reason: paymentCheck.reason };
+    }
 
     const { data: msg } = await svc
       .from("forum_messages")

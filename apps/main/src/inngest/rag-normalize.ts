@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { haikuNormalize } from "@/lib/rag-ingest/haiku-normalize";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 export const ragNormalize = inngest.createFunction(
   {
@@ -29,6 +30,14 @@ export const ragNormalize = inngest.createFunction(
     const submission_id = event.data.submission_id as string;
     const tenant_id = event.data.tenant_id as string;
     const db = createServiceRoleClient();
+
+    // §15.16 — Skip past-grace tenants. Normalisation is a Haiku call;
+    // no AI spend on tenants that have lost service.
+    const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[rag-normalize] skipping past-grace tenant", { tenant_id, submission_id, reason: paymentCheck.reason });
+      return { skipped: true, reason: paymentCheck.reason };
+    }
 
     const { data: sub } = await db
       .from("rag_submissions")

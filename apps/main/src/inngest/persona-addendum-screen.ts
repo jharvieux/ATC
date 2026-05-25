@@ -6,6 +6,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
 import { writeAuditLog } from "@/lib/audit/write";
+import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 
 interface ScreenPayload {
   tenant_id: string;
@@ -34,6 +35,17 @@ export const personaAddendumScreen = inngest.createFunction(
     }
 
     const a = row as { id: string; content: string; status: string; tenant_id: string };
+
+    // §15.16 — Don't burn Haiku spend screening a past-grace tenant's
+    // addendum. The addendum stays in 'pending' status; if they resume
+    // paying, a manual rescreen via the admin UI catches it up.
+    const paymentCheck = await assertTenantStillPayingById(db, a.tenant_id);
+    if (!paymentCheck.ok) {
+      console.info("[persona-addendum-screen] skipping past-grace tenant",
+        { tenant_id: a.tenant_id, addendum_id, reason: paymentCheck.reason });
+      return { skipped: true, reason: paymentCheck.reason };
+    }
+
     const result = await screenAddendumHaiku(a.content, { tenant_id: a.tenant_id });
 
     const newStatus = result.pass ? "approved" : "rejected";
