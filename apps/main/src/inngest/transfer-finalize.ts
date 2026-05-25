@@ -19,6 +19,9 @@
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
+// INNGEST-PROBE-ALLOW-MIXED: bindContactOnIdentification writes to
+// attribution_touches across tenant scope inside an already-tenanted
+// Inngest run; primary work uses tenantClient(ctx).
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { bindContactOnIdentification } from "@/lib/attribution/bind-contact-on-identification";
 
