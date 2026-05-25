@@ -1,8 +1,12 @@
 // §12.4 — Create a draft quote.
+// §35.6.1 — Quote creation copies the contact's most-recent attribution
+// touch into conversion_touch_* columns.
 
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { populateConversionTouch } from "@/lib/attribution/populate-conversion-touch";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -38,6 +42,19 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    // §35.6.1 — populate conversion_touch_* from the contact's most
+    // recent attribution touch (or fallback to first_touch_*). Non-fatal:
+    // failure here doesn't roll back the quote.
+    const quoteId = (data as { id: string }).id;
+    await populateConversionTouch({
+      tenant_id: ctx.tenant_id,
+      contact_id: parsed.data.contact_id,
+      target_table: "quotes",
+      target_id: quoteId,
+      svc: createServiceRoleClient(),
+    });
+
     return Response.json(data, { status: 201 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

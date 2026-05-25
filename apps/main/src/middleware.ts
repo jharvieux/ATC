@@ -11,6 +11,7 @@ import {
   type Tenant,
 } from "@/lib/tenancy/resolve-tenant";
 import { derivePaymentState } from "@/lib/billing/payment-state";
+import { extractAttributionFromRequest } from "@/lib/attribution/extract-utm";
 
 const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const RESOLVED_TENANT_TYPE_HEADER = "x-resolved-tenant-type";
@@ -18,6 +19,41 @@ const RESOLVED_TENANT_TYPE_HEADER = "x-resolved-tenant-type";
 // render the "payment required" banner. One of "" (clear), "within_grace",
 // or "past_grace".
 const PAYMENT_BANNER_HEADER = "x-payment-banner-state";
+
+// §35.2.2 — pending UTM attribution cookie. Holds the most recent
+// UTM-bearing request's payload until a contact identifies; identification
+// handlers then write a touch row and clear the cookie. Last-write-wins
+// for UTM-bearing requests within a session.
+const ATTRIBUTION_PENDING_COOKIE = "atc_attribution_pending";
+const ATTRIBUTION_COOKIE_MAX_AGE_DAYS = 30;
+// §35.10 — consent must be respected. Honors the existing tenant consent
+// cookie that signup writes on consent capture; if the cookie says
+// "rejected" we skip pending attribution writes entirely.
+const COOKIE_CONSENT_COOKIE = "atc_cookie_consent";
+
+function applyAttributionCapture(res: NextResponse, req: NextRequest): void {
+  // §35.10 — refused-consent suppression. If the consent cookie is "rejected",
+  // do not capture pending attribution. Treat as direct-visit downstream.
+  const consent = req.cookies.get(COOKIE_CONSENT_COOKIE)?.value;
+  if (consent === "rejected") return;
+
+  const referrer = req.headers.get("referer");
+  const extracted = extractAttributionFromRequest({
+    url: req.nextUrl,
+    referrer,
+  });
+  if (!extracted) return; // non-UTM request leaves any existing pending cookie alone
+
+  res.cookies.set({
+    name: ATTRIBUTION_PENDING_COOKIE,
+    value: encodeURIComponent(JSON.stringify(extracted)),
+    httpOnly: false, // intentionally readable by client-side identification flows
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: ATTRIBUTION_COOKIE_MAX_AGE_DAYS * 24 * 60 * 60,
+    path: "/",
+  });
+}
 
 // Paths exempt from the past-grace redirect. The billing UI obviously can't
 // be gated by itself; webhook + auth + health must remain reachable.
@@ -105,6 +141,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
           const res = NextResponse.next();
           res.headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
           res.headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+          applyAttributionCapture(res, req);
           return applyPaymentGate(res, req, tenant);
         }
       } catch {
