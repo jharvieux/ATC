@@ -56,10 +56,42 @@ export async function POST(
       return Response.json({ error: "Booking is already cancelled." }, { status: 422 });
     }
 
+    // §36.5.2 — optional cancellation_reason_category + free-text reason
+    // from the request body. Both nullable in the schema; we accept both
+    // as optional in v1 (UI requires the free-text reason).
+    const body = (await req.json().catch(() => ({}))) as {
+      cancellation_reason?: unknown;
+      cancellation_reason_category?: unknown;
+    };
+    const reason = typeof body.cancellation_reason === "string" ? body.cancellation_reason : null;
+    const reasonCategory = typeof body.cancellation_reason_category === "string"
+      ? body.cancellation_reason_category
+      : null;
+
+    const VALID_CATEGORIES = new Set([
+      "customer_change_of_mind",
+      "medical",
+      "family_emergency",
+      "financial",
+      "cruise_line_change",
+      "weather_or_natural_disaster",
+      "poor_prior_experience_with_line",
+      "other",
+    ]);
+    if (reasonCategory && !VALID_CATEGORIES.has(reasonCategory)) {
+      return Response.json({ error: `invalid_category:${reasonCategory}` }, { status: 400 });
+    }
+
     // Mark booking as cancelled
     await db
       .from("bookings")
-      .update({ status: "cancelled", cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update({
+        status: "cancelled",
+        cancelled_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        cancellation_reason: reason,
+        cancellation_reason_category: reasonCategory,
+      })
       .eq("id", bookingId);
 
     // Load commissions

@@ -88,6 +88,8 @@ import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-i
 import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
 // BP40 §33.8 — Price-watch daily evaluator
 import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
+// BP36 §36.6 — attribution_rollup nightly refresh
+import { attributionRollupRefresh } from "@/inngest/attribution-rollup-refresh";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -183,5 +185,7 @@ export const { GET, POST, PUT } = serve({
     refreshCruisemapperStatic,
     // BP40: Price-watch daily evaluator (§33.8)
     evaluatePriceWatches,
+    // BP36: attribution_rollup nightly refresh (§36.6)
+    attributionRollupRefresh,
   ],
 });
