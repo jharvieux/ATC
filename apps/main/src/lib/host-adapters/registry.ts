@@ -36,6 +36,20 @@ export async function getAdapter(adapter_id: string): Promise<HostAgencyClient> 
   }
 
   const row = data as AdapterRow;
+
+  // Audit pass 2, Finding 9: whitelist `implementation_path` before
+  // `await import(...)`. Today `host_adapters` is service-role-only-writable,
+  // so the path is platform-controlled. Latent RCE if a future "custom
+  // adapter" feature or SQL-injection ever lets a tenant influence this
+  // column. Whitelist the shape we actually ship: `@/lib/host-adapters/<slug>/adapter`.
+  const ALLOWED_IMPLEMENTATION_PATH = /^@\/lib\/host-adapters\/[a-z0-9][a-z0-9-]*\/adapter$/;
+  if (!ALLOWED_IMPLEMENTATION_PATH.test(row.implementation_path)) {
+    throw new Error(
+      `Host adapter '${adapter_id}' has implementation_path='${row.implementation_path}' ` +
+        `which does not match the allowed pattern. Refusing to dynamic-import.`,
+    );
+  }
+
   const mod = await import(/* @vite-ignore */ row.implementation_path);
   const firstKey = Object.keys(mod)[0];
   const AdapterClass = mod.default ?? (firstKey !== undefined ? mod[firstKey] : undefined);

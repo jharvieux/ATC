@@ -150,6 +150,26 @@ export async function POST(
       return Response.json({ error: "content_required" }, { status: 400 });
     }
 
+    // Audit pass 2, Finding 5: parent_message_id was inserted verbatim with
+    // no scope check, so a member of tenant A's forum could attach their
+    // reply to ANY message UUID (cross-tenant, cross-forum, cross-thread).
+    // Require the parent to exist in the SAME thread + tenant.
+    if (parent_message_id) {
+      const { data: parent } = await svc
+        .from("forum_messages")
+        .select("id")
+        .eq("id", parent_message_id)
+        .eq("thread_id", threadId)
+        .eq("tenant_id", ctx.tenant_id)
+        .maybeSingle();
+      if (!parent) {
+        return Response.json(
+          { error: "parent_message_not_in_thread" },
+          { status: 422 },
+        );
+      }
+    }
+
     // Insert with status 'pending' first
     const { data: msg, error: insertErr } = await svc
       .from("forum_messages")

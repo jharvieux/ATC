@@ -173,6 +173,37 @@ export async function PATCH(req: Request, { params }: RouteProps): Promise<Respo
 
   const svc = createServiceRoleClient();
 
+  // Audit pass 2, Finding 4: enforce token-binding here too. If the token
+  // has been bound to an authenticated email by a prior GET (line 119),
+  // a subsequent PATCH must come from a session for that same email.
+  const { data: invitationRow } = await svc
+    .from("invitations")
+    .select("token_bound_email")
+    .eq("id", invitation_id)
+    .maybeSingle();
+  const bound =
+    (invitationRow as { token_bound_email?: string | null } | null)?.token_bound_email ?? null;
+  if (bound) {
+    const authHeader = req.headers.get("authorization");
+    let callerEmail: string | null = null;
+    if (authHeader?.startsWith("Bearer ")) {
+      const accessToken = authHeader.slice("Bearer ".length);
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (url && anon) {
+        const sb = (await import("@supabase/supabase-js")).createClient(url, anon, {
+          auth: { autoRefreshToken: false, persistSession: false },
+          global: { headers: { Authorization: `Bearer ${accessToken}` } },
+        });
+        const { data: userData } = await sb.auth.getUser();
+        callerEmail = userData?.user?.email?.toLowerCase() ?? null;
+      }
+    }
+    if (!callerEmail || callerEmail !== bound.toLowerCase()) {
+      return Response.json({ error: "token_bound_to_different_email" }, { status: 403 });
+    }
+  }
+
   const updates: Record<string, string> = {};
   if (rsvp_state) updates.rsvp_state = rsvp_state;
   if (visibility_choice) updates.visibility_choice = visibility_choice;
