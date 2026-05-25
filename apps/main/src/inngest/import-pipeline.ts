@@ -208,13 +208,8 @@ export const importPipeline = inngest.createFunction(
 // ── helpers ──────────────────────────────────────────────────────────────
 
 async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row: ImportQueueRow): Promise<string | null> {
-  // Phase B: text lives wherever the source put it. Email path stores in
-  // a sibling table keyed by source_ref; document path stores in
-  // uploaded_file_path (we'd OCR/parse Phase C). Manual path stuffs the
-  // body into source_ref directly.
-  //
-  // For Phase B we accept that document_path returns null (uploads aren't
-  // wired yet) and that email_text comes from gmail_inbound_messages.
+  // Email path: read body_text from the gmail_inbound_messages row the
+  // webhook persisted, keyed by Gmail message_id.
   if (row.import_path === "email") {
     const { data } = await svc
       .from("gmail_inbound_messages")
@@ -223,10 +218,60 @@ async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row:
       .maybeSingle();
     return (data as { body_text?: string } | null)?.body_text ?? null;
   }
+  // Manual path: the user-pasted body is in source_ref directly.
   if (row.import_path === "manual") {
-    return row.source_ref; // entire payload IS the text
+    return row.source_ref;
   }
-  // document path: Phase C wires OCR/PDF parsing.
+  // Document path: download the PDF from the imported-documents bucket
+  // and run pdf-parse on it. text-only PDFs work fine; scanned-image
+  // PDFs return empty (resolveText returns "") which the caller treats
+  // as parse_failed (correct behavior — operator can re-submit as a
+  // manual entry or via Gmail). OCR for scanned PDFs is a separate
+  // capability we haven't shipped yet.
+  if (row.import_path === "document" && row.uploaded_file_path) {
+    try {
+      const { data, error } = await svc.storage
+        .from("imported-documents")
+        .download(row.uploaded_file_path);
+      if (error || !data) {
+        console.warn(
+          "[import-pipeline] storage download failed for %s: %s",
+          row.id,
+          error?.message ?? "no data",
+        );
+        return null;
+      }
+      const buf = Buffer.from(await data.arrayBuffer());
+      // pdf-parse is dynamic-imported so the heavy module doesn't load
+      // until the document path actually runs. pdf-parse v2 exposes a
+      // PDFParse class; create one, getText() returns { text, pages }.
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buf });
+      let extracted = "";
+      try {
+        const result = await parser.getText();
+        extracted = result.text ?? "";
+      } finally {
+        await parser.destroy();
+      }
+      const text = extracted.trim();
+      if (!text) {
+        console.info(
+          "[import-pipeline] PDF parsed but text is empty (likely scanned/image-only) for %s",
+          row.id,
+        );
+        return null;
+      }
+      return text;
+    } catch (err) {
+      console.warn(
+        "[import-pipeline] pdf-parse threw for %s: %s",
+        row.id,
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    }
+  }
   return null;
 }
 
