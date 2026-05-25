@@ -70,8 +70,8 @@ export const customDomainReverify = inngest.createFunction(
             })
             .eq("id", row.id);
           drifted++;
-          // TODO(notifications): email tenant via Resend with drift explanation.
           console.warn("[custom-domain-reverify] CNAME drift tenant=%s domain=%s", row.id, row.custom_domain);
+          await notifyDomainDrift(db, row.id, row.custom_domain, "cname_drifted");
           continue;
         }
 
@@ -84,8 +84,8 @@ export const customDomainReverify = inngest.createFunction(
           })
           .eq("id", row.id);
         drifted++;
-        // TODO(notifications): email tenant with TXT drift + 72h grace warning.
         console.warn("[custom-domain-reverify] TXT drift tenant=%s domain=%s (72h grace started)", row.id, row.custom_domain);
+        await notifyDomainDrift(db, row.id, row.custom_domain, "txt_drifted");
       } catch (e) {
         console.error("[custom-domain-reverify] check failed for tenant %s: %s", row.id, e);
       }
@@ -95,3 +95,59 @@ export const customDomainReverify = inngest.createFunction(
     return { checked, drifted };
   },
 );
+
+async function notifyDomainDrift(
+  db: ReturnType<typeof createServiceRoleClient>,
+  tenant_id: string,
+  domain: string,
+  kind: "cname_drifted" | "txt_drifted",
+): Promise<void> {
+  try {
+    const { data: owners } = await db
+      .from("users")
+      .select("email")
+      .eq("tenant_id", tenant_id)
+      .eq("status", "active");
+    const recipients = ((owners ?? []) as Array<{ email: string }>).map((u) => u.email);
+    if (recipients.length === 0) return;
+
+    const { sendTenantNotification } = await import("@/lib/email/notifications");
+    const isCname = kind === "cname_drifted";
+    const subject = isCname
+      ? `URGENT: Your custom domain ${domain} is no longer pointing to us`
+      : `Action needed: TXT record drift on ${domain} (72-hour grace)`;
+    const html = isCname
+      ? `<h2>Your custom domain has drifted</h2>
+         <p>The CNAME record for <strong>${domain}</strong> no longer
+         points at our infrastructure. We've unbound it from your account
+         to avoid serving traffic from a domain we don't control.</p>
+         <p>To restore: in your DNS provider, set ${domain}'s CNAME back
+         to the value we provided during setup, then re-add the domain in
+         your tenant settings.</p>`
+      : `<h2>TXT record drift detected</h2>
+         <p>The TXT verification record for <strong>${domain}</strong>
+         has changed. We're keeping your binding active for 72 hours
+         while you investigate.</p>
+         <p>If you didn't intend to change DNS, please restore the TXT
+         record we provided during setup.</p>`;
+
+    for (const to of recipients) {
+      await sendTenantNotification({
+        db,
+        tenant_id,
+        to,
+        subject,
+        html,
+        category: "transactional",
+        template_id: `custom_domain_${kind}`,
+        template_variables: { domain },
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[custom-domain-reverify] notification failed for tenant %s: %s",
+      tenant_id,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}

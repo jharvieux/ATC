@@ -23,8 +23,30 @@ export const crownJewelAnnualAudit = inngest.createFunction(
       `(${projectId}) and to no other project. See docs/runbooks/crown-jewel-annual-audit.md.`;
 
     console.warn(message);
-    // TODO(notifications): send email to platform operator via Resend with the runbook link.
+
+    // Email the platform operator with the runbook link. Best-effort —
+    // the log line above is the durable record.
+    try {
+      const { sendOperatorNotification } = await import("@/lib/email/notifications");
+      await sendOperatorNotification({
+        subject: "Annual crown-jewel domain audit required",
+        html: `<pre style="font-family: ui-monospace, monospace; white-space: pre-wrap;">${escapeHtml(message)}</pre>`,
+        text: message,
+      });
+    } catch (err) {
+      console.warn(
+        "[crown-jewel-annual-audit] operator email failed: %s",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
 
     return { reservedDomain, projectId, platformEnv, audited_at: new Date().toISOString() };
   },
 );
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}

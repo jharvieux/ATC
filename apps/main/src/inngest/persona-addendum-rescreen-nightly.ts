@@ -7,6 +7,10 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
 import { writeAuditLog } from "@/lib/audit/write";
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export const personaAddendumRescreenNightly = inngest.createFunction(
   {
     id: "persona-addendum-rescreen-nightly",
@@ -52,7 +56,42 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
             })
             .eq("id", row.id);
           suspended++;
-          // TODO(notifications): email tenant with §16.6 suspension explanation.
+          // Notify tenant owners that the addendum was suspended.
+          try {
+            const { data: owners } = await db
+              .from("users")
+              .select("email")
+              .eq("tenant_id", row.tenant_id)
+              .eq("status", "active");
+            const recipients = ((owners ?? []) as Array<{ email: string }>).map((u) => u.email);
+            if (recipients.length > 0) {
+              const { sendTenantNotification } = await import("@/lib/email/notifications");
+              const findingsList = result.findings
+                .map((f) => `<li><strong>${f.category}:</strong> ${escapeHtml(f.evidence)}</li>`)
+                .join("");
+              const html = `<h2>Persona addendum suspended</h2>
+                <p>The nightly rescreen flagged your <strong>${row.persona_slug}</strong> addendum
+                for policy concerns. It has been suspended pending review.</p>
+                <ul>${findingsList}</ul>
+                <p>Please revise and resubmit from your tenant settings, or contact support.</p>`;
+              for (const to of recipients) {
+                await sendTenantNotification({
+                  db,
+                  tenant_id: row.tenant_id,
+                  to,
+                  subject: "Persona addendum suspended",
+                  html,
+                  category: "transactional",
+                  template_id: "persona_addendum_suspended",
+                });
+              }
+            }
+          } catch (notifyErr) {
+            console.warn(
+              "[persona-addendum-rescreen-nightly] notification failed: %s",
+              notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+            );
+          }
           await writeAuditLog({
             tenant_id: row.tenant_id,
             actor_type: "system",
