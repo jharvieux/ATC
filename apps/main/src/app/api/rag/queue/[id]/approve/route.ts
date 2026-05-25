@@ -16,6 +16,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { adjustRagChunkCount } from "@/lib/abuse/counters";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 
 interface RagIngestResponse {
   queue_item_id?: string;
@@ -79,8 +80,17 @@ export async function POST(
     if (!ragUrl) {
       return Response.json({ error: "rag_service_not_configured" }, { status: 500 });
     }
-    // TODO(bp24-service-jwt): replace with RS256-signed JWT per BP09 contract.
-    const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
+
+    // BP09 — RS256-signed JWT per call (replaces the raw-PEM bearer pattern
+    // the verifier was always rejecting). Tenant-scoped: caller is approving
+    // their own queue item, so the JWT carries ctx.tenant_id. A fresh JWT
+    // is minted per request because the rag verifier enforces unique JTI via
+    // Redis SETNX — re-using a token returns 401 replay.
+    const jwtArgs = {
+      tenant_id: row.tenant_id,
+      scope: "write" as const,
+      service_identifier: "chat-service",
+    };
 
     const norm = (row.normalization_result ?? {}) as Record<string, unknown>;
     const category = (body.edits?.category as string | undefined) ?? (norm.suggested_category as string | undefined) ?? "general";
@@ -88,7 +98,7 @@ export async function POST(
     // Step 1: POST /api/ingest
     const ingestRes = await fetch(`${ragUrl}/api/ingest`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await signServiceJwt(jwtArgs)}` },
       body: JSON.stringify({
         scope: "tenant",
         tenant_id: row.tenant_id,
@@ -111,10 +121,11 @@ export async function POST(
       return Response.json({ error: "rag_ingest_no_queue_id", upstream: ingested }, { status: 502 });
     }
 
-    // Step 2: POST /api/approve/tenant
+    // Step 2: POST /api/approve/tenant — fresh JWT (rag verifier rejects
+    // reused JTIs as replay attempts).
     const approveRes = await fetch(`${ragUrl}/api/approve/tenant`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${bearer}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${await signServiceJwt(jwtArgs)}` },
       body: JSON.stringify({
         queue_item_id: ingested.queue_item_id,
         edits: body.edits ?? {},

@@ -5,15 +5,16 @@
 // the citations (for the <MessageSources/> UI) and the retrieved chunk IDs
 // (for the §6.10 feedback loop).
 //
-// The RAG service call uses the simple Bearer-token pattern that the rest of
-// main-app uses (see apps/main/src/app/api/admin/chunks/post-termination/route.ts).
-// Proper RS256 JWT signing per BP09 lands when the chat handler is wired up
-// in BP24 — TODO(bp24-chat-service-jwt).
+// The RAG service call uses signServiceJwt (BP09): RS256-signed JWT with
+// tenant_id, scope=read, service_identifier="chat-service". The rag verifier
+// (apps/rag/src/lib/auth/verify-service-jwt.ts) checks signature + replay
+// guard + tenant_registry_shadow before allowing the retrieval.
 
 import { extractEntities, type EntitySet } from "./entity-extraction";
 import { filterChunks } from "./filter-chunks";
 import { formatKnowledgeBlock, type FormattedBlock } from "./format-block";
 import { RetrieveResponseSchema, type RetrievedChunk, type RetrievedAsset } from "@atc/contracts";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 
 export interface RetrieveForChatInput {
   message: string;
@@ -132,15 +133,30 @@ async function callRagRetrieve(
     return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
   }
 
-  // TODO(bp24-chat-service-jwt): replace with RS256-signed JWT per BP09 contract.
-  const bearer = process.env.SERVICE_JWT_PRIVATE_KEY ?? "";
+  // BP09 — RS256-signed JWT per call. Tenant-scoped: the JWT carries the
+  // calling tenant's id, which the rag verifier cross-checks against
+  // tenant_registry_shadow. The /api/retrieve handler additionally enforces
+  // body.tenant_id === jwt.tenant_id (defense in depth).
+  let jwt: string;
+  try {
+    jwt = await signServiceJwt({
+      tenant_id: body.tenant_id,
+      scope: "read",
+      service_identifier: "chat-service",
+      user_id: body.user_id ?? null,
+      persona_id: body.persona_id ?? null,
+    });
+  } catch (err) {
+    console.warn("[retrieve-for-chat] JWT signing failed:", String(err));
+    return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
+  }
 
   try {
     const res = await fetch(`${ragServiceUrl}/api/retrieve`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${bearer}`,
+        Authorization: `Bearer ${jwt}`,
       },
       body: JSON.stringify(body),
     });
