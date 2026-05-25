@@ -1,0 +1,45 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/**/*.ts",
+        "tests/**/*.test.{ts,tsx}",
+        "tests/**/*.spec.{ts,tsx}",
+        "tests/contracts/setup.ts",
+        "vitest.config.{ts,mts}",
+        "playwright.config.ts"
+      ],
+      "project": ["scripts/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+    },
+    "apps/main": {
+      "entry": [
+        "src/app/**/{page,layout,route,loading,error,not-found,template,default,sitemap,robots,opengraph-image,twitter-image,favicon}.{ts,tsx}",
+        "src/middleware.{ts,tsx}",
+        "src/instrumentation.{ts,tsx}",
+        "src/inngest/**/*.ts",
+        "next.config.{js,mjs,ts}",
+        "test/**/*.{test,spec}.{ts,tsx}"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
+      "ignoreDependencies": [
+        "@types/node",
+        "encoding"
+      ]
+    },
+    "apps/rag": {
+      "entry": [
+        "src/app/**/{page,layout,route}.{ts,tsx}",
+        "src/middleware.{ts,tsx}",
+        "next.config.{js,mjs,ts}",
+        "test/**/*.{test,spec}.{ts,tsx}"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["@types/node"]
+    },
+    "packages/*": {
+      "entry": ["src/index.{ts,tsx}", "index.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx}", "**/*.{js,mjs}"]
+    }
+  }
+}

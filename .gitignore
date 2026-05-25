@@ -17,6 +17,11 @@ coverage/
 playwright-report/
 test-results/
 
+# quality scanners
+.lighthouseci/
+.stryker-tmp/
+reports/mutation/
+
 # misc
 .DS_Store
 *.pem
