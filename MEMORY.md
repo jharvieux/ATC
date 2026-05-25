@@ -4,6 +4,46 @@ Newest entries on top.
 
 ---
 
+## D-080 — 2026-05-24 — §34–§40 tech-spec addenda are missing from repo; autonomous build halted
+
+**Decision:** Stop autonomous work on the §34–§40 build prompts until the user confirms how to handle the missing tech-spec addenda. Phase B of BP34 is the watermark.
+
+**Background:** User added six new build prompts (`prompt-section-35.md` through `prompt-section-40.md`) plus `build-prompts-33.md`, and asked me to "start running them all starting with 34" in an overnight autonomous mode. Each build prompt names a "Primary spec reference" of the form `section-XX-addendum-*.html`. None of those files exist in `specs/TechSpec/`. The TechSpec directory ends at §33 (with the §33 addendum just added in this session). There is no §34 build prompt at all in `specs/BuildPrompts/` (only `build-prompts-33.md` for §33).
+
+**What was actually shipped on the BP34 path:**
+- Phase A — schema, IMPORT trigger regex, fuzzy match-confidence scorer (PR #133 merged into dev)
+- Phase B — full parsing pipeline (Haiku classifier + Sonnet extractors + validation + auto-accept routing + Inngest orchestrator on `import.queued`), 17 new tests bringing import suite to 67 tests, typecheck clean. Committed + pushed on `feature/bp34-phase-a-schema` as 2ed3bab. PR not yet opened (waiting on direction).
+
+**Why this is logged as a decision rather than just a question:** CLAUDE.md is explicit ("If a spec is ambiguous, flag it, propose an interpretation, ask the user to confirm. Don't invent behavior."). I built Phases A + B from the build prompt + conversation memory; Phase C scope (Gmail OAuth + document upload + review queue UI + statement matching + §14.3 rate resolution + acceptance promotion incl. §14.9 clawback) is too large to keep inventing without source-of-truth.
+
+**Rejected:**
+- Pressing on with Phase C from memory — would compound the spec-invention debt and likely require rework when real specs land.
+- Skipping to BP35–40 — every one of them has the same missing-spec problem.
+
+**Related artifacts:** SESSION.md (Q1–Q5 morning-question batch); `specs/BuildPrompts/prompt-section-{35..40}.md`; `apps/main/src/lib/import/*`; `apps/main/src/inngest/import-pipeline.ts`.
+
+---
+
+## D-079 — 2026-05-24 — BP34 build approach: AI defaults on, kill-switch per feature, one PR per BP
+
+**Decision:** Per user direction on overnight-autonomous scope:
+1. **One PR per BP, phases inside.** ~7 large PRs total (BP34–BP40), not many small ones.
+2. **All 3 BP38 expand-migrate-contract deploys.** Don't collapse to a single deploy.
+3. **AI features enabled by default with per-feature kill-switch env var.** Pattern: `BP##_<FEATURE>_DISABLED=true` short-circuits at the entry point. Don't gate on tenant flags; tenant flags are for tier gating not infrastructure kill.
+4. **React-PDF for all PDF needs.** Includes retroactive wire-up to unblock the help-docs PDF deferral after BP39 lands.
+
+**Why:** Reduces PR review surface for the user; keeps each BP atomic for revert; the kill-switch pattern is cheap insurance for AI features going wrong in prod; react-pdf trade-off (vs. Puppeteer) is acceptable given no headless-chrome ops burden + we don't need print-perfect CSS.
+
+**Rejected:**
+- Per-phase PRs — would multiply review load.
+- Single BP38 deploy — defeats the expand-migrate-contract pattern's whole purpose.
+- AI disabled by default — slows go-live and adds opt-in friction; we'd rather have kill-switches we never flip.
+- Mixing PDF libraries — operational tax of two PDF stacks isn't worth marginal feature gains from Puppeteer.
+
+**Related artifacts:** BP34 phases (Phase A: PR #133, Phase B: 2ed3bab); upcoming BP35–BP40 build prompts; `BP34_IMPORT_PIPELINE_DISABLED` env var convention applied in `apps/main/src/inngest/import-pipeline.ts`.
+
+---
+
 ## D-078 — 2026-05-24 — D-041 follow-up shipped: platform_settings cross-project sync
 
 **Decision:** Built the deferred sync mechanism from D-041. Same webhook + retry + reconcile pattern already in production for tenant events, generalised to a second event family.
