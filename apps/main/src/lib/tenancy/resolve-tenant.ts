@@ -16,6 +16,11 @@ export type Tenant = {
   tenant_type: string;
   status: string;
   custom_domain: string | null;
+  // §15.16 — fields the middleware payment gate reads (PR #118 /
+  // /lib/billing/payment-state.ts). Cached alongside the rest of the
+  // tenant row so a payment-state lookup doesn't cost a second DB hit.
+  subscription_status: string | null;
+  non_paying_since: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -58,7 +63,7 @@ function cacheSet(
 // Lookups
 // ---------------------------------------------------------------------------
 
-const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain";
+const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, subscription_status, non_paying_since";
 
 /**
  * Resolves a subdomain slug to a tenant.
