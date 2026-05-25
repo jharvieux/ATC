@@ -73,6 +73,8 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
 
   // BP34 §34.3 — inbound import pipeline
   "import.queued": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  // BP37 §37.4.2 — task sequence step scheduled (consumed by task-sequence-step-fire).
+  "task_sequence.step_scheduled": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 
   // CCPA / user data (BP17, BP25)
   "user.data_export_requested": { kind: "tenant_scoped", payload_shape: tenantScopedShape },

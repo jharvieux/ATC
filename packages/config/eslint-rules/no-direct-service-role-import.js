@@ -245,7 +245,6 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/groups/invite/[token]/rsvp/route.ts",
   // BP40 §40.5 — booking line items list/create.
   "/app/api/bookings/[id]/line-items/route.ts",
-<<<<<<< HEAD
   // BP34: import pipeline (§34.3) — Inngest function with no user session.
   "/inngest/import-pipeline.ts",
   // BP34: purge-parsed-documents (§34.4) — Inngest cron, cross-tenant scan.
