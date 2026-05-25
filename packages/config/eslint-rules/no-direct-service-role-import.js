@@ -243,6 +243,16 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/groups/[id]/invitations/route.ts",
   "/app/api/groups/invite/[token]/route.ts",
   "/app/api/groups/invite/[token]/rsvp/route.ts",
+  // BP36 §36.6 — attribution_rollup nightly refresh (Inngest cron).
+  "/inngest/attribution-rollup-refresh.ts",
+  // BP36 §36.2 — report routes use service-role to read attribution_rollup
+  // MV (no RLS on MVs; tenant filter applied in WHERE per §36.6 comment).
+  "/app/api/reports/leads-by-source/route.ts",
+  "/app/api/reports/bookings-by-source/route.ts",
+  "/app/api/reports/source-funnel/route.ts",
+  "/app/api/reports/campaigns/route.ts",
+  "/app/api/reports/first-vs-last-touch/route.ts",
+  "/app/api/reports/cancellations/route.ts",
 ];
 
 function endsWithAllowed(filename) {
