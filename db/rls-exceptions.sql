@@ -22,3 +22,5 @@ skip_table: pending_rag_sync            -- REASON: platform-internal retry queue
 skip_table: supervisor_review_queue     -- REASON: platform-internal review queue. SELECT/UPDATE for platform admins via withPlatformAdminAudit (service_role); INSERT by supervisor sampling (service_role); DELETE by retention purge (service_role). Per §10.5a.
 skip_table: reconciliation_review_queue -- REASON: platform-admin reconciliation queue. All reads/writes via service_role through withPlatformAdminAudit. Per §14.8.
 skip_table: email_log                   -- REASON: cross-tenant rate-limit log. Reads/writes service_role only (Inngest cron reminder cadence). tenant_id nullable (NULL for platform-level sends). Per §18.8.
+skip_table: gmail_oauth_tokens          -- REASON: BP34 §34.2 — OAuth tokens written exclusively by the callback route + watch renewal cron via service_role; SELECT to authenticated is enough for §34.2.4 health endpoint.
+skip_table: gmail_inbound_messages      -- REASON: BP34 §34.2 — Pub/Sub webhook persists inbound Gmail messages (no user session); SELECT to authenticated for §34 review queue context.
