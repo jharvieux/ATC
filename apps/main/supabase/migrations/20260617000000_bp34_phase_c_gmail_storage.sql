@@ -92,26 +92,36 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.gmail_inbound_messages TO service
 -- The bucket is private; access is mediated entirely via the application
 -- (signed URLs from the review queue UI when an agent inspects a pending
 -- item). The upload route writes via service-role.
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'imported-documents',
-  'imported-documents',
-  FALSE,
-  10 * 1024 * 1024,  -- 10 MB per file (raised later if needed)
-  ARRAY['application/pdf']::TEXT[]
-)
-ON CONFLICT (id) DO NOTHING;
-
--- RLS on storage.objects: tenant can read only its own folder; writes
--- happen server-side via service_role.
-DROP POLICY IF EXISTS imported_documents_tenant_select ON storage.objects;
-CREATE POLICY imported_documents_tenant_select
-  ON storage.objects FOR SELECT TO authenticated
-  USING (
-    bucket_id = 'imported-documents'
-    AND (storage.foldername(name))[1] = (
-      SELECT t.id::TEXT FROM public.tenants t
-      WHERE auth_user_in_tenant(t.id) AND tenant_is_active(t.id)
-      LIMIT 1
-    )
-  );
+--
+-- Wrapped in a DO block + IF EXISTS guard so CI/local Postgres without the
+-- Supabase `storage` extension skip cleanly. Production Supabase always has it.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'storage') THEN
+    EXECUTE $sql$
+      INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+      VALUES (
+        'imported-documents',
+        'imported-documents',
+        FALSE,
+        10 * 1024 * 1024,
+        ARRAY['application/pdf']::TEXT[]
+      )
+      ON CONFLICT (id) DO NOTHING
+    $sql$;
+    EXECUTE 'DROP POLICY IF EXISTS imported_documents_tenant_select ON storage.objects';
+    EXECUTE $sql$
+      CREATE POLICY imported_documents_tenant_select
+        ON storage.objects FOR SELECT TO authenticated
+        USING (
+          bucket_id = 'imported-documents'
+          AND (storage.foldername(name))[1] = (
+            SELECT t.id::TEXT FROM public.tenants t
+            WHERE auth_user_in_tenant(t.id) AND tenant_is_active(t.id)
+            LIMIT 1
+          )
+        )
+    $sql$;
+  END IF;
+END;
+$$;
