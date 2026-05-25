@@ -13,6 +13,7 @@ import { inngest } from "./client";
 import { withPlatformAdminAudit, platformAdminClient } from "@/lib/db/platform-admin-client";
 import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
+import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 
 const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
@@ -82,6 +83,12 @@ export const abuseRecomputeNightly = inngest.createFunction(
 
         let tenantsProcessed = 0;
         const drifts: DriftRecord[] = [];
+
+        // Pre-fetch tenant-scope chunk counts from the rag service in one
+        // batch call (resolves TODO(rag-service-count)). One signed JWT
+        // covers the whole batch — well under the 5 min TTL.
+        const tenantIds = (tenants ?? []).map((t) => t.id);
+        const ragChunkCounts = await fetchRagTenantChunkCounts(tenantIds);
 
         for (const t of ((tenants ?? []) as Array<{
           id: string;
@@ -198,10 +205,11 @@ export const abuseRecomputeNightly = inngest.createFunction(
             });
           }
 
-          // ── RAG: recompute promoted_chunks_count from rag_global_promotions ──
-          //   The chunk count (current_tenant_chunks_count) is RAG-side and
-          //   would need a service-to-service call to the RAG service. That's
-          //   deferred — TODO(rag-service-count).
+          // ── RAG: recompute promoted_chunks_count + current_tenant_chunks_count ──
+          //   Promoted count is local (rag_global_promotions). Current chunk
+          //   count is rag-side and comes from the pre-loop batch fetch.
+          //   If the rag fetch failed (empty map), we leave the chunk count
+          //   alone rather than zeroing it — fail safe vs fail loud.
           const { data: promoCountRows } = await db
             .from("rag_global_promotions")
             .select("id")
@@ -210,27 +218,46 @@ export const abuseRecomputeNightly = inngest.createFunction(
           const promotedTrue = Array.isArray(promoCountRows) ? promoCountRows.length : 0;
           const { data: quotaRow } = await db
             .from("tenant_rag_quotas")
-            .select("promoted_chunks_count")
+            .select("promoted_chunks_count, current_tenant_chunks_count")
             .eq("tenant_id", t.id)
             .maybeSingle();
-          const promotedRt = Number((quotaRow as { promoted_chunks_count?: number } | null)?.promoted_chunks_count ?? 0);
-          if (Math.abs(promotedTrue - promotedRt) > 0) {
-            if (quotaRow) {
-              await db.from("tenant_rag_quotas").update({ promoted_chunks_count: promotedTrue }).eq("tenant_id", t.id);
+          const quota = quotaRow as { promoted_chunks_count?: number; current_tenant_chunks_count?: number } | null;
+          const promotedRt = Number(quota?.promoted_chunks_count ?? 0);
+          const chunksRt = Number(quota?.current_tenant_chunks_count ?? 0);
+          const chunksTrue = ragChunkCounts.get(t.id);
+          const promotedDrifted = Math.abs(promotedTrue - promotedRt) > 0;
+          const chunksDrifted = chunksTrue !== undefined && Math.abs(chunksTrue - chunksRt) > 0;
+          if (promotedDrifted || chunksDrifted) {
+            const update: { promoted_chunks_count?: number; current_tenant_chunks_count?: number } = {};
+            if (promotedDrifted) update.promoted_chunks_count = promotedTrue;
+            if (chunksDrifted) update.current_tenant_chunks_count = chunksTrue;
+            if (quota) {
+              await db.from("tenant_rag_quotas").update(update).eq("tenant_id", t.id);
             } else {
               await db.from("tenant_rag_quotas").insert({
                 tenant_id: t.id,
                 base_cap: 0,
                 promoted_chunks_count: promotedTrue,
-                current_tenant_chunks_count: 0,
+                current_tenant_chunks_count: chunksTrue ?? 0,
               });
             }
-            drifts.push({
-              tenant_id: t.id,
-              dimension: "rag_cap",
-              real_time_value: BigInt(promotedRt),
-              recomputed_value: BigInt(promotedTrue),
-            });
+            // One drift row per dimension that moved.
+            if (promotedDrifted) {
+              drifts.push({
+                tenant_id: t.id,
+                dimension: "rag_cap",
+                real_time_value: BigInt(promotedRt),
+                recomputed_value: BigInt(promotedTrue),
+              });
+            }
+            if (chunksDrifted) {
+              drifts.push({
+                tenant_id: t.id,
+                dimension: "rag_chunks",
+                real_time_value: BigInt(chunksRt),
+                recomputed_value: BigInt(chunksTrue!),
+              });
+            }
           }
 
           // Re-evaluate state machine for each dimension after corrections.
@@ -252,3 +279,64 @@ export const abuseRecomputeNightly = inngest.createFunction(
     );
   },
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Calls /api/admin/tenant-chunk-counts on the rag service to collect per-tenant
+// counts of approved tenant-scope chunks. Returns an empty Map on any error
+// (caller treats missing entries as "leave the count alone") rather than
+// throwing — the rest of the recompute loop should still get to run.
+async function fetchRagTenantChunkCounts(
+  tenantIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (tenantIds.length === 0) return out;
+
+  const ragServiceUrl = process.env.RAG_SERVICE_URL;
+  if (!ragServiceUrl) {
+    console.warn("[abuse-recompute-nightly] RAG_SERVICE_URL not set — skipping chunk-count recompute");
+    return out;
+  }
+
+  // Tenant identity in the JWT for a genuinely cross-tenant cron is awkward
+  // (see PR #115 follow-up). For now use the first tenant ID in the batch
+  // as the JWT tenant — the rag verifier checks the tenant exists in the
+  // shadow registry, and the platform-admin endpoint itself enforces the
+  // batch can read across tenants. This shape is temporary and will move
+  // to a PLATFORM sentinel tenant once the follow-up lands.
+  const firstTenantId = tenantIds[0]!;
+
+  let jwt: string;
+  try {
+    jwt = await signServiceJwt({
+      tenant_id: firstTenantId,
+      scope: "read",
+      service_identifier: "platform-admin",
+    });
+  } catch (err) {
+    console.warn("[abuse-recompute-nightly] JWT signing failed — skipping chunk-count recompute:", String(err));
+    return out;
+  }
+
+  try {
+    const res = await fetch(`${ragServiceUrl}/api/admin/tenant-chunk-counts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ tenant_ids: tenantIds }),
+    });
+    if (!res.ok) {
+      console.warn(`[abuse-recompute-nightly] rag returned ${res.status} for tenant-chunk-counts`);
+      return out;
+    }
+    const body = (await res.json()) as { counts?: Array<{ tenant_id: string; count: number }> };
+    for (const row of body.counts ?? []) {
+      out.set(row.tenant_id, row.count);
+    }
+  } catch (err) {
+    console.warn("[abuse-recompute-nightly] rag service unreachable for chunk-counts:", String(err));
+  }
+
+  return out;
+}
