@@ -6,7 +6,17 @@
 // Processing contract (§7.9a):
 //   1. Verify stripe-signature — 400 on failure, no retry
 //   2. Atomic idempotency insert into stripe_webhook_events — 200 on duplicate
-//   3. Dispatch to event-type handler (all TODO stubs for now)
+//   3. Dispatch to event-type handler. Currently wired:
+//        - transfer.paid                       (§14.7  payout settlement)
+//        - checkout.session.completed          (§15.8  subscription IDs + stage)
+//        - account.updated                     (§15.6 / §15.9 tax form + Connect)
+//        - customer.subscription.created       (§15.16 initial subscription state)
+//        - customer.subscription.updated       (§15.16 ongoing status)
+//        - customer.subscription.deleted       (§15.16 cancellation)
+//        - invoice.payment_succeeded           (§15.16 paying-status clear)
+//        - invoice.payment_failed              (§15.16 grace-clock start)
+//      Unknown event types fall through to processing_outcome='unhandled'
+//      and a 200 (so Stripe doesn't retry events we don't care about).
 //   4. Update row with processing_completed_at + outcome
 //   5. Return 200
 // Any uncaught exception: update row to outcome='error', return 500 (Stripe retries)
@@ -167,6 +177,7 @@ export async function handleStripeWebhook(
       // filters read. PAYING_STATUSES (active/trialing) → clear the timestamp;
       // anything else → set it iff not already set (preserves grace clock
       // across rapid status transitions).
+      case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
