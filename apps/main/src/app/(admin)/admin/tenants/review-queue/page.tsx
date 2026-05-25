@@ -4,6 +4,7 @@
 // Visible only to platform_compliance and platform_super_admin roles.
 
 import { useState, useEffect } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 type TenantSummary = {
   id: string;
@@ -34,9 +35,7 @@ export default function ReviewQueuePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/admin/tenants/review-queue", {
-      headers: { "x-admin-user-id": "current" }, // TODO(rbac): use actual admin session
-    })
+    adminFetch("/api/admin/tenants/review-queue")
       .then((r) => r.json())
       .then((d) => { setTenants(d.tenants ?? []); setLoading(false); });
   }, []);
@@ -49,9 +48,8 @@ export default function ReviewQueuePage() {
     const body: Record<string, unknown> = { action, reason };
     if (action === "request_more_info") body.revert_to_stage = revertStage;
 
-    const res = await fetch(`/api/admin/tenants/${selected.id}/review`, {
+    const res = await adminFetch(`/api/admin/tenants/${selected.id}/review`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-user-id": "current" },
       body: JSON.stringify(body),
     });
 

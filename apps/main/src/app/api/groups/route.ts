@@ -15,6 +15,7 @@ import { generateToken } from "@/lib/groups/invitation-token";
 import { selectHeroImage } from "@/lib/groups/hero-image";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementGroupInvitees } from "@/lib/abuse/counters";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface InviteeInput {
   email: string;
@@ -123,8 +124,7 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ group_id: group.id, invitation_count: invitees.length }, { status: 201 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -143,7 +143,6 @@ export async function GET(req: Request): Promise<Response> {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ groups: data });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

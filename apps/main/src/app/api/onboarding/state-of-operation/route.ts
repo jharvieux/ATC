@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const US_STATE_CODES = new Set([
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -53,7 +54,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, next_stage: "tier_select" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

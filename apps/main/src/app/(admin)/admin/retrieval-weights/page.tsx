@@ -7,6 +7,7 @@
 // exactly. Tenants cannot override — these are platform-wide.
 
 import { useEffect, useState } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 type WeightKey = "match" | "authority" | "recency" | "feedback";
 
@@ -29,9 +30,7 @@ export default function AdminRetrievalWeightsPage(): JSX.Element {
 
   async function refresh(): Promise<void> {
     try {
-      const res = await fetch("/api/admin/retrieval-weights", {
-        headers: { "x-admin-user-id": "admin" },
-      });
+      const res = await adminFetch("/api/admin/retrieval-weights");
       if (!res.ok) throw new Error(`load failed: ${res.status}`);
       const body = (await res.json()) as Record<WeightKey, number>;
       setValues(body);
@@ -72,9 +71,8 @@ export default function AdminRetrievalWeightsPage(): JSX.Element {
         setBusy(false);
         return;
       }
-      const res = await fetch("/api/admin/retrieval-weights", {
+      const res = await adminFetch("/api/admin/retrieval-weights", {
         method: "PUT",
-        headers: { "x-admin-user-id": "admin", "content-type": "application/json" },
         body: JSON.stringify(body),
       });
       const parsed = (await res.json()) as { updated?: WeightKey[]; values?: Record<WeightKey, number>; error?: string };

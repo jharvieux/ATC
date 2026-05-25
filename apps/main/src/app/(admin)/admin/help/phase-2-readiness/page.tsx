@@ -10,16 +10,13 @@
 // PHASE_2_CUSTOMER_BUG_FLOW_ENABLED to true.
 
 import { useEffect, useState } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 interface Check {
   name: string;
   description: string;
   passed: boolean | null;
   detail?: string;
-}
-
-async function adminFetch(path: string, adminUserId: string): Promise<Response> {
-  return fetch(path, { headers: { "x-admin-user-id": adminUserId } });
 }
 
 export default function Phase2ReadinessPage(): JSX.Element {
@@ -62,7 +59,7 @@ export default function Phase2ReadinessPage(): JSX.Element {
       ];
 
       // Check 1: customer bug count.
-      const r1 = await adminFetch("/api/admin/help/bugs", adminUserId);
+      const r1 = await adminFetch("/api/admin/help/bugs");
       if (r1.ok) {
         const body = (await r1.json()) as { items: Array<{ source_type: string }> };
         const customerCount = body.items.filter((i) => i.source_type === "customer").length;
@@ -82,7 +79,7 @@ export default function Phase2ReadinessPage(): JSX.Element {
       // help-flow activity which is a reasonable proxy for the abuse
       // dimension being active; a dedicated readiness API would be a
       // follow-on. Use the sessions count as the v1 indicator.
-      const r2 = await adminFetch("/api/admin/help/sessions", adminUserId);
+      const r2 = await adminFetch("/api/admin/help/sessions");
       if (r2.ok) {
         const body = (await r2.json()) as { items: Array<{ tenant_id: string }> };
         const PLATFORM_TENANT = "00000000-0000-0000-0000-000000000000";

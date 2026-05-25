@@ -11,6 +11,7 @@ import { priceIdFor } from "@/lib/stripe/price-ids";
 import { inngest } from "@/inngest/client";
 import { withVendorHealthGate } from "@/lib/vendor-health/gate";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -63,8 +64,7 @@ export async function GET(req: Request): Promise<Response> {
       read_only: isReadOnly,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 

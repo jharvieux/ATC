@@ -8,6 +8,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function PATCH(
   req: Request,
@@ -37,7 +38,6 @@ export async function PATCH(
 
     return Response.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

@@ -1,6 +1,7 @@
 /** Spec ref: §7.8 — List knowledge chunks */
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -8,7 +9,6 @@ export async function GET(req: Request): Promise<Response> {
     void ctx;
     return Response.json({ todo: "List knowledge chunks", spec_section: "§7.8" }, { status: 501 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

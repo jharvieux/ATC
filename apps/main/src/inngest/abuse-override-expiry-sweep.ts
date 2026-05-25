@@ -20,7 +20,12 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
 
     return withPlatformAdminAudit(
-      { admin_user_id: "system-cron", reason: "abuse_override_revoke", operation: "abuse_override_expiry_sweep" },
+      {
+        admin_user_id: "system-cron",
+        reason: "abuse_override_revoke",
+        operation: "abuse_override_expiry_sweep",
+        reason_detail: "automated_expiry_sweep_revokes_overrides_past_effective_to",
+      },
       async (db, recordQuery) => {
         const today = new Date().toISOString().slice(0, 10);
         const { data: expired } = await db

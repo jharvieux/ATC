@@ -17,6 +17,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { adjustRagChunkCount } from "@/lib/abuse/counters";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface RagIngestResponse {
   queue_item_id?: string;
@@ -167,7 +168,6 @@ export async function POST(
 
     return Response.json({ chunk_id: approved.chunk_id, status: "approved" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

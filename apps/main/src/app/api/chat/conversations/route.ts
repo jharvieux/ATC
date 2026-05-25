@@ -6,6 +6,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -27,7 +28,6 @@ export async function GET(req: Request): Promise<Response> {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ conversations: data ?? [] });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

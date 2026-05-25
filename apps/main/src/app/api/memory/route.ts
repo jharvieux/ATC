@@ -7,6 +7,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const MemoryPatchSchema = z.object({
   preferences: z.record(z.unknown()).nullable().optional(),
@@ -40,8 +41,7 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json(data);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -85,8 +85,7 @@ export async function PATCH(req: Request): Promise<Response> {
 
     return Response.json(data);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -130,7 +129,6 @@ export async function DELETE(req: Request): Promise<Response> {
 
     return new Response(null, { status: 204 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

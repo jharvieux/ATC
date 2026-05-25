@@ -3,6 +3,7 @@
 // §17.5 — Admin page for publishing new legal document versions.
 
 import { useState, useEffect } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 interface LegalDoc {
   id: string;
@@ -42,9 +43,7 @@ export default function AdminLegalDocsPage() {
 
   async function loadDocs() {
     try {
-      const res = await fetch("/api/admin/legal-docs", {
-        headers: { "x-admin-user-id": "admin" },
-      });
+      const res = await adminFetch("/api/admin/legal-docs");
       if (!res.ok) throw new Error("Failed to load documents.");
       const data = await res.json() as { documents: LegalDoc[] };
       setDocs(data.documents ?? []);
@@ -63,12 +62,8 @@ export default function AdminLegalDocsPage() {
     setError(null);
     setSuccessMsg(null);
     try {
-      const res = await fetch("/api/admin/legal-docs", {
+      const res = await adminFetch("/api/admin/legal-docs", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-user-id": "admin",
-        },
         body: JSON.stringify({
           document_type: form.document_type,
           content_markdown: form.content_markdown,

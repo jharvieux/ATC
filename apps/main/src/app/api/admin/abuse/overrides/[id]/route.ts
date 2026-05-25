@@ -21,7 +21,12 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
 
   try {
     const tenantId = await withPlatformAdminAudit(
-      { admin_user_id: adminUserId, reason: "abuse_override_revoke", operation: `abuse_override_revoke:${id}` },
+      {
+        admin_user_id: adminUserId,
+        reason: "abuse_override_revoke",
+        operation: `abuse_override_revoke:${id}`,
+        reason_detail: `override_id=${id};revoked_via=admin_api`,
+      },
       async (db, recordQuery) => {
         const { data: row } = await db
           .from("tenant_usage_overrides")

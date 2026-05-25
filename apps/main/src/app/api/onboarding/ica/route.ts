@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface IcaAcceptBody {
   typed_legal_name: string;
@@ -65,7 +66,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, next_stage: "tax_form" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

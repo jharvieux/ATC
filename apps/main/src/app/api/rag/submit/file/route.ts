@@ -10,6 +10,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const SUPPORTED_MIMES = new Set([
   "application/pdf",
@@ -103,8 +104,7 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ submission_id: submissionId, status: "pending" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 

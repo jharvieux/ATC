@@ -8,6 +8,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(
   req: Request,
@@ -39,8 +40,7 @@ export async function GET(
 
     return Response.json({ conversation: conv, messages: msgs ?? [] });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -67,7 +67,6 @@ export async function PATCH(
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

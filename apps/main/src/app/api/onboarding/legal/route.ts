@@ -5,6 +5,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface LegalAcceptBody {
   // List of document IDs (or types for stub) the user is accepting.
@@ -43,7 +44,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, next_stage: "ica" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

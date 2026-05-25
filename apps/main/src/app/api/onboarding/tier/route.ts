@@ -4,6 +4,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface TierSelectionBody {
   tier: "starter" | "pro" | "agency";
@@ -62,7 +63,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, next_stage: "subscription" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

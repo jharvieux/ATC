@@ -21,6 +21,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { renderQuotePdfHtml } from "@/lib/quotes/render-pdf";
 import { writeAuditLog } from "@/lib/audit/write";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface QuoteRow {
   id: string;
@@ -171,8 +172,7 @@ export async function POST(
       variance_cents: varianceCents,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 

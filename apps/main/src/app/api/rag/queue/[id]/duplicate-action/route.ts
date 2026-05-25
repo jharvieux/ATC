@@ -11,6 +11,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface Body {
   mode: "replace" | "add_with_supersedes" | "cancel";
@@ -84,7 +85,6 @@ export async function POST(
       { status: 501 },
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

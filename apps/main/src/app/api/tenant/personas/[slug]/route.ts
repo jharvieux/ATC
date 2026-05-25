@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { upsertPersonaOverride, type PersonaOverrideInput } from "@/lib/personas/upsert-persona-override";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const VALID_SLUGS = new Set([
   "marcus-cole",
@@ -80,7 +81,6 @@ export async function PATCH(
 
     return Response.json({ ok: true, id: result.id });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

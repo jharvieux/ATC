@@ -9,6 +9,7 @@
 
 import { useState, useEffect } from "react";
 import { use } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 type Detail = {
   tenant_id: string;
@@ -42,7 +43,7 @@ export default function TenantDetailPage(props: { params: Promise<{ tenant_id: s
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/admin/abuse/tenant/${tenant_id}`, { headers: { "x-admin-user-id": "current" } })
+    adminFetch(`/api/admin/abuse/tenant/${tenant_id}`)
       .then((r) => r.json())
       .then((j) => {
         if (j.error) setError(j.error);
@@ -58,9 +59,8 @@ export default function TenantDetailPage(props: { params: Promise<{ tenant_id: s
       return;
     }
     setSubmitting(true);
-    const res = await fetch("/api/admin/abuse/overrides", {
+    const res = await adminFetch("/api/admin/abuse/overrides", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-user-id": "current" },
       body: JSON.stringify({
         tenant_id,
         dimension,

@@ -6,6 +6,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const BULK_THRESHOLD = 10;
 
@@ -69,7 +70,6 @@ export async function POST(req: Request): Promise<Response> {
     const failed = results.length - succeeded;
     return Response.json({ succeeded, failed, results });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

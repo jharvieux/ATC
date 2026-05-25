@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const RelationshipCreateSchema = z.object({
   to_contact_id: z.string().uuid(),
@@ -42,7 +43,6 @@ export async function POST(
 
     return Response.json(data, { status: 201 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
