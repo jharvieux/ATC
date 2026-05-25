@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function POST(
   req: Request,
@@ -54,7 +55,6 @@ export async function POST(
 
     return Response.json({ status: "rejected" });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

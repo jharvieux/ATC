@@ -11,6 +11,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const PRO_PLUS_TIERS = new Set(["sub_pro", "sub_agency", "byo_professional", "byo_agency"]);
 
@@ -73,8 +74,7 @@ export async function GET(req: Request): Promise<Response> {
       defaults: platformDefaults,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -160,7 +160,6 @@ export async function PUT(req: Request): Promise<Response> {
     });
     return Response.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

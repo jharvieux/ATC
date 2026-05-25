@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { resolveAIBehavior, type AIMode } from "@/lib/personas/resolve-ai-behavior";
 import { writeAuditLog } from "@/lib/audit/write";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 // Cost range strings per §9.10.2 — real values land when §27.12 cost attribution lands
 // TODO(§27.12-cost-display): replace with real cost attribution data
@@ -42,8 +43,7 @@ export async function GET(req: Request): Promise<Response> {
       cost_ranges: COST_RANGES,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -124,7 +124,6 @@ export async function PATCH(req: Request): Promise<Response> {
       flags: resolveAIBehavior({ ai_mode, background_ai_enabled }),
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

@@ -125,6 +125,8 @@ describe("withPlatformAdminAudit", () => {
         admin_user_id: "system-cron",
         reason: "abuse_override_revoke",
         operation: "abuse_override_expiry_sweep",
+        // 2026-05-25 — abuse_override_revoke is in REASONS_REQUIRING_DETAIL.
+        reason_detail: "test_fixture",
       },
       async () => undefined,
     );
@@ -164,5 +166,32 @@ describe("withPlatformAdminAudit", () => {
     const row = lastAuditRow();
     expect(row).not.toBeNull();
     expect((row!.changes as Record<string, unknown>).reason_detail).toMatch(/Stripe outage/);
+  });
+
+  // 2026-05-25 — audit Auth #6 expanded the set. Spot-check a few more.
+  it.each([
+    "tenant_termination_processing",
+    "rag_chunk_demotion",
+    "abuse_override_revoke",
+    "ai_kill_switch_global_pause",
+  ] as const)("%s without reason_detail throws", async (reason) => {
+    await expect(
+      withPlatformAdminAudit(
+        { admin_user_id: "admin-x", reason, operation: "test" },
+        async () => "should-not-reach",
+      ),
+    ).rejects.toThrow(/reason_detail is required/);
+  });
+
+  it("non-destructive reasons (e.g. tenant_detail_lookup) do not require reason_detail", async () => {
+    const result = await withPlatformAdminAudit(
+      {
+        admin_user_id: "admin-y",
+        reason: "tenant_detail_lookup",
+        operation: "lookup_test",
+      },
+      async () => "ok",
+    );
+    expect(result).toBe("ok");
   });
 });

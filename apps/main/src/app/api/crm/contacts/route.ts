@@ -8,6 +8,7 @@ import { recordIdentificationTouch } from "@/lib/attribution/record-touch";
 import { readPendingAttributionFromHeader, ATTRIBUTION_PENDING_COOKIE } from "@/lib/attribution/read-pending-cookie";
 import { channelFromManualCategory } from "@/lib/attribution/channel-map";
 import { emptyAttributionPayload } from "@/lib/attribution/types";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const ContactCreateSchema = z.object({
   first_name: z.string().optional(),
@@ -63,8 +64,7 @@ export async function GET(req: Request): Promise<Response> {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ contacts: data, total: count, limit, offset });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -122,7 +122,6 @@ export async function POST(req: Request): Promise<Response> {
     if (pending) res.headers.append("Set-Cookie", `${ATTRIBUTION_PENDING_COOKIE}=; Path=/; Max-Age=0`);
     return res;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

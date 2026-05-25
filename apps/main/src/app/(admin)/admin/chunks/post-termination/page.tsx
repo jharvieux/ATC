@@ -5,6 +5,7 @@
 // Three actions: retain, demote (tenant-scoped → purged after 90d), hard-delete.
 
 import { useState, useEffect, useCallback } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 interface Chunk {
   id: string;
@@ -29,9 +30,7 @@ export default function PostTerminationReviewPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/chunks/post-termination?page=${page}`, {
-        headers: { "x-admin-user-id": "admin" },
-      });
+      const res = await adminFetch(`/api/admin/chunks/post-termination?page=${page}`);
       if (!res.ok) throw new Error("Failed to load chunks.");
       const data = await res.json() as { chunks: Chunk[]; total: number };
       setChunks(data.chunks ?? []);
@@ -49,12 +48,8 @@ export default function PostTerminationReviewPage() {
     setActing(chunkId);
     setError(null);
     try {
-      const res = await fetch("/api/admin/chunks/post-termination", {
+      const res = await adminFetch("/api/admin/chunks/post-termination", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-user-id": "admin",
-        },
         body: JSON.stringify({ chunk_id: chunkId, action }),
       });
       if (!res.ok) {

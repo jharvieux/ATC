@@ -8,6 +8,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const KNOWN_SLUGS = new Set([
   "marcus-cole",
@@ -55,7 +56,6 @@ export async function POST(
 
     return Response.json({ ok: true, active_persona_slug: slug });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

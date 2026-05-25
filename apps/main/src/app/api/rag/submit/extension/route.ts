@@ -8,6 +8,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface Body {
   url?: string;
@@ -43,7 +44,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json(result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

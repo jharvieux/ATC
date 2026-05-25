@@ -8,6 +8,7 @@
 //   - Help sessions (forensic review)
 
 import { useEffect, useState } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 type Tab = "bugs" | "features" | "sessions";
 
@@ -48,59 +49,37 @@ interface SessionRow {
   escalated_to_human: boolean;
 }
 
-async function adminFetch(path: string, init?: RequestInit, adminUserId?: string): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  if (adminUserId) headers.set("x-admin-user-id", adminUserId);
-  if (init?.body) headers.set("Content-Type", "application/json");
-  return fetch(path, { ...init, headers });
-}
-
 export default function HelpTriagePage(): JSX.Element {
   const [tab, setTab] = useState<Tab>("bugs");
   const [bugs, setBugs] = useState<BugRow[]>([]);
   const [features, setFeatures] = useState<FeatureRow[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [adminUserId, setAdminUserId] = useState("");
 
   useEffect(() => {
-    setAdminUserId(typeof window !== "undefined" ? localStorage.getItem("admin-user-id") ?? "" : "");
-  }, []);
-
-  useEffect(() => {
-    if (!adminUserId) return;
     (async () => {
       if (tab === "bugs") {
-        const r = await adminFetch("/api/admin/help/bugs", undefined, adminUserId);
+        const r = await adminFetch("/api/admin/help/bugs", undefined);
         if (r.ok) setBugs(((await r.json()) as { items: BugRow[] }).items);
       } else if (tab === "features") {
-        const r = await adminFetch("/api/admin/help/features", undefined, adminUserId);
+        const r = await adminFetch("/api/admin/help/features", undefined);
         if (r.ok) setFeatures(((await r.json()) as { items: FeatureRow[] }).items);
       } else {
-        const r = await adminFetch("/api/admin/help/sessions", undefined, adminUserId);
+        const r = await adminFetch("/api/admin/help/sessions", undefined);
         if (r.ok) setSessions(((await r.json()) as { items: SessionRow[] }).items);
       }
     })();
-  }, [tab, adminUserId]);
+  }, [tab]);
 
   async function decide(featureId: string, decision: "accepted" | "rejected" | "deferred" | "duplicate"): Promise<void> {
     const notes = window.prompt(`Notes for decision "${decision}"?`) ?? "";
-    const r = await adminFetch(
-      `/api/admin/help/features/${featureId}`,
-      { method: "PATCH", body: JSON.stringify({ decision, decision_notes: notes }) },
-      adminUserId,
-    );
+    const r = await adminFetch(`/api/admin/help/features/${featureId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ decision, decision_notes: notes }),
+    });
     if (r.ok) {
-      const fresh = await adminFetch("/api/admin/help/features", undefined, adminUserId);
+      const fresh = await adminFetch("/api/admin/help/features", undefined);
       if (fresh.ok) setFeatures(((await fresh.json()) as { items: FeatureRow[] }).items);
     }
-  }
-
-  if (!adminUserId) {
-    return (
-      <div style={{ padding: "2rem", fontFamily: "system-ui, sans-serif" }}>
-        <p>Set localStorage <code>admin-user-id</code> to your platform-admin UUID, then reload.</p>
-      </div>
-    );
   }
 
   return (

@@ -9,6 +9,7 @@ import { personaBase as priya } from "@/lib/personas/base-blocks/priya";
 import { personaBase as dave } from "@/lib/personas/base-blocks/dave";
 import { personaBase as maya } from "@/lib/personas/base-blocks/maya";
 import { personaBase as jenny } from "@/lib/personas/base-blocks/jenny";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const BASE_PERSONAS = [marcus, marco, priya, dave, maya, jenny];
 
@@ -41,7 +42,6 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json({ personas });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

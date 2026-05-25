@@ -53,6 +53,7 @@ export async function POST(
         admin_user_id: adminUserId,
         reason: "rag_chunk_demotion",
         operation: `demote.${mode}`,
+        reason_detail: `promotion_id=${promotion_id};mode=${mode}`,
       },
       async (db, recordQuery) => {
         recordQuery({ op: "select", table: "rag_global_promotions" });

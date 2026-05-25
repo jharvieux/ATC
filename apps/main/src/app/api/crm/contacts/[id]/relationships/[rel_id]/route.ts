@@ -2,6 +2,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function DELETE(
   req: Request,
@@ -21,7 +22,6 @@ export async function DELETE(
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return new Response(null, { status: 204 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

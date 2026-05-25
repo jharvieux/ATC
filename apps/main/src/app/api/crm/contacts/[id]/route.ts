@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const ContactPatchSchema = z.object({
   first_name: z.string().optional(),
@@ -40,8 +41,7 @@ export async function GET(
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json(data);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -71,7 +71,6 @@ export async function PATCH(
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json(data);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

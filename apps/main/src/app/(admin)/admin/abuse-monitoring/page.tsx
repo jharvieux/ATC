@@ -11,6 +11,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { adminFetch } from "@/lib/admin-fetch";
 
 type Summary = {
   tenants_at_risk: Array<Record<string, unknown> & { tenant_id: string }>;
@@ -52,8 +53,8 @@ export default function AbuseMonitoringPage(): JSX.Element {
 
   useEffect(() => {
     void Promise.all([
-      fetch("/api/admin/abuse/summary", { headers: { "x-admin-user-id": "current" } }).then((r) => r.json()),
-      fetch("/api/admin/abuse/override-requests?status=pending", { headers: { "x-admin-user-id": "current" } }).then((r) => r.json()),
+      adminFetch("/api/admin/abuse/summary").then((r) => r.json()),
+      adminFetch("/api/admin/abuse/override-requests?status=pending").then((r) => r.json()),
     ])
       .then(([s, q]) => {
         if (s.error) setError(s.error);
@@ -188,9 +189,8 @@ function RequestsTab({ requests }: { requests: OverrideRequest[] }): JSX.Element
       return;
     }
     setBusyId(id);
-    const res = await fetch(`/api/admin/abuse/override-requests/${id}`, {
+    const res = await adminFetch(`/api/admin/abuse/override-requests/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-admin-user-id": "current" },
       body: JSON.stringify({ action: "deny", deny_reason: denyReason }),
     });
     const json = await res.json();
@@ -236,9 +236,8 @@ function OverridesTab({ summary }: { summary: Summary }): JSX.Element {
   async function revoke(id: string) {
     if (!confirm("Revoke this override? Caps revert immediately.")) return;
     setBusyId(id);
-    const res = await fetch(`/api/admin/abuse/overrides/${id}`, {
+    const res = await adminFetch(`/api/admin/abuse/overrides/${id}`, {
       method: "DELETE",
-      headers: { "x-admin-user-id": "current" },
     });
     const json = await res.json();
     setBusyId(null);

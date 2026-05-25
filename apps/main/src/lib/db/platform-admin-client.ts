@@ -25,6 +25,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "./service-role-client";
 import type { PlatformAdminReason } from "./platform-admin-reasons";
 
+// §26.3a.3 — Reasons that REQUIRE a non-empty reason_detail when invoked.
+// Expanded 2026-05-25 to close audit Finding 6: every truly destructive
+// operation gets the same friction as manual_emergency_intervention.
+// Read/list operations under benign reasons (tenant_listing_for_admin_dashboard,
+// abuse_signal_aggregation, etc.) deliberately don't require detail.
+const REASONS_REQUIRING_DETAIL: ReadonlySet<PlatformAdminReason> = new Set([
+  "manual_emergency_intervention",
+  "tenant_termination_processing",
+  "tenant_suspension_processing",
+  "rag_chunk_demotion",
+  "commission_manual_override",
+  "abuse_override_revoke",
+  "ccpa_deletion_processing",
+  "ai_kill_switch_global_pause",
+  "ai_kill_switch_global_resume",
+  "ai_kill_switch_tenant_pause",
+  "ai_kill_switch_tenant_resume",
+]);
+
 export type QueryRecord = {
   op: "select" | "insert" | "update" | "delete" | "rpc";
   table: string;
@@ -150,13 +169,16 @@ export async function withPlatformAdminAudit<T>(
     return fn(outer.db, outer.recordQuery);
   }
 
-  if (
-    options.reason === "manual_emergency_intervention" &&
-    !options.reason_detail
-  ) {
+  // 2026-05-25 audit Auth #6 — expanded reason_detail requirement.
+  // Previously only manual_emergency_intervention required detail; the audit
+  // showed that equivalent destructive operations (tenant termination,
+  // override revocation, AI kill-switch) could bypass the friction by picking
+  // a different reason. Every truly destructive operation now requires detail.
+  if (REASONS_REQUIRING_DETAIL.has(options.reason) && !options.reason_detail) {
     throw new Error(
-      'withPlatformAdminAudit: reason_detail is required when reason is ' +
-        '"manual_emergency_intervention". This is a deliberate friction.',
+      `withPlatformAdminAudit: reason_detail is required when reason is "${options.reason}". ` +
+        `This is a deliberate friction — capture the human-readable justification ` +
+        `(incident ID, ticket link, or one-sentence rationale) at the call site.`,
     );
   }
 

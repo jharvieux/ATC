@@ -1,6 +1,7 @@
 /** Spec ref: §7.6 — Booking (get + patch) */
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -8,8 +9,7 @@ export async function GET(req: Request): Promise<Response> {
     void ctx;
     return Response.json({ todo: "Get booking", spec_section: "§7.6" }, { status: 501 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -19,7 +19,6 @@ export async function PATCH(req: Request): Promise<Response> {
     void ctx;
     return Response.json({ todo: "Update booking", spec_section: "§7.6" }, { status: 501 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

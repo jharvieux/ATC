@@ -7,6 +7,7 @@
 // engineered). Quarterly review reminder is the §24.5 Inngest cron.
 
 import { useEffect, useState } from "react";
+import { adminFetch } from "@/lib/admin-fetch";
 
 interface DenylistData {
   count: number;
@@ -24,9 +25,7 @@ export default function AdminDenylistPage(): JSX.Element {
 
   async function refresh(): Promise<void> {
     try {
-      const res = await fetch("/api/admin/denylist", {
-        headers: { "x-admin-user-id": "admin" },
-      });
+      const res = await adminFetch("/api/admin/denylist");
       if (!res.ok) throw new Error(`load failed: ${res.status}`);
       const body = (await res.json()) as DenylistData;
       setData(body);
@@ -49,9 +48,8 @@ export default function AdminDenylistPage(): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/denylist", {
+      const res = await adminFetch("/api/admin/denylist", {
         method: "POST",
-        headers: { "x-admin-user-id": "admin", "content-type": "application/json" },
         body: JSON.stringify({ term: newTerm.trim(), reason: reason.trim() }),
       });
       const body = (await res.json()) as { added?: boolean; count?: number; error?: string };
@@ -72,9 +70,8 @@ export default function AdminDenylistPage(): JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/denylist?hash=${encodeURIComponent(hash)}`, {
+      const res = await adminFetch(`/api/admin/denylist?hash=${encodeURIComponent(hash)}`, {
         method: "DELETE",
-        headers: { "x-admin-user-id": "admin" },
       });
       const body = (await res.json()) as { removed?: boolean; error?: string };
       if (!res.ok) throw new Error(body.error ?? "remove failed");

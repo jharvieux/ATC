@@ -7,6 +7,7 @@ import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -22,8 +23,7 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json({ is_sandbox: data.is_sandbox });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -97,7 +97,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ is_sandbox: body.enable });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

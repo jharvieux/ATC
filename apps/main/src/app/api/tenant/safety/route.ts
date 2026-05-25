@@ -9,6 +9,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const PRO_PLUS_TIERS = new Set(["sub_pro", "sub_agency", "byo_professional", "byo_agency"]);
 
@@ -47,8 +48,7 @@ export async function GET(req: Request): Promise<Response> {
       ?.supplemental_hate_speech_denylist ?? []) as string[];
     return Response.json({ terms });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -98,8 +98,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     return Response.json({ ok: true, added: true, count: updated.length });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -137,7 +136,6 @@ export async function DELETE(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id);
     return Response.json({ ok: true, removed: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

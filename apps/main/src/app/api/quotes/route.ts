@@ -9,6 +9,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { populateConversionTouch } from "@/lib/attribution/populate-conversion-touch";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -99,7 +100,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json(quote, { status: 201 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

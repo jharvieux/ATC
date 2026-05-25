@@ -4,6 +4,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const PAGE_SIZE = 25;
 
@@ -45,7 +46,6 @@ export async function GET(req: Request): Promise<Response> {
       total: count ?? 0,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
