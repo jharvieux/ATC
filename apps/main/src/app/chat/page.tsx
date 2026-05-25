@@ -14,6 +14,7 @@ import { StreamingArea } from "@/components/chat/StreamingArea";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { SignupWall } from "@/components/chat/SignupWall";
 import { HardLimitMessage } from "@/components/chat/HardLimitMessage";
+import { ChatSidebar } from "@/components/chat/ChatSidebar";
 
 const DRAFT_KEY = "atc-chat-draft";
 
@@ -204,21 +205,13 @@ export default function ChatPage(): JSX.Element {
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <aside
           style={{
-            width: 240,
+            width: 260,
             borderRight: "1px solid #e5e7eb",
             padding: 16,
-            display: "none",
           }}
           className="chat-sidebar"
         >
-          {/* History / Memory / Prefs — minimal stub */}
-          <h3 style={{ marginTop: 0 }}>Chat</h3>
-          <ul style={{ listStyle: "none", padding: 0, fontSize: 14 }}>
-            <li><a href="/chat">Active</a></li>
-            <li><a href="/chat?view=history">History</a></li>
-            <li><a href="/chat?view=memory">Memory</a></li>
-            <li><a href="/chat?view=prefs">Preferences</a></li>
-          </ul>
+          <ChatSidebar />
         </aside>
 
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
