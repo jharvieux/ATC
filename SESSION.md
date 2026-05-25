@@ -1,63 +1,88 @@
-# Session state — last updated 2026-05-24 ~19:30 UTC
+# Session state — last updated 2026-05-25 ~02:20 UTC
 
-## Just completed (this session)
+## Overnight outcome — 7 draft PRs covering BP34–BP40
 
-Massive session. Two epics shipped + cascade-merged a backlog of 8 PRs.
+Every framing BP is on a branch with a draft PR open. All typecheck clean. 137 new unit tests across the suite (+ 83 pre-existing import tests on PR #133). 11 new migrations.
 
-### Pre-go-live hygiene + foundational refactors (8 PRs merged into dev)
+| PR | Branch | BP | Highlights |
+|----|--------|----|-----------|
+| [#133](https://github.com/jharvieux/ATC/pull/133) | `feature/bp34-phase-a-schema` | **BP34 A+B+C+D** | Inbound import end-to-end backend + review queue UI; tech-spec addenda checked in |
+| [#134](https://github.com/jharvieux/ATC/pull/134) | `feature/bp35-referral-attribution` | **BP35** | First/conversion-touch + rolling 10-touch + UTM middleware |
+| [#135](https://github.com/jharvieux/ATC/pull/135) | `feature/bp36-source-of-business-reporting` | **BP36** | attribution_rollup MV + nightly refresh + 6 reports + cancel-category. **Stacked on #134** |
+| [#136](https://github.com/jharvieux/ATC/pull/136) | `feature/bp37-tasks-and-follow-up` | **BP37** | Tasks + sequence engine with snapshot + reminder cron + 4 default sequences |
+| [#137](https://github.com/jharvieux/ATC/pull/137) | `feature/bp38-multi-option-quote-builder` | **BP38** | quote_options + 3 expand-migrate-contract migrations + line-item validation |
+| [#138](https://github.com/jharvieux/ATC/pull/138) | `feature/bp39-client-facing-deliverables` | **BP39** | Trip itinerary + resources page; **@react-pdf/renderer installed** per D-079 |
+| [#139](https://github.com/jharvieux/ATC/pull/139) | `feature/bp40-non-cruise-line-items` | **BP40** | booking_line_items + per-type validation + Components bulk view |
 
-- PR #103 — E2E tier 1+2+2.5 plumbing + 17 specs + bug-intent + asset renderer + CI workflow (incl. PostgREST v12 → v14 install fix)
-- PR #104 — RLS snapshot tooling extended to cover rag DB
-- PR #105 — BP22 platform-admin-configurable retrieval composite weights
-- PR #106 — BP38 `@atc/contracts` zod package (single source of truth for main↔rag)
-- PR #107 — BP24 streaming foundation (`instrumentedClaudeStream` + `bufferToSentences`)
-- PR #108 — D-041 platform_settings cross-project sync (sender + receiver + retry + reconcile)
-- PR #112 — BP24 chat-route streaming wiring (option B UX, `delta_start`/`rewriting`/`message_revised` events)
-- PR #113 — BP24 help-AI streaming wiring (`[REWRITE]` sentinel)
-- PR #114 — chat-route stale streaming comment refresh
+## Merge order recommendation
 
-### Pre-go-live no-cost items
-
-- PR #115 — RS256 service JWT signer + 2 tenant-scoped wire-ups *(open, blocked by Vercel rate limit)*
-- PR #116 — rag-service-count cron wire-up (stacked on #115) *(open)*
-- PR #117 — Migrate 4 TODO(platform-alert) sites to `sendOperatorAlert` *(open)*
-
-### Payment gate epic — 4 stacked PRs
-
-- PR #118 — `tenants.subscription_status` + `non_paying_since` + Stripe webhook wires + `derivePaymentState` helper + 21 tests
-- PR #119 — Middleware redirect past 7-day grace + persistent banner (stacked on #118)
-- PR #120 — `excludeNonPayingPastGrace` cron helper + 5 bulk crons migrated + 9 tests (stacked on #119)
-- PR #121 — `InactivityReminder` email + `compliance-nightly` rewire; **180d auto-suspend removed for paying tenants** (stacked on #120)
-
-### Policy changes captured
-
-- Paying-but-inactive tenants no longer auto-suspend at 180d. Suspension follows non-payment only (via the middleware gate). Captured in PR #121's description and reflected in the `compliance-nightly` rewrite.
+1. **#133 (BP34)** first — the largest, and the tech-spec addenda commits in it unblock subsequent specs being readable from `dev`. Mark ready-for-review when you've decided on Phase D (Gmail OAuth + UI) split.
+2. **#134 (BP35)** — independent of #133.
+3. **#135 (BP36)** — must come after #134 (uses BP35's columns); rebase off `dev` once #134 lands.
+4. **#136 / #137 / #139 / #140** in any order — all independent.
 
 ## In flight
 
-- Nothing committed in flight on a working branch. All work is in open PRs above.
+Nothing in flight on a working branch. Currently on `chore/session-state-overnight-batch` for SESSION.md updates.
 
 ## Next step
 
-1. **Work the JWT cross-tenant follow-up** (#115's flagged design question). Recommended hybrid: seed PLATFORM sentinel tenant in `tenant_registry_shadow`, switch genuinely-cross-tenant callers to use it; tenant-scoped callers (post-termination, rag-tenant-scoped-purge) use the affected tenant's id. Wires the remaining 6 admin/cron sites that PR #115 didn't touch.
-2. **Event-driven cron migration** — add `assertTenantStillPaying` (from PR #120's helper) to the per-tenant Inngest handlers that aren't bulk loops: `precruise-generate-and-send`, `tenant-on-terminated`, `group-reminder-cadence`, etc.
-3. When Vercel quota clears: merge cascade for the 11 open PRs (#115 → #116 → #117 → #118 → #119 → #120 → #121).
+Wait for user direction on the morning questions below. No autonomous work to continue from here — all framing BPs are queued; remaining work depends on user input (Phase D split, OAuth setup, etc.).
+
+## Morning questions (all batched)
+
+**Q1 — PR opening cadence.** All 7 PRs are draft. Convert all to ready-for-review now, or stage by BP? Recommend: convert #133 (BP34) first after you've reviewed; convert others as you're ready.
+
+**Q2 — BP34 Phase D split.** Phase D backlog from #133:
+- Review queue UI ✅ (already shipped in #133)
+- Gmail OAuth connect/callback endpoints — needs your GCP project setup (still 501 stubs)
+- 7-day Pub/Sub watch renewal cron
+- Disconnect endpoint
+- PDF OCR for document path (currently returns null → parse_failed)
+
+Build as one follow-up PR or separate? Recommend separate: one for Gmail-OAuth chain, one for PDF OCR.
+
+**Q3 — Gmail OAuth setup timing.** Pub/Sub webhook is live in #133 (uses fetch + jose, no SDK dep). When are you running `docs/runbooks/gmail-inbound-setup.md` to provision the GCP project + OAuth client + Pub/Sub topic? That unblocks Q2's Gmail follow-up PR.
+
+**Q4 — PDF OCR dependency.** BP34 document-upload path needs OCR to extract text from uploaded PDFs. Three options:
+- (A) `pdf-parse` npm — text-only PDFs; lightweight; would work for ~80% of forwarded confirmations
+- (B) `pdfjs-dist` + OCR worker — handles scanned PDFs; heavier
+- (C) Google Document AI / AWS Textract — costs $$$; defer until volume justifies
+- Recommend (A) for v1. Need your approval for the new runtime dep.
+
+**Q5 — BP35 wire-ups still pending.** Library + middleware + 3 identification points (contact create, quote create, booking submit) are wired in #134. NOT wired yet:
+- Chat-start identification (depends on chat-start endpoint scaffolding)
+- Form-submission identification (depends on form scaffolding)
+- BP34 import-acceptance → `source_origin='imported'` touch (will wire when #133 merges and the import promoter is on dev)
+
+Defer all three to a "BP35 wire-ups follow-up" PR or land separately? Recommend the latter.
+
+**Q6 — BP36 CSV export.** Spec §36.8 calls for CSV export of every report. Backend complete, export wrapper is mechanical. Sync (<10k rows) + async (Inngest) split mentioned in spec. Want CSV export in #135 (would add ~150 LOC + tests), or as a follow-up PR?
+
+**Q7 — BP37 system task generators.** Five daily Inngest crons referenced in §37.5 (passport expiring, final payment, quote expiring, post-trip, lead aging). Not in #136. Each is ~80 LOC + tests; 400 LOC total for a "BP37 Phase B" PR. Want them as a single follow-up PR or interleave with other priorities?
+
+**Q8 — Email reminder channel for BP37.** Library exposes email channel; reminder fire-up cron currently marks email reminders as 'delivered' without actually sending. Wire-up to BP23 sendTemplatedEmail is mechanical (~50 LOC). Land as a tiny PR or fold into #136?
+
+**Q9 — BP38 customer-facing tokenized URL.** `/api/quote-options/:id/select` currently requires agent permission. The "customer clicks Select on the tokenized quote page" flow needs a parallel customer-token endpoint. Was deferred. Want it as a BP38 follow-up?
+
+**Q10 — BP39 + BP40 itinerary integration.** §40.6 says non-cruise line items should interleave into §39's day-by-day. The renderer in #138 doesn't yet pull from `booking_line_items`. Land as a tiny BP39+BP40 integration PR once both merge?
+
+**Q11 — UI gaps.** The following UI work is deferred across BPs:
+- BP34 — review queue UI ✅ (in #133)
+- BP35 — manual source picker on contact create UI
+- BP36 — Reports dashboard pages (6 pages + filters + chart components)
+- BP37 — "My Tasks" + per-record task lists + sequence management
+- BP38 — quote builder (side-by-side multi-option form)
+- BP39 — agent edit pages for itinerary + resources
+- BP40 — line-items table on booking detail + Components bulk view
+
+Prioritization? My recommendation: BP36 reports + BP37 My Tasks have highest agent-facing impact; BP38 quote builder + BP39 agent edit are essential to making those features usable end-to-end.
 
 ## Blocked on user
 
-- **Vercel build quota** — required check `Vercel – atc-main` failing with `Deployment rate limited — retry in 24 hours`. Blocks merges of #115/116/117/118/119/120/121. Options: (A) Vercel Pro upgrade, (B) wait ~24h, (C) temporarily remove `Vercel – atc-main` from required checks in repo settings.
-- **`OPERATOR_SLACK_WEBHOOK_URL` env var** — must be set for PR #117's alerts to surface beyond `audit_log`.
-- **`SUPABASE_RAG_TEST_DB_URL` GH secret** — needed for PR #104's rag CI drift check.
-- **Migrations to run when promoting**: `20260613000000_retrieval_weights.sql`, `20260614000000_platform_settings_sync.sql`, `20260615000000_tenant_payment_state.sql` (main) + `0014_composite_weights.sql`, `0014_platform_settings_sync.sql` (rag).
-- **JWT design decision** — three options for the cross-tenant admin JWT path were laid out in PR #115's description; the recommended hybrid (A + C) is what the next session would default to absent further direction.
+Nothing strictly blocking next-task selection — every BP shipped is internally complete to its declared scope. Items above are all "want vs need" for the next round.
 
-## Open questions
-
-### #6 from the original pre-go-live list — auto-downgrade for paying inactive tenants
-
-Resolved as: **don't do auto-downgrade**. User confirmed: "For inactive paying subscribers there shouldn't be an auto-downgrade but friendly reminder email." PR #121 implements that. The original D-049 deferral is effectively closed; if you want a MEMORY entry capturing the resolution, that's worth doing.
-
-### Carried forward from earlier sessions (not addressed this session)
+## Carried forward from earlier sessions
 
 - BP31: Haiku tolerable-PII redaction + confidence/clarity scorer Haiku call (cost-deferred)
 - BP30: AI behavior eval harness, continuous-sampling cron, dedicated test Supabase project, Percy/Chromatic (cost-deferred)
@@ -65,3 +90,4 @@ Resolved as: **don't do auto-downgrade**. User confirmed: "For inactive paying s
 - BP24: populate `platform_settings.supervisor_slur_deny_list`
 - BP23: populate `port_info_chunks` content for 17 ports
 - BP16/17: counsel sign-off on ICA + AI Liability Disclaimer
+- Help-docs PDF retro to @react-pdf/renderer (now installed via #138 — per D-079)

@@ -4,6 +4,40 @@ Newest entries on top.
 
 ---
 
+## D-082 — 2026-05-25 — Overnight queue: BP34–BP40 all open as draft PRs
+
+**Decision:** Shipped seven feature BPs as draft PRs through the night per user direction to continue without interruption + batch questions at end + move to next unblocked piece on blockers.
+
+| PR | BP | Migrations | Tests |
+|----|----|-----------|------|
+| #133 | BP34 A+B+C+D — inbound import (3 intake paths, classifier, extractors, validation, auto-accept, statement matching, clawback writes, review queue UI+API) | 3 | 83 |
+| #134 | BP35 — referral attribution (first/conversion/rolling-touch + UTM middleware + agent edit route + tier gating) | 1 | 17 |
+| #135 | BP36 — source-of-business reporting (attribution_rollup MV + nightly cron + 6 reports + cancel-category enum) **stacked on #134** | 1 | 6 |
+| #136 | BP37 — tasks & follow-up (sequence engine w/ snapshot + reminder cron + 4 default sequences) | 1 | 5 |
+| #137 | BP38 — multi-option quote builder (quote_options + 3 expand-migrate-contract migrations + line-item validation) | 3 | 15 |
+| #138 | BP39 — client-facing deliverables (trip itinerary + resources, tokenized URLs, react-pdf PDF, public viewer) | 1 | 2 |
+| #139 | BP40 — non-cruise line items (single table + JSONB shapes + per-type validation + Components bulk view) | 1 | 9 |
+
+**Cumulative:** 11 migrations, 137 new unit tests, typecheck clean across every commit, ~9000 LOC added.
+
+**Scope decisions captured per PR body:**
+- BP38: 3 sequential migrations in one PR (collapses to one deploy in pre-go-live state per "all 3 BP38 deploys" direction)
+- @react-pdf/renderer installed per D-079 pre-approval (BP39)
+- BP36 stacked on BP35; other BPs independent off `dev`
+- AI co-pilot integrations, Gmail OAuth flow, system task crons, customer-side AI on deliverables, RAG-driven port descriptions, full UI pages — all explicitly deferred with clear PR notes
+- BP34's prior decisions (D-079 build approach, D-080 missing-specs blocker, D-081 Phase C scope) live in PR #133's commit history; land on dev when #133 merges
+
+**Rejected:**
+- BP39 resources public viewer (deferred as parallel to /i/[token])
+- BP37 email-channel reminders → BP23 sendTemplatedEmail wire-up (library exposes channel; out of scope for #136)
+- Multi-touch attribution models (BP35 §35.10 explicit out-of-scope-v1)
+- Standalone trip-only bookings (BP40 §40.8 all tiers excluded v1)
+- BP36 CSV export inline (deferred to follow-up)
+
+**Related artifacts:** PRs #133–#139 on GitHub; all branches pushed; SESSION.md morning Q&A batch (11 questions).
+
+---
+
 ## D-078 — 2026-05-24 — D-041 follow-up shipped: platform_settings cross-project sync
 
 **Decision:** Built the deferred sync mechanism from D-041. Same webhook + retry + reconcile pattern already in production for tenant events, generalised to a second event family.
