@@ -88,9 +88,17 @@ import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-i
 import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
 // BP40 §33.8 — Price-watch daily evaluator
 import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
-// BP37 §37 — Tasks: sequence step firing + reminder cron
+// BP37 §37 — Tasks: sequence step firing + reminder cron + system generators
 import { taskSequenceStepFire } from "@/inngest/task-sequence-step-fire";
 import { taskRemindersFire } from "@/inngest/task-reminders-fire";
+import {
+  systemTaskPassportExpiring,
+  systemTaskFinalPayment,
+  systemTaskQuoteExpiring,
+  systemTaskPostTrip,
+  systemTaskLeadAging,
+  systemTaskCommissionRateMissing,
+} from "@/inngest/system-task-generators";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -186,8 +194,14 @@ export const { GET, POST, PUT } = serve({
     refreshCruisemapperStatic,
     // BP40: Price-watch daily evaluator (§33.8)
     evaluatePriceWatches,
-    // BP37: Tasks & follow-up (§37)
+    // BP37: Tasks & follow-up (§37) — pipeline + 5 + 1 system generators
     taskSequenceStepFire,
     taskRemindersFire,
+    systemTaskPassportExpiring,
+    systemTaskFinalPayment,
+    systemTaskQuoteExpiring,
+    systemTaskPostTrip,
+    systemTaskLeadAging,
+    systemTaskCommissionRateMissing,
   ],
 });
