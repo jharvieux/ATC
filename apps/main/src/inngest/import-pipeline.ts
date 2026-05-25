@@ -18,6 +18,7 @@ import { extractCommissionStatement } from "@/lib/import/extractors/commission-s
 import { extractIntakeForm } from "@/lib/import/extractors/intake-form";
 import { validate, type ValidationFlag, type ValidationInput } from "@/lib/import/validation";
 import { decideRoute } from "@/lib/import/auto-accept";
+import { promoteImport } from "@/lib/import/promote";
 
 type ImportQueueRow = {
   id: string;
@@ -33,13 +34,19 @@ type ImportQueueRow = {
   document_type: string | null;
 };
 
-// Retention windows per §34.4 (in days). Applied at status transition.
-const RETENTION_DAYS = {
-  virus_detected: 30,
-  parse_failed: 7,
-  auto_accepted: 7,
-  accepted: 7,
-  rejected: 30,
+// Retention windows per §34.4. Applied at status transition.
+//   - virus_detected: 30d (§34.3.1)
+//   - parse_failed:    7d (§34.4)
+//   - accepted/rejected/auto_accepted: 24h (§34.4 — purge-parsed-documents
+//     cron sweeps "extraction_status IN ('accepted','rejected') AND
+//     extracted_at < NOW() - INTERVAL '24 hours'")
+//   - pending_review: no fixed purge — retained until agent acts.
+const RETENTION_HOURS = {
+  virus_detected: 30 * 24,
+  parse_failed: 7 * 24,
+  auto_accepted: 24,
+  accepted: 24,
+  rejected: 24,
 } as const;
 
 export const importPipeline = inngest.createFunction(
@@ -89,10 +96,16 @@ export const importPipeline = inngest.createFunction(
       return { failed: true, reason: "no_text_available" };
     }
 
-    // ── 3. Classify ─────────────────────────────────────────────────────
-    const classification = await step.run("classify", async () => {
-      return classifyDocument({ tenant_id, text: rawText });
-    });
+    // ── 3. Classify (or honor hint when caller pre-set document_type) ──
+    let classification: { type: string; confidence: number; route_to_review: boolean; error?: string };
+    if (row.document_type && row.document_type !== "unknown") {
+      // Manual entry path passed a hint; trust it and skip the Haiku call.
+      classification = { type: row.document_type, confidence: 1, route_to_review: false };
+    } else {
+      classification = await step.run("classify", async () => {
+        return classifyDocument({ tenant_id, text: rawText });
+      });
+    }
 
     if (classification.error) {
       await markParseFailed(svc, row.id, `classify_error:${classification.error}`);
@@ -159,17 +172,36 @@ export const importPipeline = inngest.createFunction(
       return { routed: "review", reason: decision.reason, threshold: decision.threshold_used };
     }
 
-    // auto_accept — Phase C wires the promotion logic (write contact /
-    // booking / commission rows). For Phase B we just mark the state.
-    await svc
-      .from("import_queue")
-      .update({
-        status: "auto_accepted",
-        purgable_at: daysFromNow(RETENTION_DAYS.auto_accepted),
-      })
-      .eq("id", row.id);
+    // auto_accept — call the shared promoter to write contact / booking /
+    // commission rows. The promoter handles the §34.4 retention transition
+    // (status='accepted' + 24h purgable_at). If commission_rate can't be
+    // resolved, the promoter pushes the row back to pending_review with
+    // reason='commission_rate_missing' (§34.7.3 step 3 fall-through).
+    const promotion = await step.run("promote", () =>
+      promoteImport({
+        queue_row_id: row.id,
+        svc,
+        // Host-adapter rate lookup is not wired yet — when §13 publishes
+        // a per-cruise-line rate API, pass it here. For now we fall
+        // straight from doc-parsed → agent_set.
+        getAdapterRate: undefined,
+        acceptingUserId: null,
+      }),
+    );
 
-    return { routed: "auto_accept", reason: decision.reason, threshold: decision.threshold_used };
+    if (promotion.ok) {
+      return {
+        routed: "auto_accept",
+        reason: decision.reason,
+        threshold: decision.threshold_used,
+        contact_id: promotion.contact_id,
+        booking_id: promotion.booking_id,
+      };
+    }
+    if ("needs_review" in promotion) {
+      return { routed: "review", reason: promotion.reason, threshold: decision.threshold_used };
+    }
+    return { failed: true, reason: promotion.error };
   },
 );
 
@@ -208,7 +240,7 @@ async function markParseFailed(
     .update({
       status: "parse_failed",
       parse_failure_reason: reason,
-      purgable_at: daysFromNow(RETENTION_DAYS.parse_failed),
+      purgable_at: hoursFromNow(RETENTION_HOURS.parse_failed),
     })
     .eq("id", id);
 }
@@ -276,6 +308,6 @@ function buildValidationInput(
   }
 }
 
-function daysFromNow(days: number): string {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+function hoursFromNow(hours: number): string {
+  return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 }
