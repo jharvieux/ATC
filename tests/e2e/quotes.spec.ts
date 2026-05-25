@@ -15,6 +15,7 @@ test.afterAll(async () => { await sql.end(); });
 
 test.beforeEach(async () => {
   // Clean up any quotes left over from prior runs so list assertions are stable.
+  // quote_options FK-cascades on quote delete.
   await sql`DELETE FROM public.quotes WHERE tenant_id = ${TENANT}::uuid`;
 });
 
@@ -36,6 +37,8 @@ test("POST /api/quotes rejects malformed body with 400", async ({ request }) => 
 });
 
 test("POST /api/quotes creates a draft quote with tenant_id auto-injected", async ({ request }) => {
+  // §38 — Container-level fields land on the quote row; option-level
+  // fields (cruise_line, ship_name, ...) land on quote_options[index=1].
   const res = await request.post("/api/quotes", {
     headers: HEADERS,
     data: {
@@ -43,7 +46,7 @@ test("POST /api/quotes creates a draft quote with tenant_id auto-injected", asyn
       cruise_line: "Royal Caribbean",
       ship_name: "Symphony of the Seas",
       passenger_count: 2,
-      total_amount: 2499.99,
+      total_amount_cents: 249999,
     },
   });
   expect(res.status()).toBe(201);
@@ -51,14 +54,22 @@ test("POST /api/quotes creates a draft quote with tenant_id auto-injected", asyn
   expect(quote.id).toMatch(/^[0-9a-f-]{36}$/);
   expect(quote.tenant_id).toBe(TENANT);
   expect(quote.status).toBe("draft");
-  expect(quote.cruise_line).toBe("Royal Caribbean");
 
-  // DB assertion — the row really exists and is scoped to our tenant.
+  // DB assertion — the quote row exists and is scoped to our tenant.
   const rows = await sql<Array<{ status: string; tenant_id: string }>>`
     SELECT status, tenant_id FROM public.quotes WHERE id = ${quote.id}::uuid
   `;
   expect(rows).toHaveLength(1);
   expect(rows[0]!.tenant_id).toBe(TENANT);
+
+  // Option fields landed on quote_options[index=1].
+  const options = await sql<Array<{ cruise_line: string; ship_name: string }>>`
+    SELECT cruise_line, ship_name FROM public.quote_options
+    WHERE quote_id = ${quote.id}::uuid AND option_index = 1
+  `;
+  expect(options).toHaveLength(1);
+  expect(options[0]!.cruise_line).toBe("Royal Caribbean");
+  expect(options[0]!.ship_name).toBe("Symphony of the Seas");
 });
 
 // TODO when the quote-detail / accept routes are wired:
