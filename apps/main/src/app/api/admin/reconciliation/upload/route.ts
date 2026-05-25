@@ -12,7 +12,8 @@
 //      > $50  → queue (default: hold)
 //      not found → orphan row
 //
-// Requires x-admin-user-id header (TODO §26 replace with full session check).
+// Platform-admin gated via assertPlatformAdmin; the upload is wrapped in
+// withPlatformAdminAudit so the audit_log row covers the whole batch.
 
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { z } from "zod";
