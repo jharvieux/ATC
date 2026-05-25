@@ -11,9 +11,8 @@
 //      recorded. The customer-accepted variance is zero (no variance allowed
 //      on a locked price).
 //
-// All audit_log writes are stubbed to console.warn (D-036) — the table does
-// not yet exist. The customer_accepted_audit_id column is still populated
-// with a fresh UUID so the snapshot can be linked when audit_log lands.
+// The customer_accepted_audit_id column is populated with the same UUID
+// used in the audit_log row so the snapshot is queryable by quote.
 
 import { randomUUID } from "node:crypto";
 import { assertPermission } from "@/lib/auth/assert-permission";
@@ -49,7 +48,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   try {
-    const { ctx } = await assertPermission(req, { resource: "quotes", action: "accept" });
+    const { ctx, user } = await assertPermission(req, { resource: "quotes", action: "accept" });
     const db = tenantClient(ctx);
     const adminDb = createServiceRoleClient();
     const { id } = await params;
@@ -132,18 +131,23 @@ export async function POST(
     const acceptedAt = new Date().toISOString();
     const action = kind === "confirmed" ? "quote.accepted_confirmed" : "quote.accepted_estimate";
 
-    logQuoteAuditStub({
-      audit_id: auditId,
-      action,
-      quote_id: quote.id,
+    await writeAuditLog({
       tenant_id: ctx.tenant_id,
-      kind,
-      total_cents: totalCents,
-      variance_cents: varianceCents,
-      price_lock_token: quote.price_lock_token,
-      price_lock_expires_at: quote.price_lock_expires_at,
-      pdf_content_hash: rendered.content_hash,
-      pdf_html_length: rendered.html.length,
+      actor_type: "user",
+      actor_user_id: user.id,
+      action,
+      resource_type: "quote",
+      resource_id: quote.id,
+      changes: {
+        audit_id: auditId,
+        kind,
+        total_cents: totalCents,
+        variance_cents: varianceCents,
+        price_lock_token: quote.price_lock_token,
+        price_lock_expires_at: quote.price_lock_expires_at,
+        pdf_content_hash: rendered.content_hash,
+        pdf_html_length: rendered.html.length,
+      },
     });
 
     const updatePayload: Record<string, unknown> = {
@@ -174,22 +178,4 @@ export async function POST(
   } catch (err) {
     return respondToAuthError(err);
   }
-}
-
-// BP26: legacy shim around writeAuditLog. Each caller passes action +
-// tenant_id + various fields; the rest go into changes.
-function logQuoteAuditStub(payload: Record<string, unknown>): void {
-  const { action, tenant_id, quote_id, ...rest } = payload as {
-    action?: string;
-    tenant_id?: string;
-    quote_id?: string;
-  };
-  void writeAuditLog({
-    tenant_id: typeof tenant_id === "string" ? tenant_id : null,
-    actor_type: "user",
-    action: typeof action === "string" ? action : "unknown",
-    resource_type: "quote",
-    resource_id: typeof quote_id === "string" ? quote_id : null,
-    changes: rest as Record<string, unknown>,
-  });
 }

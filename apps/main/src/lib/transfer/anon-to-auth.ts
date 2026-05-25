@@ -186,8 +186,7 @@ export async function undoTransfer({
     throw new Error(`undoTransfer: message revert failed — ${msgErr.message}`);
   }
 
-  // 5. Audit-log (stub until §26).
-  //    Snapshot of message count and time range per §11.6.
+  // 5. Audit-log snapshot per §11.6 — message count + time range.
   const { data: msgSnapshot } = await db
     .from("messages")
     .select("created_at")

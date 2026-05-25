@@ -194,14 +194,37 @@ describe("selectAdapter — §13.7 flow", () => {
 });
 
 describe("getTenantCredentialHealth — §13.5.4 banner", () => {
-  it("no configs → healthy", async () => {
-    mockFrom.mockReturnValue({
-      select: () => ({
-        eq: () => ({
-          eq: async () => ({ data: [], error: null }),
-        }),
-      }),
+  function mockHealthQueries(opts: {
+    configs: Array<{ adapter_id: string; credential_status: string }>;
+    auditRows?: Array<{ changes: { adapter_id?: string } | null }>;
+  }) {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "tenant_host_configs") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: async () => ({ data: opts.configs, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === "audit_log") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                gte: async () => ({ data: opts.auditRows ?? [], error: null }),
+              }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table: ${table}`);
     });
+  }
+
+  it("no configs → healthy", async () => {
+    mockHealthQueries({ configs: [] });
 
     const { getTenantCredentialHealth } = await import(
       "@/lib/host-adapters/credential-health"
@@ -212,15 +235,8 @@ describe("getTenantCredentialHealth — §13.5.4 banner", () => {
   });
 
   it("rejected config → degraded with banner message", async () => {
-    mockFrom.mockReturnValue({
-      select: () => ({
-        eq: () => ({
-          eq: async () => ({
-            data: [{ adapter_id: "host-a", credential_status: "rejected" }],
-            error: null,
-          }),
-        }),
-      }),
+    mockHealthQueries({
+      configs: [{ adapter_id: "host-a", credential_status: "rejected" }],
     });
 
     const { getTenantCredentialHealth } = await import(
@@ -230,5 +246,19 @@ describe("getTenantCredentialHealth — §13.5.4 banner", () => {
     expect(health.status).toBe("degraded");
     expect(health.affected_adapters).toContain("host-a");
     expect(health.banner_message).toContain("Settings");
+  });
+
+  it("recent decryption failure in audit_log → degraded even if status active", async () => {
+    mockHealthQueries({
+      configs: [{ adapter_id: "host-b", credential_status: "active" }],
+      auditRows: [{ changes: { adapter_id: "host-b" } }],
+    });
+
+    const { getTenantCredentialHealth } = await import(
+      "@/lib/host-adapters/credential-health"
+    );
+    const health = await getTenantCredentialHealth("tenant-300");
+    expect(health.status).toBe("degraded");
+    expect(health.affected_adapters).toContain("host-b");
   });
 });

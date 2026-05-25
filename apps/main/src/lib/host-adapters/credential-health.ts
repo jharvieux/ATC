@@ -5,9 +5,8 @@
 //
 // Health is determined by:
 //   - credential_status = 'rejected' | 'expired' | 'revoked' → degraded
-//   - recent audit_log entry with action = 'credential.decryption_failed' → degraded
-//
-// TODO(audit-log §26): the audit_log join below is stubbed until the table lands.
+//   - audit_log entry with action='credential.decryption_failed' in the
+//     last 24 hours → degraded (even if status row still says 'active')
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
@@ -16,6 +15,8 @@ export interface CredentialHealth {
   affected_adapters: string[];
   banner_message?: string;
 }
+
+const RECENT_DECRYPTION_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export async function getTenantCredentialHealth(
   tenant_id: string,
@@ -34,17 +35,32 @@ export async function getTenantCredentialHealth(
 
   type ConfigRow = { adapter_id: string; credential_status: string };
   const degradedStatuses = new Set(["rejected", "expired", "revoked"]);
-  const affected = (data as ConfigRow[])
-    .filter((r) => degradedStatuses.has(r.credential_status))
-    .map((r) => r.adapter_id);
+  const statusAffected = new Set(
+    (data as ConfigRow[])
+      .filter((r) => degradedStatuses.has(r.credential_status))
+      .map((r) => r.adapter_id),
+  );
 
-  if (affected.length === 0) {
+  const since = new Date(Date.now() - RECENT_DECRYPTION_FAILURE_WINDOW_MS).toISOString();
+  const { data: auditRows } = await db
+    .from("audit_log")
+    .select("changes")
+    .eq("tenant_id", tenant_id)
+    .eq("action", "credential.decryption_failed")
+    .gte("created_at", since);
+
+  for (const row of (auditRows ?? []) as Array<{ changes: { adapter_id?: string } | null }>) {
+    const adapter_id = row.changes?.adapter_id;
+    if (typeof adapter_id === "string") statusAffected.add(adapter_id);
+  }
+
+  if (statusAffected.size === 0) {
     return { status: "healthy", affected_adapters: [] };
   }
 
   return {
     status: "degraded",
-    affected_adapters: affected,
+    affected_adapters: Array.from(statusAffected),
     banner_message:
       `Your host adapter credentials cannot be loaded. ` +
       `Please re-enter them in Settings to resume bookings.`,

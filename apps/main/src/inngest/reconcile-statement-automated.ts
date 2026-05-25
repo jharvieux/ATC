@@ -5,7 +5,7 @@
 // statement and reconciles each line item against commissions rows.
 //
 // Variance thresholds (§14.8):
-//   < $5   (500 cents)    → auto-accept, log to audit stub
+//   < $5   (500 cents)    → auto-accept, write audit_log row
 //   $5–$50 (500–5000 cents) → queue for review (default: accept)
 //   > $50  (5000 cents)   → queue for review (default: hold)
 //   booking not found     → orphan row; admin investigates

@@ -15,8 +15,9 @@
 //   • Category 3 surface is contacts.notes (added by the BP25 migration);
 //     "tenant_crm_notes" never existed.
 //
-// All audit writes remain console.warn stubs until §26 ships audit_log
-// (D-036 pattern).
+// Step 10 writes a ccpa_deletion_executions row plus an audit_log row
+// (action=user.ccpa_purge_executed) — both via service-role client since
+// the user being purged no longer has a session.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { deriveCustomerHash } from "./customer-hash";
@@ -280,7 +281,7 @@ export async function purgeUserDataPerRetention(
     // Step 9 — legal_consents retained (§25.4 reasoning — point-in-time legal proof).
     //   No action.
 
-    // Step 10 — audit (stubs until §26 ships audit_log).
+    // Step 10 — record execution row + audit_log.
     await db.from("ccpa_deletion_executions").insert({
       user_id,
       grace_period_ended_at: graceEndedAt,
