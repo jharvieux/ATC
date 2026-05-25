@@ -22,8 +22,9 @@ CREATE TABLE IF NOT EXISTS public.gmail_oauth_tokens (
   -- Encrypted token blob (BP14 APP_ENCRYPTION_KEY_* framework). The
   -- ciphertext is opaque to RLS — only service-role decryptors should
   -- read this column. We still RLS-protect the row so tenants can't see
-  -- each other's existence.
-  encrypted_refresh_token BYTEA,
+  -- each other's existence. Stored as base64 TEXT (matches the
+  -- credential-cipher API contract: { ciphertext: string, key_id: string }).
+  encrypted_refresh_token TEXT,
   encryption_key_version  TEXT,
 
   -- Health surfacing (§34.2.4).
