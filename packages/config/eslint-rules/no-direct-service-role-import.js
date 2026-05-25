@@ -272,6 +272,14 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/resources/[id]/route.ts",
   // BP39 §39.2.6 — public tokenized itinerary viewer (no user session).
   "/app/i/[token]/page.tsx",
+  // BP36 §36.6 — attribution_rollup nightly refresh + reports.
+  "/inngest/attribution-rollup-refresh.ts",
+  "/app/api/reports/leads-by-source/route.ts",
+  "/app/api/reports/bookings-by-source/route.ts",
+  "/app/api/reports/source-funnel/route.ts",
+  "/app/api/reports/campaigns/route.ts",
+  "/app/api/reports/first-vs-last-touch/route.ts",
+  "/app/api/reports/cancellations/route.ts",
 ];
 
 function endsWithAllowed(filename) {
