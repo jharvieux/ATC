@@ -381,6 +381,10 @@ describe("runSupervisor — slur consecutive-hit escalation (§10.2 tone_drift)"
 });
 
 describe("runSupervisor — sampling integration (§10.5a)", () => {
+  // Per-test timeout bumped to 90s — the 30s default has flaked twice in
+  // the merge cascade (jobs 77660638249, 77660757380). Each runSupervisor
+  // call exercises the lexical screen + the mock DB; 20 iterations can
+  // sit just under 30s on a noisy CI runner.
   it("simulates ~1% sampling rate for clean passes over 1000 runs", async () => {
     // We can't call maybeSampleForReview here (it needs its own DB mock),
     // but we can verify the supervisor returns 'allow' for clean responses,
@@ -402,5 +406,5 @@ describe("runSupervisor — sampling integration (§10.5a)", () => {
 
     // All clean responses should be allowed (the check is deterministic)
     expect(allowCount).toBe(iterations);
-  });
+  }, 90_000);
 });
