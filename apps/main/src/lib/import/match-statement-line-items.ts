@@ -96,31 +96,46 @@ export async function matchStatementLineItems(args: {
   const { data, error } = await query;
   if (error) throw new Error(`commissions_scan_failed: ${error.message}`);
 
-  // Flatten the join shape into a flat lookup.
-  const candidates: CommissionRow[] = ((data ?? []) as Array<{
+  // Flatten the join shape into a flat lookup. Supabase typegen returns
+  // joined rows as arrays (since !inner can technically yield multiple)
+  // even when there's a 1:1 FK; we normalise to a single object here.
+  type JoinedRow = {
     id: string;
     booking_id: string;
-    bookings: {
-      provider_booking_ref: string | null;
-      cruise_line: string | null;
-      ship_name: string | null;
-      sailing_date: string | null;
-      contacts: { last_name: string | null } | { last_name: string | null }[] | null;
-    } | null;
-  }>)
-    .filter((r) => r.bookings)
+    bookings:
+      | {
+          provider_booking_ref: string | null;
+          cruise_line: string | null;
+          ship_name: string | null;
+          sailing_date: string | null;
+          contacts: { last_name: string | null } | { last_name: string | null }[] | null;
+        }
+      | Array<{
+          provider_booking_ref: string | null;
+          cruise_line: string | null;
+          ship_name: string | null;
+          sailing_date: string | null;
+          contacts: { last_name: string | null } | { last_name: string | null }[] | null;
+        }>
+      | null;
+  };
+  const joinedRows = (data ?? []) as unknown as JoinedRow[];
+  const candidates: CommissionRow[] = joinedRows
     .map((r) => {
-      const c = Array.isArray(r.bookings!.contacts) ? r.bookings!.contacts[0] ?? null : r.bookings!.contacts;
+      const b = Array.isArray(r.bookings) ? r.bookings[0] ?? null : r.bookings;
+      if (!b) return null;
+      const c = Array.isArray(b.contacts) ? b.contacts[0] ?? null : b.contacts;
       return {
         id: r.id,
         booking_id: r.booking_id,
-        provider_booking_ref: r.bookings!.provider_booking_ref,
-        cruise_line: r.bookings!.cruise_line,
-        ship_name: r.bookings!.ship_name,
-        sailing_date: r.bookings!.sailing_date,
+        provider_booking_ref: b.provider_booking_ref,
+        cruise_line: b.cruise_line,
+        ship_name: b.ship_name,
+        sailing_date: b.sailing_date,
         passenger_last_name: c?.last_name ?? null,
-      };
-    });
+      } satisfies CommissionRow;
+    })
+    .filter((x): x is CommissionRow => x !== null);
 
   const refIndex = new Map<string, CommissionRow>();
   for (const c of candidates) {
