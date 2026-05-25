@@ -104,6 +104,26 @@ function wrapQueryBuilder(qb: unknown, tenant_id: string): unknown {
   });
 }
 
+// Methods on the Supabase client that BYPASS the from()-based proxy and
+// give the caller a fully-unscoped, service-role surface. Letting these
+// through without an error is the same footgun the fail-closed proxy was
+// created to prevent (audit pass 2, Finding 6). If a caller legitimately
+// needs to call .rpc() or .schema(), they should reach for
+// withPlatformAdminAudit explicitly — the audit row is part of the contract.
+const UNSCOPED_METHODS: ReadonlySet<string> = new Set(["rpc", "schema"]);
+
+export class UnscopedTenantClientMethodError extends Error {
+  constructor(method: string) {
+    super(
+      `tenantClient: refusing to expose '${method}'. This method bypasses ` +
+        `the tenant-scoping Proxy and would give callers a raw service-role ` +
+        `client. Use withPlatformAdminAudit(...) explicitly if the operation ` +
+        `genuinely needs to run cross-tenant.`,
+    );
+    this.name = "UnscopedTenantClientMethodError";
+  }
+}
+
 export function tenantClient(ctx: TenantContext): SupabaseClient {
   const supabase = createServiceRoleClient();
 
@@ -122,6 +142,9 @@ export function tenantClient(ctx: TenantContext): SupabaseClient {
           }
           throw new UnregisteredTenantTableError(table);
         };
+      }
+      if (typeof prop === "string" && UNSCOPED_METHODS.has(prop)) {
+        throw new UnscopedTenantClientMethodError(prop);
       }
       return Reflect.get(target, prop, receiver);
     },

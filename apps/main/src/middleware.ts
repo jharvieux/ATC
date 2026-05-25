@@ -192,7 +192,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (expected && bypassTenant) {
       const auth = req.headers.get("authorization");
       const token = auth?.startsWith("Bearer ") ? auth.slice(7) : auth;
-      if (token === expected) {
+      // Constant-time compare — same posture as lib/auth/test-bypass.ts
+      // (audit pass 2, Finding 2 — non-constant-time bearer compare leaked
+      // the secret via timing).
+      const tokenOk =
+        token != null &&
+        Buffer.byteLength(token) === Buffer.byteLength(expected) &&
+        Buffer.compare(Buffer.from(token), Buffer.from(expected)) === 0;
+      if (tokenOk) {
         const headers = cloneAndScrubHeaders(req);
         headers.set(RESOLVED_TENANT_ID_HEADER, bypassTenant);
         headers.set(RESOLVED_TENANT_TYPE_HEADER, "byo_host");

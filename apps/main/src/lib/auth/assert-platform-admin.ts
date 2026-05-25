@@ -23,8 +23,24 @@
 // right HTTP status (401 for missing/invalid token, 403 for token-valid-but-
 // not-an-admin, 500 for misconfiguration).
 
+import { timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+
+// Constant-time string equality. The two existing call sites compare a
+// caller-supplied bearer token against a high-value secret in env. V8's
+// `===` short-circuits on the first byte mismatch, which is a textbook
+// timing-attack primitive (audit pass 2, Finding 2).
+function constantTimeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) {
+    // Burn a comparable amount of CPU so length mismatch doesn't leak via timing.
+    timingSafeEqual(ab, ab);
+    return false;
+  }
+  return timingSafeEqual(ab, bb);
+}
 
 export interface PlatformAdminContext {
   /** auth_user_id from Supabase (human admin), or "service:bearer" for the service-to-service bearer path. */
@@ -65,9 +81,11 @@ export async function assertPlatformAdmin(req: Request): Promise<PlatformAdminCo
     throw new PlatformAdminError(401, "empty_bearer", "Bearer token is empty.");
   }
 
-  // Path 1 — service-to-service Bearer (RAG cron, etc.).
+  // Path 1 — service-to-service Bearer (RAG cron, etc.). Constant-time
+  // compare prevents the recovery-via-timing primitive flagged in audit
+  // pass 2, Finding 2.
   const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-  if (serviceKey && token === serviceKey) {
+  if (serviceKey && constantTimeEqual(token, serviceKey)) {
     return { admin_user_id: "service:bearer", role: "service", via: "bearer" };
   }
 
@@ -96,7 +114,11 @@ export async function assertPlatformAdmin(req: Request): Promise<PlatformAdminCo
     .maybeSingle();
 
   if (lookupErr) {
-    throw new PlatformAdminError(500, "platform_admins_lookup_failed", lookupErr.message);
+    // Log full error server-side; surface a static message to the client.
+    // Audit pass 2, Finding 3: PostgREST errors can contain schema hints
+    // (column names, RLS predicate names). Don't reveal them on 500.
+    console.error("[assertPlatformAdmin] platform_admins lookup failed:", lookupErr);
+    throw new PlatformAdminError(500, "platform_admins_lookup_failed", "Lookup failed.");
   }
   if (!adminRow) {
     throw new PlatformAdminError(

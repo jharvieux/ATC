@@ -132,4 +132,18 @@ describe("tenantClient proxy", () => {
     // .from() throws before reaching the underlying client.
     expect(mockFrom).not.toHaveBeenCalled();
   });
+
+  it("THROWS when callers access .rpc — bypassing the proxy is the bug we're preventing", () => {
+    const db = tenantClient(ctx);
+    expect(() => (db as unknown as { rpc: () => unknown }).rpc).toThrow(
+      /refusing to expose 'rpc'/,
+    );
+  });
+
+  it("THROWS when callers access .schema — same reason", () => {
+    const db = tenantClient(ctx);
+    expect(() => (db as unknown as { schema: () => unknown }).schema).toThrow(
+      /refusing to expose 'schema'/,
+    );
+  });
 });
