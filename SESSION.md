@@ -1,79 +1,81 @@
-# Session state — last updated 2026-05-24 ~21:05 UTC
+# Session state — last updated 2026-05-24 ~21:40 UTC
 
-## Just completed (this session, post-cascade)
+## Just completed (this session, after specs were dropped in)
 
-### BP34 Phase A (PR #133, merged into dev earlier)
-- `20260616000000_bp34_inbound_import.sql` — bookings origin/imported_from/imported_at/imported_by_user_id/provider_booking_ref; commissions clawback fields + commission_rate_source enum; new contact_imports table with RLS
-- `apps/main/src/lib/import/trigger-regex.ts` — IMPORT trigger detector
-- `apps/main/src/lib/import/match-confidence.ts` — Levenshtein-backed fuzzy match scorer per §34.5.4 (weights 0.30/0.25/0.25/0.15/0.20/0.10; ≥0.85 high_confidence, ≥0.60 possible, else not_surfaced)
-- platform_settings seed: `bp34_import_auto_accept_threshold_default = 0.80`
-- 50 unit tests passing
+### BP34 Phases A + B + C — 9 commits on `feature/bp34-phase-a-schema`, ready for PR
 
-### BP34 Phase B (committed + pushed on `feature/bp34-phase-a-schema` as 2ed3bab — NO PR YET)
-- `20260616100000_bp34_phase_b_import_queue.sql` — `import_queue` table with 11-state status FSM, RLS, updated_at trigger, partial indexes for pending_review + purgable_at
-- AI surfaces: `import_classify` + `import_extract` added to `AICallPurpose` union
-- `apps/main/src/lib/import/classifier.ts` — Haiku classifier, `CLASSIFY_REVIEW_THRESHOLD=0.60`, code-fence tolerant
-- `apps/main/src/lib/import/extractors/{types,runner,lead-notification,booking-confirmation,commission-statement,intake-form}.ts` — shared Sonnet runner (overall_confidence = MIN per-field) + 4 per-type extractors
-- `apps/main/src/lib/import/validation.ts` — required + plausibility + duplicate detection; commission_statement always flags requires_human_review
-- `apps/main/src/lib/import/auto-accept.ts` — `decideRoute()` with tenant-override + platform-default + NEVER_AUTO_ACCEPT list
-- `apps/main/src/inngest/import-pipeline.ts` — orchestrator on `import.queued` event; per-tenant concurrency cap (4); `BP34_IMPORT_PIPELINE_DISABLED` kill-switch; step.run boundaries: load → resolve-text → classify → extract → validate → route
-- `apps/main/src/inngest/events.ts` — added `import.queued` event
-- `apps/main/src/app/api/inngest/route.ts` — wired `importPipeline` into the serve() handler
-- 17 new unit tests (validation + auto-accept), **67 total in `apps/main/test/unit/import/` all passing**
-- Full typecheck clean (`pnpm exec tsc --noEmit` → exit 0)
+After the user added the missing §34–§40 tech-spec addenda manually, I re-verified Phase B against the real §34 spec (one alignment fix: retention windows for accepted/rejected from 7d/30d → 24h per §34.4) and built Phase C end-to-end as backend.
 
-### New spec/build-prompt files checked in (in 2ed3bab — also got swept into the BP34 Phase B commit)
-- `specs/BuildPrompts/prompt-section-{35,36,37,38,39,40}.md`
-- `specs/TechSpec/section-33-addendum-external-data-sources-and-media-assets.html`
-- `specs/TechSpec/spec-addendum-external-data-and-media.md`
-- Minor edits to `specs/TechSpec/{index,section-32-self-service-help}.html`
+**Code added (Phase C, 8 commits):**
+
+| Concern | File |
+|---|---|
+| Retention sweep (§34.4) | `apps/main/src/inngest/purge-parsed-documents.ts` |
+| Rate resolver (§34.7.3) | `apps/main/src/lib/import/resolve-commission-rate.ts` |
+| Acceptance promotion (§34.5, §34.7) | `apps/main/src/lib/import/promote.ts` |
+| Tier gating helper (§34.9) | `apps/main/src/lib/import/tier-gate.ts` |
+| Statement matching (§34.5.4, §14.8) | `apps/main/src/lib/import/match-statement-line-items.ts` |
+| Gmail trigger glue (§34.2) | `apps/main/src/lib/import/process-gmail-message.ts` |
+| Manual entry route | `apps/main/src/app/api/imports/manual/route.ts` |
+| Document upload route (PDF-only) | `apps/main/src/app/api/imports/upload/route.ts` |
+| Review queue list | `apps/main/src/app/api/imports/review/route.ts` |
+| Review accept (edit + agent rate) | `apps/main/src/app/api/imports/review/[id]/accept/route.ts` |
+| Review reject | `apps/main/src/app/api/imports/review/[id]/reject/route.ts` |
+| Gmail Pub/Sub webhook (real) | `apps/main/src/app/api/webhooks/gmailpubsub/route.ts` |
+| Gmail health endpoint (§34.2.4) | `apps/main/src/app/api/integrations/gmail/health/route.ts` |
+| Gmail health banner component | `apps/main/src/components/integrations/GmailHealthBanner.tsx` |
+| §14.9 clawback writes (§34.8.2) | `apps/main/src/app/api/bookings/[id]/cancel/route.ts` |
+| Schema: gmail tables + storage bucket | `apps/main/supabase/migrations/20260617000000_bp34_phase_c_gmail_storage.sql` |
+
+**Tests:** 83 unit tests in `apps/main/test/unit/import/` (was 17 → 83). Typecheck clean throughout (every commit).
+
+**Cross-section wires:**
+- §14.9 `/api/bookings/:id/cancel` now writes `clawback_amount_cents` + `clawback_at` + `clawback_reason` on three branches (hold cancel, Stripe reversal, contractual recovery). Required by §36 reports.
+- `/api/inngest` now serves `importPipeline` + `purgeParsedDocuments`.
+- `inngest/events.ts` now declares `import.queued` event.
 
 ## In flight
 
-**Nothing in flight on a working branch** — Phase B is committed + pushed but PR has not been opened (waiting on the answer to morning question Q1 below).
+**Nothing in flight on a working branch.** Phase A merged in PR #133. Phases B + C are committed + pushed on `feature/bp34-phase-a-schema` (HEAD = `8f5a16a`). PR not yet opened — recommendation in Q1.
 
-## Next step (HARD BLOCKED — see questions below)
+## Next step
 
-Phase C of BP34 would normally be next, but it cannot proceed without source-of-truth tech-spec files for §34. **All build prompts §34 → §40 reference tech-spec addenda that do not exist in `specs/TechSpec/`.** Specifically missing:
+**Open the BP34 PR** (`feature/bp34-phase-a-schema` → `dev`) as draft so the user can see scope at a glance. Then handle morning Q&A on deferred Phase D items.
 
-- `section-34-addendum-inbound-import.html` (BP34)
-- `section-35-addendum-referral-attribution.html` (BP35)
-- `section-36-addendum-source-of-business-reporting.html` (BP36)
-- `section-37-addendum-tasks-and-follow-up.html` (BP37)
-- `section-38-addendum-multi-option-quote-builder.html` (BP38)
-- `section-39-addendum-client-facing-deliverables.html` (BP39)
-- `section-40-addendum-non-cruise-line-items.html` (BP40)
+## Blocked on user (morning questions)
 
-Per CLAUDE.md: "If a spec is ambiguous, flag it, propose an interpretation, ask the user to confirm. Don't invent behavior." — and these aren't ambiguous, they're entirely absent. Phase A + B of BP34 were built from build-prompt requirements + conversation context, which is at the limit of what's defensible without a spec. Phase C scope (Gmail OAuth, document upload, review queue UI, statement matching, §14.3 rate resolution) is too big to keep inventing.
+**Q1 — Open the BP34 PR now?** Branch has ~3000 LOC across Phases B+C. Recommend opening as **draft** so CI runs and you can see scope; we mark ready-for-review after Phase D's UI lands or you decide UI is a separate PR.
 
-## Blocked on user
+**Q2 — Phase D scope split.** Phase D as-listed contains a mix: Gmail health surfacing (DONE), tier gating (DONE), final tests. Plus what I deferred from Phase C: review queue UI, OAuth connect/callback, watch renewal cron, PDF OCR for document path. How do you want this split? Options:
+- (A) One big "BP34 finishing" PR with everything deferred.
+- (B) Three smaller PRs: (i) Review queue UI, (ii) Gmail OAuth + watch cron, (iii) PDF OCR.
+- Recommend (B). Each piece has different risk profile + dependency.
 
-**Q1 — BP34 Phase B PR:** Open PR now into `dev`, or wait until Phase C lands so it's one BP34 PR per your "One PR per BP" direction? Phase B is fully tested + typecheck clean; opening now means earlier review surface but two commits to squash later. Recommend: open now, mark draft, append Phase C commits to same branch.
+**Q3 — PDF OCR dependency.** The document-upload path stores the PDF + emits import.queued but the pipeline's `resolveText('document')` returns null, so the row goes to parse_failed (correctly fail-loud). To fix it I need either:
+- (A) `pdf-parse` npm dep (lightweight, text-only PDFs)
+- (B) `pdfjs-dist` + OCR worker (handles scanned PDFs but heavier)
+- (C) External service (Google Document AI, AWS Textract) — costs $$$
+- Recommend (A) for v1; tenants forwarding scanned-PDF lead-board screenshots will see parse_failed and can re-submit as manual entry or images via Gmail.
 
-**Q2 — Missing §34–§40 tech-spec addenda:** All six new build prompts reference HTML addendum files that aren't in the repo. Options:
-- (A) You forgot to drop them in — paste/check them in and I resume autonomously.
-- (B) Build prompts ARE the spec — work from them alone, with conversation Q&A to fill gaps.
-- (C) Stop §34–§40 work entirely until tech-specs land; pick from the carry-forward backlog instead (BP25/23/24-deny-list/30/31).
-- Recommend (A) if the specs exist somewhere — they're materially richer than the build prompts on schema + edge cases. (B) is doable but every fielded decision becomes a question.
+**Q4 — Gmail OAuth setup.** The Pub/Sub webhook is wired and the trigger-detection + emit-to-pipeline flow is in. What's still needed to make Gmail import end-to-end functional:
+- (A) GCP project + OAuth client + Pub/Sub topic creation (per `docs/runbooks/gmail-inbound-setup.md`) — **your task**
+- (B) OAuth connect/callback endpoints (apps/main/src/app/api/integrations/gmail/connect/route.ts is still a 501 stub) — Phase D
+- (C) 7-day Pub/Sub watch renewal cron — Phase D
+- (D) Disconnect endpoint — Phase D
+- Need (A) confirmed before (B)–(D) are testable. Will you run the runbook this week or should I defer all Gmail wiring to a later session?
 
-**Q3 — `gmail_inbound_messages` table:** Phase B's `resolveText()` reads from this table for the email path, but I have not actually found it in the schema. Either I need to add it as part of Phase C (likely — it's a natural Phase C deliverable), or it already exists under a different name. Will verify Phase C.
+**Q5 — Match-report persistence.** Commission-statement matching currently stashes the report on `import_queue.raw_extracted_fields._match_report` rather than its own table. Spec §14.8 will need a proper `commission_statement_matches` table eventually but there's no §14.8 build prompt in the repo. Acceptable to defer until §14.8 lands, or do you want a follow-up table now?
 
-**Q4 — Document-upload virus scanning:** You said "defer virus scan; rely on Gmail." That covers the email path. The document-upload path has no Gmail in front of it. Options:
-- (A) Same answer — defer virus scanning for uploads too, accept the risk.
-- (B) Add a ClamAV step before uploads are queued (extra infra).
-- (C) Gate uploads to a stricter MIME allowlist (PDF only) and treat that as the v1 mitigation.
-- Recommend (C) — cheapest and aligns with the "stuff fancy customers send" use case.
+**Q6 — BP35 + beyond after BP34 PR opens.** Per your "one PR per BP" direction, BP35–40 are next. Should I start BP35 (Referral Attribution) tonight or wait for morning?
 
-**Q5 — §14.9 clawback writes:** You said "wire clawback writes." Phase C is where these land (commission_statement acceptance → write to commissions.clawback_amount_cents + clawback_at + clawback_reason). Confirm: should clawback always auto-fire on accepted statements, or be a separate explicit action in the review UI?
+## Open questions / observations
 
-## Open questions
+- **Sub-host import block:** `promoteBooking()` enforces §34.7.4 by rejecting non-byo_host tenants. The intake routes (manual/upload) don't pre-check tenant_type because intake content type isn't known until classifier runs (a manual entry could be a lead, not a booking). The block is at the right layer but a more graceful UX would be to surface in the review queue with reason='sub_host_cannot_import_booking'. Phase D / UX call.
+- **`gmail_inbound_messages` for non-IMPORT mail:** Phase B's `resolveText()` for email path reads from this table, which is now populated by the webhook. Non-IMPORT messages also get rows here. The "normal Gmail conversation handling" path (§23.1) doesn't exist yet — when it does, it'll read from the same table.
+- **PR strategy reminder:** From D-079 — one PR per BP, all phases inside. BP34 PR will contain Phases B+C (Phase A is already merged separately as #133). That's the intent.
+- **Spec re-check found one bug (retention windows).** I'm glad I read §34 before resuming. Future Phase work should re-read the relevant spec section before starting; conversation memory drift on detail values is real.
 
-- **Build-prompt commit hygiene:** The §35–§40 build prompts ended up in the BP34 Phase B commit by accident (pre-commit hook seems to have added them). They should ideally have been a separate `chore: check in new build prompts` commit. Not worth amending now since the branch is already pushed and the prompts logically belong with the BP34 generation, but flagging for next-session awareness.
-- **Pre-existing tech-spec edits (`section-32-self-service-help.html`, `index.html`):** Also swept into the Phase B commit. Same reasoning — not worth unwinding.
-- **MEMORY.md D-079 entry pending:** Documenting Phase B + the missing-spec blocker. Will add as part of this checkpoint.
-- **D-049 (BP132 in task list):** Officially resolved by PR #121's no-auto-suspend policy. Worth marking the task `deleted` next session.
-
-## Carried forward from earlier sessions (still pending)
+## Carried forward from earlier sessions
 
 - BP31: Haiku tolerable-PII redaction + confidence/clarity scorer Haiku call (cost-deferred)
 - BP30: AI behavior eval harness, continuous-sampling cron, dedicated test Supabase project, Percy/Chromatic (cost-deferred)
@@ -81,4 +83,4 @@ Per CLAUDE.md: "If a spec is ambiguous, flag it, propose an interpretation, ask 
 - BP24: populate `platform_settings.supervisor_slur_deny_list`
 - BP23: populate `port_info_chunks` content for 17 ports
 - BP16/17: counsel sign-off on ICA + AI Liability Disclaimer
-- Retroactive react-pdf wire-up to unblock help-docs PDF deferral (depends on BP39 landing)
+- Retroactive react-pdf wire-up to unblock help-docs PDF deferral (after BP39 lands)
