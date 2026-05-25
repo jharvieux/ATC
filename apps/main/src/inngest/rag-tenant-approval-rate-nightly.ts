@@ -19,6 +19,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 
 interface TenantRow {
   id: string;
@@ -41,17 +42,26 @@ export const ragTenantApprovalRateNightly = inngest.createFunction(
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Fetch active tenants.
-    const { data: tenants, error: tErr } = await db
+    const { data: tenantsRaw, error: tErr } = await db
       .from("tenants")
-      .select("id")
+      .select("id, status, subscription_status, non_paying_since")
       .eq("status", "active");
     if (tErr) {
       console.error("[rag-tenant-approval-rate-nightly] tenants fetch failed:", tErr.message);
       return { ok: false };
     }
 
+    // §15.16 — skip past-grace tenants.
+    const tenants = excludeNonPayingPastGrace(
+      (tenantsRaw ?? []) as Array<TenantRow & {
+        status: string;
+        subscription_status: string | null;
+        non_paying_since: string | null;
+      }>,
+    );
+
     const aggregates: Aggregate[] = [];
-    for (const t of (tenants ?? []) as TenantRow[]) {
+    for (const t of tenants) {
       const { count: approved } = await db
         .from("rag_submissions")
         .select("*", { count: "exact", head: true })

@@ -14,6 +14,7 @@ import { withPlatformAdminAudit, platformAdminClient } from "@/lib/db/platform-a
 import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 
 const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
@@ -75,28 +76,43 @@ export const abuseRecomputeNightly = inngest.createFunction(
         const periodEndIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
 
         recordQuery({ op: "select", table: "tenants" });
-        const { data: tenants } = await db
+        const { data: tenantsRaw } = await db
           .from("tenants")
-          .select("id, tier_id, seat_count, billing_period, status")
+          .select("id, tier_id, seat_count, billing_period, status, subscription_status, non_paying_since")
           .in("status", ["active", "sandbox"])
           .limit(5000);
+
+        // §15.16 — skip tenants past the 7-day non-payment grace window.
+        // Within-grace tenants still run (grace preserves automated features).
+        let skippedNonPaying = 0;
+        const tenants = excludeNonPayingPastGrace(
+          (tenantsRaw ?? []) as Array<{
+            id: string;
+            tier_id?: string | null;
+            seat_count?: number;
+            billing_period?: "monthly" | "annual";
+            status: string;
+            subscription_status: string | null;
+            non_paying_since: string | null;
+          }>,
+          (t) => {
+            skippedNonPaying++;
+            console.info("[abuse-recompute-nightly] skipping past-grace tenant", { tenant_id: t.id });
+          },
+        );
 
         let tenantsProcessed = 0;
         const drifts: DriftRecord[] = [];
 
         // Pre-fetch tenant-scope chunk counts from the rag service in one
         // batch call (resolves TODO(rag-service-count)). One signed JWT
-        // covers the whole batch — well under the 5 min TTL.
-        const tenantIds = (tenants ?? []).map((t) => t.id);
+        // covers the whole batch — well under the 5 min TTL. Runs after
+        // the non-paying filter so we don't waste the call on tenants
+        // we're about to skip anyway.
+        const tenantIds = tenants.map((t) => t.id);
         const ragChunkCounts = await fetchRagTenantChunkCounts(tenantIds);
 
-        for (const t of ((tenants ?? []) as Array<{
-          id: string;
-          tier_id?: string | null;
-          seat_count?: number;
-          billing_period?: "monthly" | "annual";
-          status: string;
-        }>)) {
+        for (const t of tenants) {
           tenantsProcessed++;
 
           // Tier code lookup.
@@ -272,6 +288,7 @@ export const abuseRecomputeNightly = inngest.createFunction(
 
         return {
           tenants_processed: tenantsProcessed,
+          tenants_skipped_non_paying: skippedNonPaying,
           drift_records: drifts.length,
           elapsed_ms: Date.now() - start,
         };
