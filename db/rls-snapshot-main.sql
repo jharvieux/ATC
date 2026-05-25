@@ -10,15 +10,19 @@
 -- public.ai_kill_switch_state (rls_enabled)
 -- public.anonymous_chat_counters (rls_enabled)
 -- public.anonymous_sessions (rls_enabled)
+-- public.attribution_touches (rls_enabled)
 -- public.audit_log (rls_enabled)
 -- public.auth_attempts (rls_enabled)
+-- public.booking_line_items (rls_enabled)
 -- public.booking_options (rls_enabled)
 -- public.booking_passengers (rls_enabled)
 -- public.bookings (rls_enabled)
 -- public.bug_submissions (rls_enabled)
+-- public.campaigns (rls_enabled)
 -- public.ccpa_deletion_executions (rls_enabled)
 -- public.commissions (rls_enabled)
 -- public.complaints (rls_enabled)
+-- public.contact_imports (rls_enabled)
 -- public.contact_relationships (rls_enabled)
 -- public.contacts (rls_enabled)
 -- public.conversations (rls_enabled)
@@ -37,12 +41,15 @@
 -- public.forum_threads (rls_enabled)
 -- public.forum_user_state (rls_enabled)
 -- public.forums (rls_enabled)
+-- public.gmail_inbound_messages (rls_enabled)
+-- public.gmail_oauth_tokens (rls_enabled)
 -- public.group_invite_pending_approval (rls_enabled)
 -- public.groups (rls_enabled)
 -- public.help_doc_versions (rls_enabled)
 -- public.help_sessions (rls_enabled)
 -- public.host_adapters (rls_enabled)
 -- public.host_booking_fee_configs (rls_enabled)
+-- public.import_queue (rls_enabled)
 -- public.invitations (rls_enabled)
 -- public.legal_consents (rls_enabled)
 -- public.legal_documents (rls_enabled)
@@ -58,6 +65,7 @@
 -- public.port_info_chunks (rls_enabled)
 -- public.pre_cruise_email_content (rls_enabled)
 -- public.price_watches (rls_enabled)
+-- public.quote_options (rls_enabled)
 -- public.quotes (rls_enabled)
 -- public.rag_global_promotions (rls_enabled)
 -- public.rag_submissions (rls_enabled)
@@ -67,6 +75,12 @@
 -- public.sub_host_subcontractors (rls_enabled)
 -- public.subcontractors (rls_enabled)
 -- public.supervisor_review_queue (rls_enabled)
+-- public.task_reminders (rls_enabled)
+-- public.task_sequence_runs (rls_enabled)
+-- public.task_sequence_steps (rls_enabled)
+-- public.task_sequences (rls_enabled)
+-- public.tasks (rls_enabled)
+-- public.tenant_attribution_categories (rls_enabled)
 -- public.tenant_branding (rls_enabled)
 -- public.tenant_host_configs (rls_enabled)
 -- public.tenant_host_fee_overrides (rls_enabled)
@@ -79,6 +93,8 @@
 -- public.tenant_usage_metrics (rls_enabled)
 -- public.tenant_usage_overrides (rls_enabled)
 -- public.tenants (rls_enabled)
+-- public.trip_itineraries (rls_enabled)
+-- public.trip_resources (rls_enabled)
 -- public.usage_limit_events (rls_enabled)
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
@@ -171,6 +187,21 @@ CREATE POLICY "anonymous_sessions_tenant_update" ON public.anonymous_sessions
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id));
 
+-- TABLE: public.attribution_touches
+CREATE POLICY "attribution_touches_delete" ON public.attribution_touches
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "attribution_touches_insert" ON public.attribution_touches
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "attribution_touches_select" ON public.attribution_touches
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "attribution_touches_update" ON public.attribution_touches
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
 -- TABLE: public.audit_log
 CREATE POLICY "audit_log_delete_service" ON public.audit_log
   FOR DELETE TO PUBLIC
@@ -198,6 +229,21 @@ CREATE POLICY "auth_attempts_select_service" ON public.auth_attempts
 CREATE POLICY "auth_attempts_update_service" ON public.auth_attempts
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: public.booking_line_items
+CREATE POLICY "bli_delete" ON public.booking_line_items
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "bli_insert" ON public.booking_line_items
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "bli_select" ON public.booking_line_items
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "bli_update" ON public.booking_line_items
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.booking_options
 CREATE POLICY "booking_options_delete" ON public.booking_options
@@ -264,6 +310,21 @@ CREATE POLICY "bug_submissions_tenant_update" ON public.bug_submissions
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id));
 
+-- TABLE: public.campaigns
+CREATE POLICY "campaigns_delete" ON public.campaigns
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "campaigns_insert" ON public.campaigns
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "campaigns_select" ON public.campaigns
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "campaigns_update" ON public.campaigns
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
 -- TABLE: public.ccpa_deletion_executions
 CREATE POLICY "ccpa_executions_delete_service" ON public.ccpa_deletion_executions
   FOR DELETE TO PUBLIC
@@ -306,6 +367,21 @@ CREATE POLICY "complaints_select_in_tenant" ON public.complaints
 CREATE POLICY "complaints_update_service" ON public.complaints
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: public.contact_imports
+CREATE POLICY "contact_imports_delete" ON public.contact_imports
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "contact_imports_insert" ON public.contact_imports
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "contact_imports_select" ON public.contact_imports
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "contact_imports_update" ON public.contact_imports
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.contact_relationships
 CREATE POLICY "contact_relationships_delete_policy" ON public.contact_relationships
@@ -580,6 +656,16 @@ CREATE POLICY "forums_update" ON public.forums
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.gmail_inbound_messages
+CREATE POLICY "gmail_inbound_select" ON public.gmail_inbound_messages
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.gmail_oauth_tokens
+CREATE POLICY "gmail_oauth_tokens_select" ON public.gmail_oauth_tokens
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
 -- TABLE: public.group_invite_pending_approval
 CREATE POLICY "gipa_delete_service" ON public.group_invite_pending_approval
   FOR DELETE TO PUBLIC
@@ -653,6 +739,21 @@ CREATE POLICY "host_adapters_select_policy" ON public.host_adapters
 CREATE POLICY "host_booking_fee_configs_select_policy" ON public.host_booking_fee_configs
   FOR SELECT TO PUBLIC
   USING (auth.role() = 'authenticated'::text OR auth.role() = 'service_role'::text);
+
+-- TABLE: public.import_queue
+CREATE POLICY "import_queue_delete" ON public.import_queue
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "import_queue_insert" ON public.import_queue
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "import_queue_select" ON public.import_queue
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "import_queue_update" ON public.import_queue
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.invitations
 CREATE POLICY "invitations_delete" ON public.invitations
@@ -866,6 +967,21 @@ CREATE POLICY "price_watches_tenant_update" ON public.price_watches
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id));
 
+-- TABLE: public.quote_options
+CREATE POLICY "quote_options_delete" ON public.quote_options
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "quote_options_insert" ON public.quote_options
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "quote_options_select" ON public.quote_options
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "quote_options_update" ON public.quote_options
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
 -- TABLE: public.quotes
 CREATE POLICY "quotes_delete_policy" ON public.quotes
   FOR DELETE TO PUBLIC
@@ -974,6 +1090,96 @@ CREATE POLICY "subcontractors_select_policy" ON public.subcontractors
 CREATE POLICY "subcontractors_update_policy" ON public.subcontractors
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.task_reminders
+CREATE POLICY "task_reminders_delete" ON public.task_reminders
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_reminders_insert" ON public.task_reminders
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_reminders_select" ON public.task_reminders
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_reminders_update" ON public.task_reminders
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.task_sequence_runs
+CREATE POLICY "task_sequence_runs_delete" ON public.task_sequence_runs
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequence_runs_insert" ON public.task_sequence_runs
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequence_runs_select" ON public.task_sequence_runs
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequence_runs_update" ON public.task_sequence_runs
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.task_sequence_steps
+CREATE POLICY "task_sequence_steps_delete" ON public.task_sequence_steps
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequence_steps_insert" ON public.task_sequence_steps
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequence_steps_select" ON public.task_sequence_steps
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequence_steps_update" ON public.task_sequence_steps
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.task_sequences
+CREATE POLICY "task_sequences_delete" ON public.task_sequences
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequences_insert" ON public.task_sequences
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequences_select" ON public.task_sequences
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "task_sequences_update" ON public.task_sequences
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.tasks
+CREATE POLICY "tasks_delete" ON public.tasks
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tasks_insert" ON public.tasks
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tasks_select" ON public.tasks
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tasks_update" ON public.tasks
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.tenant_attribution_categories
+CREATE POLICY "tenant_attr_categories_delete" ON public.tenant_attribution_categories
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tenant_attr_categories_insert" ON public.tenant_attribution_categories
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tenant_attr_categories_select" ON public.tenant_attribution_categories
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "tenant_attr_categories_update" ON public.tenant_attribution_categories
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.tenant_branding
@@ -1149,6 +1355,36 @@ CREATE POLICY "tenants_update_policy" ON public.tenants
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(id))
   WITH CHECK (auth_user_in_tenant(id) AND tenant_is_active(id));
+
+-- TABLE: public.trip_itineraries
+CREATE POLICY "trip_itineraries_delete" ON public.trip_itineraries
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "trip_itineraries_insert" ON public.trip_itineraries
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "trip_itineraries_select" ON public.trip_itineraries
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "trip_itineraries_update" ON public.trip_itineraries
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.trip_resources
+CREATE POLICY "trip_resources_delete" ON public.trip_resources
+  FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "trip_resources_insert" ON public.trip_resources
+  FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "trip_resources_select" ON public.trip_resources
+  FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "trip_resources_update" ON public.trip_resources
+  FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.usage_limit_events
 CREATE POLICY "ule_delete_service" ON public.usage_limit_events
