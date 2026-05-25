@@ -162,10 +162,107 @@ export async function handleStripeWebhook(
         break;
       }
 
-      // TODO(§15.16): customer.subscription.updated
-      // TODO(§15.16): customer.subscription.deleted
-      // TODO(§15.16): invoice.payment_succeeded
-      // TODO(§15.16): invoice.payment_failed
+      // §15.16 — Subscription state changes. Drive tenants.subscription_status
+      // + non_paying_since, which the middleware payment gate and cron
+      // filters read. PAYING_STATUSES (active/trialing) → clear the timestamp;
+      // anything else → set it iff not already set (preserves grace clock
+      // across rapid status transitions).
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        const sub = event.data.object as Stripe.Subscription;
+        const { data: tenantRow } = await db
+          .from("tenants")
+          .select("id, non_paying_since")
+          .eq("stripe_subscription_id", sub.id)
+          .maybeSingle();
+        if (!tenantRow) {
+          processingOutcome = "unhandled";
+          break;
+        }
+
+        const status = event.type === "customer.subscription.deleted"
+          ? "canceled"
+          : (sub.status as string);
+        const isPaying = status === "active" || status === "trialing";
+
+        const updates: Record<string, unknown> = { subscription_status: status };
+        if (isPaying) {
+          updates.non_paying_since = null;
+        } else if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
+          updates.non_paying_since = new Date().toISOString();
+        }
+        await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        processingOutcome = "success";
+        break;
+      }
+
+      // invoice.payment_succeeded — definitive proof the tenant is paying.
+      // Clear non_paying_since unconditionally; bump subscription_status to
+      // active if it was lagging (Stripe sends payment_succeeded BEFORE the
+      // subscription.updated that flips status sometimes).
+      case "invoice.payment_succeeded": {
+        const invoice = event.data.object as Stripe.Invoice;
+        // Stripe SDK v22 moved invoice.subscription into invoice.parent.
+        // subscription_details.subscription (the same field, just reorganised
+        // when the Parent type was added to distinguish subscription vs
+        // quote-shaped invoice origins).
+        const sub = invoice.parent?.subscription_details?.subscription;
+        const subId = typeof sub === "string" ? sub : sub?.id;
+        if (!subId) {
+          processingOutcome = "unhandled";
+          break;
+        }
+        const { data: tenantRow } = await db
+          .from("tenants")
+          .select("id, subscription_status")
+          .eq("stripe_subscription_id", subId)
+          .maybeSingle();
+        if (!tenantRow) {
+          processingOutcome = "unhandled";
+          break;
+        }
+        const cur = (tenantRow as { subscription_status: string | null }).subscription_status;
+        const updates: Record<string, unknown> = { non_paying_since: null };
+        if (cur !== "active" && cur !== "trialing") {
+          updates.subscription_status = "active";
+        }
+        await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        processingOutcome = "success";
+        break;
+      }
+
+      // invoice.payment_failed — start the grace clock. Don't overwrite
+      // an existing non_paying_since (the clock should run from the FIRST
+      // failure, not the most recent retry).
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        // Stripe SDK v22 moved invoice.subscription into invoice.parent.
+        // subscription_details.subscription (the same field, just reorganised
+        // when the Parent type was added to distinguish subscription vs
+        // quote-shaped invoice origins).
+        const sub = invoice.parent?.subscription_details?.subscription;
+        const subId = typeof sub === "string" ? sub : sub?.id;
+        if (!subId) {
+          processingOutcome = "unhandled";
+          break;
+        }
+        const { data: tenantRow } = await db
+          .from("tenants")
+          .select("id, non_paying_since")
+          .eq("stripe_subscription_id", subId)
+          .maybeSingle();
+        if (!tenantRow) {
+          processingOutcome = "unhandled";
+          break;
+        }
+        const updates: Record<string, unknown> = { subscription_status: "past_due" };
+        if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
+          updates.non_paying_since = new Date().toISOString();
+        }
+        await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        processingOutcome = "success";
+        break;
+      }
       default:
         processingOutcome = "unhandled";
         break;
