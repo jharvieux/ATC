@@ -4,7 +4,6 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { recordIdentificationTouch } from "@/lib/attribution/record-touch";
 import { readPendingAttributionFromHeader, ATTRIBUTION_PENDING_COOKIE } from "@/lib/attribution/read-pending-cookie";
 import { channelFromManualCategory } from "@/lib/attribution/channel-map";
@@ -99,7 +98,6 @@ export async function POST(req: Request): Promise<Response> {
     // category. Per §35.7.1 manual source is required — UI enforces.
     const contactId = (data as { id: string }).id;
     const pending = readPendingAttributionFromHeader(req.headers.get("cookie"));
-    const svc = createServiceRoleClient();
     const payload = pending
       ? pending
       : {
@@ -117,7 +115,7 @@ export async function POST(req: Request): Promise<Response> {
         editor_user_id: user.id,
         payload,
       },
-      svc,
+      db,
     );
 
     const res = Response.json(data, { status: 201 });

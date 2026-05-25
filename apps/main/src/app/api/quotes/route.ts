@@ -5,7 +5,6 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { populateConversionTouch } from "@/lib/attribution/populate-conversion-touch";
 
 const QuoteCreateSchema = z.object({
@@ -52,7 +51,7 @@ export async function POST(req: Request): Promise<Response> {
       contact_id: parsed.data.contact_id,
       target_table: "quotes",
       target_id: quoteId,
-      svc: createServiceRoleClient(),
+      svc: db,
     });
 
     return Response.json(data, { status: 201 });
