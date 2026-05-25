@@ -1,6 +1,9 @@
 // §12.4 — Mark quote as sent.
 // PDF rendering is deferred (TODO): returns a presigned URL placeholder per build prompt.
+// §38.4.3 — mints customer_access_token on first send for the public
+// tokenized selection endpoint.
 
+import { randomBytes } from "node:crypto";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 
@@ -15,7 +18,7 @@ export async function POST(
 
     const { data: existing, error: fetchErr } = await db
       .from("quotes")
-      .select("id, status")
+      .select("id, status, customer_access_token")
       .eq("id", id)
       .maybeSingle();
 
@@ -26,9 +29,20 @@ export async function POST(
     }
 
     const now = new Date().toISOString();
+    const update: Record<string, unknown> = {
+      status: "sent",
+      sent_at: now,
+      updated_at: now,
+    };
+    // §38.4.3 — mint customer_access_token if not already set; preserve
+    // any prior token so re-sends don't invalidate URLs already shared.
+    const row = existing as { customer_access_token: string | null };
+    if (!row.customer_access_token) {
+      update.customer_access_token = randomBytes(32).toString("base64url");
+    }
     const { data, error } = await db
       .from("quotes")
-      .update({ status: "sent", sent_at: now, updated_at: now })
+      .update(update)
       .eq("id", id)
       .select()
       .single();
