@@ -1,63 +1,72 @@
-# Session state — last updated 2026-05-25 ~05:30 UTC
+# Session state — last updated 2026-05-25 ~14:00 UTC
 
-## Just completed — full merge cascade landed on `dev`
+## Just completed (this push)
 
-All 13 PRs from the BP34–BP40 overnight + UI push are merged:
+### Security audits — 2026-05-25
 
-| Order | PR | What |
-|---|---|---|
-| 1 | #133 | BP34 Inbound import pipeline (§34) |
-| 2 | #134 | BP35 Referral attribution (§35) |
-| 3 | #136 | BP37 Tasks & follow-up (§37) |
-| 4 | #137 | BP38 Multi-option quote containers (§38) |
-| 5 | #138 | BP39 Client-facing deliverables (§39) — itinerary + resources + react-pdf |
-| 6 | #139 | BP40 Price-watch + non-cruise line items (§33.8 / §40) |
-| 7 | #152 | BP36 Source-of-Business reporting (§36) — MV + 6 reports |
-| 8 | #153 | BP35 wire-ups: bindContactOnIdentification + transfer-finalize |
-| 9 | #154 | BP35 UI: contact-create form with source picker |
-| 10 | #155 | BP40 UI: LineItemsPanel + Components bulk view |
-| 11 | #156 | BP39 ↔ BP40: render non-cruise line items on itinerary (§40.6) |
-| 12 | #157 | BP39 UI: ItineraryEditor + ResourcesEditor |
-| 13 | #158 | BP36 UI: Reports dashboard (landing + 6 report pages) |
+Ran three parallel Agent audits over the BP34–BP40 codebase (auth boundary, tenant isolation, Stripe/payments) plus a fourth on the RAG service. Documented findings and fixed every HIGH-confidence one.
 
-### Issues encountered + resolutions (worth remembering)
+### Security PRs landed on `dev`
 
-- **`packages/config/eslint-rules/no-direct-service-role-import.js`** conflicts on every rebase — each BP appends to the same allow-list. Resolution: keep both lists.
-- **`apps/main/src/app/api/inngest/route.ts`** conflicts on every rebase — each BP adds an Inngest function import + registration. Resolution: keep both.
-- **`db/rls-exceptions.sql` ≠ `db/rls-exceptions.txt`** — the `.sql` file is read by the Playwright RLS-coverage step; the `.txt` file is read only by the migration lint. BP34 updated only `.txt`. Cherry-picked gmail entries to `.sql` to unblock CI on downstream PRs.
-- **Storage-bucket migrations** need `IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='storage') THEN ... END IF;` because the CI test DB lacks the `storage` schema.
-- **`SECURITY DEFINER` migrations** must use `SET search_path = ''` (empty) + `REVOKE EXECUTE ... FROM public` (not `REVOKE ALL`).
-- **RLS lint scans only static `CREATE POLICY` blocks** — no `DO $$ ... EXECUTE format() $$;` loops.
-- **Stacked PRs (#145, #146, #149) auto-closed** when their base feature branches got deleted on merge. Re-created against `dev` as #156, #158, #157.
-- **Cross-tenant Inngest probe** flags any handler that imports both `tenantClient` and `createServiceRoleClient`. BP35 wire-ups added a service-role call inside `transfer-finalize` next to the existing tenantClient work. Added `// INNGEST-PROBE-ALLOW-MIXED:` comment with justification.
-- **Next.js 14 `useSearchParams()`** must be wrapped in `<Suspense>` for static prerender. BP36 UI's 6 report pages all needed wrapping.
-- **Flaky test:** `runSupervisor — sampling integration (§10.5a)` 30s timeout on `simulates ~1% sampling rate for clean passes over 1000 runs` — pre-existing on `dev`, intermittent. Reran twice on #158 before passing; #156 also retried once. Filed as follow-up #148-style work.
+| PR | What |
+|---|---|
+| #162 | CodeQL workflow — continuous TS/JS security analysis (security-extended query set), runs on every PR + weekly cron |
+| #163 | Stripe webhook column-name production bug (`raw_payload` → `raw_event`) — schema mismatch meant every insert was failing with 500. Not yet exposed in prod (pre-customer) so no recovery needed |
+| #164 | Stop-the-world admin gate at middleware + request-headers propagation fix + Tier-2 bypass hardened with VERCEL_ENV check |
+| #165 | `tenantClient` fail-closed: throws `UnregisteredTenantTableError` for tables in neither set, plus 49 tenant-scoped tables registered, plus new `PLATFORM_READABLE_TABLES` set for cross-tenant reads with caller self-scoping |
+
+### Audit findings status
+
+| # | Source | Severity | Status |
+|---|---|---|---|
+| Auth #1 | Auth boundary | HIGH (10) | Fixed by #164 (stop-the-world bearer gate) — needs real §26 admin session gate to restore admin UI |
+| Auth #2 | Auth boundary | HIGH (9) | Fixed by #164 (request-headers propagation) |
+| Auth #3 | Auth boundary | MEDIUM | Hardened by #164 (VERCEL_ENV check on Tier-2 bypass) |
+| Auth #4 | Auth boundary | MEDIUM | Open — CCPA cross-tenant delete |
+| Auth #5 | Auth boundary | MEDIUM | Open — `assertPermission` is a stub |
+| Auth #6 | Auth boundary | LOW | Open — `withPlatformAdminAudit` reason-detail bypass |
+| Tenant #1 | Tenant isolation | HIGH (10) | Fixed by #165 (fail-closed proxy) |
+| Tenant #2 | Tenant isolation | HIGH (10) | Fixed by #165 (tasks now properly scoped) |
+| Tenant #3 | Tenant isolation | HIGH (10) | Fixed by #165 (task mutations now scoped) |
+| Tenant #4 | Tenant isolation | HIGH (10) | Fixed by #164 (admin gate) |
+| Tenant #5 | Tenant isolation | HIGH (7) | Fixed by #164 (request-headers propagation) |
+| Stripe audit | Payments | (no HIGH findings) | All defense-in-depth observations noted in audit; raw_payload bug fixed in #163 |
+| RAG audit | (in flight) | TBD | Agent running in background |
+
+## Conflict + bug patterns observed during the cascade
+
+Worth remembering for future merge waves:
+
+1. **`packages/config/eslint-rules/no-direct-service-role-import.js`** conflicts on every rebase — keep both lists.
+2. **`apps/main/src/app/api/inngest/route.ts`** conflicts on every rebase — keep both function registrations.
+3. **`db/rls-exceptions.sql` ≠ `db/rls-exceptions.txt`** — RLS coverage check reads `.sql`, migration lint reads `.txt`. Keep in sync.
+4. **Storage-bucket migrations** need `IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='storage') THEN ... END IF;` because CI's DB lacks the storage schema.
+5. **`SECURITY DEFINER` migrations** must use `SET search_path = ''` + `REVOKE EXECUTE ... FROM public`.
+6. **RLS coverage lint** scans only static `CREATE POLICY` blocks — no `DO $$ ... EXECUTE format() $$;` loops.
+7. **Helper functions that take `svc` as a parameter** can route through `tenantClient` — every `.from(table)` they make must have the table in `TENANT_SCOPED_TABLES` or `PLATFORM_READABLE_TABLES`. Easy to miss in static grep.
 
 ## In flight
 
-**Nothing in flight.** Working tree is on `dev`, clean and synced.
+- **RAG-side security audit** — Agent running in background.
+- **Auth #4 (CCPA tenant scope), §26 admin session gate, Auth #5 (RBAC)** — to be implemented this session.
 
 ## Next step
 
-1. Decide on stale PRs (do NOT close without user OK):
-   - **#140** chore: SESSION.md + MEMORY.md overnight queue — superseded by this update; recommend close.
-   - **#102, #78, #76** older SESSION.md snapshot PRs — recommend close.
-   - **#132** docs(specs) check-in for sections 34-40 — specs are already in dev; recommend close.
-   - **#52** BP14 Host agency abstraction — much older, never finalized; recommend defer or close.
-   - **#11, #10, #9, #30, #55, #111** Dependabot PRs — separate cadence, evaluate as needed.
-   - **chore/session-checkpoint-merge-cascade** local branch was created mid-session (couldn't push directly to dev); it was a placeholder for this very SESSION.md. Safe to delete once this update lands.
-2. Address follow-ups captured during the cascade:
-   - **`tests/e2e/quotes.spec.ts:54`** — Playwright spec expects `quote.cruise_line === "Royal Caribbean"` but after BP38 `cruise_line` lives on `quote_options`. Test or response shape needs update. (Playwright is non-required, so not blocking.)
-   - **`apps/main/test/integration/supervisor/run-supervisor.test.ts`** — sampling test 30s timeout is flaky. Either bump per-test timeout or split the 1000-iteration loop.
+Continue the security fix wave:
+1. Fix Auth #4 (CCPA cross-tenant delete) — quick (~30 min).
+2. Build §26 admin session gate — restores admin UI.
+3. Fix Auth #5 (assertPermission RBAC) — biggest impact, touches many routes.
+4. Process RAG audit findings when agent reports.
+5. Merge everything.
 
 ## Blocked on user
 
 Nothing.
 
-## Open questions / observations
+## Open questions
 
-- Required CI gates worked well — Playwright + Vercel failed on every PR but were non-required, so they didn't block. Worth confirming whether Playwright should become required after stabilizing the quotes regression + supervisor flake.
-- Vercel checks failed consistently — looks like rate-limit / external auth issue rather than per-PR problem. Worth investigating before the deploy pipeline matters.
+- After §26 admin gate ships, decide whether the bearer-token path stays (for service-to-service like RAG crons) or moves to a dedicated `/api/internal/*` namespace.
+- After Auth #5 (real RBAC) ships, decide whether to enforce `withPlatformAdminAudit` reason-detail on all destructive reasons (Auth #6) or close the finding as wontfix.
 
 ## Carried forward (deferred work)
 
