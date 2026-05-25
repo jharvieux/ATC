@@ -153,38 +153,74 @@ CREATE INDEX IF NOT EXISTS task_reminders_pending_idx
   WHERE fired_at IS NULL;
 
 -- ── RLS ───────────────────────────────────────────────────────────────
-DO $$
-DECLARE
-  t TEXT;
-BEGIN
-  FOR t IN
-    SELECT unnest(ARRAY[
-      'tasks','task_reminders','task_sequences','task_sequence_steps','task_sequence_runs'
-    ])
-  LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format($pol$
-      CREATE POLICY %I_select ON public.%I FOR SELECT TO authenticated
-      USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
-    $pol$, t, t);
-    EXECUTE format($pol$
-      CREATE POLICY %I_insert ON public.%I FOR INSERT TO authenticated
-      WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
-    $pol$, t, t);
-    EXECUTE format($pol$
-      CREATE POLICY %I_update ON public.%I FOR UPDATE TO authenticated
-      USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
-      WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
-    $pol$, t, t);
-    EXECUTE format($pol$
-      CREATE POLICY %I_delete ON public.%I FOR DELETE TO authenticated
-      USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
-    $pol$, t, t);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO authenticated', t);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO service_role', t);
-  END LOOP;
-END;
-$$;
+-- Static policy declarations (one block per table) so the migration lint
+-- can statically verify §5.1.2 coverage. The shape is identical across all
+-- five task tables — auth_user_in_tenant + tenant_is_active per §5.1.
+
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tasks_select ON public.tasks FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY tasks_insert ON public.tasks FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY tasks_update ON public.tasks FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY tasks_delete ON public.tasks FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.tasks TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.tasks TO service_role;
+
+ALTER TABLE public.task_reminders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY task_reminders_select ON public.task_reminders FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_reminders_insert ON public.task_reminders FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_reminders_update ON public.task_reminders FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_reminders_delete ON public.task_reminders FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_reminders TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_reminders TO service_role;
+
+ALTER TABLE public.task_sequences ENABLE ROW LEVEL SECURITY;
+CREATE POLICY task_sequences_select ON public.task_sequences FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequences_insert ON public.task_sequences FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequences_update ON public.task_sequences FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequences_delete ON public.task_sequences FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_sequences TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_sequences TO service_role;
+
+ALTER TABLE public.task_sequence_steps ENABLE ROW LEVEL SECURITY;
+CREATE POLICY task_sequence_steps_select ON public.task_sequence_steps FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequence_steps_insert ON public.task_sequence_steps FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequence_steps_update ON public.task_sequence_steps FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequence_steps_delete ON public.task_sequence_steps FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_sequence_steps TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_sequence_steps TO service_role;
+
+ALTER TABLE public.task_sequence_runs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY task_sequence_runs_select ON public.task_sequence_runs FOR SELECT TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequence_runs_insert ON public.task_sequence_runs FOR INSERT TO authenticated
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequence_runs_update ON public.task_sequence_runs FOR UPDATE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY task_sequence_runs_delete ON public.task_sequence_runs FOR DELETE TO authenticated
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_sequence_runs TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.task_sequence_runs TO service_role;
 
 -- ── 37.4.5 default sequence seeder ─────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.seed_default_task_sequences_for_tenant(p_tenant_id UUID)
