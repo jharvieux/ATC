@@ -49,6 +49,20 @@ export interface HostCallContext {
   tenant_id: string;
   user_id: string | null;
   correlation_id: string;
+  /**
+   * Decrypted per-tenant credentials for the adapter to use. Populated by
+   * `selectAdapterForCall` (apps/main/src/lib/host-adapters/select-adapter.ts)
+   * for tenants that have a verified host config. Undefined for tenants on
+   * the platform-default adapter or the fallback-email adapter.
+   *
+   * Adapter implementations MUST read credentials from here at call time
+   * rather than holding them in instance state. The 2026-05-25 audit
+   * (pass 2, Finding 8) flagged that the prior pattern (cache adapter
+   * instance constructed with config, decrypt+discard tenant creds on each
+   * call) meant the singleton adapter ran with platform-default creds for
+   * every tenant.
+   */
+  credentials?: Record<string, unknown>;
 }
 
 export interface InventorySearchRequest {

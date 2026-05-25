@@ -8,7 +8,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { selectAdapter } from "@/lib/host-adapters/select-adapter";
+import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import type { ModificationRequest } from "@atc/shared-types";
 
 export async function POST(
@@ -46,10 +46,14 @@ export async function POST(
       .eq("id", ctx.tenant_id)
       .single();
 
-    const adapter = await selectAdapter({
-      id: ctx.tenant_id,
-      prong: (tenantRow as { prong: string } | null)?.prong ?? "byo_host",
-    });
+    const correlation_id = crypto.randomUUID();
+    const { adapter, ctx: hostCtx } = await selectAdapterForCall(
+      {
+        id: ctx.tenant_id,
+        prong: (tenantRow as { prong: string } | null)?.prong ?? "byo_host",
+      },
+      { tenant_id: ctx.tenant_id, user_id: null, correlation_id },
+    );
 
     // Check modification capability
     if (!adapter.capabilities.supports_modification) {
@@ -68,7 +72,7 @@ export async function POST(
     const result = await adapter.modifyBooking(
       bookingRow.provider_booking_ref ?? bookingId,
       modReq,
-      { tenant_id: ctx.tenant_id, user_id: null, correlation_id: crypto.randomUUID() },
+      hostCtx,
     );
 
     if (!result.ok) {

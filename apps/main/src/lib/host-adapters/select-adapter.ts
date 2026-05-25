@@ -68,9 +68,11 @@ function makeCredentialFailedAdapter(adapterDisplayName: string): HostAgencyClie
   };
 }
 
-export async function selectAdapter(
+// Internal: select adapter + return decrypted credentials separately so the
+// caller can either build a ctx or just use the adapter (the old behavior).
+async function selectAdapterAndCredentials(
   tenant: TenantForAdapterSelection,
-): Promise<HostAgencyClient> {
+): Promise<{ adapter: HostAgencyClient; credentials: Record<string, unknown> | null }> {
   const db = createServiceRoleClient();
 
   // Step 1: tenant has a verified host config
@@ -87,30 +89,62 @@ export async function selectAdapter(
     const decrypted = decryptCredential(row.credentials);
     if (!decrypted.ok) {
       // §13.5.3 / §13.5.4: do NOT fall back — return degraded adapter
-      const adapterName = row.adapter_id;
-      return makeCredentialFailedAdapter(adapterName);
+      return { adapter: makeCredentialFailedAdapter(row.adapter_id), credentials: null };
     }
-    return getAdapter(row.adapter_id);
+    // Coerce to a generic record. Adapter implementations cast/validate.
+    const credentials =
+      typeof decrypted.value === "object" && decrypted.value !== null
+        ? (decrypted.value as Record<string, unknown>)
+        : { value: decrypted.value };
+    return { adapter: await getAdapter(row.adapter_id), credentials };
   }
 
   // Step 2: sub-host → platform default + sub-host credentials
   if (tenant.prong === "sub_host") {
-    return getPlatformDefaultAdapter();
+    return { adapter: await getPlatformDefaultAdapter(), credentials: null };
   }
 
   // Step 3: platform (Prong 1)
   if (tenant.prong === "platform") {
-    return getPlatformDefaultAdapter();
+    return { adapter: await getPlatformDefaultAdapter(), credentials: null };
   }
 
   // Step 4: BYO-host with no config
-  return new FallbackEmailAdapter();
+  return { adapter: new FallbackEmailAdapter(), credentials: null };
 }
 
-// Convenience: same flow but returns the ctx-carrying version of select
+/**
+ * Picks the adapter for this tenant. Credentials are NOT included in the
+ * returned instance state — call `selectAdapterForCall` instead when you
+ * need to invoke methods on the adapter, so the call-time context carries
+ * the right per-tenant credentials.
+ *
+ * Keep this overload for places that only inspect `capabilities` or call
+ * `healthCheck()` (which by contract does not require credentials).
+ */
+export async function selectAdapter(
+  tenant: TenantForAdapterSelection,
+): Promise<HostAgencyClient> {
+  return (await selectAdapterAndCredentials(tenant)).adapter;
+}
+
+/**
+ * Picks the adapter AND builds the HostCallContext to invoke its methods
+ * with. The returned `ctx` carries the decrypted per-tenant credentials
+ * when applicable. Use this whenever you intend to actually call
+ * `searchInventory`, `submitBooking`, etc.
+ *
+ * Audit pass 2, Finding 8: previously credentials were decrypted and
+ * silently discarded; the singleton adapter ran with platform-default
+ * credentials for every tenant. Callers MUST migrate to this form.
+ */
 export async function selectAdapterForCall(
   tenant: TenantForAdapterSelection,
-  _ctx: HostCallContext,
-): Promise<HostAgencyClient> {
-  return selectAdapter(tenant);
+  baseCtx: HostCallContext,
+): Promise<{ adapter: HostAgencyClient; ctx: HostCallContext }> {
+  const { adapter, credentials } = await selectAdapterAndCredentials(tenant);
+  const ctx: HostCallContext = credentials
+    ? { ...baseCtx, credentials }
+    : baseCtx;
+  return { adapter, ctx };
 }

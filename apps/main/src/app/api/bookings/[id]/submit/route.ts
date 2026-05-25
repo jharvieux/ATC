@@ -14,7 +14,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { selectAdapter } from "@/lib/host-adapters/select-adapter";
+import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import { multiplyRate, subtractFee, toRate, type Cents } from "@/lib/money";
 import { writeAuditLog } from "@/lib/audit/write";
 import type { BookingSubmissionRequest } from "@atc/shared-types";
@@ -124,11 +124,15 @@ export async function POST(
       }
     }
 
-    // Step 2: Select adapter and check health
-    const adapter = await selectAdapter({
-      id: ctx.tenant_id,
-      prong: tenant?.prong ?? "byo_host",
-    });
+    // Step 2: Select adapter (with decrypted per-tenant credentials in ctx)
+    // and check health. Audit pass 2, Finding 8: callers must use
+    // selectAdapterForCall so the ctx passed to adapter methods carries
+    // the tenant's actual credentials.
+    const correlation_id = crypto.randomUUID();
+    const { adapter, ctx: hostCtx } = await selectAdapterForCall(
+      { id: ctx.tenant_id, prong: tenant?.prong ?? "byo_host" },
+      { tenant_id: ctx.tenant_id, user_id: null, correlation_id },
+    );
 
     const health = await adapter.healthCheck();
 
@@ -330,11 +334,7 @@ export async function POST(
         // CONFIRMED quote: submit at locked price.
         submitReq = { ...submitReqBase, total_amount_cents: quote.locked_price_cents };
       } else if (quote.price_kind === "estimate" && adapter.getCurrentPrice) {
-        const priceResult = await adapter.getCurrentPrice(submitReqBase, {
-          tenant_id: ctx.tenant_id,
-          user_id: null,
-          correlation_id: crypto.randomUUID(),
-        });
+        const priceResult = await adapter.getCurrentPrice(submitReqBase, hostCtx);
         if (priceResult.ok) {
           const hostCents = priceResult.value.total_cents;
           const estimateCents = quote.estimate_price_cents ?? submitReqBase.total_amount_cents;
@@ -379,11 +379,7 @@ export async function POST(
       }
     }
 
-    const submitResult = await adapter.submitBooking(submitReq, {
-      tenant_id: ctx.tenant_id,
-      user_id: null,
-      correlation_id: crypto.randomUUID(),
-    });
+    const submitResult = await adapter.submitBooking(submitReq, hostCtx);
 
     if (!submitResult.ok) {
       // Leave booking in draft; return the adapter error

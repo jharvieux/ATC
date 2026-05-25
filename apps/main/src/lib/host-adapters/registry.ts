@@ -1,7 +1,17 @@
-// §13.3 — Adapter registry: loads, caches, and lists HostAgencyClient instances.
+// §13.3 — Adapter registry: loads and lists HostAgencyClient instances.
 //
-// Adapter instances are stateless after construction; the cache avoids
-// re-importing and re-constructing on every request.
+// Adapter instances are constructed fresh per call. Node's module cache
+// handles the cost of `await import(...)`; constructor cost is negligible
+// for the adapters we ship.
+//
+// PRIOR DESIGN (removed 2026-05-25):
+//   A `Map<adapter_id, instance>` cache held a singleton per adapter.
+//   Audit pass 2 (Finding 8) showed that the singleton shared state
+//   across tenants — if any adapter implementation kept mutable state
+//   (commission session tokens, retry counters), tenant A's call could
+//   observe tenant B's state. Dropped the cache; adapters now MUST be
+//   stateless and read per-tenant credentials from HostCallContext at
+//   call time.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import type { HostAgencyClient } from "@atc/shared-types";
@@ -16,13 +26,7 @@ type AdapterRow = {
   is_default: boolean;
 };
 
-const adapterCache = new Map<string, HostAgencyClient>();
-
 export async function getAdapter(adapter_id: string): Promise<HostAgencyClient> {
-  if (adapterCache.has(adapter_id)) {
-    return adapterCache.get(adapter_id)!;
-  }
-
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("host_adapters")
@@ -60,9 +64,11 @@ export async function getAdapter(adapter_id: string): Promise<HostAgencyClient> 
     );
   }
 
-  const instance = new AdapterClass(row.config) as HostAgencyClient;
-  adapterCache.set(adapter_id, instance);
-  return instance;
+  // Constructor receives the PLATFORM config (the adapter row's `config`
+  // column), which carries non-secret defaults (endpoints, timeouts).
+  // PER-TENANT credentials are NOT passed at construction time — adapters
+  // read them from HostCallContext.credentials at call time.
+  return new AdapterClass(row.config) as HostAgencyClient;
 }
 
 export async function listActiveAdapters(): Promise<AdapterRow[]> {

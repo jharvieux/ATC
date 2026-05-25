@@ -12,7 +12,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { selectAdapter } from "@/lib/host-adapters/select-adapter";
+import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import { writeAuditLog } from "@/lib/audit/write";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 
@@ -83,17 +83,15 @@ export const reconcileStatementAutomated = inngest.createFunction(
 
     for (const tenant of tenants as TenantRow[]) {
       try {
-        const adapter = await selectAdapter({ id: tenant.id, prong: tenant.tenant_type });
+        const correlation_id = crypto.randomUUID();
+        const { adapter, ctx } = await selectAdapterForCall(
+          { id: tenant.id, prong: tenant.tenant_type },
+          { tenant_id: tenant.id, user_id: null, correlation_id },
+        );
 
         if (!adapter.capabilities.supports_commission_api) {
           continue;
         }
-
-        const ctx = {
-          tenant_id: tenant.id,
-          user_id: null,
-          correlation_id: crypto.randomUUID(),
-        };
 
         const result = await adapter.fetchCommissionStatement(
           { period_start: periodStart, period_end: periodEnd, format: "json" },
