@@ -251,8 +251,7 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/purge-parsed-documents.ts",
   // BP34: Gmail Pub/Sub webhook (§34.2) — public webhook, no user session.
   "/app/api/webhooks/gmailpubsub/route.ts",
-  // BP34: import intake routes — user-authenticated but helpers (promoteImport,
-  // statement-matching) write cross-table under ctx.tenant_id from assertPermission.
+  // BP34: import intake routes — user-authenticated but helpers write cross-table.
   "/app/api/imports/manual/route.ts",
   "/app/api/imports/upload/route.ts",
   "/app/api/imports/review/route.ts",
@@ -261,13 +260,14 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/imports/source-file/route.ts",
   // BP34 §34.2.4: Gmail integration health endpoint — reads gmail_oauth_tokens.
   "/app/api/integrations/gmail/health/route.ts",
-  // BP37 §37.3 — task reminders fire cron (Inngest, no user session).
+  // BP37 task system.
   "/inngest/task-reminders-fire.ts",
-  // BP37 §37.4.2 — sequence step fire (Inngest event consumer).
   "/inngest/task-sequence-step-fire.ts",
-  // BP37 §37.7 — tasks list/create route uses service-role for cross-table
-  // reminder inserts under the user's tenant context.
   "/app/api/tasks/route.ts",
+  // BP38 quote options.
+  "/app/api/quotes/[id]/options/route.ts",
+  "/app/api/quote-options/[id]/select/route.ts",
+  "/app/api/public/quote/[token]/select/route.ts",
 ];
 
 function endsWithAllowed(filename) {
