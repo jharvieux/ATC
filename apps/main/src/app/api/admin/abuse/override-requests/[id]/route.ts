@@ -7,10 +7,16 @@
 //   to the request and flips status to approved.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
   const { id } = await ctx.params;
   if (!id) return Response.json({ error: "id required" }, { status: 400 });
 

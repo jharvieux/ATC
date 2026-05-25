@@ -60,6 +60,7 @@
 -- public.pending_rag_sync (rls_enabled)
 -- public.persona_addendums (rls_enabled)
 -- public.pipeline_stages (rls_enabled)
+-- public.platform_admins (rls_enabled)
 -- public.platform_revenue (rls_enabled)
 -- public.platform_settings (rls_enabled)
 -- public.port_info_chunks (rls_enabled)
@@ -904,6 +905,21 @@ CREATE POLICY "pipeline_stages_update_policy" ON public.pipeline_stages
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.platform_admins
+CREATE POLICY "platform_admins_delete_deny" ON public.platform_admins
+  FOR DELETE TO authenticated
+  USING (false);
+CREATE POLICY "platform_admins_insert_deny" ON public.platform_admins
+  FOR INSERT TO authenticated
+  WITH CHECK (false);
+CREATE POLICY "platform_admins_select_deny" ON public.platform_admins
+  FOR SELECT TO authenticated
+  USING (false);
+CREATE POLICY "platform_admins_update_deny" ON public.platform_admins
+  FOR UPDATE TO authenticated
+  USING (false)
+  WITH CHECK (false);
 
 -- TABLE: public.platform_revenue
 CREATE POLICY "platform_revenue_delete_policy" ON public.platform_revenue

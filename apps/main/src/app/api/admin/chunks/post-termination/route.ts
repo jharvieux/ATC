@@ -6,6 +6,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface ReviewActionBody {
   chunk_id: string;
@@ -13,8 +14,13 @@ interface ReviewActionBody {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
@@ -64,8 +70,13 @@ export async function GET(req: Request): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "x-admin-user-id required" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   let body: ReviewActionBody;
   try {

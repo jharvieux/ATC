@@ -1,10 +1,16 @@
 // BP31 §32.6.5 — Cross-tenant admin view of bug submissions.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function GET(req: Request): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
+  }
 
   try {
     const items = await withPlatformAdminAudit(

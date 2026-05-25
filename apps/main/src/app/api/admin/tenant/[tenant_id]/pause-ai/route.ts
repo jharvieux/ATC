@@ -11,14 +11,18 @@
 // "ai_kill_switch_tenant_pause".
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function POST(
   req: Request,
   { params }: { params: { tenant_id: string } },
 ): Promise<Response> {
-  const adminUserId = req.headers.get("x-admin-user-id");
-  if (!adminUserId) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
+  let adminUserId: string;
+  try {
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+  } catch (e) {
+    if (e instanceof PlatformAdminError) return e.toResponse();
+    throw e;
   }
 
   const { tenant_id } = params;
