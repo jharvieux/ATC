@@ -65,6 +65,29 @@ export default async function PublicItineraryPage({ params }: PageProps): Promis
 
   if (!booking) notFound();
 
+  // §40.6 — non-cruise line items. Soft-fail when BP40 table absent.
+  type ItinLi = {
+    id: string;
+    item_type: "flight" | "hotel" | "transfer" | "excursion" | "insurance" | "other";
+    description: string;
+    supplier_name: string | null;
+    start_date: string | null;
+  };
+  let lineItems: ItinLi[] = [];
+  const { data: liData, error: liErr } = await svc
+    .from("booking_line_items")
+    .select("id, item_type, description, supplier_name, start_date, include_in_itinerary")
+    .eq("booking_id", row.booking_id);
+  if (liErr && liErr.code !== "42P01") {
+    console.warn("[public-itinerary] booking_line_items load failed:", liErr.message);
+  } else if (liData) {
+    lineItems = (liData as Array<ItinLi & { include_in_itinerary: boolean }>)
+      .filter((it) => it.include_in_itinerary)
+      .map(({ id, item_type, description, supplier_name, start_date }) => ({
+        id, item_type, description, supplier_name, start_date,
+      }));
+  }
+
   // Audit who viewed.
   const h = await headers();
   await writeAuditLog({
@@ -102,6 +125,24 @@ export default async function PublicItineraryPage({ params }: PageProps): Promis
           <dd style={{ margin: 0 }}>{booking.cabin_category ?? "—"}</dd>
         </dl>
       </section>
+
+      {lineItems.length > 0 && (
+        <section style={{ marginTop: 32 }}>
+          <h2 style={{ color: "#1f4e79" }}>Trip components</h2>
+          <ul style={{ paddingLeft: 18 }}>
+            {lineItems.map((it) => (
+              <li key={it.id} style={{ marginBottom: 6 }}>
+                <strong style={{ textTransform: "capitalize" }}>{it.item_type}</strong>
+                {it.start_date ? ` · ${it.start_date}` : ""} —{" "}
+                <span>{it.description}</span>
+                {it.supplier_name && (
+                  <span style={{ color: "#888" }}> · {it.supplier_name}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {row.agent_notes && (
         <section style={{ marginTop: 32 }}>

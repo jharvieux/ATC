@@ -7,6 +7,17 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 
+// §40.6 — non-cruise line items that should be rendered on the itinerary.
+// Type intentionally narrow; details JSON is rendered as-is when present.
+export interface ItineraryLineItem {
+  id: string;
+  item_type: "flight" | "hotel" | "transfer" | "excursion" | "insurance" | "other";
+  description: string;
+  supplier_name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+}
+
 export interface ItineraryPdfData {
   tenant: { display_name: string };
   cruise_line: string | null;
@@ -20,6 +31,9 @@ export interface ItineraryPdfData {
   agent: { name: string | null; email: string | null; phone: string | null };
   days?: Array<{ day_number: number; port_name: string | null; arrival_time: string | null; departure_time: string | null; description: string | null }>;
   whats_included?: string[];
+  // §40.6 — partitioned by item_type for layout. Caller filters by
+  // include_in_itinerary before passing.
+  line_items?: ItineraryLineItem[];
 }
 
 const styles = StyleSheet.create({
@@ -70,6 +84,10 @@ function ItineraryDocument({ data }: { data: ItineraryPdfData }): JSX.Element {
           </>
         )}
 
+        {data.line_items && data.line_items.length > 0 && (
+          <ItineraryLineItemsSection items={data.line_items} sailing_date={data.sailing_date} />
+        )}
+
         {data.days && data.days.length > 0 && (
           <>
             <Text style={styles.h2}>Day-by-day</Text>
@@ -104,6 +122,99 @@ function ItineraryDocument({ data }: { data: ItineraryPdfData }): JSX.Element {
       </Page>
     </Document>
   );
+}
+
+function ItineraryLineItemsSection(props: {
+  items: ItineraryLineItem[];
+  sailing_date: string | null;
+}): JSX.Element {
+  // §40.6 layout: "Getting there" (pre-sail flights/hotels/transfers) →
+  // "Heading home" (post-sail) → in-cruise items (excursions interleave
+  // with day-by-day above; transfers/other go in their own section).
+  const sailMs = props.sailing_date ? Date.parse(props.sailing_date) : null;
+  const isPreSail = (it: ItineraryLineItem) =>
+    sailMs != null && it.start_date != null && Date.parse(it.start_date) < sailMs;
+  const isPostSail = (it: ItineraryLineItem) =>
+    sailMs != null && it.start_date != null && Date.parse(it.start_date) > sailMs;
+
+  const gettingThere = props.items
+    .filter((it) => ["flight", "hotel", "transfer"].includes(it.item_type) && (sailMs == null || isPreSail(it)))
+    .sort(byStartDate);
+  const headingHome = props.items
+    .filter((it) => ["flight", "hotel", "transfer"].includes(it.item_type) && sailMs != null && isPostSail(it))
+    .sort(byStartDate);
+  const other = props.items.filter((it) => !["flight", "hotel", "transfer"].includes(it.item_type));
+
+  return (
+    <>
+      {gettingThere.length > 0 && (
+        <>
+          <Text style={styles.h2}>Getting there</Text>
+          {gettingThere.map((it) => (
+            <View key={it.id} style={styles.dayBlock}>
+              <Text style={styles.dayHeader}>
+                {labelForType(it.item_type)} · {it.start_date ?? "TBD"}
+              </Text>
+              <Text>{it.description}</Text>
+              {it.supplier_name && (
+                <Text style={{ color: "#666", fontSize: 10, marginTop: 1 }}>{it.supplier_name}</Text>
+              )}
+            </View>
+          ))}
+        </>
+      )}
+      {headingHome.length > 0 && (
+        <>
+          <Text style={styles.h2}>Heading home</Text>
+          {headingHome.map((it) => (
+            <View key={it.id} style={styles.dayBlock}>
+              <Text style={styles.dayHeader}>
+                {labelForType(it.item_type)} · {it.start_date ?? "TBD"}
+              </Text>
+              <Text>{it.description}</Text>
+              {it.supplier_name && (
+                <Text style={{ color: "#666", fontSize: 10, marginTop: 1 }}>{it.supplier_name}</Text>
+              )}
+            </View>
+          ))}
+        </>
+      )}
+      {other.length > 0 && (
+        <>
+          <Text style={styles.h2}>Other trip components</Text>
+          {other.map((it) => (
+            <View key={it.id} style={styles.dayBlock}>
+              <Text style={styles.dayHeader}>
+                {labelForType(it.item_type)}
+                {it.start_date ? ` · ${it.start_date}` : ""}
+              </Text>
+              <Text>{it.description}</Text>
+              {it.supplier_name && (
+                <Text style={{ color: "#666", fontSize: 10, marginTop: 1 }}>{it.supplier_name}</Text>
+              )}
+            </View>
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
+function byStartDate(a: ItineraryLineItem, b: ItineraryLineItem): number {
+  const aMs = a.start_date ? Date.parse(a.start_date) : Number.POSITIVE_INFINITY;
+  const bMs = b.start_date ? Date.parse(b.start_date) : Number.POSITIVE_INFINITY;
+  return aMs - bMs;
+}
+
+function labelForType(t: ItineraryLineItem["item_type"]): string {
+  switch (t) {
+    case "flight": return "Flight";
+    case "hotel": return "Hotel";
+    case "transfer": return "Transfer";
+    case "excursion": return "Excursion";
+    case "insurance": return "Insurance";
+    case "other": return "Trip component";
+  }
 }
 
 export async function renderItineraryPdf(data: ItineraryPdfData): Promise<Buffer> {
