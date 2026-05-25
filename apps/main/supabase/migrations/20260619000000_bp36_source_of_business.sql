@@ -133,12 +133,12 @@ CREATE OR REPLACE FUNCTION public.refresh_attribution_rollup()
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
 BEGIN
   REFRESH MATERIALIZED VIEW CONCURRENTLY public.attribution_rollup;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.refresh_attribution_rollup() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.refresh_attribution_rollup() FROM public;
 GRANT EXECUTE ON FUNCTION public.refresh_attribution_rollup() TO service_role;
