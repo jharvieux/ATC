@@ -95,15 +95,25 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.trip_resources TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.trip_resources TO service_role;
 
 -- ── Storage bucket for itinerary PDFs ─────────────────────────────────
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'trip-itinerary-pdfs',
-  'trip-itinerary-pdfs',
-  FALSE,
-  20 * 1024 * 1024,
-  ARRAY['application/pdf']::TEXT[]
-)
-ON CONFLICT (id) DO NOTHING;
+-- Wrapped in pg_namespace guard so CI/local Postgres without the Supabase
+-- storage extension skip cleanly. Production Supabase always has it.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'storage') THEN
+    EXECUTE $sql$
+      INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+      VALUES (
+        'trip-itinerary-pdfs',
+        'trip-itinerary-pdfs',
+        FALSE,
+        20 * 1024 * 1024,
+        ARRAY['application/pdf']::TEXT[]
+      )
+      ON CONFLICT (id) DO NOTHING
+    $sql$;
+  END IF;
+END;
+$$;
 
 -- The public itinerary endpoint serves PDFs via signed URLs from the
 -- application, not via direct bucket policies. No anon read policy needed.
