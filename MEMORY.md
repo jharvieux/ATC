@@ -4,6 +4,48 @@ Newest entries on top.
 
 ---
 
+## D-083 — 2026-05-25 — Morning Q&A executed: 11 follow-up + UI PRs
+
+User answered the 11 morning questions from D-082; this entry captures what was built in response.
+
+**In-PR folds (changes to the original 8 PRs):**
+- Q6: CSV export wired into all 6 BP36 reports + shared respond helper + 8 unit tests (in #135)
+- Q8: Task email reminder channel wired into BP23 sendEmail with new TaskReminder.tsx template (in #136)
+- Q9: Customer-side tokenized quote-option selection via /api/public/quote/:token/select; quotes.customer_access_token added + minted on send (in #137, +1 migration)
+
+**New stacked follow-up PRs:**
+- #141 — BP34 PDF OCR via already-installed pdf-parse (stacked on #133)
+- #142 — BP34 Gmail OAuth chain: connect/callback/disconnect + 7-day watch renewal cron (stacked on #133)
+- #143 — BP37 six system task generators with shared upsertSystemTask + UNIQUE-index dedupe (stacked on #136)
+- #144 — BP35 bindContactOnIdentification helper + transfer-finalize wire-up (stacked on #134)
+- #145 — BP39+BP40 itinerary line-items integration (stacked on #138, soft-fails when BP40 absent)
+
+**Six UI PRs (Q11):**
+- #146 — BP36 Reports dashboard (landing + 6 report pages + ReportShell)
+- #147 — BP37 My Tasks dashboard + TaskListInline component
+- #148 — BP38 multi-option quote builder side-by-side editor
+- #149 — BP39 ItineraryEditor + ResourcesEditor components
+- #150 — BP40 LineItemsPanel + Components bulk view
+- #151 — BP35 contact-create form with required source picker
+
+**Decisions captured:**
+- Q4: `pdf-parse` was already installed; no new dep needed. Did NOT install pdfjs-dist.
+- Q5: Chat-start identification doesn't exist as an endpoint yet; only transfer-finalize had a real call site. Wire-up to signup-complete dropped as header-comment recipe (route is still 501 stub).
+- Q7: 5 spec-listed generators + 1 BP34 commission-rate-missing extra (skipping virus-scan one per user direction). soft-fails when BP34 import_queue absent.
+- Q10: Stacked on BP39; reads from BP40 table with 42P01 soft-fail so it works regardless of merge order.
+- All UI used the existing tenant CRM Tailwind pattern from contacts/page.tsx; no design system additions.
+
+**Total state:** 19 PRs open, all ready-for-review. Cumulative new code across the full overnight: ~12,500 LOC, ~150 unit tests, typecheck clean across every commit.
+
+**Rejected this round:**
+- Customer-facing side-by-side quote display page (Q9 only added the SELECTION endpoint; the display page is a styling pass deferred)
+- Sequence-management UI (Q11 implicit deferral — sequence CRUD endpoints are themselves Phase B)
+- Excursion day-by-day interleave on itinerary (depends on day-by-day section itself which is also future work tied to §33.5 RAG)
+
+**Related artifacts:** PRs #141–#151 on GitHub; all branches pushed; SESSION.md morning reminder note for Gmail GCP setup (Q3).
+
+---
+
 ## D-082 — 2026-05-25 — Overnight queue: BP34–BP40 all open as draft PRs
 
 **Decision:** Shipped seven feature BPs as draft PRs through the night per user direction to continue without interruption + batch questions at end + move to next unblocked piece on blockers.
