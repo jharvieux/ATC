@@ -16,6 +16,7 @@
   "concurrency": 4,
   "disableTypeChecks": "{apps,packages,tests}/**/*.{ts,tsx}",
   "ignoreStatic": true,
+  "_comment_mutate": "Excluded files: env.ts in both apps is read+regex-parsed by BP29 §28 schema-discipline meta-tests; Stryker's mutant brackets break that parsing. Exclude similar self-introspected files here if you add more such tests.",
   "mutate": [
     "apps/main/src/lib/**/*.ts",
     "apps/main/src/inngest/**/*.ts",
@@ -29,7 +30,9 @@
     "!**/*.spec.ts",
     "!**/__tests__/**",
     "!**/types.ts",
-    "!**/*.d.ts"
+    "!**/*.d.ts",
+    "!apps/main/src/lib/env.ts",
+    "!apps/rag/src/lib/env.ts"
   ],
   "thresholds": {
     "high": 80,
