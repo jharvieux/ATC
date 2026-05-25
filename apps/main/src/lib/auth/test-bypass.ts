@@ -7,10 +7,15 @@
 //   way to assert a known user identity without GoTrue.
 //
 // Threat model:
-//   This MUST never be live in production. Three locks:
+//   This MUST never be live in production. Four locks:
 //     1. NODE_ENV must NOT be "production".
-//     2. TEST_AUTH_BYPASS_TOKEN env var must be set (the secret).
-//     3. The request's Authorization header must be exactly
+//     2. VERCEL_ENV must NOT be "production". Belt-and-suspenders against
+//        an env misconfiguration that ships preview-tier credentials with
+//        a "development" NODE_ENV onto a prod host. Audit pass 2,
+//        Finding 7 flagged that the middleware-side bypass got this check
+//        but the assertPermission-side path (this file) did not.
+//     3. TEST_AUTH_BYPASS_TOKEN env var must be set (the secret).
+//     4. The request's Authorization header must be exactly
 //        `Bearer ${TEST_AUTH_BYPASS_TOKEN}`.
 //   Any one of these missing → tryTestBypass returns null and callers
 //   fall through to the real Supabase auth path.
@@ -26,6 +31,7 @@ export interface TestBypassIdentity {
 
 export function tryTestBypass(req: Request): TestBypassIdentity | null {
   if (process.env.NODE_ENV === "production") return null;
+  if (process.env.VERCEL_ENV === "production") return null;
   const expected = process.env.TEST_AUTH_BYPASS_TOKEN;
   if (!expected) return null;
   const authUserId = process.env.TEST_AUTH_BYPASS_USER_ID;
