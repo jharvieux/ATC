@@ -136,6 +136,23 @@ async function promoteBooking(
   getAdapterRate: ((cruise_line: string | null) => Promise<number | null>) | undefined,
   acceptingUserId: string | null | undefined,
 ): Promise<PromoteResult> {
+  // §34.7.4 / §34.9 — sub-host tenants cannot import bookings (the
+  // platform is host-of-record for sub-hosts, so all sub-host bookings
+  // flow through the platform's booking flow by definition). Block here
+  // before any writes happen.
+  const { data: tenantData } = await svc
+    .from("tenants")
+    .select("tenant_type")
+    .eq("id", row.tenant_id)
+    .maybeSingle();
+  const tenantType = (tenantData as { tenant_type?: string } | null)?.tenant_type;
+  if (tenantType && tenantType !== "byo_host") {
+    return {
+      ok: false,
+      error: `booking_import_not_permitted_for_tenant_type:${tenantType}`,
+    };
+  }
+
   // §34.7.3 rate resolution. If null → can't promote; row stays in review.
   const rate = await resolveCommissionRate({
     tenant_id: row.tenant_id,
