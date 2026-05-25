@@ -1,13 +1,18 @@
-// Spec ref: §7.9 / §26.3 (assertPermission canonical contract)
+// Spec ref: §7.9 / §26.3 (assertPermission canonical contract) + §26.2 RBAC
 //
-// assertPermission verifies that the caller is an authenticated, active member
-// of the resolved tenant. For sensitive routes (§17.7 / §26.3 re-auth list)
-// it also asserts the JWT's `auth_time` claim is ≤ 4 hours old; on a stale
-// auth_time it throws AuthReauthRequired with a structured shape so the
-// client can redirect to /auth/reauth?return=...
+// assertPermission verifies three things:
+//   1. The caller is an authenticated, active member of the resolved tenant.
+//   2. For sensitive routes (§17.7 / §26.3 re-auth list), the JWT's
+//      `auth_time` claim is ≤ 4 hours old. Otherwise throws AuthReauthRequired
+//      with a structured shape so the client can redirect to /auth/reauth?return=...
+//   3. The caller's role grants the requested (resource, action) per the
+//      permission matrix in ./permission-grants.ts. Otherwise throws
+//      AuthForbidden (403).
 //
-// Full RBAC matrix is later spec work; for now we log resource+action and
-// proceed once membership + freshness pass.
+// Prior to 2026-05-25, step 3 was a stub (audit Finding 5, Medium severity):
+// the function logged the pair and proceeded. Every "permission-gated"
+// mutating route was therefore open to any active tenant member, regardless
+// of role.
 
 import { createClient } from "@supabase/supabase-js";
 import { tenantContextFromRequest } from "@/lib/db/factories";
@@ -17,13 +22,30 @@ import {
   SENSITIVE_SESSION_MAX_AGE_MS,
 } from "./sensitive-routes";
 import { tryTestBypass } from "./test-bypass";
+import { isPermitted, type UserRole } from "./permission-grants";
 
 export type User = {
   id: string;
   auth_user_id: string;
   tenant_id: string;
   status: string;
+  role: UserRole;
 };
+
+/**
+ * Structured forbidden error — caller's role lacks the requested grant.
+ * Route handlers should catch this and return a 403.
+ */
+export class AuthForbidden extends Error {
+  readonly code = "forbidden" as const;
+  constructor(
+    public readonly resource: string,
+    public readonly action: string,
+    public readonly role: string,
+  ) {
+    super(`Role '${role}' is not permitted to ${action} ${resource}.`);
+  }
+}
 
 /**
  * Structured re-auth required error. Route handlers should catch this and
@@ -47,9 +69,6 @@ export async function assertPermission(
   req: Request,
   opts: AssertPermissionOpts,
 ): Promise<{ ctx: TenantContext; user: User }> {
-  // TODO(rbac): evaluate against the permission matrix when §26.2 RBAC lands.
-  console.log("[assertPermission] resource=%s action=%s", opts.resource, opts.action);
-
   // Tier-2 E2E auth bypass — only fires when NODE_ENV !== production AND
   // TEST_AUTH_BYPASS_TOKEN is set AND the request carries the matching
   // Bearer. Skips both the GoTrue call AND the post-bypass users-row
@@ -57,6 +76,10 @@ export async function assertPermission(
   // which Tier-2 deliberately avoids — the seed script is the source of
   // truth that the user exists; tests that need richer user state should
   // assert it themselves). See lib/auth/test-bypass.ts.
+  //
+  // Bypassed users get role='tenant_owner' so all grants succeed during
+  // Tier-2 E2E. To exercise RBAC denial in tests, instantiate a real user
+  // with a non-owner role and use a real session JWT.
   const bypass = tryTestBypass(req);
   if (bypass) {
     const ctxBypass = await tenantContextFromRequest(req);
@@ -65,6 +88,7 @@ export async function assertPermission(
       auth_user_id: bypass.auth_user_id,
       tenant_id: bypass.tenant_id,
       status: "active",
+      role: "tenant_owner",
     };
     return { ctx: ctxBypass, user: syntheticUser };
   }
@@ -107,7 +131,7 @@ export async function assertPermission(
 
   const { data: row, error } = await supabase
     .from("users")
-    .select("id, auth_user_id, tenant_id, status")
+    .select("id, auth_user_id, tenant_id, status, role")
     .eq("auth_user_id", authData.user.id)
     .eq("tenant_id", ctx.tenant_id)
     .maybeSingle();
@@ -121,7 +145,15 @@ export async function assertPermission(
     );
   }
 
-  return { ctx, user: row as User };
+  const user = row as User;
+
+  // §26.2 RBAC check — deny if the user's role lacks the (resource, action)
+  // grant in permission-grants.ts. Closes audit Finding 5.
+  if (!isPermitted(user.role, opts.resource, opts.action)) {
+    throw new AuthForbidden(opts.resource, opts.action, user.role);
+  }
+
+  return { ctx, user };
 }
 
 /**

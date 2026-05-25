@@ -1,0 +1,139 @@
+// §26.2 — RBAC permission matrix.
+//
+// The 2026-05-25 audit (Finding 5, Medium severity, wide blast radius)
+// flagged that `assertPermission` was a stub: it logged the (resource,
+// action) pair and proceeded, regardless of the caller's role. Every
+// "permission-gated" mutating route was therefore open to any active
+// tenant member.
+//
+// This file is the source of truth. Roles map to the set of (resource,
+// action) pairs they're allowed to perform. Anything not listed is denied.
+//
+// CONVENTIONS:
+//   - `tenant_owner` is the catch-all "owner" role. Until we model finer
+//     ownership (which would require a separate role-management UI), it
+//     gets every grant in the matrix.
+//   - `agent` gets day-to-day operational rights. Cannot touch tenant
+//     settings (branding, host_config, persona_addendum, tenant_branding).
+//   - `viewer` gets read/list only.
+//
+// To grant a new permission: add an entry under the appropriate role(s).
+// To restrict an existing permission: remove it from `agent` / `viewer`.
+//
+// CALL SITE: `assertPermission(req, { resource, action })` invokes
+// `isPermitted(role, resource, action)` from this file. If the function
+// returns false, the route returns 403.
+
+export type UserRole = "tenant_owner" | "agent" | "viewer";
+
+/** A grant key is "<resource>:<action>". */
+type GrantKey = string;
+
+function key(resource: string, action: string): GrantKey {
+  return `${resource}:${action}`;
+}
+
+// READ-only grants — `viewer` gets exactly these.
+const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
+  key("bookings", "read"),
+  key("bug_submission", "read"),
+  key("contacts", "list"),
+  key("contacts", "read"),
+  key("feature_request", "read"),
+  key("groups", "list"),
+  key("help_docs", "read"),
+  key("host_config", "read"),
+  key("persona_addendum", "read"),
+  key("price_watches", "list"),
+  key("subcontractors", "read"),
+  key("tasks", "list"),
+  key("tenant_branding", "read"),
+]);
+
+// AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
+// mutations agents perform. Excludes tenant settings (host_config write,
+// tenant_branding write, persona_addendum write) — those are owner-only.
+const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
+  ...READ_GRANTS,
+  // Bookings
+  key("bookings", "cancel"),
+  key("bookings", "modify"),
+  key("bookings", "submit"),
+  key("bookings", "update"),
+  // Quotes
+  key("quotes", "accept"),
+  key("quotes", "create"),
+  key("quotes", "send"),
+  // Contacts
+  key("contacts", "create"),
+  key("contacts", "update"),
+  // Tasks
+  key("tasks", "create"),
+  key("tasks", "delete"),
+  key("tasks", "update"),
+  // Groups
+  key("groups", "create"),
+  // Price watches
+  key("price_watches", "create"),
+  key("price_watches", "rearm"),
+  key("price_watches", "update"),
+  // Forums — operational, not moderation
+  key("forums", "edit_message"),
+  key("forums", "post_message"),
+  key("forums", "react"),
+  // Help self-service
+  key("bug_submission", "create"),
+  key("feature_request", "create"),
+  key("help_docs", "export"),
+  key("help_session", "create"),
+  key("help_session", "update"),
+  // Notifications
+  key("notifications", "write"),
+  // RAG submissions (operational — submit content; approve/reject is owner)
+  key("rag_submissions", "create"),
+]);
+
+// TENANT_OWNER grants — full set. AGENT_GRANTS plus owner-only.
+const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
+  ...AGENT_GRANTS,
+  // Tenant settings (owner-only)
+  key("host_config", "write"),
+  key("tenant_branding", "write"),
+  key("persona_addendum", "write"),
+  // Subcontractors (owner-only — affects payout flow)
+  key("subcontractors", "create"),
+  key("subcontractors", "delete"),
+  key("subcontractors", "update"),
+  // Forum moderation
+  key("forums", "moderate_forum"),
+  key("forums", "moderate_thread"),
+  key("forums", "moderate_user"),
+  // RAG content lifecycle
+  key("rag_submissions", "approve"),
+  key("rag_submissions", "reject"),
+  key("rag_submissions", "review"),
+]);
+
+const GRANTS_BY_ROLE: Record<UserRole, ReadonlySet<GrantKey>> = {
+  tenant_owner: OWNER_GRANTS,
+  agent: AGENT_GRANTS,
+  viewer: READ_GRANTS,
+};
+
+/**
+ * Returns true iff the role has been granted the (resource, action) pair.
+ * Unknown roles are treated as deny.
+ */
+export function isPermitted(
+  role: string,
+  resource: string,
+  action: string,
+): boolean {
+  const grants = GRANTS_BY_ROLE[role as UserRole];
+  if (!grants) return false;
+  return grants.has(key(resource, action));
+}
+
+export function isKnownRole(role: string): role is UserRole {
+  return role === "tenant_owner" || role === "agent" || role === "viewer";
+}
