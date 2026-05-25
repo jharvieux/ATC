@@ -19,6 +19,8 @@
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { bindContactOnIdentification } from "@/lib/attribution/bind-contact-on-identification";
 
 export const transferFinalize = inngest.createFunction(
   {
@@ -81,9 +83,28 @@ export const transferFinalize = inngest.createFunction(
       );
     }
 
-    // TODO(prompt-13): create CRM contact for user_id in tenant_id.
+    // §35.2.2 — bind a CRM contact to the now-identified user and write
+    // an attribution touch. Pending UTM cookie is not available in this
+    // Inngest path (transfer fires 24h after the user identified); we
+    // attribute as 'direct' on the touch. The first-touch column on the
+    // contact captures whatever data we have at this point.
+    const bindResult = await bindContactOnIdentification({
+      svc: createServiceRoleClient(),
+      tenant_id,
+      user_id,
+      source_origin: "utm_parsed", // representative of an organic identification path
+      pending_payload: null,
+    });
+    if (!bindResult.ok) {
+      console.warn("[transfer-finalize] bindContactOnIdentification failed:", bindResult.error);
+    }
+
     // TODO(pre-cruise-emails): schedule pre-cruise emails for active bookings.
 
-    return { status: "committed", conversations_transferred: convIds.length };
+    return {
+      status: "committed",
+      conversations_transferred: convIds.length,
+      ...(bindResult.ok ? { contact_id: bindResult.contact_id, contact_was_new: bindResult.was_new_contact } : {}),
+    };
   },
 );
