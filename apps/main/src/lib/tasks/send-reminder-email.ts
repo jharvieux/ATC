@@ -1,0 +1,137 @@
+// BP37 §37.3.2 — Email channel for task reminders.
+//
+// Loads the tenant + recipient + task, renders TaskReminder template,
+// calls sendEmail (BP23). Returns the email log status. The reminder
+// cron records this as 'delivered' / 'suppressed' / 'failed'.
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { sendEmail } from "@/lib/email/send";
+import { TaskReminder } from "@/emails/TaskReminder";
+
+type TenantRow = {
+  id: string;
+  legal_name: string;
+  mailing_address: string | null;
+  email_send_pattern: "platform_resend" | "tenant_resend";
+  tenant_resend_api_key_encrypted: string | null;
+  email_from_address: string | null;
+  email_from_name: string | null;
+};
+
+type UserRow = {
+  id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+};
+
+type TaskRow = {
+  id: string;
+  tenant_id: string;
+  title: string;
+  description: string | null;
+  due_at: string | null;
+  priority: string;
+  assigned_to_user_id: string | null;
+  created_by_user_id: string | null;
+};
+
+export type EmailReminderOutcome =
+  | { status: "sent" }
+  | { status: "suppressed"; reason: string }
+  | { status: "failed"; reason: string };
+
+export async function sendTaskReminderEmail(args: {
+  svc: SupabaseClient;
+  task_id: string;
+  tenant_id: string;
+}): Promise<EmailReminderOutcome> {
+  const { svc, task_id, tenant_id } = args;
+
+  const { data: taskData } = await svc
+    .from("tasks")
+    .select("id, tenant_id, title, description, due_at, priority, assigned_to_user_id, created_by_user_id")
+    .eq("id", task_id)
+    .maybeSingle();
+  if (!taskData) return { status: "failed", reason: "task_not_found" };
+  const task = taskData as TaskRow;
+  if (task.tenant_id !== tenant_id) return { status: "failed", reason: "tenant_mismatch" };
+
+  const recipientUserId = task.assigned_to_user_id ?? task.created_by_user_id;
+  if (!recipientUserId) return { status: "suppressed", reason: "no_recipient_user" };
+
+  const { data: userData } = await svc
+    .from("users")
+    .select("id, email, first_name, last_name")
+    .eq("id", recipientUserId)
+    .maybeSingle();
+  if (!userData) return { status: "failed", reason: "recipient_user_not_found" };
+  const user = userData as UserRow;
+  if (!user.email) return { status: "suppressed", reason: "recipient_has_no_email" };
+
+  const { data: tenantData } = await svc
+    .from("tenants")
+    .select("id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+    .eq("id", tenant_id)
+    .maybeSingle();
+  if (!tenantData) return { status: "failed", reason: "tenant_not_found" };
+  const tenant = tenantData as TenantRow;
+
+  const { data: brandingData } = await svc
+    .from("tenant_branding")
+    .select("logo_url, primary_color, secondary_color, accent_color, slogan")
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+  const branding = (brandingData as {
+    logo_url: string | null;
+    primary_color: string | null;
+    secondary_color: string | null;
+    accent_color: string | null;
+    slogan: string | null;
+  } | null) ?? { logo_url: null, primary_color: null, secondary_color: null, accent_color: null, slogan: null };
+
+  const appUrl = process.env.PLATFORM_APP_URL ?? "https://app.example.com";
+  const taskUrl = `${appUrl}/crm/tasks/${task.id}`;
+  // §37.3.2 — operational reminder; suppression honors unsubscribe.
+  const unsubscribeUrl = `${appUrl}/email/unsubscribe?token=task-reminder`;
+
+  const jsx = TaskReminder({
+    branding,
+    tenant_legal_name: tenant.legal_name,
+    tenant_business_address: tenant.mailing_address ?? "",
+    recipient_name: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email,
+    task_title: task.title,
+    task_description: task.description,
+    due_at: task.due_at,
+    priority: task.priority,
+    task_url: taskUrl,
+    unsubscribe_url: unsubscribeUrl,
+  });
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const html = renderToStaticMarkup(jsx);
+
+  const result = await sendEmail({
+    db: svc,
+    tenant: {
+      id: tenant.id,
+      legal_name: tenant.legal_name,
+      mailing_address: tenant.mailing_address,
+      email_send_pattern: tenant.email_send_pattern,
+      tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted,
+      email_from_address: tenant.email_from_address,
+      email_from_name: tenant.email_from_name,
+    },
+    to: user.email,
+    subject: `Task reminder: ${task.title}`,
+    template_id: "task_reminder",
+    category: "transactional",
+    html,
+    user_id: user.id,
+  });
+
+  if (result.status === "sent") return { status: "sent" };
+  if (result.status === "suppressed" || result.status === "rate_limited") {
+    return { status: "suppressed", reason: result.reason ?? result.status };
+  }
+  return { status: "failed", reason: result.reason ?? "email_send_failed" };
+}

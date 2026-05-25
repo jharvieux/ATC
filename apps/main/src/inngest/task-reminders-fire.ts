@@ -11,6 +11,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { sendTaskReminderEmail } from "@/lib/tasks/send-reminder-email";
 
 const BATCH_LIMIT = 200;
 
@@ -56,19 +57,34 @@ export const taskRemindersFire = inngest.createFunction(
       const t = Array.isArray(r.tasks) ? r.tasks[0] ?? null : r.tasks;
       // §37.3.3 — suppress reminders that fall inside a snooze window.
       const snoozed = t?.snoozed_until && Date.parse(r.remind_at) < Date.parse(t.snoozed_until);
-      const status: "delivered" | "suppressed" | "failed" = snoozed ? "suppressed" : "delivered";
 
-      // Email path: would call sendTemplatedReminderEmail here. For v1
-      // we mark delivered (the in-app channel is the primary surface);
-      // wiring Resend templates is a mechanical follow-up that reuses
-      // the BP23 email infrastructure.
+      let status: "delivered" | "suppressed" | "failed";
+      if (snoozed) {
+        status = "suppressed";
+      } else if (r.channel === "email") {
+        // §37.3.2 — send through BP23 email infrastructure.
+        const emailResult = await sendTaskReminderEmail({
+          svc,
+          task_id: r.task_id,
+          tenant_id: r.tenant_id,
+        });
+        if (emailResult.status === "sent") status = "delivered";
+        else if (emailResult.status === "suppressed") status = "suppressed";
+        else status = "failed";
+      } else {
+        // in_app channel: cron just marks fired. The CRM nav badge reads
+        // task_reminders WHERE fired_status='delivered' AND task is open.
+        status = "delivered";
+      }
+
       try {
         await svc
           .from("task_reminders")
           .update({ fired_at: new Date().toISOString(), fired_status: status })
           .eq("id", r.id);
         if (status === "delivered") delivered++;
-        else suppressed++;
+        else if (status === "suppressed") suppressed++;
+        else failed++;
       } catch (err) {
         failed++;
         console.error("[task-reminders-fire] mark failed:", err);
