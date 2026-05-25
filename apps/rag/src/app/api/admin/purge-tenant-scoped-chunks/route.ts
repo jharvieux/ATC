@@ -10,7 +10,19 @@ interface PurgeBody {
   tenant_id: string;
 }
 
-export const POST = withServiceAuth(async (req) => {
+export const POST = withServiceAuth(async (req, ctx) => {
+  // §15.14.3 — Platform-admin only. The 2026-05-25 RAG audit (Finding 1)
+  // showed that without this gate, any active tenant JWT could pass
+  // body.tenant_id pointing at a victim tenant and physically delete
+  // every one of their tenant-scoped chunks. Mass cross-tenant data
+  // destruction in one request.
+  if (ctx.service_identifier !== "platform-admin") {
+    return Response.json(
+      { error: "purge_tenant_scoped_chunks_requires_platform_admin" },
+      { status: 403 },
+    );
+  }
+
   let body: PurgeBody;
   try {
     const raw = await req.json();

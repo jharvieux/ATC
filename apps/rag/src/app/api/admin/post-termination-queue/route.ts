@@ -5,7 +5,18 @@ export const dynamic = "force-dynamic";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 
-export const GET = withServiceAuth(async (req) => {
+export const GET = withServiceAuth(async (req, ctx) => {
+  // §15.14.4 — Platform-admin only. The 2026-05-25 RAG audit (Finding 3)
+  // showed that without this gate, any active tenant JWT could page
+  // through every pending-review chunk across all tenants — exposing
+  // content the platform flagged as sensitive enough to gate.
+  if (ctx.service_identifier !== "platform-admin") {
+    return Response.json(
+      { error: "post_termination_queue_requires_platform_admin" },
+      { status: 403 },
+    );
+  }
+
   const { searchParams } = new URL(req.url);
   const from = parseInt(searchParams.get("from") ?? "0", 10);
   const limit = Math.min(100, parseInt(searchParams.get("limit") ?? "20", 10));
