@@ -257,6 +257,7 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/imports/upload/route.ts",
   "/app/api/imports/review/route.ts",
   "/app/api/imports/review/[id]/accept/route.ts",
+  "/app/api/imports/review/[id]/merge/route.ts",
   "/app/api/imports/review/[id]/reject/route.ts",
   "/app/api/imports/source-file/route.ts",
   "/app/api/integrations/gmail/health/route.ts",
