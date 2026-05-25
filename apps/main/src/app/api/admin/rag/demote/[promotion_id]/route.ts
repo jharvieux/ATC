@@ -2,10 +2,10 @@
 //
 // Wrapped in withPlatformAdminAudit with reason='rag_chunk_demotion'.
 // Two modes:
-//   to_tenant_scope (default): chunk scope changes back to 'tenant' on the
-//     RAG side via /demote/chunk/:id (NEW endpoint — TODO until RAG side
-//     ships it; for now the main-app records the intent + audit).
-//   hard_delete: chunk removed entirely via /demote/chunk/:id?mode=delete.
+//   to_tenant_scope (default): chunk scope flips back to 'tenant' via the
+//     RAG side's /api/admin/demote-chunk endpoint. Origin tenant retains
+//     visibility subject to §15.14.3 90-day post-termination retention.
+//   hard_delete: chunk row is physically removed on the RAG side.
 //
 // If origin tenant is terminated, to_tenant_scope leaves the chunk in the
 // origin tenant's scope subject to the §15.14.3 90-day post-termination
@@ -78,18 +78,17 @@ export async function POST(
         });
 
         // Call the RAG service to perform the actual chunk lifecycle change.
-        // TODO(bp22-rag-demote): once /demote/chunk lands on the RAG side, swap
-        // the success path here. Until then we record the intent and surface a
-        // 501 so the operator knows the RAG-side hand-off is incomplete.
+        // The demote MUST happen on RAG before we mark the promotion row,
+        // otherwise an operator who hits demote during a RAG outage would
+        // see "demoted" in the admin UI while the chunk is still globally
+        // visible to retrieval.
         const ragRes = await fetch(`${ragUrl}/api/admin/demote-chunk?id=${row.global_chunk_id}&mode=${mode}`, {
           method: "POST",
           headers: { Authorization: `Bearer ${jwt}` },
         });
-        if (!ragRes.ok && ragRes.status !== 404) {
-          // 404 = endpoint not yet implemented; we still record the demotion
-          // locally so the operator action is captured.
+        if (!ragRes.ok) {
           const t = await ragRes.text();
-          return { error: "rag_demote_failed", detail: t };
+          return { error: "rag_demote_failed", detail: t, rag_status: ragRes.status };
         }
 
         recordQuery({ op: "update", table: "rag_global_promotions" });
@@ -103,12 +102,7 @@ export async function POST(
           .eq("id", promotion_id);
         if (updErr) return { error: updErr.message };
 
-        return {
-          status: "demoted",
-          mode,
-          rag_endpoint_status: ragRes.status,
-          ...(ragRes.status === 404 && { note: "rag_demote_endpoint_not_yet_implemented_main_recorded_intent" }),
-        };
+        return { status: "demoted", mode };
       },
     );
 
