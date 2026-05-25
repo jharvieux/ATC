@@ -301,8 +301,7 @@ function buildValidationInput(
     case "booking_confirmation":
     case "commission_statement":
     case "intake_form":
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return { type, tenant_id, fields: fields as any };
+      return { type, tenant_id, fields } as ValidationInput;
     default:
       throw new Error(`unknown_validation_type:${type}`);
   }
