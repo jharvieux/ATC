@@ -8,6 +8,9 @@ on:
   schedule:
     # Weekly Monday 06:00 UTC — catches new GitHub-maintained rules.
     - cron: '0 6 * * 1'
+  # Manual ad-hoc trigger — useful after batches of merges to confirm the
+  # aggregate state is clean without waiting for a push event.
+  workflow_dispatch: {}
 
 permissions:
   actions: read

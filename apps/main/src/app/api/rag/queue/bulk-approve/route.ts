@@ -43,9 +43,16 @@ export async function POST(req: Request): Promise<Response> {
     // The individual approve call orchestrates the RAG calls, audit, and
     // status transition. Loop with per-item error capture (sequential to
     // avoid hammering the RAG service with parallel JWT calls).
+    //
+    // CodeQL js/request-forgery: derive the origin from a trusted env var,
+    // not from req.url (a forged Host header could otherwise redirect the
+    // per-item POSTs at an attacker-controlled server). The IDs in the
+    // path are UUIDs validated by the per-item handler.
+    const baseUrl =
+      process.env.NEXT_PUBLIC_APP_URL ?? `https://${process.env.PLATFORM_PRIMARY_DOMAIN}`;
     const results: Array<{ id: string; ok: boolean; chunk_id?: string; error?: string }> = [];
     for (const id of ids) {
-      const res = await fetch(new URL(req.url).origin + `/api/rag/queue/${id}/approve`, {
+      const res = await fetch(`${baseUrl}/api/rag/queue/${encodeURIComponent(id)}/approve`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

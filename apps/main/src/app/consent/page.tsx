@@ -79,9 +79,14 @@ export default function ConsentPage() {
       const remaining = pendingDocs.filter((d) => !next.has(d.document_type));
       if (remaining.length === 0) {
         setAllDone(true);
-        // Redirect to the original destination or home.
+        // Redirect to the original destination or home. Same-origin only:
+        // require a leading slash and reject protocol-relative URLs
+        // ('//evil.com'). Anything else falls back to '/' so a crafted
+        // return_to query param can't bounce the user off-site.
         const params = new URLSearchParams(window.location.search);
-        const returnTo = params.get("return_to") ?? "/";
+        const candidate = params.get("return_to") ?? "/";
+        const returnTo =
+          candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
         window.location.href = returnTo;
       }
     } catch (e) {
