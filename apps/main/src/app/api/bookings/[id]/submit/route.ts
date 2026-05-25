@@ -59,7 +59,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   try {
-    const { ctx } = await assertPermission(req, { resource: "bookings", action: "submit" });
+    const { ctx, user } = await assertPermission(req, { resource: "bookings", action: "submit" });
     const { id: bookingId } = await params;
 
     const db = tenantClient(ctx);
@@ -216,12 +216,17 @@ export async function POST(
         })
         .eq("id", bookingId);
 
-      logAuditStub({
-        action: "booking.commission_rate_resolution",
-        resource_id: bookingId,
-        outcome: "failed",
-        reason: health.ok ? "commission_rate_unresolvable" : "host_adapter_unhealthy",
+      await writeAuditLog({
         tenant_id: ctx.tenant_id,
+        actor_type: "user",
+        actor_user_id: user.id,
+        action: "booking.commission_rate_resolution",
+        resource_type: "booking",
+        resource_id: bookingId,
+        changes: {
+          outcome: "failed",
+          reason: health.ok ? "commission_rate_unresolvable" : "host_adapter_unhealthy",
+        },
       });
 
       return Response.json(
@@ -245,12 +250,14 @@ export async function POST(
         })
         .eq("id", bookingId);
 
-      logAuditStub({
-        action: "booking.commission_rate_resolution",
-        resource_id: bookingId,
-        outcome: "failed",
-        reason: "missing_platform_split",
+      await writeAuditLog({
         tenant_id: ctx.tenant_id,
+        actor_type: "user",
+        actor_user_id: user.id,
+        action: "booking.commission_rate_resolution",
+        resource_type: "booking",
+        resource_id: bookingId,
+        changes: { outcome: "failed", reason: "missing_platform_split" },
       });
 
       return Response.json(
@@ -274,16 +281,21 @@ export async function POST(
     const platform_retained_cents = multiplyRate(net_commission_cents, platformSplitRate);
     const subhost_payable_cents = subtractFee(net_commission_cents, platform_retained_cents);
 
-    logAuditStub({
-      action: "booking.commission_rate_resolution",
-      resource_id: bookingId,
-      outcome: "success",
-      commission_rate,
-      platform_split_rate,
-      gross_commission_cents: gross_commission_cents.toString(),
-      net_commission_cents: net_commission_cents.toString(),
-      platform_retained_cents: platform_retained_cents.toString(),
+    await writeAuditLog({
       tenant_id: ctx.tenant_id,
+      actor_type: "user",
+      actor_user_id: user.id,
+      action: "booking.commission_rate_resolution",
+      resource_type: "booking",
+      resource_id: bookingId,
+      changes: {
+        outcome: "success",
+        commission_rate,
+        platform_split_rate,
+        gross_commission_cents: gross_commission_cents.toString(),
+        net_commission_cents: net_commission_cents.toString(),
+        platform_retained_cents: platform_retained_cents.toString(),
+      },
     });
 
     // §21.10.1 — Quote pricing discipline.
@@ -349,16 +361,21 @@ export async function POST(
                 updated_at: new Date().toISOString(),
               })
               .eq("id", bookingId);
-            logAuditStub({
-              action: "quote.reconfirmation_requested",
-              quote_id: quote.id,
-              booking_id: bookingId,
+            await writeAuditLog({
               tenant_id: ctx.tenant_id,
-              estimate_cents: estimateCents,
-              host_cents: hostCents,
-              variance_cents: variance,
-              allowed_variance_cents: allowedVariance,
-              prior_audit_id: quote.customer_accepted_audit_id,
+              actor_type: "user",
+              actor_user_id: user.id,
+              action: "quote.reconfirmation_requested",
+              resource_type: "quote",
+              resource_id: quote.id,
+              changes: {
+                booking_id: bookingId,
+                estimate_cents: estimateCents,
+                host_cents: hostCents,
+                variance_cents: variance,
+                allowed_variance_cents: allowedVariance,
+                prior_audit_id: quote.customer_accepted_audit_id,
+              },
             });
             return Response.json(
               {
@@ -444,23 +461,4 @@ export async function POST(
     const message = err instanceof Error ? err.message : "Unauthorized";
     return Response.json({ error: message }, { status: 401 });
   }
-}
-
-// BP26: legacy shim around writeAuditLog. Each caller passes a payload with
-// `action` and `tenant_id`; the rest goes into `changes`. New callers should
-// use writeAuditLog directly with explicit actor_type / resource_type.
-function logAuditStub(payload: Record<string, unknown>): void {
-  const { action, tenant_id, resource_id, ...rest } = payload as {
-    action?: string;
-    tenant_id?: string;
-    resource_id?: string;
-  };
-  void writeAuditLog({
-    tenant_id: typeof tenant_id === "string" ? tenant_id : null,
-    actor_type: "system",
-    action: typeof action === "string" ? action : "unknown",
-    resource_type: "booking",
-    resource_id: typeof resource_id === "string" ? resource_id : null,
-    changes: rest as Record<string, unknown>,
-  });
 }
