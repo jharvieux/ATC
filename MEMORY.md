@@ -4,6 +4,40 @@ Newest entries on top.
 
 ---
 
+## D-081 — 2026-05-24 — BP34 Phase C scope decisions (autonomous build resumed)
+
+**Decision:** Build Phase C end-to-end as backend-only (routes + libs + helpers + Inngest jobs), defer the React UI pages and GCP-setup-dependent flows to Phase D / morning conversation.
+
+**What got built:**
+- purge-parsed-documents Inngest cron (§34.4 — 24h post-acceptance, 7d parse-failed, 30d virus)
+- Rate resolver (§34.7.3 doc → adapter → null) + acceptance promotion (§34.5 / §34.7) writing contacts/bookings/commissions/contact_imports
+- Manual entry route + Document upload route (PDF-only allowlist, no virus scan per 2026-05-23 direction)
+- Review queue API: list, accept (with edit + agent rate entry), reject (with optional retain_for_followup)
+- Statement matching (§34.5.4 / §14.8) using Phase A's computeMatchConfidence — exact provider_booking_ref, fuzzy 4-component, orphan bucket
+- §14.9 clawback writes wired into all three branches of /api/bookings/:id/cancel per §34.8.2
+- Gmail Pub/Sub webhook: real Google-JWT-verified + envelope-decoding + Gmail REST history.list + per-message fetch + processGmailInboundMessage glue (replaces 501 stub)
+- §34.2.4 health surfacing: /api/integrations/gmail/health + GmailHealthBanner React component
+- §34.7.4 / §34.9 enforcement: promote-booking rejects sub-host tenants
+- 83 unit tests passing, typecheck clean across 8 commits on feature/bp34-phase-a-schema
+
+**What was deferred:**
+- OAuth connect/callback endpoints — need GCP project + OAuth client setup (manual)
+- 7-day Pub/Sub watch renewal cron — depends on the OAuth flow being live
+- Disconnect endpoint — same dependency
+- PDF text extraction for document path — needs OCR library or external service; pipeline currently returns null → parse_failed (correct fail-loud behavior until OCR ships)
+- Review queue UI (full React pages, bulk-accept screen per §34.6.1) — backend is ready, deferred for the morning UX conversation
+- Statement match report persistence — match-report ships inline on the queue row's raw_extracted_fields._match_report; persisted table deferred to whenever §14.8 build prompt lands (none in repo yet)
+
+**Why deferred specifically:** Per user policy ("kill switches stay for spicy ops"), Gmail OAuth + Pub/Sub webhook is the spicy op — it's ToS-exposed, depends on per-GCP-project config, and can't be smoke-tested locally without live credentials. The webhook IS shipped; the OAuth flow that mints the refresh_token in the first place is the manual step. PDF OCR was deferred because a dependency install (`pdf-parse`, `tesseract`, etc.) requires user approval per CLAUDE.md; small enough to wire in Phase D.
+
+**Rejected:**
+- Installing `googleapis` SDK — would've added a heavy runtime dep when the Pub/Sub webhook is just JWT-verify + a couple of REST calls. Did fetch + jose instead (already in repo from BP09).
+- Skipping the spec re-verification step before resuming Phase C — Phase B's retention windows (was 7d/30d for accepted/rejected) were wrong vs spec §34.4 (24h). Fixed before Phase C started.
+
+**Related artifacts:** `apps/main/src/lib/import/*` (10 files now), `apps/main/src/inngest/{import-pipeline,purge-parsed-documents}.ts`, `apps/main/src/app/api/{imports,webhooks/gmailpubsub,integrations/gmail}/**`, `apps/main/supabase/migrations/202606171*` and `202606161*`.
+
+---
+
 ## D-080 — 2026-05-24 — §34–§40 tech-spec addenda are missing from repo; autonomous build halted
 
 **Decision:** Stop autonomous work on the §34–§40 build prompts until the user confirms how to handle the missing tech-spec addenda. Phase B of BP34 is the watermark.
