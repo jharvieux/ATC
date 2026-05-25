@@ -108,6 +108,11 @@ const envSchema = z.object({
   RESEND_FROM_DOMAIN: z.string().optional(),
   RESEND_FROM_ADDRESS_DEFAULT: z.string().email().optional(),
   RESEND_FROM_NAME_DEFAULT: z.string().optional(),
+  // §26.6 — Operator alert email recipient. sendOperatorAlert delivers
+  // here when set (via the platform RESEND_API_KEY); without it alerts
+  // still land in audit_log + console. From-address falls back to
+  // RESEND_FROM_ADDRESS_DEFAULT, or `alerts@<RESEND_FROM_DOMAIN>` if set.
+  OPERATOR_ALERT_EMAIL: z.string().email().optional(),
   // White-label (§16) — BP18
   VERCEL_API_TOKEN: z.string().optional(),
   VERCEL_PROJECT_ID: z.string().optional(),
@@ -309,10 +314,9 @@ const envSchema = z.object({
   SENTRY_ENVIRONMENT:       z.string().optional(),
   LOG_LEVEL:                z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
   AUDIT_LOG_RETENTION_YEARS: z.coerce.number().int().positive().optional().default(7),
-  // Operator alert routing — Slack webhook for elevated-severity monitoring
-  // alerts. BP26 reads this directly via process.env; declared here so the
-  // schema-walking parity test stays green.
-  OPERATOR_SLACK_WEBHOOK_URL: z.string().url().optional(),
+  // Operator alert routing — moved from Slack-webhook to Resend email in
+  // PR #117. The email recipient lives at OPERATOR_ALERT_EMAIL (declared
+  // alongside the rest of the Resend block above).
   // §28.15 — operational toggles. Env-based so they can flip without a DB
   // round-trip; spec rationale at §28.15.
   AI_GLOBAL_KILL_SWITCH:                z.coerce.boolean().optional().default(false),

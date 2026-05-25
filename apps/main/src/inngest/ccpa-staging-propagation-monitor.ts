@@ -4,6 +4,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 
 export const ccpaStagingPropagationMonitor = inngest.createFunction(
   {
@@ -51,15 +52,19 @@ export const ccpaStagingPropagationMonitor = inngest.createFunction(
         .select("*", { count: "exact", head: true })
         .not("deleted_at", "is", null);
 
-      console.warn(
-        "[ccpa-staging-monitor] ALERT: staging last refreshed %.1f days ago (threshold: 25d). " +
-        "%d user(s) with pending CCPA deletions may not be propagated to staging. " +
-        "See docs/runbooks/ccpa-staging-cleanup.md for manual remediation.",
-        daysSinceRefresh,
-        count ?? 0,
-      );
-
-      // TODO(notifications): emit alert to operator email/Slack via Resend or webhook.
+      await sendOperatorAlert({
+        severity: "high",
+        signal: "ccpa_staging_refresh_overdue",
+        detail:
+          `Staging last refreshed ${daysSinceRefresh.toFixed(1)} days ago (threshold 25d). ` +
+          `${count ?? 0} user(s) with pending CCPA deletions may not be propagated to staging. ` +
+          `See docs/runbooks/ccpa-staging-cleanup.md for manual remediation.`,
+        payload: {
+          days_since_refresh: Math.round(daysSinceRefresh * 10) / 10,
+          pending_deletion_count: count ?? 0,
+          threshold_days: 25,
+        },
+      });
     }
   },
 );

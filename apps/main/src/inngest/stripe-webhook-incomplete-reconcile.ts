@@ -10,6 +10,7 @@
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "./client";
+import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 
 export const stripeWebhookIncompleteReconcile = inngest.createFunction(
   { id: "stripe-webhook-incomplete-reconcile", triggers: [{ cron: "*/15 * * * *" }] },
@@ -35,15 +36,20 @@ export const stripeWebhookIncompleteReconcile = inngest.createFunction(
       return { stalled: 0 };
     }
 
-    for (const row of stalled) {
-      // TODO(escalation): replace with real alert (PagerDuty / Slack) when alerting infra lands
-      console.warn("[reconcile] Stalled webhook event detected", {
-        id: row.id,
-        stripe_event_id: row.stripe_event_id,
-        event_type: row.event_type,
-        processing_started_at: row.processing_started_at,
-      });
-    }
+    // One alert per cron run (batched detail) — a sustained Stripe outage
+    // would otherwise spam the channel with one ping per stalled event.
+    await sendOperatorAlert({
+      severity: "high",
+      signal: "stripe_webhook_stalled",
+      detail:
+        `${stalled.length} Stripe webhook event(s) stalled past the processing timeout. ` +
+        `Investigate apps/main/src/lib/stripe/webhook-handler.ts and the failing event_types.`,
+      payload: {
+        stalled_count: stalled.length,
+        sample_event_ids: stalled.slice(0, 10).map((r) => r.stripe_event_id),
+        sample_event_types: Array.from(new Set(stalled.slice(0, 10).map((r) => r.event_type))),
+      },
+    });
 
     return { stalled: stalled.length };
   },
