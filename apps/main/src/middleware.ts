@@ -1,4 +1,4 @@
-// Spec ref: §1.4 (tenant resolution), §3.6 (resolution logic), BP04
+// Spec ref: §1.4 (tenant resolution), §3.6 (resolution logic), §26.x (admin gate), BP04
 //
 // Runtime: Next.js edge runtime locally; Vercel deploys this under Fluid
 // Compute (Node.js). @supabase/supabase-js v2 is edge-compatible so no
@@ -30,6 +30,24 @@ const ATTRIBUTION_COOKIE_MAX_AGE_DAYS = 30;
 // cookie that signup writes on consent capture; if the cookie says
 // "rejected" we skip pending attribution writes entirely.
 const COOKIE_CONSENT_COOKIE = "atc_cookie_consent";
+
+// Build a request-headers clone with any caller-supplied resolution headers
+// stripped. Route handlers and Server Components must only ever read the
+// values set by THIS middleware — never anything inbound from the network.
+//
+// Why this exists: NextResponse.next() alone does NOT forward modified
+// request headers to handlers; you have to pass them explicitly via the
+// `request: { headers }` option. Without that, route handlers can read
+// attacker-supplied `x-resolved-tenant-id` headers verbatim. See the
+// 2026-05-25 security audit finding "middleware tenant resolution doesn't
+// propagate".
+function cloneAndScrubHeaders(req: NextRequest): Headers {
+  const headers = new Headers(req.headers);
+  headers.delete(RESOLVED_TENANT_ID_HEADER);
+  headers.delete(RESOLVED_TENANT_TYPE_HEADER);
+  headers.delete(PAYMENT_BANNER_HEADER);
+  return headers;
+}
 
 function applyAttributionCapture(res: NextResponse, req: NextRequest): void {
   // §35.10 — refused-consent suppression. If the consent cookie is "rejected",
@@ -96,21 +114,73 @@ function applyPaymentGate(
   return res;
 }
 
+// §26 — Platform-admin API gate. STOP-THE-WORLD posture per the
+// 2026-05-25 audit: every /api/admin/* route is blocked at the middleware
+// layer unless the caller presents the platform admin Bearer token. Some
+// downstream routes do additional checks (`MAIN_APP_ADMIN_API_KEY` match
+// inside the handler); this gate is the front-door, not a replacement.
+//
+// Until the real Supabase-session admin gate ships (§26 build prompt), the
+// admin React pages at /(admin)/admin/* that call these routes will be
+// non-functional. That is intentional — the prior state was "anyone on the
+// internet can take destructive admin actions by sending an arbitrary
+// x-admin-user-id header" (audit Finding 1, confidence 10).
+function isAdminApiPath(pathname: string): boolean {
+  return pathname.startsWith("/api/admin/") || pathname === "/api/admin";
+}
+
+function isValidAdminBearer(req: NextRequest): boolean {
+  const expected = process.env.MAIN_APP_ADMIN_API_KEY;
+  if (!expected) return false;
+  const auth = req.headers.get("authorization");
+  return auth === `Bearer ${expected}`;
+}
+
+function adminForbidden(): NextResponse {
+  return NextResponse.json(
+    {
+      error: "admin_gate_blocked",
+      detail:
+        "This endpoint requires a verified platform admin session. " +
+        "Service-to-service callers must present the MAIN_APP_ADMIN_API_KEY " +
+        "bearer token. See §26 (admin gate).",
+    },
+    { status: 403 },
+  );
+}
+
 export async function middleware(req: NextRequest): Promise<NextResponse> {
-  // Tier-2 E2E auth bypass — short-circuits tenant resolution when a
-  // request carries the bypass Bearer. Gated behind NODE_ENV !== production
-  // AND the bypass env vars being set; mirrors lib/auth/test-bypass.ts.
-  if (process.env.NODE_ENV !== "production") {
+  const pathname = req.nextUrl.pathname;
+
+  // 0. Admin API gate — runs BEFORE everything else so no later code path
+  //    can leak a tenant header or attribution side-effect into an admin call.
+  if (isAdminApiPath(pathname) && !isValidAdminBearer(req)) {
+    return adminForbidden();
+  }
+
+  // 1. Tier-2 E2E auth bypass — short-circuits tenant resolution when a
+  //    request carries the bypass Bearer. Gated behind NODE_ENV !== production
+  //    AND VERCEL_ENV !== "production" AND the bypass env vars being set.
+  //    Belt-and-suspenders against an env var misconfiguration on a prod
+  //    deploy: the 2026-05-25 audit (Finding 3) flagged that a leaked
+  //    TEST_AUTH_BYPASS_TOKEN on a non-prod NODE_ENV host would yield full
+  //    tenant impersonation. The VERCEL_ENV check is independent of
+  //    NODE_ENV and survives mistakes like `vercel build` shipping with a
+  //    test-flavored NODE_ENV.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    process.env.VERCEL_ENV !== "production"
+  ) {
     const expected = process.env.TEST_AUTH_BYPASS_TOKEN;
     const bypassTenant = process.env.TEST_AUTH_BYPASS_TENANT_ID;
     if (expected && bypassTenant) {
       const auth = req.headers.get("authorization");
       const token = auth?.startsWith("Bearer ") ? auth.slice(7) : auth;
       if (token === expected) {
-        const res = NextResponse.next();
-        res.headers.set(RESOLVED_TENANT_ID_HEADER, bypassTenant);
-        res.headers.set(RESOLVED_TENANT_TYPE_HEADER, "byo_host");
-        return res;
+        const headers = cloneAndScrubHeaders(req);
+        headers.set(RESOLVED_TENANT_ID_HEADER, bypassTenant);
+        headers.set(RESOLVED_TENANT_TYPE_HEADER, "byo_host");
+        return NextResponse.next({ request: { headers } });
       }
     }
   }
@@ -122,15 +192,15 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
   const domainRegex = process.env.PLATFORM_DOMAIN_REGEX ?? "";
 
-  // 1. Platform admin domain — passes through with "platform" sentinel.
+  // 2. Platform admin domain — passes through with "platform" sentinel.
   if (hostname === primaryDomain) {
-    const res = NextResponse.next();
-    res.headers.set(RESOLVED_TENANT_ID_HEADER, "platform");
-    res.headers.set(RESOLVED_TENANT_TYPE_HEADER, "platform");
-    return res;
+    const headers = cloneAndScrubHeaders(req);
+    headers.set(RESOLVED_TENANT_ID_HEADER, "platform");
+    headers.set(RESOLVED_TENANT_TYPE_HEADER, "platform");
+    return NextResponse.next({ request: { headers } });
   }
 
-  // 2. Subdomain of the platform primary domain — resolve by slug.
+  // 3. Subdomain of the platform primary domain — resolve by slug.
   if (domainRegex) {
     const match = hostname.match(new RegExp(domainRegex));
     const slug = match?.[1];
@@ -138,9 +208,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       try {
         const tenant = await getTenantBySlug(slug);
         if (tenant) {
-          const res = NextResponse.next();
-          res.headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
-          res.headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+          const headers = cloneAndScrubHeaders(req);
+          headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
+          headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+          const res = NextResponse.next({ request: { headers } });
           applyAttributionCapture(res, req);
           return applyPaymentGate(res, req, tenant);
         }
@@ -151,13 +222,14 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // 3. Custom domain — resolve by full hostname.
+  // 4. Custom domain — resolve by full hostname.
   try {
     const tenant = await getTenantByCustomDomain(hostname);
     if (tenant) {
-      const res = NextResponse.next();
-      res.headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
-      res.headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+      const headers = cloneAndScrubHeaders(req);
+      headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
+      headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+      const res = NextResponse.next({ request: { headers } });
       return applyPaymentGate(res, req, tenant);
     }
   } catch {
