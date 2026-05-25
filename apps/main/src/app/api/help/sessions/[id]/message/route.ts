@@ -43,6 +43,8 @@ import {
   featureStepFor,
   EMPTY_BUG_DRAFT,
   EMPTY_FEATURE_DRAFT,
+  BUG_FLOW_STEPS,
+  FEATURE_FLOW_STEPS,
   type BugDraft,
   type BugFlowState,
   type FeatureDraft,
@@ -128,26 +130,29 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         return;
       }
 
-      // For bug/feature flows we advance the state machine. The new
-      // state's question becomes a system-side instruction appended to
-      // the prompt; the model is told to ask that question next or — if
-      // we've reached showing_summary — to recap the draft.
+      // For bug/feature flows we derive the current state by counting prior
+      // user messages in this session's conversation — the bot asks each
+      // step's question exactly once, so the count is the position in
+      // BUG_FLOW_STEPS / FEATURE_FLOW_STEPS. We then rebuild the working
+      // draft from those same prior messages so the summary at the end can
+      // recite back the user's own answers verbatim.
       let nextQuestion = "";
       let draftSnapshot: BugDraft | FeatureDraft | null = null;
+      const priorUserMessages = session.conversation_id
+        ? await loadPriorUserMessages(db, session.conversation_id)
+        : [];
+
       if (session.session_type === "bug") {
-        // Persist the flow state in a tiny conv-context table read from the
-        // help_sessions row would be ideal; for v1 keep state in-memory per
-        // request (the client also keeps it in the conversation transcript).
-        const currentState: BugFlowState = "gathering_location"; // v1 stub
-        const draft = { ...EMPTY_BUG_DRAFT };
-        const advanced = advanceBugFlow(currentState, draft, userMessage);
+        const currentState = bugStateForIndex(priorUserMessages.length);
+        const reconstructed = reconstructBugDraft(priorUserMessages);
+        const advanced = advanceBugFlow(currentState, reconstructed, userMessage);
         draftSnapshot = advanced.draft;
         const step = bugStepFor(advanced.state);
         nextQuestion = step?.question ?? "Thanks — that's everything I need. I'll summarize before submitting.";
       } else if (session.session_type === "feature") {
-        const currentState: FeatureFlowState = "gathering_what";
-        const draft = { ...EMPTY_FEATURE_DRAFT };
-        const advanced = advanceFeatureFlow(currentState, draft, userMessage);
+        const currentState = featureStateForIndex(priorUserMessages.length);
+        const reconstructed = reconstructFeatureDraft(priorUserMessages);
+        const advanced = advanceFeatureFlow(currentState, reconstructed, userMessage);
         draftSnapshot = advanced.draft;
         const step = featureStepFor(advanced.state);
         nextQuestion = step?.question ?? "Thanks — that's everything I need. I'll summarize before submitting.";
@@ -297,4 +302,53 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   })();
 
   return new Response(readable, { status: 200, headers: SSE_HEADERS });
+}
+
+type MessagesDb = ReturnType<typeof tenantClient>;
+
+async function loadPriorUserMessages(
+  db: MessagesDb,
+  conversation_id: string,
+): Promise<string[]> {
+  const { data } = await db
+    .from("messages")
+    .select("content, role, created_at")
+    .eq("conversation_id", conversation_id)
+    .eq("role", "user")
+    .order("created_at", { ascending: true });
+  return ((data ?? []) as Array<{ content: string }>)
+    .map((r) => (typeof r.content === "string" ? r.content : ""))
+    .filter((s) => s.length > 0);
+}
+
+function bugStateForIndex(priorUserMessageCount: number): BugFlowState {
+  const step = BUG_FLOW_STEPS[Math.min(priorUserMessageCount, BUG_FLOW_STEPS.length - 1)];
+  return step ? step.state : "submitted";
+}
+
+function featureStateForIndex(priorUserMessageCount: number): FeatureFlowState {
+  const step = FEATURE_FLOW_STEPS[Math.min(priorUserMessageCount, FEATURE_FLOW_STEPS.length - 1)];
+  return step ? step.state : "submitted";
+}
+
+function reconstructBugDraft(priorUserMessages: string[]): BugDraft {
+  let draft: BugDraft = { ...EMPTY_BUG_DRAFT };
+  let state: BugFlowState = "gathering_location";
+  for (const msg of priorUserMessages) {
+    const advanced = advanceBugFlow(state, draft, msg);
+    state = advanced.state;
+    draft = advanced.draft;
+  }
+  return draft;
+}
+
+function reconstructFeatureDraft(priorUserMessages: string[]): FeatureDraft {
+  let draft: FeatureDraft = { ...EMPTY_FEATURE_DRAFT };
+  let state: FeatureFlowState = "gathering_what";
+  for (const msg of priorUserMessages) {
+    const advanced = advanceFeatureFlow(state, draft, msg);
+    state = advanced.state;
+    draft = advanced.draft;
+  }
+  return draft;
 }
