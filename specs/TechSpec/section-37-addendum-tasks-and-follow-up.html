@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 37 - Addendum — Tasks &amp; Follow-up — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 37</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s37">Section 37 - Addendum — Tasks &amp; Follow-up</h1>
+<p><strong>Status:</strong> Addendum. Lands after Part 1–9 build prompts. Adds a task surface to the CRM that augments <a class="xref" href="section-12-crm.html">§12</a> pipeline stages with concrete actionable items. References existing sections by number; does not modify them in place.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> Tasks are a cross-cutting feature that attaches to contacts, quotes, bookings, and conversations. The existing <a class="xref" href="section-12-crm.html">§12</a> pipeline defines stages but not the per-record action layer agents need to actually work the pipeline. Lands as a self-contained addition without modifying the pipeline definition.</p>
+
+<h2 id="s37-1">37.1 Overview <a class="anchor-link" href="#s37-1" aria-label="Permalink">¶</a></h2>
+<p>The platform's CRM pipeline (<a class="xref" href="section-12-crm.html#s12-3">§12.3</a>) defines lifecycle stages — Lead, Qualified, Quote Sent, Quote Accepted, Booked, Sailed. The Tasks &amp; Follow-up surface adds the work agents do at each stage: "call back Tuesday," "send follow-up if quote not accepted in 5 days," "remind customer about final payment deadline."</p>
+<p>Tasks cover three patterns:</p>
+<ol>
+<li><strong>Ad-hoc tasks</strong> — agent-created, one-off, attached to a contact / quote / booking / conversation</li>
+<li><strong>Sequenced follow-up cadences</strong> — predefined sequences (e.g., "post-quote nurture") that fire tasks on a schedule when triggered by a pipeline event</li>
+<li><strong>System-generated tasks</strong> — automatically created from platform events (final payment approaching, passport expiring before sailing, document review pending)</li>
+</ol>
+<p>Tasks have due dates, reminders, completion tracking, and optional assignment to specific seats in multi-agent tenants.</p>
+
+<h2 id="s37-2">37.2 Task Schema <a class="anchor-link" href="#s37-2" aria-label="Permalink">¶</a></h2>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES public.tenants(id),
+
+  -- What this task is about (exactly one of contact/quote/booking/conversation is required)
+  contact_id      UUID REFERENCES public.contacts(id)      ON DELETE CASCADE,
+  quote_id        UUID REFERENCES public.quotes(id)        ON DELETE CASCADE,
+  booking_id      UUID REFERENCES public.bookings(id)      ON DELETE CASCADE,
+  conversation_id UUID REFERENCES public.conversations(id) ON DELETE CASCADE,
+
+  -- Task content
+  title TEXT NOT NULL,
+  description TEXT,
+  task_type TEXT NOT NULL CHECK (task_type IN (
+    'call','email','text','meeting','follow_up','review','document','custom'
+  )),
+
+  -- Lifecycle
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open','in_progress','completed','snoozed','cancelled')),
+  priority TEXT NOT NULL DEFAULT 'normal'
+    CHECK (priority IN ('low','normal','high','urgent')),
+
+  -- Timing
+  due_at TIMESTAMPTZ,
+  due_is_all_day BOOLEAN NOT NULL DEFAULT FALSE,
+  snoozed_until TIMESTAMPTZ,
+  completed_at  TIMESTAMPTZ,
+
+  -- Assignment
+  assigned_to_user_id UUID REFERENCES public.users(id),
+  created_by_user_id  UUID REFERENCES public.users(id),
+
+  -- Origin (where did this task come from)
+  origin TEXT NOT NULL DEFAULT 'manual'
+    CHECK (origin IN ('manual','sequence','system','ai_suggested')),
+  origin_reference TEXT,   -- e.g., sequence_id when origin='sequence', event_id when origin='system'
+
+  -- Sequence tracking (per §37.4)
+  sequence_run_id UUID REFERENCES public.task_sequence_runs(id) ON DELETE SET NULL,
+  sequence_step_index INT,
+
+  -- Audit
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  -- Exactly one record link required
+  CHECK (
+    (contact_id IS NOT NULL)::int +
+    (quote_id IS NOT NULL)::int +
+    (booking_id IS NOT NULL)::int +
+    (conversation_id IS NOT NULL)::int = 1
+  )
+);
+
+CREATE INDEX tasks_tenant_status_due_idx
+  ON public.tasks(tenant_id, status, due_at)
+  WHERE status IN ('open','in_progress','snoozed');
+
+CREATE INDEX tasks_tenant_contact_idx
+  ON public.tasks(tenant_id, contact_id)
+  WHERE contact_id IS NOT NULL;
+
+CREATE INDEX tasks_assigned_idx
+  ON public.tasks(tenant_id, assigned_to_user_id, status)
+  WHERE assigned_to_user_id IS NOT NULL AND status IN ('open','in_progress');
+
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
+-- RLS per §5.1: auth_user_in_tenant + tenant_is_active.
+</code></pre>
+
+<h3 id="s37-2-1">37.2.1 Why a single tasks table with optional FKs <a class="anchor-link" href="#s37-2-1" aria-label="Permalink">¶</a></h3>
+<p>The schema uses four nullable foreign keys (contact_id, quote_id, booking_id, conversation_id) with a CHECK ensuring exactly one is populated. Alternative designs (separate tables per record type, polymorphic association) trade off differently:</p>
+<ul>
+<li><strong>Separate tables</strong> — would require four task tables. Increases query complexity (must UNION ALL to show all tasks for an agent). Rejected.</li>
+<li><strong>Polymorphic (target_type + target_id without FK)</strong> — loses referential integrity. Rejected.</li>
+<li><strong>Single table with nullable FKs</strong> — chosen. Database-enforced referential integrity per link type, single query path, simple indexes.</li>
+</ul>
+
+<h2 id="s37-3">37.3 Task Reminders <a class="anchor-link" href="#s37-3" aria-label="Permalink">¶</a></h2>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.task_reminders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  task_id   UUID NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+
+  remind_at TIMESTAMPTZ NOT NULL,
+  channel TEXT NOT NULL CHECK (channel IN ('in_app','email')),
+  -- 'sms' deferred per §23.1 Twilio future scope
+  fired_at TIMESTAMPTZ,
+  fired_status TEXT CHECK (fired_status IN ('delivered','suppressed','failed')),
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX task_reminders_pending_idx
+  ON public.task_reminders(remind_at)
+  WHERE fired_at IS NULL;
+
+ALTER TABLE public.task_reminders ENABLE ROW LEVEL SECURITY;
+</code></pre>
+<p>Multiple reminders per task supported (e.g., 1 day before, 1 hour before, at due time). Reminders fire via Inngest scheduled function that runs every minute and processes rows where <code>remind_at &lt;= NOW() AND fired_at IS NULL</code>. After firing, <code>fired_at</code> and <code>fired_status</code> are set; rows are not deleted (retained for audit).</p>
+
+<h3 id="s37-3-1">37.3.1 In-app reminders <a class="anchor-link" href="#s37-3-1" aria-label="Permalink">¶</a></h3>
+<p>In-app channel produces a notification badge in the CRM nav and an item in the notifications panel. The notification links to the task. Notifications are read/unread tracked; suppressing further is the agent's responsibility.</p>
+
+<h3 id="s37-3-2">37.3.2 Email reminders <a class="anchor-link" href="#s37-3-2" aria-label="Permalink">¶</a></h3>
+<p>Email channel sends a templated email to the assigned user (or task creator if unassigned) per <a class="xref" href="section-23-email-notifications.html">§23</a>. Templates use React Email components and respect tenant branding. Suppression: if the user has unsubscribed from operational emails or the tenant has hard-bounced this address, the reminder is suppressed and <code>fired_status = 'suppressed'</code>.</p>
+
+<h3 id="s37-3-3">37.3.3 Snoozing <a class="anchor-link" href="#s37-3-3" aria-label="Permalink">¶</a></h3>
+<p>Snoozing a task sets <code>status = 'snoozed'</code> and <code>snoozed_until</code>. Future reminders prior to <code>snoozed_until</code> are suppressed; reminders at or after <code>snoozed_until</code> fire normally, and the system automatically transitions the task back to <code>open</code> at the snooze expiry.</p>
+
+<h2 id="s37-4">37.4 Sequenced Follow-up Cadences <a class="anchor-link" href="#s37-4" aria-label="Permalink">¶</a></h2>
+<p>Sequences are predefined task templates triggered by pipeline events. Example: when a quote enters status <code>sent</code>, a "post-quote nurture" sequence triggers:</p>
+<ul>
+<li>Day 2: Task "Call to confirm receipt"</li>
+<li>Day 5: Task "Follow up if not accepted"</li>
+<li>Day 9: Task "Final follow-up before quote expires"</li>
+</ul>
+
+<h3 id="s37-4-1">37.4.1 Sequence definition <a class="anchor-link" href="#s37-4-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.task_sequences (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+
+  name TEXT NOT NULL,
+  description TEXT,
+  trigger_event TEXT NOT NULL CHECK (trigger_event IN (
+    'lead_created',
+    'quote_sent',
+    'quote_accepted',
+    'booking_created',
+    'booking_confirmed',
+    'pre_sail_60d',
+    'post_sail_7d',
+    'manual'              -- agent triggers explicitly
+  )),
+
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  applies_to_record TEXT NOT NULL DEFAULT 'auto'
+    CHECK (applies_to_record IN ('auto','contact','quote','booking')),
+  -- 'auto' = derived from trigger_event (lead_created→contact, quote_sent→quote, etc.)
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE public.task_sequence_steps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  sequence_id UUID NOT NULL REFERENCES public.task_sequences(id) ON DELETE CASCADE,
+
+  step_index INT NOT NULL,
+  offset_days INT NOT NULL,            -- days from trigger event to task due_at
+  offset_hours INT NOT NULL DEFAULT 0, -- additional hour offset for finer scheduling
+
+  task_title_template TEXT NOT NULL,
+  task_description_template TEXT,
+  task_type TEXT NOT NULL,
+  task_priority TEXT NOT NULL DEFAULT 'normal',
+  reminder_offsets_minutes INT[] DEFAULT ARRAY[]::INT[],   -- minutes before due_at for reminders
+
+  skip_if_status TEXT[],   -- skip step if record currently in any of these statuses (e.g., quote already accepted)
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (sequence_id, step_index)
+);
+
+CREATE TABLE public.task_sequence_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  sequence_id UUID NOT NULL REFERENCES public.task_sequences(id),
+
+  -- What this run is for (exactly one)
+  contact_id UUID REFERENCES public.contacts(id) ON DELETE CASCADE,
+  quote_id   UUID REFERENCES public.quotes(id)   ON DELETE CASCADE,
+  booking_id UUID REFERENCES public.bookings(id) ON DELETE CASCADE,
+
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active','completed','cancelled')),
+  triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  triggered_by_user_id UUID REFERENCES public.users(id),  -- null for system triggers
+  completed_at TIMESTAMPTZ,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CHECK (
+    (contact_id IS NOT NULL)::int +
+    (quote_id IS NOT NULL)::int +
+    (booking_id IS NOT NULL)::int = 1
+  )
+);
+
+ALTER TABLE public.task_sequences      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.task_sequence_steps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.task_sequence_runs  ENABLE ROW LEVEL SECURITY;
+</code></pre>
+
+<h3 id="s37-4-2">37.4.2 Sequence triggering <a class="anchor-link" href="#s37-4-2" aria-label="Permalink">¶</a></h3>
+<p>When a pipeline event occurs (e.g., a quote transitions to <code>sent</code>), the platform looks up active sequences whose <code>trigger_event</code> matches. For each match:</p>
+<ol>
+<li>A <code>task_sequence_runs</code> row is created.</li>
+<li>An Inngest event is dispatched: <code>task_sequence.step_scheduled</code> for each step in the sequence, with delay computed from <code>offset_days</code> + <code>offset_hours</code>.</li>
+<li>Each delayed event, when it fires, creates the corresponding <code>tasks</code> row (with <code>origin='sequence'</code>, <code>sequence_run_id</code>, <code>sequence_step_index</code>) and any associated reminders.</li>
+<li>Before creating each task, the step checks <code>skip_if_status</code> against the record's current status. If matched, the step is skipped (logged but no task created).</li>
+</ol>
+
+<h3 id="s37-4-3">37.4.3 Sequence cancellation <a class="anchor-link" href="#s37-4-3" aria-label="Permalink">¶</a></h3>
+<p>A sequence run is cancelled when:</p>
+<ul>
+<li>The associated record transitions to a terminal status (e.g., quote accepted, booking cancelled, contact deleted)</li>
+<li>Agent explicitly cancels the run from the CRM UI</li>
+<li>Tenant deactivates the sequence definition (existing runs continue or are cancelled per tenant choice during deactivation)</li>
+</ul>
+<p>Cancellation sets <code>task_sequence_runs.status = 'cancelled'</code> and cancels all future (not yet fired) Inngest delayed events for that run. Already-created tasks remain — the agent decides whether to mark them complete or cancel them individually.</p>
+
+<h3 id="s37-4-4">37.4.4 Template substitution <a class="anchor-link" href="#s37-4-4" aria-label="Permalink">¶</a></h3>
+<p>Task title and description templates support simple variable substitution drawn from the associated record:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Variable</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>{{contact.first_name}}</code></td><td>Contact's first name</td></tr>
+<tr><td><code>{{contact.last_name}}</code></td><td>Contact's last name</td></tr>
+<tr><td><code>{{quote.cruise_line}}</code></td><td>Cruise line on the associated quote</td></tr>
+<tr><td><code>{{quote.sailing_date}}</code></td><td>Sailing date on the quote</td></tr>
+<tr><td><code>{{booking.cruise_line}}</code></td><td>Cruise line on the associated booking</td></tr>
+<tr><td><code>{{booking.sailing_date}}</code></td><td>Sailing date on the booking</td></tr>
+<tr><td><code>{{days_until_sailing}}</code></td><td>Computed at task-creation time</td></tr>
+</tbody>
+</table></div>
+<p>Missing variables (e.g., <code>{{quote.cruise_line}}</code> on a contact-scoped sequence) render as empty string. Templates are stored as plain text; substitution is a string replace, not a Handlebars or Jinja runtime — keep it simple and safe.</p>
+
+<h3 id="s37-4-5">37.4.5 Default sequences <a class="anchor-link" href="#s37-4-5" aria-label="Permalink">¶</a></h3>
+<p>New tenants are seeded with the following starter sequences (active by default; tenant can disable or modify):</p>
+<ul>
+<li><strong>New lead nurture</strong> — trigger: <code>lead_created</code>. Steps: Day 1 "Initial outreach call", Day 3 "Follow up if no response", Day 7 "Final follow-up before marking cold"</li>
+<li><strong>Post-quote nurture</strong> — trigger: <code>quote_sent</code>. Steps: Day 2 "Confirm receipt", Day 5 "Follow up on questions", Day 9 "Quote expires soon — final push"</li>
+<li><strong>Booking confirmation follow-through</strong> — trigger: <code>booking_confirmed</code>. Steps: Day 1 "Send welcome packet", Day 30 "Check excursion preferences", Day -60 (pre-sail) "Confirm passport and travel docs"</li>
+<li><strong>Post-cruise review request</strong> — trigger: <code>post_sail_7d</code>. Steps: Day 0 "Ask about the trip", Day 7 "Request review and referrals"</li>
+</ul>
+
+<h2 id="s37-5">37.5 System-Generated Tasks <a class="anchor-link" href="#s37-5" aria-label="Permalink">¶</a></h2>
+<p>Some tasks are automatically generated from platform events outside the pipeline. These have <code>origin='system'</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Trigger</th><th>Task</th><th>Due date</th></tr></thead>
+<tbody>
+<tr><td>Passport expiring within 6 months of sailing date</td><td>"Confirm passport renewal with [contact]"</td><td>30 days from now or 60 days before sailing, whichever is sooner</td></tr>
+<tr><td>Final payment due within 14 days</td><td>"Remind [contact] about final payment for [cruise]"</td><td>7 days before final payment due</td></tr>
+<tr><td>Quote about to expire (within 48 hours)</td><td>"Quote expiring soon — follow up with [contact]"</td><td>Quote expiry minus 24h</td></tr>
+<tr><td>Booking sailed without post-trip task created</td><td>"Post-trip check-in with [contact]"</td><td>3 days after sailing return</td></tr>
+<tr><td>Contact has been in "Lead" stage &gt; 30 days without activity</td><td>"Lead aging — re-engage or mark cold"</td><td>Immediate</td></tr>
+<tr><td>Document failed virus scan (<a class="xref" href="section-34-addendum-inbound-import.html#s34-3-1">§34.3.1</a>)</td><td>"Virus-detected document quarantined — review"</td><td>Immediate</td></tr>
+<tr><td>Imported booking pending commission rate input (<a class="xref" href="section-34-addendum-inbound-import.html#s34-7-3">§34.7.3</a> step 3)</td><td>"Set commission rate for imported booking"</td><td>Immediate</td></tr>
+</tbody>
+</table></div>
+<p>System-generated tasks are created by Inngest scheduled functions running daily (or on the event trigger). Each task has <code>origin_reference</code> set to the event source so duplicates are avoided (don't re-create the same passport-expiring task every night).</p>
+
+<h2 id="s37-6">37.6 AI-Suggested Tasks <a class="anchor-link" href="#s37-6" aria-label="Permalink">¶</a></h2>
+<p>The AI co-pilot (<a class="xref" href="section-20-booking-flow.html#s20-4">§20.4</a>) and the customer-memory extraction (<a class="xref" href="section-11-customer-memory.html#s11-2">§11.2</a>) can propose tasks based on conversation content. Examples:</p>
+<ul>
+<li>Customer mentions in chat "my passport expires next year" → AI suggests task "Confirm exact passport expiry with [name]"</li>
+<li>Conversation indicates customer is researching a specific cruise line → AI suggests task "Send [cruise line] suite category options"</li>
+<li>Customer expresses concern about a sailing date → AI suggests task "Discuss alternative sail dates with [name]"</li>
+</ul>
+<p>AI-suggested tasks have <code>origin='ai_suggested'</code> and start in <code>status='open'</code> with a clear marker in the UI. The agent can accept, edit, or dismiss. Dismissed suggestions are logged so the AI can learn patterns over time (per <a class="xref" href="section-11-customer-memory.html">§11</a> memory mechanisms).</p>
+<p>AI task suggestion is gated by <code>ai_mode</code> (<a class="xref" href="section-09-ai-personas.html#s9-10">§9.10</a>): if a tenant has <code>ai_mode = 'disabled'</code>, AI-suggested tasks do not appear.</p>
+
+<h2 id="s37-7">37.7 Task UI <a class="anchor-link" href="#s37-7" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s37-7-1">37.7.1 Task list views <a class="anchor-link" href="#s37-7-1" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><strong>"My Tasks" dashboard</strong> — default view; shows tasks assigned to the current user, grouped by due date (Overdue, Today, This Week, Later)</li>
+<li><strong>"All Tasks"</strong> (Agency-tier only) — owner view across all seats</li>
+<li><strong>Per-record task list</strong> — tasks scoped to a single contact / quote / booking, shown on that record's detail page</li>
+</ul>
+
+<h3 id="s37-7-2">37.7.2 Task creation paths <a class="anchor-link" href="#s37-7-2" aria-label="Permalink">¶</a></h3>
+<ul>
+<li>"+ Task" button on contact / quote / booking detail pages</li>
+<li>Quick-add from "My Tasks" dashboard (defaults to contact_id null until agent picks a record)</li>
+<li>System and sequence and AI-suggested paths described above</li>
+</ul>
+
+<h3 id="s37-7-3">37.7.3 Mobile considerations <a class="anchor-link" href="#s37-7-3" aria-label="Permalink">¶</a></h3>
+<p>The task surface is one of the highest-value features for mobile-first usage (agents check tasks between calls or while traveling). The mobile-responsive web UI must support: viewing today's tasks, marking complete, snoozing, adding a quick task. Native mobile app is out of scope for v1 per the broader spec posture.</p>
+
+<h3 id="s37-7-4">37.7.4 Notifications <a class="anchor-link" href="#s37-7-4" aria-label="Permalink">¶</a></h3>
+<p>The CRM nav shows a badge with the count of overdue + due-today tasks for the current user. Clicking opens the notifications panel where each due task is listed with a quick-complete action.</p>
+
+<h2 id="s37-8">37.8 Sequence Management UI <a class="anchor-link" href="#s37-8" aria-label="Permalink">¶</a></h2>
+<p>Tenants manage sequences in CRM settings:</p>
+<ul>
+<li>List all sequences (active and inactive) with their trigger event and step count</li>
+<li>Create new sequence via guided form (name, trigger, then add steps one at a time)</li>
+<li>Edit existing sequence — changes apply to NEW runs only; in-flight runs continue with the steps captured at run-start time</li>
+<li>Deactivate sequence — stops new runs; existing runs continue or are cancelled per tenant choice</li>
+<li>View active runs — see which contacts/quotes/bookings currently have an active run, with the next step's task and due date</li>
+</ul>
+
+<h3 id="s37-8-1">37.8.1 Step snapshot at run-start <a class="anchor-link" href="#s37-8-1" aria-label="Permalink">¶</a></h3>
+<p>To make sequence editing safe, the step definitions are snapshotted into the run at the moment of triggering. Editing the sequence definition does not retroactively change in-flight runs. Implementation: when a <code>task_sequence_runs</code> row is created, the application copies the current <code>task_sequence_steps</code> rows into a JSONB field on the run (or a per-run snapshot table — implementation choice at build time). The delayed Inngest events use the snapshot, not the current definition.</p>
+
+<h2 id="s37-9">37.9 Calendar Integration (Future Hook) <a class="anchor-link" href="#s37-9" aria-label="Permalink">¶</a></h2>
+<p>Tasks with <code>due_at</code> can in principle be exposed as calendar events (iCal feed, Google Calendar sync). The schema supports this (<code>due_at</code>, <code>due_is_all_day</code> are calendar-compatible fields). Implementation deferred to a future phase. v1 surfaces tasks only in the CRM UI.</p>
+
+<h2 id="s37-10">37.10 Tenant-Type Applicability <a class="anchor-link" href="#s37-10" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feature</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Ad-hoc tasks</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>System-generated tasks</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Task assignment to other users</td><td>N/A</td><td>N/A</td><td>Y</td><td>N/A</td><td>N/A</td><td>Y</td></tr>
+<tr><td>Sequenced cadences</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Custom sequence creation</td><td>N</td><td>N</td><td>Y</td><td>N</td><td>Y</td><td>Y</td></tr>
+<tr><td>Default sequences (4 from §37.4.5)</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>AI-suggested tasks</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>"All Tasks" cross-user view</td><td>N/A</td><td>N/A</td><td>Y</td><td>N/A</td><td>N/A</td><td>Y</td></tr>
+</tbody>
+</table></div>
+<p>BYO Research gets the basics (ad-hoc tasks, system-generated reminders) but not sequences or AI suggestions — the cheapest tier omits the more complex features. Multi-seat features (assignment, cross-user views) apply only to Agency tiers.</p>
+
+<h2 id="s37-11">37.11 Calls Worth Flagging <a class="anchor-link" href="#s37-11" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Inngest delayed events for long-horizon sequences.</strong> A post-cruise sequence step at "30 days after sailing" could be 18+ months out from quote creation. Inngest delayed events are reliable but the long delay means a sequence definition edit window is large. The step-snapshot pattern in <a class="xref" href="#s37-8-1">§37.8.1</a> protects correctness; verify Inngest's supported delay maximum at build time (it's well over a year, but worth confirming).</li>
+<li><strong>Sequence cancellation race conditions.</strong> If a quote is accepted at the same moment the sequence's "follow up if not accepted" task is being created, the skip_if_status check might fire before or after the status transition commits. Use an explicit lock or check status at task-creation time (post-snapshot read of the live record), not at scheduling time.</li>
+<li><strong>System tasks producing duplicates.</strong> Without origin_reference uniqueness, the daily passport-check job could create the same task every day. Recommend a UNIQUE constraint on (tenant_id, origin, origin_reference) where origin = 'system'.</li>
+<li><strong>Email reminder volume.</strong> A tenant with hundreds of tasks could generate substantial email volume. Respect rate limits per <a class="xref" href="section-23-email-notifications.html#s23-3">§23.3</a> and consider a daily-digest option for non-urgent reminders.</li>
+<li><strong>Sequence triggers depend on event emission.</strong> Pipeline status transitions in <a class="xref" href="section-12-crm.html">§12</a> must emit the trigger events listed in <a class="xref" href="#s37-4-1">§37.4.1</a>. Build coordination: §12 implementation must emit these events; verify event names match between §12 emission code and §37 sequence definitions.</li>
+<li><strong>Template substitution safety.</strong> Simple string replace is intentional to avoid template-injection risk. Variables are populated from typed record fields, never from free-text or AI output, which keeps the substitution surface controlled.</li>
+<li><strong>Conversation-scoped tasks.</strong> Tasks can attach to conversations (the AI chat conversation thread). Useful for "AI flagged this conversation for review" cases. Verify <a class="xref" href="section-10-ai-supervisor.html">§10</a> supervisor design generates these where appropriate.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-36-addendum-source-of-business-reporting.html">← §36: Source-of-Business Reporting</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-38-addendum-multi-option-quote-builder.html">§38: Multi-Option Quote Builder →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

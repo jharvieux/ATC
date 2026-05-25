@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 34 - Addendum — Inbound Import — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 34</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s34">Section 34 - Addendum — Inbound Import (Email / Document / Manual)</h1>
+<p><strong>Status:</strong> Addendum. Lands after Part 1–9 build prompts and after the <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html">§33</a> addendum. References existing sections by number; modifies <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> behavior for imported bookings via the adjustment in <a class="xref" href="#s34-7">§34.7</a> (does not edit §14.3 in place).</p>
+<p><strong>Why an addendum, not a retrofit:</strong> This work adds a new intake surface (email forward via Gmail, document upload, manual entry) and a new booking origin (<code>imported</code>) for bookings that originated outside the platform. Each touches existing sections (<a class="xref" href="section-05-database-schema-main-app.html">§5</a>, <a class="xref" href="section-12-crm.html">§12</a>, <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a>, <a class="xref" href="section-22-knowledge-ingestion-rag-submission-side.html">§22</a>, <a class="xref" href="section-23-email-notifications.html">§23</a>, <a class="xref" href="section-26-security.html">§26</a>) but the existing sections are stable and have build prompts already written. The addendum lands the new behavior as a clearly-scoped extension and explicitly cross-references the existing sections it adjusts.</p>
+
+<h2 id="s34-1">34.1 Overview <a class="anchor-link" href="#s34-1" aria-label="Permalink">¶</a></h2>
+<p>The platform supports importing contacts and bookings that originated outside the platform — primarily for BYO-host agents whose host agency provides the lead-capture and booking-of-record systems. Imports create platform-side records so the agent can use the platform's CRM (<a class="xref" href="section-12-crm.html">§12</a>), AI chat (<a class="xref" href="section-09-ai-personas.html">§9</a>), price watches (<a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-8">§33.8</a>), pre-cruise email series (<a class="xref" href="section-23-email-notifications.html#s23-4">§23.4</a>), and commission reconciliation (<a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a>) on bookings the platform did not itself create.</p>
+<p>Three intake paths share a common parsing pipeline:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Path</th><th>Trigger</th><th>Use cases</th></tr></thead>
+<tbody>
+<tr><td>Email forward</td><td>Gmail message (<a class="xref" href="section-23-email-notifications.html#s23-1">§23.1</a> Gmail integration) with <code>IMPORT</code> trigger word</td><td>Lead notifications from host system, web-form alerts, referral emails, host commission statements</td></tr>
+<tr><td>Document upload</td><td>Agent uploads file via CRM UI</td><td>PDFs of intake forms, CSV exports from host system, screenshots of lead-board entries, commission statement PDFs</td></tr>
+<tr><td>Manual entry</td><td>Agent fills form in CRM UI</td><td>Phone leads, in-person referrals, networking events</td></tr>
+</tbody>
+</table></div>
+<p>This section defines:</p>
+<ul>
+<li>The email import trigger semantics (<a class="xref" href="#s34-2">§34.2</a>)</li>
+<li>The unified parsing pipeline (<a class="xref" href="#s34-3">§34.3</a>)</li>
+<li>Document retention policy (<a class="xref" href="#s34-4">§34.4</a>)</li>
+<li>Extracted record types: contacts, imported bookings, commission statements (<a class="xref" href="#s34-5">§34.5</a>)</li>
+<li>Agent review queue (<a class="xref" href="#s34-6">§34.6</a>)</li>
+<li>The <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> adjustment for imported bookings (<a class="xref" href="#s34-7">§34.7</a>)</li>
+<li>Schema additions, including the <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a> commissions clawback fields (<a class="xref" href="#s34-8">§34.8</a>)</li>
+<li>Tenant-type applicability (<a class="xref" href="#s34-9">§34.9</a>)</li>
+<li>Calls worth flagging (<a class="xref" href="#s34-10">§34.10</a>)</li>
+</ul>
+
+<h2 id="s34-2">34.2 Email Import Trigger (Gmail Integration) <a class="anchor-link" href="#s34-2" aria-label="Permalink">¶</a></h2>
+<p>Inbound parsing rides the existing Gmail integration (<a class="xref" href="section-23-email-notifications.html#s23-1">§23.1</a>) — no separate inbound address or provider. A Gmail message qualifies for import parsing when <strong>either</strong> of these is true (case-insensitive):</p>
+<ul>
+<li>The subject line starts with the word <code>IMPORT</code> (with or without trailing punctuation: <code>IMPORT</code>, <code>Import:</code>, <code>IMPORT -</code>, etc.)</li>
+<li>The first non-empty line of the message body starts with the word <code>IMPORT</code></li>
+</ul>
+<p>Messages not matching the trigger continue to flow into the normal Gmail-conversation path (the agent's regular inbox correspondence with customers). Trigger detection is the first step of inbound processing, runs before persona response logic per <a class="xref" href="section-09-ai-personas.html">§9</a>, and the result is logged on the message row.</p>
+
+<h3 id="s34-2-1">34.2.1 Why a single trigger word rather than label or prefix-syntax <a class="anchor-link" href="#s34-2-1" aria-label="Permalink">¶</a></h3>
+<ul>
+<li>Labels require Gmail-side configuration the agent has to set up; trigger word works in any Gmail account out of the box.</li>
+<li>A bracketed prefix like <code>[IMPORT]</code> is easy to typo (<code>[Import ]</code>, <code>[ IMPORT]</code>); a leading word is forgiving.</li>
+<li>"Top of the email" lets the agent paste a forwarded message and just type IMPORT on the first line before sending — no subject editing needed.</li>
+</ul>
+
+<h3 id="s34-2-2">34.2.2 Trigger detection rules <a class="anchor-link" href="#s34-2-2" aria-label="Permalink">¶</a></h3>
+<p>Implemented as a regex check (per-line) against subject and first body line:</p>
+<pre class="codeblock" data-lang="ts"><code>const IMPORT_TRIGGER = /^\s*IMPORT\b/i;
+
+function qualifiesForImport(subject: string, body: string): boolean {
+  if (IMPORT_TRIGGER.test(subject)) return true;
+  const firstNonEmpty = body
+    .split(/\r?\n/)
+    .map(l =&gt; l.trim())
+    .find(l =&gt; l.length &gt; 0);
+  return firstNonEmpty ? IMPORT_TRIGGER.test(firstNonEmpty) : false;
+}
+</code></pre>
+<p>The <code>\b</code> word boundary ensures "IMPORTANT", "IMPORTED", "IMPORTING" do NOT match. Only the standalone word "IMPORT" (followed by whitespace, punctuation, or end-of-line) triggers parsing.</p>
+
+<h3 id="s34-2-3">34.2.3 Agent guidance <a class="anchor-link" href="#s34-2-3" aria-label="Permalink">¶</a></h3>
+<p>Surfaced in the CRM help docs per <a class="xref" href="section-32-self-service-help.html">§32</a>:</p>
+<ul>
+<li>"To import: forward the email to your Gmail address connected to the platform, and either prefix the subject with <code>IMPORT</code> or type <code>IMPORT</code> as the first line of the body."</li>
+<li>Worked examples shown in the help: lead notification (web-form alert from host system), booking confirmation (cruise line email forwarded), commission statement (monthly statement from host).</li>
+</ul>
+
+<h3 id="s34-2-4">34.2.4 Gmail integration health requirement <a class="anchor-link" href="#s34-2-4" aria-label="Permalink">¶</a></h3>
+<p>Email import is only functional while the Gmail integration is healthy. If the tenant's Gmail OAuth token expires or is revoked, inbound message processing stops — including import parsing. The CRM surfaces Gmail-integration health prominently:</p>
+<ul>
+<li>Tenant settings page displays current status: <code>connected</code> / <code>token_expired</code> / <code>revoked</code> / <code>disconnected</code>.</li>
+<li>A persistent banner appears in the CRM nav when status is anything other than <code>connected</code>.</li>
+<li>An email notification is sent to the tenant owner when the integration transitions to a non-healthy state.</li>
+</ul>
+<p>Without these signals, an agent could send IMPORT emails for weeks expecting parsing while no parsing is occurring — a silent failure that would corrupt their pipeline data.</p>
+
+<h2 id="s34-3">34.3 Parsing Pipeline <a class="anchor-link" href="#s34-3" aria-label="Permalink">¶</a></h2>
+<p>All three intake paths converge on a single parsing pipeline. The pipeline is implemented as an Inngest function with checkpointed steps so a failure at any stage does not lose work.</p>
+<pre class="codeblock" data-lang="text"><code>[Email qualifies (§34.2) | Document uploaded | Form submitted]
+        │
+        ▼
+[Virus scan (uploads only) — pass/fail gate]
+        │
+        ▼
+[Document type classification — Haiku]
+   ├── 'lead_notification'    → contact extraction
+   ├── 'booking_confirmation' → contact + booking extraction
+   ├── 'commission_statement' → commission line-item extraction (§14.8)
+   ├── 'intake_form'          → contact extraction
+   └── 'unknown'              → flagged for agent review, no auto-extraction
+        │
+        ▼
+[Field extraction — Sonnet, structured tool output]
+        │
+        ▼
+[Validation layer — required fields, plausibility checks, duplicate detection]
+        │
+        ▼
+[Agent review queue OR auto-accept above confidence threshold]
+        │
+        ▼
+[Records created/updated in CRM]
+        │
+        ▼
+[Original document discarded (per §34.4); extracted fields retained]
+</code></pre>
+
+<h3 id="s34-3-1">34.3.1 Virus scanning <a class="anchor-link" href="#s34-3-1" aria-label="Permalink">¶</a></h3>
+<p>Document upload and Gmail attachment paths MUST pass virus scanning before any parsing. Implementation: ClamAV daemon running as a sidecar service, or Supabase storage's native scan if available at build time. Files failing the scan are quarantined (not in tenant-accessible storage), logged to <code>audit_log</code> with <code>action = 'document.virus_detected'</code>, and the agent is notified via in-app notification. Quarantined files are deleted after 30 days.</p>
+
+<h3 id="s34-3-2">34.3.2 Document type classification <a class="anchor-link" href="#s34-3-2" aria-label="Permalink">¶</a></h3>
+<p>A Haiku call classifies the document into one of the five categories listed in the flow above. Classification prompt is constrained to a structured tool output (single enum value plus confidence score). Confidence below 0.60 routes the document directly to the agent review queue with type = <code>unknown</code>; the agent can then either set the type manually and re-process, or reject the import.</p>
+
+<h3 id="s34-3-3">34.3.3 Field extraction <a class="anchor-link" href="#s34-3-3" aria-label="Permalink">¶</a></h3>
+<p>A Sonnet call with the document text/image (PDF rasterized if needed) extracts structured fields based on the classified type. Each extracted field carries a per-field confidence score. The overall extraction confidence is the minimum field confidence — one weak field pulls the whole record into review.</p>
+<p>Prompt-injection screening per <a class="xref" href="section-26-security.html">§26.8</a> applies: scraped or forwarded content is untrusted input, and instruction-like content embedded in a document must not steer the extraction. The extraction prompt explicitly frames the document content as data, not instructions.</p>
+
+<h3 id="s34-3-4">34.3.4 Validation layer <a class="anchor-link" href="#s34-3-4" aria-label="Permalink">¶</a></h3>
+<p>After extraction, before persistence:</p>
+<ul>
+<li><strong>Required-field check:</strong> Type-specific required fields must be populated. For example, a <code>booking_confirmation</code> requires the <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-2">§33.2</a> <code>SailingKey</code> fields. Missing required fields route to agent review.</li>
+<li><strong>Plausibility:</strong> Dates within reasonable range (not in the past for future-sailing extractions; not 100 years out), amounts within plausible bands (per-cabin price &lt; $100,000), email format valid.</li>
+<li><strong>Duplicate detection:</strong> Contact match on (tenant_id, email) or (tenant_id, phone). Booking match on (tenant_id, cruise_line, ship, sail_date, passenger_last_names). Possible duplicates route to agent review for accept-as-new / merge / discard decisions.</li>
+</ul>
+
+<h3 id="s34-3-5">34.3.5 Auto-accept threshold <a class="anchor-link" href="#s34-3-5" aria-label="Permalink">¶</a></h3>
+<p>Default auto-accept threshold is overall extraction confidence ≥ 0.80 with no validation flags. Threshold is tenant-configurable in CRM settings (range 0.60–1.00). Records below threshold or with flags route to the <a class="xref" href="#s34-6">§34.6</a> review queue. Above threshold and clean, records are written directly to the CRM and the agent is notified.</p>
+
+<h2 id="s34-4">34.4 Document Retention <a class="anchor-link" href="#s34-4" aria-label="Permalink">¶</a></h2>
+<p>Uploaded files and parsed email attachments are <strong>discarded after successful parse</strong>. The agent retains the original outside the platform for reference. Reasoning: minimizes PII storage surface; the agent already has the source-of-truth copy.</p>
+<p>Retention exceptions:</p>
+<ul>
+<li><strong>Parse failure:</strong> File retained for 7 days behind a <code>parse_failed</code> flag so the agent can review what the system saw before re-attempting or correcting manually.</li>
+<li><strong>Agent review pending:</strong> File retained until the agent confirms or rejects extraction; then discarded.</li>
+<li><strong>Virus-detected files:</strong> Quarantined for 30 days per <a class="xref" href="#s34-3-1">§34.3.1</a>.</li>
+</ul>
+<p>A daily Inngest scheduled function (<code>purge-parsed-documents</code>) sweeps storage and removes files whose <code>extraction_status IN ('accepted','rejected')</code> and whose <code>extracted_at &lt; NOW() - INTERVAL '24 hours'</code>. Discard is logged to <code>audit_log</code> per <a class="xref" href="section-26-security.html#s26-5">§26.5</a> with <code>action = 'document.purged'</code>.</p>
+<p>For the Gmail path, the source email itself is NOT deleted from the agent's Gmail (the platform does not manage the agent's mailbox content). Only platform-side temporary parsing artifacts are discarded.</p>
+
+<h2 id="s34-5">34.5 Extracted Record Types <a class="anchor-link" href="#s34-5" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s34-5-1">34.5.1 Contact extraction <a class="anchor-link" href="#s34-5-1" aria-label="Permalink">¶</a></h3>
+<p>Contact extraction populates <code>public.contacts</code> (<a class="xref" href="section-12-crm.html#s12-1">§12.1</a>). The <code>source</code> field is set to <code>'imported'</code> (extending the existing enum from <a class="xref" href="section-12-crm.html#s12-1">§12.1</a>) and <code>source_reference</code> captures the import path (e.g., <code>'gmail:&lt;message-id&gt;'</code>, <code>'upload:&lt;upload-id&gt;'</code>).</p>
+<p>A new audit table tracks the link between contact and import event:</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.contact_imports (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     UUID NOT NULL REFERENCES public.tenants(id),
+  contact_id    UUID NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
+  import_path   TEXT NOT NULL CHECK (import_path IN ('email','document','manual')),
+  source_ref    TEXT NOT NULL,         -- Gmail message-id, upload-id, or form submission-id
+  document_type TEXT NOT NULL,         -- §34.3.2 classification result
+  confidence    NUMERIC(4,3),          -- overall extraction confidence; NULL for manual
+  imported_by_user_id UUID REFERENCES public.users(id),
+  imported_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  raw_extracted_fields JSONB,          -- snapshot of what the parser saw, for audit
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX contact_imports_tenant_contact_idx
+  ON public.contact_imports(tenant_id, contact_id);
+ALTER TABLE public.contact_imports ENABLE ROW LEVEL SECURITY;
+-- RLS policies follow §5.1 auth_user_in_tenant + tenant_is_active pattern.
+</code></pre>
+<p>The <code>raw_extracted_fields</code> JSONB is the parser's verbatim output, retained even after the source document is discarded. This allows reconstructing what the parser saw if a later dispute arises (e.g., "the agent says I extracted the wrong DOB"). It does NOT contain the source document itself — only the parser's structured interpretation.</p>
+
+<h3 id="s34-5-2">34.5.2 Booking extraction (bookings-of-record-elsewhere) <a class="anchor-link" href="#s34-5-2" aria-label="Permalink">¶</a></h3>
+<p>Bookings made through the agent's host-of-record systems but imported into the platform for tracking. Schema additions to <code>public.bookings</code>:</p>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.bookings
+  ADD COLUMN origin TEXT NOT NULL DEFAULT 'platform'
+    CHECK (origin IN ('platform','imported')),
+  ADD COLUMN imported_from TEXT
+    CHECK (imported_from IN ('email','document','manual')),
+  ADD COLUMN imported_at TIMESTAMPTZ,
+  ADD COLUMN imported_by_user_id UUID REFERENCES public.users(id),
+  ADD COLUMN provider_booking_ref TEXT;   -- host's reference number, for §14.8 matching
+CREATE INDEX bookings_provider_ref_idx
+  ON public.bookings(tenant_id, provider_booking_ref)
+  WHERE provider_booking_ref IS NOT NULL;
+</code></pre>
+<p>Imported bookings MUST capture the <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-2">§33.2</a> <code>SailingKey</code> fields so price watches can attach: <code>cruise_line</code>, <code>ship_name</code>, <code>sailing_date</code>, <code>departure_port</code>, <code>duration_nights</code>. Missing fields route the import to the <a class="xref" href="#s34-6">§34.6</a> review queue rather than auto-accepting.</p>
+<p>Booking imports also create associated contact rows per <a class="xref" href="#s34-5-1">§34.5.1</a> if the passenger contacts do not already exist in the CRM.</p>
+
+<h3 id="s34-5-3">34.5.3 Imported booking commission lifecycle <a class="anchor-link" href="#s34-5-3" aria-label="Permalink">¶</a></h3>
+<p>The full adjustment to <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> for imported bookings is specified in <a class="xref" href="#s34-7">§34.7</a>. Summary: imported bookings enter the <code>expected</code> commission state without traversing the booking-submit path; commission rates are sourced from parsed document, then host adapter, then agent input, with the source recorded; <code>platform_split_rate</code> is NULL for BYO tenants.</p>
+
+<h3 id="s34-5-4">34.5.4 Commission statement extraction <a class="anchor-link" href="#s34-5-4" aria-label="Permalink">¶</a></h3>
+<p>Commission statements feed the <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a> reconciliation flow. Each parsed line item matches an existing <code>commissions</code> row by:</p>
+<ol>
+<li><strong>Exact match on <code>provider_booking_ref</code></strong> (preferred). When the host's statement includes a booking reference number that matches a row's <code>provider_booking_ref</code>, the match is automatic and flows through the <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a> variance thresholds.</li>
+<li><strong>Fuzzy match fallback</strong> on (cruise_line, ship_name, sailing_date, passenger_last_name) when <code>provider_booking_ref</code> is absent or doesn't match any row. Fuzzy matches always surface in the <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a> admin review flow with the match-confidence score, never auto-accepted regardless of dollar variance.</li>
+</ol>
+<p>Match-confidence calculation for fuzzy matches:</p>
+<pre class="codeblock" data-lang="text"><code>cruise_line exact match     → 0.30
+ship_name exact match       → 0.25
+sailing_date exact match    → 0.25
+sailing_date ±7 days        → 0.15
+passenger_last_name exact   → 0.20
+passenger_last_name fuzzy   → 0.10  (Levenshtein distance ≤ 2)
+
+Total ≥ 0.85: high-confidence match (auto-suggest in review UI)
+Total 0.60–0.84: possible match (require explicit admin confirmation)
+Total &lt; 0.60: not surfaced; treated as orphan per §14.8
+</code></pre>
+<p>Statement parsing does NOT create new bookings — it only updates existing commission records. If a statement line item has no matching booking, it surfaces as an orphan per <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a>, and the admin can choose to manually create an imported booking from the orphan or mark the line item as unmatched.</p>
+
+<h2 id="s34-6">34.6 Agent Review Queue <a class="anchor-link" href="#s34-6" aria-label="Permalink">¶</a></h2>
+<p>Items requiring agent review:</p>
+<ul>
+<li>Overall extraction confidence below auto-accept threshold (default 0.80)</li>
+<li>Required fields missing</li>
+<li><code>commission_rate_missing</code> per <a class="xref" href="#s34-7-3">§34.7.3</a> step 3 (imported booking with no rate from parse or host adapter)</li>
+<li>Possible duplicate contact detected (existing match on email or phone)</li>
+<li>Possible duplicate booking detected (existing match on SailingKey + passenger name)</li>
+<li>Document type classified as <code>unknown</code></li>
+<li>Plausibility failures (impossible dates, out-of-band amounts)</li>
+</ul>
+<p>UI: a "Pending review" tab in the CRM showing each item with extracted fields, source preview (image of the document or excerpt of the email body), and actions:</p>
+<ul>
+<li><strong>Accept as-is</strong> — write records as parsed</li>
+<li><strong>Edit and accept</strong> — agent corrects fields, then writes</li>
+<li><strong>Merge with existing</strong> — for duplicate-flagged items, merge extracted fields into the existing contact/booking</li>
+<li><strong>Reject</strong> — discard extraction; original document also discarded (or retained per <a class="xref" href="#s34-4">§34.4</a> if the agent flags for follow-up)</li>
+</ul>
+<p>Reviewed items leave the queue. Audit log records the review action, the reviewing user, and the final disposition.</p>
+
+<h3 id="s34-6-1">34.6.1 Bulk review patterns <a class="anchor-link" href="#s34-6-1" aria-label="Permalink">¶</a></h3>
+<p>An agency owner with multiple agents may face a backlog at month-end when commission statements are forwarded in bulk. The review queue supports:</p>
+<ul>
+<li><strong>Filter by import path</strong> (email / document / manual)</li>
+<li><strong>Filter by document type</strong> (commission statement / booking confirmation / lead notification)</li>
+<li><strong>Filter by submitting agent</strong> (Agency-tier tenants with multiple seats)</li>
+<li><strong>Bulk accept</strong> — select multiple high-confidence items and accept all at once; useful for batches of similar lead notifications from the same source</li>
+</ul>
+
+<h2 id="s34-7">34.7 §14.3 Adjustment for Imported Bookings <a class="anchor-link" href="#s34-7" aria-label="Permalink">¶</a></h2>
+<p>This section modifies the behavior described in <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> (Two-Party Split — rate locking and computation) for bookings with <code>origin = 'imported'</code>. <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> as written assumes both rates resolve at <code>POST /api/bookings/:id/submit</code>; imported bookings have no submit step. The fail-closed rule of <a class="xref" href="section-14-commissions-splits-payouts.html#s14-4">§14.4</a> is therefore replaced for imports with the resolution order specified below. <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> behavior for <code>origin = 'platform'</code> bookings is unchanged.</p>
+
+<h3 id="s34-7-1">34.7-1 Where rate resolution happens for imports <a class="anchor-link" href="#s34-7-1" aria-label="Permalink">¶</a></h3>
+<p>For imported bookings, rate resolution happens at <strong>import-acceptance time</strong> (the point at which the agent accepts the import out of the <a class="xref" href="#s34-6">§34.6</a> review queue, or the point at which the system auto-accepts above the threshold). This timestamp replaces the <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> submit-time as the rate-locking moment.</p>
+
+<h3 id="s34-7-2">34.7.2 The commissions row for imports <a class="anchor-link" href="#s34-7-2" aria-label="Permalink">¶</a></h3>
+<p>A <code>commissions</code> row is written at import-acceptance time. All <a class="xref" href="section-14-commissions-splits-payouts.html#s14-0">§14.0</a> money rules apply unchanged (BIGINT cents, half-away-from-zero rounding, money utility module). The row's <code>commission_rate_source</code> field (new — see <a class="xref" href="#s34-8">§34.8</a>) records how the rate was sourced.</p>
+
+<h3 id="s34-7-3">34.7.3 Commission rate resolution order <a class="anchor-link" href="#s34-7-3" aria-label="Permalink">¶</a></h3>
+<ol>
+<li><strong>From parsed document.</strong> If the imported document explicitly states a commission rate or commission amount, derive <code>commission_rate</code> from it. If the document gives an amount in dollars rather than a rate, the implied rate is <code>commission_amount / commissionable_fare</code> and is stored as such (the amount itself is also retained for cross-check). Set <code>commission_rate_source = 'doc_parsed'</code>.</li>
+<li><strong>From host adapter.</strong> If no rate was parsed from the document, but the tenant's configured host adapter publishes a commission rate programmatically per <a class="xref" href="section-13-host-agency-abstraction-layer.html">§13</a>, use that rate. Set <code>commission_rate_source = 'host_adapter'</code>.</li>
+<li><strong>From agent input.</strong> If neither (1) nor (2) produces a rate, the import enters or remains in the <a class="xref" href="#s34-6">§34.6</a> review queue with reason <code>commission_rate_missing</code>. The agent enters a rate in the review screen. Set <code>commission_rate_source = 'agent_set'</code>.</li>
+</ol>
+<p>The import cannot be accepted (and the <code>commissions</code> row cannot be written) until <code>commission_rate</code> is resolved. This is the fail-closed behavior for imports — same intent as <a class="xref" href="section-14-commissions-splits-payouts.html#s14-4">§14.4</a> but with the agent as the resolver of last resort rather than platform admin.</p>
+
+<h3 id="s34-7-4">34.7.4 platform_split_rate for imports <a class="anchor-link" href="#s34-7-4" aria-label="Permalink">¶</a></h3>
+<p>For BYO tenants, <code>platform_split_rate</code> is NULL — the platform has no commission share on BYO bookings, whether platform-originated or imported. The <a class="xref" href="section-14-commissions-splits-payouts.html#s14-4">§14.4</a> fail-closed rule for <code>platform_split_rate</code> is therefore inapplicable to BYO imports.</p>
+<p>For sub-host tenants: <strong>imported bookings are not permitted</strong> (see <a class="xref" href="#s34-9">§34.9</a>). A sub-host's bookings flow through the platform's booking flow by definition (the platform is host-of-record). If a sub-host attempts to import a booking, the UI rejects the action with explanation.</p>
+
+<h3 id="s34-7-5">34.7.5 host_booking_fee lock for imports <a class="anchor-link" href="#s34-7-5" aria-label="Permalink">¶</a></h3>
+<p>The <code>host_booking_fee_cents</code> column is locked at import-acceptance time using the same rules as <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a>:</p>
+<ul>
+<li>If the parsed document contains the host's booking fee explicitly, use that.</li>
+<li>Otherwise, snapshot from <code>host_booking_fee_configs</code> (or tenant override) at import-acceptance time.</li>
+<li>Either way, the fee is locked on the commissions row and not re-derived later.</li>
+</ul>
+
+<h3 id="s34-7-6">34.7.6 Subsequent rate changes <a class="anchor-link" href="#s34-7-6" aria-label="Permalink">¶</a></h3>
+<p>Same rule as <a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a>: subsequent host rate changes or tenant tier changes do NOT affect already-imported commissions. The locked values apply.</p>
+<p>If the agent later discovers the resolved rate was wrong (e.g., they entered 12% but the host actually pays 13% for that cruise line), the correction path is:</p>
+<ol>
+<li>Agent updates <code>commission_rate</code> on the commissions row from the CRM UI.</li>
+<li>The system inserts an audit_log entry recording prior rate, new rate, editor, reason (free text).</li>
+<li><code>commission_rate_source</code> is updated to <code>'agent_corrected'</code> (new value in the enum — see <a class="xref" href="#s34-8">§34.8</a>).</li>
+<li>If <code>net_commission_cents</code> had already been computed, it is recomputed using the new rate.</li>
+</ol>
+
+<h3 id="s34-7-7">34.7.7 Calls Worth Flagging — §14.3 adjustment <a class="anchor-link" href="#s34-7-7" aria-label="Permalink">¶</a></h3>
+<ul>
+<li><a class="xref" href="section-14-commissions-splits-payouts.html#s14-3">§14.3</a> is NOT edited in place. The adjustment lives here in §34.7 and is referenced from any code path or reviewer who's reading §14.3 with imported bookings in mind. A small note in §14.3 pointing to §34.7 is the only edit recommended to §14.3 itself, and even that is optional.</li>
+<li>The <code>'agent_corrected'</code> value in the <code>commission_rate_source</code> enum is distinct from <code>'agent_set'</code>. <code>'agent_set'</code> = agent provided the original rate at import. <code>'agent_corrected'</code> = agent overrode a previously-resolved rate. The distinction matters for audit and for the <a class="xref" href="section-36-addendum-source-of-business-reporting.html">§36</a> reporting integrity checks.</li>
+<li><code>commission_rate</code> from a parsed document carries the same data-validity risk as any other extraction. The parser may misread a percent sign or a decimal. The agent review queue should highlight parsed rates for confirmation when the document type is <code>commission_statement</code> or <code>booking_confirmation</code>; rates above auto-accept threshold from <code>lead_notification</code> documents (which shouldn't contain rates anyway) should still require confirmation.</li>
+</ul>
+
+<h2 id="s34-8">34.8 Schema Additions <a class="anchor-link" href="#s34-8" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s34-8-1">34.8.1 commissions table additions <a class="anchor-link" href="#s34-8-1" aria-label="Permalink">¶</a></h3>
+<p>Two changes to the <code>commissions</code> table defined in <a class="xref" href="section-05-database-schema-main-app.html">§5</a> and <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a>:</p>
+<pre class="codeblock" data-lang="sql"><code>-- Commission rate source tracking (per §34.7)
+ALTER TABLE public.commissions
+  ADD COLUMN commission_rate_source TEXT
+    CHECK (commission_rate_source IN (
+      'host_adapter',        -- resolved at submit-time from host capabilities (§14.3 platform-origin path)
+      'doc_parsed',          -- imported booking, rate from parsed document
+      'agent_set',           -- imported booking, agent entered rate at import
+      'agent_corrected'      -- agent overrode a previously-resolved rate (any origin)
+    ));
+
+-- Clawback tracking (per §34.8.2 — used by §40 cancellations reporting)
+ALTER TABLE public.commissions
+  ADD COLUMN clawback_amount_cents BIGINT DEFAULT 0,
+  ADD COLUMN clawback_at TIMESTAMPTZ,
+  ADD COLUMN clawback_reason TEXT;
+</code></pre>
+
+<h3 id="s34-8-2">34.8.2 Why clawback fields land in §34 <a class="anchor-link" href="#s34-8-2" aria-label="Permalink">¶</a></h3>
+<p><a class="xref" href="section-14-commissions-splits-payouts.html#s14-9">§14.9</a> describes clawback handling narratively but doesn't add explicit storage. The <a class="xref" href="section-36-addendum-source-of-business-reporting.html">§36</a> "Lost revenue from cancellations" report needs to query clawback amounts per booking. Rather than edit <a class="xref" href="section-14-commissions-splits-payouts.html">§14</a> in place (the build prompts for §14 are already written), the storage lands here as part of the import/reporting addendum group. <a class="xref" href="section-14-commissions-splits-payouts.html#s14-9">§14.9</a>'s clawback flow should write to these fields when it processes a clawback; the field semantics are:</p>
+<ul>
+<li><code>clawback_amount_cents</code> — total amount clawed back from <code>received_commission_cents</code>. Defaults to 0; non-zero only when a clawback occurred.</li>
+<li><code>clawback_at</code> — when the clawback was processed.</li>
+<li><code>clawback_reason</code> — free text; commonly populated from the booking's <code>cancellation_reason</code> when the clawback was triggered by a cancellation.</li>
+</ul>
+
+<h3 id="s34-8-3">34.8.3 bookings table additions <a class="anchor-link" href="#s34-8-3" aria-label="Permalink">¶</a></h3>
+<p>Already shown in <a class="xref" href="#s34-5-2">§34.5.2</a> for clarity in context: <code>origin</code>, <code>imported_from</code>, <code>imported_at</code>, <code>imported_by_user_id</code>, <code>provider_booking_ref</code>.</p>
+
+<h3 id="s34-8-4">34.8.4 contact_imports table <a class="anchor-link" href="#s34-8-4" aria-label="Permalink">¶</a></h3>
+<p>Already shown in <a class="xref" href="#s34-5-1">§34.5.1</a>.</p>
+
+<h3 id="s34-8-5">34.8.5 contacts.source enum extension <a class="anchor-link" href="#s34-8-5" aria-label="Permalink">¶</a></h3>
+<p><a class="xref" href="section-12-crm.html#s12-1">§12.1</a> defines <code>source TEXT</code> as a free text field with stated values 'manual', 'ai_extracted', 'signup', 'imported', 'referred'. The 'imported' value is already in the documented enum — no schema change needed, just the path now actually emits it.</p>
+
+<h2 id="s34-9">34.9 Tenant-Type Applicability <a class="anchor-link" href="#s34-9" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feature</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Manual entry import</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Email import (Gmail trigger)</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Document upload import</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Commission statement parsing</td><td>N</td><td>Y</td><td>Y</td><td>N/A</td><td>N/A</td><td>N/A</td></tr>
+<tr><td>Bookings-of-record-elsewhere</td><td>N</td><td>Y</td><td>Y</td><td>N</td><td>N</td><td>N</td></tr>
+</tbody>
+</table></div>
+<p>Sub-host tenants don't need commission statement parsing or bookings-of-record-elsewhere — both apply only when the tenant has an external host (BYO model). For sub-hosts, commission statements arrive directly to the platform via the <a class="xref" href="section-14-commissions-splits-payouts.html#s14-8">§14.8</a> path because the platform IS the host-of-record.</p>
+<p>Email import requires the Gmail integration, which is itself tier-gated per <a class="xref" href="section-04-detailed-feature-matrix.html">§4</a>. BYO Research has no Gmail integration, hence no email import.</p>
+
+<h2 id="s34-10">34.10 Calls Worth Flagging <a class="anchor-link" href="#s34-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Trigger word collisions remain narrow but possible.</strong> An agent forwarding "IMPORTANT: client update" does NOT match (word boundary check). An agent who writes "Import these details below — IMPORT" on a line where "IMPORT" appears later does NOT match. Only the leading word "IMPORT" at the start of subject or first body line matches. If the agent's normal email vocabulary heavily uses the word IMPORT in subject lines for other reasons, false positives are possible — the agent should change the trigger word in tenant settings (future enhancement; not in v1).</li>
+<li><strong>Gmail token expiry is a silent failure mode</strong> unless the health surfacing in <a class="xref" href="#s34-2-4">§34.2.4</a> is built. Critical to land in v1 alongside the import feature.</li>
+<li><strong>Virus scanning provider selection</strong> is deferred. ClamAV sidecar is the safe default; Supabase native scanning is a faster integration if available at build time.</li>
+<li><strong>Confidence threshold tuning</strong> will need post-launch adjustment. The 0.80 default is a starting point; real-world parsing accuracy on the actual document types tenants forward (host system emails, screenshots, varied PDF formats) will require calibration. Build the threshold as a tenant-configurable setting from day one to avoid a future migration.</li>
+<li><strong>Cancellation triggered by clawback path</strong> — when a cancellation in <a class="xref" href="section-14-commissions-splits-payouts.html#s14-9">§14.9</a> causes a clawback, the clawback amount must be written to the new <code>clawback_amount_cents</code> field for the <a class="xref" href="section-36-addendum-source-of-business-reporting.html">§36</a> report to work. Build coordination: §14.9 implementation and §34.8.1 schema must land together.</li>
+<li><strong>The <code>raw_extracted_fields</code> JSONB in <code>contact_imports</code></strong> is retained even after the source document is purged. This is by design — it's the audit trail of what the parser produced. It is NOT the source document and does not contain PII the parser didn't extract. If a tenant requests full data deletion per <a class="xref" href="section-25-data-privacy-retention.html">§25</a>, this JSONB is included in the deletion scope alongside the contact row.</li>
+<li><strong>Per-tenant parsing volume</strong> may drive AI cost. A tenant who forwards 200 commission statements per month with multi-page PDFs could generate non-trivial Sonnet costs. <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a> cost-attribution and abuse monitoring should treat import-parsing AI calls the same as customer-chat AI calls for budget purposes.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-33-addendum-external-data-sources-and-media-assets.html">← §33: External Data Sources &amp; Media Assets</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-35-addendum-referral-attribution.html">§35: Referral Attribution →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 38 - Addendum — Multi-Option Quote Builder — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 38</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s38">Section 38 - Addendum — Multi-Option Quote Builder</h1>
+<p><strong>Status:</strong> Addendum. Extends the <a class="xref" href="section-12-crm.html#s12-4">§12.4</a> quote schema to support multiple options per quote (side-by-side comparison). Does not modify <a class="xref" href="section-12-crm.html#s12-4">§12.4</a> in place; introduces a sibling table and recasts the existing <code>quotes</code> table as the container while option-specific fields move to the new options table.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> The existing <a class="xref" href="section-12-crm.html#s12-4">§12.4</a> schema embeds option-specific fields (cruise_line, ship_name, sailing_date, cabin_category, commissionable_fare) directly on the <code>quotes</code> row. A real-world agent conversation produces multiple options ("here are three sailings to compare"), and the single-option schema cannot represent this without convoluted workarounds. This addendum lands the multi-option capability as an additive extension.</p>
+
+<h2 id="s38-1">38.1 Overview <a class="anchor-link" href="#s38-1" aria-label="Permalink">¶</a></h2>
+<p>A quote is now a <strong>container</strong> holding one or more <strong>options</strong>. Each option represents a single cruise alternative (a specific line/ship/sailing/cabin combination with its own pricing). The customer reviews all options side-by-side, the agent (or AI) can recommend one, and the customer's acceptance is per-option — they pick which one they want to book.</p>
+<p>Backward compatibility: a single-option quote is still valid. The schema permits N=1 options without ceremony. Existing single-option quotes from before this addendum land migrate cleanly (one row in the new options table per existing quote).</p>
+
+<h2 id="s38-2">38.2 Schema Migration <a class="anchor-link" href="#s38-2" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s38-2-1">38.2.1 New quote_options table <a class="anchor-link" href="#s38-2-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.quote_options (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  quote_id  UUID NOT NULL REFERENCES public.quotes(id) ON DELETE CASCADE,
+
+  -- Position/labeling
+  option_index INT NOT NULL,             -- 1, 2, 3 (display order)
+  label TEXT,                            -- e.g., "Budget pick", "Best value", "Splurge"
+
+  -- Trip details (moved from quotes per §38.2.2)
+  cruise_line TEXT,
+  ship_name TEXT,
+  sailing_date DATE,
+  duration_nights INTEGER,
+  departure_port TEXT,
+  cabin_category TEXT,
+  passenger_count INTEGER,
+
+  -- Financial (cents — money rules per §14.0)
+  commissionable_fare_cents BIGINT,
+  non_commissionable_total_cents BIGINT,
+  total_amount_cents BIGINT,
+  currency TEXT NOT NULL DEFAULT 'USD',
+
+  -- Line-item breakdown (per §38.5)
+  line_items JSONB,                      -- array of {description, amount_cents, is_commissionable, category}
+
+  -- Status
+  is_recommended BOOLEAN NOT NULL DEFAULT FALSE,  -- agent's flagged "best fit"
+  customer_selected BOOLEAN NOT NULL DEFAULT FALSE,
+  customer_selected_at TIMESTAMPTZ,
+
+  -- Notes specific to this option
+  option_notes TEXT,
+  pros TEXT[],                           -- bullet list of pros
+  cons TEXT[],                           -- bullet list of cons
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (quote_id, option_index)
+);
+
+CREATE INDEX quote_options_quote_idx ON public.quote_options(quote_id, option_index);
+CREATE INDEX quote_options_tenant_idx ON public.quote_options(tenant_id);
+
+ALTER TABLE public.quote_options ENABLE ROW LEVEL SECURITY;
+-- RLS per §5.1.
+
+-- At most one option per quote can be customer_selected = TRUE
+CREATE UNIQUE INDEX quote_options_one_selected_idx
+  ON public.quote_options(quote_id)
+  WHERE customer_selected = TRUE;
+</code></pre>
+
+<h3 id="s38-2-2">38.2.2 quotes table changes <a class="anchor-link" href="#s38-2-2" aria-label="Permalink">¶</a></h3>
+<p>The <code>quotes</code> table per <a class="xref" href="section-12-crm.html#s12-4">§12.4</a> currently stores option-specific fields. These move to <code>quote_options</code>. The <code>quotes</code> row becomes the container:</p>
+<pre class="codeblock" data-lang="sql"><code>-- Columns to remove from quotes (now on quote_options):
+--   cruise_line, ship_name, sailing_date, duration_nights, cabin_category,
+--   passenger_count, commissionable_fare, non_commissionable_total, total_amount
+--
+-- The §14.0 money refactor already renamed *_amount to *_amount_cents;
+-- this addendum removes those columns from quotes entirely (they live on options).
+--
+-- Migration approach: keep the columns nullable during transition; the migration
+-- script copies their values into a quote_options row (option_index=1) for each
+-- existing quote; then a follow-up migration drops the columns from quotes.
+
+-- Add new container-level columns:
+ALTER TABLE public.quotes
+  ADD COLUMN customer_facing_intro TEXT,        -- the message shown above the options list
+  ADD COLUMN show_recommendation BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN recommendation_rationale TEXT;     -- if show_recommendation, this paragraph explains
+</code></pre>
+
+<h3 id="s38-2-3">38.2.3 Migration safety <a class="anchor-link" href="#s38-2-3" aria-label="Permalink">¶</a></h3>
+<p>Single-step column drops on a live table risk locking. Recommended migration sequence:</p>
+<ol>
+<li>Add <code>quote_options</code> table (zero-downtime).</li>
+<li>Application code starts double-writing: new quotes write to both <code>quotes</code> (existing option-specific columns) AND <code>quote_options</code>. Reads still come from <code>quotes</code>.</li>
+<li>Backfill job: for each existing quote, create the corresponding <code>quote_options</code> row.</li>
+<li>Application code switches reads to <code>quote_options</code>. Continues double-writing.</li>
+<li>Verification window (1–2 weeks). Verify all reads are correct.</li>
+<li>Application code stops writing to <code>quotes</code>' option-specific columns.</li>
+<li>Migration drops the now-unused columns from <code>quotes</code>.</li>
+</ol>
+<p>This is the standard "expand-migrate-contract" pattern. Cannot be done in a single deploy; spans 2–3 deploy cycles.</p>
+
+<h2 id="s38-3">38.3 Building a Multi-Option Quote <a class="anchor-link" href="#s38-3" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s38-3-1">38.3.1 Agent path <a class="anchor-link" href="#s38-3-1" aria-label="Permalink">¶</a></h3>
+<p>From a contact's detail page, the agent clicks "+ New Quote":</p>
+<ol>
+<li>Quote container is created (status = <code>draft</code>) with <code>quotes</code> row.</li>
+<li>UI shows an empty option grid. Agent adds option 1: picks cruise line, ship, sailing date, cabin category, fills financial fields (or imports pricing per <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-2">§33.2</a> cached pricing if available).</li>
+<li>Agent clicks "+ Add option" — option 2 added with similar form. Defaults pulled from option 1 to reduce typing (same passenger_count, same departure port).</li>
+<li>Up to 5 options supported. UI caps at 5 to keep the side-by-side display readable.</li>
+<li>Agent optionally marks one option as <code>is_recommended = TRUE</code> and writes a <code>recommendation_rationale</code> on the quote container.</li>
+<li>Agent writes <code>customer_facing_intro</code> — the message shown above the options when the customer views the quote.</li>
+<li>Agent clicks "Send Quote" — status transitions to <code>sent</code>, customer is notified.</li>
+</ol>
+
+<h3 id="s38-3-2">38.3.2 AI-assisted path <a class="anchor-link" href="#s38-3-2" aria-label="Permalink">¶</a></h3>
+<p>From a chat conversation, the AI persona's <code>generate_quote</code> tool (per <a class="xref" href="section-09-ai-personas.html#s9-6">§9.6</a>) is extended to produce a multi-option quote when the conversation indicates the customer is comparing. The tool input includes:</p>
+<pre class="codeblock" data-lang="ts"><code>{
+  contact_id: string,
+  customer_facing_intro: string,
+  recommendation: {
+    show: boolean,
+    rationale?: string,   // required if show=true
+    recommended_option_index?: number
+  },
+  options: Array&lt;{
+    label?: string,
+    cruise_line: string,
+    ship_name: string,
+    sailing_date: string,        // ISO date
+    duration_nights: number,
+    departure_port: string,
+    cabin_category: string,
+    passenger_count: number,
+    commissionable_fare_cents: number,
+    non_commissionable_total_cents: number,
+    total_amount_cents: number,
+    line_items: Array&lt;LineItem&gt;,
+    pros?: string[],
+    cons?: string[],
+    option_notes?: string
+  }&gt;
+}
+</code></pre>
+<p>The AI is prompted to suggest 2–3 options when the conversation evidence supports multiple alternatives. Hallucination safeguards from <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-10">§21.10</a> apply: prices must come from <code>search_host_inventory</code> tool calls (not invented), arithmetic check enforces commissionable_fare + non_commissionable = total. The generated quote is in <code>draft</code> status; agent reviews and sends per <a class="xref" href="section-10-ai-supervisor.html">§10</a> supervisor flow.</p>
+
+<h2 id="s38-4">38.4 Customer-Facing Quote Display <a class="anchor-link" href="#s38-4" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s38-4-1">38.4.1 Side-by-side layout <a class="anchor-link" href="#s38-4-1" aria-label="Permalink">¶</a></h3>
+<p>The customer views the quote at a tokenized URL (per the existing quote-send flow). Layout:</p>
+<pre class="codeblock" data-lang="text"><code>┌─────────────────────────────────────────────────────────────────┐
+│ [Tenant branding]                                                │
+│                                                                  │
+│ [Customer-facing intro paragraph]                                │
+│                                                                  │
+│ ┌────────────────────┐ ┌────────────────────┐ ┌────────────────┐│
+│ │  Option 1          │ │  Option 2  ★REC    │ │  Option 3      ││
+│ │  [Label]           │ │  [Label]           │ │  [Label]       ││
+│ │                    │ │                    │ │                ││
+│ │  Royal Caribbean   │ │  Royal Caribbean   │ │  Celebrity     ││
+│ │  Symphony of Seas  │ │  Wonder of Seas    │ │  Edge          ││
+│ │  Mar 15, 2026      │ │  Mar 22, 2026      │ │  Mar 18, 2026  ││
+│ │  7 nights          │ │  7 nights          │ │  8 nights      ││
+│ │  Balcony cabin     │ │  Balcony cabin     │ │  Sky Suite     ││
+│ │                    │ │                    │ │                ││
+│ │  $3,245            │ │  $3,489            │ │  $5,890        ││
+│ │  [breakdown ▼]     │ │  [breakdown ▼]     │ │  [breakdown ▼] ││
+│ │                    │ │                    │ │                ││
+│ │  Pros:             │ │  Pros:             │ │  Pros:         ││
+│ │  • Newer ship      │ │  • Newer ship      │ │  • Luxury      ││
+│ │  • Lower price     │ │  • Better itinerary│ │  • Suite perks ││
+│ │                    │ │                    │ │                ││
+│ │  Cons:             │ │  Cons:             │ │  Cons:         ││
+│ │  • Older itinerary │ │  • $244 more       │ │  • $2k+ more   ││
+│ │                    │ │                    │ │                ││
+│ │  [ Select this ]   │ │  [ Select this ]   │ │  [ Select this]││
+│ └────────────────────┘ └────────────────────┘ └────────────────┘│
+│                                                                  │
+│ [Why we recommend Option 2: rationale text]                     │
+│                                                                  │
+│ [AI chat panel — ask questions about these options]             │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+
+<h3 id="s38-4-2">38.4.2 Recommendation marker <a class="anchor-link" href="#s38-4-2" aria-label="Permalink">¶</a></h3>
+<p>If <code>show_recommendation = TRUE</code> on the quote AND exactly one option has <code>is_recommended = TRUE</code>, the recommended option gets a visual marker (badge, ribbon, highlighted border) and the <code>recommendation_rationale</code> appears below the option grid. If zero or multiple options are marked recommended, the UI suppresses the marker and the rationale (defensive — don't half-display a confused state).</p>
+
+<h3 id="s38-4-3">38.4.3 Customer selection <a class="anchor-link" href="#s38-4-3" aria-label="Permalink">¶</a></h3>
+<p>Customer clicks "Select this" on their preferred option. The UI:</p>
+<ol>
+<li>Sets <code>quote_options.customer_selected = TRUE</code> for that row (unique partial index ensures only one can be selected).</li>
+<li>Sets <code>quotes.status = 'accepted'</code> and <code>quotes.accepted_at = NOW()</code>.</li>
+<li>Routes the customer to the booking flow (<a class="xref" href="section-20-booking-flow.html">§20</a>) pre-filled with the selected option's data.</li>
+</ol>
+<p>If the customer revisits the quote and selects a different option (before booking is submitted), the prior selection is unselected and the new one selected. After a booking has been initiated against an option, switching requires the agent to intervene (creates a new draft booking; old booking remains in its current state).</p>
+
+<h3 id="s38-4-4">38.4.4 Decline path <a class="anchor-link" href="#s38-4-4" aria-label="Permalink">¶</a></h3>
+<p>Customer can decline the entire quote (button "None of these work for me — let's talk"). This sets <code>quotes.status = 'declined'</code> and <code>declined_at = NOW()</code> and prompts the customer for a brief reason (free text → <code>declined_reason</code>, existing field). Triggers a system task for the agent to follow up.</p>
+
+<h2 id="s38-5">38.5 Line-Item Breakdown <a class="anchor-link" href="#s38-5" aria-label="Permalink">¶</a></h2>
+<p>Each option's <code>line_items</code> JSONB array stores the cost breakdown:</p>
+<pre class="codeblock" data-lang="json"><code>[
+  {
+    "description": "Base cruise fare (2 guests, balcony)",
+    "amount_cents": 248000,
+    "is_commissionable": true,
+    "category": "base_fare"
+  },
+  {
+    "description": "Beverage package",
+    "amount_cents": 45000,
+    "is_commissionable": true,
+    "category": "beverage_package"
+  },
+  {
+    "description": "Taxes &amp; port fees",
+    "amount_cents": 28800,
+    "is_commissionable": false,
+    "category": "taxes_fees"
+  },
+  {
+    "description": "Pre-paid gratuities",
+    "amount_cents": 16800,
+    "is_commissionable": false,
+    "category": "gratuities"
+  },
+  {
+    "description": "Travel insurance",
+    "amount_cents": 12400,
+    "is_commissionable": false,
+    "category": "insurance"
+  }
+]
+</code></pre>
+<p>Category values follow <a class="xref" href="section-12-crm.html#s12-5">§12.5</a> commissionable-fare table: <code>base_fare</code>, <code>cabin_upgrade</code>, <code>loyalty_discount</code>, <code>taxes_fees</code>, <code>gratuities</code>, <code>insurance</code>, <code>dining</code>, <code>beverage_package</code>, <code>excursion</code>, <code>other</code>. The application validates that the sum of line items matches the option's <code>total_amount_cents</code> and that the sum of commissionable line items matches <code>commissionable_fare_cents</code>. Mismatches block the quote from being sent.</p>
+
+<h2 id="s38-6">38.6 PDF Generation <a class="anchor-link" href="#s38-6" aria-label="Permalink">¶</a></h2>
+<p>Multi-option quotes generate a PDF with all options side-by-side on the first page (landscape orientation for ≥ 2 options; portrait acceptable for 1 option), followed by per-option detail pages with full line-item breakdown.</p>
+<p>The §12.4 default of full line-item breakdown applies per-option; tenant can globally disable detail breakdown in settings if they prefer to show only totals (rare; defaults to full transparency).</p>
+<p>PDF header includes "ESTIMATE" per <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html#s21-10">§21.10</a> pricing-confidence safeguards, and the footer notes "subject to confirmation at booking" unless the host has provided price-lock guarantee. For each option, the line-item breakdown clearly identifies commissionable vs non-commissionable items so customer-facing pricing transparency is preserved.</p>
+
+<h2 id="s38-7">38.7 Quote Lifecycle State Changes <a class="anchor-link" href="#s38-7" aria-label="Permalink">¶</a></h2>
+<p>Existing <a class="xref" href="section-12-crm.html#s12-4">§12.4</a> quote statuses still apply at the container level: <code>draft</code>, <code>sent</code>, <code>viewed</code>, <code>accepted</code>, <code>declined</code>, <code>expired</code>, <code>converted</code>. Per-option events are tracked on the options:</p>
+<ul>
+<li><code>customer_selected_at</code> on the chosen option (sets <code>quote_options.customer_selected = TRUE</code>)</li>
+<li>An <code>option_viewed_at</code> field can be added for view tracking; deferred to a future analytics iteration</li>
+</ul>
+<p>The container's <code>converted_to_booking_id</code> still applies — it points to the booking that resulted from whichever option the customer selected. Only one booking results from a quote; the unselected options become history.</p>
+
+<h2 id="s38-8">38.8 AI Co-Pilot Behavior <a class="anchor-link" href="#s38-8" aria-label="Permalink">¶</a></h2>
+<p>The AI co-pilot panel in the quote builder (analogous to the booking-flow co-pilot in <a class="xref" href="section-20-booking-flow.html#s20-4">§20.4</a>) helps the agent:</p>
+<ul>
+<li>Suggest a third option given two ("here's a budget alternative")</li>
+<li>Auto-fill line items from cached pricing (per <a class="xref" href="section-33-addendum-external-data-sources-and-media-assets.html#s33-2">§33.2</a>)</li>
+<li>Generate pros/cons for each option based on conversation context and customer memory</li>
+<li>Draft the <code>customer_facing_intro</code> and <code>recommendation_rationale</code></li>
+<li>Validate that the options actually differ meaningfully (warn if three options are essentially the same booking)</li>
+</ul>
+<p>Co-pilot generations pass through <a class="xref" href="section-10-ai-supervisor.html">§10</a> supervisor preflight. Agent retains full edit rights — co-pilot proposes, doesn't commit.</p>
+
+<h3 id="s38-8-1">38.8.1 Customer-side AI <a class="anchor-link" href="#s38-8-1" aria-label="Permalink">¶</a></h3>
+<p>When the customer views the quote, an AI chat panel is available to answer questions about the options. The AI persona is the same one assigned to the conversation; the quote options are loaded into the AI's context as structured data so it can answer questions like "what's the cabin size difference?" or "which has the better itinerary?" with reference to the actual options shown. RAG retrieval per <a class="xref" href="section-21-rag-knowledge-base-consumer-side.html">§21</a> supplements with ship-specific facts.</p>
+
+<h2 id="s38-9">38.9 Tenant-Type Applicability <a class="anchor-link" href="#s38-9" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feature</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Single-option quote</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Multi-option quote (up to 5)</td><td>N (max 1)</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Agent recommendation marker</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>AI co-pilot in builder</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Customer-side AI on quote</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>PDF generation</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+</tbody>
+</table></div>
+<p>BYO Research caps at single-option to keep the cheapest tier simple. Other tiers all get the full multi-option capability.</p>
+
+<h2 id="s38-10">38.10 Calls Worth Flagging <a class="anchor-link" href="#s38-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Migration spans multiple deploys.</strong> The expand-migrate-contract pattern in <a class="xref" href="#s38-2-3">§38.2.3</a> takes 2–3 deploy cycles. Build prompt sequencing matters: do not write code that assumes <code>quote_options</code> is the only source of truth until after step 4 (read switchover) completes.</li>
+<li><strong>5-option cap is a soft UX decision.</strong> Schema permits any positive integer. The 5 cap is UI-side. Real-world agents who want 6 options would face a decision about extending the cap vs splitting into two quotes. Defer until tenant feedback.</li>
+<li><strong>Line-item validation strictness.</strong> Requiring line items to sum exactly to total_amount_cents protects data integrity but may frustrate agents who copy-paste fare info from host systems with minor rounding artifacts. Suggest a $1 tolerance window with a warning rather than a hard reject.</li>
+<li><strong>Customer-side AI access to all option data.</strong> Loading all options into AI context for chat means the AI can answer comparison questions but also means the AI's response generation cost scales with option count. Per-quote AI cost should be tracked separately (per <a class="xref" href="section-27-saas-abuse-monitoring-cost-controls.html">§27</a>) for cost attribution.</li>
+<li><strong>Per-option view tracking</strong> would let agents see "customer viewed option 3 most" and inform follow-up. Schema field (<code>option_viewed_at</code>) is mentioned but not added in v1 — defer if no clear demand.</li>
+<li><strong>Option labels are free-text.</strong> "Budget pick", "Best value", "Splurge" are example labels. Tenants will use varied conventions ("Family-friendly", "Romantic", etc.). No standardization required; labels are display-only.</li>
+<li><strong>Selecting an option locks the booking path.</strong> Once a booking is initiated against an option, changing the selected option requires the agent to intervene. This is correct behavior but should be clearly communicated in the customer-facing copy: "By clicking Select, you'll be taken to the booking flow for this option."</li>
+<li><strong>Quote-to-booking attribution carry-through.</strong> Per <a class="xref" href="section-35-addendum-referral-attribution.html#s35-6-2">§35.6.2</a>, the booking's conversion-touch is read fresh from the contact's latest touch, not copied from the quote. Multi-option quotes don't change this; the customer's session at the moment of "Select this" provides the conversion touch.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-37-addendum-tasks-and-follow-up.html">← §37: Tasks &amp; Follow-up</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-39-addendum-client-facing-deliverables.html">§39: Client-Facing Deliverables →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Section 35 - Addendum — Referral Source Attribution — ATC Spec v6.2</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="page-header">
+    <nav class="topnav"><a href="index.html">Home</a> <span class="sep">›</span> Section 35</nav>
+    <div class="brand">AI Travel Concierge Platform — Tech Spec v6.2</div>
+  </header>
+  <main class="content">
+    <h1 id="s35">Section 35 - Addendum — Referral Source Attribution</h1>
+<p><strong>Status:</strong> Addendum. Lands after Part 1–9 build prompts. References existing sections by number; does not modify them in place. Schema additions augment <a class="xref" href="section-05-database-schema-main-app.html">§5</a>, <a class="xref" href="section-12-crm.html">§12</a>, and the bookings table.</p>
+<p><strong>Why an addendum, not a retrofit:</strong> Attribution capture is a new cross-cutting concern that touches contacts, quotes, bookings, and the platform's HTTP middleware. The existing sections are stable. The addendum lands new columns and a new table without modifying the existing schema definitions in <a class="xref" href="section-05-database-schema-main-app.html">§5</a>.</p>
+
+<h2 id="s35-1">35.1 Overview <a class="anchor-link" href="#s35-1" aria-label="Permalink">¶</a></h2>
+<p>The platform captures and stores referral source attribution for every contact, quote, and booking. Attribution data answers questions like "which campaign acquired this customer?" and "which channel closed this booking?" for the <a class="xref" href="section-36-addendum-source-of-business-reporting.html">§36</a> reporting layer.</p>
+<p>Attribution uses three storage locations:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Location</th><th>What it stores</th><th>Mutability</th></tr></thead>
+<tbody>
+<tr><td><code>contacts</code> columns</td><td>First-touch attribution</td><td>Immutable after contact creation</td></tr>
+<tr><td><code>quotes</code> / <code>bookings</code> columns</td><td>Conversion-touch attribution: snapshot of the contact's most recent touch at the moment of quote/booking creation</td><td>Immutable</td></tr>
+<tr><td><code>attribution_touches</code> table</td><td>Rolling 10 most recent touches per contact</td><td>Trigger-evicted oldest on insert</td></tr>
+</tbody>
+</table></div>
+<p>This trades full history for a bounded, queryable working set that supports first-touch reporting, last-touch (conversion) reporting, and a short backward-looking trail for investigation. Storage cost is bounded: at most 10 rows per contact in <code>attribution_touches</code>, regardless of how many sessions the contact has had.</p>
+
+<h2 id="s35-2">35.2 Capture Mechanism <a class="anchor-link" href="#s35-2" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s35-2-1">35.2.1 UTM parameter parsing <a class="anchor-link" href="#s35-2-1" aria-label="Permalink">¶</a></h3>
+<p>The platform's HTTP middleware (alongside the tenant-resolution logic in <a class="xref" href="section-01-platform-overview.html#s1-4">§1.4</a>) parses standard UTM parameters from inbound URLs on every request:</p>
+<ul>
+<li><code>utm_source</code> — e.g., <code>facebook</code>, <code>google</code>, <code>newsletter</code></li>
+<li><code>utm_medium</code> — e.g., <code>social</code>, <code>cpc</code>, <code>email</code></li>
+<li><code>utm_campaign</code> — e.g., <code>wave_season_2027</code></li>
+<li><code>utm_content</code> — optional ad variant or content slot</li>
+<li><code>utm_term</code> — optional search term</li>
+</ul>
+<p>Additional captured at the same touch:</p>
+<ul>
+<li><code>referrer_url</code> — the HTTP <code>Referer</code> header value</li>
+<li><code>landing_path</code> — the URL path the user landed on</li>
+</ul>
+<p>UTM values are case-preserved as-received but lowercased for indexed columns (the indexed lowercase form is used for grouping in reports; the original case is retained in a separate field for display).</p>
+
+<h3 id="s35-2-2">35.2.2 Session attribution flow <a class="anchor-link" href="#s35-2-2" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="text"><code>[Request arrives with utm_* params]
+        │
+        ▼
+[Middleware extracts UTM + referrer + landing_path]
+        │
+        ▼
+[Store in session cookie: attribution_pending]
+        │
+        ▼
+[Anonymous browsing — no contact row yet]
+        │
+        ▼
+[User identifies themselves (signs up / starts chat / submits form)]
+        │
+        ▼
+[Contact row created OR existing contact resolved]
+        │
+        ▼
+[Insert attribution_touches row for this contact with the pending UTM data]
+        │
+        ▼
+[If contact is brand new: also populate contact.first_touch_* columns]
+</code></pre>
+<p>The session cookie holds pending attribution until a contact is created or resolved. Multiple pageviews in the same session do not create multiple touch rows — only the first UTM-bearing request in a session creates pending attribution. Subsequent UTM-bearing requests in the same session overwrite the pending attribution (last-write-wins within a session).</p>
+
+<h3 id="s35-2-3">35.2.3 Returning visitor handling <a class="anchor-link" href="#s35-2-3" aria-label="Permalink">¶</a></h3>
+<p>When a returning identified user lands with new UTM parameters, a new <code>attribution_touches</code> row is inserted for their existing contact. The contact's <code>first_touch_*</code> columns are NOT modified. The rolling 10-touch trigger (<a class="xref" href="#s35-4-2">§35.4.2</a>) evicts the oldest touch if the new touch is the 11th.</p>
+
+<h3 id="s35-2-4">35.2.4 Direct visits (no UTM) <a class="anchor-link" href="#s35-2-4" aria-label="Permalink">¶</a></h3>
+<p>Visits without any UTM parameters are recorded with <code>utm_source = NULL</code> and <code>channel = 'direct'</code> (derived per <a class="xref" href="#s35-5">§35.5</a>). Direct visits still produce touch rows if they are accompanied by identification events (the user signs up, chats, etc.); pure direct browsing without identification does not produce touch rows because there is no contact to attach them to.</p>
+
+<h2 id="s35-3">35.3 Contact Schema Additions (First Touch) <a class="anchor-link" href="#s35-3" aria-label="Permalink">¶</a></h2>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.contacts
+  -- First-touch attribution (set at contact creation; never updated)
+  ADD COLUMN first_touch_at TIMESTAMPTZ,
+  ADD COLUMN first_touch_source_origin TEXT
+    CHECK (first_touch_source_origin IN ('utm_parsed','agent_set','imported')),
+  ADD COLUMN first_touch_utm_source   TEXT,
+  ADD COLUMN first_touch_utm_medium   TEXT,
+  ADD COLUMN first_touch_utm_campaign TEXT,
+  ADD COLUMN first_touch_utm_content  TEXT,
+  ADD COLUMN first_touch_utm_term     TEXT,
+  ADD COLUMN first_touch_referrer_url TEXT,
+  ADD COLUMN first_touch_landing_path TEXT,
+  ADD COLUMN first_touch_channel      TEXT,
+  ADD COLUMN first_touch_manual_label TEXT,        -- for agent_set / imported
+  ADD COLUMN first_touch_manual_category TEXT;     -- for agent_set / imported
+
+CREATE INDEX contacts_first_touch_campaign_idx
+  ON public.contacts(tenant_id, first_touch_utm_campaign)
+  WHERE first_touch_utm_campaign IS NOT NULL;
+
+CREATE INDEX contacts_first_touch_channel_idx
+  ON public.contacts(tenant_id, first_touch_channel);
+</code></pre>
+
+<h3 id="s35-3-1">35.3.1 First-touch immutability <a class="anchor-link" href="#s35-3-1" aria-label="Permalink">¶</a></h3>
+<p>The <code>first_touch_*</code> fields on the contact are write-once at contact creation. An agent editing the contact's source via the CRM UI produces an <code>agent_edit</code> touch in the rolling <code>attribution_touches</code> table — it does NOT overwrite <code>first_touch_*</code>. This preserves the audit value of first-touch reporting: the original acquisition channel is never lost to subsequent edits.</p>
+<p>If an agent or platform admin needs to correct a genuinely incorrect first-touch (rare — e.g., a misattributed bot visit was recorded first, or a UTM parameter was malformed), the correction path is restricted to platform admin via direct DB edit with mandatory <code>audit_log</code> entry. This is surfaced in admin tooling, not tenant UI. The friction is intentional: routine "corrections" of first-touch would undermine its analytical value.</p>
+
+<h2 id="s35-4">35.4 Rolling Touch Table <a class="anchor-link" href="#s35-4" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s35-4-1">35.4.1 attribution_touches table definition <a class="anchor-link" href="#s35-4-1" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.attribution_touches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  UUID NOT NULL REFERENCES public.tenants(id),
+  contact_id UUID NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
+
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source_origin TEXT NOT NULL
+    CHECK (source_origin IN ('utm_parsed','agent_set','agent_edit','imported')),
+
+  utm_source   TEXT,
+  utm_medium   TEXT,
+  utm_campaign TEXT,
+  utm_content  TEXT,
+  utm_term     TEXT,
+  referrer_url TEXT,
+  landing_path TEXT,
+  channel      TEXT,
+
+  manual_label    TEXT,    -- for agent_set / agent_edit / imported
+  manual_category TEXT,
+  editor_user_id  UUID REFERENCES public.users(id),   -- non-null for agent_set / agent_edit
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX attr_touches_contact_idx
+  ON public.attribution_touches(tenant_id, contact_id, occurred_at DESC);
+
+CREATE INDEX attr_touches_campaign_idx
+  ON public.attribution_touches(tenant_id, utm_campaign, occurred_at)
+  WHERE utm_campaign IS NOT NULL;
+
+ALTER TABLE public.attribution_touches ENABLE ROW LEVEL SECURITY;
+-- RLS policies per §5.1: auth_user_in_tenant + tenant_is_active.
+</code></pre>
+
+<h3 id="s35-4-2">35.4.2 Rolling 10-touch window via trigger <a class="anchor-link" href="#s35-4-2" aria-label="Permalink">¶</a></h3>
+<pre class="codeblock" data-lang="sql"><code>CREATE OR REPLACE FUNCTION public.attribution_touches_trim_to_ten()
+RETURNS TRIGGER AS $$
+BEGIN
+  DELETE FROM public.attribution_touches
+  WHERE contact_id = NEW.contact_id
+    AND id NOT IN (
+      SELECT id
+      FROM public.attribution_touches
+      WHERE contact_id = NEW.contact_id
+      ORDER BY occurred_at DESC, created_at DESC
+      LIMIT 10
+    );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_attribution_touches_trim
+  AFTER INSERT ON public.attribution_touches
+  FOR EACH ROW EXECUTE FUNCTION public.attribution_touches_trim_to_ten();
+</code></pre>
+<p>The trigger runs after every insert, deleting any rows beyond the 10 most recent for that contact. <code>ORDER BY occurred_at DESC, created_at DESC</code> — important because two touches could share an <code>occurred_at</code> value (rare but possible with fast clicking or a clock-precision tie). <code>created_at</code> as tiebreaker keeps the eviction deterministic.</p>
+<p>The trigger is <code>AFTER INSERT FOR EACH ROW</code>. For a contact with 10 existing rows and one new insert, exactly one row is deleted. Cost is bounded and predictable: one DELETE per INSERT, scoped to a single contact via an indexed query.</p>
+
+<h3 id="s35-4-3">35.4.3 Touch semantics <a class="anchor-link" href="#s35-4-3" aria-label="Permalink">¶</a></h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Event</th><th>What gets written</th></tr></thead>
+<tbody>
+<tr><td>First UTM touch on a session, contact identified for the first time</td><td>INSERT to <code>attribution_touches</code> with <code>source_origin='utm_parsed'</code>. ALSO populate the contact's <code>first_touch_*</code> columns.</td></tr>
+<tr><td>Returning identified user with new UTM</td><td>INSERT to <code>attribution_touches</code> with <code>source_origin='utm_parsed'</code>. First-touch columns on contact UNCHANGED.</td></tr>
+<tr><td>Contact created via manual entry with source set</td><td>INSERT to <code>attribution_touches</code> with <code>source_origin='agent_set'</code>, <code>editor_user_id</code> = creating user. Populate first_touch columns from the manual values.</td></tr>
+<tr><td>Contact created via <a class="xref" href="section-34-addendum-inbound-import.html">§34</a> import</td><td>INSERT to <code>attribution_touches</code> with <code>source_origin='imported'</code>. Populate first_touch columns from the import event metadata.</td></tr>
+<tr><td>Agent edits source on existing contact</td><td>INSERT to <code>attribution_touches</code> with <code>source_origin='agent_edit'</code> and <code>editor_user_id</code> set. First-touch columns on contact NOT modified.</td></tr>
+<tr><td>Quote created</td><td>Read most recent <code>attribution_touches</code> row for contact; copy values to <code>quotes.conversion_touch_*</code> per <a class="xref" href="#s35-6">§35.6</a>.</td></tr>
+<tr><td>Booking created</td><td>Same as quote, copied to <code>bookings.conversion_touch_*</code> per <a class="xref" href="#s35-6">§35.6</a>.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="s35-4-4">35.4.4 What an edit counts as <a class="anchor-link" href="#s35-4-4" aria-label="Permalink">¶</a></h3>
+<p>An agent edit (<code>source_origin='agent_edit'</code>) consumes a slot in the rolling 10-touch window, same as any other touch. This is deliberate: it preserves the audit trail of who changed what and when. If an agent makes 11 corrections to a contact's source over time, the oldest correction is evicted alongside any other touch. The 10-touch limit is the hard ceiling for all touch types combined.</p>
+
+<h2 id="s35-5">35.5 Channel Normalization <a class="anchor-link" href="#s35-5" aria-label="Permalink">¶</a></h2>
+<p>The <code>channel</code> field is a normalized category derived from <code>utm_medium</code> (or <code>manual_category</code> for offline touches). The normalization map is platform-admin-managed (not tenant-managed) so that reporting categories remain stable across tenants. The map is versioned: changes to the map produce a new version, and historical touch rows retain their channel as computed at the time they were inserted (not retroactively recomputed).</p>
+<div class="table-wrap"><table>
+<thead><tr><th><code>utm_medium</code> value</th><th><code>channel</code></th></tr></thead>
+<tbody>
+<tr><td>social, sm, social_media</td><td>social</td></tr>
+<tr><td>cpc, ppc, paid_search, search</td><td>search</td></tr>
+<tr><td>email, e-mail, newsletter</td><td>email</td></tr>
+<tr><td>(none / direct visit / no UTM)</td><td>direct</td></tr>
+<tr><td>referral, partner, affiliate</td><td>referral</td></tr>
+<tr><td>(manual entry / imported, default)</td><td>offline</td></tr>
+<tr><td>(anything else)</td><td>other</td></tr>
+</tbody>
+</table></div>
+<p>Tenants can supply a <code>manual_category</code> override on agent_set / imported touches to override the default 'offline' channel. Examples: "phone_referral", "trade_show", "past_client_referral". These are free-text values that the platform-admin map can be extended to handle in future versions, but at v1 they are stored verbatim in <code>manual_category</code> and the <code>channel</code> field is 'offline' for all of them.</p>
+
+<h2 id="s35-6">35.6 Quote and Booking Schema (Conversion Touch) <a class="anchor-link" href="#s35-6" aria-label="Permalink">¶</a></h2>
+<pre class="codeblock" data-lang="sql"><code>ALTER TABLE public.quotes
+  ADD COLUMN conversion_touch_at TIMESTAMPTZ,
+  ADD COLUMN conversion_touch_source_origin TEXT,
+  ADD COLUMN conversion_touch_utm_source   TEXT,
+  ADD COLUMN conversion_touch_utm_medium   TEXT,
+  ADD COLUMN conversion_touch_utm_campaign TEXT,
+  ADD COLUMN conversion_touch_utm_content  TEXT,
+  ADD COLUMN conversion_touch_utm_term     TEXT,
+  ADD COLUMN conversion_touch_referrer_url TEXT,
+  ADD COLUMN conversion_touch_landing_path TEXT,
+  ADD COLUMN conversion_touch_channel      TEXT,
+  ADD COLUMN conversion_touch_manual_label TEXT,
+  ADD COLUMN conversion_touch_manual_category TEXT;
+
+-- Same set of columns on bookings (mirror)
+ALTER TABLE public.bookings
+  ADD COLUMN conversion_touch_at TIMESTAMPTZ,
+  ADD COLUMN conversion_touch_source_origin TEXT,
+  ADD COLUMN conversion_touch_utm_source   TEXT,
+  ADD COLUMN conversion_touch_utm_medium   TEXT,
+  ADD COLUMN conversion_touch_utm_campaign TEXT,
+  ADD COLUMN conversion_touch_utm_content  TEXT,
+  ADD COLUMN conversion_touch_utm_term     TEXT,
+  ADD COLUMN conversion_touch_referrer_url TEXT,
+  ADD COLUMN conversion_touch_landing_path TEXT,
+  ADD COLUMN conversion_touch_channel      TEXT,
+  ADD COLUMN conversion_touch_manual_label TEXT,
+  ADD COLUMN conversion_touch_manual_category TEXT;
+
+CREATE INDEX quotes_conv_campaign_idx
+  ON public.quotes(tenant_id, conversion_touch_utm_campaign)
+  WHERE conversion_touch_utm_campaign IS NOT NULL;
+
+CREATE INDEX bookings_conv_campaign_idx
+  ON public.bookings(tenant_id, conversion_touch_utm_campaign)
+  WHERE conversion_touch_utm_campaign IS NOT NULL;
+
+CREATE INDEX bookings_conv_channel_idx
+  ON public.bookings(tenant_id, conversion_touch_channel);
+</code></pre>
+
+<h3 id="s35-6-1">35.6.1 Population at row creation <a class="anchor-link" href="#s35-6-1" aria-label="Permalink">¶</a></h3>
+<p>When a quote or booking row is created, the application code reads the most recent <code>attribution_touches</code> row for the contact and copies its values to the <code>conversion_touch_*</code> columns. If no <code>attribution_touches</code> rows exist for the contact (rare — implies a contact with first_touch columns but no touch table rows, which can happen if the contact predates this addendum), the <code>conversion_touch_*</code> columns are populated from the contact's <code>first_touch_*</code> values.</p>
+
+<h3 id="s35-6-2">35.6.2 Quote-to-booking handoff <a class="anchor-link" href="#s35-6-2" aria-label="Permalink">¶</a></h3>
+<p>When a quote converts to a booking (per <a class="xref" href="section-12-crm.html#s12-4">§12.4</a> quote lifecycle), the booking's <code>conversion_touch_*</code> values are populated independently — read fresh from the contact's current most recent touch, NOT copied from the quote. This means a booking created weeks after the quote, after additional intermediate visits with new UTMs, attributes to the most recent touch at booking time. If the agent prefers the quote's attribution to carry forward (e.g., "the campaign that produced the quote should own the booking"), they can override via agent_edit on the booking.</p>
+
+<h3 id="s35-6-3">35.6.3 Imported booking attribution <a class="anchor-link" href="#s35-6-3" aria-label="Permalink">¶</a></h3>
+<p>For bookings imported via <a class="xref" href="section-34-addendum-inbound-import.html">§34</a> (<code>origin = 'imported'</code>), <code>conversion_touch_*</code> is populated from whatever the contact's most recent touch is at the time of import-acceptance. If the contact is created by the same import (no prior touches), the conversion-touch values mirror the import's first-touch values (channel = 'offline' unless overridden).</p>
+
+<h2 id="s35-7">35.7 Manual Entry of Source <a class="anchor-link" href="#s35-7" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s35-7-1">35.7.1 At contact creation <a class="anchor-link" href="#s35-7-1" aria-label="Permalink">¶</a></h3>
+<p>The CRM contact-creation form prompts for source as a required field. The agent picks from a tenant-configurable list of categories or enters free text in <code>manual_label</code>. Examples of default categories shipped with new tenants:</p>
+<ul>
+<li>Past client referral</li>
+<li>Facebook</li>
+<li>Instagram</li>
+<li>Trade show / networking event</li>
+<li>Phone walk-in</li>
+<li>Email referral</li>
+<li>Other</li>
+</ul>
+<p>The category list lives in a new table:</p>
+<pre class="codeblock" data-lang="sql"><code>CREATE TABLE public.tenant_attribution_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES public.tenants(id),
+  category_label TEXT NOT NULL,
+  display_order INT NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tenant_id, category_label)
+);
+
+ALTER TABLE public.tenant_attribution_categories ENABLE ROW LEVEL SECURITY;
+</code></pre>
+<p>Tenants edit their category list in CRM settings. Default categories are seeded at tenant creation but can be edited/deleted/reordered.</p>
+
+<h3 id="s35-7-2">35.7.2 Editing existing attribution <a class="anchor-link" href="#s35-7-2" aria-label="Permalink">¶</a></h3>
+<p>The CRM exposes an "Edit source" action on:</p>
+<ul>
+<li>Contact detail page (edits create <code>agent_edit</code> touches; first-touch on contact unchanged)</li>
+<li>Quote detail page (edits update <code>quotes.conversion_touch_*</code> in place — quotes have no rolling touch table)</li>
+<li>Booking detail page (edits update <code>bookings.conversion_touch_*</code> in place)</li>
+</ul>
+<p>Every edit writes an <code>audit_log</code> entry per <a class="xref" href="section-26-security.html#s26-5">§26.5</a> with the prior values, new values, and editing user.</p>
+
+<h3 id="s35-7-3">35.7.3 Permission model <a class="anchor-link" href="#s35-7-3" aria-label="Permalink">¶</a></h3>
+<p>BYO Research tenants can SET source at contact creation but CANNOT EDIT after creation (the cheapest tier omits the editing UI to keep complexity low). All other paid tiers support both set and edit. This is a UI gating decision, not a schema constraint.</p>
+
+<h2 id="s35-8">35.8 Privacy and Retention <a class="anchor-link" href="#s35-8" aria-label="Permalink">¶</a></h2>
+
+<h3 id="s35-8-1">35.8.1 PII in attribution data <a class="anchor-link" href="#s35-8-1" aria-label="Permalink">¶</a></h3>
+<p>Attribution fields contain no inherent PII — UTM values, referrer URLs, and campaign names describe how the contact found the platform, not who they are. The <code>referrer_url</code> field could contain personal information if the referrer happens to be a personal site (e.g., a user's own blog), but this is a rare edge case and not a PII vector that warrants special handling.</p>
+
+<h3 id="s35-8-2">35.8.2 Deletion alongside contact <a class="anchor-link" href="#s35-8-2" aria-label="Permalink">¶</a></h3>
+<p>When a contact is deleted per <a class="xref" href="section-25-data-privacy-retention.html">§25</a> data deletion rules, all associated <code>attribution_touches</code> rows are deleted via the <code>ON DELETE CASCADE</code> in the foreign key definition. The contact's own <code>first_touch_*</code> columns are part of the contact row itself, deleted with it. <code>conversion_touch_*</code> on quotes and bookings is retained even after the contact is deleted (the quote/booking is a financial record retained per <a class="xref" href="section-25-data-privacy-retention.html">§25</a>); these columns contain no PII, only campaign metadata.</p>
+
+<h3 id="s35-8-3">35.8.3 Cross-tenant isolation <a class="anchor-link" href="#s35-8-3" aria-label="Permalink">¶</a></h3>
+<p>Attribution data is strictly tenant-scoped. RLS policies on <code>attribution_touches</code> and <code>tenant_attribution_categories</code> enforce <code>auth_user_in_tenant + tenant_is_active</code> per <a class="xref" href="section-05-database-schema-main-app.html#s5-1">§5.1</a>. A campaign run by tenant A is not visible to tenant B even if both happened to use the same <code>utm_campaign</code> string.</p>
+
+<h2 id="s35-9">35.9 Tenant-Type Applicability <a class="anchor-link" href="#s35-9" aria-label="Permalink">¶</a></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feature</th><th>BYO Research</th><th>BYO Pro</th><th>BYO Agency</th><th>Sub Starter</th><th>Sub Pro</th><th>Sub Agency</th></tr></thead>
+<tbody>
+<tr><td>Attribution capture (UTM, referrer)</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>First-touch on contacts</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Rolling 10-touch table</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Manual source on contact creation</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Edit source after creation</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+<tr><td>Category list customization</td><td>N</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td><td>Y</td></tr>
+</tbody>
+</table></div>
+<p>Attribution capture is universal — every tenant captures it because the data is foundational for the <a class="xref" href="section-36-addendum-source-of-business-reporting.html">§36</a> reports. Editing and customization are tier-gated.</p>
+
+<h2 id="s35-10">35.10 Calls Worth Flagging <a class="anchor-link" href="#s35-10" aria-label="Permalink">¶</a></h2>
+<ul>
+<li><strong>Attribution_touches grows linearly with engaged contacts.</strong> Capped at 10 per contact by the trigger. For a tenant with 10,000 contacts, max 100,000 rows. Well within Postgres comfort zone. Index on (tenant_id, contact_id, occurred_at DESC) handles the trigger's subquery efficiently.</li>
+<li><strong>Trigger correctness under fast successive inserts.</strong> Two touches inserted in the same millisecond could share <code>occurred_at</code>. The <code>created_at</code> tiebreaker in the ORDER BY makes eviction deterministic, but the "10 most recent" definition depends on physical insert order, not logical session order. In practice this is fine — the user wouldn't notice — but worth knowing during debug.</li>
+<li><strong>Platform-admin first-touch correction</strong> is direct DB edit + audit_log entry. Clunky but acceptable for an edge case. If correction requests exceed ~2/month across all tenants, a small admin UI is worth building.</li>
+<li><strong>Multi-touch journey ambiguity.</strong> First-touch and last-touch don't capture multi-touch attribution models (linear, time-decay, U-shape). The rolling 10-touch table contains the data to support custom multi-touch attribution in future, but no calculation is provided in v1. <a class="xref" href="section-36-addendum-source-of-business-reporting.html">§36</a> reports use first-touch and conversion-touch only.</li>
+<li><strong>Cookie persistence and privacy</strong>. The session cookie holding pending attribution must respect any active cookie-consent posture. <a class="xref" href="section-17-authentication-signup-consent.html">§17</a> consent flow should set a flag controlling whether pending attribution is set; if consent is refused, the attribution is discarded and direct/no-source treatment applies.</li>
+<li><strong>UTM spoofing.</strong> An adversary could craft URLs with arbitrary utm_* values to skew a tenant's reporting. Low-impact issue — the worst case is a tenant's own reports being misleading, not a security breach. No mitigation in v1; flag for future if abuse is observed.</li>
+<li><strong>Channel map versioning</strong> is described but the storage isn't specified here. Recommend adding a small platform-admin table <code>attribution_channel_map_versions</code> and storing the map_version_id on each touch row in a future iteration. Out of scope for v1 because the default map will not change frequently.</li>
+</ul>
+
+<p><strong>End of section.</strong></p>
+  </main>
+  <footer class="page-footer">
+    <nav class="pagenav"><a class="prev" href="section-34-addendum-inbound-import.html">← §34: Inbound Import</a><a class="toc-link" href="index.html">Table of Contents</a><a class="next" href="section-36-addendum-source-of-business-reporting.html">§36: Source-of-Business Reporting →</a></nav>
+    <div class="footer-meta">AI Travel Concierge Platform · Technical Specification v6.2 · Pre-Development Hardening</div>
+  </footer>
+</body>
+</html>
