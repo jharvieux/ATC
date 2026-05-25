@@ -4,6 +4,37 @@ Newest entries on top.
 
 ---
 
+## D-082 — 2026-05-25 — Merge cascade for BP34–BP40 + UI follow-ups
+
+**Decision:** Pushed all 13 outstanding PRs from the BP34–BP40 build + UI work onto `dev` in a single overnight cascade, accepting the rebase churn that comes with shared-file appends (eslint allow-list, Inngest serve registration, rls-exceptions, migrations).
+
+**Cascade pattern that worked:**
+1. Merge base feature branches in order (BP34 → BP35 → BP37 → BP38 → BP40 → BP39 → BP36). Each merge advances `dev`; the next branch needs a rebase.
+2. After each merge, rebase the remaining branches onto the new `dev` HEAD. Conflicts always landed in the same two files (eslint allow-list, Inngest route) — resolve by keeping both lists.
+3. For stacked PRs whose base feature branches got deleted on merge (#145, #146, #149 → auto-closed), `git rebase --onto origin/dev <last-merged-commit> <head>` to strip the now-duplicate commits, then open fresh PRs against `dev` (became #156, #158, #157).
+4. Use a Monitor task to poll `gh pr checks` for all open PRs in parallel — merge each one as it goes UNSTABLE (= required checks pass, non-required can fail).
+
+**Required vs non-required checks at the time of cascade:**
+- Required (must pass): Lint, Typecheck, Build; Lint; Typecheck; Test; Contract Tests; Cross-Tenant Probe; CVE Scan; Secret Scan; GitGuardian; RLS Snapshot Diff.
+- Non-required (can fail without blocking merge): Playwright (Tier 1 + 2 + 2.5); Vercel – atc-main; Vercel – atc-rag.
+
+**Cross-cutting issues hit (also documented in SESSION.md):**
+- `db/rls-exceptions.sql` ≠ `db/rls-exceptions.txt`. Both must be updated for new exception tables; BP34 only updated `.txt`, causing every downstream PR's Playwright RLS-coverage check to fail until I cherry-picked the gmail entries into `.sql`.
+- Storage-bucket migrations need a `pg_namespace` guard or CI's test DB blows up (storage schema absent).
+- BP35 wire-ups added `createServiceRoleClient()` next to existing `tenantClient(ctx)` in `transfer-finalize.ts`; cross-tenant Inngest probe requires `// INNGEST-PROBE-ALLOW-MIXED: <reason>` to allow it.
+- BP36 UI's 6 report pages all use `useSearchParams()` → must wrap in `<Suspense>` for static prerender in Next.js 14.
+
+**Rejected approaches:**
+- Skipping non-required checks via `--admin` merge — never; followed branch protection rules per CLAUDE.md.
+- Forcing merge with failing required checks — never.
+- Merging directly to `dev` for the SESSION.md update — blocked by branch protection (correctly). Created `chore/session-checkpoint-merge-cascade` branch instead.
+
+**Followed-up:** SESSION.md updated with cascade results and an enumerated list of stale chore PRs (#140, #102, #78, #76, #132) that the user should review.
+
+**Rejected for future:** Treating Playwright as required gate — too flaky (quotes spec regression from BP38, supervisor sampling 30s timeout flake). Both should be fixed before promoting.
+
+---
+
 ## D-081 — 2026-05-24 — BP34 Phase C scope decisions (autonomous build resumed)
 
 **Decision:** Build Phase C end-to-end as backend-only (routes + libs + helpers + Inngest jobs), defer the React UI pages and GCP-setup-dependent flows to Phase D / morning conversation.
