@@ -2,10 +2,10 @@
 //
 // Source of truth: the AI_PRICING_DEFAULTS constant below, override-able
 // at runtime via platform_settings.ai_pricing_catalog JSONB. Operators
-// update either the constant (PR + deploy) or the platform_settings row
-// (no deploy needed). The daily-refresh cron (inngest/ai-pricing-cache-
-// refresh) bumps the last_refreshed_at timestamp; the actual scrape is
-// TODO(operator) because vendor pricing pages change format.
+// update the override row via PUT /api/admin/ai-pricing (no deploy
+// needed). The daily-refresh cron flips ai_pricing_stale when the last
+// operator update is more than 30 days old so the admin dashboard can
+// nudge re-verification.
 //
 // Cost units: integer cents per million tokens. BigInt math throughout to
 // avoid floating-point drift on small per-call amounts.

@@ -91,6 +91,10 @@ export const PLATFORM_ADMIN_REASONS = [
 
   // BP35 §33.4 — CruiseMapper itinerary refresh (cross-tenant reference data).
   "external_pricing_refresh",
+
+  // §27.12 — Operator-managed AI vendor pricing catalog.
+  "ai_pricing_read",
+  "ai_pricing_update",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

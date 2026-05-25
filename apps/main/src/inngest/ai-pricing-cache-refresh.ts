@@ -1,12 +1,16 @@
-// §27.12 — Daily AI pricing cache refresh.
+// §27.12 — Daily AI pricing staleness check.
 //
-// The actual scrape of Anthropic + OpenAI pricing pages is operator-
-// maintained because vendor pages change format. This cron exists as the
-// schedule + the timestamp bump so operators have a single signal that
-// "pricing hasn't been refreshed in N days".
+// Vendor pricing is operator-managed via PUT /api/admin/ai-pricing (web
+// scrapers are ToS-exposed + brittle, so we don't auto-fetch). This cron
+// flips platform_settings.ai_pricing_stale to 'true' when the last
+// operator update is more than STALENESS_DAYS old, so the admin dashboard
+// can show a yellow banner reminding the operator to re-verify vendor
+// pricing pages.
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+
+const STALENESS_DAYS = 30;
 
 export const aiPricingCacheRefresh = inngest.createFunction(
   {
@@ -16,22 +20,28 @@ export const aiPricingCacheRefresh = inngest.createFunction(
   async () => {
     const svc = createServiceRoleClient();
 
-    // TODO(operator): fetch Anthropic + OpenAI pricing pages, parse the
-    // catalog, and upsert into platform_settings.ai_pricing_catalog.
-    // Pricing pages change format; operator owns the parsers.
-    console.warn("[ai-pricing-cache-refresh] auto-fetch not implemented; bumping last_refreshed_at only");
+    const { data: row } = await svc
+      .from("platform_settings")
+      .select("value")
+      .eq("key", "ai_pricing_last_refreshed_at")
+      .maybeSingle();
+
+    const lastRefreshed = (row?.value as string | undefined) ?? null;
+    const stale = lastRefreshed
+      ? Date.now() - new Date(lastRefreshed).getTime() > STALENESS_DAYS * 24 * 60 * 60 * 1000
+      : true;
 
     await svc
       .from("platform_settings")
       .upsert(
         {
-          key: "ai_pricing_last_refreshed_at",
-          value: new Date().toISOString(),
-          description: "§27.12 — timestamp of last successful AI pricing cache refresh (manual or auto).",
+          key: "ai_pricing_stale",
+          value: stale,
+          description: "§27.12 — true when ai_pricing_last_refreshed_at is older than STALENESS_DAYS.",
         },
         { onConflict: "key" },
       );
 
-    return { ok: true, fetched: false, note: "stub — operator wires fetchers" };
+    return { ok: true, last_refreshed_at: lastRefreshed, stale };
   },
 );
