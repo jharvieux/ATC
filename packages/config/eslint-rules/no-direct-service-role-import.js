@@ -243,6 +243,9 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/groups/[id]/invitations/route.ts",
   "/app/api/groups/invite/[token]/route.ts",
   "/app/api/groups/invite/[token]/rsvp/route.ts",
+  // BP40 §40.5 — booking line items list/create (tier-gate read +
+  // cross-table validation under user's tenant context).
+  "/app/api/bookings/[id]/line-items/route.ts",
 ];
 
 function endsWithAllowed(filename) {

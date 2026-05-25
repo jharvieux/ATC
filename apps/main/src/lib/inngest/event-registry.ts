@@ -71,6 +71,9 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   // Persona addendums (BP18)
   "persona_addendum.submitted": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 
+  // BP34 §34.3 — inbound import pipeline
+  "import.queued": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+
   // CCPA / user data (BP17, BP25)
   "user.data_export_requested": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "user.data_purge_scheduled": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
