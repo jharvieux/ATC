@@ -243,8 +243,7 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/groups/[id]/invitations/route.ts",
   "/app/api/groups/invite/[token]/route.ts",
   "/app/api/groups/invite/[token]/rsvp/route.ts",
-  // BP40 §40.5 — booking line items list/create (tier-gate read +
-  // cross-table validation under user's tenant context).
+  // BP40 §40.5 — booking line items list/create.
   "/app/api/bookings/[id]/line-items/route.ts",
   // BP34: import pipeline (§34.3) — Inngest function with no user session.
   "/inngest/import-pipeline.ts",
@@ -262,6 +261,13 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/imports/source-file/route.ts",
   // BP34 §34.2.4: Gmail integration health endpoint — reads gmail_oauth_tokens.
   "/app/api/integrations/gmail/health/route.ts",
+  // BP37 §37.3 — task reminders fire cron (Inngest, no user session).
+  "/inngest/task-reminders-fire.ts",
+  // BP37 §37.4.2 — sequence step fire (Inngest event consumer).
+  "/inngest/task-sequence-step-fire.ts",
+  // BP37 §37.7 — tasks list/create route uses service-role for cross-table
+  // reminder inserts under the user's tenant context.
+  "/app/api/tasks/route.ts",
 ];
 
 function endsWithAllowed(filename) {

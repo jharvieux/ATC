@@ -116,9 +116,17 @@ export type InngestEvents = {
     data: { tenant_id: string; persona_slug: string; addendum_id: string };
   };
   // §34.3 — Inbound import queued for processing (email, document, or manual).
-  // Emitted by Gmail webhook, document upload route, and manual-entry form
-  // submission. Consumed by the import-pipeline orchestrator.
   "import.queued": {
     data: { tenant_id: string; import_queue_id: string };
+  };
+  // §37.4.2 — sequence step scheduled to fire after a delay. Consumed by
+  // the task_sequence_step_fire Inngest function which materializes the
+  // task and any reminders from the snapshot.
+  "task_sequence.step_scheduled": {
+    data: {
+      tenant_id: string;
+      sequence_run_id: string;
+      step_index: number;
+    };
   };
 };
