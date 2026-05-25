@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
 
@@ -12,6 +12,14 @@ type Item = {
 };
 
 export default function LeadsBySourcePage(): JSX.Element {
+  return (
+    <Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+      <LeadsBySourceContent />
+    </Suspense>
+  );
+}
+
+function LeadsBySourceContent(): JSX.Element {
   const search = useSearchParams();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);

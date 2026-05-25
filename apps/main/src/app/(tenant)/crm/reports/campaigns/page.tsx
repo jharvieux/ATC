@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
 
@@ -22,6 +22,14 @@ function dollars(cents: number | null): string {
 }
 
 export default function CampaignsPage(): JSX.Element {
+  return (
+    <Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+      <CampaignsContent />
+    </Suspense>
+  );
+}
+
+function CampaignsContent(): JSX.Element {
   const search = useSearchParams();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);

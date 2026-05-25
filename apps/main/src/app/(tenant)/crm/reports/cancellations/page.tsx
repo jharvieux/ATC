@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
 
@@ -18,6 +18,14 @@ function dollars(cents: number): string {
 }
 
 export default function CancellationsPage(): JSX.Element {
+  return (
+    <Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+      <CancellationsContent />
+    </Suspense>
+  );
+}
+
+function CancellationsContent(): JSX.Element {
   const router = useRouter();
   const search = useSearchParams();
   const groupBy = search.get("group_by") ?? "channel";

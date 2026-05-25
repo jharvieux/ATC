@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
 
@@ -19,6 +19,14 @@ function pct(v: number | null): string {
 }
 
 export default function SourceFunnelPage(): JSX.Element {
+  return (
+    <Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+      <SourceFunnelContent />
+    </Suspense>
+  );
+}
+
+function SourceFunnelContent(): JSX.Element {
   const search = useSearchParams();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);

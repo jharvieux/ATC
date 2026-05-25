@@ -1,12 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
 
 type Item = { first: string | null; last: string | null; count: number };
 
 export default function FirstVsLastTouchPage(): JSX.Element {
+  return (
+    <Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+      <FirstVsLastTouchContent />
+    </Suspense>
+  );
+}
+
+function FirstVsLastTouchContent(): JSX.Element {
   const search = useSearchParams();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
