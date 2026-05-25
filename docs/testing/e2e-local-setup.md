@@ -63,13 +63,20 @@ pnpm exec playwright test tests/e2e/price-watch.spec.ts
 
 `apps/main/.env.local` (gitignored). Generate the two encryption keys with `openssl rand -base64 32`.
 
+For the two Supabase JWTs, run the helper (signs them with the secret in `scripts/local-postgrest.conf`):
+
+```bash
+pnpm tsx scripts/print-test-jwts.ts >> apps/main/.env.local
+```
+
+Then add the rest of the env vars:
+
 ```env
 PLATFORM_PRIMARY_DOMAIN=localhost
 PLATFORM_DOMAIN_REGEX=^([a-z0-9-]+)\.localhost$
-# Tier 2.5 — these JWTs must match scripts/local-postgrest.conf's jwt-secret.
 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRpZXIyLWxvY2FsIn0.Pz-8BVTsRIUC81JWFUXQyvCjid981wZGKiag9Z2GF34
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoidGllcjItbG9jYWwifQ.88tFBcM9_intifembBjlhAE04uCnr0M2GbV_rTuxH3o
+# NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY come from
+# the `pnpm tsx scripts/print-test-jwts.ts` step above.
 SUPABASE_DB_URL=postgresql://YOUR_USER@localhost:5432/atc_main_test
 STRIPE_SECRET_KEY=sk_test_placeholder
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_placeholder

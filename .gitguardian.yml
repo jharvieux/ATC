@@ -1,0 +1,20 @@
+# GitGuardian config — declares known-safe test fixtures so future scans
+# don't flag them as real secrets.
+#
+# Background: the previous false positive was a Supabase service-role JWT
+# literal in test files. We rewrote the tests to generate the JWTs at
+# runtime (see tests/security/_test-jwt-fixtures.ts), so the literal no
+# longer appears in committed source. The fixture module + the matching
+# jwt-secret in scripts/local-postgrest.conf are intentionally committed
+# (it's the local-only test pattern).
+
+version: 2
+
+# Paths whose secret-shaped content is known to be test-only.
+paths-ignore:
+  - "tests/security/_test-jwt-fixtures.ts"
+  - "scripts/local-postgrest.conf"
+  - "scripts/print-test-jwts.ts"
+  # Local dev env example — placeholder values only, no real secrets.
+  - "apps/main/.env.example"
+  - ".env.example"

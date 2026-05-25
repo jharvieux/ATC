@@ -20,6 +20,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { TEST_ANON_JWT, TEST_SERVICE_ROLE_JWT } from "./_test-jwt-fixtures";
 
 const haveTier2 = Boolean(process.env.SUPABASE_DB_URL);
 const describeIf = haveTier2 ? describe : describe.skip;
@@ -27,9 +28,9 @@ const describeIf = haveTier2 ? describe : describe.skip;
 if (haveTier2) {
   process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??=
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InRpZXIyLWxvY2FsIn0.Pz-8BVTsRIUC81JWFUXQyvCjid981wZGKiag9Z2GF34";
+    TEST_ANON_JWT;
   process.env.SUPABASE_SERVICE_ROLE_KEY ??=
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoidGllcjItbG9jYWwifQ.88tFBcM9_intifembBjlhAE04uCnr0M2GbV_rTuxH3o";
+    TEST_SERVICE_ROLE_JWT;
   process.env.INNGEST_EVENT_KEY ??= "tier2-test-eventkey";
 }
 
