@@ -208,13 +208,9 @@ export const importPipeline = inngest.createFunction(
 // ── helpers ──────────────────────────────────────────────────────────────
 
 async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row: ImportQueueRow): Promise<string | null> {
-  // Phase B: text lives wherever the source put it. Email path stores in
-  // a sibling table keyed by source_ref; document path stores in
-  // uploaded_file_path (we'd OCR/parse Phase C). Manual path stuffs the
-  // body into source_ref directly.
-  //
-  // For Phase B we accept that document_path returns null (uploads aren't
-  // wired yet) and that email_text comes from gmail_inbound_messages.
+  // Email path → gmail_inbound_messages.body_text (BP34 Phase C).
+  // Manual path → source_ref carries the body verbatim (BP34 Phase C).
+  // Document path → PDF OCR via pdf-parse (BP34 Phase D).
   if (row.import_path === "email") {
     const { data } = await svc
       .from("gmail_inbound_messages")
@@ -224,10 +220,17 @@ async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row:
     return (data as { body_text?: string } | null)?.body_text ?? null;
   }
   if (row.import_path === "manual") {
-    return row.source_ref; // entire payload IS the text
+    return row.source_ref;
   }
-  // document path: Phase C wires OCR/PDF parsing.
-  return null;
+  // document path
+  if (!row.uploaded_file_path) return null;
+  const { extractPdfText } = await import("@/lib/import/pdf-extract");
+  const result = await extractPdfText({ svc, storage_path: row.uploaded_file_path });
+  if (!result.ok) {
+    console.warn(`[import-pipeline] pdf-extract failed for ${row.id}: ${result.reason}`);
+    return null;
+  }
+  return result.text;
 }
 
 async function markParseFailed(
