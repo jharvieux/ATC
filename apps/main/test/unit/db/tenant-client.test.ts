@@ -107,7 +107,8 @@ describe("tenantClient proxy", () => {
     ]);
   });
 
-  it("does NOT scope queries against tables not in TENANT_SCOPED_TABLES", () => {
+  it("passes through queries against PLATFORM_READABLE_TABLES without auto-scoping", () => {
+    // `tier_definitions` has no tenant_id column — callers self-scope.
     const qb = makeQueryBuilder();
     mockFrom.mockReturnValue(qb);
 
@@ -116,7 +117,19 @@ describe("tenantClient proxy", () => {
 
     expect(mockFrom).toHaveBeenCalledWith("tier_definitions");
     expect(qb.select).toHaveBeenCalledWith("*");
-    // No tenant filter applied — passthrough.
+    // No tenant filter applied — platform-readable passthrough.
     expect(qb.filterBuilder.eqCalls).toEqual([]);
+  });
+
+  it("THROWS on tables in neither TENANT_SCOPED_TABLES nor PLATFORM_READABLE_TABLES", () => {
+    // Fail-closed contract — see UnregisteredTenantTableError.
+    mockFrom.mockReturnValue(makeQueryBuilder());
+
+    const db = tenantClient(ctx);
+    expect(() => db.from("this_table_does_not_exist_anywhere")).toThrow(
+      /refusing to access table 'this_table_does_not_exist_anywhere'/,
+    );
+    // .from() throws before reaching the underlying client.
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
