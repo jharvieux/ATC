@@ -14,7 +14,19 @@ interface MarkBody {
   post_termination_review_status: "pending" | "reviewed_retained";
 }
 
-export const POST = withServiceAuth(async (req) => {
+export const POST = withServiceAuth(async (req, ctx) => {
+  // §15.14.3 — Platform-admin only. The 2026-05-25 RAG audit (Finding 4)
+  // showed that without this gate, any active tenant JWT could pass
+  // another tenant's UUID and mass-mark their global chunks as
+  // post-termination — surfacing them in the review queue and (via
+  // Finding 2) enabling later mass deletion.
+  if (ctx.service_identifier !== "platform-admin") {
+    return Response.json(
+      { error: "post_termination_mark_requires_platform_admin" },
+      { status: 403 },
+    );
+  }
+
   let body: MarkBody;
   try {
     const raw = await req.json();

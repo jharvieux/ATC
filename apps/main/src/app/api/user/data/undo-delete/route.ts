@@ -1,5 +1,8 @@
 // §17.10 — CCPA deletion undo.
 // POST: clear users.deleted_at if within the 30-day grace period.
+//
+// 2026-05-25 — tenant-scoped per audit finding Auth #4. Restore matches
+// the per-tenant delete shape: undoing on tenant A only clears tenant A.
 
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -24,12 +27,18 @@ export async function POST(req: Request): Promise<Response> {
   }
   const authUserId = authData.user.id;
 
+  const tenantId = req.headers.get("x-resolved-tenant-id");
+  if (!tenantId || tenantId === "platform") {
+    return Response.json({ error: "tenant_unresolved" }, { status: 400 });
+  }
+
   const db = createServiceRoleClient();
 
   const { data: userRow } = await db
     .from("users")
     .select("id, deleted_at")
     .eq("auth_user_id", authUserId)
+    .eq("tenant_id", tenantId)
     .maybeSingle();
 
   if (!userRow) return Response.json({ error: "user_not_found" }, { status: 404 });
@@ -49,7 +58,8 @@ export async function POST(req: Request): Promise<Response> {
   const { error: updateErr } = await db
     .from("users")
     .update({ deleted_at: null })
-    .eq("auth_user_id", authUserId);
+    .eq("auth_user_id", authUserId)
+    .eq("tenant_id", tenantId);
 
   if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
 

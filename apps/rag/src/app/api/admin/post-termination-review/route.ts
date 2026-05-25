@@ -16,7 +16,17 @@ const STATUS_MAP: Record<string, string> = {
   hard_delete: "reviewed_hard_deleted",
 };
 
-export const POST = withServiceAuth(async (req) => {
+export const POST = withServiceAuth(async (req, ctx) => {
+  // §15.14.4 — Platform-admin only. The 2026-05-25 RAG audit (Finding 2)
+  // showed that without this gate, any active tenant JWT could hard-delete
+  // arbitrary chunks (including global ones) by id, or demote+purge them.
+  if (ctx.service_identifier !== "platform-admin") {
+    return Response.json(
+      { error: "post_termination_review_requires_platform_admin" },
+      { status: 403 },
+    );
+  }
+
   let body: ReviewBody;
   try {
     const raw = await req.json();
@@ -31,19 +41,26 @@ export const POST = withServiceAuth(async (req) => {
   const db = getRagDb();
   const newStatus = STATUS_MAP[body.action];
 
+  // Defense-in-depth: only act on chunks legitimately in the review queue
+  // (post_termination_review_status='pending'). Audit Finding 2 recommended
+  // this so even a future bypass of the platform-admin gate can't reach
+  // arbitrary chunks.
   if (body.action === "hard_delete") {
-    // Physically remove the chunk.
-    const { error } = await db.from("knowledge_chunks").delete().eq("id", body.chunk_id);
+    const { error } = await db
+      .from("knowledge_chunks")
+      .delete()
+      .eq("id", body.chunk_id)
+      .eq("post_termination_review_status", "pending");
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true, action: "hard_delete", chunk_id: body.chunk_id });
   }
 
   if (body.action === "demote") {
-    // Change scope to tenant (90-day cron will purge it) and set status.
     const { error } = await db
       .from("knowledge_chunks")
       .update({ scope: "tenant", post_termination_review_status: newStatus })
-      .eq("id", body.chunk_id);
+      .eq("id", body.chunk_id)
+      .eq("post_termination_review_status", "pending");
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true, action: "demote", chunk_id: body.chunk_id });
   }
@@ -52,7 +69,8 @@ export const POST = withServiceAuth(async (req) => {
   const { error } = await db
     .from("knowledge_chunks")
     .update({ post_termination_review_status: newStatus })
-    .eq("id", body.chunk_id);
+    .eq("id", body.chunk_id)
+    .eq("post_termination_review_status", "pending");
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true, action: "retain", chunk_id: body.chunk_id });

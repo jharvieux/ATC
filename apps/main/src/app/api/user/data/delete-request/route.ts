@@ -1,6 +1,12 @@
 // §17.10 — CCPA data deletion request.
 // POST: user must confirm by typing their own email address.
 // Sets users.deleted_at and schedules a purge Inngest job at +30 days.
+//
+// 2026-05-25 — tenant-scoped per audit finding Auth #4. A single Supabase
+// auth user can have rows in multiple tenants (UNIQUE(tenant_id, auth_user_id));
+// without scoping, clicking "delete my account" on tenant A's app silently
+// flagged the user's tenant B row too. The middleware now reliably propagates
+// x-resolved-tenant-id to handlers (per #164), so we filter by it.
 
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -31,6 +37,15 @@ export async function POST(req: Request): Promise<Response> {
   const authUser = authData.user;
   const authUserId = authUser.id;
 
+  // Tenant scope (audit Auth #4): a single auth user can have rows in
+  // multiple tenants; clicking "delete my account" on tenant A's app must
+  // not silently flag the user's tenant B row. The middleware reliably
+  // injects x-resolved-tenant-id (#164), so we filter by it.
+  const tenantId = req.headers.get("x-resolved-tenant-id");
+  if (!tenantId || tenantId === "platform") {
+    return Response.json({ error: "tenant_unresolved" }, { status: 400 });
+  }
+
   let body: DeleteBody;
   try {
     body = await req.json();
@@ -46,11 +61,12 @@ export async function POST(req: Request): Promise<Response> {
 
   const db = createServiceRoleClient();
 
-  // Check not already deleted.
+  // Check not already deleted — scoped to current tenant.
   const { data: userRow } = await db
     .from("users")
     .select("id, deleted_at")
     .eq("auth_user_id", authUserId)
+    .eq("tenant_id", tenantId)
     .maybeSingle();
 
   if (!userRow) return Response.json({ error: "user_not_found" }, { status: 404 });
@@ -63,11 +79,12 @@ export async function POST(req: Request): Promise<Response> {
   const deletedAt = new Date().toISOString();
   const purgeAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Set deleted_at — starts the 30-day grace period.
+  // Set deleted_at — starts the 30-day grace period. Tenant-scoped.
   const { error: updateErr } = await db
     .from("users")
     .update({ deleted_at: deletedAt })
-    .eq("auth_user_id", authUserId);
+    .eq("auth_user_id", authUserId)
+    .eq("tenant_id", tenantId);
 
   if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
 
