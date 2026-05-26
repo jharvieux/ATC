@@ -119,6 +119,25 @@ export async function POST(
     const { data: thread } = await svc.from("forum_threads").select("*").eq("id", threadId).eq("forum_id", forumId).single();
     if (!thread) return Response.json({ error: "thread_not_found" }, { status: 404 });
 
+    // §19.10 — Post-sailing forum read-only mode. Once the group has
+    // sailed (sailed_at IS NOT NULL OR status='sailed'), the forum
+    // transitions to read-only. Returns 410 Gone per the spec.
+    const { data: group } = await svc
+      .from("groups")
+      .select("sailed_at, status")
+      .eq("id", (forum as { group_id: string }).group_id)
+      .maybeSingle();
+    const sailed =
+      group &&
+      ((group as { sailed_at: string | null; status: string }).sailed_at !== null ||
+        (group as { sailed_at: string | null; status: string }).status === "sailed");
+    if (sailed) {
+      return Response.json(
+        { error: "forum_read_only_post_sailing" },
+        { status: 410 },
+      );
+    }
+
     // Load mute state for this user
     const { data: muteState } = await svc
       .from("forum_user_state")

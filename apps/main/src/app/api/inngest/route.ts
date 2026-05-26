@@ -62,6 +62,8 @@ import { bookingCommissionRetentionPurge } from "@/inngest/booking-commission-re
 import { subprocessorsAnnualReview } from "@/inngest/subprocessors-annual-review";
 // BP26: Forensics retention (§26.5a)
 import { forensicsLogPurgeCron } from "@/inngest/forensics-log-purge-cron";
+// §26.5 — audit_log 7-year retention purge
+import { auditLogRetentionPurge } from "@/inngest/audit-log-retention-purge";
 // BP26: Vendor health probe (§26.9)
 import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
 // BP26: §26.6 monitoring crons
@@ -161,6 +163,8 @@ export const { GET, POST, PUT } = serve({
     subprocessorsAnnualReview,
     // BP26: Forensics retention (§26.5a)
     forensicsLogPurgeCron,
+    // §26.5 — audit_log 7-year retention purge
+    auditLogRetentionPurge,
     // BP26: Vendor health probe (§26.9)
     vendorHealthProbe,
     // BP26: §26.6 monitoring crons
