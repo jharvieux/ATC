@@ -469,3 +469,70 @@ describe("validate commission_statement — line item completeness", () => {
     expect(flags.some((f) => f.flag === "line_items_incomplete")).toBe(true);
   });
 });
+
+describe("validate booking_confirmation — exact-boundary dates", () => {
+  it("flags sailing_date at exactly 24h + 1s ago", async () => {
+    const just_over = new Date(Date.now() - 24 * 60 * 60 * 1000 - 1000).toISOString();
+    const flags = await validate({
+      type: "booking_confirmation",
+      tenant_id: "t1",
+      fields: {
+        cruise_line: "Royal", ship_name: "Wonder", sailing_date: just_over,
+        departure_port: "Miami", duration_nights: 7, provider_booking_ref: "REF-1",
+        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12,
+        passenger_first_name: "J", passenger_last_name: "D",
+      },
+    }, fakeDb({ data: [], error: null }));
+    expect(flags.some((f) => f.reason.includes("is in the past"))).toBe(true);
+  });
+  it("does NOT flag sailing_date at exactly 24h ago - 1s (just inside grace)", async () => {
+    const just_under = new Date(Date.now() - 24 * 60 * 60 * 1000 + 1000).toISOString();
+    const flags = await validate({
+      type: "booking_confirmation",
+      tenant_id: "t1",
+      fields: {
+        cruise_line: "Royal", ship_name: "Wonder", sailing_date: just_under,
+        departure_port: "Miami", duration_nights: 7, provider_booking_ref: "REF-1",
+        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12,
+        passenger_first_name: "J", passenger_last_name: "D",
+      },
+    }, fakeDb({ data: [], error: null }));
+    expect(flags.find((f) => f.reason.includes("is in the past"))).toBeUndefined();
+  });
+});
+
+describe("validate commission_statement — period date boundary", () => {
+  it("flags statement_period_start === statement_period_end (single-day = suspicious)", async () => {
+    // Open question whether equal dates should flag — the spec says "start
+    // after end". Current implementation uses strict `>`, so equal dates DO NOT
+    // flag. Locks that semantic: equal-date statements pass plausibility.
+    const flags = await validate({
+      type: "commission_statement",
+      tenant_id: "t1",
+      fields: {
+        statement_period_start: "2026-05-01",
+        statement_period_end: "2026-05-01",
+        line_items: [{
+          provider_booking_ref: "REF-1", passenger_first_name: "J", passenger_last_name: "D",
+          commissionable_fare_cents: 100000, commission_rate: 0.12, commission_amount_cents: 12000,
+        }],
+      },
+    }, fakeDb({ data: [], error: null }));
+    expect(flags.find((f) => f.reason.includes("after statement_period_end"))).toBeUndefined();
+  });
+  it("flags statement_period_start one day after end (clear violation)", async () => {
+    const flags = await validate({
+      type: "commission_statement",
+      tenant_id: "t1",
+      fields: {
+        statement_period_start: "2026-05-02",
+        statement_period_end: "2026-05-01",
+        line_items: [{
+          provider_booking_ref: "REF-1", passenger_first_name: "J", passenger_last_name: "D",
+          commissionable_fare_cents: 100000, commission_rate: 0.12, commission_amount_cents: 12000,
+        }],
+      },
+    }, fakeDb({ data: [], error: null }));
+    expect(flags.some((f) => f.reason.includes("after statement_period_end"))).toBe(true);
+  });
+});

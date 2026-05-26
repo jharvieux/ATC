@@ -235,3 +235,32 @@ describe("maybeSampleForReview — §10.5a sampling decisions", () => {
     expect(Math.abs(purgeAfter - expected)).toBeLessThan(60 * 1000);
   });
 });
+
+describe("maybeSampleForReview — exact-rate boundary", () => {
+  it("INSERTS when Math.random() returns exactly the rate (> is strict, not >=)", async () => {
+    Math.random = () => 0.01; // exactly equal to the clean_pass default
+    const log: CallLog = { selects: [], inserts: [] };
+    const db = makeFake({ supervisor_sample_rate_clean_pass: 0.01 }, [], log);
+    await maybeSampleForReview({ ...baseInput, action: "allow", findings: [], db });
+    // Source: `if (... && Math.random() > rate) return;` — strict `>`.
+    // 0.01 > 0.01 is false → no early return → row inserts. Locks the
+    // strict-comparison semantic against a mutation to `>=`.
+    expect(log.inserts).toHaveLength(1);
+  });
+
+  it("INSERTS when Math.random() returns just below the rate", async () => {
+    Math.random = () => 0.009; // below default 0.01
+    const log: CallLog = { selects: [], inserts: [] };
+    const db = makeFake({ supervisor_sample_rate_clean_pass: 0.01 }, [], log);
+    await maybeSampleForReview({ ...baseInput, action: "allow", findings: [], db });
+    expect(log.inserts).toHaveLength(1);
+  });
+
+  it("SKIPS when Math.random() returns just above the rate", async () => {
+    Math.random = () => 0.011; // just above default 0.01
+    const log: CallLog = { selects: [], inserts: [] };
+    const db = makeFake({ supervisor_sample_rate_clean_pass: 0.01 }, [], log);
+    await maybeSampleForReview({ ...baseInput, action: "allow", findings: [], db });
+    expect(log.inserts).toHaveLength(0);
+  });
+});
