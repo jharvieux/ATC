@@ -19,6 +19,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { resolveAIBehavior } from "@/lib/personas/resolve-ai-behavior";
 import { mergeMemory, type CustomerMemoryFields } from "@/lib/memory/merge";
+import { writeAuditLog } from "@/lib/audit/write";
 
 // ── Zod schema for Haiku-extracted memory fields ─────────────────────────────
 
@@ -281,6 +282,21 @@ Return valid JSON only, no prose.`;
       });
       return { status: "requeued_optimistic_lock_conflict" };
     }
+
+    // §11.7 — All memory changes audit-logged. AI-extracted updates
+    // record actor_type='ai' and the conversation that drove the change.
+    await writeAuditLog({
+      tenant_id,
+      actor_type: "ai",
+      actor_user_id: user_id,
+      action: "memory.ai_extraction_updated",
+      resource_type: "customer_memory",
+      resource_id: (updateResult[0] as { id: string }).id,
+      changes: {
+        conversation_id,
+        extracted_fields: Object.keys(extracted),
+      },
+    });
   } else {
     const { error: insertErr } = await db
       .from("customer_memories")
@@ -293,6 +309,19 @@ Return valid JSON only, no prose.`;
       });
 
     if (insertErr) throw new Error(`extract-memory: insert error — ${insertErr.message}`);
+
+    // §11.7 — Audit the first AI extraction for this customer too.
+    await writeAuditLog({
+      tenant_id,
+      actor_type: "ai",
+      actor_user_id: user_id,
+      action: "memory.ai_extraction_created",
+      resource_type: "customer_memory",
+      changes: {
+        conversation_id,
+        extracted_fields: Object.keys(extracted),
+      },
+    });
   }
 
   return { status: "ok", extracted_fields: Object.keys(extracted) };
