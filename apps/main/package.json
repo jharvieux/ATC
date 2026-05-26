@@ -34,7 +34,6 @@
     "remark-rehype": "^11.1.2",
     "stripe": "^22.1.1",
     "tesseract.js": "^7.0.0",
-    "unified": "^11.0.5",
     "xlsx": "^0.18.5",
     "zod": "^3.24.2"
   },
@@ -42,7 +41,6 @@
     "@atc/config": "workspace:*",
     "@types/big.js": "^6.2.2",
     "@types/node": "^22.10.5",
-    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "autoprefixer": "^10.4.20",

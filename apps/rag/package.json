@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@atc/contracts": "workspace:*",
-    "@atc/shared-types": "workspace:*",
     "@supabase/supabase-js": "^2.106.0",
     "inngest": "^4.4.0",
     "ioredis": "^5.10.1",

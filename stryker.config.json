@@ -6,14 +6,17 @@
   "vitest": {
     "configFile": "vitest.config.ts"
   },
-  "reporters": ["html", "clear-text", "progress"],
+  "reporters": ["html", "json", "clear-text", "progress"],
   "htmlReporter": {
     "fileName": "reports/mutation/mutation.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
   },
   "coverageAnalysis": "perTest",
   "timeoutMS": 60000,
   "timeoutFactor": 2,
-  "concurrency": 4,
+  "concurrency": 2,
   "disableTypeChecks": "{apps,packages,tests}/**/*.{ts,tsx}",
   "ignoreStatic": true,
   "_comment_mutate": "Excluded files: env.ts in both apps is read+regex-parsed by BP29 §28 schema-discipline meta-tests; Stryker's mutant brackets break that parsing. Exclude similar self-introspected files here if you add more such tests.",
