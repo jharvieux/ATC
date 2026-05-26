@@ -95,6 +95,10 @@ export const PLATFORM_ADMIN_REASONS = [
   // §27.12 — Operator-managed AI vendor pricing catalog.
   "ai_pricing_read",
   "ai_pricing_update",
+
+  // §33.12 — Authority-override curation (platform admin sets or clears
+  // authority_manual_override on knowledge_chunks).
+  "rag_authority_curation",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

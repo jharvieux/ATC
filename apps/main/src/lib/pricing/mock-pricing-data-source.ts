@@ -32,16 +32,9 @@ export class MockPricingDataSource implements PricingDataSource {
     }
   }
 
-  async refreshGeneralPricing(): Promise<RefreshResult> {
-    return {
-      sailings_refreshed: 0,
-      sailings_failed: 0,
-      actor_run_id: null,
-      spend_usd: 0,
-      partial: false,
-      reason: "mock-no-op",
-    };
-  }
+  // D-088: refreshGeneralPricing removed from PricingDataSource (Apify
+  // is now tracked-sailings only; DIY scraper handles general pricing).
+  // The mock implementation drops the method to match.
 
   async refreshTrackedSailings(sailings: SailingKey[]): Promise<RefreshResult> {
     let refreshed = 0;

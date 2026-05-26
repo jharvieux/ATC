@@ -494,6 +494,15 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   const displayableAssetsBlock = buildDisplayableAssetsBlock(retrieval.assets);
   const availableAssetIds = retrieval.assets.map((a) => a.asset_id);
 
+  // §33.7 D-088 — build the PRICING ANCHORS block from the conversation's
+  // entities. Reads general_pricing_ranges + applies the +10%/$100 round
+  // rule. Empty string when no entities or feature flag is off.
+  const { buildPricingAnchorsBlock } = await import("@/lib/pricing/build-pricing-anchors-block");
+  const pricingAnchorsBlock = await buildPricingAnchorsBlock(svc, {
+    cruiseLines: retrieval.entities.cruise_lines,
+    ships: retrieval.entities.ships,
+  });
+
   const systemPromptBase = await buildSystemPrompt({
     persona_slug: personaSlug,
     tenant_id: tenantId,
@@ -502,6 +511,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     db: svc,
     knowledge_block: retrieval.knowledge_block,
     ...(displayableAssetsBlock ? { displayable_assets_block: displayableAssetsBlock } : {}),
+    ...(pricingAnchorsBlock ? { pricing_anchors_block: pricingAnchorsBlock } : {}),
   });
 
   // Append the §24.9 persona augmentation if Soft1/Soft2 fired.

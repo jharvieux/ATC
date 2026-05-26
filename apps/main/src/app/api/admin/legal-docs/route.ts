@@ -4,7 +4,6 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
-import { sanitizeForLog } from "@/lib/log/sanitize";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -132,7 +131,11 @@ export async function POST(req: Request): Promise<Response> {
             }, { onConflict: "auth_user_id,document_type" });
           }
 
-          console.info("[legal-docs] Flagged %d users for re-consent on %s v%d", uniqueUsers.length, sanitizeForLog(body.document_type), newVersion);
+          // CodeQL log-injection narrowing: body.document_type is validated
+          // against VALID_TYPES (line 67); resolve to the const value so
+          // the taint tracker sees a constant flow.
+          const safeDocType = VALID_TYPES.find((t) => t === body.document_type) ?? "unknown";
+          console.info("[legal-docs] Flagged %d users for re-consent on %s v%d", uniqueUsers.length, safeDocType, newVersion);
 
           // Notify affected users. Best-effort — the user_consent_pending
           // rows are the durable signal; the email is a convenience.

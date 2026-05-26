@@ -24,6 +24,9 @@ export interface HelpDoc {
   body_markdown: string;
   /** Source file basename — used for cache keys */
   file_name: string;
+  /** Subscription tier codes this doc applies to.
+   *  Empty / missing means "all tiers". Filter with listDocsForTier(). */
+  tiers: string[];
 }
 
 // Use process.cwd() so the path resolves correctly across:
@@ -69,6 +72,19 @@ function parseFrontMatter(raw: string): { meta: Record<string, string>; body: st
   return { meta, body };
 }
 
+/** Parse the `tiers:` frontmatter value. Accepts either:
+ *    tiers: [byo_research, sub_pro]      — bracketed list
+ *    tiers: byo_research, sub_pro        — bare comma list
+ *  Returns [] when missing — treated as "all tiers" by listDocsForTier(). */
+function parseTiersField(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const stripped = raw.trim().replace(/^\[/, "").replace(/\]$/, "");
+  return stripped
+    .split(",")
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
 let _cached: HelpDoc[] | null = null;
 
 /** Load all help docs once per process. Cache is fine — content ships with
@@ -83,6 +99,7 @@ export function loadAllDocs(forceFresh = false): HelpDoc[] {
     const { meta, body } = parseFrontMatter(raw);
     if (!meta.slug || !meta.title) continue; // skip malformed
     const order = parseInt(meta.order ?? "999", 10);
+    const tiers = parseTiersField(meta.tiers);
     docs.push({
       slug: meta.slug,
       title: meta.title,
@@ -90,6 +107,7 @@ export function loadAllDocs(forceFresh = false): HelpDoc[] {
       category: meta.category ?? "general",
       body_markdown: body.trimStart(),
       file_name: file,
+      tiers,
     });
   }
   docs.sort((a, b) => a.order - b.order);
@@ -103,6 +121,18 @@ export function getDocBySlug(slug: string): HelpDoc | undefined {
 
 export function listDocs(): Array<Pick<HelpDoc, "slug" | "title" | "order" | "category">> {
   return loadAllDocs().map((d) => ({ slug: d.slug, title: d.title, order: d.order, category: d.category }));
+}
+
+/** Return docs visible to a given subscription tier code.
+ *  A doc with no `tiers:` field is treated as universal (visible to every tier)
+ *  so that adding a new tier doesn't hide existing docs by default. To gate a
+ *  doc, list the tier codes explicitly in its frontmatter. */
+export function listDocsForTier(
+  tierCode: string,
+): Array<Pick<HelpDoc, "slug" | "title" | "order" | "category">> {
+  return loadAllDocs()
+    .filter((d) => d.tiers.length === 0 || d.tiers.includes(tierCode))
+    .map((d) => ({ slug: d.slug, title: d.title, order: d.order, category: d.category }));
 }
 
 /** Naive in-memory fuzzy search. Returns matches with a short snippet

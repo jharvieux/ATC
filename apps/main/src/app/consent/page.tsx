@@ -79,14 +79,22 @@ export default function ConsentPage() {
       const remaining = pendingDocs.filter((d) => !next.has(d.document_type));
       if (remaining.length === 0) {
         setAllDone(true);
-        // Redirect to the original destination or home. Same-origin only:
-        // require a leading slash and reject protocol-relative URLs
-        // ('//evil.com'). Anything else falls back to '/' so a crafted
-        // return_to query param can't bounce the user off-site.
-        const params = new URLSearchParams(window.location.search);
-        const candidate = params.get("return_to") ?? "/";
-        const returnTo =
-          candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
+        // Same-origin only. Parse against location.origin and reject any
+        // URL whose origin doesn't match — covers both '//evil.com'
+        // protocol-relative and 'https://evil.com' absolute attacks.
+        // Use the URL's pathname+search+hash so the navigation is purely
+        // relative (the structured re-build is what CodeQL recognises as
+        // a sanitizer).
+        const candidate = new URLSearchParams(window.location.search).get("return_to") ?? "/";
+        let returnTo = "/";
+        try {
+          const parsed = new URL(candidate, window.location.origin);
+          if (parsed.origin === window.location.origin) {
+            returnTo = parsed.pathname + parsed.search + parsed.hash;
+          }
+        } catch {
+          // invalid URL — fall through to '/'
+        }
         window.location.href = returnTo;
       }
     } catch (e) {

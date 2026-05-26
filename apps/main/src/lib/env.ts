@@ -70,6 +70,19 @@ const envSchema = z.object({
   MEMORY_EXTRACTION_MESSAGE_WINDOW: z.coerce.number().int().positive().optional().default(50),
   // Delay in ms before re-enqueue on optimistic-lock conflict (§11.2.4)
   MEMORY_EXTRACTION_RETRY_DELAY_MS: z.coerce.number().int().positive().optional().default(5000),
+  // §11.5 — DOB re-prompt cadence (operator-tightened per D-087).
+  // Re-prompt eligibility recurs every N days from estimation_recorded_at /
+  // estimation_last_reprompt_at. Default 30 (was 365 in original spec).
+  DOB_REPROMPT_INTERVAL_DAYS: z.coerce.number().int().positive().optional().default(30),
+  // §11.5 — Imminent-booking suppression window. Users with a booking
+  // sailing inside this window are NOT re-prompted via chat; the §20.5
+  // submit gate handles them. Default 60 days.
+  DOB_IMMINENT_BOOKING_WINDOW_DAYS: z.coerce.number().int().positive().optional().default(60),
+  // §33.7 D-088 — Kill switch for the AI price-rounding rule (+10%
+  // then round to nearest $100, "approximately/around" framing).
+  // Default ENABLED; set to false to bypass the rule entirely (raw
+  // cached values flow into the prompt without softening).
+  AI_PRICE_ROUNDING_ENABLED: z.coerce.boolean().optional().default(true),
   // Credential encryption (§13.5.1) — 256-bit keys, base64-encoded
   APP_ENCRYPTION_KEY_CURRENT: z.string().min(1),
   APP_ENCRYPTION_KEY_ID_CURRENT: z.string().min(1),
@@ -266,6 +279,25 @@ const envSchema = z.object({
   APIFY_ADAPTER_ENABLED:               z.coerce.boolean().optional().default(false),
   APIFY_RUN_BUDGET_USD_CEILING:        z.coerce.number().positive().optional().default(50),
   APIFY_MONTHLY_BUDGET_USD_CEILING:    z.coerce.number().positive().optional().default(500),
+  // D-088 Apify-4 — per-line kill switches. Default ENABLED (all 9
+  // verified sercul actors covered). Flip individual lines to "false"
+  // during incident triage without dropping the rest.
+  APIFY_ENABLED_RCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_NCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_PCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_CEL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_COS: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_CCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_HAL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_MSC: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_DSY: z.coerce.boolean().optional().default(true),
+  // D-088 Apify-4 — cap on results per actor run. Each sercul actor
+  // dumps the whole market; this bounds spend (sercul rates $1-$2 per
+  // 1,000 results). Default 2000 covers US sailing volume for every line.
+  APIFY_MAX_ROWS_PER_RUN: z.coerce.number().int().positive().optional().default(2000),
+  // D-088: APIFY_GENERAL_PRICING_BUDGET_PCT was removed. The general-
+  // pricing Apify pathway no longer exists (DIY CruiseMapper scraper
+  // replaces it). The full monthly cap applies to tracked-sailings only.
   PRICE_FRESHNESS_FRESH_HOURS:         z.coerce.number().int().positive().optional().default(72),
   PRICE_FRESHNESS_EXPIRED_HOURS:       z.coerce.number().int().positive().optional().default(744), // 31 days
   // BP35 §33.4 — CruiseMapper itinerary monthly Inngest ingest. Default-OFF

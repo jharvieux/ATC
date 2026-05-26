@@ -11,7 +11,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
-import { sanitizeForLog } from "@/lib/log/sanitize";
 
 function verifySignature(body: string, sig: string, secret: string): boolean {
   try {
@@ -127,17 +126,27 @@ export async function POST(req: Request): Promise<Response> {
       break;
 
     case "email.opened":
-    case "email.clicked":
       // Engagement metric — log count, no PII stored beyond what's already in email_log.
-      console.info(`[resend-webhook] engagement: type=${sanitizeForLog(event.type)} log_id=${logId}`);
+      // event.type narrowed to the literal "email.opened" in this branch — CodeQL
+      // sees a constant flow into the log argument.
+      console.info(`[resend-webhook] engagement: type=email.opened log_id=${logId}`);
+      break;
+    case "email.clicked":
+      console.info(`[resend-webhook] engagement: type=email.clicked log_id=${logId}`);
       break;
 
     case "email.sent":
       // Already logged at send time — no-op.
       break;
 
-    default:
-      console.warn(`[resend-webhook] unhandled event type: ${sanitizeForLog(event.type)}`);
+    default: {
+      // Untrusted event.type fell through every known case. Don't log the
+      // unknown value — it's the most aggressive log-injection surface in
+      // this file. Sentry breadcrumbs (already wired) capture the raw
+      // event for engineering inspection.
+      console.warn("[resend-webhook] unhandled event type (raw value omitted from log; see Sentry breadcrumbs)");
+      break;
+    }
   }
 
   return new Response("OK", { status: 200 });

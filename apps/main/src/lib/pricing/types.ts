@@ -62,11 +62,11 @@ export interface RefreshResult {
 }
 
 export interface PricingDataSource {
-  refreshGeneralPricing(opts: {
-    lines: CruiseLineCode[];
-    regions: RegionCode[];
-    dateRange: { from: Date; to: Date };
-  }): Promise<RefreshResult>;
+  // D-088: refreshGeneralPricing removed. General-pricing context for the AI
+  // is now sourced from the DIY CruiseMapper scraper (free, no Apify spend).
+  // Apify is reserved for tracked-sailings refresh per active price_watches
+  // rows only. See MEMORY D-088 and reality-delta-supplement §33.4/§33.9.3
+  // for the rationale.
 
   refreshTrackedSailings(sailings: SailingKey[]): Promise<RefreshResult>;
 

@@ -4,6 +4,214 @@ Newest entries on top.
 
 ---
 
+## D-090 — 2026-05-26 — Apify-5: APIFY_API_TOKEN blast-radius mitigations
+
+`APIFY_API_TOKEN` is account-level on Apify — leaked = unbounded spend across every actor in the Apify store. Two defenses landed this PR:
+
+### Layer 1 — operator-side scoped token (primary)
+
+Apify supports scoped tokens (confirmed 2026-05-26 via docs.apify.com/platform/integrations/api). Token is created with:
+
+- **Resource-specific Run permission** on exactly the 10 actor slugs we use (9 sercul + 1 deprecated crawlerbros legacy).
+- **"Restricted access" injection mode** — the actor receives a token with the same scope, can't escalate to other actors or account-level resources during the run.
+- NO account-level permissions. NO storage/webhook permissions.
+
+Documented end-to-end in `docs/runbooks/apify-token-scoping.md` including: creation UI walkthrough, quarterly rotation cadence, compromise-response steps, monitoring gaps, and the "what this doesn't protect against" residuals.
+
+### Layer 2 — code-side allowlist enforcement (defense-in-depth)
+
+Hardcoded `APIFY_ACTOR_ALLOWLIST: ReadonlySet<string>` in `apps/main/src/lib/pricing/line-routing.ts`. `assertActorAllowed(actorId)` throws `ApifyAllowlistViolation` if called with anything not on the list. Wired into both Apify-API dispatch sites:
+
+- `ApifyPricingAdapter.dispatchActor` (the 9 sercul per-line scrapers) — violation → ledger row `failed` + `sendOperatorAlert("apify_allowlist_violation")` + `refuse("allowlist_violation", ...)`.
+- `runCruiseMapperItineraryActor` (deprecated legacy path) — same handling.
+
+A drift-guard test in `line-routing.test.ts` asserts every actorId in `LINE_ROUTES` appears in the allowlist, and the allowlist size is exactly 10.
+
+### Residual gaps the operator should know about
+
+- **No native Apify hard spend cap.** Our `APIFY_MONTHLY_BUDGET_USD_CEILING` ($500 default) and `APIFY_RUN_BUDGET_USD_CEILING` ($50 default) gate the adapter, but a leaked token used directly against `api.apify.com` bypasses our code. Mitigated by Layer 1 scoping (attacker can only run 10 allowlisted actors), but ~$2/1000 results across those is theoretically possible until rotation.
+- **No Apify budget-alert webhook.** Mitigation: enable the daily-usage email notification in Apify Console (Settings → Notifications → Usage) as an out-of-band tripwire. Documented in the runbook.
+- **`vercel env pull` for production** would write the live token to a developer laptop. Don't do it — pull only `preview`. Documented.
+
+### What was rejected
+
+- **Removing the crawlerbros legacy actor from the allowlist.** Operator-documented in cruisemapper-actor.ts header as an emergency escape hatch behind `CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true`. Stripping it from the allowlist would silently break that escape hatch. Kept with the comment "remove when the DIY scraper fully covers itinerary data."
+- **Runtime-configurable allowlist (env-driven).** Adds complexity without enabling a real use case — every new actor needs both code + Apify-side config changes anyway. Stayed hardcoded.
+- **Implementing a startup self-test that probes the token's actual scope.** Would require a no-op Apify API call on every cold boot; cost-and-latency-out-of-proportion to the value. The operator runbook covers manual verification instead.
+
+### Related artifacts
+
+`apps/main/src/lib/pricing/line-routing.ts` (allowlist + guard), `apps/main/src/lib/pricing/apify-pricing-adapter.ts` (allowlist-violation refuse arm + operator alert), `apps/main/src/lib/external/cruisemapper/cruisemapper-actor.ts` (legacy path guard), `apps/main/test/unit/pricing/line-routing.test.ts` (6 new tests for allowlist + assertActorAllowed), `docs/runbooks/apify-token-scoping.md` (operator-side scoping walkthrough).
+
+---
+
+## D-089 — 2026-05-26 — Apify-4: catalog research + 9-line enablement + per-line kill switches
+
+Apify Store catalog audit on 2026-05-26 (WebFetch + WebSearch against apify.com). Findings landed in `apps/main/src/lib/pricing/line-routing.ts`.
+
+### What was confirmed
+
+All 4 previously-disabled lines (`TBC/...` placeholders) had verified slugs on the same author (`sercul`) as the existing 5 enabled actors. Per-result cost ranges $1.00–$2.00 / 1,000 results, well within the existing per-run + monthly budget caps. Slugs + market codes:
+
+| Line | Slug | Market code | Cost |
+|---|---|---|---|
+| RCL | `sercul/royal-caribbean` | `USA` | (existing) |
+| NCL | `sercul/norwegian-cruise-scraper` | `USA` | (existing) |
+| PCL | `sercul/princess-cruise-scraper` | `USA` | (existing) |
+| CEL | `sercul/celebrity-cruises` | `USA` | (existing) |
+| COS | `sercul/costa-cruises` | `USA` | (existing) |
+| CCL | `sercul/carnival-cruises` | `US` | $1.00/1k |
+| HAL | `sercul/hal-cruises-scraper` | `US` | $1.00/1k |
+| MSC | `sercul/msc-cruises-scraper` | `US` | $2.00/1k |
+| DSY | `sercul/disney-cruises-scraper` | `US` | $1.50/1k |
+
+**Market code inconsistency is real:** 5 older sercul actors use `"USA"`; the 4 newer ones use `"US"`. The route table records each line's expected code in a `marketCode` field — don't hardcode it.
+
+### What was surveyed and confirmed unavailable
+
+The 6 lines without dedicated Apify actors as of 2026-05-26: Virgin Voyages, Viking (Ocean + River), Oceania, Regent Seven Seas, Silversea, Seabourn. These stay out of `LINE_ROUTES`; `routeFor` returns null; `getCachedPrice` returns `{ status: 'unsupported' }`. General-pricing context for these lines flows from the DIY CruiseMapper scraper (D-088 Apify-2) into `general_pricing_ranges`. The price-watch UI should not offer subscriptions for these lines.
+
+### Discovered while implementing
+
+`buildSerculInput` was producing the wrong input shape (`{ market: "US", sailings: [...] }`). Every sercul actor schema is `{ region, maxRows, useApifyProxy, ... }` with `region` required and no per-sailing filter. Had anyone flipped `APIFY_ADAPTER_ENABLED=true` before today, every actor run would have errored at input validation. Rewritten in this PR.
+
+### What was rejected
+
+- **Aggregator fallback (`vulnv/booking-cruises-scraper`) for the 6 survey lines.** Existing D-070 says aggregator stays off until operator opts in per-line. Survey result reinforces that — adding it generically would require validating quality and parsing a different output shape, and would still be lower-fidelity than line-specific scrapers.
+- **Per-sailing actor input filters.** Sercul actors don't accept them. Replaced with client-side `matchesAnyWatchedSailing` filter post-fetch, so one actor run per line covers every watched US sailing in a single $1-$2 charge. The old `groupSailingsForBatch` was bucketing by (line, port, month) which would have multiplied actor runs by 6-12x without changing the cost-per-result.
+- **Global `enabled: boolean` field on LineRoute.** Replaced with env-based `APIFY_ENABLED_<LINE>` kill switches so operator can disable a single line without a code change. Default ENABLED for all 9 (matches operator's "all lines enabled with kill switches in place" direction). Global `APIFY_ADAPTER_ENABLED` still gates the entire adapter off.
+
+### Related artifacts
+
+`apps/main/src/lib/pricing/line-routing.ts`, `apps/main/src/lib/pricing/apify-pricing-adapter.ts` (client-side filter + signature cleanup), `apps/main/src/lib/env.ts` (9 new `APIFY_ENABLED_*` + `APIFY_MAX_ROWS_PER_RUN`), `apps/main/test/unit/pricing/line-routing.test.ts` (rewritten — 16 tests).
+
+---
+
+## D-087 — 2026-05-26 — Walkthrough decisions (post-overnight, operator confirmations)
+
+After the overnight sweep landed (D-086), the operator walked through the open decisions and made the following calls. Each is now recorded in `reality-delta.md` §4 (for runtime decisions) or the supplement (for deferrals) so future engineers see the trail.
+
+### Decisions made
+
+| Item | Decision | Rationale |
+|---|---|---|
+| **§13.9** Host-adapter active health probing | **Stay reactive-only at launch.** No nightly probe cron. | Host-adapter call volume is moderate; a broken credential surfaces within minutes of the next real call. Adding an active probe adds Inngest + adapter API noise without meaningful detection improvement at current volumes. |
+| **§33.12** Sample-OCR Haiku-vision evaluation | **Formally deferred.** No 200-image eval, no OCR ship. | Text-only chunks already serve the bulk of deck-plan / ship questions. Re-evaluate once there's signal that customers ask deck-plan-specific questions text-only RAG can't satisfy. |
+| **§33.12** Authority-override platform-admin UI | **Build it.** | Small admin page (1 day work) listing imported chunks by source with inline `authority_manual_override` + reason. Curation tooling is worth having even at low volume — easier to flag bad data when noticed than to hunt for it later. |
+| **§11.5** DOB re-prompt cadence | **Tighten from 365d → 30d with T-60 booking-imminent suppression.** | Yearly was too slow for customers in pre-booking limbo. 30 days re-prompts within a season; the T-60 booking suppression ensures the §20.5 submit gate handles the imminent case without redundant nagging. |
+| **§6.10 / §17.10** `/api/feedback` endpoint auth | **HMAC stays; ADD rate limiting at the endpoint.** | HMAC sufficient as auth (table is global-scoped). Rate limiting is the missing layer — protects against a leaked HMAC secret being used to flood the events table with spam signal. |
+| **§26.11** Pentest scoping runbook | **Write it now.** | One hour of doc-writing; pre-stages a future pentest engagement. Covers scope template, firm selection, findings triage, remediation SLAs. |
+
+### Decisions deferred to a subsequent discussion (Apify cluster)
+
+Saved for a focused conversation because they trade off against each other:
+
+- §33.12 actor IDs for Carnival / Holland America / MSC / Disney
+- §33.9.3 monthly budget sub-cap split (currently 80/20 default)
+- §33.9.3 APIFY_API_TOKEN scoping / blast radius
+- §33.12 UX copy for uncovered lines (Virgin / Viking / Oceania / Regent / Silversea / Seabourn)
+
+### Implementation PRs
+
+| PR | Decision | Status |
+|---|---|---|
+| Z1 | §13.9 + §33.12 OCR — delta-doc + supplement updates | This commit |
+| Z2 | §11.5 — `dob-estimate-reprompt-eligible` cron logic change | TBD |
+| Z3 | §6.10 — `/api/feedback` rate limiter | TBD |
+| Z4 | §26.11 — `docs/runbooks/pentest-scoping.md` | TBD |
+| Z5 | §33.12 — authority-override admin UI | TBD |
+
+---
+
+## D-086 — 2026-05-26 — Overnight exhaustive spec sweep + CodeQL closure
+
+**Decision:** Read every subsection of all 40 spec sections + 7 addenda against `dev`. Fixed everything addressable in small themed PRs; documented the rest in `docs/specs/reality-delta-supplement.md`. Closed the 5 known medium CodeQL alerts.
+
+### PRs landed
+
+| PR | What | Why it matters |
+|---|---|---|
+| #196 | CodeQL inline-sanitizer + URL parser fix | 5 medium alerts (4 log-injection, 1 client-side redirect) closed. The wrapper-helper approach (a `sanitizeForLog` function) wasn't traced by CodeQL's taint tracker; inline `.replace(/[\r\n]/g, ' ')` IS. Redirect uses `new URL(candidate, location.origin)` + origin equality instead of prefix check. |
+| #213 | §6.7 promo crons + §6.12 retrieval-log aggregation | Stored `promo_status` could drift from `expected_promo_state()`. Retrieval-log 90d retention was missing both the aggregation and the purge. Two new RAG migrations (0016 + 0017) add `reconcile_promo_status()` + `count_promo_state_drift()` + `aggregate_retrieval_log_pre_cutoff()` RPCs + `rag_retrieval_log_daily` table. Three new RAG-side crons. |
+| #214 | §11.7 audit_log on AI memory extraction | The customer self-edit + agent-edit paths wrote audit rows but the AI extraction path (Inngest `extract-memory`) didn't. `actor_type='ai'` is the existing enum value for this. |
+| #215 | §6.10 chat feedback propagation to RAG | Per-chunk events table existed but nothing wrote to it. Fire-and-forget HTTP from main → new `/api/feedback` endpoint on RAG with HMAC-SHA256 signature; pattern mirrors `/api/tenant-events`. |
+
+### Key clarifications surfaced
+
+- **§32.9 Interactive Bug Triage is NOT a runtime gap.** It's implemented as a Claude Code slash command at `.claude/commands/fix-bugs.md` — operator-side workflow, not a runtime UI. Prior supplement mis-classified this; now corrected.
+
+- **§20.5 DOB confirmation gate is NOT missing.** The prior supplement claim was based on a grep for `dob_confirmed_at`. The actual gate uses the inverse signal `date_of_birth_is_estimated = false` via `assertNoEstimatedDOBs(bookingId)` in `lib/booking/dob-gate.ts`. Equivalent semantics.
+
+- **§14.11 1099-NEC was a false positive** (already corrected in earlier D-085). Stripe Connect Express handles 1099 generation automatically for sub-hosts ≥ $600/yr.
+
+### Gaps documented but not fixed (require feature build)
+
+- **§20.4 / §38.8 / §38.8.1 / §39.5 — Customer-facing AI chat panels** on the booking flow, quote builder, customer quote view, and customer trip view. ~2 days of work each; needs browser testing; deferred to a dedicated build prompt.
+
+- **§13.9 active host-adapter health probing** — operator call needed: keep reactive (cheaper) or add a nightly probe (more invasive but matches spec phrasing).
+
+### Architecture deltas worth recording
+
+1. **RAG-side cron infrastructure is now non-trivial.** Previously two reconcile crons (tenant-registry, platform-settings); now five (added promo-state-reconcile, promo-state-drift-alert, retrieval-log-aggregate). The pattern of "ragDb() = createClient on demand from env" is repeated in each — could refactor to a shared client factory if the count keeps growing.
+
+2. **Feedback propagation is the first HMAC-signed POST from main → RAG that isn't tenant lifecycle.** The `RAG_WEBHOOK_SECRET` is now shared by three endpoints on RAG (`/api/tenant-events`, `/api/platform-settings-events`, `/api/feedback`). If we expand cross-service writes further, worth considering a per-endpoint secret or scoped signature.
+
+3. **Customer-facing chat surfaces (booking flow / quote view / trip view) remain unbuilt.** This is the single biggest remaining v6 capability gap. The supplement section "Gaps remaining" lists it with recommended scoping.
+
+### Rejected approaches considered
+
+- **Cross-service service-role DB write** for feedback propagation: would require sharing the RAG service-role key into the main app's env, which violates the §28 separation of concerns. HMAC-signed POST is cleaner.
+- **Adding a tenant-events-style retry queue for feedback** posts: feedback signals are best-effort by design (§6.10 ranking gracefully degrades to 0). Adding retries would add complexity for low value. Fire-and-forget chosen.
+- **Implementing §38.8.1 / §39.5 customer chat panels overnight**: rejected on risk grounds. Without browser testing, customer-facing surfaces are too risky to ship in a sleep window.
+
+### Manual follow-ups when you wake
+
+- Trigger fresh CodeQL scan on dev (one was kicked at 04:42 UTC; if its results don't show 0 alerts, kick another after #215 merges).
+- Review the 4 overnight PRs.
+- Decide on §38.8.1/§39.5 build prompt scoping.
+- Decide on §13.9 active probing direction.
+
+---
+
+## D-085 — 2026-05-25 — Reality-delta supplement items 1-5: three-PR sweep
+
+**Decision:** Closed five of the reality-delta-supplement gaps in one continuous push, structured as three PRs for reviewability.
+
+| PR | Item | Closure |
+|---|---|---|
+| #204 | §14.11 (1099-NEC) | **Reclassified as a false positive** — re-reading the spec showed Stripe Connect Express handles 1099-NEC generation automatically for sub-hosts ≥ $600/year. Original entry struck through; supplement keeps paper trail. |
+| #204 | §29.14 (DR runbook) | New `docs/runbooks/disaster-recovery.md` covering all 9 §29.14 scenarios with RTO/RPO + monthly backup-verification cadence + quarterly recovery-rehearsal log structure (SOC 2 prerequisite). |
+| #204 | §30.7 (k6 scripts) | Six scripts at `tests/load/k6/` matching the spec's six scenarios. **CI does not run them** — out-of-band, quarterly, against a dedicated load-test environment. Captured in the README. |
+| #205 | §16 / §9 / §22.5 (tenant UI gaps) | Three new pages: `/settings/branding` (simple form per user preference, not a wizard), `/settings/personas` (rename + disable + Pro+ addendum editor surfacing Haiku-screen status), `/crm/rag/queue` (review queue with bulk-approve + X-Bulk-Confirm header for >10). All consume existing API routes — no schema changes. |
+| #206 | §32.3 (10 missing help docs) | 12 markdown files at `apps/main/content/help/` (10 topic docs + 2 quickstarts: BYO and subscription). Plain language for travel agents (low computer literacy was a stated requirement). `[Screenshot: …]` placeholders so the operator can drop real screenshots in a content pass. |
+
+**Help-docs design choices (per user requirements):**
+
+1. **Subscription-aware filtering.** Extended `apps/main/src/lib/help-ai/docs-loader.ts` with a `tiers: string[]` field on `HelpDoc`, a `parseTiersField()` helper that accepts both bracketed and bare comma lists, and a new `listDocsForTier(tierCode)` filter function.
+2. **Flexible to tier reorganizations.** Docs without a `tiers:` frontmatter field are treated as **universal** — they appear for every tier. This means adding a new tier code in the future doesn't accidentally hide existing content.
+3. **Tier-gating strategy.** Only the two quickstart docs are tier-gated by file (one for BYO, one for sub-host). The 10 topic docs ship with **all six tier codes** listed, and use in-doc `> **Available on:**` callouts to scope sub-features. Operator can narrow individual docs later without a code change.
+
+**Rejected approaches:**
+
+- Putting tier metadata in a sidecar JSON/YAML file: extra moving piece, no clear win over frontmatter.
+- Importing a full YAML parser (gray-matter): the existing loader is deliberately bare; one new parser branch keeps the dependency surface flat.
+- Wiring `listDocsForTier()` into the help-center route as part of this PR: deferred to keep PR C focused on content. Noted in SESSION.md.
+
+**Verification:**
+
+- Local typecheck (`tsc --noEmit`) clean on all three PRs.
+- Local lint (`next lint --max-warnings=0`) clean on all three PRs.
+- Loader tests: 7 existing + 3 new = 10/10 passing locally.
+- PR A merged to dev; PR B merged to dev; PR C CI in flight at write time.
+
+**Manual follow-ups for the operator:**
+
+- Replace `[Screenshot: …]` placeholders in the new help docs with real screenshots once the UI is finalized.
+- Refine tier assignments on the 10 topic docs as supplier/feature mappings firm up.
+- Decide whether the help-center route should switch to `listDocsForTier()` now (small wiring change, ~2 lines).
+
+---
+
 ## D-084 — 2026-05-25 — Security audit follow-ups closed; full audit wave done
 
 **Decision:** Completed every remaining audit follow-up in one continuous push after D-083's first half. End state: all 16 audit findings (5 HIGH, 5 MEDIUM, 1 LOW + 5 from the RAG-side audit) are closed. PRs #166–#171 finished the work D-083 started.

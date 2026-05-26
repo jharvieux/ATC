@@ -9,6 +9,7 @@ import { readPendingAttributionFromHeader, ATTRIBUTION_PENDING_COOKIE } from "@/
 import { channelFromManualCategory } from "@/lib/attribution/channel-map";
 import { emptyAttributionPayload } from "@/lib/attribution/types";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { triggerMatchingSequences } from "@/lib/tasks/sequence-engine";
 
 const ContactCreateSchema = z.object({
   first_name: z.string().optional(),
@@ -117,6 +118,20 @@ export async function POST(req: Request): Promise<Response> {
       },
       db,
     );
+
+    // §37.4.2 — fan-out task sequences whose trigger_event='lead_created'.
+    // Non-fatal: a sequence-fan-out failure must not break contact creation.
+    try {
+      await triggerMatchingSequences({
+        tenant_id: ctx.tenant_id,
+        trigger: "lead_created",
+        record: { contact_id: contactId },
+        triggered_by_user_id: user.id,
+        svc: db,
+      });
+    } catch (seqErr) {
+      console.warn("[contacts.POST] sequence fan-out failed:", seqErr);
+    }
 
     const res = Response.json(data, { status: 201 });
     if (pending) res.headers.append("Set-Cookie", `${ATTRIBUTION_PENDING_COOKIE}=; Path=/; Max-Age=0`);
