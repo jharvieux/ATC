@@ -32,6 +32,7 @@ import { checkToneDrift } from "./checks/tone-drift";
 import { checkTopicEscalation } from "./checks/topic-escalation";
 import { writeAuditLog } from "@/lib/audit/write";
 import { loadUnionSlurDenyList } from "./load-deny-list";
+import { maybeSampleForReview } from "./sample-for-review";
 
 const CHECKS_RUN = [
   "hallucination_risk",
@@ -284,6 +285,25 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     .from("messages")
     .update({ supervisor_findings: supervisorFindings })
     .eq("id", message_id);
+
+  // §10.5a — probabilistic sample-for-review snapshot. Escalations always
+  // insert; other categories sampled at configurable rates. Best-effort:
+  // a sampling failure must not crash the supervisor pipeline.
+  try {
+    await maybeSampleForReview({
+      message_id,
+      conversation_id,
+      tenant_id: input.ctx.tenant_id,
+      action,
+      findings,
+      db,
+    });
+  } catch (err) {
+    console.warn(
+      "[run-supervisor] maybeSampleForReview failed (non-fatal): %s",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 
   return { action, findings, regen_count: regenCount };
 }

@@ -4,6 +4,13 @@
 // (lead_created, quote_sent, etc.). Finds active sequences matching the
 // trigger, creates a task_sequence_runs row with a steps_snapshot,
 // emits one Inngest delayed event per step.
+//
+// Status: the engine is complete and downstream task-sequence-step-fire
+// Inngest job consumes its emitted events. The CRM-side TRIGGER call
+// sites (contact create, quote send/accept, booking create/confirm)
+// don't yet call this — that fan-out is the remaining BP37 work,
+// scheduled alongside CRM pipeline-transition refactors. Don't delete
+// the file; it's the destination of those future trigger calls.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
