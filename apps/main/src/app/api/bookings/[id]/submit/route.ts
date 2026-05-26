@@ -456,6 +456,23 @@ export async function POST(
       });
     }
 
+    // §37.4.2 — fan-out task sequences whose trigger_event='booking_confirmed'.
+    // submit transitions the booking to status='submitted', which is the
+    // confirmed-with-host state. Non-fatal — a fan-out failure must not
+    // unwind the host-system commit.
+    try {
+      const { triggerMatchingSequences } = await import("@/lib/tasks/sequence-engine");
+      await triggerMatchingSequences({
+        tenant_id: ctx.tenant_id,
+        trigger: "booking_confirmed",
+        record: { booking_id: bookingId },
+        triggered_by_user_id: user.id,
+        svc: db,
+      });
+    } catch (seqErr) {
+      console.warn("[bookings/submit] sequence fan-out failed:", seqErr);
+    }
+
     return Response.json({ ok: true, provider_booking_ref, status: "submitted" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unauthorized";
