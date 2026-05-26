@@ -85,10 +85,11 @@ These three are major: every Pro+ tenant needs branding + persona control to onb
 - **Current state:** `docs/evals/design.md` exists. **No CI hook, no harness code, no golden set, no cron**. MEMORY D-024 documented this as deferred.
 - **Action:** Already in `reality-delta.md` §1 as cost-deferred. This supplement just confirms the design doc exists but execution is fully deferred.
 
-### §13.9 — Host Adapter Health Monitoring cron (PARTIAL)
+### §13.9 — Host Adapter Health Monitoring (REACTIVE-ONLY — operator-confirmed 2026-05-26)
 - **Spec:** Cron checks every active tenant_host_configs row's credential health, marks status (active / degraded / rejected). Banner surfaces.
-- **Current state:** `lib/host-adapters/credential-health.ts` exists with the banner-resolution logic ✓ (I just refactored it to query audit_log). The BANNER is wired. But there is **no cron** that actively probes adapter health — currently health is inferred reactively from decryption failures.
-- **Action:** Decide whether reactive-only health is acceptable for launch. If active probing is needed (the spec implies it via "ongoing monitoring"), add `inngest/host-adapter-health-probe.ts` running nightly.
+- **Current state:** `lib/host-adapters/credential-health.ts` exists with the banner-resolution logic ✓. The BANNER is wired. Health is inferred reactively from decryption failures + Inngest job errors. NO active probe cron exists.
+- **Decision (2026-05-26):** Stay reactive-only at launch. Rationale: host-adapter call volume is moderate; a broken credential surfaces within minutes via the next real call (every booking submit, commission reconciliation, etc.). A nightly active probe would add Inngest invocations + adapter API calls for tenants who'd surface the failure organically. Revisit if (a) host-adapter call volume drops such that real signal arrives slowly, or (b) a real incident proves the reactive path is too slow.
+- **Action for spec update:** §13.9 needs `> **Status (2026-05-26):** Reactive-only at launch. Active probing deferred — see reality-delta.md §4 and MEMORY D-087.`
 
 ### §28.21 — Local development setup
 - **Spec:** Documented `pnpm dev` flow + the env-vars-you-need-locally list.
@@ -212,7 +213,7 @@ These were flagged in §33.12 as "decided at build time" but no build-time decis
 
 - **§33.12 — Per-line actor coverage for Carnival, Holland America, MSC, Disney.** `apps/main/src/lib/pricing/line-routing.ts` ships these with placeholder `TBC/<line>` actor IDs and `enabled: false`. The spec called for build-time confirmation; no confirmation recorded. Subscriber-facing impact: customers on these four lines cannot create a price-watch today (UI correctly blocks creation, but the operator owes a decision on whether to commission actors).
 - **§33.12 — UX for uncovered lines (Virgin, Viking, Oceania, Regent, Silversea, Seabourn).** Spec says the UI surfaces "no price-watch available" for these. Need to verify the price-watch creation flow surfaces this copy explicitly rather than just returning a generic error.
-- **§33.12 — Sample-OCR evaluation gate.** Per the spec's build order step 9, run Haiku vision on a 200-image sample and evaluate uplift over text-only descriptions before deciding whether to ship the OCR uplift. **No evaluation has been run.** Open decision: schedule the sample, define the quantitative bar, or formally defer with a reason.
+- **~~§33.12 — Sample-OCR evaluation gate.~~ DEFERRED 2026-05-26.** Per the spec's build order step 9, run Haiku vision on a 200-image sample of CruiseMapper deck plans + ship photos, measure uplift over text-only descriptions, decide whether to ship OCR. **Operator decision (2026-05-26): formally deferred.** Rationale: text-only chunks are already retrievable + ranked, OCR is incremental uplift. The eval itself is cheap (~$10-20 Haiku-vision) but the calibration time is the real cost. Re-evaluate once there's signal that customers ask deck-plan-specific questions at volume that text-only RAG can't satisfy. See MEMORY D-087.
 - **§33.12 — Authority-override platform-admin UI.** Spec calls for a small admin surface to elevate or demote authority of batches of itinerary chunks (default `low`) and static-reference chunks (default `official`). Decision was "at build time"; no surface exists. Open decision: build it, defer it, or rule it out.
 
 ### Cross-cutting launch gates (not code gaps, but tracking)
