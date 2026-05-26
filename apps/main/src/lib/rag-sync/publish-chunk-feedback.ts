@@ -59,7 +59,7 @@ export async function publishChunkFeedback(
 
   try {
     const signature = await hmacHex(secret, body);
-    const res = await fetch(`${ragUrl.replace(/\/$/, "")}/api/feedback`, {
+    const res = await fetch(`${ragUrl.replace(/\/+$/, "")}/api/feedback`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
