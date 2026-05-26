@@ -274,6 +274,22 @@ const envSchema = z.object({
   APIFY_ADAPTER_ENABLED:               z.coerce.boolean().optional().default(false),
   APIFY_RUN_BUDGET_USD_CEILING:        z.coerce.number().positive().optional().default(50),
   APIFY_MONTHLY_BUDGET_USD_CEILING:    z.coerce.number().positive().optional().default(500),
+  // D-088 Apify-4 — per-line kill switches. Default ENABLED (all 9
+  // verified sercul actors covered). Flip individual lines to "false"
+  // during incident triage without dropping the rest.
+  APIFY_ENABLED_RCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_NCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_PCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_CEL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_COS: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_CCL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_HAL: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_MSC: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_DSY: z.coerce.boolean().optional().default(true),
+  // D-088 Apify-4 — cap on results per actor run. Each sercul actor
+  // dumps the whole market; this bounds spend (sercul rates $1-$2 per
+  // 1,000 results). Default 2000 covers US sailing volume for every line.
+  APIFY_MAX_ROWS_PER_RUN: z.coerce.number().int().positive().optional().default(2000),
   // D-088: APIFY_GENERAL_PRICING_BUDGET_PCT was removed. The general-
   // pricing Apify pathway no longer exists (DIY CruiseMapper scraper
   // replaces it). The full monthly cap applies to tracked-sailings only.
