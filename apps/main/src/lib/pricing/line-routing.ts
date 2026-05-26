@@ -164,6 +164,59 @@ export function routeFor(line: CruiseLineCode): LineRoute | null {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// D-090 Apify-5 — actor allowlist (defense-in-depth).
+//
+// Threat: APIFY_API_TOKEN is account-level. A leaked token gives the
+// attacker unbounded spend across every actor in the Apify store. The
+// PRIMARY mitigation is operator-side: scope the Apify token to "Run
+// permission" on exactly the allowlisted slugs (see
+// docs/runbooks/apify-token-scoping.md).
+//
+// This SECONDARY mitigation lives in code: every Apify-API dispatch path
+// must call `assertActorAllowed(actorId)` before fetch. Defends against
+// our OWN bugs (typo, accidental new dispatch site, future admin UI that
+// might take an actor ID from a request) rather than against a leaked
+// token. Both layers should be in place.
+//
+// To add a new actor: add the slug here AND extend the scoped token on
+// the Apify side. Order doesn't matter; the run won't succeed until both
+// are in place.
+// ──────────────────────────────────────────────────────────────────────────
+
+export const APIFY_ACTOR_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  // Per-line sercul scrapers — kept in sync with LINE_ROUTES by the
+  // test in apps/main/test/unit/pricing/line-routing.test.ts.
+  "sercul/royal-caribbean",
+  "sercul/norwegian-cruise-scraper",
+  "sercul/princess-cruise-scraper",
+  "sercul/celebrity-cruises",
+  "sercul/costa-cruises",
+  "sercul/carnival-cruises",
+  "sercul/hal-cruises-scraper",
+  "sercul/msc-cruises-scraper",
+  "sercul/disney-cruises-scraper",
+  // Legacy itinerary actor (deprecated 2026-05-26 per D-088, kept as the
+  // emergency-only escape hatch behind CRUISEMAPPER_ITINERARY_INGEST_ENABLED).
+  // Remove when the DIY scraper fully covers itinerary data.
+  "crawlerbros/cruisemapper-cruises-scraper",
+]);
+
+export class ApifyAllowlistViolation extends Error {
+  constructor(actorId: string) {
+    super(`apify_allowlist_violation: actor "${actorId}" is not in APIFY_ACTOR_ALLOWLIST`);
+    this.name = "ApifyAllowlistViolation";
+  }
+}
+
+/** Throws `ApifyAllowlistViolation` if the actorId isn't on the allowlist.
+ *  MUST be called at every dispatch site before the fetch. */
+export function assertActorAllowed(actorId: string): void {
+  if (!APIFY_ACTOR_ALLOWLIST.has(actorId)) {
+    throw new ApifyAllowlistViolation(actorId);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Client-side filter — D-088 Apify-4.
 //
 // Apify actors dump the whole market; this matcher keeps only items that

@@ -2,7 +2,10 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  APIFY_ACTOR_ALLOWLIST,
+  ApifyAllowlistViolation,
   LINE_ROUTES,
+  assertActorAllowed,
   groupSailingsForBatch,
   isLineEnabledByEnv,
   matchesAnyWatchedSailing,
@@ -126,6 +129,48 @@ describe("matchesAnyWatchedSailing — client-side filter", () => {
 
   it("returns false for empty watched set", () => {
     expect(matchesAnyWatchedSailing({ key: sailing() }, [])).toBe(false);
+  });
+});
+
+describe("APIFY_ACTOR_ALLOWLIST — D-090 Apify-5", () => {
+  it("contains every actorId referenced by LINE_ROUTES", () => {
+    for (const line of ENABLED_LINES) {
+      const r = LINE_ROUTES[line]!;
+      expect(
+        APIFY_ACTOR_ALLOWLIST.has(r.actorId),
+        `${r.actorId} should be allowlisted`,
+      ).toBe(true);
+    }
+  });
+
+  it("includes the legacy crawlerbros itinerary actor as an emergency escape hatch", () => {
+    // Documented in line-routing.ts header — remove when DIY scraper covers itineraries.
+    expect(APIFY_ACTOR_ALLOWLIST.has("crawlerbros/cruisemapper-cruises-scraper")).toBe(true);
+  });
+
+  it("contains exactly the 9 sercul slugs + 1 legacy slug (drift guard)", () => {
+    expect(APIFY_ACTOR_ALLOWLIST.size).toBe(10);
+  });
+});
+
+describe("assertActorAllowed", () => {
+  it("returns silently for an allowlisted actor", () => {
+    expect(() => assertActorAllowed("sercul/royal-caribbean")).not.toThrow();
+  });
+
+  it("throws ApifyAllowlistViolation for an actor not on the list", () => {
+    expect(() => assertActorAllowed("attacker/malicious-actor")).toThrow(ApifyAllowlistViolation);
+  });
+
+  it("error message names the offending actor (for ledger forensics)", () => {
+    try {
+      assertActorAllowed("sercul/non-existent-line");
+    } catch (err) {
+      expect((err as Error).message).toContain("sercul/non-existent-line");
+      expect((err as Error).message).toMatch(/apify_allowlist_violation/);
+      return;
+    }
+    throw new Error("assertActorAllowed did not throw");
   });
 });
 
