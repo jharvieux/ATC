@@ -22,6 +22,9 @@ import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
 import { parseShipPage } from "@/lib/external/cruisemapper/parsers/ship-parser";
 import { parsePortPage } from "@/lib/external/cruisemapper/parsers/port-parser";
 import { parseDeckPlanPage } from "@/lib/external/cruisemapper/parsers/deck-parser";
+// D-088 — DIY price-range extraction (replaces Apify general-pricing path).
+import { parsePriceRanges } from "@/lib/external/cruisemapper/parsers/price-range-parser";
+import { upsertGeneralPriceRange } from "@/lib/pricing/general-pricing-ranges";
 import { screenForPromptInjection } from "@/lib/external/cruisemapper/prompt-injection-screen";
 import { ingestReferenceToRag } from "@/lib/external/cruisemapper/rag-reference-ingest";
 import { recordDeckPlanImage } from "@/lib/external/cruisemapper/image-asset-recorder";
@@ -190,6 +193,32 @@ async function processKind(
     let payload;
     if (kind === "ship") {
       const ship = parsed as NonNullable<ReturnType<typeof parseShipPage>>;
+
+      // D-088 — Extract price ranges from the same HTML. Best-effort:
+      // a parse failure here does NOT abort the ship-intel ingest.
+      if (ship.cruiseLine) {
+        const ranges = parsePriceRanges(fetched.body, url);
+        for (const r of ranges) {
+          const upsertRes = await upsertGeneralPriceRange(db, {
+            cruise_line: ship.cruiseLine,
+            ship: ship.shipName,
+            cabin_class: r.cabin_class,
+            duration_nights: r.duration_nights,
+            low_amount: r.low_amount,
+            high_amount: r.high_amount,
+            source_url: url,
+          });
+          if (!upsertRes.ok) {
+            // Log + continue. Failure here shouldn't poison the
+            // ship-intel ingest below.
+            console.warn(
+              "[refresh-cruisemapper-static] price-range upsert failed",
+              { url, cabin_class: r.cabin_class, error: upsertRes.error },
+            );
+          }
+        }
+      }
+
       payload = {
         source_identifier: `cruisemapper:ship:${ship.shipSlug}`,
         category: "ship_intel" as const,
