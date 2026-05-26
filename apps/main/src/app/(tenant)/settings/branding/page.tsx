@@ -138,7 +138,7 @@ export default function BrandingSettingsPage() {
       <h1 className="text-2xl font-semibold mb-2">Branding</h1>
       <p className="text-gray-500 mb-8">
         Customize how your concierge appears to customers. Upload image URLs from your hosting
-        provider — the platform doesn't host images directly today.
+        provider — the platform doesn&apos;t host images directly today.
       </p>
 
       {error && (
@@ -237,7 +237,7 @@ export default function BrandingSettingsPage() {
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Show "Powered by AI Travel Concierge"</p>
+              <p className="font-medium">Show &ldquo;Powered by AI Travel Concierge&rdquo;</p>
               <p className="text-sm text-gray-500 mt-1">
                 {forcePoweredBy
                   ? "Your subscription requires this attribution. Upgrade to remove it."

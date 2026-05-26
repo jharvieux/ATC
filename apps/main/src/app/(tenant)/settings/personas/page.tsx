@@ -343,7 +343,7 @@ function AddendumEditor({ slug, onSaved }: { slug: string; onSaved: () => void }
       </div>
       <p className="text-xs text-gray-500">
         Extra instructions the AI will read when speaking as this persona. Use plain language —
-        "always recommend X," "never quote Y," "for honeymooners, suggest Z." Submitted text is
+        &ldquo;always recommend X,&rdquo; &ldquo;never quote Y,&rdquo; &ldquo;for honeymooners, suggest Z.&rdquo; Submitted text is
         screened for safety before activation.
       </p>
       <textarea

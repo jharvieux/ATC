@@ -166,8 +166,8 @@ export default function RagQueuePage() {
       <h1 className="text-2xl font-semibold mb-2">RAG Submission Queue</h1>
       <p className="text-gray-500 mb-6">
         Review content your team submitted before it becomes searchable knowledge for the AI.
-        Approve good content; reject anything that's incorrect, off-topic, or contains private
-        customer info that wasn't caught by the redactor.
+        Approve good content; reject anything that&apos;s incorrect, off-topic, or contains private
+        customer info that wasn&apos;t caught by the redactor.
       </p>
 
       {error && (
