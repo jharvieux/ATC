@@ -216,3 +216,30 @@ describe("inferCustomerStyle — signal counting (via resolveToneLevel)", () => 
     expect(b).toBeGreaterThan(a);
   });
 });
+
+describe("resolveToneLevel — apostrophe normalization (regression)", () => {
+  // Bug history: the contraction regex used /[''/]\w+/ which only matched
+  // ASCII apostrophe (U+0027). iOS/macOS/Word auto-replace `'` with `’`
+  // (U+2019), so contractions from any mobile or modern desktop user were
+  // silently missed → the casual-signal count under-counted → resolved
+  // tone level was lower than the customer's actual style. Fixed by
+  // expanding the regex to include both code points.
+  function levelFor(message: string) {
+    return resolveToneLevel({
+      tenant_max_level: 5,
+      persona_slug: "priya-sharma", // base 2 so signals can swing the level
+      customer_rapport_level: null,
+      customer_rapport_directive: null,
+      customer_message: message,
+    }).level;
+  }
+  it("ASCII apostrophe (don't, can't) is counted as a contraction signal", () => {
+    expect(levelFor("don't tell me, can't decide!")).toBe(4);
+  });
+  it("Curly apostrophe (don’t, can’t) is counted as a contraction signal", () => {
+    expect(levelFor("don’t tell me, can’t decide!")).toBe(4);
+  });
+  it("no apostrophe → baseline level 2", () => {
+    expect(levelFor("Tell me about cabins, please.")).toBe(2);
+  });
+});
