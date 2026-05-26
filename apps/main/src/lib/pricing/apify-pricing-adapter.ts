@@ -22,6 +22,7 @@ import type {
 import { groupSailingsForBatch, routeFor, type LineRoute } from "./line-routing";
 import { readPriceQuote, upsertPriceQuote } from "./pricing-cache";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { budgetGate } from "./budget-priority";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000; // §33.3 — 5-minute timeout
 
@@ -142,15 +143,20 @@ export class ApifyPricingAdapter implements PricingDataSource {
     if (!getApifyToken()) {
       return refuse("no_api_token", "APIFY_API_TOKEN not set");
     }
+    // §33.9.3 — Tracked-sailings refresh is the *last* to pause. Use the
+    // full monthly cap, NOT the general-pricing sub-cap that the
+    // CruiseMapper itinerary actor checks. Subscriber-facing watches keep
+    // evaluating until the full Apify monthly budget is exhausted.
     const monthly = await this.monthlySpendUsd();
-    if (monthly >= monthlyBudgetCap()) {
+    const gate = budgetGate("tracked_sailings", monthly);
+    if (gate.paused) {
       await sendOperatorAlert({
         severity: "high",
         signal: "apify_monthly_budget_exhausted",
-        detail: `Apify monthly budget cap of $${monthlyBudgetCap()} reached ($${monthly.toFixed(2)}). No new runs until next month or operator raises the cap.`,
-        payload: { monthly_spend_usd: monthly },
+        detail: `Apify monthly budget cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). Tracked-sailings refresh paused — subscriber price-watch notifications will be skipped this run.`,
+        payload: { monthly_spend_usd: monthly, cap_kind: "tracked_sailings" },
       });
-      return refuse("monthly_budget_exhausted", `monthly cap $${monthlyBudgetCap()} reached`);
+      return refuse("monthly_budget_exhausted", `monthly cap $${gate.cap_usd.toFixed(2)} reached`);
     }
     return null;
   }
@@ -301,9 +307,6 @@ function getApifyToken(): string | null {
 }
 function runBudgetCap(): number {
   return parseFloat(process.env.APIFY_RUN_BUDGET_USD_CEILING ?? "50");
-}
-function monthlyBudgetCap(): number {
-  return parseFloat(process.env.APIFY_MONTHLY_BUDGET_USD_CEILING ?? "500");
 }
 
 function refuse(reason: AdapterRefuseReason, detail: string): RefreshResult {

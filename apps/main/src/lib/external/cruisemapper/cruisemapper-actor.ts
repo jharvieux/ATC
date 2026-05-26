@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { budgetGate } from "@/lib/pricing/budget-priority";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -45,17 +46,20 @@ export async function runCruiseMapperItineraryActor(
   const token = process.env.APIFY_API_TOKEN;
   if (!token) return skip("no_api_token", "APIFY_API_TOKEN not set");
 
-  // Monthly cap shared across all Apify usage (per-line + CruiseMapper).
+  // §33.9.3 — General-pricing refresh (CruiseMapper itineraries) pauses
+  // at the general-pricing sub-cap (default 80% of monthly). This keeps
+  // budget reserved for daily tracked-sailings refresh per the addendum:
+  // "subscriber watches keep evaluating as long as possible."
   const monthly = await monthlySpendUsd(db);
-  const cap = parseFloat(process.env.APIFY_MONTHLY_BUDGET_USD_CEILING ?? "500");
-  if (monthly >= cap) {
+  const gate = budgetGate("general_pricing", monthly);
+  if (gate.paused) {
     await sendOperatorAlert({
       severity: "high",
-      signal: "apify_monthly_budget_exhausted",
-      detail: `Apify monthly budget cap of $${cap} reached ($${monthly.toFixed(2)}). CruiseMapper itinerary refresh skipped.`,
-      payload: { monthly_spend_usd: monthly, surface: "cruisemapper_itinerary" },
+      signal: gate.reason,
+      detail: `Apify general-pricing sub-cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). CruiseMapper itinerary refresh skipped. Tracked-sailings refresh continues until the full monthly cap.`,
+      payload: { monthly_spend_usd: monthly, surface: "cruisemapper_itinerary", cap_kind: "general_pricing" },
     });
-    return skip("monthly_budget_exhausted", `monthly cap $${cap} reached`);
+    return skip(gate.reason, `general-pricing sub-cap $${gate.cap_usd.toFixed(2)} reached`);
   }
 
   const actorId = process.env.CRUISEMAPPER_ITINERARY_ACTOR_ID ?? "crawlerbros/cruisemapper-cruises-scraper";

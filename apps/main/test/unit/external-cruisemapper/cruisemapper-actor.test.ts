@@ -85,15 +85,35 @@ describe("runCruiseMapperItineraryActor — guards", () => {
     expect(r.reason).toMatch(/no_api_token/);
   });
 
-  it("skips + fires operator alert when monthly cap exhausted", async () => {
+  it("skips + fires operator alert when the general-pricing sub-cap is exhausted (§33.9.3)", async () => {
+    // §33.9.3: cruisemapper-itinerary is the general-pricing path; it pauses
+    // at the sub-cap (80% of monthly by default), not the full monthly cap.
     process.env.CRUISEMAPPER_ITINERARY_INGEST_ENABLED = "true";
     process.env.APIFY_ADAPTER_ENABLED = "true";
     process.env.APIFY_API_TOKEN = "test-token";
     process.env.APIFY_MONTHLY_BUDGET_USD_CEILING = "100";
+    // Spend 150 exhausts both sub-cap (80) and total cap (100); reason
+    // surfaces as general-pricing sub-cap because that's the gate this
+    // surface checks.
     const db = makeMockDb({ monthlySpend: 150 });
     const r = await runCruiseMapperItineraryActor(db as never);
     expect(r.status).toBe("skipped");
-    expect(r.reason).toMatch(/monthly_budget_exhausted/);
+    expect(r.reason).toMatch(/general_pricing_budget_exhausted/);
     expect(alertCalls).toHaveLength(1);
+  });
+
+  it("pauses general-pricing at 80% of monthly cap even when total cap is not yet hit", async () => {
+    process.env.CRUISEMAPPER_ITINERARY_INGEST_ENABLED = "true";
+    process.env.APIFY_ADAPTER_ENABLED = "true";
+    process.env.APIFY_API_TOKEN = "test-token";
+    process.env.APIFY_MONTHLY_BUDGET_USD_CEILING = "100";
+    delete process.env.APIFY_GENERAL_PRICING_BUDGET_PCT; // default 80
+    // Spend 85: above the 80 sub-cap but below the 100 total — the
+    // tracked-sailings path would still run; this general-pricing path
+    // pauses.
+    const db = makeMockDb({ monthlySpend: 85 });
+    const r = await runCruiseMapperItineraryActor(db as never);
+    expect(r.status).toBe("skipped");
+    expect(r.reason).toMatch(/general_pricing_budget_exhausted/);
   });
 });
