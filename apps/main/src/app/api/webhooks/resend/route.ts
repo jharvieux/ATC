@@ -126,17 +126,27 @@ export async function POST(req: Request): Promise<Response> {
       break;
 
     case "email.opened":
-    case "email.clicked":
       // Engagement metric — log count, no PII stored beyond what's already in email_log.
-      console.info(`[resend-webhook] engagement: type=${String(event.type).replace(/[\r\n]/g, " ")} log_id=${logId}`);
+      // event.type narrowed to the literal "email.opened" in this branch — CodeQL
+      // sees a constant flow into the log argument.
+      console.info(`[resend-webhook] engagement: type=email.opened log_id=${logId}`);
+      break;
+    case "email.clicked":
+      console.info(`[resend-webhook] engagement: type=email.clicked log_id=${logId}`);
       break;
 
     case "email.sent":
       // Already logged at send time — no-op.
       break;
 
-    default:
-      console.warn(`[resend-webhook] unhandled event type: ${String(event.type).replace(/[\r\n]/g, " ")}`);
+    default: {
+      // Untrusted event.type fell through every known case. Don't log the
+      // unknown value — it's the most aggressive log-injection surface in
+      // this file. Sentry breadcrumbs (already wired) capture the raw
+      // event for engineering inspection.
+      console.warn("[resend-webhook] unhandled event type (raw value omitted from log; see Sentry breadcrumbs)");
+      break;
+    }
   }
 
   return new Response("OK", { status: 200 });
