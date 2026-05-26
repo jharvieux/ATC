@@ -4,6 +4,42 @@ Newest entries on top.
 
 ---
 
+## D-087 — 2026-05-26 — Walkthrough decisions (post-overnight, operator confirmations)
+
+After the overnight sweep landed (D-086), the operator walked through the open decisions and made the following calls. Each is now recorded in `reality-delta.md` §4 (for runtime decisions) or the supplement (for deferrals) so future engineers see the trail.
+
+### Decisions made
+
+| Item | Decision | Rationale |
+|---|---|---|
+| **§13.9** Host-adapter active health probing | **Stay reactive-only at launch.** No nightly probe cron. | Host-adapter call volume is moderate; a broken credential surfaces within minutes of the next real call. Adding an active probe adds Inngest + adapter API noise without meaningful detection improvement at current volumes. |
+| **§33.12** Sample-OCR Haiku-vision evaluation | **Formally deferred.** No 200-image eval, no OCR ship. | Text-only chunks already serve the bulk of deck-plan / ship questions. Re-evaluate once there's signal that customers ask deck-plan-specific questions text-only RAG can't satisfy. |
+| **§33.12** Authority-override platform-admin UI | **Build it.** | Small admin page (1 day work) listing imported chunks by source with inline `authority_manual_override` + reason. Curation tooling is worth having even at low volume — easier to flag bad data when noticed than to hunt for it later. |
+| **§11.5** DOB re-prompt cadence | **Tighten from 365d → 30d with T-60 booking-imminent suppression.** | Yearly was too slow for customers in pre-booking limbo. 30 days re-prompts within a season; the T-60 booking suppression ensures the §20.5 submit gate handles the imminent case without redundant nagging. |
+| **§6.10 / §17.10** `/api/feedback` endpoint auth | **HMAC stays; ADD rate limiting at the endpoint.** | HMAC sufficient as auth (table is global-scoped). Rate limiting is the missing layer — protects against a leaked HMAC secret being used to flood the events table with spam signal. |
+| **§26.11** Pentest scoping runbook | **Write it now.** | One hour of doc-writing; pre-stages a future pentest engagement. Covers scope template, firm selection, findings triage, remediation SLAs. |
+
+### Decisions deferred to a subsequent discussion (Apify cluster)
+
+Saved for a focused conversation because they trade off against each other:
+
+- §33.12 actor IDs for Carnival / Holland America / MSC / Disney
+- §33.9.3 monthly budget sub-cap split (currently 80/20 default)
+- §33.9.3 APIFY_API_TOKEN scoping / blast radius
+- §33.12 UX copy for uncovered lines (Virgin / Viking / Oceania / Regent / Silversea / Seabourn)
+
+### Implementation PRs
+
+| PR | Decision | Status |
+|---|---|---|
+| Z1 | §13.9 + §33.12 OCR — delta-doc + supplement updates | This commit |
+| Z2 | §11.5 — `dob-estimate-reprompt-eligible` cron logic change | TBD |
+| Z3 | §6.10 — `/api/feedback` rate limiter | TBD |
+| Z4 | §26.11 — `docs/runbooks/pentest-scoping.md` | TBD |
+| Z5 | §33.12 — authority-override admin UI | TBD |
+
+---
+
 ## D-086 — 2026-05-26 — Overnight exhaustive spec sweep + CodeQL closure
 
 **Decision:** Read every subsection of all 40 spec sections + 7 addenda against `dev`. Fixed everything addressable in small themed PRs; documented the rest in `docs/specs/reality-delta-supplement.md`. Closed the 5 known medium CodeQL alerts.

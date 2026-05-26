@@ -268,6 +268,21 @@ Implementation-level choices that deviate from the spec's prose but are delibera
 - **Source:** MEMORY D-075. Wired in BP39 / §33.7.1 (`apps/main/src/lib/ai/display-assets-block.ts`) and BP39 client renderer (`apps/main/src/components/chat/renderMessageContent.tsx`).
 - **Action for spec update:** §33.7.2 should add a `> **Status (2026-05-25):** Rendered as `<a>` hyperlinks, not inline `<img>`. See `docs/specs/reality-delta.md#§33.7.2` and MEMORY D-075.` callout. The `referrerpolicy` requirement becomes N/A; the `rel="noopener noreferrer"` requirement applies to the link instead.
 
+### §13.9 — Host-adapter health monitoring: reactive-only, no active probe cron
+- **Spec said:** Cron checks every active `tenant_host_configs` row's credential health, marks status (active / degraded / rejected). Banner surfaces.
+- **Reality:** No active-probe cron exists. Health is inferred reactively from decryption failures + Inngest job errors via `lib/host-adapters/credential-health.ts`. The banner-resolution logic is wired but reads audit_log signals rather than a status field maintained by a cron.
+- **Why (operator decision 2026-05-26):** Host-adapter call volume is moderate. A broken credential surfaces within minutes of the next real call (every booking submit, every commission reconciliation cron). A nightly active probe would add Inngest invocations + adapter API hits for tenants whose failure would surface organically anyway. Reactive is cheaper, less noisy, and equivalent in practice at this call volume.
+- **Revisit if:** (a) host-adapter call volume drops such that real signal arrives slowly, or (b) a real incident proves the reactive path is too slow.
+- **Source:** MEMORY D-087.
+- **Action for spec update:** §13.9 should add a `> **Status (2026-05-26):** Reactive-only inference at launch. Active probing deferred to a future iteration once real call volume signals a need.` callout.
+
+### §33.12 — Sample-OCR Haiku-vision evaluation: deferred
+- **Spec said:** Build-order step 9 — run Haiku vision on a 200-image sample of CruiseMapper deck plans + ship photos, measure uplift over text-only descriptions, decide whether to ship the OCR uplift.
+- **Reality:** No evaluation run. Text-only chunks ship and are retrievable.
+- **Why (operator decision 2026-05-26):** Text-only chunks already serve the bulk of deck-plan / ship questions. The OCR uplift is incremental and the calibration time (designing the quantitative bar, curating the question set, scoring the responses) is the real cost — not the ~$10–20 of Haiku-vision spend. Re-evaluate once there's customer-question signal that text-only RAG isn't satisfying.
+- **Source:** MEMORY D-087.
+- **Action for spec update:** §33.11 build-order step 9 should add `> **Status (2026-05-26):** Deferred until customer-question signal indicates text-only RAG insufficient.`
+
 ---
 
 ## 5. Security changes from audits
