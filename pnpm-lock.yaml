@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.97.1
-        version: 0.97.1(zod@4.4.3)
+        specifier: ^0.98.0
+        version: 0.98.0(zod@4.4.3)
       '@lhci/cli':
         specifier: ^0.15.1
         version: 0.15.1
@@ -24,8 +24,8 @@ importers:
         specifier: ^8.7.1
         version: 8.7.1(@stryker-mutator/core@8.7.1)(vitest@1.6.1(@types/node@25.9.1)(terser@5.48.0))
       '@supabase/supabase-js':
-        specifier: ^2.105.4
-        version: 2.106.0
+        specifier: ^2.106.2
+        version: 2.106.2
       '@vitest/coverage-v8':
         specifier: ^1.6.0
         version: 1.6.1(vitest@1.6.1(@types/node@25.9.1)(terser@5.48.0))
@@ -57,8 +57,8 @@ importers:
   apps/main:
     dependencies:
       '@anthropic-ai/sdk':
-        specifier: ^0.97.1
-        version: 0.97.1(zod@3.25.76)
+        specifier: ^0.98.0
+        version: 0.98.0(zod@3.25.76)
       '@atc/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -84,8 +84,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0
       docx:
-        specifier: ^9.6.1
-        version: 9.6.1
+        specifier: ^9.7.0
+        version: 9.7.0
       inngest:
         specifier: ^4.4.0
         version: 4.4.0(@opentelemetry/core@2.7.1(@opentelemetry/api@1.9.1))(express@4.22.2)(next@14.2.35(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(zod@3.25.76)
@@ -99,11 +99,11 @@ importers:
         specifier: 14.2.35
         version: 14.2.35(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       officeparser:
-        specifier: ^7.0.3
-        version: 7.0.3
+        specifier: ^7.1.0
+        version: 7.1.0
       openai:
-        specifier: ^6.38.0
-        version: 6.38.0(ws@8.21.0)(zod@3.25.76)
+        specifier: ^6.39.0
+        version: 6.39.0(ws@8.21.0)(zod@3.25.76)
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
@@ -178,8 +178,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/contracts
       '@supabase/supabase-js':
-        specifier: ^2.106.0
-        version: 2.106.0
+        specifier: ^2.106.2
+        version: 2.106.2
       inngest:
         specifier: ^4.4.0
         version: 4.4.0(@opentelemetry/core@2.7.1(@opentelemetry/api@1.9.1))(express@4.22.2)(next@14.2.35(@babel/core@7.25.9)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(zod@3.25.76)
@@ -193,8 +193,8 @@ importers:
         specifier: 14.2.35
         version: 14.2.35(@babel/core@7.25.9)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       openai:
-        specifier: ^6.38.0
-        version: 6.38.0(ws@8.21.0)(zod@3.25.76)
+        specifier: ^6.39.0
+        version: 6.39.0(ws@8.21.0)(zod@3.25.76)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -278,8 +278,8 @@ packages:
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
     engines: {node: '>=6.0.0'}
 
-  '@anthropic-ai/sdk@0.97.1':
-    resolution: {integrity: sha512-wOf7AUeJPitcVpvKO4UMu63mWH5SaVipkGd7OOQJt/G6VYGlV8D2Gp9dLxOrttDJh/9gqPqdaBwDGcBevumeAg==}
+  '@anthropic-ai/sdk@0.98.0':
+    resolution: {integrity: sha512-N7aXtCvC5g6T1Y4V29lJjceu/zTkVkIZF0jdBvagr0TRFHuKeImffalGWEfqZKrvjH+IQbzJWw6TmSmUzrlMgg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -2829,31 +2829,31 @@ packages:
       '@stryker-mutator/core': ~8.7.0
       vitest: '>=0.31.2'
 
-  '@supabase/auth-js@2.106.0':
-    resolution: {integrity: sha512-JY7602OvjK2l3BjsQkpePpxR+6P0iG37gCrZNWAMhAuNh1iFnhGRwj/y5EshUG0INMPGFrj0UA9MErQ/kOEKFg==}
+  '@supabase/auth-js@2.106.2':
+    resolution: {integrity: sha512-VcAjUErkHkhC5Jaf+g/G1qbkQrFh8edaCdHa7pxJmHUjkWKjT7UnYCtPA89XV0N0GIYRkEqJZw5V62CtOxTmBQ==}
     engines: {node: '>=20.0.0'}
 
-  '@supabase/functions-js@2.106.0':
-    resolution: {integrity: sha512-ADIkJYH5w7HbnGVAAlCbyKoLF5QdfyezBLfYXpUqhxZOacK6YepOvnP/8p4p+50bhTPWp6VhDxu19KO7e/qU2g==}
+  '@supabase/functions-js@2.106.2':
+    resolution: {integrity: sha512-oRnr0QrL8H+zTO1YyQ1QjiHZU/957jvubbxSJTUm2XLAgzoGGV9Tahfyd+uvLsBLRVmXLtpU3oyCjdQIvkGMOA==}
     engines: {node: '>=20.0.0'}
 
   '@supabase/phoenix@0.4.2':
     resolution: {integrity: sha512-YSAGnmDAfuleFCVt3CeurQZAhxRfXWeZIIkwp7NhYzQ1UwW6ePSnzsFAiUm/mbCkfoCf70QQHKW/K6RKh52a4A==}
 
-  '@supabase/postgrest-js@2.106.0':
-    resolution: {integrity: sha512-vNKFAXQrtmUn7J3LbN+uMlt0jciAwRIBpdy6Do4DKrpf1xj0kJhbqXTX4y8ziewWUEEx8G5GPnDmprXXaO9f3w==}
+  '@supabase/postgrest-js@2.106.2':
+    resolution: {integrity: sha512-tDOzyPgp9pIRMR2x6C9+uDSJrnXSzxLtt3d7nC+Lrsy3jnJDHYfdQC/xcRyhJE/TOBJ0heSqRKR3UmejDjZxsw==}
     engines: {node: '>=20.0.0'}
 
-  '@supabase/realtime-js@2.106.0':
-    resolution: {integrity: sha512-mYZoaYpkyjlecixbvxCu0h3jw12uHfEcUqNdaRATNI8zQVI5arels+VJzAGcHwNiD+/Juv0OXIuk+M7SHsdI4A==}
+  '@supabase/realtime-js@2.106.2':
+    resolution: {integrity: sha512-LdRGT7DNhyZkPjubUv5bSdAZ0jSEX8wTHvx7htj7+K59TOZRvz4TuQK7tL2RWxyIZVeFMRluL04SzWS61rKnUA==}
     engines: {node: '>=20.0.0'}
 
-  '@supabase/storage-js@2.106.0':
-    resolution: {integrity: sha512-BHc3nIjD3zfdDxBenphXrLJSoQ+qwo24VD96cVzmjBFbQVk5krvwRNUXrA5ozPplA3Vhlst2d/hy9R9ViqH2lg==}
+  '@supabase/storage-js@2.106.2':
+    resolution: {integrity: sha512-xgKCSYuev1YarV+iVqr+zlfgSyremnJtn8T0NCT8L4XmMv1CLtESc0Q6kNp8+mKWdX/8ND0nzm7OMKx08kwNAw==}
     engines: {node: '>=20.0.0'}
 
-  '@supabase/supabase-js@2.106.0':
-    resolution: {integrity: sha512-OOoo3sLj9iVXNp6b+fkyOfFeQrvvNy7nQbaONNf72dOaictUeS39hFDS9argIRTag6M3ZxIypNWcrDAwLgUihQ==}
+  '@supabase/supabase-js@2.106.2':
+    resolution: {integrity: sha512-2/RZ/1fmJx/MRSEDG2Xk8+J4JVk5clM9V0uSI6kUTrcS32KA89DtqI5RUOC9r6mzY3WBC9qexLjssIHjbLyVJA==}
     engines: {node: '>=20.0.0'}
 
   '@swc/counter@0.1.3':
@@ -4004,8 +4004,8 @@ packages:
     resolution: {integrity: sha512-yS+Q5i3hBf7GBkd4KG8a7eBNNWNGLTaEwwYWUijIYM7zrlYDM0BFXHjjPWlWZ1Rg7UaddZeIDmi9jF3HmqiQ2w==}
     engines: {node: '>=6.0.0'}
 
-  docx@9.6.1:
-    resolution: {integrity: sha512-ZJja9/KBUuFC109sCMzovoq2GR2wCG/AuxivjA+OHj/q0TEgJIm3S7yrlUxIy3B+bV8YDj/BiHfWyrRFmyWpDQ==}
+  docx@9.7.0:
+    resolution: {integrity: sha512-saDn+8rAtW9nPlWxDs31Kbb/hL+AhHQN2gktHkWwkj59u9htUXtpVMN1Z+cSoLGCAaeYpW7Qe9F5sU3aPdiy9w==}
     engines: {node: '>=10'}
 
   dom-serializer@2.0.0:
@@ -5578,8 +5578,8 @@ packages:
     resolution: {integrity: sha512-gXah6aZrcUxjWg2zR2MwouP2eHlCBzdV4pygudehaKXSGW4v2AsRQUK+lwwXhii6KFZcunEnmSUoYp5CXibxtA==}
     engines: {node: '>= 0.4'}
 
-  officeparser@7.0.3:
-    resolution: {integrity: sha512-kFYMS0OzIu53/LyRi+l9UIIPpeOVFlz/GVJvsAUrU6IuHBfmc0Y9/C4w/QadQxio7761U/X1frsFRNjAuyBzmg==}
+  officeparser@7.1.0:
+    resolution: {integrity: sha512-BkN+nQeOWNiwo8ZNesikbtvIKV/ZhB7RlcLmZNdfYrrlaJsceB9zS+YOK+ElaZVKj9vOLQfUvlyByRmoJm6KBg==}
     engines: {node: '>=18.0.0'}
     hasBin: true
     peerDependencies:
@@ -5615,8 +5615,8 @@ packages:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
     engines: {node: '>=12'}
 
-  openai@6.38.0:
-    resolution: {integrity: sha512-AoMplt2UalrpgUDMh3L09QWjNRlgJPipclQvA6sYAaeF6nHNBMgmikAZGmcYLn8on4d9sQY9Q8bOLfrBS7Lc8g==}
+  openai@6.39.0:
+    resolution: {integrity: sha512-O61LIsimY3acVabwvomwFhwrnN36yvHY2quIfy9keEcFytGgWeV35yLHQ6NVMLSBxRpHmcg2yuhCnlu2HT4pLQ==}
     hasBin: true
     peerDependencies:
       ws: ^8.18.0
@@ -7177,14 +7177,14 @@ snapshots:
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
 
-  '@anthropic-ai/sdk@0.97.1(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.98.0(zod@3.25.76)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
     optionalDependencies:
       zod: 3.25.76
 
-  '@anthropic-ai/sdk@0.97.1(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.98.0(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -10077,37 +10077,37 @@ snapshots:
       tslib: 2.7.0
       vitest: 1.6.1(@types/node@25.9.1)(terser@5.48.0)
 
-  '@supabase/auth-js@2.106.0':
+  '@supabase/auth-js@2.106.2':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/functions-js@2.106.0':
+  '@supabase/functions-js@2.106.2':
     dependencies:
       tslib: 2.8.1
 
   '@supabase/phoenix@0.4.2': {}
 
-  '@supabase/postgrest-js@2.106.0':
+  '@supabase/postgrest-js@2.106.2':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/realtime-js@2.106.0':
+  '@supabase/realtime-js@2.106.2':
     dependencies:
       '@supabase/phoenix': 0.4.2
       tslib: 2.8.1
 
-  '@supabase/storage-js@2.106.0':
+  '@supabase/storage-js@2.106.2':
     dependencies:
       iceberg-js: 0.8.1
       tslib: 2.8.1
 
-  '@supabase/supabase-js@2.106.0':
+  '@supabase/supabase-js@2.106.2':
     dependencies:
-      '@supabase/auth-js': 2.106.0
-      '@supabase/functions-js': 2.106.0
-      '@supabase/postgrest-js': 2.106.0
-      '@supabase/realtime-js': 2.106.0
-      '@supabase/storage-js': 2.106.0
+      '@supabase/auth-js': 2.106.2
+      '@supabase/functions-js': 2.106.2
+      '@supabase/postgrest-js': 2.106.2
+      '@supabase/realtime-js': 2.106.2
+      '@supabase/storage-js': 2.106.2
 
   '@swc/counter@0.1.3': {}
 
@@ -10617,7 +10617,7 @@ snapshots:
 
   angular-html-parser@6.0.2:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.7.0
 
   ansi-colors@4.1.3: {}
 
@@ -11290,7 +11290,7 @@ snapshots:
     dependencies:
       esutils: 2.0.3
 
-  docx@9.6.1:
+  docx@9.7.0:
     dependencies:
       '@types/node': 25.9.1
       hash.js: 1.1.7
@@ -13450,7 +13450,7 @@ snapshots:
       define-properties: 1.2.1
       es-object-atoms: 1.1.1
 
-  officeparser@7.0.3:
+  officeparser@7.1.0:
     dependencies:
       '@xmldom/xmldom': 0.9.10
       fflate: 0.8.3
@@ -13490,7 +13490,7 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
-  openai@6.38.0(ws@8.21.0)(zod@3.25.76):
+  openai@6.39.0(ws@8.21.0)(zod@3.25.76):
     optionalDependencies:
       ws: 8.21.0
       zod: 3.25.76
