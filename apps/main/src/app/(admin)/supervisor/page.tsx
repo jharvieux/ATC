@@ -3,13 +3,79 @@
 // §10.5 Supervisor Dashboard — platform admin, read-only
 //
 // Shows:
+// - Kill-switch state (global pause)
 // - Open topic-level escalations (assigned + unassigned)
 // - Recent flagged messages by check type (last 7 days)
+// - Sample category counts (supervisor_findings.findings by check)
+// - Regen budget exhaustion (messages that hit max_regen)
+// - Drift trend (last-7-day vs prior-7-day flagged-rate delta)
 // - Per-persona metrics: response count, regen rate
 // - Per-tenant aggregates
 // - Link to /admin/supervisor/review-queue (Prompt 12 lands the detail page)
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+
+interface KillSwitchState {
+  global_paused: boolean;
+  global_paused_at: string | null;
+  global_paused_reason: string | null;
+}
+
+interface DriftWindow {
+  current_7d: number;
+  prior_7d: number;
+  delta_pct: number | null;
+}
+
+async function getKillSwitchState(): Promise<KillSwitchState | null> {
+  const db = createServiceRoleClient();
+  const { data } = await db
+    .from("ai_kill_switch_state")
+    .select("global_paused, global_paused_at, global_paused_reason")
+    .eq("id", 1)
+    .maybeSingle();
+  return (data as KillSwitchState | null) ?? null;
+}
+
+async function getRegenBudgetExhausted(): Promise<number> {
+  const db = createServiceRoleClient();
+  // Convention from run-supervisor: max regen = 2. A finding with
+  // regen_count >= 2 means budget exhausted.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { count } = await db
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .not("supervisor_findings", "is", null)
+    .gte("created_at", sevenDaysAgo)
+    .filter("supervisor_findings->regen_count", "gte", "2");
+  return count ?? 0;
+}
+
+async function getDriftTrend(): Promise<DriftWindow> {
+  const db = createServiceRoleClient();
+  const now = Date.now();
+  const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [current, prior] = await Promise.all([
+    db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .not("supervisor_findings", "is", null)
+      .gte("created_at", sevenDaysAgo),
+    db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .not("supervisor_findings", "is", null)
+      .gte("created_at", fourteenDaysAgo)
+      .lt("created_at", sevenDaysAgo),
+  ]);
+
+  const c = current.count ?? 0;
+  const p = prior.count ?? 0;
+  const delta_pct = p === 0 ? null : ((c - p) / p) * 100;
+  return { current_7d: c, prior_7d: p, delta_pct };
+}
 
 type EscalationTopic = {
   id: string;
@@ -122,17 +188,84 @@ function groupByCheckType(
 }
 
 export default async function SupervisorDashboardPage() {
-  const [escalations, flaggedMessages, personaMetrics] = await Promise.all([
-    getOpenEscalations(),
-    getRecentFlaggedMessages(),
-    getPersonaMetrics(),
-  ]);
+  const [escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift] =
+    await Promise.all([
+      getOpenEscalations(),
+      getRecentFlaggedMessages(),
+      getPersonaMetrics(),
+      getKillSwitchState(),
+      getRegenBudgetExhausted(),
+      getDriftTrend(),
+    ]);
 
   const checkTypeCounts = groupByCheckType(flaggedMessages);
 
   return (
     <main style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "1200px" }}>
       <h1>AI Supervisor Dashboard</h1>
+
+      {/* §10.5 — Kill-switch state */}
+      <section
+        style={{
+          marginTop: "1rem",
+          padding: "0.75rem 1rem",
+          background: killSwitch?.global_paused ? "#fee2e2" : "#ecfdf5",
+          border: `1px solid ${killSwitch?.global_paused ? "#dc2626" : "#10b981"}`,
+          borderRadius: 6,
+        }}
+      >
+        <strong>Global AI kill-switch:</strong>{" "}
+        {killSwitch?.global_paused ? "PAUSED" : "active"}
+        {killSwitch?.global_paused && killSwitch.global_paused_at && (
+          <>
+            {" "}— since {new Date(killSwitch.global_paused_at).toLocaleString()}
+            {killSwitch.global_paused_reason && (
+              <> ({killSwitch.global_paused_reason})</>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* §10.5 — Regen budget exhaustion + drift trend (top-line counters) */}
+      <section
+        style={{
+          marginTop: "1rem",
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: "1rem",
+        }}
+      >
+        <div style={{ padding: "0.75rem 1rem", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+          <div style={{ fontSize: 13, color: "#6b7280" }}>Regen budget exhausted (7d)</div>
+          <div style={{ fontSize: 28, fontWeight: 600 }}>{regenExhausted}</div>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>
+            messages that hit max_regen — supervisor stopped retrying
+          </div>
+        </div>
+        <div style={{ padding: "0.75rem 1rem", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+          <div style={{ fontSize: 13, color: "#6b7280" }}>Drift trend (flagged-message rate)</div>
+          <div style={{ fontSize: 28, fontWeight: 600 }}>
+            {drift.current_7d} <span style={{ fontSize: 14, color: "#6b7280" }}>(prev {drift.prior_7d})</span>
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color:
+                drift.delta_pct === null
+                  ? "#6b7280"
+                  : drift.delta_pct > 10
+                    ? "#dc2626"
+                    : drift.delta_pct < -10
+                      ? "#10b981"
+                      : "#6b7280",
+            }}
+          >
+            {drift.delta_pct === null
+              ? "no prior-period baseline"
+              : `${drift.delta_pct >= 0 ? "+" : ""}${drift.delta_pct.toFixed(0)}% vs prior 7d`}
+          </div>
+        </div>
+      </section>
 
       {/* Review queue link — detail page lands in Prompt 12 */}
       <p>

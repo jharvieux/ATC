@@ -85,7 +85,11 @@ describe("runCruiseMapperItineraryActor — guards", () => {
     expect(r.reason).toMatch(/no_api_token/);
   });
 
-  it("skips + fires operator alert when monthly cap exhausted", async () => {
+  it("skips + fires operator alert when the monthly cap is exhausted (D-088 deprecated path)", async () => {
+    // D-088: the general-pricing sub-cap is gone. If an operator manually
+    // re-enables the deprecated cruisemapper-itinerary actor for an ad-hoc
+    // run, the same monthly Apify cap that protects tracked-sailings
+    // applies.
     process.env.CRUISEMAPPER_ITINERARY_INGEST_ENABLED = "true";
     process.env.APIFY_ADAPTER_ENABLED = "true";
     process.env.APIFY_API_TOKEN = "test-token";

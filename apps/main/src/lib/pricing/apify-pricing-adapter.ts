@@ -16,12 +16,12 @@ import type {
   CruiseLineCode,
   PricingDataSource,
   RefreshResult,
-  RegionCode,
   SailingKey,
 } from "./types";
-import { groupSailingsForBatch, routeFor, type LineRoute } from "./line-routing";
+import { assertActorAllowed, groupSailingsForBatch, matchesAnyWatchedSailing, routeFor, type LineRoute } from "./line-routing";
 import { readPriceQuote, upsertPriceQuote } from "./pricing-cache";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { checkMonthlyBudget } from "./budget-priority";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000; // §33.3 — 5-minute timeout
 
@@ -33,6 +33,7 @@ type AdapterRefuseReason =
   | "unsupported_line"
   | "actor_dispatch_failed"
   | "actor_timeout"
+  | "allowlist_violation"
   | "no_results";
 
 interface ApifyResponse {
@@ -53,46 +54,10 @@ export class ApifyPricingAdapter implements PricingDataSource {
     return { status: "hit", quote };
   }
 
-  async refreshGeneralPricing(opts: {
-    lines: CruiseLineCode[];
-    regions: RegionCode[];
-    dateRange: { from: Date; to: Date };
-  }): Promise<RefreshResult> {
-    const guard = await this.checkGuards();
-    if (guard) return guard;
-
-    // General refresh dispatches one actor run per (line × region × date-window).
-    // For v1 we keep it simple: one actor run per enabled line in `opts.lines`,
-    // with the date range as the search window. Region is forwarded as an actor
-    // input hint; per-line input builders ignore it when the actor doesn't accept it.
-    let refreshed = 0, failed = 0, totalSpend = 0;
-    let partial = false, reason: string | undefined;
-    let lastRunId: string | null = null;
-    void opts.regions; // forwarded by per-line builders if applicable
-
-    for (const line of opts.lines) {
-      const route = routeFor(line);
-      if (!route) continue;
-      const result = await this.runForLine(route, [], opts.dateRange);
-      refreshed += result.sailings_refreshed;
-      failed += result.sailings_failed;
-      totalSpend += result.spend_usd;
-      if (result.partial) {
-        partial = true;
-        reason ??= result.reason;
-      }
-      lastRunId = result.actor_run_id ?? lastRunId;
-    }
-
-    return {
-      sailings_refreshed: refreshed,
-      sailings_failed: failed,
-      actor_run_id: lastRunId,
-      spend_usd: totalSpend,
-      partial,
-      ...(reason ? { reason } : {}),
-    };
-  }
+  // D-088: refreshGeneralPricing was removed. General-pricing context for
+  // the AI is now sourced from the DIY CruiseMapper scraper (no Apify
+  // spend). The price-watch evaluator is the SOLE caller of Apify; it uses
+  // refreshTrackedSailings below for sailings with an active watch.
 
   async refreshTrackedSailings(sailings: SailingKey[]): Promise<RefreshResult> {
     const guard = await this.checkGuards();
@@ -142,15 +107,21 @@ export class ApifyPricingAdapter implements PricingDataSource {
     if (!getApifyToken()) {
       return refuse("no_api_token", "APIFY_API_TOKEN not set");
     }
+    // §33.9.3 D-088 — tracked-sailings refresh is the SOLE Apify consumer
+    // now. General-pricing was removed (DIY scraper replaces it). When
+    // month-to-date spend hits APIFY_MONTHLY_BUDGET_USD_CEILING, tracked-
+    // sailings pauses for the rest of the month — subscriber watches go
+    // un-refreshed but stay armed.
     const monthly = await this.monthlySpendUsd();
-    if (monthly >= monthlyBudgetCap()) {
+    const gate = checkMonthlyBudget(monthly);
+    if (gate.paused) {
       await sendOperatorAlert({
         severity: "high",
         signal: "apify_monthly_budget_exhausted",
-        detail: `Apify monthly budget cap of $${monthlyBudgetCap()} reached ($${monthly.toFixed(2)}). No new runs until next month or operator raises the cap.`,
-        payload: { monthly_spend_usd: monthly },
+        detail: `Apify monthly budget cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). Tracked-sailings refresh paused — subscriber price-watch notifications will be skipped this run.`,
+        payload: { monthly_spend_usd: monthly, cap_kind: "tracked_sailings" },
       });
-      return refuse("monthly_budget_exhausted", `monthly cap $${monthlyBudgetCap()} reached`);
+      return refuse("monthly_budget_exhausted", `monthly cap $${gate.cap_usd.toFixed(2)} reached`);
     }
     return null;
   }
@@ -168,7 +139,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
   private async runForLine(
     route: LineRoute,
     sailings: SailingKey[],
-    dateRange?: { from: Date; to: Date },
   ): Promise<RefreshResult> {
     // Pre-flight cost estimate. We don't know exact pricing without
     // dispatching, so use a conservative per-result estimate.
@@ -180,12 +150,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
     }
 
     const input = route.inputBuilder(sailings);
-    if (dateRange) {
-      (input as Record<string, unknown>).dateRange = {
-        from: dateRange.from.toISOString().slice(0, 10),
-        to: dateRange.to.toISOString().slice(0, 10),
-      };
-    }
 
     let response: ApifyResponse | null = null;
     let runStatus: "succeeded" | "failed" | "partial" = "succeeded";
@@ -199,32 +163,51 @@ export class ApifyPricingAdapter implements PricingDataSource {
       runStatus = err instanceof DOMException && err.name === "TimeoutError" ? "failed" : "failed";
       const reasonStr = err instanceof Error ? err.message : String(err);
       await this.writeLedger(route.actorId, null, 0, route.cruiseLine, "failed", { error: reasonStr });
+      // D-090 Apify-5 — distinguish allowlist violations so the operator can
+      // grep ledger rows for them; these indicate a code/config bug, not a
+      // network failure.
+      if (reasonStr.startsWith("apify_allowlist_violation")) {
+        await sendOperatorAlert({
+          severity: "high",
+          signal: "apify_allowlist_violation",
+          detail: reasonStr,
+          payload: { actor_id: route.actorId, cruise_line: route.cruiseLine },
+        });
+        return refuse("allowlist_violation", reasonStr);
+      }
       return refuse(reasonStr.includes("timeout") ? "actor_timeout" : "actor_dispatch_failed", reasonStr);
     }
 
-    // Map + upsert.
+    // Map + filter to watched sailings + upsert. D-088 Apify-4: the actor
+    // dumps the whole market; we only cache items that belong to a watched
+    // sailing. Any watched sailing that didn't appear in the response is
+    // counted as a failure (no price found this run).
     const items = response.items ?? [];
-    let refreshed = 0, failedCount = 0;
+    let refreshed = 0;
+    const matchedKeys = new Set<string>();
     for (const item of items) {
       const mapped = route.outputMapper(item);
-      if (!mapped) {
-        failedCount += 1;
-        continue;
-      }
-      if (!validateMapped(mapped)) {
-        failedCount += 1;
-        continue;
-      }
+      if (!mapped) continue;
+      if (!validateMapped(mapped)) continue;
+      if (sailings.length > 0 && !matchesAnyWatchedSailing(mapped, sailings)) continue;
       try {
         await upsertPriceQuote(this.db, mapped);
         refreshed += 1;
+        matchedKeys.add(sailingKeyStr(mapped.key));
       } catch {
-        failedCount += 1;
+        // upsert error counted below via the watched-set diff
       }
     }
+    const failedCount = sailings.length > 0
+      ? sailings.filter((s) => !matchedKeys.has(sailingKeyStr(s))).length
+      : 0;
 
     if (refreshed === 0 && items.length > 0) runStatus = "partial";
-    await this.writeLedger(route.actorId, runId, actualSpend, route.cruiseLine, runStatus, { results_count: items.length });
+    await this.writeLedger(route.actorId, runId, actualSpend, route.cruiseLine, runStatus, {
+      results_count: items.length,
+      watched_count: sailings.length,
+      matched_count: refreshed,
+    });
 
     return {
       sailings_refreshed: refreshed,
@@ -236,6 +219,9 @@ export class ApifyPricingAdapter implements PricingDataSource {
   }
 
   private async dispatchActor(actorId: string, input: unknown): Promise<ApifyResponse> {
+    // D-090 Apify-5 — defense-in-depth: refuse any actor not on the
+    // hardcoded allowlist before we send the token over the wire.
+    assertActorAllowed(actorId);
     const token = getApifyToken();
     const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token ?? "")}`;
     const controller = new AbortController();
@@ -278,6 +264,10 @@ export class ApifyPricingAdapter implements PricingDataSource {
   }
 }
 
+function sailingKeyStr(k: SailingKey): string {
+  return `${k.line}|${k.ship}|${k.sailDate}|${k.departurePort}|${k.durationNights}`;
+}
+
 // ── Validation ─────────────────────────────────────────────────────────────
 
 function validateMapped(quote: { cabinPrices: Record<string, { amount: number } | undefined> }): boolean {
@@ -301,9 +291,6 @@ function getApifyToken(): string | null {
 }
 function runBudgetCap(): number {
   return parseFloat(process.env.APIFY_RUN_BUDGET_USD_CEILING ?? "50");
-}
-function monthlyBudgetCap(): number {
-  return parseFloat(process.env.APIFY_MONTHLY_BUDGET_USD_CEILING ?? "500");
 }
 
 function refuse(reason: AdapterRefuseReason, detail: string): RefreshResult {
