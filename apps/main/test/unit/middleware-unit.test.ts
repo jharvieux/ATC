@@ -1,0 +1,380 @@
+// Unit tests for the exported `middleware()` function in apps/main/src/middleware.ts.
+//
+// The integration test (apps/main/test/integration/middleware.test.ts) covers
+// the DB-touching helpers (getTenantBySlug, getTenantByCustomDomain) and a
+// few regex/hostname patterns. This file mocks those helpers and exercises
+// the middleware function itself — the admin gate, the test-bypass gate,
+// platform domain routing, subdomain → tenant resolution, custom-domain
+// fallback, payment gate side effects, and the 404 fallthrough.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { NextRequest } from "next/server";
+
+const mocks = vi.hoisted(() => ({
+  getTenantBySlug: vi.fn(),
+  getTenantByCustomDomain: vi.fn(),
+}));
+
+vi.mock("@/lib/tenancy/resolve-tenant", () => ({
+  getTenantBySlug: mocks.getTenantBySlug,
+  getTenantByCustomDomain: mocks.getTenantByCustomDomain,
+}));
+
+import { middleware } from "@/middleware";
+
+const ORIG_ENV = { ...process.env };
+
+function payingTenant(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "tenant-1",
+    tenant_type: "sub_pro",
+    subscription_status: "active",
+    non_paying_since: null,
+    status: "active",
+    ...overrides,
+  };
+}
+
+function makeReq(opts: { host: string; pathname?: string; headers?: Record<string, string> } = { host: "atc-tenant1.ai-travelconcierge.com" }): NextRequest {
+  const url = `http://${opts.host}${opts.pathname ?? "/"}`;
+  const headers = new Headers(opts.headers ?? {});
+  headers.set("host", opts.host);
+  return new NextRequest(url, { headers });
+}
+
+describe("middleware()", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
+    process.env.PLATFORM_DOMAIN_REGEX = "^atc-([a-z0-9-]+)\\.ai-travelconcierge\\.com$";
+    delete process.env.TEST_AUTH_BYPASS_TOKEN;
+    delete process.env.TEST_AUTH_BYPASS_TENANT_ID;
+    delete process.env.MAIN_APP_ADMIN_API_KEY;
+  });
+
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in ORIG_ENV)) delete process.env[k];
+    }
+    for (const [k, v] of Object.entries(ORIG_ENV)) {
+      if (v !== undefined) process.env[k] = v;
+    }
+  });
+
+  // -- Admin API gate (§26) ------------------------------------------------
+
+  describe("admin API gate", () => {
+    it("rejects /api/admin/* with no Authorization header → 403 admin_gate_blocked", async () => {
+      const res = await middleware(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/api/admin/tenants" }),
+      );
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.error).toBe("admin_gate_blocked");
+    });
+
+    it("rejects /api/admin/* with non-Bearer Authorization → 403", async () => {
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Basic abc123" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("rejects /api/admin/* with a one-segment 'JWT' → 403", async () => {
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer not-a-jwt" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("accepts /api/admin/* with a shape-valid three-segment JWT → not 403", async () => {
+      const fakeJwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signaturePart";
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: `Bearer ${fakeJwt}` },
+        }),
+      );
+      // Platform domain → next() with headers; not the 403 admin_gate.
+      expect(res.status).not.toBe(403);
+    });
+
+    it("accepts /api/admin/* with the service-to-service MAIN_APP_ADMIN_API_KEY", async () => {
+      process.env.MAIN_APP_ADMIN_API_KEY = "service-key-xyz";
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer service-key-xyz" },
+        }),
+      );
+      expect(res.status).not.toBe(403);
+    });
+
+    it("rejects /api/admin/* with serviceKey set but a non-matching non-JWT token", async () => {
+      // Locks `serviceKey && token === serviceKey` — a mutation to `||`
+      // would let any token through when the service key env var is set.
+      process.env.MAIN_APP_ADMIN_API_KEY = "service-key-xyz";
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer not-the-service-key" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
+    it("does NOT apply the admin gate to /api/tenant/* or other non-admin paths", async () => {
+      // On platform domain with no admin path, gate not invoked.
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/health",
+        }),
+      );
+      // Should fall through to platform-sentinel header path, not 403.
+      expect(res.status).not.toBe(403);
+    });
+  });
+
+  // -- Platform domain → "platform" sentinel ------------------------------
+
+  describe("platform domain", () => {
+    it("returns next() with x-resolved-tenant-id='platform' header", async () => {
+      const res = await middleware(makeReq({ host: "ai-travelconcierge.com" }));
+      expect(res.headers.get("x-middleware-next")).toBe("1");
+      // Validates the platform sentinel propagates.
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("platform");
+    });
+  });
+
+  // -- Subdomain → slug lookup --------------------------------------------
+
+  describe("subdomain → tenant slug resolution", () => {
+    it("resolves slug via getTenantBySlug, sets headers", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      const res = await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com" }));
+      expect(mocks.getTenantBySlug).toHaveBeenCalledWith("tenant1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("sub_pro");
+    });
+
+    it("returns 404 when slug doesn't resolve to any tenant", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(null);
+      const res = await middleware(makeReq({ host: "atc-ghost.ai-travelconcierge.com" }));
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when getTenantBySlug throws (DB error)", async () => {
+      mocks.getTenantBySlug.mockRejectedValue(new Error("db connection refused"));
+      const res = await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com" }));
+      expect(res.status).toBe(404);
+    });
+
+    it("strips port from hostname before matching", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com:3000" }));
+      // Port shouldn't break the regex match.
+      expect(mocks.getTenantBySlug).toHaveBeenCalledWith("tenant1");
+    });
+  });
+
+  // -- Custom domain fallback ---------------------------------------------
+
+  describe("custom domain fallback", () => {
+    it("resolves via getTenantByCustomDomain when no subdomain match", async () => {
+      mocks.getTenantByCustomDomain.mockResolvedValue(
+        payingTenant({ id: "tenant-2", tenant_type: "byo_agency" }),
+      );
+      const res = await middleware(makeReq({ host: "agency.example.com" }));
+      expect(mocks.getTenantByCustomDomain).toHaveBeenCalledWith("agency.example.com");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-2");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("byo_agency");
+    });
+
+    it("returns 404 when custom domain doesn't resolve", async () => {
+      mocks.getTenantByCustomDomain.mockResolvedValue(null);
+      const res = await middleware(makeReq({ host: "nothing.example.com" }));
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 404 when getTenantByCustomDomain throws", async () => {
+      mocks.getTenantByCustomDomain.mockRejectedValue(new Error("rls denied"));
+      const res = await middleware(makeReq({ host: "boom.example.com" }));
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // -- Payment gate (§15.16) ----------------------------------------------
+
+  describe("payment gate", () => {
+    it("paying tenant: x-payment-banner-state header is empty", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      const res = await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com" }));
+      expect(res.headers.get("x-payment-banner-state")).toBe("");
+    });
+
+    it("within-grace non-paying tenant: banner state is 'within_grace', no redirect", async () => {
+      const nonPaying = payingTenant({
+        subscription_status: "past_due",
+        non_paying_since: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      mocks.getTenantBySlug.mockResolvedValue(nonPaying);
+      const res = await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com", pathname: "/dashboard" }));
+      expect(res.headers.get("x-payment-banner-state")).toBe("within_grace");
+      // No redirect — within grace lets the request through.
+      expect(res.headers.get("location")).toBeNull();
+    });
+
+    it("past-grace non-paying tenant on a non-exempt path: redirects to /settings/billing?gate=past_grace", async () => {
+      const nonPaying = payingTenant({
+        subscription_status: "canceled",
+        non_paying_since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      mocks.getTenantBySlug.mockResolvedValue(nonPaying);
+      const res = await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com", pathname: "/dashboard" }));
+      const location = res.headers.get("location");
+      expect(location).toContain("/settings/billing");
+      expect(location).toContain("gate=past_grace");
+    });
+
+    it("past-grace tenant on /settings/billing IS allowed through (exempt)", async () => {
+      const nonPaying = payingTenant({
+        subscription_status: "canceled",
+        non_paying_since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      mocks.getTenantBySlug.mockResolvedValue(nonPaying);
+      const res = await middleware(makeReq({ host: "atc-tenant1.ai-travelconcierge.com", pathname: "/settings/billing" }));
+      // Banner header reflects past-grace, but no redirect.
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.headers.get("x-payment-banner-state")).toBe("past_grace");
+    });
+
+    it("past-grace tenant on /api/webhooks/stripe IS allowed through (exempt)", async () => {
+      const nonPaying = payingTenant({
+        subscription_status: "canceled",
+        non_paying_since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      mocks.getTenantBySlug.mockResolvedValue(nonPaying);
+      const res = await middleware(makeReq({
+        host: "atc-tenant1.ai-travelconcierge.com",
+        pathname: "/api/webhooks/stripe",
+      }));
+      expect(res.headers.get("location")).toBeNull();
+    });
+
+    it("past-grace tenant on /legal/* IS allowed through (exempt)", async () => {
+      const nonPaying = payingTenant({
+        subscription_status: "canceled",
+        non_paying_since: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      mocks.getTenantBySlug.mockResolvedValue(nonPaying);
+      const res = await middleware(makeReq({
+        host: "atc-tenant1.ai-travelconcierge.com",
+        pathname: "/legal/privacy",
+      }));
+      expect(res.headers.get("location")).toBeNull();
+    });
+  });
+
+  // -- Test bypass (Tier-2 E2E) -------------------------------------------
+
+  describe("test bypass", () => {
+    it("ignores bypass token when env vars are unset", async () => {
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      const res = await middleware(makeReq({
+        host: "atc-tenant1.ai-travelconcierge.com",
+        headers: { authorization: "Bearer any-old-token" },
+      }));
+      // No bypass → normal resolution path.
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("activates bypass when token matches and env vars are set (non-prod)", async () => {
+      // NODE_ENV defaults to test, VERCEL_ENV unset — bypass is allowed.
+      process.env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      process.env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      const res = await middleware(makeReq({
+        host: "atc-tenant1.ai-travelconcierge.com",
+        headers: { authorization: "Bearer test-bypass-secret" },
+      }));
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("test-tenant-99");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("byo_host");
+    });
+
+    it("rejects mismatched bypass token (constant-time compare)", async () => {
+      process.env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      process.env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      const res = await middleware(makeReq({
+        host: "atc-tenant1.ai-travelconcierge.com",
+        headers: { authorization: "Bearer different-token" },
+      }));
+      // Bypass didn't fire → normal slug lookup happened.
+      expect(mocks.getTenantBySlug).toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("disables bypass when NODE_ENV='production' even if VERCEL_ENV is non-prod", async () => {
+      // Locks the `NODE_ENV !== "production" && VERCEL_ENV !== "production"` AND check.
+      // A mutation to `||` would activate bypass whenever EITHER is non-prod — defeating
+      // the belt-and-suspenders posture from MEMORY audit Finding 3.
+      // process.env.NODE_ENV is readonly in @types/node 22+; cast through
+      // any to write. This is the standard workaround used in vitest
+      // suites that exercise NODE_ENV-gated code paths.
+      const env = process.env as Record<string, string | undefined>;
+      const savedNode = env.NODE_ENV;
+      const savedVercel = env.VERCEL_ENV;
+      env.NODE_ENV = "production";
+      env.VERCEL_ENV = "preview";
+      env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      try {
+        const res = await middleware(makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          headers: { authorization: "Bearer test-bypass-secret" },
+        }));
+        // Bypass MUST NOT fire — should fall through to normal resolution.
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+        expect(mocks.getTenantBySlug).toHaveBeenCalled();
+      } finally {
+        if (savedNode !== undefined) env.NODE_ENV = savedNode;
+        else delete env.NODE_ENV;
+        if (savedVercel !== undefined) env.VERCEL_ENV = savedVercel;
+        else delete env.VERCEL_ENV;
+      }
+    });
+
+    it("disables bypass when VERCEL_ENV='production' even if NODE_ENV is non-prod", async () => {
+      // The other half of the AND. NODE_ENV being test-flavored shouldn't be
+      // enough — VERCEL_ENV=production must independently block.
+      const savedVercel = process.env.VERCEL_ENV;
+      process.env.VERCEL_ENV = "production";
+      process.env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      process.env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      try {
+        const res = await middleware(makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          headers: { authorization: "Bearer test-bypass-secret" },
+        }));
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+      } finally {
+        if (savedVercel !== undefined) process.env.VERCEL_ENV = savedVercel;
+        else delete process.env.VERCEL_ENV;
+      }
+    });
+  });
+});

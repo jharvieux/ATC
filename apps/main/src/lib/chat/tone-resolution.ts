@@ -61,7 +61,11 @@ const TOPIC_CAPS: Record<ToneTopic, [number, number]> = {
 function inferCustomerStyle(message: string): ToneLevel {
   const text = message.toLowerCase();
   let casualSignals = 0;
-  if (/['']\w+/.test(text)) casualSignals++;                  // contractions: don't, can't
+  // contractions: don't / can't / it's. Includes both ASCII apostrophe
+  // (U+0027) and curly right-single-quote (U+2019) because iOS/macOS/Word
+  // auto-replace ASCII with curly — without this, contractions from any
+  // mobile or modern desktop user are silently missed.
+  if (/['’]\w+/.test(text)) casualSignals++;
   if (/\b(hey|yo|sup|wanna|gonna|gotta|kinda|lol|haha|omg|tbh|fr|ngl)\b/.test(text)) casualSignals++;
   if ((text.match(/!/g) ?? []).length >= 2) casualSignals++;
   if (text.length < 60 && /[?!]$/.test(text.trim())) casualSignals++;

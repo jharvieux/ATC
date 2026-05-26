@@ -209,3 +209,143 @@ describe("matchStatementLineItems", () => {
     expect(report.orphans).toBe(1);
   });
 });
+
+// -- Boundary + per-field-absence coverage (Stryker-driven) ----------------
+
+describe("matchStatementLineItems — fuzzy match prerequisites", () => {
+  function statementLine(overrides: Record<string, unknown>) {
+    return {
+      tenant_id: "t1",
+      statement: {
+        statement_period_start: "2026-04-01",
+        statement_period_end: "2026-04-30",
+        line_items: [{
+          provider_booking_ref: null,
+          cruise_line: "Royal Caribbean",
+          ship_name: "Symphony of the Seas",
+          sailing_date: "2026-06-15",
+          passenger_last_name: "Doe",
+          commissionable_fare_cents: 100000,
+          commission_rate: 0.12,
+          commission_amount_cents: 12000,
+          ...overrides,
+        }],
+      },
+    };
+  }
+  const fullCandidate = {
+    id: "c1", booking_id: "b1", provider_booking_ref: "RC-1",
+    cruise_line: "Royal Caribbean", ship_name: "Symphony of the Seas",
+    sailing_date: "2026-06-15", passenger_last_name: "Doe",
+  };
+
+  it("orphan when candidate has no cruise_line (fuzzy skipped)", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({}),
+      svc: fakeSvc([{ ...fullCandidate, cruise_line: null }]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when candidate has no ship_name", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({}),
+      svc: fakeSvc([{ ...fullCandidate, ship_name: null }]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when candidate has no sailing_date", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({}),
+      svc: fakeSvc([{ ...fullCandidate, sailing_date: null }]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when candidate has no passenger_last_name", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({}),
+      svc: fakeSvc([{ ...fullCandidate, passenger_last_name: null }]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when LINE has no cruise_line (fuzzy skipped)", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({ cruise_line: null }),
+      svc: fakeSvc([fullCandidate]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when LINE has no ship_name", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({ ship_name: null }),
+      svc: fakeSvc([fullCandidate]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when LINE has no sailing_date", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({ sailing_date: null }),
+      svc: fakeSvc([fullCandidate]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+  it("orphan when LINE has no passenger_last_name", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({ passenger_last_name: null }),
+      svc: fakeSvc([fullCandidate]),
+    });
+    expect(r.orphans).toBe(1);
+  });
+
+  it("reports best_confidence on orphan output", async () => {
+    const r = await matchStatementLineItems({
+      ...statementLine({}),
+      svc: fakeSvc([
+        { ...fullCandidate, cruise_line: "Disney", ship_name: "Dream", sailing_date: "2026-12-01", passenger_last_name: "Otherwise" },
+      ]),
+    });
+    const item = r.items[0];
+    if (item?.kind === "orphan") {
+      expect(typeof item.best_confidence).toBe("number");
+      expect(item.best_confidence).toBeGreaterThanOrEqual(0);
+    } else {
+      throw new Error("expected orphan");
+    }
+  });
+
+  it("returns total_lines reflecting input length", async () => {
+    const r = await matchStatementLineItems({
+      tenant_id: "t1",
+      statement: {
+        statement_period_start: "2026-04-01",
+        statement_period_end: "2026-04-30",
+        line_items: [
+          { provider_booking_ref: "X-1", cruise_line: "RC", ship_name: "S",
+            sailing_date: "2026-06-15", passenger_last_name: "Doe",
+            commissionable_fare_cents: 100, commission_rate: 0.1, commission_amount_cents: 10 },
+          { provider_booking_ref: "X-2", cruise_line: "RC", ship_name: "S",
+            sailing_date: "2026-06-15", passenger_last_name: "Doe",
+            commissionable_fare_cents: 100, commission_rate: 0.1, commission_amount_cents: 10 },
+          { provider_booking_ref: "X-3", cruise_line: "RC", ship_name: "S",
+            sailing_date: "2026-06-15", passenger_last_name: "Doe",
+            commissionable_fare_cents: 100, commission_rate: 0.1, commission_amount_cents: 10 },
+        ],
+      },
+      svc: fakeSvc([]),
+    });
+    expect(r.total_lines).toBe(3);
+    expect(r.exact_ref_matches + r.fuzzy_matches + r.orphans).toBe(3);
+  });
+
+  it("tenant_id from input is propagated to the report", async () => {
+    const r = await matchStatementLineItems({
+      tenant_id: "tenant-X",
+      statement: {
+        statement_period_start: "2026-04-01",
+        statement_period_end: "2026-04-30",
+        line_items: [],
+      },
+      svc: fakeSvc([]),
+    });
+    expect(r.tenant_id).toBe("tenant-X");
+  });
+});

@@ -244,4 +244,130 @@ describe("purgeUserDataPerRetention", () => {
     expect(audit).toBeDefined();
     expect((audit?.values as { purge_outcome: string }).purge_outcome).toBe("error");
   });
+
+  // -- Pin the exact tables, columns, and status values written. -----------
+  // These exist to kill StringLiteral mutations Stryker found in
+  // purge-user-data.ts — any "table" / "column" / "status" string that flips
+  // to "" or to a sibling string must produce a visible test failure.
+
+  it("writes exactly these tables on the happy path", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+
+    const updateTables = log.updates.map((u) => u.table);
+    expect(updateTables).toContain("messages");
+    expect(updateTables).toContain("quotes");
+    expect(updateTables).toContain("bookings");
+    expect(updateTables).toContain("contacts");
+    expect(updateTables).toContain("users");
+
+    const deleteTables = log.deletes.map((d) => d.table);
+    expect(deleteTables).toContain("customer_memories");
+
+    const insertTables = log.inserts.map((i) => i.table);
+    expect(insertTables).toContain("ccpa_deletion_executions");
+  });
+
+  it("nulls Category 1 (messages.content) — not some other column", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    const msgUpdate = log.updates.find((u) => u.table === "messages");
+    expect(msgUpdate).toBeDefined();
+    expect(msgUpdate?.values).toHaveProperty("content");
+    expect((msgUpdate?.values as { content: unknown }).content).toBeNull();
+  });
+
+  it("nulls Category 2 (quotes.narrative) — not some other column", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    const quoteUpdate = log.updates.find((u) => u.table === "quotes");
+    expect(quoteUpdate).toBeDefined();
+    expect(quoteUpdate?.values).toHaveProperty("narrative");
+    expect((quoteUpdate?.values as { narrative: unknown }).narrative).toBeNull();
+  });
+
+  it("Category 3 contacts: clears user_id + sets anonymized_customer_hash (text RETAINED per §25.4a)", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    const contactUpdate = log.updates.find((u) => u.table === "contacts");
+    expect(contactUpdate).toBeDefined();
+    expect(contactUpdate?.values).toHaveProperty("user_id");
+    expect((contactUpdate?.values as { user_id: unknown }).user_id).toBeNull();
+    expect(contactUpdate?.values).toHaveProperty("anonymized_customer_hash");
+    expect(typeof (contactUpdate?.values as { anonymized_customer_hash: unknown }).anonymized_customer_hash).toBe("string");
+    // Per §25.4a, notes text is NOT nulled.
+    expect(contactUpdate?.values).not.toHaveProperty("notes");
+  });
+
+  it("happy-path audit row has purge_outcome='success' (not the error string)", async () => {
+    const log: CallLog = { selects: [], invests: [], inserts: [], updates: [], deletes: [] } as unknown as CallLog;
+    const trueLog: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), trueLog);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    const audit = trueLog.inserts.find((i) => i.table === "ccpa_deletion_executions");
+    expect(audit).toBeDefined();
+    expect((audit?.values as { purge_outcome: string }).purge_outcome).toBe("success");
+    void log;
+  });
+
+  it("forensics_snapshot_reason is exactly 'commission_dispute' on dispute path", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake({ ...baseScenario(), hasDispute: true }, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.forensics_snapshot_reason).toBe("commission_dispute");
+  });
+
+  it("audit row references the user_id passed in", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-42" });
+    const audit = log.inserts.find((i) => i.table === "ccpa_deletion_executions");
+    expect((audit?.values as { user_id: string }).user_id).toBe("user-42");
+  });
+
+  it("audit row records the grace_period_ended_at when supplied", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    const graceEnded = "2026-04-01T00:00:00.000Z";
+    await purgeUserDataPerRetention(db, {
+      user_id: "user-1",
+      grace_period_ended_at: graceEnded,
+    });
+    const audit = log.inserts.find((i) => i.table === "ccpa_deletion_executions");
+    expect(
+      (audit?.values as { grace_period_ended_at: string }).grace_period_ended_at,
+    ).toBe(graceEnded);
+  });
+
+  it("counts reflect every category in the audit row", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const db = makeFake(baseScenario(), log);
+    await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    const audit = log.inserts.find((i) => i.table === "ccpa_deletion_executions");
+    const v = audit?.values as Record<string, number>;
+    expect(v.category_1_messages_nulled_count).toBe(5);
+    expect(v.category_2_narratives_nulled_count).toBe(2);
+    expect(v.category_2_memories_deleted_count).toBe(1);
+    expect(v.category_3_notes_anonymized_count).toBe(2);
+    expect(v.bookings_anonymized_count).toBe(3);
+  });
+
+  it("returns affected_tenant_ids deduped from anonymized contacts", async () => {
+    const log: CallLog = { selects: [], updates: [], inserts: [], deletes: [] };
+    const scenario = {
+      ...baseScenario(),
+      contactsAnonymized: [
+        { id: "ct1", tenant_id: "tenant-A" },
+        { id: "ct2", tenant_id: "tenant-A" },
+        { id: "ct3", tenant_id: "tenant-B" },
+      ],
+    };
+    const db = makeFake(scenario, log);
+    const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
+    expect(result.affected_tenant_ids.sort()).toEqual(["tenant-A", "tenant-B"]);
+  });
 });

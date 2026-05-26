@@ -15,6 +15,7 @@ import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { SignupWall } from "@/components/chat/SignupWall";
 import { HardLimitMessage } from "@/components/chat/HardLimitMessage";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
+import { PoweredBy } from "@/components/branding/PoweredBy";
 
 const DRAFT_KEY = "atc-chat-draft";
 
@@ -267,6 +268,11 @@ export default function ChatPage(): JSX.Element {
               </button>
             </form>
           )}
+          {/* §16.7 — Powered-by attribution. show=true is the BYO Research /
+              Professional / Sub-Host Starter floor. A future branding-aware
+              variant will resolve tenant_branding.show_powered_by per-tenant;
+              for now this is a constant true placeholder. */}
+          <PoweredBy show={true} />
         </main>
       </div>
 

@@ -110,3 +110,162 @@ describe("isKnownRole", () => {
     expect(isKnownRole("Tenant_Owner")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Exhaustive matrix — every (role, resource, action) tuple asserted.
+//
+// Stryker uncovered that the original test suite (samples above) doesn't
+// pin the actual GRANT KEY STRINGS. A mutation that flipped
+// `key("bookings", "submit")` to `key("", "submit")` would slip through
+// because no assertion referenced "bookings" in a way that would FAIL on
+// removal. The exhaustive matrix below pins every key by referencing it
+// in an explicit expect — so any string-literal mutation in the source
+// produces a test failure.
+// ---------------------------------------------------------------------------
+
+// Single source of truth for "who can do what." Parallel to the prod
+// constants in permission-grants.ts — any drift between the two is itself
+// a finding (the test asserts both that prod-allowed-pairs return true
+// AND that prod-denied-pairs return false, which catches both
+// additions-without-test-updates AND deletions-without-test-updates).
+
+const READ_PAIRS: ReadonlyArray<[string, string]> = [
+  ["bookings", "read"],
+  ["bug_submission", "read"],
+  ["contacts", "list"],
+  ["contacts", "read"],
+  ["feature_request", "read"],
+  ["groups", "list"],
+  ["help_docs", "read"],
+  ["host_config", "read"],
+  ["persona_addendum", "read"],
+  ["price_watches", "list"],
+  ["subcontractors", "read"],
+  ["tasks", "list"],
+  ["team_members", "list"],
+  ["tenant_branding", "read"],
+];
+
+const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
+  ["bookings", "cancel"],
+  ["bookings", "modify"],
+  ["bookings", "submit"],
+  ["bookings", "update"],
+  ["quotes", "accept"],
+  ["quotes", "create"],
+  ["quotes", "send"],
+  ["contacts", "create"],
+  ["contacts", "update"],
+  ["tasks", "create"],
+  ["tasks", "delete"],
+  ["tasks", "update"],
+  ["groups", "create"],
+  ["price_watches", "create"],
+  ["price_watches", "rearm"],
+  ["price_watches", "update"],
+  ["forums", "edit_message"],
+  ["forums", "post_message"],
+  ["forums", "react"],
+  ["bug_submission", "create"],
+  ["feature_request", "create"],
+  ["help_docs", "export"],
+  ["help_session", "create"],
+  ["help_session", "update"],
+  ["notifications", "write"],
+  ["rag_submissions", "create"],
+];
+
+const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
+  ["host_config", "write"],
+  ["tenant_branding", "write"],
+  ["persona_addendum", "write"],
+  ["team_members", "update_role"],
+  ["subcontractors", "create"],
+  ["subcontractors", "delete"],
+  ["subcontractors", "update"],
+  ["forums", "moderate_forum"],
+  ["forums", "moderate_thread"],
+  ["forums", "moderate_user"],
+  ["rag_submissions", "approve"],
+  ["rag_submissions", "reject"],
+  ["rag_submissions", "review"],
+];
+
+describe("permission-grants — exhaustive matrix", () => {
+  describe("viewer is granted exactly the READ pairs", () => {
+    for (const [resource, action] of READ_PAIRS) {
+      it(`grants viewer ${resource}:${action}`, () => {
+        expect(isPermitted("viewer", resource, action)).toBe(true);
+      });
+    }
+    for (const [resource, action] of AGENT_ONLY_PAIRS) {
+      it(`denies viewer ${resource}:${action} (agent-only)`, () => {
+        expect(isPermitted("viewer", resource, action)).toBe(false);
+      });
+    }
+    for (const [resource, action] of OWNER_ONLY_PAIRS) {
+      it(`denies viewer ${resource}:${action} (owner-only)`, () => {
+        expect(isPermitted("viewer", resource, action)).toBe(false);
+      });
+    }
+  });
+
+  describe("agent is granted READ + AGENT_ONLY pairs, denied OWNER_ONLY", () => {
+    for (const [resource, action] of READ_PAIRS) {
+      it(`grants agent ${resource}:${action} (inherits READ)`, () => {
+        expect(isPermitted("agent", resource, action)).toBe(true);
+      });
+    }
+    for (const [resource, action] of AGENT_ONLY_PAIRS) {
+      it(`grants agent ${resource}:${action}`, () => {
+        expect(isPermitted("agent", resource, action)).toBe(true);
+      });
+    }
+    for (const [resource, action] of OWNER_ONLY_PAIRS) {
+      it(`denies agent ${resource}:${action} (owner-only)`, () => {
+        expect(isPermitted("agent", resource, action)).toBe(false);
+      });
+    }
+  });
+
+  describe("tenant_owner is granted every pair", () => {
+    for (const [resource, action] of READ_PAIRS) {
+      it(`grants tenant_owner ${resource}:${action} (inherits READ)`, () => {
+        expect(isPermitted("tenant_owner", resource, action)).toBe(true);
+      });
+    }
+    for (const [resource, action] of AGENT_ONLY_PAIRS) {
+      it(`grants tenant_owner ${resource}:${action} (inherits AGENT)`, () => {
+        expect(isPermitted("tenant_owner", resource, action)).toBe(true);
+      });
+    }
+    for (const [resource, action] of OWNER_ONLY_PAIRS) {
+      it(`grants tenant_owner ${resource}:${action} (owner-only)`, () => {
+        expect(isPermitted("tenant_owner", resource, action)).toBe(true);
+      });
+    }
+  });
+
+  describe("unknown role denies every known pair", () => {
+    const allPairs = [...READ_PAIRS, ...AGENT_ONLY_PAIRS, ...OWNER_ONLY_PAIRS];
+    for (const [resource, action] of allPairs) {
+      it(`denies unknown-role ${resource}:${action}`, () => {
+        expect(isPermitted("hacker", resource, action)).toBe(false);
+      });
+    }
+  });
+
+  describe("unknown (resource, action) is denied for every role", () => {
+    for (const role of ["tenant_owner", "agent", "viewer"] as const) {
+      it(`denies ${role} on a fabricated pair`, () => {
+        expect(isPermitted(role, "fabricated_resource", "fabricated_action")).toBe(false);
+      });
+      it(`denies ${role} on a real resource with a fabricated action`, () => {
+        expect(isPermitted(role, "bookings", "nuke")).toBe(false);
+      });
+      it(`denies ${role} on a fabricated resource with a real action`, () => {
+        expect(isPermitted(role, "fabricated_resource", "read")).toBe(false);
+      });
+    }
+  });
+});

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Initial broad scan — mutate every TS file under both apps' src/ except UI surfaces (page.tsx/layout.tsx/components/**) which mostly contain composition, not testable business logic. Re-scope per-PR via the --mutate CLI flag.",
+  "_comment": "Thorough variant of stryker.config.json — uses coverageAnalysis: 'all' so module-load-time constants (e.g. permission-grants.ts grant-key Sets) are exercised by every test, not just tests Stryker thinks cover them. Slower (~3-5x wall time vs perTest) but accurate. Run via `pnpm mutate:thorough` or `pnpm mutate:thorough -- --mutate path/to/file.ts`.",
   "testRunner": "vitest",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "vitest": {
@@ -13,14 +13,12 @@
   "jsonReporter": {
     "fileName": "reports/mutation/mutation.json"
   },
-  "_comment_coverage": "perTest is ~5x faster but cannot kill mutations on module-load-time constants (e.g. a top-level `new Set([...])` populated with string literals). Stryker marks those as `static: true` and reports them as Survived even when tests would catch them. For files heavy with such constants (lib/auth/permission-grants.ts is the canonical example), run with --coverageAnalysis all via `pnpm mutate:thorough`.",
-  "coverageAnalysis": "perTest",
+  "coverageAnalysis": "all",
+  "ignoreStatic": false,
   "timeoutMS": 60000,
   "timeoutFactor": 2,
   "concurrency": 2,
   "disableTypeChecks": "{apps,packages,tests}/**/*.{ts,tsx}",
-  "ignoreStatic": true,
-  "_comment_mutate": "Excluded files: env.ts in both apps is read+regex-parsed by BP29 §28 schema-discipline meta-tests; Stryker's mutant brackets break that parsing. Exclude similar self-introspected files here if you add more such tests.",
   "mutate": [
     "apps/main/src/lib/**/*.ts",
     "apps/main/src/inngest/**/*.ts",

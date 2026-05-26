@@ -445,30 +445,27 @@ Things the spec describes but that have no implementation yet. Different from §
 - **Status:** Library file exists with structural scaffolding but no callers. AI cost enforcement is currently in the wrapper (`selectModelForPurpose`); hard-state blocking is at the chat path. Other dimensions deferred.
 - **Action:** Either wire the file in or remove it. Knip flagged it as unused.
 
-### `lib/supervisor/sample-for-review.ts` — supervisor sampling
-- **Spec:** §10.5a sample-and-review queue feeding from supervisor outcomes.
-- **Status:** Library exists, no callers per Knip. Either the supervisor pipeline lacks the hook, or the file is duplicate of inline sampling.
-- **Action:** Audit caller surface; decide between wire-in and delete.
-
 ### `lib/tasks/sequence-engine.ts` — task sequence engine
 - **Spec:** BP37 §37.4.2 sequence engine triggered by CRM pipeline events.
-- **Status:** Library exists, no callers per Knip. Sequence DEFINITIONS may exist but the trigger fan-out from pipeline transitions isn't wired.
-- **Action:** Trace BP37 completeness.
+- **Status:** Library exists and is complete; downstream `task-sequence-step-fire` Inngest job consumes its emitted events. The CRM-side TRIGGER call sites (contact create/update, quote send/accept, booking create/confirm) don't call this yet — that fan-out is the remaining BP37 work, scheduled alongside CRM pipeline-transition refactors.
+- **Action:** When the CRM endpoints get their pipeline-transition refactor, add `triggerMatchingSequences()` calls at each transition. Engine is unchanged.
 
 ### Breach notification (lib + templates + dispatcher)
 - **Spec:** §25.9 breach response with SLA-driven dispatch.
 - **Status:** `lib/email/send-breach-notifications.ts`, `emails/BreachNotification{User,TenantAdmin}.tsx` all exist with `TODO(legal-counsel)` placeholders. Dispatcher not wired into any incident workflow.
 - **Action:** Wait for legal counsel + define incident-trigger surface. Wording TODO blocks code wiring; code is otherwise ready.
 
-### Branding / attribution components
-- **Spec:** §16.7 + §16.7.1 attribution UI.
-- **Status:** `components/branding/PoweredBy.tsx` + `LegalPageAttribution.tsx` exist but not mounted in any layout. `transfer/UndoBanner.tsx` (§11.6) same.
-- **Action:** Mount in the appropriate page/layout. Each is < 1 hour of layout work.
+### Branding / attribution: `LegalPageAttribution` + `UndoBanner`
+- **Spec:** §16.7.1 always-on attribution on every `/legal/*` page; §11.6 persistent undo banner at top of `/settings/conversations`.
+- **Status:** Components exist but their HOST PAGES don't exist yet in the tenant-context form they need:
+  - `LegalPageAttribution` requires a tenant-scoped `/legal/*` route (current `/legal/sub-processors` and `/legal/ai-disclaimer` are platform-public, no tenant_display_name in context).
+  - `UndoBanner` requires a `/settings/conversations` page; that route doesn't exist.
+- **Action:** Build the host pages first (tenant-context `/legal/*` route group + `/settings/conversations` page), then mount the components. Each is a small page-add, not a layout edit.
 
 ### BP39/BP40 editor components
 - **Spec:** §39.7 itinerary editor, §39.7 resources editor, §40.5.1 line items panel.
-- **Status:** Components exist but not mounted in booking-detail page.
-- **Action:** Wire into the booking-detail UI.
+- **Status:** Components exist but the booking-detail page `(tenant)/crm/bookings/[id]/page.tsx` doesn't exist yet — there's no surface to mount them on.
+- **Action:** Build the booking-detail page first, then mount the three editor panels into it.
 
 ### Gmail integration (PR #192) — OAuth start flow
 - **Spec:** §23.9 / §34.2 Gmail OAuth.
@@ -485,10 +482,21 @@ Things the spec describes but that have no implementation yet. Different from §
 - **Status:** Pages are stubs with `TODO(prompt-24)` markers.
 - **Action:** Wait for prompt-24.
 
-### Compliance nightly ICA version check
-- **Spec:** §17.5 — nightly cron checks active tenants' ICA version against the latest published version.
-- **Status:** Cron exists at `apps/main/src/inngest/compliance-nightly.ts` but the ICA check is a `console.info("ICA version check: stub (awaiting §17)")` — though §17 (BP17) DID ship. Marker is stale.
-- **Action:** Either wire the real check or remove the cron.
+<!-- Compliance nightly ICA version check — CLOSED 2026-05-25 in feat/wire-actionable-gaps.
+     The cron now queries legal_documents for the current ica_subhost version and
+     flips tenants.requires_ica_reacceptance when their last accepted version is
+     stale. Belt-and-suspenders to the publish-time flag in /admin/legal-docs. -->
+
+<!-- lib/supervisor/sample-for-review.ts — CLOSED 2026-05-25 in feat/wire-actionable-gaps.
+     Wired into run-supervisor.ts after the messages.supervisor_findings update;
+     escalations always insert, other categories sampled at rates from
+     platform_settings (defaults: clean_pass 1%, warning_pass 10%, regen 25%).
+     Call is wrapped in try/catch — sampling failure must not crash the pipeline. -->
+
+<!-- PoweredBy mounted in /chat customer surface 2026-05-25 in feat/wire-actionable-gaps.
+     Currently show=true as a placeholder; future variant should resolve
+     tenant_branding.show_powered_by per-tenant (server-coerced TRUE on the
+     BYO Research / BYO Professional / Sub-Host Starter tier floor per §16.7). -->
 
 ---
 

@@ -2,9 +2,10 @@
 //
 // Two jobs:
 //   1. ICA version check: if latest legal_documents ICA version > tenant's last
-//      accepted version, set requires_ica_reacceptance = true.
-//      TODO(prompt-17): legal_documents / legal_consents tables land in §17.
-//      Until then, this check is a no-op stub logged for traceability.
+//      accepted version, set requires_ica_reacceptance = true. Belt-and-
+//      suspenders against the publish-time flag (which writes user_consent_pending
+//      rows) — catches tenants who somehow slipped through (e.g. signups
+//      between publish and flag).
 //
 //   2. Inactivity reminders: at 30/60/90 days, write tenant_inactivity_nudges
 //      AND send the InactivityReminder email pointing the admin at features
@@ -64,10 +65,11 @@ export const complianceNightly = inngest.createFunction(
     const now = new Date();
 
     // ── ICA version check ──────────────────────────────────────────────────
-    // TODO(prompt-17): query legal_documents for latest ica_subhost version and
-    // compare against legal_consents for each active tenant. Until §17 lands,
-    // log a no-op.
-    console.info("[compliance-nightly] ICA version check: stub (awaiting §17)");
+    const icaFlagged = await checkIcaVersionDrift(db);
+    console.info(
+      "[compliance-nightly] ICA version check: flagged %d tenants for re-acceptance",
+      icaFlagged,
+    );
 
     // ── Active tenants ─────────────────────────────────────────────────────
     const { data: tenantsRaw, error: tenantErr } = await db
@@ -102,9 +104,62 @@ export const complianceNightly = inngest.createFunction(
       tenants_processed: tenants.length,
       reminders_sent: sentEmails,
       level_logged_no_email: levelLoggedNoEmail,
+      ica_reacceptance_flagged: icaFlagged,
     };
   },
 );
+
+/**
+ * §17.5 — Find any tenants whose latest accepted `ica_subhost` version is
+ * less than the current effective version and flip `requires_ica_reacceptance`.
+ * The publish-time flow in /api/admin/legal-docs already writes
+ * user_consent_pending rows for affected users; this catches the
+ * tenant-level flag for tenants that signed up or migrated after the
+ * publish event fired.
+ */
+async function checkIcaVersionDrift(
+  db: ReturnType<typeof createServiceRoleClient>,
+): Promise<number> {
+  // Latest current ICA version.
+  const { data: latestRows } = await db
+    .from("legal_documents")
+    .select("version")
+    .eq("document_type", "ica_subhost")
+    .is("superseded_at", null)
+    .order("version", { ascending: false })
+    .limit(1);
+  const latest = (latestRows ?? [])[0] as { version: number } | undefined;
+  if (!latest) return 0;
+
+  // All active tenants not already flagged.
+  const { data: tenants } = await db
+    .from("tenants")
+    .select("id")
+    .eq("status", "active")
+    .eq("requires_ica_reacceptance", false);
+
+  let flagged = 0;
+  for (const t of ((tenants ?? []) as Array<{ id: string }>)) {
+    const { data: consentRows } = await db
+      .from("legal_consents")
+      .select("document_version")
+      .eq("tenant_id", t.id)
+      .eq("document_type", "ica_subhost")
+      .eq("action", "accepted")
+      .order("acted_at", { ascending: false })
+      .limit(1);
+    const accepted = (consentRows ?? [])[0] as { document_version: number } | undefined;
+    const acceptedVersion = accepted?.document_version ?? 0;
+    if (acceptedVersion < latest.version) {
+      await db
+        .from("tenants")
+        .update({ requires_ica_reacceptance: true })
+        .eq("id", t.id);
+      flagged++;
+    }
+  }
+  return flagged;
+}
 
 type InactivityResult = "no_activity_data" | "below_threshold" | "already_sent" | "email_sent" | "level_logged_no_email";
 
