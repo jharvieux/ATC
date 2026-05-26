@@ -1,20 +1,28 @@
 // BP35 §33.4 — CruiseMapper itinerary actor wrapper.
 //
-// Dispatches the `crawlerbros/cruisemapper-cruises-scraper` actor (actor id
-// configurable via CRUISEMAPPER_ITINERARY_ACTOR_ID) with the broadest
-// viable input — all destinations, the next 24 months of departures.
+// ── DEPRECATED 2026-05-26 (D-088) ───────────────────────────────────────
+// This actor is no longer called by any scheduled cron. The Apify
+// monthly itinerary refresh path was removed per D-088: general-pricing
+// context for the AI now comes from the DIY CruiseMapper scraper
+// (apps/main/src/lib/external/cruisemapper/diy-fetcher.ts) which is free.
+// Apify is reserved EXCLUSIVELY for daily price-watch refresh on
+// sailings that have an active price_watches row.
 //
-// Honours the same BP34 guard fence as the per-line scrapers:
-//   - APIFY_ADAPTER_ENABLED=true required
-//   - APIFY_API_TOKEN set required
-//   - CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true required (this surface)
-//   - APIFY_MONTHLY_BUDGET_USD_CEILING enforced (sums apify_spend_ledger)
+// File kept (not deleted) so the test suite + history can reference
+// it; CRUISEMAPPER_ITINERARY_INGEST_ENABLED remains as a kill switch
+// in case manual ad-hoc runs are needed before the DIY replacement
+// fully covers itinerary data.
+// ────────────────────────────────────────────────────────────────────────
 //
-// Writes one spend ledger row per dispatch.
+// Original docstring (pre-D-088):
+//   Dispatches the `crawlerbros/cruisemapper-cruises-scraper` actor with
+//   the broadest viable input — all destinations, next 24 months. Honours
+//   the same guard fence as the per-line scrapers (token, kill switch,
+//   monthly cap).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
-import { budgetGate } from "@/lib/pricing/budget-priority";
+import { checkMonthlyBudget } from "@/lib/pricing/budget-priority";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -46,20 +54,19 @@ export async function runCruiseMapperItineraryActor(
   const token = process.env.APIFY_API_TOKEN;
   if (!token) return skip("no_api_token", "APIFY_API_TOKEN not set");
 
-  // §33.9.3 — General-pricing refresh (CruiseMapper itineraries) pauses
-  // at the general-pricing sub-cap (default 80% of monthly). This keeps
-  // budget reserved for daily tracked-sailings refresh per the addendum:
-  // "subscriber watches keep evaluating as long as possible."
+  // D-088: this surface is deprecated. If the operator manually flips
+  // CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true for an ad-hoc run, the
+  // same monthly cap that protects tracked-sailings still applies.
   const monthly = await monthlySpendUsd(db);
-  const gate = budgetGate("general_pricing", monthly);
+  const gate = checkMonthlyBudget(monthly);
   if (gate.paused) {
     await sendOperatorAlert({
       severity: "high",
-      signal: gate.reason,
-      detail: `Apify general-pricing sub-cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). CruiseMapper itinerary refresh skipped. Tracked-sailings refresh continues until the full monthly cap.`,
-      payload: { monthly_spend_usd: monthly, surface: "cruisemapper_itinerary", cap_kind: "general_pricing" },
+      signal: "apify_monthly_budget_exhausted",
+      detail: `Apify monthly cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). CruiseMapper itinerary actor (deprecated, ad-hoc only) refused.`,
+      payload: { monthly_spend_usd: monthly, surface: "cruisemapper_itinerary_deprecated" },
     });
-    return skip(gate.reason, `general-pricing sub-cap $${gate.cap_usd.toFixed(2)} reached`);
+    return skip("monthly_budget_exhausted", `monthly cap $${gate.cap_usd.toFixed(2)} reached`);
   }
 
   const actorId = process.env.CRUISEMAPPER_ITINERARY_ACTOR_ID ?? "crawlerbros/cruisemapper-cruises-scraper";
