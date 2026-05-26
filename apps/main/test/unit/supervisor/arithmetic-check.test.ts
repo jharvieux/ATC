@@ -46,11 +46,34 @@ describe("checkArithmetic — §21.10 Layer 6", () => {
 
   // -- Operator coverage ---------------------------------------------------
 
-  // NOTE: the source has a regex quirk where a binary `-` gets absorbed by
-  // the next number's optional `-?` prefix (e.g. "100 - 25" tokenises as
-  // [100, -25] not [100, -, 25]), so the eval returns null and the
-  // expression is skipped. Tests below stick to `+`, `*`, `×`, `/`, `÷`
-  // and `+ -val` patterns where the standalone-minus issue doesn't apply.
+  it("flags wrong plain-number subtraction (regression for the tokenizer-absorbs-minus bug)", () => {
+    // Bug history: fullChain was `${left}${firstOp}${restChain}` which produced
+    // "100-25" and the eval tokenizer parsed "-25" as a single negative number,
+    // making subtraction expressions silently pass. Fixed by inserting spaces.
+    expect(f("Total: 100 - 25 = 80").severity).toBe("warning");
+  });
+  it("passes correct plain-number subtraction", () => {
+    expect(f("Total: 100 - 25 = 75").severity).toBe("info");
+  });
+
+  it("flags wrong money subtraction", () => {
+    expect(f("Refund: $100 - $25 = $80").severity).toBe("warning");
+  });
+  it("passes correct money subtraction", () => {
+    expect(f("Refund: $100 - $25 = $75").severity).toBe("info");
+  });
+
+  it("handles chained subtraction (correct)", () => {
+    expect(f("100 - 25 - 10 = 65").severity).toBe("info");
+  });
+  it("flags wrong chained subtraction", () => {
+    expect(f("100 - 25 - 10 = 60").severity).toBe("warning");
+  });
+
+  it("subtraction precedence with multiplication: 100 - 5 × 2 = 90", () => {
+    expect(f("100 - 5 × 2 = 90").severity).toBe("info");
+    expect(f("100 - 5 × 2 = 190").severity).toBe("warning");
+  });
 
   it("flags wrong asterisk multiplication", () => {
     expect(f("7 * 8 = 60").severity).toBe("warning");

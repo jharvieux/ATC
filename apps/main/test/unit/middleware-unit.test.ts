@@ -120,6 +120,20 @@ describe("middleware()", () => {
       expect(res.status).not.toBe(403);
     });
 
+    it("rejects /api/admin/* with serviceKey set but a non-matching non-JWT token", async () => {
+      // Locks `serviceKey && token === serviceKey` — a mutation to `||`
+      // would let any token through when the service key env var is set.
+      process.env.MAIN_APP_ADMIN_API_KEY = "service-key-xyz";
+      const res = await middleware(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer not-the-service-key" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
     it("does NOT apply the admin gate to /api/tenant/* or other non-admin paths", async () => {
       // On platform domain with no admin path, gate not invoked.
       const res = await middleware(
@@ -310,6 +324,53 @@ describe("middleware()", () => {
       // Bypass didn't fire → normal slug lookup happened.
       expect(mocks.getTenantBySlug).toHaveBeenCalled();
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("disables bypass when NODE_ENV='production' even if VERCEL_ENV is non-prod", async () => {
+      // Locks the `NODE_ENV !== "production" && VERCEL_ENV !== "production"` AND check.
+      // A mutation to `||` would activate bypass whenever EITHER is non-prod — defeating
+      // the belt-and-suspenders posture from MEMORY audit Finding 3.
+      const savedNode = process.env.NODE_ENV;
+      const savedVercel = process.env.VERCEL_ENV;
+      process.env.NODE_ENV = "production";
+      process.env.VERCEL_ENV = "preview";
+      process.env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      process.env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      try {
+        const res = await middleware(makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          headers: { authorization: "Bearer test-bypass-secret" },
+        }));
+        // Bypass MUST NOT fire — should fall through to normal resolution.
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+        expect(mocks.getTenantBySlug).toHaveBeenCalled();
+      } finally {
+        if (savedNode !== undefined) process.env.NODE_ENV = savedNode;
+        else delete process.env.NODE_ENV;
+        if (savedVercel !== undefined) process.env.VERCEL_ENV = savedVercel;
+        else delete process.env.VERCEL_ENV;
+      }
+    });
+
+    it("disables bypass when VERCEL_ENV='production' even if NODE_ENV is non-prod", async () => {
+      // The other half of the AND. NODE_ENV being test-flavored shouldn't be
+      // enough — VERCEL_ENV=production must independently block.
+      const savedVercel = process.env.VERCEL_ENV;
+      process.env.VERCEL_ENV = "production";
+      process.env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      process.env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      try {
+        const res = await middleware(makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          headers: { authorization: "Bearer test-bypass-secret" },
+        }));
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+      } finally {
+        if (savedVercel !== undefined) process.env.VERCEL_ENV = savedVercel;
+        else delete process.env.VERCEL_ENV;
+      }
     });
   });
 });
