@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { triggerMatchingSequences } from "@/lib/tasks/sequence-engine";
 import { renderQuotePdfHtml } from "@/lib/quotes/render-pdf";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
@@ -169,6 +170,22 @@ export async function POST(
       .single();
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    // §37.4.2 — fan-out task sequences whose trigger_event='quote_accepted'.
+    // Non-fatal: a sequence-fan-out failure must not break quote acceptance.
+    try {
+      const { id: quoteId } = await params;
+      await triggerMatchingSequences({
+        tenant_id: ctx.tenant_id,
+        trigger: "quote_accepted",
+        record: { quote_id: quoteId },
+        triggered_by_user_id: null,
+        svc: db,
+      });
+    } catch (seqErr) {
+      console.warn("[quotes/accept] sequence fan-out failed:", seqErr);
+    }
+
     return Response.json({
       ...data,
       accepted_audit_id: auditId,
