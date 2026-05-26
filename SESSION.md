@@ -1,6 +1,6 @@
-# Session state — last updated 2026-05-26 ~05:00 UTC
+# Session state — last updated 2026-05-26 ~05:30 UTC
 
-## Just completed — overnight autonomous sweep
+## Just completed — overnight autonomous sweep (final state)
 
 User went to bed and asked for:
 1. Fresh CodeQL scan + fix medium-or-higher alerts (high-confidence only).
@@ -8,23 +8,30 @@ User went to bed and asked for:
 3. Fix everything addressable; document the rest.
 4. Small themed PRs as I go.
 
-### CodeQL
+### CodeQL — fully resolved
 
-- Triggered fresh full scan on dev.
-- Updated stale PR #196 (which was the inline-sanitizer fix for the 5 known medium alerts) by merging dev into it. CI green. Merged.
-- All 5 known medium alerts (4 log-injection + 1 client-side redirect) addressed.
-- New scan running in background; expected to show 0 alerts.
+- #196 closed 2 of 5 alerts via inline `.replace(/[\r\n]/g, ' ')` sanitization.
+- The remaining 3 alerts (CodeQL's taint tracker didn't recognize `.replace` reliably when wrapped in `String()` or used in multi-interpolation templates) closed by #217 via:
+  - Splitting the resend-webhook `(email.opened | email.clicked)` case so the log argument is a literal case-tag, not `event.type`.
+  - Default-case raw value omitted from log (Sentry breadcrumbs capture the raw event).
+  - `legal-docs` route now resolves `body.document_type` via `VALID_TYPES.find()` before logging, so CodeQL sees a constant-array origin.
+- Fresh CodeQL scan triggered post-merge on dev.
 
-### Spec sweep PRs landed tonight
+### All PRs landed tonight
 
 | PR | What |
 |---|---|
-| #196 | CodeQL inline sanitizer + URL parser fix — closes 5 medium alerts |
-| #213 | §6.7 promo-state-reconcile + drift-alert crons + §6.12 retrieval-log 90d aggregation + purge. Adds two RAG migrations (0016 + 0017) with RPCs. |
-| #214 | §11.7 AI memory extraction now writes `audit_log` rows (was missing — only customer/agent edits were audited) |
-| #215 | §6.10 chat feedback now propagates to `rag.knowledge_chunk_feedback_events`. New `/api/feedback` endpoint on RAG + `publishChunkFeedback` helper on main. Fire-and-forget; doesn't fail parent write. |
-
-PRs from earlier in the session also merged: #208 (§19.10+§26.5+§17.10+§10.5), #209 (§37 sequence triggers), #210 (§33.9.3 budget priority), #211 (§29.5 supabase runbook), #212 (listDocsForTier + custom-domain endpoint).
+| #196 | CodeQL pass 1 — inline sanitizer + URL parser fix (closes 2 of 5 alerts) |
+| #208 | §19.10 forum read-only + §26.5 audit_log retention + §17.10 sleepUntil + §10.5 dashboard widgets |
+| #209 | §37 sequence triggers wired into 4 CRM endpoints |
+| #210 | §33.9.3 Apify budget pause priority (80/20 sub-cap) |
+| #211 | §29.5 Supabase project setup runbook |
+| #212 | listDocsForTier wiring + custom-domain self-serve endpoint |
+| #213 | §6.7 promo-state reconcile + drift-alert crons + §6.12 retrieval-log 90d aggregation. Two new RAG migrations (0016 + 0017) with RPCs. |
+| #214 | §11.7 AI memory extraction now writes audit_log rows |
+| #215 | §6.10 chat feedback propagation to RAG per-chunk events (new /api/feedback endpoint + publishChunkFeedback helper) |
+| #216 | Documentation wrap-up: supplement + SESSION + MEMORY D-086 + customer-facing AI build prompt |
+| #217 | CodeQL pass 2 — narrow log-injection sinks to constant flow (closes remaining 3 alerts) |
 
 ### Spec sweep coverage
 
@@ -42,14 +49,14 @@ PRs from earlier in the session also merged: #208 (§19.10+§26.5+§17.10+§10.5
 
 ## In flight
 
-**Nothing in flight.** Working tree clean on the wrap-up branch. The wrap-up commit (this file + supplement update) is the final commit of the night.
+**Nothing in flight.** All overnight PRs merged. This SESSION.md update is the final commit.
 
 ## Next step
 
 When you wake:
-1. Review the 4 overnight PRs (#196, #213, #214, #215). #196 already merged; #213/#214 already merged; #215 should land once CI clears the dev-merge update.
-2. If you want the customer-facing chat panels (§20.4/§38.8/§39.5) built, write a build prompt for them or tell me to scope a multi-PR plan.
-3. Trigger the new CodeQL scan on the latest dev to confirm alerts are 0 (the scan I kicked may have predated the merges).
+1. Confirm the post-#217 CodeQL scan dropped alerts to 0 (`gh api repos/jharvieux/ATC/code-scanning/alerts?state=open --jq 'length'`). If any remain, they'll be in `apps/main/src/app/api/webhooks/resend/route.ts` or `apps/main/src/app/api/admin/legal-docs/route.ts` and the next step is to look at the specific line.
+2. Decide on the customer-facing AI chat panels build (§20.4/§38.8/§38.8.1/§39.5). See `specs/BuildPrompts/build-prompts-customer-facing-ai-panels.md` for the drafted scope.
+3. Decide on §13.9 active health probing — keep reactive or add nightly probe.
 
 ## Blocked on user
 
