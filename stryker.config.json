@@ -1,0 +1,48 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Initial broad scan — mutate every TS file under both apps' src/ except UI surfaces (page.tsx/layout.tsx/components/**) which mostly contain composition, not testable business logic. Re-scope per-PR via the --mutate CLI flag.",
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "vitest": {
+    "configFile": "vitest.config.ts"
+  },
+  "reporters": ["html", "json", "clear-text", "progress"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "coverageAnalysis": "perTest",
+  "timeoutMS": 60000,
+  "timeoutFactor": 2,
+  "concurrency": 2,
+  "disableTypeChecks": "{apps,packages,tests}/**/*.{ts,tsx}",
+  "ignoreStatic": true,
+  "_comment_mutate": "Excluded files: env.ts in both apps is read+regex-parsed by BP29 §28 schema-discipline meta-tests; Stryker's mutant brackets break that parsing. Exclude similar self-introspected files here if you add more such tests.",
+  "mutate": [
+    "apps/main/src/lib/**/*.ts",
+    "apps/main/src/inngest/**/*.ts",
+    "apps/main/src/app/api/**/route.ts",
+    "apps/main/src/middleware.ts",
+    "apps/rag/src/lib/**/*.ts",
+    "apps/rag/src/app/api/**/route.ts",
+    "apps/rag/src/middleware.ts",
+    "packages/shared-types/src/**/*.ts",
+    "!**/*.test.ts",
+    "!**/*.spec.ts",
+    "!**/__tests__/**",
+    "!**/types.ts",
+    "!**/*.d.ts",
+    "!apps/main/src/lib/env.ts",
+    "!apps/rag/src/lib/env.ts"
+  ],
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true,
+  "logLevel": "info"
+}
