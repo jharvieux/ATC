@@ -222,6 +222,95 @@ These were flagged in §33.12 as "decided at build time" but no build-time decis
 
 ---
 
+## Exhaustive spec sweep — overnight session 2026-05-26
+
+A read-every-subsection pass across all 40 sections + addenda. Items
+confirmed present are listed at the top of the supplement and not
+repeated. Gaps surfaced below — fixed ones marked CLOSED with the PR.
+
+### Gaps closed during the sweep
+
+| § | Gap | Closed in |
+|---|---|---|
+| §6.7 | No `promo-state-reconcile` cron — stored `promo_status` could drift from `expected_promo_state()` | #213 |
+| §6.7 | No `promo-state-drift-alert` cron — drift > 30 min should page | #213 |
+| §6.12 | No retrieval-log aggregation cron — spec says detail kept 90d then aggregated, but neither aggregation nor purge existed | #213 |
+| §11.7 | AI memory extraction wrote no `audit_log` rows (only customer/agent paths did) | #214 |
+| §6.10 | Chat feedback never propagated to `rag.knowledge_chunk_feedback_events` — the §6.10 ranking factor was always 0 | #215 |
+
+### Spec subsections marked TICK during the sweep
+
+For each, code was located and matches spec:
+
+- §1.4 / §3.6 Tenant resolution middleware
+- §5.1.1 SECURITY DEFINER `search_path = ''` discipline (all 12 functions audited)
+- §5.1.2 RLS 4-policy coverage (snapshot CI guards this)
+- §7.9a Stripe webhook idempotency dedup (`stripe_webhook_events`)
+- §7.1 / §17 Auth routes complete: callback, signup/complete, signout, /auth/me, /auth/consent-status, /auth/consent, /legal/:doc-type/current, /auth/transfer-session
+- §8.3 Tenant registry sync (HMAC `tenant-events` + retry queue)
+- §8.5 / §8.6 Ingest + approve endpoints
+- §10.5a Supervisor sampling (`sampleForReview` called from `run-supervisor`)
+- §11.5 DOB aging cron + re-prompt eligibility
+- §11.6 Anonymous-to-authenticated session transfer
+- §11.7 Customer self-edit + agent-edit audit (the gap was only AI extraction — closed in #214)
+- §13.6 Fallback email adapter
+- §14.7 Stripe Connect transfer idempotency contract
+- §16.3.2 Custom-domain weekly re-verification cron
+- §16.6 Persona addendum Haiku screen + periodic re-screen
+- §16.7 Powered-by attribution (LegalPageAttribution + PoweredBy components)
+- §17.2 Microsoft no-email prompt route
+- §17.6 AI Liability Disclaimer (legal doc + persistent chat banner via `AIDisclosureBanner`)
+- §17.10 CCPA delete grace cron (closed in #208 via `step.sleepUntil`)
+- §18.3 Destination-relevant hero images
+- §22.5 Tenant RAG review queue (UI shipped in PR #205)
+- §22.7 Four-tab global review queue
+- §23.4 Pre-cruise email scheduler + generate-and-send
+- §23.9 Gmail inbound integration
+- §24.4 Chat feedback endpoint (now propagating per-chunk in #215)
+- §24.5 Tone matching + deny-list + supervisor tone_drift check
+- §24.6 In-conversation persona switching
+- §24.8 Anonymous chat counter cleanup cron
+- §25.2 Retention crons (11 covered)
+- §25.4a Anonymized notes UI
+- §26.5 audit_log 7-year retention purge (closed in #208)
+- §26.6 §26.6 monitoring crons (auth-failure, permission-denied, cross-tenant-rls-bypass, email-bounce-rate, ccpa-staging-propagation)
+- §26.9 Vendor health probe
+- §27.13 Cross-section abuse integrations (chat, RAG cap, email rate, group invitations all wired)
+- §28.18 AI pricing cache refresh cron
+- §28.20 Secret rotation runbook
+- §32.9 Interactive bug triage — implemented as a Claude Code slash command at `.claude/commands/fix-bugs.md`, NOT as a runtime UI. Reclassified from gap to "implemented in an unexpected place".
+- §32.10 Customer bug flow (`lib/help-ai/bug-intent-recognizer.ts`)
+- §33.6.4 RAG retrieve API extension for assets
+- §35.4 Rolling 10-touch trim (Postgres trigger on INSERT, no cron needed)
+- §36.4/.6/.8 Campaigns + attribution_rollup MV + nightly refresh + CSV export
+- §37 Sequence engine wired into CRM transitions (closed in #209)
+
+### Gaps remaining (require a feature build, not fit for overnight)
+
+- **§20.4 / §38.8 / §38.8.1 / §39.5 — Customer-facing AI chat panels.** The booking-flow co-pilot, quote-builder co-pilot, customer-side quote AI, and trip-page itinerary AI all need:
+  - A customer-facing chat surface that renders without auth (token-bound)
+  - New `/api/chat` extension or sibling that accepts a `context` payload (quote_id / booking_id) to inject into the system prompt
+  - Persona resolution by booking/quote ownership
+  - Anonymous-bound conversations + token-based RAG retrieval scoping
+  - All four through supervisor preflight per §10
+  - **Recommend a dedicated build prompt.** Reuse the existing chat infrastructure; add a thin "customer-context-loaded" wrapper. ~2 days of work; needs browser testing.
+
+- **§30.6 AI behavior evaluation harness.** Cost-deferred per `reality-delta.md §1`. Design at `docs/evals/design.md`.
+
+- **§22.4 tolerable-PII Haiku redaction.** Cost-deferred per `reality-delta.md §1`. Stage 1 (zero-tolerance regex) works; Stage 2 stub.
+
+- **§32.6.5 / §32.13.2 Help-AI confidence scoring + screenshot PII detector.** Cost-deferred.
+
+- **§13.9 Host-adapter active health probing.** Code uses reactive-only inference today; spec implies active probing. Operator call needed: keep reactive (cheaper) or add nightly probe.
+
+### Process notes — auditor's flagged areas (require operator review)
+
+- The §11.5 estimation aging cycle runs *yearly* (>365 days since last re-prompt). Re-confirm that's the intended cadence — could be punishingly slow for the customer who entered an estimated DOB.
+- The §33.9.3 budget-split default (80% general / 20% tracked-sailings) was a reasonable engineering choice but the spec doesn't dictate the percentage. Operator may want different defaults once real Apify spend lands.
+- §10.6 kill-switch state is shown on the new §10.5 dashboard (#208) — but the auth/permission model for who can flip the kill switch isn't explicit in spec. Today: any user with `assertPlatformAdmin` access can.
+
+---
+
 ## Process notes
 
 Same conventions as `reality-delta.md`:
