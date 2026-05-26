@@ -5,6 +5,7 @@
 
 -- Tables with RLS enabled:
 -- public.rag_media_assets (rls_enabled)
+-- public.rag_retrieval_log_daily (rls_enabled)
 --
 -- Tables with RLS disabled:
 -- public.itineraries (rls_disabled)
@@ -21,4 +22,9 @@
 CREATE POLICY "rag_media_assets_select" ON public.rag_media_assets
   FOR SELECT TO PUBLIC
   USING (scope = 'global'::text OR tenant_id::text = current_setting('request.jwt.claim.tenant_id'::text, true));
+
+-- TABLE: public.rag_retrieval_log_daily
+CREATE POLICY "rag_retrieval_log_daily_select" ON public.rag_retrieval_log_daily
+  FOR SELECT TO PUBLIC
+  USING (true);
 
