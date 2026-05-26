@@ -187,6 +187,41 @@ For completeness — items I checked that are properly wired:
 
 ---
 
+## §33 Addendum — sweep findings (2026-05-25)
+
+A focused audit of `specs/TechSpec/section-33-addendum-external-data-sources-and-media-assets.html` against current `dev` state. Items confirmed-present are not enumerated; entries below are the gaps surfaced.
+
+### Code bugs fixed in this same PR
+
+- **~~§33.7.2 #5 — no client-side 3-asset cap.~~** (Closed in `fix/section-33-hardening`.) `renderMessageContent.tsx` now caps rendered display-asset links at 3 per response regardless of how many markup tags the model emits. Excess markers drop silently. Test coverage added.
+- **~~§33.8.3 — no expire-first sweep in `evaluate-price-watches`.~~** (Closed.) The cron now transitions watches with `sail_date < today` to status='expired' before any refresh, preventing wasted Apify spend on past sailings.
+- **~~§33.8.3 — no freshness gate in `evaluate-price-watches`.~~** (Closed.) The comparator now reads `pricing_cache.fetched_at`, compares against `PRICE_FRESHNESS_FRESH_HOURS` (default 72h per §33.10), and skips watches whose cached price is stale. Stale prices can no longer trigger a notification. Pure-helper extraction (`lib/price-watches/freshness.ts`) with unit tests.
+
+### Documented runtime decision (now in reality-delta.md §4)
+
+- **§33.7.2 — hyperlink rendering, not inline `<img>`.** Was a deliberate MEMORY D-075 decision but absent from the delta doc. Now recorded in `reality-delta.md` §4 with the rationale and the spec-update action.
+
+### Smoke-test results
+
+- **§33.6.4 retrieve API extension — confirmed present.** `apps/rag/src/app/api/retrieve/route.ts` returns the `chunks[].related_asset_ids` + top-level `assets[]` arrays per spec, with tenant-scope filtering enforced and a per-request log of dropped IDs.
+- **§33.9.3 monthly-budget pause priority — partially implemented.** Both the per-line Apify adapter (tracked-sailings path) and the CruiseMapper itinerary actor (general-pricing path) consult the same `apify_spend_ledger` rollup against `APIFY_MONTHLY_BUDGET_USD_CEILING`. There is **no priority ordering** between the two. The spec wants general-pricing refresh to pause *first* and tracked-sailings (subscriber-facing watches) to pause *last*. **Open gap:** introduce a sub-cap or pause-priority flag so a budget overrun on the monthly general-pricing run doesn't silently disable subscriber watches for the rest of the month.
+
+### Decision-debt gaps (§33.12 "decide at build time" items that weren't decided)
+
+These were flagged in §33.12 as "decided at build time" but no build-time decision was recorded. Each is an open decision that the operator owes.
+
+- **§33.12 — Per-line actor coverage for Carnival, Holland America, MSC, Disney.** `apps/main/src/lib/pricing/line-routing.ts` ships these with placeholder `TBC/<line>` actor IDs and `enabled: false`. The spec called for build-time confirmation; no confirmation recorded. Subscriber-facing impact: customers on these four lines cannot create a price-watch today (UI correctly blocks creation, but the operator owes a decision on whether to commission actors).
+- **§33.12 — UX for uncovered lines (Virgin, Viking, Oceania, Regent, Silversea, Seabourn).** Spec says the UI surfaces "no price-watch available" for these. Need to verify the price-watch creation flow surfaces this copy explicitly rather than just returning a generic error.
+- **§33.12 — Sample-OCR evaluation gate.** Per the spec's build order step 9, run Haiku vision on a 200-image sample and evaluate uplift over text-only descriptions before deciding whether to ship the OCR uplift. **No evaluation has been run.** Open decision: schedule the sample, define the quantitative bar, or formally defer with a reason.
+- **§33.12 — Authority-override platform-admin UI.** Spec calls for a small admin surface to elevate or demote authority of batches of itinerary chunks (default `low`) and static-reference chunks (default `official`). Decision was "at build time"; no surface exists. Open decision: build it, defer it, or rule it out.
+
+### Cross-cutting launch gates (not code gaps, but tracking)
+
+- **§33.9.1 — Counsel ToS review (cruise-line scraping + CruiseMapper + image hot-linking).** Explicit launch-gate. Should be tracked alongside the §16/§17 counsel sign-offs in the deferred-for-legal list.
+- **§33.9.3 — Token blast-radius mitigation.** Spec calls out that `APIFY_API_TOKEN` is account-level and the platform caps don't constrain the raw token. Action item: confirm whether Apify offers a scoped token shape, and either use it or document that the residual risk is accepted with the standard secret-rotation schedule as the only mitigation.
+
+---
+
 ## Process notes
 
 Same conventions as `reality-delta.md`:

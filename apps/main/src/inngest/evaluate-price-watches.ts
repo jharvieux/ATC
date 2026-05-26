@@ -4,13 +4,21 @@
 // on the 1st of every month) so refreshed pricing flows in before the
 // daily evaluation. Well before user-facing daily traffic.
 //
-// Flow:
-//   1. SELECT all price_watches WHERE status='active'.
+// Flow (§33.8.3 correctness requirements):
+//   0. EXPIRE FIRST. Transition any watches whose sail_date is in the
+//      past to status='expired' before doing any other work — past
+//      sailings should be neither refreshed (wasted Apify cost) nor
+//      evaluated.
+//   1. SELECT all remaining price_watches WHERE status='active'.
 //   2. Group by SailingKey, batch-refresh via BP34's PricingDataSource
 //      (one actor run per (line, port, month) bucket regardless of how
 //      many watches reference it).
-//   3. For each watch, read the now-fresh pricing_cache row + evaluate
-//      threshold. On trigger: UPDATE status='triggered', triggered_at=NOW().
+//   3. For each watch, read the now-refreshed pricing_cache row. APPLY
+//      THE FRESHNESS GATE: only watches whose cached price is `fresh`
+//      (within PRICE_FRESHNESS_FRESH_HOURS) are evaluated. Stale /
+//      expired cached prices (actor blocked, budget cap, uncovered line)
+//      cause the watch to be skipped for this run — never triggered on
+//      data that may not reflect a real, current price.
 //   4. Notification: enqueued only when PRICE_WATCH_NOTIFICATIONS_ENABLED=true
 //      (default false per cost-deferral). When off, status flips still
 //      happen — the UI reflects reality even without sending email.
@@ -19,6 +27,7 @@ import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { ApifyPricingAdapter } from "@/lib/pricing/apify-pricing-adapter";
 import { evaluateThreshold } from "@/lib/price-watches/evaluate-threshold";
+import { isFresh, resolveFreshHours } from "@/lib/price-watches/freshness";
 import { sailingKeyForWatch, type PriceWatch } from "@/lib/price-watches/types";
 import type { CabinClass, SailingKey } from "@/lib/pricing/types";
 
@@ -37,6 +46,19 @@ export const evaluatePriceWatches = inngest.createFunction(
         operation: "evaluate_price_watches",
       },
       async (db, recordQuery) => {
+        // §33.8.3 step 0 — expire-first sweep. Past sailings transition
+        // to status='expired' before any refresh / evaluation so they
+        // can't waste Apify cost or accidentally fire on a stale price.
+        const todayIso = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        recordQuery({ op: "update", table: "price_watches" });
+        const { data: expiredRows } = await db
+          .from("price_watches")
+          .update({ status: "expired" })
+          .eq("status", "active")
+          .lt("sail_date", todayIso)
+          .select("watch_id");
+        const expired_count = (expiredRows ?? []).length;
+
         recordQuery({ op: "select", table: "price_watches" });
 
         const { data: watchRows } = await db
@@ -46,7 +68,7 @@ export const evaluatePriceWatches = inngest.createFunction(
           .limit(10_000);
         const watches = (watchRows ?? []) as PriceWatch[];
         if (watches.length === 0) {
-          return { active_watches: 0, refreshed: 0, triggered: 0, notified: 0 };
+          return { active_watches: 0, refreshed: 0, triggered: 0, notified: 0, expired: expired_count };
         }
 
         // De-dup sailing keys so we refresh each underlying price once.
@@ -68,22 +90,44 @@ export const evaluatePriceWatches = inngest.createFunction(
 
         let triggered = 0;
         let notified = 0;
+        let skipped_stale = 0;
         const notificationsEnabled = process.env.PRICE_WATCH_NOTIFICATIONS_ENABLED === "true";
+
+        // §33.8.3 freshness gate — only `fresh` prices may trigger a
+        // watch. Threshold default per §33.10 is 72h; configurable via
+        // PRICE_FRESHNESS_FRESH_HOURS so the operator can tighten or
+        // loosen without a deploy.
+        const freshHours = resolveFreshHours(process.env.PRICE_FRESHNESS_FRESH_HOURS);
+        const nowMs = Date.now();
 
         for (const w of watches) {
           // Read current cached price for the specific cabin class.
           const { data: cachedRows } = await db
             .from("pricing_cache")
-            .select("price_amount, price_currency")
+            .select("price_amount, price_currency, fetched_at")
             .eq("cruise_line", w.cruise_line)
             .eq("ship", w.ship)
             .eq("sail_date", w.sail_date)
             .eq("departure_port", w.departure_port)
             .eq("cabin_class", w.cabin_class)
             .limit(1);
-          const row = ((cachedRows ?? []) as Array<{ price_amount: number; price_currency: string }>)[0] ?? null;
+          const row =
+            ((cachedRows ?? []) as Array<{
+              price_amount: number;
+              price_currency: string;
+              fetched_at: string | null;
+            }>)[0] ?? null;
           let current: { amount: number; currency: string } | null = null;
           if (row) {
+            // §33.8.3 freshness gate. If the cache miss happened (no row)
+            // evaluateThreshold below returns 'no_action'; that's fine.
+            // If we have a row but it's stale or expired, skip the watch
+            // entirely — never compare against a price the actor failed
+            // to refresh.
+            if (!isFresh(row.fetched_at, nowMs, freshHours)) {
+              skipped_stale += 1;
+              continue;
+            }
             const raw: unknown = row.price_amount;
             const dollars = typeof raw === "number" ? raw : Number(raw);
             current = { amount: dollars, currency: row.price_currency };
@@ -135,6 +179,8 @@ export const evaluatePriceWatches = inngest.createFunction(
           spend_usd: refresh.spend_usd,
           triggered,
           notified,
+          skipped_stale,
+          expired: expired_count,
           notifications_enabled: notificationsEnabled,
         };
       },
