@@ -4,6 +4,56 @@ Newest entries on top.
 
 ---
 
+## D-086 — 2026-05-26 — Overnight exhaustive spec sweep + CodeQL closure
+
+**Decision:** Read every subsection of all 40 spec sections + 7 addenda against `dev`. Fixed everything addressable in small themed PRs; documented the rest in `docs/specs/reality-delta-supplement.md`. Closed the 5 known medium CodeQL alerts.
+
+### PRs landed
+
+| PR | What | Why it matters |
+|---|---|---|
+| #196 | CodeQL inline-sanitizer + URL parser fix | 5 medium alerts (4 log-injection, 1 client-side redirect) closed. The wrapper-helper approach (a `sanitizeForLog` function) wasn't traced by CodeQL's taint tracker; inline `.replace(/[\r\n]/g, ' ')` IS. Redirect uses `new URL(candidate, location.origin)` + origin equality instead of prefix check. |
+| #213 | §6.7 promo crons + §6.12 retrieval-log aggregation | Stored `promo_status` could drift from `expected_promo_state()`. Retrieval-log 90d retention was missing both the aggregation and the purge. Two new RAG migrations (0016 + 0017) add `reconcile_promo_status()` + `count_promo_state_drift()` + `aggregate_retrieval_log_pre_cutoff()` RPCs + `rag_retrieval_log_daily` table. Three new RAG-side crons. |
+| #214 | §11.7 audit_log on AI memory extraction | The customer self-edit + agent-edit paths wrote audit rows but the AI extraction path (Inngest `extract-memory`) didn't. `actor_type='ai'` is the existing enum value for this. |
+| #215 | §6.10 chat feedback propagation to RAG | Per-chunk events table existed but nothing wrote to it. Fire-and-forget HTTP from main → new `/api/feedback` endpoint on RAG with HMAC-SHA256 signature; pattern mirrors `/api/tenant-events`. |
+
+### Key clarifications surfaced
+
+- **§32.9 Interactive Bug Triage is NOT a runtime gap.** It's implemented as a Claude Code slash command at `.claude/commands/fix-bugs.md` — operator-side workflow, not a runtime UI. Prior supplement mis-classified this; now corrected.
+
+- **§20.5 DOB confirmation gate is NOT missing.** The prior supplement claim was based on a grep for `dob_confirmed_at`. The actual gate uses the inverse signal `date_of_birth_is_estimated = false` via `assertNoEstimatedDOBs(bookingId)` in `lib/booking/dob-gate.ts`. Equivalent semantics.
+
+- **§14.11 1099-NEC was a false positive** (already corrected in earlier D-085). Stripe Connect Express handles 1099 generation automatically for sub-hosts ≥ $600/yr.
+
+### Gaps documented but not fixed (require feature build)
+
+- **§20.4 / §38.8 / §38.8.1 / §39.5 — Customer-facing AI chat panels** on the booking flow, quote builder, customer quote view, and customer trip view. ~2 days of work each; needs browser testing; deferred to a dedicated build prompt.
+
+- **§13.9 active host-adapter health probing** — operator call needed: keep reactive (cheaper) or add a nightly probe (more invasive but matches spec phrasing).
+
+### Architecture deltas worth recording
+
+1. **RAG-side cron infrastructure is now non-trivial.** Previously two reconcile crons (tenant-registry, platform-settings); now five (added promo-state-reconcile, promo-state-drift-alert, retrieval-log-aggregate). The pattern of "ragDb() = createClient on demand from env" is repeated in each — could refactor to a shared client factory if the count keeps growing.
+
+2. **Feedback propagation is the first HMAC-signed POST from main → RAG that isn't tenant lifecycle.** The `RAG_WEBHOOK_SECRET` is now shared by three endpoints on RAG (`/api/tenant-events`, `/api/platform-settings-events`, `/api/feedback`). If we expand cross-service writes further, worth considering a per-endpoint secret or scoped signature.
+
+3. **Customer-facing chat surfaces (booking flow / quote view / trip view) remain unbuilt.** This is the single biggest remaining v6 capability gap. The supplement section "Gaps remaining" lists it with recommended scoping.
+
+### Rejected approaches considered
+
+- **Cross-service service-role DB write** for feedback propagation: would require sharing the RAG service-role key into the main app's env, which violates the §28 separation of concerns. HMAC-signed POST is cleaner.
+- **Adding a tenant-events-style retry queue for feedback** posts: feedback signals are best-effort by design (§6.10 ranking gracefully degrades to 0). Adding retries would add complexity for low value. Fire-and-forget chosen.
+- **Implementing §38.8.1 / §39.5 customer chat panels overnight**: rejected on risk grounds. Without browser testing, customer-facing surfaces are too risky to ship in a sleep window.
+
+### Manual follow-ups when you wake
+
+- Trigger fresh CodeQL scan on dev (one was kicked at 04:42 UTC; if its results don't show 0 alerts, kick another after #215 merges).
+- Review the 4 overnight PRs.
+- Decide on §38.8.1/§39.5 build prompt scoping.
+- Decide on §13.9 active probing direction.
+
+---
+
 ## D-085 — 2026-05-25 — Reality-delta supplement items 1-5: three-PR sweep
 
 **Decision:** Closed five of the reality-delta-supplement gaps in one continuous push, structured as three PRs for reviewability.
