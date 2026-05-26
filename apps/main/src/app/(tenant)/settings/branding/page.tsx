@@ -253,18 +253,7 @@ export default function BrandingSettingsPage() {
         </CardContent>
       </Card>
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="text-base">Custom domain</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-gray-600 mb-3">
-            Want your concierge at <code>concierge.yourdomain.com</code> instead of our subdomain?
-            Email <a href="mailto:support@aitravelconcierge.com?subject=Custom%20domain%20request" className="text-blue-600 underline">support@aitravelconcierge.com</a> with
-            the domain you want. Our team will issue DNS instructions and provision the certificate.
-          </p>
-        </CardContent>
-      </Card>
+      <CustomDomainRequestCard />
 
       <div className="flex justify-end gap-3">
         <Button onClick={onSave} disabled={saving}>
@@ -315,5 +304,97 @@ function ColorPicker(props: { label: string; value: string; onChange: (v: string
         onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onChange(e.target.value)}
       />
     </label>
+  );
+}
+
+function CustomDomainRequestCard() {
+  const [hostname, setHostname] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  async function onSubmit() {
+    setResult(null);
+    if (!hostname.trim()) {
+      setResult({ ok: false, message: "Enter the domain you&apos;d like to use." });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/tenant/branding/custom-domain-request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ desired_hostname: hostname.trim(), notes: notes.trim() }),
+      });
+      const data = (await res.json()) as { error?: string; note?: string };
+      if (!res.ok) {
+        setResult({ ok: false, message: data.error ?? "request_failed" });
+        return;
+      }
+      setResult({
+        ok: true,
+        message: data.note ?? "Request received. Our team will be in touch.",
+      });
+      setHostname("");
+      setNotes("");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="text-base">Custom domain</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-gray-600">
+          By default your concierge lives at <code>&lt;your-slug&gt;.aitravelconcierge.com</code>.
+          To use your own subdomain (e.g. <code>concierge.yourdomain.com</code>), submit it here.
+          Our team emails you DNS instructions and provisions the HTTPS certificate.
+        </p>
+        <label className="block">
+          <span className="block text-sm font-medium text-gray-700 mb-1">
+            Desired hostname
+          </span>
+          <input
+            type="text"
+            className={TEXT_INPUT_CLS}
+            value={hostname}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHostname(e.target.value)}
+            placeholder="concierge.yourdomain.com"
+          />
+        </label>
+        <label className="block">
+          <span className="block text-sm font-medium text-gray-700 mb-1">
+            Notes (optional)
+          </span>
+          <textarea
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm h-20"
+            value={notes}
+            maxLength={500}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="When you'd like this active, any DNS constraints we should know about, etc."
+          />
+        </label>
+        {result && (
+          <div
+            className={
+              "p-3 rounded text-sm " +
+              (result.ok
+                ? "bg-green-50 border border-green-200 text-green-700"
+                : "bg-red-50 border border-red-200 text-red-700")
+            }
+          >
+            {result.message}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button onClick={onSubmit} disabled={submitting || !hostname.trim()}>
+            {submitting ? "Submitting…" : "Submit request"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
