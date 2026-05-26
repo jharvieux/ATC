@@ -4,6 +4,47 @@ Newest entries on top.
 
 ---
 
+## D-090 — 2026-05-26 — Apify-5: APIFY_API_TOKEN blast-radius mitigations
+
+`APIFY_API_TOKEN` is account-level on Apify — leaked = unbounded spend across every actor in the Apify store. Two defenses landed this PR:
+
+### Layer 1 — operator-side scoped token (primary)
+
+Apify supports scoped tokens (confirmed 2026-05-26 via docs.apify.com/platform/integrations/api). Token is created with:
+
+- **Resource-specific Run permission** on exactly the 10 actor slugs we use (9 sercul + 1 deprecated crawlerbros legacy).
+- **"Restricted access" injection mode** — the actor receives a token with the same scope, can't escalate to other actors or account-level resources during the run.
+- NO account-level permissions. NO storage/webhook permissions.
+
+Documented end-to-end in `docs/runbooks/apify-token-scoping.md` including: creation UI walkthrough, quarterly rotation cadence, compromise-response steps, monitoring gaps, and the "what this doesn't protect against" residuals.
+
+### Layer 2 — code-side allowlist enforcement (defense-in-depth)
+
+Hardcoded `APIFY_ACTOR_ALLOWLIST: ReadonlySet<string>` in `apps/main/src/lib/pricing/line-routing.ts`. `assertActorAllowed(actorId)` throws `ApifyAllowlistViolation` if called with anything not on the list. Wired into both Apify-API dispatch sites:
+
+- `ApifyPricingAdapter.dispatchActor` (the 9 sercul per-line scrapers) — violation → ledger row `failed` + `sendOperatorAlert("apify_allowlist_violation")` + `refuse("allowlist_violation", ...)`.
+- `runCruiseMapperItineraryActor` (deprecated legacy path) — same handling.
+
+A drift-guard test in `line-routing.test.ts` asserts every actorId in `LINE_ROUTES` appears in the allowlist, and the allowlist size is exactly 10.
+
+### Residual gaps the operator should know about
+
+- **No native Apify hard spend cap.** Our `APIFY_MONTHLY_BUDGET_USD_CEILING` ($500 default) and `APIFY_RUN_BUDGET_USD_CEILING` ($50 default) gate the adapter, but a leaked token used directly against `api.apify.com` bypasses our code. Mitigated by Layer 1 scoping (attacker can only run 10 allowlisted actors), but ~$2/1000 results across those is theoretically possible until rotation.
+- **No Apify budget-alert webhook.** Mitigation: enable the daily-usage email notification in Apify Console (Settings → Notifications → Usage) as an out-of-band tripwire. Documented in the runbook.
+- **`vercel env pull` for production** would write the live token to a developer laptop. Don't do it — pull only `preview`. Documented.
+
+### What was rejected
+
+- **Removing the crawlerbros legacy actor from the allowlist.** Operator-documented in cruisemapper-actor.ts header as an emergency escape hatch behind `CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true`. Stripping it from the allowlist would silently break that escape hatch. Kept with the comment "remove when the DIY scraper fully covers itinerary data."
+- **Runtime-configurable allowlist (env-driven).** Adds complexity without enabling a real use case — every new actor needs both code + Apify-side config changes anyway. Stayed hardcoded.
+- **Implementing a startup self-test that probes the token's actual scope.** Would require a no-op Apify API call on every cold boot; cost-and-latency-out-of-proportion to the value. The operator runbook covers manual verification instead.
+
+### Related artifacts
+
+`apps/main/src/lib/pricing/line-routing.ts` (allowlist + guard), `apps/main/src/lib/pricing/apify-pricing-adapter.ts` (allowlist-violation refuse arm + operator alert), `apps/main/src/lib/external/cruisemapper/cruisemapper-actor.ts` (legacy path guard), `apps/main/test/unit/pricing/line-routing.test.ts` (6 new tests for allowlist + assertActorAllowed), `docs/runbooks/apify-token-scoping.md` (operator-side scoping walkthrough).
+
+---
+
 ## D-089 — 2026-05-26 — Apify-4: catalog research + 9-line enablement + per-line kill switches
 
 Apify Store catalog audit on 2026-05-26 (WebFetch + WebSearch against apify.com). Findings landed in `apps/main/src/lib/pricing/line-routing.ts`.

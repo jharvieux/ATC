@@ -18,7 +18,7 @@ import type {
   RefreshResult,
   SailingKey,
 } from "./types";
-import { groupSailingsForBatch, matchesAnyWatchedSailing, routeFor, type LineRoute } from "./line-routing";
+import { assertActorAllowed, groupSailingsForBatch, matchesAnyWatchedSailing, routeFor, type LineRoute } from "./line-routing";
 import { readPriceQuote, upsertPriceQuote } from "./pricing-cache";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { checkMonthlyBudget } from "./budget-priority";
@@ -33,6 +33,7 @@ type AdapterRefuseReason =
   | "unsupported_line"
   | "actor_dispatch_failed"
   | "actor_timeout"
+  | "allowlist_violation"
   | "no_results";
 
 interface ApifyResponse {
@@ -162,6 +163,18 @@ export class ApifyPricingAdapter implements PricingDataSource {
       runStatus = err instanceof DOMException && err.name === "TimeoutError" ? "failed" : "failed";
       const reasonStr = err instanceof Error ? err.message : String(err);
       await this.writeLedger(route.actorId, null, 0, route.cruiseLine, "failed", { error: reasonStr });
+      // D-090 Apify-5 — distinguish allowlist violations so the operator can
+      // grep ledger rows for them; these indicate a code/config bug, not a
+      // network failure.
+      if (reasonStr.startsWith("apify_allowlist_violation")) {
+        await sendOperatorAlert({
+          severity: "high",
+          signal: "apify_allowlist_violation",
+          detail: reasonStr,
+          payload: { actor_id: route.actorId, cruise_line: route.cruiseLine },
+        });
+        return refuse("allowlist_violation", reasonStr);
+      }
       return refuse(reasonStr.includes("timeout") ? "actor_timeout" : "actor_dispatch_failed", reasonStr);
     }
 
@@ -206,6 +219,9 @@ export class ApifyPricingAdapter implements PricingDataSource {
   }
 
   private async dispatchActor(actorId: string, input: unknown): Promise<ApifyResponse> {
+    // D-090 Apify-5 — defense-in-depth: refuse any actor not on the
+    // hardcoded allowlist before we send the token over the wire.
+    assertActorAllowed(actorId);
     const token = getApifyToken();
     const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token ?? "")}`;
     const controller = new AbortController();
