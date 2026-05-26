@@ -217,6 +217,8 @@ const ALLOWED_PATH_SUFFIXES = [
   "/lib/audit/write.ts",
   // BP26: forensics_log retention cron — service-role daily purge. §26.5a.
   "/inngest/forensics-log-purge-cron.ts",
+  // §26.5: audit_log 7-year retention cron — service-role daily purge.
+  "/inngest/audit-log-retention-purge.ts",
   // BP26: §26.6 monitoring crons — cross-tenant scans, no user session.
   "/inngest/auth-failure-monitor.ts",
   "/inngest/permission-denied-monitor.ts",
