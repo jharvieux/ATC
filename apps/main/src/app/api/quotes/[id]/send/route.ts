@@ -14,6 +14,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { renderQuotePdf } from "@/lib/quotes/render-quote-pdf";
+import { triggerMatchingSequences } from "@/lib/tasks/sequence-engine";
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 const QUOTE_PDF_BUCKET = "quote-pdfs";
@@ -147,6 +148,20 @@ export async function POST(
         quote.id,
         renderErr instanceof Error ? renderErr.message : String(renderErr),
       );
+    }
+
+    // §37.4.2 — fan-out task sequences whose trigger_event='quote_sent'.
+    // Non-fatal: a sequence-fan-out failure must not break quote send.
+    try {
+      await triggerMatchingSequences({
+        tenant_id: ctx.tenant_id,
+        trigger: "quote_sent",
+        record: { quote_id: id },
+        triggered_by_user_id: null,
+        svc: db,
+      });
+    } catch (seqErr) {
+      console.warn("[quotes/send] sequence fan-out failed:", seqErr);
     }
 
     return Response.json({ quote: data, pdf_url: pdfUrl });
