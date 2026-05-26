@@ -22,7 +22,7 @@ import type {
 import { groupSailingsForBatch, routeFor, type LineRoute } from "./line-routing";
 import { readPriceQuote, upsertPriceQuote } from "./pricing-cache";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
-import { budgetGate } from "./budget-priority";
+import { checkMonthlyBudget } from "./budget-priority";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000; // §33.3 — 5-minute timeout
 
@@ -54,46 +54,10 @@ export class ApifyPricingAdapter implements PricingDataSource {
     return { status: "hit", quote };
   }
 
-  async refreshGeneralPricing(opts: {
-    lines: CruiseLineCode[];
-    regions: RegionCode[];
-    dateRange: { from: Date; to: Date };
-  }): Promise<RefreshResult> {
-    const guard = await this.checkGuards();
-    if (guard) return guard;
-
-    // General refresh dispatches one actor run per (line × region × date-window).
-    // For v1 we keep it simple: one actor run per enabled line in `opts.lines`,
-    // with the date range as the search window. Region is forwarded as an actor
-    // input hint; per-line input builders ignore it when the actor doesn't accept it.
-    let refreshed = 0, failed = 0, totalSpend = 0;
-    let partial = false, reason: string | undefined;
-    let lastRunId: string | null = null;
-    void opts.regions; // forwarded by per-line builders if applicable
-
-    for (const line of opts.lines) {
-      const route = routeFor(line);
-      if (!route) continue;
-      const result = await this.runForLine(route, [], opts.dateRange);
-      refreshed += result.sailings_refreshed;
-      failed += result.sailings_failed;
-      totalSpend += result.spend_usd;
-      if (result.partial) {
-        partial = true;
-        reason ??= result.reason;
-      }
-      lastRunId = result.actor_run_id ?? lastRunId;
-    }
-
-    return {
-      sailings_refreshed: refreshed,
-      sailings_failed: failed,
-      actor_run_id: lastRunId,
-      spend_usd: totalSpend,
-      partial,
-      ...(reason ? { reason } : {}),
-    };
-  }
+  // D-088: refreshGeneralPricing was removed. General-pricing context for
+  // the AI is now sourced from the DIY CruiseMapper scraper (no Apify
+  // spend). The price-watch evaluator is the SOLE caller of Apify; it uses
+  // refreshTrackedSailings below for sailings with an active watch.
 
   async refreshTrackedSailings(sailings: SailingKey[]): Promise<RefreshResult> {
     const guard = await this.checkGuards();
@@ -143,12 +107,13 @@ export class ApifyPricingAdapter implements PricingDataSource {
     if (!getApifyToken()) {
       return refuse("no_api_token", "APIFY_API_TOKEN not set");
     }
-    // §33.9.3 — Tracked-sailings refresh is the *last* to pause. Use the
-    // full monthly cap, NOT the general-pricing sub-cap that the
-    // CruiseMapper itinerary actor checks. Subscriber-facing watches keep
-    // evaluating until the full Apify monthly budget is exhausted.
+    // §33.9.3 D-088 — tracked-sailings refresh is the SOLE Apify consumer
+    // now. General-pricing was removed (DIY scraper replaces it). When
+    // month-to-date spend hits APIFY_MONTHLY_BUDGET_USD_CEILING, tracked-
+    // sailings pauses for the rest of the month — subscriber watches go
+    // un-refreshed but stay armed.
     const monthly = await this.monthlySpendUsd();
-    const gate = budgetGate("tracked_sailings", monthly);
+    const gate = checkMonthlyBudget(monthly);
     if (gate.paused) {
       await sendOperatorAlert({
         severity: "high",
