@@ -309,8 +309,9 @@ describe("validate booking_confirmation — boundaries", () => {
         total_amount_cents: 100000,
         currency: "USD",
         commission_rate: 0.12,
-        passenger_first_name: "J",
-        passenger_last_name: "D",
+        commission_amount_cents: 12000,
+        cabin_category: null,
+        passenger_last_names: ["D"],
         ...overrides,
       },
     };
@@ -395,8 +396,8 @@ describe("validate booking_confirmation — duplicate detection", () => {
       fields: {
         cruise_line: "Royal", ship_name: "Wonder", sailing_date: "2026-12-01",
         departure_port: "Miami", duration_nights: 7, provider_booking_ref: ref,
-        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12,
-        passenger_first_name: "J", passenger_last_name: "D",
+        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12, commission_amount_cents: 12000, cabin_category: null,
+        passenger_last_names: ["D"],
       },
     };
   }
@@ -441,7 +442,7 @@ describe("validate commission_statement — line item completeness", () => {
           statement_period_start: "2026-04-01",
           statement_period_end: "2026-05-01",
           line_items: [
-            { provider_booking_ref: null, passenger_first_name: "J", passenger_last_name: "D",
+            { provider_booking_ref: null, passenger_last_name: "D", cruise_line: null, ship_name: null, sailing_date: null,
               commissionable_fare_cents: 100000, commission_rate: 0.12, commission_amount_cents: 12000 },
           ],
         },
@@ -459,7 +460,7 @@ describe("validate commission_statement — line item completeness", () => {
           statement_period_start: "2026-04-01",
           statement_period_end: "2026-05-01",
           line_items: [
-            { provider_booking_ref: "REF-1", passenger_first_name: "J", passenger_last_name: "D",
+            { provider_booking_ref: "REF-1", passenger_last_name: "D", cruise_line: null, ship_name: null, sailing_date: null,
               commissionable_fare_cents: 100000, commission_rate: 0.12, commission_amount_cents: null },
           ],
         },
@@ -479,8 +480,8 @@ describe("validate booking_confirmation — exact-boundary dates", () => {
       fields: {
         cruise_line: "Royal", ship_name: "Wonder", sailing_date: just_over,
         departure_port: "Miami", duration_nights: 7, provider_booking_ref: "REF-1",
-        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12,
-        passenger_first_name: "J", passenger_last_name: "D",
+        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12, commission_amount_cents: 12000, cabin_category: null,
+        passenger_last_names: ["D"],
       },
     }, fakeDb({ data: [], error: null }));
     expect(flags.some((f) => f.reason.includes("is in the past"))).toBe(true);
@@ -493,8 +494,8 @@ describe("validate booking_confirmation — exact-boundary dates", () => {
       fields: {
         cruise_line: "Royal", ship_name: "Wonder", sailing_date: just_under,
         departure_port: "Miami", duration_nights: 7, provider_booking_ref: "REF-1",
-        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12,
-        passenger_first_name: "J", passenger_last_name: "D",
+        total_amount_cents: 100000, currency: "USD", commission_rate: 0.12, commission_amount_cents: 12000, cabin_category: null,
+        passenger_last_names: ["D"],
       },
     }, fakeDb({ data: [], error: null }));
     expect(flags.find((f) => f.reason.includes("is in the past"))).toBeUndefined();
@@ -513,7 +514,7 @@ describe("validate commission_statement — period date boundary", () => {
         statement_period_start: "2026-05-01",
         statement_period_end: "2026-05-01",
         line_items: [{
-          provider_booking_ref: "REF-1", passenger_first_name: "J", passenger_last_name: "D",
+          provider_booking_ref: "REF-1", passenger_last_name: "D", cruise_line: null, ship_name: null, sailing_date: null,
           commissionable_fare_cents: 100000, commission_rate: 0.12, commission_amount_cents: 12000,
         }],
       },
@@ -528,7 +529,7 @@ describe("validate commission_statement — period date boundary", () => {
         statement_period_start: "2026-05-02",
         statement_period_end: "2026-05-01",
         line_items: [{
-          provider_booking_ref: "REF-1", passenger_first_name: "J", passenger_last_name: "D",
+          provider_booking_ref: "REF-1", passenger_last_name: "D", cruise_line: null, ship_name: null, sailing_date: null,
           commissionable_fare_cents: 100000, commission_rate: 0.12, commission_amount_cents: 12000,
         }],
       },

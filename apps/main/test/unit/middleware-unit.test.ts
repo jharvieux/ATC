@@ -330,12 +330,16 @@ describe("middleware()", () => {
       // Locks the `NODE_ENV !== "production" && VERCEL_ENV !== "production"` AND check.
       // A mutation to `||` would activate bypass whenever EITHER is non-prod — defeating
       // the belt-and-suspenders posture from MEMORY audit Finding 3.
-      const savedNode = process.env.NODE_ENV;
-      const savedVercel = process.env.VERCEL_ENV;
-      process.env.NODE_ENV = "production";
-      process.env.VERCEL_ENV = "preview";
-      process.env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
-      process.env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
+      // process.env.NODE_ENV is readonly in @types/node 22+; cast through
+      // any to write. This is the standard workaround used in vitest
+      // suites that exercise NODE_ENV-gated code paths.
+      const env = process.env as Record<string, string | undefined>;
+      const savedNode = env.NODE_ENV;
+      const savedVercel = env.VERCEL_ENV;
+      env.NODE_ENV = "production";
+      env.VERCEL_ENV = "preview";
+      env.TEST_AUTH_BYPASS_TOKEN = "test-bypass-secret";
+      env.TEST_AUTH_BYPASS_TENANT_ID = "test-tenant-99";
       mocks.getTenantBySlug.mockResolvedValue(payingTenant());
       try {
         const res = await middleware(makeReq({
@@ -346,10 +350,10 @@ describe("middleware()", () => {
         expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
         expect(mocks.getTenantBySlug).toHaveBeenCalled();
       } finally {
-        if (savedNode !== undefined) process.env.NODE_ENV = savedNode;
-        else delete process.env.NODE_ENV;
-        if (savedVercel !== undefined) process.env.VERCEL_ENV = savedVercel;
-        else delete process.env.VERCEL_ENV;
+        if (savedNode !== undefined) env.NODE_ENV = savedNode;
+        else delete env.NODE_ENV;
+        if (savedVercel !== undefined) env.VERCEL_ENV = savedVercel;
+        else delete env.VERCEL_ENV;
       }
     });
 
