@@ -1,13 +1,14 @@
 // §24.4 — Submit chat feedback (thumbs up/down + optional reason).
 //
 // Body: { message_id: string, score: -1|0|1, reason?: string }.
-// Writes feedback_score and feedback_reason on the messages row. The §6.10
-// authority-loop nudges (RAG side) consume this signal via the existing
-// retrieve/authority pipeline.
+// Writes feedback_score and feedback_reason on the messages row. Then
+// propagates the per-chunk signal to the RAG service so the §6.10
+// feedback_confidence_factor at retrieval time picks it up.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { publishChunkFeedback } from "@/lib/rag-sync/publish-chunk-feedback";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -29,6 +30,17 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const db = tenantClient(ctx);
+
+    // Read existing rag_chunks_used BEFORE updating so we know which
+    // chunks to attribute the signal to. The §6.10 events table is
+    // append-only — re-thumbing a message would queue another event,
+    // which is fine (the rolling counters absorb it).
+    const { data: msgRow } = await db
+      .from("messages")
+      .select("rag_chunks_used")
+      .eq("id", messageId)
+      .maybeSingle();
+
     const { error } = await db
       .from("messages")
       .update({
@@ -37,6 +49,21 @@ export async function POST(req: Request): Promise<Response> {
       })
       .eq("id", messageId);
     if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    // §6.10 — Propagate to RAG. Best-effort: failure here doesn't fail
+    // the parent write. The signal_direction maps from -1/+1 only;
+    // score=0 means "clear my previous feedback" — no chunk event sent.
+    if (score !== 0 && msgRow) {
+      const rag = (msgRow as { rag_chunks_used: { ids?: string[] } | null }).rag_chunks_used;
+      const chunkIds = rag?.ids ?? [];
+      if (chunkIds.length > 0) {
+        void publishChunkFeedback({
+          message_id: messageId,
+          signal_direction: score > 0 ? "up" : "down",
+          chunk_ids: chunkIds,
+        });
+      }
+    }
 
     return Response.json({ ok: true });
   } catch (err) {
