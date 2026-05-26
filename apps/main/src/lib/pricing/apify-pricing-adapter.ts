@@ -16,10 +16,9 @@ import type {
   CruiseLineCode,
   PricingDataSource,
   RefreshResult,
-  RegionCode,
   SailingKey,
 } from "./types";
-import { groupSailingsForBatch, routeFor, type LineRoute } from "./line-routing";
+import { assertActorAllowed, groupSailingsForBatch, matchesAnyWatchedSailing, routeFor, type LineRoute } from "./line-routing";
 import { readPriceQuote, upsertPriceQuote } from "./pricing-cache";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { checkMonthlyBudget } from "./budget-priority";
@@ -34,6 +33,7 @@ type AdapterRefuseReason =
   | "unsupported_line"
   | "actor_dispatch_failed"
   | "actor_timeout"
+  | "allowlist_violation"
   | "no_results";
 
 interface ApifyResponse {
@@ -139,7 +139,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
   private async runForLine(
     route: LineRoute,
     sailings: SailingKey[],
-    dateRange?: { from: Date; to: Date },
   ): Promise<RefreshResult> {
     // Pre-flight cost estimate. We don't know exact pricing without
     // dispatching, so use a conservative per-result estimate.
@@ -151,12 +150,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
     }
 
     const input = route.inputBuilder(sailings);
-    if (dateRange) {
-      (input as Record<string, unknown>).dateRange = {
-        from: dateRange.from.toISOString().slice(0, 10),
-        to: dateRange.to.toISOString().slice(0, 10),
-      };
-    }
 
     let response: ApifyResponse | null = null;
     let runStatus: "succeeded" | "failed" | "partial" = "succeeded";
@@ -170,32 +163,51 @@ export class ApifyPricingAdapter implements PricingDataSource {
       runStatus = err instanceof DOMException && err.name === "TimeoutError" ? "failed" : "failed";
       const reasonStr = err instanceof Error ? err.message : String(err);
       await this.writeLedger(route.actorId, null, 0, route.cruiseLine, "failed", { error: reasonStr });
+      // D-090 Apify-5 — distinguish allowlist violations so the operator can
+      // grep ledger rows for them; these indicate a code/config bug, not a
+      // network failure.
+      if (reasonStr.startsWith("apify_allowlist_violation")) {
+        await sendOperatorAlert({
+          severity: "high",
+          signal: "apify_allowlist_violation",
+          detail: reasonStr,
+          payload: { actor_id: route.actorId, cruise_line: route.cruiseLine },
+        });
+        return refuse("allowlist_violation", reasonStr);
+      }
       return refuse(reasonStr.includes("timeout") ? "actor_timeout" : "actor_dispatch_failed", reasonStr);
     }
 
-    // Map + upsert.
+    // Map + filter to watched sailings + upsert. D-088 Apify-4: the actor
+    // dumps the whole market; we only cache items that belong to a watched
+    // sailing. Any watched sailing that didn't appear in the response is
+    // counted as a failure (no price found this run).
     const items = response.items ?? [];
-    let refreshed = 0, failedCount = 0;
+    let refreshed = 0;
+    const matchedKeys = new Set<string>();
     for (const item of items) {
       const mapped = route.outputMapper(item);
-      if (!mapped) {
-        failedCount += 1;
-        continue;
-      }
-      if (!validateMapped(mapped)) {
-        failedCount += 1;
-        continue;
-      }
+      if (!mapped) continue;
+      if (!validateMapped(mapped)) continue;
+      if (sailings.length > 0 && !matchesAnyWatchedSailing(mapped, sailings)) continue;
       try {
         await upsertPriceQuote(this.db, mapped);
         refreshed += 1;
+        matchedKeys.add(sailingKeyStr(mapped.key));
       } catch {
-        failedCount += 1;
+        // upsert error counted below via the watched-set diff
       }
     }
+    const failedCount = sailings.length > 0
+      ? sailings.filter((s) => !matchedKeys.has(sailingKeyStr(s))).length
+      : 0;
 
     if (refreshed === 0 && items.length > 0) runStatus = "partial";
-    await this.writeLedger(route.actorId, runId, actualSpend, route.cruiseLine, runStatus, { results_count: items.length });
+    await this.writeLedger(route.actorId, runId, actualSpend, route.cruiseLine, runStatus, {
+      results_count: items.length,
+      watched_count: sailings.length,
+      matched_count: refreshed,
+    });
 
     return {
       sailings_refreshed: refreshed,
@@ -207,6 +219,9 @@ export class ApifyPricingAdapter implements PricingDataSource {
   }
 
   private async dispatchActor(actorId: string, input: unknown): Promise<ApifyResponse> {
+    // D-090 Apify-5 — defense-in-depth: refuse any actor not on the
+    // hardcoded allowlist before we send the token over the wire.
+    assertActorAllowed(actorId);
     const token = getApifyToken();
     const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token ?? "")}`;
     const controller = new AbortController();
@@ -247,6 +262,10 @@ export class ApifyPricingAdapter implements PricingDataSource {
       context,
     });
   }
+}
+
+function sailingKeyStr(k: SailingKey): string {
+  return `${k.line}|${k.ship}|${k.sailDate}|${k.departurePort}|${k.durationNights}`;
 }
 
 // ── Validation ─────────────────────────────────────────────────────────────

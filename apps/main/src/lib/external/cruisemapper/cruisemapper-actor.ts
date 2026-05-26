@@ -23,6 +23,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { checkMonthlyBudget } from "@/lib/pricing/budget-priority";
+import { assertActorAllowed } from "@/lib/pricing/line-routing";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -70,6 +71,22 @@ export async function runCruiseMapperItineraryActor(
   }
 
   const actorId = process.env.CRUISEMAPPER_ITINERARY_ACTOR_ID ?? "crawlerbros/cruisemapper-cruises-scraper";
+
+  // D-090 Apify-5 — defense-in-depth: refuse if operator overrode the
+  // actor-id env to something not on the hardcoded allowlist.
+  try {
+    assertActorAllowed(actorId);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await writeLedger(db, actorId, null, 0, "failed", { error: reason, surface: "cruisemapper_itinerary" });
+    await sendOperatorAlert({
+      severity: "high",
+      signal: "apify_allowlist_violation",
+      detail: reason,
+      payload: { actor_id: actorId, surface: "cruisemapper_itinerary_deprecated" },
+    });
+    return { status: "failed", items: [], actor_run_id: null, spend_usd: 0, reason };
+  }
 
   const now = new Date();
   const monthsForward = opts.monthsForward ?? 24;

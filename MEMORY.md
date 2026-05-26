@@ -4,6 +4,89 @@ Newest entries on top.
 
 ---
 
+## D-090 — 2026-05-26 — Apify-5: APIFY_API_TOKEN blast-radius mitigations
+
+`APIFY_API_TOKEN` is account-level on Apify — leaked = unbounded spend across every actor in the Apify store. Two defenses landed this PR:
+
+### Layer 1 — operator-side scoped token (primary)
+
+Apify supports scoped tokens (confirmed 2026-05-26 via docs.apify.com/platform/integrations/api). Token is created with:
+
+- **Resource-specific Run permission** on exactly the 10 actor slugs we use (9 sercul + 1 deprecated crawlerbros legacy).
+- **"Restricted access" injection mode** — the actor receives a token with the same scope, can't escalate to other actors or account-level resources during the run.
+- NO account-level permissions. NO storage/webhook permissions.
+
+Documented end-to-end in `docs/runbooks/apify-token-scoping.md` including: creation UI walkthrough, quarterly rotation cadence, compromise-response steps, monitoring gaps, and the "what this doesn't protect against" residuals.
+
+### Layer 2 — code-side allowlist enforcement (defense-in-depth)
+
+Hardcoded `APIFY_ACTOR_ALLOWLIST: ReadonlySet<string>` in `apps/main/src/lib/pricing/line-routing.ts`. `assertActorAllowed(actorId)` throws `ApifyAllowlistViolation` if called with anything not on the list. Wired into both Apify-API dispatch sites:
+
+- `ApifyPricingAdapter.dispatchActor` (the 9 sercul per-line scrapers) — violation → ledger row `failed` + `sendOperatorAlert("apify_allowlist_violation")` + `refuse("allowlist_violation", ...)`.
+- `runCruiseMapperItineraryActor` (deprecated legacy path) — same handling.
+
+A drift-guard test in `line-routing.test.ts` asserts every actorId in `LINE_ROUTES` appears in the allowlist, and the allowlist size is exactly 10.
+
+### Residual gaps the operator should know about
+
+- **No native Apify hard spend cap.** Our `APIFY_MONTHLY_BUDGET_USD_CEILING` ($500 default) and `APIFY_RUN_BUDGET_USD_CEILING` ($50 default) gate the adapter, but a leaked token used directly against `api.apify.com` bypasses our code. Mitigated by Layer 1 scoping (attacker can only run 10 allowlisted actors), but ~$2/1000 results across those is theoretically possible until rotation.
+- **No Apify budget-alert webhook.** Mitigation: enable the daily-usage email notification in Apify Console (Settings → Notifications → Usage) as an out-of-band tripwire. Documented in the runbook.
+- **`vercel env pull` for production** would write the live token to a developer laptop. Don't do it — pull only `preview`. Documented.
+
+### What was rejected
+
+- **Removing the crawlerbros legacy actor from the allowlist.** Operator-documented in cruisemapper-actor.ts header as an emergency escape hatch behind `CRUISEMAPPER_ITINERARY_INGEST_ENABLED=true`. Stripping it from the allowlist would silently break that escape hatch. Kept with the comment "remove when the DIY scraper fully covers itinerary data."
+- **Runtime-configurable allowlist (env-driven).** Adds complexity without enabling a real use case — every new actor needs both code + Apify-side config changes anyway. Stayed hardcoded.
+- **Implementing a startup self-test that probes the token's actual scope.** Would require a no-op Apify API call on every cold boot; cost-and-latency-out-of-proportion to the value. The operator runbook covers manual verification instead.
+
+### Related artifacts
+
+`apps/main/src/lib/pricing/line-routing.ts` (allowlist + guard), `apps/main/src/lib/pricing/apify-pricing-adapter.ts` (allowlist-violation refuse arm + operator alert), `apps/main/src/lib/external/cruisemapper/cruisemapper-actor.ts` (legacy path guard), `apps/main/test/unit/pricing/line-routing.test.ts` (6 new tests for allowlist + assertActorAllowed), `docs/runbooks/apify-token-scoping.md` (operator-side scoping walkthrough).
+
+---
+
+## D-089 — 2026-05-26 — Apify-4: catalog research + 9-line enablement + per-line kill switches
+
+Apify Store catalog audit on 2026-05-26 (WebFetch + WebSearch against apify.com). Findings landed in `apps/main/src/lib/pricing/line-routing.ts`.
+
+### What was confirmed
+
+All 4 previously-disabled lines (`TBC/...` placeholders) had verified slugs on the same author (`sercul`) as the existing 5 enabled actors. Per-result cost ranges $1.00–$2.00 / 1,000 results, well within the existing per-run + monthly budget caps. Slugs + market codes:
+
+| Line | Slug | Market code | Cost |
+|---|---|---|---|
+| RCL | `sercul/royal-caribbean` | `USA` | (existing) |
+| NCL | `sercul/norwegian-cruise-scraper` | `USA` | (existing) |
+| PCL | `sercul/princess-cruise-scraper` | `USA` | (existing) |
+| CEL | `sercul/celebrity-cruises` | `USA` | (existing) |
+| COS | `sercul/costa-cruises` | `USA` | (existing) |
+| CCL | `sercul/carnival-cruises` | `US` | $1.00/1k |
+| HAL | `sercul/hal-cruises-scraper` | `US` | $1.00/1k |
+| MSC | `sercul/msc-cruises-scraper` | `US` | $2.00/1k |
+| DSY | `sercul/disney-cruises-scraper` | `US` | $1.50/1k |
+
+**Market code inconsistency is real:** 5 older sercul actors use `"USA"`; the 4 newer ones use `"US"`. The route table records each line's expected code in a `marketCode` field — don't hardcode it.
+
+### What was surveyed and confirmed unavailable
+
+The 6 lines without dedicated Apify actors as of 2026-05-26: Virgin Voyages, Viking (Ocean + River), Oceania, Regent Seven Seas, Silversea, Seabourn. These stay out of `LINE_ROUTES`; `routeFor` returns null; `getCachedPrice` returns `{ status: 'unsupported' }`. General-pricing context for these lines flows from the DIY CruiseMapper scraper (D-088 Apify-2) into `general_pricing_ranges`. The price-watch UI should not offer subscriptions for these lines.
+
+### Discovered while implementing
+
+`buildSerculInput` was producing the wrong input shape (`{ market: "US", sailings: [...] }`). Every sercul actor schema is `{ region, maxRows, useApifyProxy, ... }` with `region` required and no per-sailing filter. Had anyone flipped `APIFY_ADAPTER_ENABLED=true` before today, every actor run would have errored at input validation. Rewritten in this PR.
+
+### What was rejected
+
+- **Aggregator fallback (`vulnv/booking-cruises-scraper`) for the 6 survey lines.** Existing D-070 says aggregator stays off until operator opts in per-line. Survey result reinforces that — adding it generically would require validating quality and parsing a different output shape, and would still be lower-fidelity than line-specific scrapers.
+- **Per-sailing actor input filters.** Sercul actors don't accept them. Replaced with client-side `matchesAnyWatchedSailing` filter post-fetch, so one actor run per line covers every watched US sailing in a single $1-$2 charge. The old `groupSailingsForBatch` was bucketing by (line, port, month) which would have multiplied actor runs by 6-12x without changing the cost-per-result.
+- **Global `enabled: boolean` field on LineRoute.** Replaced with env-based `APIFY_ENABLED_<LINE>` kill switches so operator can disable a single line without a code change. Default ENABLED for all 9 (matches operator's "all lines enabled with kill switches in place" direction). Global `APIFY_ADAPTER_ENABLED` still gates the entire adapter off.
+
+### Related artifacts
+
+`apps/main/src/lib/pricing/line-routing.ts`, `apps/main/src/lib/pricing/apify-pricing-adapter.ts` (client-side filter + signature cleanup), `apps/main/src/lib/env.ts` (9 new `APIFY_ENABLED_*` + `APIFY_MAX_ROWS_PER_RUN`), `apps/main/test/unit/pricing/line-routing.test.ts` (rewritten — 16 tests).
+
+---
+
 ## D-087 — 2026-05-26 — Walkthrough decisions (post-overnight, operator confirmations)
 
 After the overnight sweep landed (D-086), the operator walked through the open decisions and made the following calls. Each is now recorded in `reality-delta.md` §4 (for runtime decisions) or the supplement (for deferrals) so future engineers see the trail.
