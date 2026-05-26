@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { checkFeedbackRateLimit } from "@/lib/rate-limit/feedback-limit";
 
 const bodySchema = z.object({
   message_id: z.string().uuid().nullable(),
@@ -50,6 +51,20 @@ export async function POST(req: Request): Promise<Response> {
   if (!secret) {
     return Response.json({ error: "rag_webhook_secret_not_configured" }, { status: 500 });
   }
+
+  // §6.10 / D-087 rate limit. Defense-in-depth: HMAC verifies the caller
+  // shares the secret; rate limit bounds blast radius if the secret leaks.
+  // Short prefix of the secret (8 chars) is the bucket hint so legitimate
+  // rotations don't bleed buckets across keys.
+  const secretHint = secret.slice(0, 8);
+  const rl = await checkFeedbackRateLimit(req, secretHint);
+  if (!rl.allowed) {
+    return Response.json(
+      { error: "rate_limited", reset_seconds: rl.reset_seconds },
+      { status: 429, headers: { "Retry-After": String(rl.reset_seconds) } },
+    );
+  }
+
   const rawBody = await req.text();
   const provided = req.headers.get("x-webhook-signature") ?? "";
   const expected = await hmacHex(secret, rawBody);
