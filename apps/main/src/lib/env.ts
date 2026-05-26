@@ -78,6 +78,11 @@ const envSchema = z.object({
   // sailing inside this window are NOT re-prompted via chat; the §20.5
   // submit gate handles them. Default 60 days.
   DOB_IMMINENT_BOOKING_WINDOW_DAYS: z.coerce.number().int().positive().optional().default(60),
+  // §33.7 D-088 — Kill switch for the AI price-rounding rule (+10%
+  // then round to nearest $100, "approximately/around" framing).
+  // Default ENABLED; set to false to bypass the rule entirely (raw
+  // cached values flow into the prompt without softening).
+  AI_PRICE_ROUNDING_ENABLED: z.coerce.boolean().optional().default(true),
   // Credential encryption (§13.5.1) — 256-bit keys, base64-encoded
   APP_ENCRYPTION_KEY_CURRENT: z.string().min(1),
   APP_ENCRYPTION_KEY_ID_CURRENT: z.string().min(1),

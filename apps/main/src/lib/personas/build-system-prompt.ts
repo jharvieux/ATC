@@ -90,6 +90,13 @@ type BuildSystemPromptOpts = {
   // buildDisplayableAssetsBlock(assets). Optional; when omitted or empty,
   // the section is omitted from the prompt entirely.
   displayable_assets_block?: string;
+  // §33.7 D-088 — PRICING ANCHORS block. Built by
+  // buildPricingAnchorsBlock(db, entities). Optional; when omitted, the
+  // section is skipped entirely. The static "PRICING GUIDANCE" rules
+  // are folded into the block by the builder so the model only sees them
+  // when anchors are present (avoids cache churn when the model needs no
+  // price guidance for a turn).
+  pricing_anchors_block?: string;
 };
 
 export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<SystemPromptResult> {
@@ -102,6 +109,7 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     db,
     knowledge_block,
     displayable_assets_block,
+    pricing_anchors_block,
   } = opts;
 
   const base = BASE_BLOCKS.get(persona_slug);
@@ -162,6 +170,12 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // in the "facts" section of the prompt. Omitted when empty.
   if (displayable_assets_block) {
     layers.push(`\n\n${displayable_assets_block}`);
+  }
+
+  // §33.7 D-088 — PRICING ANCHORS block, also in the facts section.
+  // Contains the rounding-rule guidance + the formatted anchor list.
+  if (pricing_anchors_block) {
+    layers.push(`\n\n${pricing_anchors_block}`);
   }
 
   // Tone calibration (already substituted in layer 1, also append as a reminder)
