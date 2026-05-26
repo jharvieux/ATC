@@ -16,10 +16,9 @@ import type {
   CruiseLineCode,
   PricingDataSource,
   RefreshResult,
-  RegionCode,
   SailingKey,
 } from "./types";
-import { groupSailingsForBatch, routeFor, type LineRoute } from "./line-routing";
+import { groupSailingsForBatch, matchesAnyWatchedSailing, routeFor, type LineRoute } from "./line-routing";
 import { readPriceQuote, upsertPriceQuote } from "./pricing-cache";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { checkMonthlyBudget } from "./budget-priority";
@@ -139,7 +138,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
   private async runForLine(
     route: LineRoute,
     sailings: SailingKey[],
-    dateRange?: { from: Date; to: Date },
   ): Promise<RefreshResult> {
     // Pre-flight cost estimate. We don't know exact pricing without
     // dispatching, so use a conservative per-result estimate.
@@ -151,12 +149,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
     }
 
     const input = route.inputBuilder(sailings);
-    if (dateRange) {
-      (input as Record<string, unknown>).dateRange = {
-        from: dateRange.from.toISOString().slice(0, 10),
-        to: dateRange.to.toISOString().slice(0, 10),
-      };
-    }
 
     let response: ApifyResponse | null = null;
     let runStatus: "succeeded" | "failed" | "partial" = "succeeded";
@@ -173,29 +165,36 @@ export class ApifyPricingAdapter implements PricingDataSource {
       return refuse(reasonStr.includes("timeout") ? "actor_timeout" : "actor_dispatch_failed", reasonStr);
     }
 
-    // Map + upsert.
+    // Map + filter to watched sailings + upsert. D-088 Apify-4: the actor
+    // dumps the whole market; we only cache items that belong to a watched
+    // sailing. Any watched sailing that didn't appear in the response is
+    // counted as a failure (no price found this run).
     const items = response.items ?? [];
-    let refreshed = 0, failedCount = 0;
+    let refreshed = 0;
+    const matchedKeys = new Set<string>();
     for (const item of items) {
       const mapped = route.outputMapper(item);
-      if (!mapped) {
-        failedCount += 1;
-        continue;
-      }
-      if (!validateMapped(mapped)) {
-        failedCount += 1;
-        continue;
-      }
+      if (!mapped) continue;
+      if (!validateMapped(mapped)) continue;
+      if (sailings.length > 0 && !matchesAnyWatchedSailing(mapped, sailings)) continue;
       try {
         await upsertPriceQuote(this.db, mapped);
         refreshed += 1;
+        matchedKeys.add(sailingKeyStr(mapped.key));
       } catch {
-        failedCount += 1;
+        // upsert error counted below via the watched-set diff
       }
     }
+    const failedCount = sailings.length > 0
+      ? sailings.filter((s) => !matchedKeys.has(sailingKeyStr(s))).length
+      : 0;
 
     if (refreshed === 0 && items.length > 0) runStatus = "partial";
-    await this.writeLedger(route.actorId, runId, actualSpend, route.cruiseLine, runStatus, { results_count: items.length });
+    await this.writeLedger(route.actorId, runId, actualSpend, route.cruiseLine, runStatus, {
+      results_count: items.length,
+      watched_count: sailings.length,
+      matched_count: refreshed,
+    });
 
     return {
       sailings_refreshed: refreshed,
@@ -247,6 +246,10 @@ export class ApifyPricingAdapter implements PricingDataSource {
       context,
     });
   }
+}
+
+function sailingKeyStr(k: SailingKey): string {
+  return `${k.line}|${k.ship}|${k.sailDate}|${k.departurePort}|${k.durationNights}`;
 }
 
 // ── Validation ─────────────────────────────────────────────────────────────
