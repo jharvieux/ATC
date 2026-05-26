@@ -19,7 +19,11 @@
 //                           triggered a DB-tier failure was seeing raw
 //                           PostgREST error text in the 401 body.)
 
-import { AuthForbidden, AuthReauthRequired } from "./assert-permission";
+import {
+  AuthForbidden,
+  AuthReauthRequired,
+  ConsentPendingError,
+} from "./assert-permission";
 import { PlatformAdminError } from "./assert-platform-admin";
 
 // Known-shape error messages that `assertPermission` throws as a plain
@@ -57,6 +61,16 @@ export function respondToAuthError(err: unknown): Response {
     return Response.json(
       { error: "reauth_required", return_to: err.return_to },
       { status: 401 },
+    );
+  }
+  if (err instanceof ConsentPendingError) {
+    return Response.json(
+      {
+        error: "consent_pending",
+        return_to: err.return_to,
+        pending: err.pending,
+      },
+      { status: 403 },
     );
   }
   if (isKnownAuthFailure(err)) {

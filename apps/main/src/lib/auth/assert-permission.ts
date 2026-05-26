@@ -23,6 +23,7 @@ import {
 } from "./sensitive-routes";
 import { tryTestBypass } from "./test-bypass";
 import { isPermitted, type UserRole } from "./permission-grants";
+import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
 
 export type User = {
   id: string;
@@ -57,6 +58,34 @@ export class AuthReauthRequired extends Error {
   constructor(return_to: string) {
     super("Sensitive action requires re-authentication (auth_time > 4h).");
     this.return_to = return_to;
+  }
+}
+
+/**
+ * §17.4 — Pending consent gate. Thrown when the caller has rows in
+ * user_consent_pending (a new legal document version was published since
+ * their last acceptance). Spec says ANY authenticated request other than
+ * /consent + /logout + /legal/* must be redirected to /consent. In this
+ * codebase the auth token isn't in cookies (it's in localStorage and
+ * passed via Authorization headers), so middleware can't see who's
+ * authenticated — the gate enforces here instead, where we already
+ * verified the bearer and know the auth_user_id.
+ *
+ * The consent acceptance endpoints (/api/user/consent and
+ * /api/user/consent/pending) use Supabase auth directly without going
+ * through assertPermission, so they're naturally exempt — the user can
+ * still POST their acceptance while every other surface is gated.
+ */
+export class ConsentPendingError extends Error {
+  readonly code = "consent_pending" as const;
+  readonly return_to: string;
+  readonly pending: PendingConsent[];
+  constructor(return_to: string, pending: PendingConsent[]) {
+    super(
+      `Pending consent renewal required for ${pending.length} document(s).`,
+    );
+    this.return_to = return_to;
+    this.pending = pending;
   }
 }
 
@@ -114,10 +143,23 @@ export async function assertPermission(
     throw new Error("assertPermission: invalid or expired access token.");
   }
 
+  const pathname = new URL(req.url).pathname;
+
+  // §17.4 Versioned consent gate. If the caller has pending user_consent_pending
+  // rows (new document version published since their last acceptance), block
+  // every authenticated action other than the consent acceptance flow itself.
+  // The /api/user/consent and /api/user/consent/pending routes don't go
+  // through assertPermission, so this doesn't deadlock the user out of
+  // accepting; downstream they'll catch ConsentPendingError, return 403 with
+  // `consent_pending` + return_to, and the client routes to /consent.
+  const pending = await getConsentPending(authData.user.id);
+  if (pending.length > 0) {
+    throw new ConsentPendingError(pathname, pending);
+  }
+
   // §26.3 sensitive-action re-auth check. Decode auth_time from the JWT
   // payload (no signature verification needed — Supabase already validated
   // the token in getUser()). If stale, throw the structured error.
-  const pathname = new URL(req.url).pathname;
   if (isSensitiveRoute(pathname)) {
     const authTime = readAuthTime(accessToken);
     if (authTime === null) {
