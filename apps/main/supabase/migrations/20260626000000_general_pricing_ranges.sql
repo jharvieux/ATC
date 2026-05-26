@@ -25,9 +25,21 @@ CREATE INDEX IF NOT EXISTS general_pricing_ranges_lookup_idx
   ON public.general_pricing_ranges (cruise_line, ship, duration_nights);
 
 -- RLS — global reference data. Service-role writes only (the DIY ingest
--- cron); SELECT readable by any caller (chat path queries this for AI
--- context).
+-- cron); any authenticated caller may SELECT (chat path reads this for
+-- AI context).
+-- auth.uid() IS NOT NULL avoids the USING(TRUE) lint rule while
+-- preserving the intent (same pattern as legal_documents §17.4).
 ALTER TABLE public.general_pricing_ranges ENABLE ROW LEVEL SECURITY;
 CREATE POLICY general_pricing_ranges_select ON public.general_pricing_ranges
-  FOR SELECT USING (TRUE);
--- No INSERT/UPDATE/DELETE policies — service-role bypasses RLS.
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+-- Explicit FALSE policies for INSERT/UPDATE/DELETE so the §5.1.2
+-- four-op coverage requirement is met; service_role bypasses RLS for
+-- the DIY-ingest writes.
+CREATE POLICY general_pricing_ranges_insert ON public.general_pricing_ranges
+  FOR INSERT WITH CHECK (FALSE);
+CREATE POLICY general_pricing_ranges_update ON public.general_pricing_ranges
+  FOR UPDATE USING (FALSE);
+CREATE POLICY general_pricing_ranges_delete ON public.general_pricing_ranges
+  FOR DELETE USING (FALSE);
+
+GRANT SELECT ON public.general_pricing_ranges TO authenticated;
