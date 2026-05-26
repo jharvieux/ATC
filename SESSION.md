@@ -1,52 +1,72 @@
-# Session state — last updated 2026-05-25 ~22:35 UTC
+# Session state — last updated 2026-05-26 ~05:00 UTC
 
-## Just completed
+## Just completed — overnight autonomous sweep
 
-Three-PR sweep closing items 1-5 of `docs/specs/reality-delta-supplement.md`:
+User went to bed and asked for:
+1. Fresh CodeQL scan + fix medium-or-higher alerts (high-confidence only).
+2. Exhaustive spec gap analysis across every section.
+3. Fix everything addressable; document the rest.
+4. Small themed PRs as I go.
 
-| PR | What | Status |
-|---|---|---|
-| #204 | §29.14 DR runbook + §30.7 k6 scripts (×6) + §14.11 supplement correction (false positive: Stripe Connect handles 1099-NEC) | Merged |
-| #205 | §16/§9/§22.5 — branding form + persona editor + RAG queue UI pages | Merged |
-| #206 | §32.3 — 10 missing help docs + 2 quickstarts + tier-aware loader extension | Open, CI pending |
+### CodeQL
 
-### Highlights
+- Triggered fresh full scan on dev.
+- Updated stale PR #196 (which was the inline-sanitizer fix for the 5 known medium alerts) by merging dev into it. CI green. Merged.
+- All 5 known medium alerts (4 log-injection + 1 client-side redirect) addressed.
+- New scan running in background; expected to show 0 alerts.
 
-- **§14.11 was a false positive** — Stripe Connect Express handles 1099-NEC generation automatically for sub-hosts ≥ $600/year. Original delta entry struck through with paper trail kept in the supplement.
-- **k6 scripts** are out-of-band per spec — CI does NOT run them. Six scenarios cover chat-sustained, signups-burst, group-invite-blast, rag-retrieval, stripe-webhook-flood, multi-tenant-fanout. Run from `tests/load/k6/` with a dedicated load-test environment.
-- **DR runbook** covers all 9 §29.14 scenarios with RTO/RPO targets, monthly backup-verification cadence, and quarterly recovery-rehearsal log structure (SOC 2 prerequisite).
-- **Tenant UI pages** use only existing API routes (`/api/tenant/branding`, `/api/tenant/personas/*`, `/api/rag/queue/*`) — no schema changes, no new endpoints.
-- **Help docs loader extended** to parse `tiers: [...]` frontmatter and filter via `listDocsForTier(tierCode)`. Docs without `tiers:` are treated as universal (so tier reorganizations don't accidentally hide content). New `[Screenshot: ...]` placeholders throughout for an operator-led content pass.
+### Spec sweep PRs landed tonight
+
+| PR | What |
+|---|---|
+| #196 | CodeQL inline sanitizer + URL parser fix — closes 5 medium alerts |
+| #213 | §6.7 promo-state-reconcile + drift-alert crons + §6.12 retrieval-log 90d aggregation + purge. Adds two RAG migrations (0016 + 0017) with RPCs. |
+| #214 | §11.7 AI memory extraction now writes `audit_log` rows (was missing — only customer/agent edits were audited) |
+| #215 | §6.10 chat feedback now propagates to `rag.knowledge_chunk_feedback_events`. New `/api/feedback` endpoint on RAG + `publishChunkFeedback` helper on main. Fire-and-forget; doesn't fail parent write. |
+
+PRs from earlier in the session also merged: #208 (§19.10+§26.5+§17.10+§10.5), #209 (§37 sequence triggers), #210 (§33.9.3 budget priority), #211 (§29.5 supabase runbook), #212 (listDocsForTier + custom-domain endpoint).
+
+### Spec sweep coverage
+
+- Read every subsection of all 40 spec sections + 7 addenda (§33–§40).
+- For each subsection: grep code, identify implementation, mark TICK or GAP.
+- 45+ subsections marked TICK and now listed in `docs/specs/reality-delta-supplement.md` "Spec subsections marked TICK during the sweep".
+- 5 gaps closed in code (above).
+- §32.9 reclassified — implemented as a Claude Code slash command (`.claude/commands/fix-bugs.md`), not a runtime UI.
+- Cost-deferred items confirmed deferred and pointing to `reality-delta.md §1`.
+
+### Gaps remaining — not fit for overnight, recommended next steps
+
+- **§20.4 / §38.8 / §38.8.1 / §39.5 — Customer-facing AI chat panels** on the booking flow, quote builder, customer quote view, and customer trip view. ~2 days of work; needs browser testing. Recommend a dedicated build prompt.
+- **§13.9 active health probing** — operator call needed: keep reactive or add nightly probe.
 
 ## In flight
 
-**Nothing in flight.** PR #206 is open with CI running but the diff is closed (no further edits expected unless a check fails).
+**Nothing in flight.** Working tree clean on the wrap-up branch. The wrap-up commit (this file + supplement update) is the final commit of the night.
 
 ## Next step
 
-When PR #206 lands: items 1-5 of the reality-delta-supplement are closed. Remaining backlog from the supplement is whatever items 6+ are — re-read the file to confirm.
-
-A few notes the user may want to follow up on:
-
-- **Help-center route wiring** — `listDocsForTier()` was added but not yet wired into the `/admin/help` page; today that page calls `listDocs()` which returns everything. Wiring change is small; deferred to keep PR C focused on content.
-- **Tenant-side help docs route** — `/admin/help` is the operator-facing route; the tenant-facing one (if separate) may also need the tier filter wired.
-- **Branding page custom domain** — today's UI surfaces a `mailto:support@…` because no self-serve custom-domain endpoint exists yet. If/when an endpoint ships, the page should switch from email to form.
-- **Persona addendum tier-gate copy** — the page returns the tier-blocked message on any 403 from the API. The API currently 403s for non-Pro tiers; if the tier mapping changes, the copy may need a refresh.
+When you wake:
+1. Review the 4 overnight PRs (#196, #213, #214, #215). #196 already merged; #213/#214 already merged; #215 should land once CI clears the dev-merge update.
+2. If you want the customer-facing chat panels (§20.4/§38.8/§39.5) built, write a build prompt for them or tell me to scope a multi-PR plan.
+3. Trigger the new CodeQL scan on the latest dev to confirm alerts are 0 (the scan I kicked may have predated the merges).
 
 ## Blocked on user
 
-Nothing.
+- §13.9 active vs reactive health probing — design decision
+- Multiple "operator confirm" launch-gate items unchanged from prior session (counsel sign-offs, §15.7 STR, §15.14.6 ICA, §16.7.1, etc.)
 
 ## Open questions
 
-- Should the help docs page actually call `listDocsForTier(currentTenantTier)` now? It's a 2-line change in the help route handler — was deferred to keep the help-doc content PR self-contained.
-- The branding UI has no real-time tier check, so the "forced powered-by" state is inferred from the server response. Good enough for now; cleaner would be a dedicated tier-fetch endpoint.
+- The §11.5 estimation aging cron runs *yearly* (>365 days since last re-prompt). Intended? It seems slow for a customer who entered an estimated DOB.
+- The §33.9.3 budget-split default (80/20) was an engineering choice — operator should confirm once real Apify spend lands.
+- Should the `/api/feedback` RAG endpoint take tenant scoping (e.g., signed JWT) instead of HMAC? Today it's HMAC-only, matching `/api/tenant-events`. The events table is global, so global write makes sense, but worth a security review.
 
-## Carried forward (deferred work, unchanged from prior session)
+## Carried forward (deferred work, unchanged)
 
-- BP39 follow-up: retroactive react-pdf wire-up to unblock help-docs PDF deferral
-- BP31: Haiku tolerable-PII redaction + confidence/clarity scorer Haiku call (cost-deferred)
-- BP30: AI behavior eval harness, continuous-sampling cron, dedicated test Supabase project, Percy/Chromatic (cost-deferred)
+- BP39 follow-up: retroactive react-pdf wire-up
+- BP31: Haiku tolerable-PII redaction + confidence/clarity scorer (cost-deferred)
+- BP30: AI behavior eval harness (cost-deferred)
 - BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc
 - BP24: populate `platform_settings.supervisor_slur_deny_list`
 - BP23: populate `port_info_chunks` content for 17 ports
