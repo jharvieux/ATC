@@ -274,11 +274,9 @@ const envSchema = z.object({
   APIFY_ADAPTER_ENABLED:               z.coerce.boolean().optional().default(false),
   APIFY_RUN_BUDGET_USD_CEILING:        z.coerce.number().positive().optional().default(50),
   APIFY_MONTHLY_BUDGET_USD_CEILING:    z.coerce.number().positive().optional().default(500),
-  // §33.9.3 — General-pricing pause-priority sub-cap as a percent of the
-  // monthly cap. General-pricing refresh (CruiseMapper itineraries) pauses
-  // at this fraction; tracked-sailings (price-watch) runs until the full
-  // cap. Default 80 → general pauses at 80%, watches keep going to 100%.
-  APIFY_GENERAL_PRICING_BUDGET_PCT:    z.coerce.number().positive().max(100).optional().default(80),
+  // D-088: APIFY_GENERAL_PRICING_BUDGET_PCT was removed. The general-
+  // pricing Apify pathway no longer exists (DIY CruiseMapper scraper
+  // replaces it). The full monthly cap applies to tracked-sailings only.
   PRICE_FRESHNESS_FRESH_HOURS:         z.coerce.number().int().positive().optional().default(72),
   PRICE_FRESHNESS_EXPIRED_HOURS:       z.coerce.number().int().positive().optional().default(744), // 31 days
   // BP35 §33.4 — CruiseMapper itinerary monthly Inngest ingest. Default-OFF
