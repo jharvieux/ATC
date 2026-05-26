@@ -4,6 +4,45 @@ Newest entries on top.
 
 ---
 
+## D-085 — 2026-05-25 — Reality-delta supplement items 1-5: three-PR sweep
+
+**Decision:** Closed five of the reality-delta-supplement gaps in one continuous push, structured as three PRs for reviewability.
+
+| PR | Item | Closure |
+|---|---|---|
+| #204 | §14.11 (1099-NEC) | **Reclassified as a false positive** — re-reading the spec showed Stripe Connect Express handles 1099-NEC generation automatically for sub-hosts ≥ $600/year. Original entry struck through; supplement keeps paper trail. |
+| #204 | §29.14 (DR runbook) | New `docs/runbooks/disaster-recovery.md` covering all 9 §29.14 scenarios with RTO/RPO + monthly backup-verification cadence + quarterly recovery-rehearsal log structure (SOC 2 prerequisite). |
+| #204 | §30.7 (k6 scripts) | Six scripts at `tests/load/k6/` matching the spec's six scenarios. **CI does not run them** — out-of-band, quarterly, against a dedicated load-test environment. Captured in the README. |
+| #205 | §16 / §9 / §22.5 (tenant UI gaps) | Three new pages: `/settings/branding` (simple form per user preference, not a wizard), `/settings/personas` (rename + disable + Pro+ addendum editor surfacing Haiku-screen status), `/crm/rag/queue` (review queue with bulk-approve + X-Bulk-Confirm header for >10). All consume existing API routes — no schema changes. |
+| #206 | §32.3 (10 missing help docs) | 12 markdown files at `apps/main/content/help/` (10 topic docs + 2 quickstarts: BYO and subscription). Plain language for travel agents (low computer literacy was a stated requirement). `[Screenshot: …]` placeholders so the operator can drop real screenshots in a content pass. |
+
+**Help-docs design choices (per user requirements):**
+
+1. **Subscription-aware filtering.** Extended `apps/main/src/lib/help-ai/docs-loader.ts` with a `tiers: string[]` field on `HelpDoc`, a `parseTiersField()` helper that accepts both bracketed and bare comma lists, and a new `listDocsForTier(tierCode)` filter function.
+2. **Flexible to tier reorganizations.** Docs without a `tiers:` frontmatter field are treated as **universal** — they appear for every tier. This means adding a new tier code in the future doesn't accidentally hide existing content.
+3. **Tier-gating strategy.** Only the two quickstart docs are tier-gated by file (one for BYO, one for sub-host). The 10 topic docs ship with **all six tier codes** listed, and use in-doc `> **Available on:**` callouts to scope sub-features. Operator can narrow individual docs later without a code change.
+
+**Rejected approaches:**
+
+- Putting tier metadata in a sidecar JSON/YAML file: extra moving piece, no clear win over frontmatter.
+- Importing a full YAML parser (gray-matter): the existing loader is deliberately bare; one new parser branch keeps the dependency surface flat.
+- Wiring `listDocsForTier()` into the help-center route as part of this PR: deferred to keep PR C focused on content. Noted in SESSION.md.
+
+**Verification:**
+
+- Local typecheck (`tsc --noEmit`) clean on all three PRs.
+- Local lint (`next lint --max-warnings=0`) clean on all three PRs.
+- Loader tests: 7 existing + 3 new = 10/10 passing locally.
+- PR A merged to dev; PR B merged to dev; PR C CI in flight at write time.
+
+**Manual follow-ups for the operator:**
+
+- Replace `[Screenshot: …]` placeholders in the new help docs with real screenshots once the UI is finalized.
+- Refine tier assignments on the 10 topic docs as supplier/feature mappings firm up.
+- Decide whether the help-center route should switch to `listDocsForTier()` now (small wiring change, ~2 lines).
+
+---
+
 ## D-084 — 2026-05-25 — Security audit follow-ups closed; full audit wave done
 
 **Decision:** Completed every remaining audit follow-up in one continuous push after D-083's first half. End state: all 16 audit findings (5 HIGH, 5 MEDIUM, 1 LOW + 5 from the RAG-side audit) are closed. PRs #166–#171 finished the work D-083 started.

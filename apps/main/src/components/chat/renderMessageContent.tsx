@@ -25,6 +25,11 @@ export interface DisplayAsset {
 const MARKUP_RE = /\[\[display_asset:([^\]]{1,80})\]\]/g;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+// §33.7.2 point 5 — hard cap on rendered assets per response, regardless
+// of how many markup tags the AI emits. The system prompt already
+// instructs ≤3; this is the belt-and-braces enforcement.
+const MAX_RENDERED_ASSETS = 3;
+
 export interface RenderOptions {
   /** §21.6 tenant source-display toggle. When false, asset markup is
    *  stripped entirely (no link, no attribution) — the model may still
@@ -60,6 +65,7 @@ export function renderMessageContent(
   const out: React.ReactNode[] = [];
   let lastIndex = 0;
   let key = 0;
+  let renderedAssetCount = 0;
   let match: RegExpExecArray | null;
   MARKUP_RE.lastIndex = 0;
   while ((match = MARKUP_RE.exec(content)) !== null) {
@@ -68,7 +74,8 @@ export function renderMessageContent(
     }
     const id = (match[1] ?? "").toLowerCase();
     const asset = UUID_RE.test(id) ? byId.get(id) : undefined;
-    if (asset) {
+    if (asset && renderedAssetCount < MAX_RENDERED_ASSETS) {
+      renderedAssetCount += 1;
       out.push(
         <span key={`asset-${key++}`} style={{ display: "inline-block", margin: "2px 0" }}>
           <a
@@ -86,6 +93,9 @@ export function renderMessageContent(
           ) : null}
         </span>,
       );
+    } else if (asset) {
+      // §33.7.2 #5 — beyond the cap. Drop the markup silently; the model
+      // already had a ≤3 instruction in the prompt block.
     } else {
       // Unknown ID — render markup literally so the issue is visible.
       out.push(match[0]);

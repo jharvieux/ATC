@@ -43,4 +43,186 @@ describe("checkArithmetic — §21.10 Layer 6", () => {
     const out = f("It works out to 10 + 5 × 2 = 30 total.");
     expect(out.severity).toBe("warning");
   });
+
+  // -- Operator coverage ---------------------------------------------------
+
+  it("flags wrong plain-number subtraction (regression for the tokenizer-absorbs-minus bug)", () => {
+    // Bug history: fullChain was `${left}${firstOp}${restChain}` which produced
+    // "100-25" and the eval tokenizer parsed "-25" as a single negative number,
+    // making subtraction expressions silently pass. Fixed by inserting spaces.
+    expect(f("Total: 100 - 25 = 80").severity).toBe("warning");
+  });
+  it("passes correct plain-number subtraction", () => {
+    expect(f("Total: 100 - 25 = 75").severity).toBe("info");
+  });
+
+  it("flags wrong money subtraction", () => {
+    expect(f("Refund: $100 - $25 = $80").severity).toBe("warning");
+  });
+  it("passes correct money subtraction", () => {
+    expect(f("Refund: $100 - $25 = $75").severity).toBe("info");
+  });
+
+  it("handles chained subtraction (correct)", () => {
+    expect(f("100 - 25 - 10 = 65").severity).toBe("info");
+  });
+  it("flags wrong chained subtraction", () => {
+    expect(f("100 - 25 - 10 = 60").severity).toBe("warning");
+  });
+
+  it("subtraction precedence with multiplication: 100 - 5 × 2 = 90", () => {
+    expect(f("100 - 5 × 2 = 90").severity).toBe("info");
+    expect(f("100 - 5 × 2 = 190").severity).toBe("warning");
+  });
+
+  it("flags wrong asterisk multiplication", () => {
+    expect(f("7 * 8 = 60").severity).toBe("warning");
+  });
+  it("passes correct asterisk multiplication", () => {
+    expect(f("7 * 8 = 56").severity).toBe("info");
+  });
+
+  it("flags wrong slash division", () => {
+    expect(f("100 / 4 = 30").severity).toBe("warning");
+  });
+  it("passes correct slash division", () => {
+    expect(f("100 / 4 = 25").severity).toBe("info");
+  });
+
+  it("flags wrong unicode-divide division", () => {
+    expect(f("100 ÷ 4 = 30").severity).toBe("warning");
+  });
+  it("passes correct unicode-divide division", () => {
+    expect(f("100 ÷ 4 = 25").severity).toBe("info");
+  });
+
+  // -- Currency handling ---------------------------------------------------
+
+  it("respects $0.01 money tolerance — passes a 1-cent deviation", () => {
+    // 33.33 × 3 = 99.99, but writing "= $100.00" is within penny tolerance.
+    // Use a case where actual is within tolerance:
+    expect(f("$33.34 × 3 = $100.02").severity).toBe("info");
+  });
+
+  it("flags money deviation outside $0.01 tolerance", () => {
+    // $50 + $50 should NOT equal $99.95 (off by 5 cents).
+    expect(f("$50 + $50 = $99.95").severity).toBe("warning");
+  });
+
+  it("handles € and £ currency markers", () => {
+    expect(f("€50 × 2 = €100").severity).toBe("info");
+    expect(f("£25 × 4 = £100").severity).toBe("info");
+    expect(f("€50 × 2 = €120").severity).toBe("warning");
+  });
+
+  it("handles comma-grouped numbers", () => {
+    expect(f("$1,200 + $300 = $1,500").severity).toBe("info");
+    expect(f("$1,200 + $300 = $1,600").severity).toBe("warning");
+  });
+
+  it("handles decimal money", () => {
+    expect(f("$12.50 × 2 = $25.00").severity).toBe("info");
+    expect(f("$12.50 × 2 = $26.00").severity).toBe("warning");
+  });
+
+  // -- Percentage tolerance ------------------------------------------------
+
+  it("passes percentage arithmetic within 0.1% tolerance", () => {
+    // 10% of 100 = 10. Use a percentage expression on both sides.
+    expect(f("50% + 50% = 100%").severity).toBe("info");
+  });
+
+  it("flags percentage arithmetic outside 0.1% tolerance", () => {
+    // 50% + 20% should NOT equal 100%.
+    expect(f("50% + 20% = 100%").severity).toBe("warning");
+  });
+
+  // -- Whole-number exact tolerance ---------------------------------------
+
+  it("flags non-money non-percentage off-by-one as warning (zero tolerance)", () => {
+    expect(f("3 + 4 = 8").severity).toBe("warning");
+  });
+
+  it("passes exact non-money arithmetic", () => {
+    expect(f("3 + 4 = 7").severity).toBe("info");
+  });
+
+  // -- Precedence: division and multiplication chains ----------------------
+
+  it("computes division-then-multiplication left-to-right", () => {
+    // 100 / 5 × 2 = 40 (left-to-right: 100/5 = 20, 20×2 = 40)
+    expect(f("100 / 5 × 2 = 40").severity).toBe("info");
+    expect(f("100 / 5 × 2 = 10").severity).toBe("warning");
+  });
+
+  it("respects div precedence over addition", () => {
+    // 10 + 20 / 4 = 15
+    expect(f("10 + 20 / 4 = 15").severity).toBe("info");
+    expect(f("10 + 20 / 4 = 7.5").severity).toBe("warning");
+  });
+
+  // -- Multiple expressions in one response --------------------------------
+
+  it("reports up to 3 mismatches in details", () => {
+    const out = f("1+1=3 and 2+2=5 and 3+3=7 and 4+4=9");
+    expect(out.severity).toBe("warning");
+    // Slice(0,3) → at most 3 segments separated by " | "
+    expect((out.details ?? "").split(" | ")).toHaveLength(3);
+  });
+
+  it("flags when one of multiple expressions is wrong", () => {
+    expect(f("$10 + $5 = $15. Also $20 + $5 = $30.").severity).toBe("warning");
+  });
+
+  it("passes when all of multiple expressions are correct", () => {
+    expect(f("$10 + $5 = $15. Also $20 + $5 = $25.").severity).toBe("info");
+  });
+
+  // -- info message details -----------------------------------------------
+
+  it("returns the info-level details string when no errors are found", () => {
+    const out = f("Plain prose with no math.");
+    expect(out.severity).toBe("info");
+    expect(out.details).toBe("no arithmetic errors detected");
+  });
+
+  it("formats warning details with the 'arithmetic error(s):' prefix", () => {
+    const out = f("$10 + $5 = $20");
+    expect(out.severity).toBe("warning");
+    expect(out.details).toMatch(/^arithmetic error\(s\):/);
+  });
+
+  it("includes the 'actual' number in warning details", () => {
+    const out = f("$10 + $5 = $20");
+    expect(out.details).toMatch(/actual 15/);
+  });
+
+  // -- Edge cases of the regex --------------------------------------------
+
+  it("does NOT match number-equals-number without an operator", () => {
+    expect(f("Price is 5 = 5 meaning five each").severity).toBe("info");
+  });
+
+  it("matches a chain of three additions", () => {
+    expect(f("1 + 2 + 3 + 4 = 10").severity).toBe("info");
+    expect(f("1 + 2 + 3 + 4 = 11").severity).toBe("warning");
+  });
+
+  it("integer-result formatNum does not include decimals", () => {
+    const out = f("$10 + $5 = $20");
+    expect(out.details).toMatch(/actual 15(?!\.)/);
+  });
+
+  it("non-integer-result formatNum includes 2 decimals", () => {
+    const out = f("$10.50 + $5 = $20");
+    expect(out.details).toMatch(/actual 15\.50/);
+  });
+
+  it("returns 'arithmetic_check' as the check name on info", () => {
+    expect(f("no math").check).toBe("arithmetic_check");
+  });
+
+  it("returns 'arithmetic_check' as the check name on warning", () => {
+    expect(f("1+1=3").check).toBe("arithmetic_check");
+  });
 });

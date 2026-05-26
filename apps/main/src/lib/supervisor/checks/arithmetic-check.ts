@@ -40,7 +40,13 @@ export function checkArithmetic(input: CheckInput): SupervisorFinding {
     const isMoney = /[$€£]/.test(fullExpr);
     const isPct = /%/.test(fullExpr);
 
-    const fullChain = `${left}${firstOp}${restChain}`;
+    // Insert spaces around firstOp to prevent the tokenizer from absorbing
+    // a binary `-` into the next number's optional `-?` prefix. Without
+    // these spaces, "100 - 25" reconstructs to "100-25" and the tokenizer
+    // produces [num:100, num:-25] instead of [num:100, op:-, num:25] —
+    // evalChain then bails with null and the subtraction error is silently
+    // skipped. Reproducer: `100 - 25 = 80` was previously not flagged.
+    const fullChain = `${left} ${firstOp} ${restChain}`;
     const claimedNum = parseNumber(claimed);
     const actualNum = evalChain(fullChain);
     if (claimedNum === null || actualNum === null) continue;

@@ -104,4 +104,56 @@ describe("renderMessageContent", () => {
     const out = html(renderMessageContent(`X [[display_asset:${A_ID}]]`, [A]));
     expect(out).toContain("href=");
   });
+
+  it("caps rendered assets at 3 per response (§33.7.2 #5)", () => {
+    const ids = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+      "55555555-5555-4555-8555-555555555555",
+    ];
+    const allAssets: DisplayAsset[] = ids.map((id, i) => ({
+      asset_id: id,
+      kind: "deck_plan",
+      image_url: `https://www.cruisemapper.com/asset-${i}.jpg`,
+      source_page_url: "https://www.cruisemapper.com/p",
+      attribution: "Image: CruiseMapper",
+      caption: `Asset ${i}`,
+    }));
+    const content = ids.map((id) => `[[display_asset:${id}]]`).join(" ");
+    const out = html(renderMessageContent(content, allAssets));
+    expect(out).toContain("asset-0.jpg");
+    expect(out).toContain("asset-1.jpg");
+    expect(out).toContain("asset-2.jpg");
+    expect(out).not.toContain("asset-3.jpg");
+    expect(out).not.toContain("asset-4.jpg");
+    expect(out).not.toContain(`[[display_asset:${ids[3]}]]`);
+    expect(out).not.toContain(`[[display_asset:${ids[4]}]]`);
+  });
+
+  it("unknown IDs (rendered literally) don't consume the cap budget", () => {
+    const ids = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333",
+    ];
+    const knownAssets: DisplayAsset[] = ids.map((id, i) => ({
+      asset_id: id,
+      kind: "deck_plan",
+      image_url: `https://www.cruisemapper.com/k-${i}.jpg`,
+      source_page_url: "https://www.cruisemapper.com/p",
+      attribution: "Image: CruiseMapper",
+      caption: `Known ${i}`,
+    }));
+    const UNKNOWN_ID = "99999999-9999-4999-8999-999999999999";
+    const content =
+      `[[display_asset:${UNKNOWN_ID}]] ` +
+      ids.map((id) => `[[display_asset:${id}]]`).join(" ");
+    const out = html(renderMessageContent(content, knownAssets));
+    expect(out).toContain("k-0.jpg");
+    expect(out).toContain("k-1.jpg");
+    expect(out).toContain("k-2.jpg");
+    expect(out).toContain(`[[display_asset:${UNKNOWN_ID}]]`);
+  });
 });

@@ -23,17 +23,15 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
     id: "user-data-purge-after-grace",
     triggers: [{ event: "user.data_purge_scheduled" }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const { auth_user_id, user_id, deleted_at, purge_at } = event.data as PurgePayload;
-    const db = createServiceRoleClient();
 
-    // Wait until purge_at before executing.
-    const purgeTime = new Date(purge_at).getTime();
-    if (Date.now() < purgeTime) {
-      // Rescheduled by the reconcile cron — return deferred.
-      // TODO(inngest-delay): use inngest.sleep() when step functions are available.
-      return { deferred: true, purge_at };
-    }
+    // §17.10 — Sleep until purge_at (30 days after the delete request).
+    // Inngest persists the function state during sleep; on wake we
+    // re-check user state to handle undo-delete cleanly.
+    await step.sleepUntil("ccpa-grace-period", purge_at);
+
+    const db = createServiceRoleClient();
 
     // Re-read the user row — if undo-delete was called, deleted_at will be NULL.
     const { data: userRow } = await db
