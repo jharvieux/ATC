@@ -70,6 +70,14 @@ const envSchema = z.object({
   MEMORY_EXTRACTION_MESSAGE_WINDOW: z.coerce.number().int().positive().optional().default(50),
   // Delay in ms before re-enqueue on optimistic-lock conflict (§11.2.4)
   MEMORY_EXTRACTION_RETRY_DELAY_MS: z.coerce.number().int().positive().optional().default(5000),
+  // §11.5 — DOB re-prompt cadence (operator-tightened per D-087).
+  // Re-prompt eligibility recurs every N days from estimation_recorded_at /
+  // estimation_last_reprompt_at. Default 30 (was 365 in original spec).
+  DOB_REPROMPT_INTERVAL_DAYS: z.coerce.number().int().positive().optional().default(30),
+  // §11.5 — Imminent-booking suppression window. Users with a booking
+  // sailing inside this window are NOT re-prompted via chat; the §20.5
+  // submit gate handles them. Default 60 days.
+  DOB_IMMINENT_BOOKING_WINDOW_DAYS: z.coerce.number().int().positive().optional().default(60),
   // Credential encryption (§13.5.1) — 256-bit keys, base64-encoded
   APP_ENCRYPTION_KEY_CURRENT: z.string().min(1),
   APP_ENCRYPTION_KEY_ID_CURRENT: z.string().min(1),
