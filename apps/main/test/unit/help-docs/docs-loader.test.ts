@@ -8,6 +8,7 @@ import {
   loadAllDocs,
   getDocBySlug,
   listDocs,
+  listDocsForTier,
   searchDocs,
   _resetDocsCacheForTests,
 } from "@/lib/help-ai/docs-loader";
@@ -44,6 +45,33 @@ describe("docs-loader", () => {
 
   it("getDocBySlug returns undefined for unknown slug", () => {
     expect(getDocBySlug("does-not-exist")).toBeUndefined();
+  });
+});
+
+describe("listDocsForTier", () => {
+  it("returns BYO-tier-tagged docs when filtering on a BYO tier", () => {
+    _resetDocsCacheForTests();
+    const byoDocs = listDocsForTier("byo_research");
+    const slugs = byoDocs.map((d) => d.slug);
+    expect(slugs).toContain("quickstart-byo");
+    expect(slugs).not.toContain("quickstart-subhost");
+  });
+
+  it("returns sub-host-tier-tagged docs when filtering on a subscription tier", () => {
+    _resetDocsCacheForTests();
+    const subDocs = listDocsForTier("sub_pro");
+    const slugs = subDocs.map((d) => d.slug);
+    expect(slugs).toContain("quickstart-subhost");
+    expect(slugs).not.toContain("quickstart-byo");
+  });
+
+  it("includes docs with empty tiers (treated as universal)", () => {
+    _resetDocsCacheForTests();
+    // 'getting-started' has no tiers: field → should appear for every tier.
+    const byoDocs = listDocsForTier("byo_research");
+    const subDocs = listDocsForTier("sub_pro");
+    expect(byoDocs.map((d) => d.slug)).toContain("getting-started");
+    expect(subDocs.map((d) => d.slug)).toContain("getting-started");
   });
 });
 
