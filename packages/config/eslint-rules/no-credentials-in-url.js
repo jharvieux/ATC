@@ -14,7 +14,7 @@
 // parameter.
 
 const CREDENTIAL_QUERY_PARAM_RE =
-  /\?(?:[^&"`\s]*&)?(?:token|api[_-]?key|secret|password|auth[_-]?key)=/i;
+  /[?&](?:token|api[_-]?key|secret|password|auth[_-]?key)=/i;
 
 function looksLikeFetch(callee) {
   if (callee.type === "Identifier") return callee.name === "fetch";

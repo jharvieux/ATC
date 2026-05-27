@@ -41,7 +41,7 @@ describe("no-credentials-in-url — regex behavior", () => {
   // The rule constructs its regex from a static pattern. We can verify the
   // pattern matches the cases we care about by re-deriving it.
   const CREDENTIAL_RE =
-    /\?(?:[^&"`\s]*&)?(?:token|api[_-]?key|secret|password|auth[_-]?key)=/i;
+    /[?&](?:token|api[_-]?key|secret|password|auth[_-]?key)=/i;
 
   it("matches ?token= in URL", () => {
     expect(CREDENTIAL_RE.test("https://api.example.com/x?token=abc")).toBe(true);
