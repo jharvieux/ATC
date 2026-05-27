@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §23.1 / §23.6 / §23.7 — Unified email send helper.
 //
 // Flow:

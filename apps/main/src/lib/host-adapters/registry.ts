@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §13.3 — Adapter registry: loads and lists HostAgencyClient instances.
 //
 // Adapter instances are constructed fresh per call. Node's module cache
