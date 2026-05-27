@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §14.3 / §14.4 — Booking submission with commission rate resolution.
 //
 // Fail-closed contract per §14.4:
