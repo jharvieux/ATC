@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §15.1–15.2 — Onboarding stage state machine.
 //
 // Stages advance strictly forward through the §15.1 diagram.
