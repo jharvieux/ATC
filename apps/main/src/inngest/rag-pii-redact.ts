@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §22.4 Stage 2 — PII redaction.
 //
 // Triggered by 'rag.submission_ready_for_pii_redaction'.
