@@ -167,11 +167,22 @@ absent), the answer is denial, not permission. Returning `{ allowed: true }` on
 Redis error, or 200 on a silent DB-write failure, is the worst possible failure mode
 because it's silent AND it disables retries. Permit only on positive confirmation.
 
-— Check every Supabase mutation (D-091)
+— Check every Supabase mutation (D-091 / D-094)
 `@supabase/supabase-js` v2 does NOT throw on DB errors. Every `await x.update().eq(...)`,
-`.insert(...)`, `.delete()`, `.upsert(...)` must destructure `{ error }` and surface
-non-200 on truthy error. Discarding the result hides DB failures and (for webhook
-handlers) tells the caller everything succeeded.
+`.insert(...)`, `.delete()`, `.upsert(...)` must surface failure as a throw or non-200
+response. Two equivalent patterns:
+
+  // Preferred (D-094): wrap the query, throw structured error on failure.
+  await safeAwait(db.from("x").update({...}).eq("id", id), "x.update.context");
+
+  // Also acceptable: destructure { error } and explicit-handle.
+  const { error } = await db.from("x").update({...}).eq("id", id);
+  if (error) throw new Error(`x.update failed: ${error.message}`);
+
+For CAS-style updates (status guard), use `safeAwaitRowCount` with the expected count
+so zero-row updates raise instead of silently no-op'ing (Greptile P1 #24 root cause).
+
+See `apps/main/src/lib/db/safe-mutation.ts` for the helper module.
 
 — Two layers of tenant isolation (D-091)
 Every tenant-scoped query needs BOTH an app-layer filter AND a DB-layer constraint
