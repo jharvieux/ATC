@@ -2,7 +2,7 @@
 //
 // Copy slotted from platform_settings.abuse_notification_copy (operator-
 // editable). This component is presentational; lookup is the caller's job.
-/* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";

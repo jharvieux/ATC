@@ -1,7 +1,7 @@
 // §25.9 — Customer-facing breach notification email.
 // Renders BrandedLayout with the legally-required disclosures slotted in.
 // Wording is TODO(legal-counsel) until counsel signs off.
-/* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";

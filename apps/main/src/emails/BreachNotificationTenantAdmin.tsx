@@ -2,7 +2,7 @@
 // Different shape from BreachNotificationUser: tenant admins need
 // operationally actionable info (who's on point, when their SLA is,
 // where to read the post-mortem-in-progress).
-/* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
