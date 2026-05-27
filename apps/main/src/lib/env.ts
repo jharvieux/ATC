@@ -14,6 +14,22 @@
 import { z } from "zod";
 import { Buffer } from "node:buffer";
 
+// z.coerce.boolean() calls Boolean(value), which treats non-empty strings
+// as truthy — so the string 'false' becomes true. That silently flipped
+// kill switches, OAuth toggles, and other ops flags whenever they were
+// set to 'false' in env. envBoolean() parses common boolean spellings
+// explicitly. Other strings fall through to z.boolean() and fail.
+function envBoolean() {
+  return z.preprocess((v) => {
+    if (typeof v === "boolean") return v;
+    if (typeof v !== "string") return v;
+    const lower = v.toLowerCase().trim();
+    if (lower === "" || lower === "false" || lower === "0" || lower === "no" || lower === "off") return false;
+    if (lower === "true" || lower === "1" || lower === "yes" || lower === "on") return true;
+    return v;
+  }, z.boolean());
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   GIT_COMMIT_SHA: z.string().optional(),
@@ -82,7 +98,7 @@ const envSchema = z.object({
   // then round to nearest $100, "approximately/around" framing).
   // Default ENABLED; set to false to bypass the rule entirely (raw
   // cached values flow into the prompt without softening).
-  AI_PRICE_ROUNDING_ENABLED: z.coerce.boolean().optional().default(true),
+  AI_PRICE_ROUNDING_ENABLED: envBoolean().optional().default(true),
   // Credential encryption (§13.5.1) — 256-bit keys, base64-encoded
   APP_ENCRYPTION_KEY_CURRENT: z.string().min(1),
   APP_ENCRYPTION_KEY_ID_CURRENT: z.string().min(1),
@@ -179,7 +195,7 @@ const envSchema = z.object({
   // override; these are the platform defaults.
   ANTHROPIC_SONNET_MODEL: z.string().optional().default("claude-sonnet-4-6"),
   ANTHROPIC_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
-  ANTHROPIC_PROMPT_CACHE_ENABLED: z.coerce.boolean().optional().default(true),
+  ANTHROPIC_PROMPT_CACHE_ENABLED: envBoolean().optional().default(true),
   // RAG ingestion — §22
   RAG_INGEST_PII_REDACTION_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
   RAG_INGEST_NORMALIZATION_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
@@ -266,7 +282,7 @@ const envSchema = z.object({
   HELP_DOCS_CACHE_TTL_SECONDS: z.coerce.number().int().positive().optional().default(3600),
   // BP32 §32.14 — Phase 2 customer bug flow toggles. Ship dark by default;
   // operator flips to true per the §32.15 Phase 2 alignment.
-  PHASE_2_CUSTOMER_BUG_FLOW_ENABLED: z.coerce.boolean().optional().default(false),
+  PHASE_2_CUSTOMER_BUG_FLOW_ENABLED: envBoolean().optional().default(false),
   CUSTOMER_BUG_PER_DAY_LIMIT:        z.coerce.number().int().positive().optional().default(5),
   // BP32 §32.10.7 — GitHub webhook secret used to verify issues.closed events.
   // Optional because Phase 2 ships dark; the webhook route 401s without it.
@@ -276,21 +292,21 @@ const envSchema = z.object({
   // the API token to activate spend. With this default, just provisioning
   // APIFY_API_TOKEN does NOT immediately trigger spend.
   APIFY_API_TOKEN:                     z.string().optional(),
-  APIFY_ADAPTER_ENABLED:               z.coerce.boolean().optional().default(false),
+  APIFY_ADAPTER_ENABLED:               envBoolean().optional().default(false),
   APIFY_RUN_BUDGET_USD_CEILING:        z.coerce.number().positive().optional().default(50),
   APIFY_MONTHLY_BUDGET_USD_CEILING:    z.coerce.number().positive().optional().default(500),
   // D-088 Apify-4 — per-line kill switches. Default ENABLED (all 9
   // verified sercul actors covered). Flip individual lines to "false"
   // during incident triage without dropping the rest.
-  APIFY_ENABLED_RCL: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_NCL: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_PCL: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_CEL: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_COS: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_CCL: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_HAL: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_MSC: z.coerce.boolean().optional().default(true),
-  APIFY_ENABLED_DSY: z.coerce.boolean().optional().default(true),
+  APIFY_ENABLED_RCL: envBoolean().optional().default(true),
+  APIFY_ENABLED_NCL: envBoolean().optional().default(true),
+  APIFY_ENABLED_PCL: envBoolean().optional().default(true),
+  APIFY_ENABLED_CEL: envBoolean().optional().default(true),
+  APIFY_ENABLED_COS: envBoolean().optional().default(true),
+  APIFY_ENABLED_CCL: envBoolean().optional().default(true),
+  APIFY_ENABLED_HAL: envBoolean().optional().default(true),
+  APIFY_ENABLED_MSC: envBoolean().optional().default(true),
+  APIFY_ENABLED_DSY: envBoolean().optional().default(true),
   // D-088 Apify-4 — cap on results per actor run. Each sercul actor
   // dumps the whole market; this bounds spend (sercul rates $1-$2 per
   // 1,000 results). Default 2000 covers US sailing volume for every line.
@@ -305,14 +321,14 @@ const envSchema = z.object({
   // Apify guard fence (APIFY_ADAPTER_ENABLED + APIFY_API_TOKEN) before any
   // actor dispatch — this flag is the *additional* opt-in for the
   // CruiseMapper itinerary path specifically.
-  CRUISEMAPPER_ITINERARY_INGEST_ENABLED: z.coerce.boolean().optional().default(false),
+  CRUISEMAPPER_ITINERARY_INGEST_ENABLED: envBoolean().optional().default(false),
   CRUISEMAPPER_ITINERARY_ACTOR_ID:       z.string().optional().default("crawlerbros/cruisemapper-cruises-scraper"),
   // BP36 §33.5 — CruiseMapper DIY (text-only) scraper. Default-OFF cost-deferral.
   // The User-Agent header MUST identify the platform with a real ops contact
   // email so CruiseMapper can reach us before blocking. Optional at boot — the
   // scraper job logs and no-ops if it isn't set.
   CRUISEMAPPER_DIY_USER_AGENT:           z.string().optional(),
-  CRUISEMAPPER_DIY_INGEST_ENABLED:       z.coerce.boolean().optional().default(false),
+  CRUISEMAPPER_DIY_INGEST_ENABLED:       envBoolean().optional().default(false),
   CRUISEMAPPER_DIY_RATE_LIMIT_RPS:       z.coerce.number().positive().optional().default(1.0),
   CRUISEMAPPER_DIY_BASE_URL:             z.string().url().optional().default("https://www.cruisemapper.com"),
   // BP40 §33.8 — price-watch subscriptions. Default-OFF cost-deferral:
@@ -320,17 +336,17 @@ const envSchema = z.object({
   // (active → triggered) so the UI reflects reality, but no notification
   // is sent. Operator flips to true to actually email/in-app-notify
   // subscribers.
-  PRICE_WATCH_NOTIFICATIONS_ENABLED:     z.coerce.boolean().optional().default(false),
+  PRICE_WATCH_NOTIFICATIONS_ENABLED:     envBoolean().optional().default(false),
   // §28.17 — abuse-control toggles (spec-listed; code currently uses hardcoded
   // defaults at the call sites).
-  ABUSE_OVERRIDE_REQUIRE_REAUTH:        z.coerce.boolean().optional().default(true),
+  ABUSE_OVERRIDE_REQUIRE_REAUTH:        envBoolean().optional().default(true),
   ABUSE_RAG_PROMOTION_BONUS_PER_CHUNK:  z.coerce.number().int().positive().optional().default(25),
   // §28.9 — OAuth provider toggles. Conditional MS-Graph requirement
   // enforced via superRefine below.
-  OAUTH_GOOGLE_ENABLED:    z.coerce.boolean().optional().default(true),
-  OAUTH_MICROSOFT_ENABLED: z.coerce.boolean().optional().default(true),
-  OAUTH_FACEBOOK_ENABLED:  z.coerce.boolean().optional().default(true),
-  OAUTH_APPLE_ENABLED:     z.coerce.boolean().optional().default(false),
+  OAUTH_GOOGLE_ENABLED:    envBoolean().optional().default(true),
+  OAUTH_MICROSOFT_ENABLED: envBoolean().optional().default(true),
+  OAUTH_FACEBOOK_ENABLED:  envBoolean().optional().default(true),
+  OAUTH_APPLE_ENABLED:     envBoolean().optional().default(false),
   MICROSOFT_GRAPH_CLIENT_ID:                z.string().optional(),
   MICROSOFT_GRAPH_CLIENT_SECRET:            z.string().optional(),
   MICROSOFT_GRAPH_CLIENT_SECRET_PREVIOUS:   z.string().optional(),
@@ -351,14 +367,14 @@ const envSchema = z.object({
   // alongside the rest of the Resend block above).
   // §28.15 — operational toggles. Env-based so they can flip without a DB
   // round-trip; spec rationale at §28.15.
-  AI_GLOBAL_KILL_SWITCH:                z.coerce.boolean().optional().default(false),
-  RAG_INGESTION_PAUSED:                 z.coerce.boolean().optional().default(false),
-  MAINTENANCE_MODE:                     z.coerce.boolean().optional().default(false),
-  SIGNUP_ENABLED:                       z.coerce.boolean().optional().default(true),
-  STRIPE_CONNECT_ONBOARDING_ENABLED:    z.coerce.boolean().optional().default(true),
+  AI_GLOBAL_KILL_SWITCH:                envBoolean().optional().default(false),
+  RAG_INGESTION_PAUSED:                 envBoolean().optional().default(false),
+  MAINTENANCE_MODE:                     envBoolean().optional().default(false),
+  SIGNUP_ENABLED:                       envBoolean().optional().default(true),
+  STRIPE_CONNECT_ONBOARDING_ENABLED:    envBoolean().optional().default(true),
   // §28.16 — tone & persona defaults.
   PERSONA_TONE_DEFAULT_MAX_LEVEL:       z.coerce.number().int().min(1).max(5).optional().default(3),
-  PERSONA_ADDENDUM_HAIKU_SCREEN_ENABLED: z.coerce.boolean().optional().default(true),
+  PERSONA_ADDENDUM_HAIKU_SCREEN_ENABLED: envBoolean().optional().default(true),
 })
   // §28.9 conditional: MS Graph creds required when Microsoft OAuth is on.
   .superRefine((data, ctx) => {
