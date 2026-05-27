@@ -26,6 +26,37 @@ type TenantRow = {
   stripe_connect_account_id: string | null;
 };
 
+/**
+ * D-091 P1 #24 — CAS-style lock acquisition with row-count verification.
+ *
+ * Supabase JS does NOT throw or return an error when an UPDATE matches
+ * zero rows; it returns `{ data: null, error: null }`. Without checking
+ * the affected-row count, a concurrent runner that already claimed the
+ * lock looks identical to a successful lock acquisition — and the second
+ * runner proceeds to its Stripe transfer, double-processing the payout.
+ *
+ * Chaining `.select("id")` returns the rows that the UPDATE actually
+ * affected. Length 0 means the row was NOT in the expected state (lock
+ * already held); length 1 means the lock was successfully acquired.
+ *
+ * Pure-ish for testability: takes the Supabase client as a parameter so
+ * unit tests can pass a mock without needing the full Inngest runtime.
+ */
+export async function tryAcquirePayoutLock(
+  db: ReturnType<typeof createServiceRoleClient>,
+  payoutId: string,
+): Promise<{ acquired: boolean; reason?: "db_error" | "already_locked"; error?: string }> {
+  const { data, error } = await db
+    .from("payout_records")
+    .update({ status: "processing" })
+    .eq("id", payoutId)
+    .eq("status", "available")
+    .select("id");
+  if (error) return { acquired: false, reason: "db_error", error: error.message };
+  if (!data || data.length === 0) return { acquired: false, reason: "already_locked" };
+  return { acquired: true };
+}
+
 export const payoutsExecuteTransfer = inngest.createFunction(
   {
     id: "payouts-execute-transfer",
@@ -69,16 +100,18 @@ export const payoutsExecuteTransfer = inngest.createFunction(
       }
 
       // §14.7: Step 1 — DB write FIRST. Transition to 'processing'.
-      const { error: lockError } = await db
-        .from("payout_records")
-        .update({ status: "processing" })
-        .eq("id", row.id)
-        .eq("status", "available"); // CAS guard
-
-      if (lockError) {
-        console.warn(
-          `payouts-execute-transfer: failed to lock payout ${row.id}: ${lockError.message}`,
-        );
+      // D-091 P1 #24 — see tryAcquirePayoutLock above for rationale.
+      const lockResult = await tryAcquirePayoutLock(db, row.id);
+      if (!lockResult.acquired) {
+        if (lockResult.reason === "db_error") {
+          console.warn(
+            `payouts-execute-transfer: failed to lock payout ${row.id}: ${lockResult.error}`,
+          );
+        } else {
+          console.info(
+            `payouts-execute-transfer: skipped payout ${row.id} — already locked by another run`,
+          );
+        }
         continue;
       }
 
