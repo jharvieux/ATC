@@ -16,19 +16,23 @@ trigger under normal happy-path testing. Three injection modes per handler:
 
 Design doc: `docs/runbooks/error-injection-probe-design.md`.
 
-## Why this is a separate test directory
+## Why this directory exists
 
-- `apps/main/test/` is the standard unit-test home. Tests there run in
-  every PR's CI job and must pass quickly.
-- `tests/security/error-injection/` is dedicated to failure-mode coverage
-  that exercises the same handlers under injected failures. It runs in
-  its own CI job (`pnpm test:error-injection`) so a flaky resource-mocked
-  test doesn't block unrelated PRs while we tune it.
+The probe tests live under `apps/main/test/error-injection/` because
+vitest must resolve transitive deps (`stripe`, `@anthropic-ai/sdk`)
+that only resolve from `apps/main/node_modules`. Initial attempts to
+host the probe under `tests/security/error-injection/` failed because
+the root has no `stripe` module and `vi.mock("stripe", ...)` had no
+real module to intercept.
+
+`pnpm test:error-injection` runs only the files under this directory.
+The probe runs in its own CI step (alongside the regular `pnpm -r test`
+step) so a flaky resource-mocked test doesn't block unrelated PRs.
 
 ## Canonical handler test pattern
 
 ```typescript
-// tests/security/error-injection/<handler-name>.error.test.ts
+// apps/main/test/error-injection/<handler-name>.error.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFailingDbClient, makeMockStripeEvent, makeMockStripeWebhookRequest } from "./_helpers";
 

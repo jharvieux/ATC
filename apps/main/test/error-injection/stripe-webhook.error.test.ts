@@ -152,41 +152,74 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
     expect(await res.text()).toBe("Duplicate");
   });
 
-  it("parallel webhook deliveries: first succeeds, second hits 23505 — both 200", async () => {
-    // Two concurrent inserts: first wins (error: null), second hits 23505.
-    // Override the insert behavior via the per-test counter check.
+  it("parallel webhook deliveries: first call succeeds (200 'OK'), second hits 23505 (200 'Duplicate')", async () => {
+    // Greptile review fix: the prior version drove insert behavior via the
+    // module-scoped mockInsertResult, which two concurrent IIFEs could
+    // overwrite before either insert call fired — so both calls could see
+    // the 23505 result and the test would pass for the wrong reason.
+    //
+    // Sequence-driven mock: the Nth insert call returns the Nth result,
+    // independent of when each IIFE began. Body-text assertion proves
+    // exactly one call processed and one deduped — a regression that
+    // breaks happy-path inserts (both deduped) would now fail.
     const insertSequence: Array<{ error: { code?: string; message: string } | null }> = [
       { error: null },
       { error: { code: "23505", message: "duplicate" } },
     ];
-    // Reset counter so we can drive both insertions deterministically.
-    mockInsertCallCount = 0;
-    Object.defineProperty(globalThis, "__nextInsert", {
-      configurable: true,
-      get() {
-        return insertSequence[mockInsertCallCount] ?? { error: null };
-      },
-    });
-    // Swap the toggle so the mock pulls from the sequence.
-    mockInsertResult = insertSequence[0]!;
+    let sequencedInsertCount = 0;
 
-    // Fire both. We can't truly run them in parallel inside vitest's
-    // single-threaded event loop, but Promise.all guarantees both
-    // resolve before assertions run.
+    vi.spyOn(await import("@/lib/db/service-role-client"), "createServiceRoleClient").mockImplementation(
+      () => ({
+        from(_table: string) {
+          void _table;
+          return {
+            async insert(_payload: unknown) {
+              void _payload;
+              const idx = sequencedInsertCount;
+              sequencedInsertCount += 1;
+              return insertSequence[idx] ?? insertSequence[insertSequence.length - 1]!;
+            },
+            select() {
+              const chain: Record<string, unknown> = {
+                eq() { return chain; },
+                in() { return chain; },
+                async maybeSingle() {
+                  return {
+                    data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
+                    error: null,
+                  };
+                },
+                async single() { return { data: { id: "t-1" }, error: null }; },
+                then(resolve: (v: { data: unknown[]; error: null }) => unknown) {
+                  return resolve({ data: [{ id: "p-1" }], error: null });
+                },
+              };
+              return chain;
+            },
+            update() {
+              const u: Record<string, unknown> = {
+                eq() { return u; },
+                in() { return u; },
+                then(resolve: (v: { data: null; error: null }) => unknown) {
+                  return resolve({ data: null, error: null });
+                },
+              };
+              return u;
+            },
+          };
+        },
+      } as never),
+    );
+
     const [a, b] = await Promise.all([
-      (async () => {
-        mockInsertResult = insertSequence[0]!;
-        return handleStripeWebhook(makeReq(), "platform");
-      })(),
-      (async () => {
-        // Yield so the first insert can land before the second is built.
-        await Promise.resolve();
-        mockInsertResult = insertSequence[1]!;
-        return handleStripeWebhook(makeReq(), "platform");
-      })(),
+      handleStripeWebhook(makeReq(), "platform"),
+      handleStripeWebhook(makeReq(), "platform"),
     ]);
+    expect(sequencedInsertCount).toBe(2);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
-    expect(mockInsertCallCount).toBe(2);
+    const bodies = [await a.text(), await b.text()];
+    expect(bodies).toContain("OK");
+    expect(bodies).toContain("Duplicate");
   });
 });
