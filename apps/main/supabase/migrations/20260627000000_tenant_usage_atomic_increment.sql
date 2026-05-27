@@ -33,7 +33,7 @@ CREATE OR REPLACE FUNCTION public.increment_tenant_ai_cost(
 RETURNS VOID
 LANGUAGE SQL
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
   INSERT INTO public.tenant_usage_metrics (tenant_id, billing_period, ai_cost_cents)
   VALUES (p_tenant_id, p_billing_period, p_amount_cents)
