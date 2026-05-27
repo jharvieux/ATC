@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // Spec ref: §7.9a — Stripe webhook handler contract
 //
 // Service-role import is permitted here: webhook handlers operate outside any
