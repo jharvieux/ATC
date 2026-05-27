@@ -9,6 +9,7 @@ import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embed } from "@/lib/embeddings/openai";
 import { ApproveRequestSchema } from "@/lib/schemas/retrieve";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const POST = withServiceAuth(async (req, ctx) => {
   if (ctx.scope !== "write") {
@@ -82,7 +83,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     return Response.json({ error: "approval_internal_error" }, { status: 500 });
   }
 
-  await db
+  await safeAwait(db
     .from("knowledge_ingestion_queue")
     .update({
       processing_stage: "approved",
@@ -93,7 +94,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
       global_reviewed_at: new Date().toISOString(),
       global_review_status: "approved",
     })
-    .eq("id", body.queue_item_id);
+    .eq("id", body.queue_item_id), "knowledge_ingestion_queue.update");
 
   return Response.json({ chunk_id: chunk.id });
 });

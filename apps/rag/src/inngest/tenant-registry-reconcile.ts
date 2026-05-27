@@ -10,6 +10,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type MainTenant = {
   id: string;
@@ -73,14 +74,14 @@ export const tenantRegistryReconcile = inngest.createFunction(
 
       if (!shadow) {
         // Present in main, absent in shadow — insert
-        await db.from("tenant_registry_shadow").insert({
+        await safeAwait(db.from("tenant_registry_shadow").insert({
           tenant_id: tenant.id,
           status: tenant.status,
           tenant_type: tenant.tenant_type,
           display_name: tenant.display_name,
           source_revision: tenant.source_revision,
           last_reconcile_sync_at: new Date().toISOString(),
-        });
+        }), "tenant_registry_shadow.insert");
         console.warn("[reconcile] inserted missing tenant", { tenant_id: tenant.id });
         inserted++;
         continue;
@@ -93,20 +94,20 @@ export const tenantRegistryReconcile = inngest.createFunction(
         shadow.source_revision !== tenant.source_revision;
 
       if (drifted) {
-        await db.from("tenant_registry_shadow").update({
+        await safeAwait(db.from("tenant_registry_shadow").update({
           status: tenant.status,
           tenant_type: tenant.tenant_type,
           display_name: tenant.display_name,
           source_revision: tenant.source_revision,
           last_reconcile_sync_at: new Date().toISOString(),
-        }).eq("tenant_id", tenant.id);
+        }).eq("tenant_id", tenant.id), "tenant_registry_shadow.update");
         console.warn("[reconcile] corrected drifted tenant", { tenant_id: tenant.id });
         updated++;
       } else {
         // No drift — just update last_reconcile_sync_at
-        await db.from("tenant_registry_shadow").update({
+        await safeAwait(db.from("tenant_registry_shadow").update({
           last_reconcile_sync_at: new Date().toISOString(),
-        }).eq("tenant_id", tenant.id);
+        }).eq("tenant_id", tenant.id), "tenant_registry_shadow.update");
       }
     }
 

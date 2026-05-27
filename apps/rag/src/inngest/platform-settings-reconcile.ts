@@ -16,6 +16,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // Keep this list in sync with apps/main/src/lib/rag-sync/publish-platform-event.ts
 // SYNC_ELIGIBLE_KEYS. Two copies because rag can't import from main; a
@@ -85,12 +86,12 @@ export const platformSettingsReconcile = inngest.createFunction(
       const shadow = shadowMap.get(setting.key);
 
       if (!shadow) {
-        await db.from("platform_settings").insert({
+        await safeAwait(db.from("platform_settings").insert({
           key: setting.key,
           value: setting.value as Record<string, unknown> | string | number | boolean | null,
           source_revision: setting.source_revision,
           last_reconcile_sync_at: new Date().toISOString(),
-        });
+        }), "platform_settings.insert");
         console.warn("[platform-settings-reconcile] inserted missing key", { key: setting.key });
         inserted++;
         continue;
@@ -101,21 +102,21 @@ export const platformSettingsReconcile = inngest.createFunction(
         JSON.stringify(shadow.value) !== JSON.stringify(setting.value);
 
       if (drifted && setting.source_revision >= shadow.source_revision) {
-        await db
+        await safeAwait(db
           .from("platform_settings")
           .update({
             value: setting.value as Record<string, unknown> | string | number | boolean | null,
             source_revision: setting.source_revision,
             last_reconcile_sync_at: new Date().toISOString(),
           })
-          .eq("key", setting.key);
+          .eq("key", setting.key), "platform_settings.update");
         console.warn("[platform-settings-reconcile] corrected drifted key", { key: setting.key });
         updated++;
       } else {
-        await db
+        await safeAwait(db
           .from("platform_settings")
           .update({ last_reconcile_sync_at: new Date().toISOString() })
-          .eq("key", setting.key);
+          .eq("key", setting.key), "platform_settings.update");
       }
     }
 
