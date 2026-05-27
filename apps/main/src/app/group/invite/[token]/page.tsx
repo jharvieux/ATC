@@ -4,7 +4,7 @@
 
 import * as React from "react";
 
-type PageProps = { params: { token: string } };
+type PageProps = { params: Promise<{ token: string }> };
 
 interface InviteData {
   invitation: { id: string; rsvp_state: string };
@@ -31,7 +31,8 @@ async function fetchInviteData(token: string, origin: string): Promise<{ data?: 
   return { data: body };
 }
 
-export default async function InvitePage({ params }: PageProps): Promise<React.ReactElement> {
+export default async function InvitePage(props: PageProps): Promise<React.ReactElement> {
+  const params = await props.params;
   const origin = process.env.NEXT_PUBLIC_SUPABASE_URL
     ? (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000")
     : "http://localhost:3000";
@@ -62,27 +63,23 @@ export default async function InvitePage({ params }: PageProps): Promise<React.R
     <main style={{ maxWidth: 680, margin: "0 auto", padding: "32px 16px", fontFamily: "system-ui, sans-serif" }}>
       {group.hero_image_url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={group.hero_image_url} alt={group.departure_port} style={{ width: "100%", borderRadius: 12, marginBottom: 24, maxHeight: 300, objectFit: "cover" }} />
+        (<img src={group.hero_image_url} alt={group.departure_port} style={{ width: "100%", borderRadius: 12, marginBottom: 24, maxHeight: 300, objectFit: "cover" }} />)
       )}
-
       <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 4 }}>{group.cruise_line} — {group.ship_name}</h1>
       <p style={{ color: "#6b7280", marginBottom: 24 }}>
         Sailing {new Date(group.sailing_date).toLocaleDateString("en-US", { dateStyle: "long" })} · {group.departure_port}
       </p>
-
       {group.coordinator_message && (
         <blockquote style={{ margin: "0 0 24px", padding: "16px 20px", background: "#f9fafb", borderLeft: "4px solid #6366f1", fontFamily: "Georgia, serif", fontSize: 15, lineHeight: 1.7 }}>
           {group.coordinator_message}
         </blockquote>
       )}
-
       {/* Cabin grid */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 32 }}>
         <StatCard label="Booked" value={cabin_grid.booked} color="#059669" />
         <StatCard label="Interested" value={cabin_grid.interested} color="#d97706" />
         <StatCard label="Pending" value={cabin_grid.pending} color="#6b7280" />
       </div>
-
       {/* RSVP buttons — disabled if sailed */}
       {!isSailed && (
         <div style={{ marginBottom: 32 }}>
@@ -90,7 +87,6 @@ export default async function InvitePage({ params }: PageProps): Promise<React.R
           <RsvpButtons token={params.token} current={invitation.rsvp_state} />
         </div>
       )}
-
       {isSailed && (
         <p style={{ color: "#6b7280", fontStyle: "italic" }}>This group has sailed — the page is now read-only.</p>
       )}

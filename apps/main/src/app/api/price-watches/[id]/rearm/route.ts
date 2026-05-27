@@ -9,10 +9,8 @@ import { tenantClient } from "@/lib/db/tenant-client";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "price_watches", action: "rearm" });
     const db = tenantClient(ctx);

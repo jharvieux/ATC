@@ -2,6 +2,7 @@
 
 // §12 — CRM contacts list with search + pipeline filter.
 
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 
 interface Contact {
@@ -53,12 +54,12 @@ export default function CrmContactsPage() {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Contacts</h1>
-        <a
+        <Link
           href="/crm/contacts/new"
           className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700"
         >
           Add contact
-        </a>
+        </Link>
       </div>
 
       <div className="flex gap-3 mb-4">

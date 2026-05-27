@@ -7,6 +7,7 @@
 // tenant-initiated requests. Also a small inline form to create a
 // new override for this tenant directly.
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 import { use } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
@@ -81,7 +82,7 @@ export default function TenantDetailPage(props: { params: Promise<{ tenant_id: s
 
   return (
     <main style={pageStyle}>
-      <a href="/admin/abuse-monitoring" style={{ color: "#3b82f6" }}>← Back</a>
+      <Link href="/admin/abuse-monitoring" style={{ color: "#3b82f6" }}>← Back</Link>
       <h1>Tenant {tenant_id}</h1>
 
       <h2 style={{ marginTop: 24 }}>Create override</h2>

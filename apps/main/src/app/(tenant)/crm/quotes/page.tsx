@@ -2,6 +2,7 @@
 
 // §12.4 — Quote list.
 
+import Link from "next/link";
 import { useState, useEffect } from "react";
 
 interface Quote {
@@ -32,12 +33,12 @@ export default function CrmQuotesPage() {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Quotes</h1>
-        <a
+        <Link
           href="/crm/quotes/new"
           className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700"
         >
           New quote
-        </a>
+        </Link>
       </div>
 
       {loading ? (

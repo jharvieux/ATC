@@ -8,10 +8,8 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: { userId: string } },
-): Promise<Response> {
+export async function PATCH(req: Request, props: { params: Promise<{ userId: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "forums", action: "moderate_user" });
     const svc = createServiceRoleClient();

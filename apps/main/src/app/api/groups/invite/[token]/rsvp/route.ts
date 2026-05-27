@@ -28,7 +28,8 @@ async function authenticatedEmail(req: Request): Promise<string | null> {
   return data.user.email.toLowerCase();
 }
 
-export async function POST(req: Request, { params }: { params: { token: string } }): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ token: string }> }): Promise<Response> {
+  const params = await props.params;
   const contentType = req.headers.get("content-type") ?? "";
   let rsvp_state: string | null = null;
 

@@ -72,7 +72,7 @@ async function callHandler(req: Request): Promise<Response> {
   const handler = withServiceAuth(async (_req, _ctx) =>
     Response.json({ ok: true }),
   );
-  return handler(req);
+  return handler(req, { params: Promise.resolve({}) });
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     const req = makeReq(token);
     const handler = freshWrapper(async () => Response.json({ ok: true }));
 
-    const res = await handler(req);
+    const res = await handler(req, { params: Promise.resolve({}) });
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: "redis_unreachable" });
   });
@@ -179,7 +179,7 @@ describe("verifyServiceJwt — fail-closed contract", () => {
 
     const token = await makeToken({ tenant_id: "unknown-tenant" });
     const handler = freshWrapper(async () => Response.json({ ok: true }));
-    const res = await handler(makeReq(token));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "tenant_unknown" });
   });
@@ -211,7 +211,7 @@ describe("verifyServiceJwt — fail-closed contract", () => {
 
     const token = await makeToken({ tenant_id: "suspended-tenant" });
     const handler = freshWrapper(async () => Response.json({ ok: true }));
-    const res = await handler(makeReq(token));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "tenant_inactive" });
   });
@@ -245,7 +245,7 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     const handler = freshWrapper(async (_req, ctx) =>
       Response.json({ reached: true, tenant_id: ctx.tenant_id }),
     );
-    const res = await handler(makeReq(token));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ reached: true, tenant_id: "active-tenant" });
   });

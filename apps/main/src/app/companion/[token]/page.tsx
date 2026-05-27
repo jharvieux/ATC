@@ -9,7 +9,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyCompanionToken } from "@/lib/email/unsubscribe-token";
 
 interface PageProps {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -19,7 +19,8 @@ const PHASE_LABELS: Record<string, string> = {
   t_1:  "Tomorrow!",
 };
 
-export default async function CompanionPage({ params }: PageProps) {
+export default async function CompanionPage(props: PageProps) {
+  const params = await props.params;
   const payload = verifyCompanionToken(params.token);
   if (!payload) notFound();
 
@@ -43,7 +44,6 @@ export default async function CompanionPage({ params }: PageProps) {
       <header style={{ borderBottom: "2px solid #3b82f6", paddingBottom: 16, marginBottom: 32 }}>
         <h1 style={{ margin: 0, color: "#1f2937" }}>Your Voyage Guide — {phaseLabel}</h1>
       </header>
-
       {/* Render content sections generically from the JSONB blob */}
       {Object.entries(generated).map(([key, value]) => (
         <section key={key} style={{ marginBottom: 32 }}>
@@ -61,7 +61,6 @@ export default async function CompanionPage({ params }: PageProps) {
           )}
         </section>
       ))}
-
       <footer style={{ borderTop: "1px solid #e5e7eb", paddingTop: 16, color: "#9ca3af", fontSize: 13 }}>
         <p>This page is for your eyes only — no login required.</p>
       </footer>

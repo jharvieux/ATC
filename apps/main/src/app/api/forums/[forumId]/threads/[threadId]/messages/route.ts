@@ -104,8 +104,9 @@ function decideModerationStatus(result: ModerationResult): "visible" | "flagged_
 
 export async function POST(
   req: Request,
-  { params }: { params: { forumId: string; threadId: string } },
+  props: { params: Promise<{ forumId: string; threadId: string }> }
 ): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "forums", action: "post_message" });
     const env = verifyEnvAtBoot();

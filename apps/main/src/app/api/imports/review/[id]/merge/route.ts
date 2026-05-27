@@ -46,10 +46,8 @@ function isBlank(v: unknown): boolean {
   return v === null || v === undefined || (typeof v === "string" && v.trim().length === 0);
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const { ctx, user } = await assertPermission(req, { resource: "imports.review", action: "accept" });
   const svc = createServiceRoleClient();
   const queueRowId = params.id;
