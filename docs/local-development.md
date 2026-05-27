@@ -60,6 +60,20 @@ The schema marks the following as required-at-boot (truncated; see `apps/main/.e
 - `ANTHROPIC_API_KEY` (must start with `sk-ant-`)
 - `MICROSOFT_GRAPH_CLIENT_ID`, `MICROSOFT_GRAPH_CLIENT_SECRET`
   - Required when `OAUTH_MICROSOFT_ENABLED=true` (default). To skip: set `OAUTH_MICROSOFT_ENABLED=false`.
+- `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME`
+  - Required since BP31 (§32.14). Used by the help-AI bug-triage flow.
+  - Local dev doesn't exercise GitHub App auth — placeholder values are sufficient:
+    ```bash
+    GITHUB_APP_ID=0
+    GITHUB_APP_INSTALLATION_ID=0
+    GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
+    ci-placeholder
+    -----END RSA PRIVATE KEY-----"
+    GITHUB_REPO_OWNER=ci-placeholder-owner
+    GITHUB_REPO_NAME=ci-placeholder-repo
+    ```
+  - The `PRIVATE_KEY` must contain `-----BEGIN` to satisfy the zod schema's PEM-format check (`apps/main/src/lib/env.ts:261`).
+  - These were added to `.github/workflows/e2e.yml` in PR #320; missing them locally is what caused the Next 14 → 16 instrumentation crash described under "When boot fails" below.
 
 ## Local-dev shortcuts
 
