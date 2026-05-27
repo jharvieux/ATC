@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §12.4 / §21.10.1 — Accept a quote.
 //
 // Behavior:
