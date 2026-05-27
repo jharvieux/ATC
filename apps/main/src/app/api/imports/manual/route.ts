@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // BP34 §34.1 / §34.3 — Manual entry intake.
 //
 // Smallest intake path: agent fills a CRM form and submits a free-text
