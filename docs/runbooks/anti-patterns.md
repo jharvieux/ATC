@@ -94,6 +94,118 @@ Recurring bug-class patterns identified in the 2026-05-26 Greptile audit. Each p
 
 ---
 
+## Round-2 patterns (post second Greptile audit, 2026-05-26)
+
+### 7. Zero-row update returns `error: null`
+
+**Symptom**: CAS-style lock pattern — `.update({status: 'X'}).eq("id", id).eq("status", 'Y')` — silently no-ops when the row's current status isn't `'Y'`. Supabase JS does NOT distinguish "matched 0 rows" from "succeeded with N=0 affected rows" — both return `{ error: null }`.
+
+**Codebase instances (3 found)**:
+- `apps/main/src/inngest/payouts-execute-transfer.ts:75-76` (Greptile-flagged — real money)
+- `apps/main/src/inngest/evaluate-price-watches.ts:56-57` (NEW)
+- `apps/main/src/inngest/tenant-on-terminated.ts:52-53` (NEW)
+
+**Why slips through**: tests with the row in the expected state pass; tests with the row in unexpected state see no error and assume the update happened.
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): "CAS-style status-guarded updates MUST chain `.select('id')` to get the affected-row array, then assert `result.length === 1`."
+- **Code review**: any `.update(...).eq("status", literal)` triggers checklist item.
+- **ESLint**: feasible but heuristic — flag any `update(...)` followed by 2+ `.eq()` calls without a `.select()` on the chain.
+
+### 8. `void`-prefixed async in serverless functions
+
+**Symptom**: `void someAsyncFn(...)` fire-and-forget. In Vercel/Lambda, the function host can terminate the process when the request returns, killing the in-flight async work. Side effects (DB writes, alerts, audit) may never complete.
+
+**Codebase instances (14 found)**:
+- 4 in `apps/main/src/inngest/abuse-recompute-nightly.ts` (Greptile-flagged)
+- 4 in `apps/main/src/lib/abuse/counters.ts` (NEW — same pattern)
+- 2 in `apps/main/src/lib/ai/{call-wrapper,stream-wrapper}.ts` (NEW)
+- 2 audit-log writes — `apps/main/src/lib/crypto/credential-cipher.ts:104`, `apps/main/src/lib/supervisor/metrics.ts:33`
+- 2 chat-side fire-and-forget — `apps/main/src/app/api/chat/route.ts:179` (streaming response keeps process alive — likely OK)
+
+**Why slips through**: under load with fast-completing async work, the void calls usually finish before termination — pattern works "most of the time."
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): "In serverless code, `void <asyncFn>()` is dangerous — the host can kill the process before the work completes. Either `await` it, OR add `// allow-void-async: <reason>` justifying that the work is idempotent retry-safe."
+- **ESLint** (proposed): `atc/no-void-async-without-comment` — flags `void <ident>(...)` unless preceded by an `// allow-void-async` comment with a justification on the same comment block. Forces every void to be a deliberate decision.
+
+### 9. Wrong assertPermission action for multi-operation routes
+
+**Symptom**: one route handles multiple semantically-different operations (e.g. self-edit AND coordinator moderation) but calls `assertPermission` once with one `(resource, action)` pair. Either over-permissive (members can moderate) or under-permissive (owners blocked from moderation).
+
+**Codebase instances (1 confirmed)**:
+- `apps/main/src/app/api/forums/messages/[id]/route.ts` (Greptile-flagged) — `assertPermission("forums", "edit_message")` covers both self-edit and coordinator hide/unhide/pin
+
+**Other suspects (each multi-method route is a candidate)**: routes that switch on `body.action` or have multiple HTTP methods need per-operation review.
+
+**Why slips through**: type system doesn't know that "edit_message" semantically maps to one of two unrelated operations.
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): "If a route handles multiple semantically-distinct operations (multiple HTTP methods OR multiple `body.action` values), each operation MUST have its own `assertPermission` call with the correct `(resource, action)` pair. Don't reuse a single gate."
+- **Code review**: explicit checklist item for routes with `action` field in body or multiple methods.
+
+### 10. Idempotency-row written BEFORE dispatch
+
+**Symptom**: webhook handler inserts dedup row, THEN dispatches event handler. If the process crashes after the insert but before the dispatch, the next retry from the external service is rejected as a duplicate — work never completes.
+
+**Codebase instances (1 confirmed)**:
+- `apps/main/src/lib/stripe/webhook-handler.ts` (Greptile-flagged)
+
+**Why slips through**: crash-between-insert-and-dispatch is a low-probability race that doesn't appear in normal testing.
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): "Idempotency rows should be written AFTER the dispatched handler completes successfully. The row's existence indicates 'fully processed,' not 'received.' Use a separate `processing_started_at` for in-flight tracking if needed for reconciliation."
+- **Probe**: error-injection probe (planned, see `docs/runbooks/error-injection-probe-design.md`) covers this — inject a crash after the insert, assert the retry succeeds.
+
+### 11. Untrusted input flowing into state-machine actions
+
+**Symptom**: a function like `progressTo(tenantId, stage)` is called with a `stage` argument derived from request body, without validating that the input is a valid transition.
+
+**Codebase instances (1 confirmed)**:
+- `apps/main/src/app/api/admin/tenants/[id]/review/route.ts:139` — `revertTo(tenantId, body.revert_to_stage)` accepts admin-supplied stage without checking it's behind the current stage
+
+**Other state-machine callers**: every `progressTo(ctx.tenant_id, "literal")` uses a string literal — those are safe.
+
+**Why slips through**: the literal-arg pattern is everywhere and looks identical at the call site.
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): "State-machine transition functions must validate inputs at the function boundary. If `progressTo` accepts any non-literal value, the function itself must enforce: (a) target stage exists in the enum, (b) transition is allowed from current stage. Don't delegate validation to callers."
+- **ESLint** (proposed): `atc/state-machine-input-must-be-literal` — flags `(progressTo|revertTo|transitionTo)(<expr>, <non-literal-expr>)` so any dynamic call goes through an explicit waiver comment.
+- **Code-level fix**: amend `progressTo`/`revertTo` to assert target stage is enum-valid AND is a permitted transition from current. Defense-in-depth even when callers pass literals.
+
+### 12. Webhook signature encoding mismatch
+
+**Symptom**: webhook signature decoded using the wrong encoding (hex vs base64 vs base64url) — every valid signature fails, every downstream enforcement (suppression list, callback handling) silently inoperative.
+
+**Codebase instances (1 confirmed)**:
+- `apps/main/src/app/api/webhooks/resend/route.ts:19` — `Buffer.from(sig, "hex")` but Svix uses base64url
+
+**Other webhook handlers verified**: Stripe uses stripe-sdk's `constructEvent` which handles encoding internally; GitHub uses HMAC hex (correct).
+
+**Why slips through**: type system doesn't know what encoding the signature uses; tests with mock signatures use the same wrong decode and pass.
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): "When integrating a new webhook source, capture the signature encoding (hex / base64 / base64url) at integration time. Add a brief comment at the verification site naming the provider and encoding (`// Svix uses base64url`)."
+- **Test fixture**: every webhook handler should have a unit test using a real recorded signature from the provider (one fixture per provider). A signature-encoding mismatch fails the test deterministically.
+- **Runbook**: maintain a per-provider signature-format table somewhere reachable (suggestion: `docs/runbooks/webhook-signature-formats.md`).
+
+---
+
+## Round-2 prevention plan summary
+
+| Pattern | Codebase instances | Best prevention | Status |
+|---|---|---|---|
+| 7. Zero-row CAS | 3 | Doctrine + code review | Doctrine to add |
+| 8. Void async in serverless | 14 (4 likely real bugs) | ESLint rule `no-void-async-without-comment` | Rule to ship |
+| 9. Wrong action gate | 1 | Doctrine + code review | Doctrine to add |
+| 10. Idempotency-before-dispatch | 1 | Doctrine + error-injection probe | Doctrine to add; probe deferred |
+| 11. Untrusted state-machine input | 1 | Defense-in-depth in `progressTo`/`revertTo` + ESLint rule | Code fix + rule to ship |
+| 12. Signature encoding mismatch | 1 | Per-provider runbook + recorded-signature unit tests | Runbook to add |
+
+**Recommendation**: defer the two new ESLint rules + per-provider runbook to a separate session — the doctrine + the existing patterns + the punch list cover the immediate fixes. Schedule the rules when there's bandwidth.
+
+---
+
 ## How this catalog gets used
 
 - **At authoring time**: the CLAUDE.md doctrine lines (added to the "Things to be wary of" section) shape what gets written. Re-read every session.

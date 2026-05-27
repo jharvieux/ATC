@@ -188,6 +188,47 @@ A budget gate read once before a multi-batch loop will not catch overruns mid-lo
 Either re-check between batches, or use a DB-atomic reserve-row pattern. Concurrent
 crons + retries can both pass the gate at run-start and double-spend.
 
+— CAS-style status-guarded updates need row-count verification (D-091 round 2)
+`.update({status:'X'}).eq("id", id).eq("status", 'Y')` does NOT throw when zero
+rows match. Supabase JS returns `{ error: null }` whether the row was found-and-
+updated or not-matched. Every CAS-style lock pattern MUST chain `.select('id')`
+and assert the returned array length matches the expected affected-row count.
+
+— Never `void` an async call in serverless without a justification (D-091 round 2)
+`void someAsyncFn()` in a Vercel/Lambda function tells the host the work is
+fire-and-forget. The host may terminate the process before the work completes,
+silently dropping DB writes, audit rows, and alerts. Either `await` the call,
+OR add a `// allow-void-async: <reason>` comment justifying that the work is
+idempotent and retry-safe (and ideally moved into its own Inngest function).
+
+— One assertPermission call per semantic operation (D-091 round 2)
+Routes that switch on `body.action` or accept multiple HTTP methods must call
+`assertPermission` separately for each operation with the correct (resource,
+action) pair. Reusing a single permission gate for two semantically-different
+operations is either over-permissive or under-permissive — both are bugs.
+
+— Idempotency rows written AFTER dispatch, not before (D-091 round 2)
+A webhook handler that inserts the dedup row before completing the dispatched
+handler creates a "stranded state": if the process crashes between insert and
+dispatch, retries are rejected as duplicates and the work never completes. The
+dedup row's existence should indicate "fully processed," not "received." Use a
+separate `processing_started_at` timestamp for in-flight tracking if reconcile
+needs to recover stuck rows.
+
+— State-machine transitions validate inputs at the function boundary (D-091 round 2)
+If `progressTo`/`revertTo`/`transitionTo` accept any non-literal value, the
+function itself MUST assert: (a) target is a valid enum value, (b) transition is
+permitted from current state. Don't delegate this to callers — defense-in-depth
+catches the day a route passes `body.target_stage` straight through.
+
+— Webhook signatures: capture the encoding at integration time (D-091 round 2)
+Different webhook providers use different signature encodings (hex, base64,
+base64url). Mis-decoding silently rejects every valid webhook AND every
+downstream enforcement step. At integration time, capture a recorded signature
+fixture and write a unit test that verifies it passes — guards against a future
+refactor flipping the encoding. Note the encoding in a comment near
+constructEvent / verify call.
+
 ## Honesty about uncertainty
 
 **Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.  If unsure about what was in the spec re-read that section before assuming anything.
