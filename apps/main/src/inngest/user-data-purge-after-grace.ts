@@ -33,29 +33,53 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
 
     const db = createServiceRoleClient();
 
-    // Re-read the user row — if undo-delete was called, deleted_at will be NULL.
+    // Re-read the user row by PK (D-091 Round-3 #45 fix). The prior version
+    // filtered by `auth_user_id` and called `maybeSingle()`, which silently
+    // returned null when the auth user existed in multiple tenants (each
+    // tenant has its own users row keyed by (tenant_id, auth_user_id)).
+    // Multi-tenant users could never be purged because the re-read always
+    // hit the multi-row case and bailed.
+    //
+    // The event payload's `user_id` is the PK of the specific tenant-scoped
+    // users row this purge run is for, so filtering on that is unambiguous.
     const { data: userRow } = await db
       .from("users")
       .select("deleted_at, status")
-      .eq("auth_user_id", auth_user_id)
+      .eq("id", user_id)
       .maybeSingle();
 
     if (!userRow) {
-      console.info("[user-data-purge] user=%s not found — already purged or undo succeeded", auth_user_id);
+      console.info(
+        "[user-data-purge] user_id=%s auth_user=%s not found — already purged or undo succeeded",
+        user_id,
+        auth_user_id,
+      );
       return { skipped: true };
     }
 
     const typedUser = userRow as { deleted_at: string | null; status: string };
     if (!typedUser.deleted_at) {
-      console.info("[user-data-purge] user=%s deletion was undone — skipping purge", auth_user_id);
+      console.info(
+        "[user-data-purge] user_id=%s auth_user=%s deletion was undone — skipping purge",
+        user_id,
+        auth_user_id,
+      );
       return { skipped: true, reason: "undo_delete" };
     }
     if (typedUser.deleted_at !== deleted_at) {
-      console.info("[user-data-purge] user=%s deleted_at mismatch — skipping stale job", auth_user_id);
+      console.info(
+        "[user-data-purge] user_id=%s auth_user=%s deleted_at mismatch — skipping stale job",
+        user_id,
+        auth_user_id,
+      );
       return { skipped: true, reason: "stale" };
     }
     if (typedUser.status === "purged") {
-      console.info("[user-data-purge] user=%s already purged — skipping", auth_user_id);
+      console.info(
+        "[user-data-purge] user_id=%s auth_user=%s already purged — skipping",
+        user_id,
+        auth_user_id,
+      );
       return { skipped: true, reason: "already_purged" };
     }
 
