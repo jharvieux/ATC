@@ -174,13 +174,15 @@ These should be added to `docs/runbooks/anti-patterns.md` in a follow-up:
 
 See `docs/runbooks/anti-patterns.md` for the consolidated pattern catalog (6 original patterns + 6 round-2 patterns, the latter to be appended in a follow-up) and the ESLint rules / CLAUDE.md doctrine added to prevent recurrence.
 
-## Summary statistics
+## Summary statistics (rounds 1 + 2; cross-round totals after round 3 are at the end of the document)
 
-- **10 Greptile audits** run (5 round 1, 5 round 2)
+- **10 Greptile audits** run in rounds 1+2 (5 each)
 - **~40 actionable findings**, ~7 P1 from round 1 + ~10 P1-equivalent from round 2
 - **6 original patterns** + 6 new round-2 patterns = 12 recurring patterns identified
 - **3 ESLint rules** shipped + **7 CLAUDE.md doctrine additions** + **slop-check workflow** + **error-injection probe design doc** = preventive infrastructure in place
 - ~113 grep-found instances of Pattern 1 (unchecked Supabase mutations) across the codebase, confirmed widespread
+
+_Round 3 added 10 more audits, 18 more findings, and 6 more patterns — see the "Round 3 — additional Greptile findings" section above and the "Cross-round totals" table at the end. Latest figures: **15 audits / ~90 findings / 18 patterns**._
 
 
 ---
@@ -227,16 +229,23 @@ Each subsystem has Pattern 1 mutations (15-20+ more unchecked Supabase mutations
 
 ### Round 3 — recommended Tier-1 additions
 
-8 quick-win fixes after the original Tier-1 lands. Each ≤ 1h, all close real risk:
+Quick-win fixes after the original Tier-1 lands. Each ≤ 1h, all close real risk. Numbered references map to the P1/high-impact table above.
 
-- Chat conversation history (highest product impact)
-- Chat kill switch in streaming mode
-- Haiku PII redact fail-closed
-- CCPA multi-tenant purge fix (iterate instead of `maybeSingle`)
-- CCPA export explicit column allowlist
-- Quote price-lock expiry enforcement
-- Quote dispute PDF actually persisted to audit_log
-- Admin reconciliation audit wrapper signature + Haiku prompt-injection mitigation
+- **#42 Chat conversation history** — highest product impact
+- **#43 Chat kill switch in streaming mode**
+- **#44 Haiku PII redact fail-closed**
+- **#45 CCPA multi-tenant purge fix** (iterate instead of `maybeSingle`)
+- **#46 CCPA export explicit column allowlist**
+- **#47 Quote price-lock expiry enforcement**
+- **#48 Quote dispute PDF actually persisted** to audit_log
+- **#49 Quote acceptance CAS guard** (`.in("status", ["sent","viewed"])` + row-count) — prevents stranded audit rows from concurrent acceptance
+- **#50 Bookings non-atomic host submit** — order operations so commission row is written BEFORE the host adapter call, OR add a reconciliation cron for orphaned bookings
+- **#51 Bookings draft-status CAS guard** — concurrent submit double-call prevention
+- **#52 Admin reconciliation audit-wrapper signature** — accept `(db, recordQuery)`
+- **#53 Admin reconciliation Haiku prompt-injection mitigation** — use tool-call/JSON mode OR explicit delimiter + system-prompt warning
+- **#58 OpenAI embedding path bypasses all enforcement** — wire `loadTenantSnapshot` + state-machine check, mirroring the Claude path
+
+(Greptile noted findings #50, #51, #58 were P1-flagged but missing from the original quick-wins list. Added explicitly so they're not silently deprioritized.)
 
 ## Cross-round totals (after 15 audits, ~90 findings)
 
