@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §17.10 — CCPA data deletion request.
 // POST: user must confirm by typing their own email address.
 // Sets users.deleted_at and schedules a purge Inngest job at +30 days.
