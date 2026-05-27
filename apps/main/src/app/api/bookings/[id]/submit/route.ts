@@ -84,6 +84,27 @@ export async function POST(
       return Response.json({ error: "Only draft bookings can be submitted." }, { status: 422 });
     }
 
+    // D-091 Round-3 #51 — CAS lock to prevent concurrent submits from
+    // both reaching the host adapter call.
+    // Transition draft → submitting atomically; if 0 rows match, another
+    // submit holds the lock. Returns 409 so the client can retry later.
+    // On host-call success the lock transitions to 'submitted' below; on
+    // host-call failure we revert to 'draft' so a retry can pick it up.
+    // A future reconciliation cron will sweep stuck 'submitting' rows
+    // older than N minutes back to draft.
+    const { data: lockRows } = await db
+      .from("bookings")
+      .update({ status: "submitting", updated_at: new Date().toISOString() })
+      .eq("id", bookingId)
+      .eq("status", "draft")
+      .select("id");
+    if (!lockRows || (lockRows as Array<{ id: string }>).length === 0) {
+      return Response.json(
+        { error: "Booking submission already in flight or status changed." },
+        { status: 409 },
+      );
+    }
+
     // §20.5 DOB confirmation gate — must clear before host adapter call
     const { assertNoEstimatedDOBs, DOBEstimateUnresolvedError } = await import("@/lib/booking/dob-gate");
     try {
@@ -400,7 +421,17 @@ export async function POST(
     const submitResult = await adapter.submitBooking(submitReq, hostCtx);
 
     if (!submitResult.ok) {
-      // Leave booking in draft; return the adapter error
+      // D-091 R3 #51 — revert the CAS lock so a retry can pick this up.
+      // Previously this path left the booking in 'submitting' indefinitely
+      // and any subsequent attempt got the 409 above.
+      await safeAwait(
+        db
+          .from("bookings")
+          .update({ status: "draft", updated_at: new Date().toISOString() })
+          .eq("id", bookingId)
+          .eq("status", "submitting"),
+        "bookings.update.revert_lock_on_host_failure",
+      );
       return Response.json(
         { error: `Host adapter error: ${submitResult.error.message}`, code: submitResult.error.code },
         { status: 502 },
