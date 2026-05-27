@@ -25,13 +25,10 @@ type ProcessingRow = {
 
 type TenantRow = { stripe_connect_account_id: string | null };
 
-export const payoutsReconcileProcessing = inngest.createFunction(
-  {
-    id: "payouts-reconcile-processing",
-    triggers: [{ cron: "*/5 * * * *" }],
-  },
-  async () => {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
+// D-091 / error-injection probe — inner body extracted for direct test
+// invocation.
+export async function runPayoutsReconcileProcessing(): Promise<{ recovered: number; total_processing: number }> {
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
     const stripe = new Stripe(stripeKey);
 
@@ -113,6 +110,13 @@ export const payoutsReconcileProcessing = inngest.createFunction(
       }
     }
 
-    return { recovered, total_processing: processing.length };
+  return { recovered, total_processing: processing.length };
+}
+
+export const payoutsReconcileProcessing = inngest.createFunction(
+  {
+    id: "payouts-reconcile-processing",
+    triggers: [{ cron: "*/5 * * * *" }],
   },
+  runPayoutsReconcileProcessing,
 );
