@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §8.4 — POST /api/retrieve
 //
 // All retrieval is scoped to the tenant identified by the JWT (ctx.tenant_id).

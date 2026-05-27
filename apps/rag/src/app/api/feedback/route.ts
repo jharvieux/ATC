@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §6.10 — Inbound chunk feedback events from the main app.
 //
 // When a customer thumbs-up or thumbs-down an AI response on the main
