@@ -99,7 +99,9 @@ export async function runCruiseMapperItineraryActor(
     ...(opts.regions ? { regions: opts.regions } : {}),
   };
 
-  const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
+  // D-091 P1 #2 — token in Authorization header, NOT URL query string.
+  // See apify-pricing-adapter.ts:dispatchActor for full rationale.
+  const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), APIFY_RUN_TIMEOUT_MS);
   let items: unknown[] = [];
@@ -108,7 +110,10 @@ export async function runCruiseMapperItineraryActor(
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(actorInput),
       signal: controller.signal,
     });
