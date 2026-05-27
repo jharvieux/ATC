@@ -118,7 +118,10 @@ export function assertValidRevertTarget(
 ): InvalidStageTransitionError | null {
   // 1. Enum membership — protects against untrusted input being cast to
   //    OnboardingStage at the call site (e.g. `body.revert_to_stage`).
-  if (typeof target !== "string" || !(target in STAGE_ORDER)) {
+  //    Use Object.hasOwn (not the `in` operator) so prototype keys like
+  //    "constructor", "toString", "hasOwnProperty" don't sneak through —
+  //    the `in` operator walks the prototype chain.
+  if (typeof target !== "string" || !Object.hasOwn(STAGE_ORDER, target)) {
     return new InvalidStageTransitionError(current, target as OnboardingStage);
   }
   // 2. Direction — revert must be backwards. Same-stage revert is rejected
