@@ -292,7 +292,13 @@ describe("instrumentedClaudeCall — happy path", () => {
       system: "you are a helper",
       messages: [{ role: "user", content: "hi" }],
     });
-    expect((anthropicCreateArgs as { system?: string }).system).toBe("you are a helper");
+    // §9.3 — prompt caching wraps the system string into a block array with
+    // a cache_control marker. The original intent of this test was "system
+    // arg is forwarded when provided"; assertion updated to read the wrapped
+    // text. Plain-string mode is exercised separately by build-system-arg.test.ts.
+    const systemArg = (anthropicCreateArgs as { system?: unknown }).system;
+    expect(Array.isArray(systemArg)).toBe(true);
+    expect((systemArg as Array<{ text: string }>)[0].text).toBe("you are a helper");
   });
 
   it("downgrades the actual SDK-call model when ai_cost_state='soft1' for non-customer-facing purpose", async () => {
