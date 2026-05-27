@@ -17,10 +17,16 @@ import { retrievalLogAggregate } from "@/inngest/retrieval-log-aggregate";
 // POSTs to /api/inngest, which would let an external caller fire any
 // registered function on demand. Pass it explicitly so a missing value is
 // loud rather than silent.
+//
+// NEXT_PHASE === "phase-production-build" lets `next build` collect page data
+// without runtime secrets. The same module evaluates again at server boot
+// (NEXT_PHASE !== "phase-production-build") where the throw is what we want.
 const signingKey = process.env.INNGEST_SIGNING_KEY;
-if (!signingKey && process.env.NODE_ENV === "production") {
-  // Throw at module evaluation time so the deploy fails fast rather than
-  // serving an unauthenticated endpoint.
+if (
+  !signingKey &&
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build"
+) {
   throw new Error(
     "INNGEST_SIGNING_KEY must be set in production. " +
       "Without it, /api/inngest accepts unauthenticated function invocations.",
