@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §14.8 — Manual statement upload: Haiku parses CSV text; matches commissions.
 //
 // POST /api/admin/reconciliation/upload
