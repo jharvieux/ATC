@@ -26,7 +26,6 @@
     "apps/main/src/proxy.ts",
     "apps/rag/src/lib/**/*.ts",
     "apps/rag/src/app/api/**/route.ts",
-    "apps/rag/src/middleware.ts",
     "packages/shared-types/src/**/*.ts",
     "!**/*.test.ts",
     "!**/*.spec.ts",
