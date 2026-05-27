@@ -32,6 +32,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
+import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { checkSentence } from "@/lib/supervisor/per-sentence-check";
@@ -130,6 +131,23 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         return;
       }
 
+      // D-095 — Load the conversation history ONCE. Used for both:
+      //   (a) Flow-state reconstruction (bug/feature): we want user turns
+      //       in chronological order so we can count them and replay
+      //       answers into the draft.
+      //   (b) LLM context (below): full user+assistant turns prepended
+      //       to the current message.
+      // Earlier the route issued two separate queries against `messages`
+      // for the same conversation_id (loadPriorUserMessages and
+      // loadConversationHistory). Greptile P2 noted that the user-only
+      // subset can be derived from the full history in memory.
+      const fullHistory = session.conversation_id
+        ? await loadConversationHistory(db, ctx.tenant_id, session.conversation_id)
+        : [];
+      const priorUserMessages = fullHistory
+        .filter((t) => t.role === "user")
+        .map((t) => t.content);
+
       // For bug/feature flows we derive the current state by counting prior
       // user messages in this session's conversation — the bot asks each
       // step's question exactly once, so the count is the position in
@@ -138,9 +156,6 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       // recite back the user's own answers verbatim.
       let nextQuestion = "";
       let draftSnapshot: BugDraft | FeatureDraft | null = null;
-      const priorUserMessages = session.conversation_id
-        ? await loadPriorUserMessages(db, session.conversation_id)
-        : [];
 
       if (session.session_type === "bug") {
         const currentState = bugStateForIndex(priorUserMessages.length);
@@ -172,6 +187,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
       const model = env().ANTHROPIC_SONNET_MODEL;
 
+      // D-095 — Conversation history for the LLM call. Reuses `fullHistory`
+      // loaded above (single DB roundtrip). Appends the current userMessage
+      // because this route doesn't (yet) persist help-AI user turns to the
+      // messages table.
+      const messagesForLlm: Array<{ role: "user" | "assistant"; content: string }> =
+        [...fullHistory, { role: "user", content: userMessage }];
+
       // BP24 — Help-AI streaming opt-in. Default off; flip
       // HELP_AI_STREAMING_ENABLED=true to use the streaming wrapper +
       // per-sentence deny-list check. The chat route has its own flag
@@ -192,7 +214,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           purpose: "help_ai_main",
           max_tokens: 800,
           system: promptedSystem,
-          messages: [{ role: "user", content: userMessage }],
+          messages: messagesForLlm,
           signal: abortController.signal,
         });
 
@@ -264,7 +286,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
             purpose: "help_ai_main",
             max_tokens: 800,
             system: promptedSystem,
-            messages: [{ role: "user", content: userMessage }],
+            messages: messagesForLlm,
           });
           assistantText = result.text;
         } catch {
@@ -302,23 +324,6 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   })();
 
   return new Response(readable, { status: 200, headers: SSE_HEADERS });
-}
-
-type MessagesDb = ReturnType<typeof tenantClient>;
-
-async function loadPriorUserMessages(
-  db: MessagesDb,
-  conversation_id: string,
-): Promise<string[]> {
-  const { data } = await db
-    .from("messages")
-    .select("content, role, created_at")
-    .eq("conversation_id", conversation_id)
-    .eq("role", "user")
-    .order("created_at", { ascending: true });
-  return ((data ?? []) as Array<{ content: string }>)
-    .map((r) => (typeof r.content === "string" ? r.content : ""))
-    .filter((s) => s.length > 0);
 }
 
 function bugStateForIndex(priorUserMessageCount: number): BugFlowState {

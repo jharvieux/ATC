@@ -50,6 +50,7 @@ import {
 import { resolveToneLevel } from "@/lib/chat/tone-resolution";
 import { deriveFingerprint, extractClientIp } from "@/lib/chat/fingerprint";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
+import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import {
   buildSystemPrompt,
   DEFAULT_PERSONA_SLUG,
@@ -391,6 +392,16 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     content: userMessage,
   });
 
+  // D-095 — load multi-turn history so the LLM sees prior context.
+  // Pulls user+assistant rows in chronological order (the user message
+  // just persisted above becomes the final entry). Trimmed to a char
+  // budget so a runaway conversation can't blow the prompt window.
+  // Computed once before the regen loop; reused across attempts so we
+  // don't accidentally feed our own in-progress assistant draft back as
+  // context on regen. tenantId is required (svc bypasses RLS — db-layer
+  // isolation matters here).
+  const chatHistory = await loadConversationHistory(svc, tenantId, conversationId);
+
   // BP27 §27.4 — bump chat-messages counter. Non-fatal: the message
   // already persisted; we don't want to surface a 500 over usage
   // attribution failure.
@@ -588,7 +599,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         purpose: "chat_main",
         max_tokens: 1024,
         system: sys,
-        messages: [{ role: "user", content: userMessage }],
+        messages: chatHistory,
         signal: abortController.signal,
       });
 
@@ -669,7 +680,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
           purpose: "chat_main",
           max_tokens: 1024,
           system: sys,
-          messages: [{ role: "user", content: userMessage }],
+          messages: chatHistory,
         });
         candidateText = result.text;
       } catch {
