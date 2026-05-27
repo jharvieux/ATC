@@ -29,6 +29,22 @@ import {
   type CachedTenantSnapshot,
 } from "@/lib/abuse/snapshot";
 
+// D-091 Round-3 #56/#58 — wrapper-level enforcement of the §27.6 AI-cost
+// state machine. Both Claude and OpenAI calls now route through the same
+// state check; previously the Claude wrapper only DOWNGRADED on soft1/2
+// and silently allowed `hard`, and the OpenAI embedding wrapper bypassed
+// the state machine entirely. Callers should catch this and short-circuit
+// with the customer-facing fallback message; throwing rather than
+// returning a tagged result keeps the wrapper symmetric with vendor
+// network failures.
+export class AiCostHardStateError extends Error {
+  readonly code = "ai_cost_hard_state" as const;
+  constructor(public readonly tenant_id: string, public readonly purpose: string) {
+    super(`AI cost limit (hard) reached for tenant ${tenant_id} — refusing ${purpose} call`);
+    this.name = "AiCostHardStateError";
+  }
+}
+
 export type AICallPurpose =
   | "chat_main"
   | "chat_supervisor"
@@ -80,7 +96,7 @@ export interface ModelSelectionInput {
 
 export function selectModelForPurpose(input: ModelSelectionInput): string {
   if (input.ai_cost_state === "ok") return input.desired_model;
-  if (input.ai_cost_state === "hard") return input.desired_model; // hard is enforced at the call site by NOT calling at all
+  if (input.ai_cost_state === "hard") return input.desired_model; // hard is enforced upstream by the wrapper (throws AiCostHardStateError before we get here)
   // soft1 + soft2: downgrade non-customer-facing purposes.
   if (CUSTOMER_FACING_PURPOSES.has(input.purpose)) return input.desired_model;
   return DOWNGRADE_MAP[input.desired_model] ?? input.desired_model;
@@ -197,6 +213,15 @@ export async function instrumentedClaudeCall(
   const db = createServiceRoleClient();
   await primePricingCache(db);
   const snapshot = await loadTenantSnapshot(db, args.tenant_id);
+
+  // D-091 Round-3 #56 — fail-closed at the wrapper on hard state.
+  // Previously the only enforcement was at the call site (chat route's
+  // pre-flight check); embeddings, supervisor, memory extract, and any
+  // future caller could bypass. Centralizing here is defense-in-depth.
+  if (snapshot.ai_cost_state === "hard" && args.tenant_id !== PLATFORM_TENANT_ID) {
+    throw new AiCostHardStateError(args.tenant_id, args.purpose);
+  }
+
   const model = selectModelForPurpose({
     desired_model: args.model,
     purpose: args.purpose,
@@ -272,6 +297,17 @@ export async function instrumentedOpenAIEmbedding(
 
   const db = createServiceRoleClient();
   await primePricingCache(db);
+
+  // D-091 Round-3 #58 — embeddings now route through the same §27.6
+  // state machine the Claude wrapper does. Previously this path bypassed
+  // the snapshot/state check entirely, so a tenant in `hard` state could
+  // keep generating embeddings indefinitely.
+  if (args.tenant_id !== PLATFORM_TENANT_ID) {
+    const snapshot = await loadTenantSnapshot(db, args.tenant_id);
+    if (snapshot.ai_cost_state === "hard") {
+      throw new AiCostHardStateError(args.tenant_id, args.purpose);
+    }
+  }
 
   const openai = new OpenAI({ apiKey });
   const start = Date.now();
