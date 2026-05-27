@@ -1,88 +1,115 @@
-# Session state — last updated 2026-05-26 ~22:00 UTC
+# Session state — last updated 2026-05-26 ~22:45 UTC
 
 ## Just completed
 
-This was a long session covering the Apify chain, slop-detection infrastructure, three rounds of Greptile security audits, and Tier-1 bug fixes from the audit findings.
+Continuation of the long D-091 / audit follow-up session. After Tier-1 fixes
+(PRs #258–#264), advanced through the "top-10 impact" list to items 1–3:
 
-### Apify chain (D-088) — all 5 PRs merged into dev
-- #225 Apify-1 — tracked-sailings only (general-pricing Apify path removed; DIY CruiseMapper scraper replaces it)
-- #226 Apify-2 — DIY price-range scraper + `general_pricing_ranges` table
-- #227 Apify-3 — AI rounding rule (+10% then nearest $100; "around/approximately" framing)
-- #229 chore — RAG RLS snapshot regen (had drifted post-migration 0017)
-- #230 Apify-4 + Apify-5 — 9 cruise lines enabled with verified `sercul/*` slugs + per-line kill switches + `APIFY_ACTOR_ALLOWLIST` + operator scoped-token runbook
+### Item #1 — Safe-mutation wrapper (PR #265, open)
+- `apps/main/src/lib/db/safe-mutation.ts` — `SupabaseMutationError` class +
+  `unwrap`, `unwrapRequired`, `safeAwait`, `safeAwaitRowCount` helpers.
+- Migrated `apps/main/src/lib/ai/call-wrapper.ts:logAndIncrement` as proof
+  of pattern (4 mutation sites).
+- `CLAUDE.md` doctrine updated to point at the wrapper.
+- 18 unit tests, all passing.
 
-### Vercel preview deploy — first successful build of the project
-- Audit doc `docs/runbooks/vercel-env-checklist.md` enumerated 8 empty + 16 missing env vars
-- Operator populated values; `vercel deploy` (cloud-build path) succeeded; SSO gate confirmed working
-- "site not currently active" was the SSO wall — not a broken deploy
+### Item #2 — Chat conversation history (PR #266, open)
+- `apps/main/src/lib/chat/conversation-history.ts` — `loadConversationHistory`
+  + `trimToBudget` with 50k-char cap, user-first first-message guarantee.
+- Customer chat (`apps/main/src/app/api/chat/route.ts`) — loads history once
+  after persisting the user message; reused across regen attempts so a
+  rewriting iteration doesn't feed its own draft back as context.
+- Help-AI chat — when `session.conversation_id` is set, inherits chat-history
+  context. Admin-source sessions stay single-turn pending the deeper help-AI
+  persistence fix (documented as a known gap).
+- 11 unit tests, all passing.
 
-### Slop-detection infrastructure (D-091) — #233 merged
-- `atc/no-orphan-todo` (error), `atc/no-narrating-comments` (off, opt-in)
-- `pnpm slop-check` diff scanner + GitHub Actions workflow
-- CLAUDE.md slop-sweep step added to End-of-session protocol
-- 5 pre-existing orphan TODOs cleaned up
+### Item #3 — Error-injection probe foundation (PR #267, open)
+- `apps/main/test/error-injection/_helpers.ts` — 4 reusable mocks
+  (makeFailingDbClient, makeMockStripeEvent/Request, invokeInngestFunction,
+  makeThrowingStripeClass/Fetch).
+- `pnpm test:error-injection` script + CI workflow step.
+- 11 probe tests passing across 2 handlers:
+  - **Stripe webhook** — resource-down + concurrency lanes
+    (`apps/main/test/error-injection/stripe-webhook.error.test.ts`).
+    DB-fail coverage was already shipped in PR #262
+    (`webhook-error-propagation.test.ts`).
+  - **GitHub webhook** — full Pattern 1/2/6 coverage
+    (`apps/main/test/error-injection/github-webhook.error.test.ts`).
+- Coverage table + per-handler remaining-work notes in
+  `apps/main/test/error-injection/README.md` and
+  `docs/runbooks/audit-followups-2026-05-26.md` "Error-injection probe —
+  handler coverage" section.
 
-### Anti-pattern infrastructure (D-091b) — #239 merged
-- `atc/no-unchecked-supabase-mutation` (off — codebase has ~113 instances; flip after cleanup), `atc/no-credentials-in-url` (error), `atc/no-fail-open-on-resource-error` (off)
-- 7 CLAUDE.md doctrine bullets
-- Punch list doc + anti-patterns catalog
-
-### Three rounds of Greptile audits — 15 PRs total, all closed without merge
-- Round 1 (5 PRs, #234–#238): auth+db, crypto+PII, Stripe, Apify, RAG endpoints — ~25 findings, 7 P1
-- Round 2 (5 PRs, #240–#244): Inngest crons, tenant routes, forums, host-adapters+email, onboarding+consent — ~18 P1-equivalent findings
-- Round 3 (10 PRs, #248–#257): AI wrappers, bookings, quotes, invitations, RAG ingestion, admin reconciliation, CCPA, imports, DNS/white-label, chat — ~18 more findings + 6 new patterns
-- **Cross-round totals: 15 audits, ~90 findings, 18 recurring patterns** — all documented in `docs/runbooks/audit-followups-2026-05-26.md`
-
-### Tier-1 fixes from D-091 punch list — 5 merged, 2 in flight
-- ✅ #258 — Svix signature verification rewritten to match Svix scheme (msg-id + timestamp + body, base64-encoded, 5-min tolerance, multi-sig). Closes CAN-SPAM exposure from silently-rejected bounce/complaint webhooks. 9 unit tests.
-- ✅ #259 — onboarding state-machine: `progressTo` CAS update + `revertTo` enum/direction validation. Closes admin-review-bypass + TOCTOU. 14 tests.
-- ✅ #260 — Apify token moved from URL query string to `Authorization: Bearer` header. Closes token-leak via outbound URL logging.
-- ✅ #261 — payout CAS lock now verifies row-count via `tryAcquirePayoutLock` helper. Closes payout double-processing on concurrent runs. 4 tests.
-- ✅ #264 — `assertValidRevertTarget` uses `Object.hasOwn` (Greptile follow-up on #259 — prototype-chain leak in `target in STAGE_ORDER`). 4 regression tests.
-- 🟡 #262 — Stripe webhook: 6 unchecked-mutation sites destructure `{ error }` + dead-code branch removed. Tests expanded to 8 handler branches after Greptile review.
-- 🟡 #263 — round-3 findings appended to D-091 punch list. Doc-consistency fixes after Greptile P1 review.
-
-### Procedure change shipped
-- **Read every Greptile review before merging.** Greptile posts comments separately (per the operator's setting change). Caught 5 follow-up findings this session that would have otherwise leaked past merge. Specifically: PR #259 had a P1 inline finding (`target in STAGE_ORDER` leaks Object.prototype keys) that I missed when I merged it. Fixed in #264 retroactively.
+### Procedure reminder still active
+- **Read every Greptile review before merging.** Greptile posts comments
+  separately; missing one P1 cost a follow-up PR (#264) earlier this session.
 
 ## In flight
 
-- **#262** (Stripe webhook unchecked mutations) — CI re-running after test expansion to 8 handler branches. Greptile's 4/5 review predated the expansion.
-- **#263** (round-3 doc) — CI re-running after Greptile P1 doc-consistency fixes (summary stats clarity + 3 missing P1 items added to quick-wins).
+- **PR #265** (safe-mutation wrapper) — awaiting CI + Greptile review before merge.
+- **PR #266** (chat conversation history) — awaiting CI + Greptile review.
+- **PR #267** (error-injection probe foundation) — awaiting CI + Greptile review.
 
-Both ready to merge once CI clears. No code-level blockers.
+All three are independent — no merge ordering needed.
 
 ## Next step
 
-Merge #262 + #263 (notification from current background poll incoming). Then start the next Tier-1 batch — the round-3 audit findings list:
+Two equally-valid continuations:
 
-1. **#42 Chat conversation history** (highest product impact — every chat turn is currently stateless; help-AI has the same bug)
-2. **#43 Chat kill switch in streaming mode** (check `ai_kill_switch_state.global_paused` BEFORE stream starts, not after)
-3. **#44 Haiku PII redact fail-closed** (missing API key currently returns input as `status: 'clean'` — fails OPEN)
-4. **#45 CCPA multi-tenant purge fix** (`maybeSingle()` silently skips multi-tenant users — compliance gap)
-5. **#46 CCPA export explicit column allowlist** (`select('*')` leaks `tenant_id` + internal columns)
-6. **#47 Quote price-lock expiry enforcement**
-7. **#48 Quote dispute PDF actually persisted to audit_log**
-8. **#49 Quote acceptance CAS guard**
-9. **#50–#51 Bookings non-atomic host submit + draft-status CAS**
-10. **#52 Admin reconciliation audit-wrapper signature**
-11. **#53 Admin reconciliation Haiku prompt-injection mitigation**
-12. **#58 OpenAI embedding path enforcement** (bypasses Pattern 8 state machine entirely)
+**A. Finish item #3** (the user explicitly chose "Full Tier 1–3 multi-day"
+on the scope question). Remaining handlers, in priority order:
 
-All detail in `docs/runbooks/audit-followups-2026-05-26.md` "Round 3 — recommended Tier-1 additions" section.
+1. Extract Inngest cron bodies (`payouts-execute-transfer` non-lock sites,
+   `payouts-reconcile-processing`, `abuse-recompute-nightly`,
+   `ai-pricing-cache-refresh`) into named exports + add probe tests.
+   Recommended as small per-cron PRs following the `tryAcquirePayoutLock`
+   precedent.
+2. Add `apps/rag/test/error-injection/` for the RAG feedback webhook
+   (cross-app, needs its own vitest include + glob entry).
+3. Tenant API routes (`tenant/billing`, `tenant/chat-limits`, forums) —
+   probe tests + fix the unchecked-mutation Pattern 1 bugs they have
+   in the same PR.
+
+**B. Move to round-3 Tier-1 punch list** (the items the user deferred when
+they picked "Full Tier 1–3 (multi-day)" for #3):
+
+- #43 Chat kill switch in streaming mode
+- #44 Haiku PII redact fail-closed
+- #45 CCPA multi-tenant purge fix
+- #46 CCPA export explicit column allowlist
+- #47 Quote price-lock expiry enforcement
+- #48 Quote dispute PDF actually persisted to audit_log
+- #49 Quote acceptance CAS guard
+- #50–#51 Bookings non-atomic host submit + draft-status CAS
+- #52 Admin reconciliation audit-wrapper signature
+- #53 Admin reconciliation Haiku prompt-injection mitigation
+- #58 OpenAI embedding path enforcement
+
+All detail in `docs/runbooks/audit-followups-2026-05-26.md` "Round 3 —
+recommended Tier-1 additions" section.
 
 ## Blocked on user
 
-- Vercel env vars are largely populated. Some optional ones still empty (Resend FROM domain, GitHub App, OAuth Microsoft when enabled) — not blocking dev.
-- Production deploy still requires cutting a `release/*` branch (per `.github/workflows/deploy.yml`). Not blocking.
+- Vercel env vars largely populated; some optional still empty (Resend FROM
+  domain, GitHub App, OAuth Microsoft) — not blocking dev.
+- Production deploy still requires cutting a `release/*` branch — not blocking.
 
 ## Open questions
 
-- The 113-site `atc/no-unchecked-supabase-mutation` codebase cleanup is the largest backlog item. Rule is currently `off` because flipping to `error` would block every PR. Worth a dedicated 2-3 day cleanup pass before flipping.
-- Help-AI chat at `apps/main/src/app/api/help/sessions/[id]/message/route.ts:195, 267` has the SAME stateless-LLM bug as customer chat. Greptile only flagged the customer chat path; I found this via grep. Should land in the same fix PR.
-- The "safe-client wrapper" structural recommendation (Pattern 1 prevention) — wrap Supabase JS calls in a thin `safeUpdate`/`safeInsert` facade that throws on `{error}` truthy. ~1 day to write, then incremental migration. Eliminates Pattern 1 entirely. Not started.
-- Two ESLint rules sketched but not implemented: `atc/no-void-async-without-comment` (Pattern 8), `atc/state-machine-input-must-be-literal` (Pattern 11). Both opt-in by design — deferred until operator wants a one-pass audit.
-- Error-injection probe (#245 design doc) — real implementation is multi-day project. Recommended sequencing: build shared helpers (`makeFailingDbClient`, `makeMockStripeRequest`, etc.) first, then exercise Tier-1 → Tier-2 → Tier-3 handlers.
+- **Help-AI assistant-turn persistence** — help-AI doesn't write its own
+  user/assistant rows to `messages`, so within-help-AI multi-turn context
+  is still single-turn after PR #266. Full fix is its own PR (decide:
+  should help-AI turns count toward chat metrics? what tenant_id scoping
+  for admin-source sessions?).
+- **113-site `atc/no-unchecked-supabase-mutation` cleanup** — rule still
+  `off` because flipping to `error` blocks every PR. After PR #265 lands,
+  incremental migration to `safeAwait` is the path; flip the rule after.
+- **Two ESLint rules sketched but not implemented:**
+  `atc/no-void-async-without-comment` (Pattern 8),
+  `atc/state-machine-input-must-be-literal` (Pattern 11). Both opt-in.
+- **Error-injection probe — Inngest crons** need the cron-internal refactor
+  documented in the probe README; each cron is its own small PR.
 
 ## Carried forward (deferred work, unchanged from prior sessions)
 

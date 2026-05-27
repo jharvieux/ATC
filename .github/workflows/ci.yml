@@ -46,6 +46,13 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
+      - name: Error-injection probe (D-091 follow-up)
+        # Forces handlers into DB-fail / resource-down / concurrent failure
+        # modes that don't fire under happy-path testing. See
+        # apps/main/test/error-injection/README.md and
+        # docs/runbooks/error-injection-probe-design.md.
+        run: pnpm test:error-injection
+
       - name: Build
         run: pnpm -r build
         env:

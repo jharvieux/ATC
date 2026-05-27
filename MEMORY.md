@@ -4,6 +4,52 @@ Newest entries on top.
 
 ---
 
+## D-095 — 2026-05-26 — Chat conversation history (PR #266)
+
+Round-3 audit Pattern 13: customer chat and help-AI chat both called Anthropic with `messages: [{role:"user", content: userMessage}]` — single-turn, stateless. The LLM literally couldn't see prior turns; every multi-turn conversation looked like "the AI forgot what we said."
+
+### What was decided
+- Built shared helper `apps/main/src/lib/chat/conversation-history.ts` (`loadConversationHistory` + `trimToBudget`) that pulls user+assistant rows from the messages table in chronological order, drops oldest when over a 50k-char budget, and enforces a user-first first-message (Anthropic requires alternating roles starting with user).
+- Customer chat loads history once after persisting the user message; reused across regen attempts so a rewriting iteration doesn't feed its own draft back as context.
+- Help-AI **partial fix only**: when `session.conversation_id` is set (customer_chat → help-AI handoff), inherits chat-history context. Admin-source sessions stay single-turn pending the deeper help-AI persistence fix (help-AI doesn't currently write its own user/assistant rows to `messages`).
+
+### Why this scope split for help-AI
+Fully fixing help-AI multi-turn requires deciding whether help-AI turns count toward chat metrics and what tenant scoping admin-source sessions use. Both are product decisions, not engineering decisions — deferred to a follow-up PR with operator input.
+
+### Rejected
+- Wider 100k-char history budget — Haiku and Sonnet have 200k context but the system prompt + RAG + asset blocks already consume a healthy chunk; 50k leaves clear room for a long reply.
+- Single-pass char counting with no role-aware trim — turned out we needed to drop a leading assistant after trim because the cut point can land mid-pair.
+
+### Related artifacts
+- PR #266 — `feat/chat-conversation-history`
+- `apps/main/src/lib/chat/conversation-history.ts`
+- `apps/main/test/unit/chat/conversation-history.test.ts` (11 tests)
+
+---
+
+## D-094 — 2026-05-26 — Safe-mutation wrapper (PR #265)
+
+Pattern 1 (unchecked Supabase mutation) is THE dominant problem class across all 15 Greptile audits — ~113 grep sites in the codebase. Per-site `{ error }` destructuring + manual surfacing is mechanical but lossy; one missed site = one silent prod failure. Adopted a wrapper-based structural fix.
+
+### What was decided
+- `apps/main/src/lib/db/safe-mutation.ts` exports `SupabaseMutationError` class + `unwrap`, `unwrapRequired`, `safeAwait`, `safeAwaitRowCount` helpers.
+- `safeAwait(query, "context.label")` is the canonical pattern — throws structured error with context, caller gets to choose surface (500, retry, etc.).
+- `safeAwaitRowCount(query, "context", expected)` covers the CAS-style update case (Pattern 7) — verifies `.select("id")` returned the expected row count.
+- Migrated `call-wrapper.ts:logAndIncrement` as proof-of-pattern (4 sites).
+- Rule `atc/no-unchecked-supabase-mutation` still `off` — flipping to `error` would block every PR. Incremental migration to `safeAwait`, then flip.
+
+### Rejected
+- Mandatory wrap for every site enforced at PR time — too disruptive; one missed site under deadline pressure becomes a "disable the rule for this file" comment that never gets removed.
+- Returning `Result<T, E>` discriminated unions instead of throwing — adds ceremony at every call site for the 95% case where caller just wants to fail the request.
+
+### Related artifacts
+- PR #265 — `feat/safe-supabase-mutation-wrapper`
+- `apps/main/src/lib/db/safe-mutation.ts`
+- `apps/main/test/unit/db/safe-mutation.test.ts` (18 tests including zero-row CAS regression vector)
+- `CLAUDE.md` "Check every Supabase mutation" doctrine bullet now points at the wrapper.
+
+---
+
 ## D-093 — 2026-05-26 — Procedure change: read every Greptile review before merging
 
 Greptile posts comments separately from PR-body content (per operator setting flip). I had been treating Greptile as just another CI check — only verifying required-check pass and merging when green. That's wrong.

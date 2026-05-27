@@ -268,3 +268,34 @@ Quick-win fixes after the original Tier-1 lands. Each ≤ 1h, all close real ris
 | 16. Broken audit-wrapper signature (round 3) | 1/15 | Admin reconciliation only (verified via enumeration of all 29 callsites) |
 | 17. `select('*')` user-facing leak (round 3) | 1/15 found + ~5 candidates | CCPA export confirmed |
 | 18. maybeSingle masks multi-row (round 3) | 1/15 found + 1 grep | CCPA purge + user-consent renewal |
+
+
+## Error-injection probe — handler coverage (PR #267)
+
+D-091 follow-up. The probe foundation landed in PR #267
+(`feat/error-injection-probe`). Coverage tracked in
+`apps/main/test/error-injection/README.md`.
+
+**Shipped:** `_helpers.ts` (4 reusable mocks), `pnpm test:error-injection`
+script, CI workflow step, Stripe webhook resource-down + concurrency tests
+(5), GitHub webhook full coverage (6) — 11 probe tests, all passing.
+DB-fail Stripe webhook coverage was already shipped in
+`apps/main/test/unit/stripe/webhook-error-propagation.test.ts` (PR #262).
+
+**Remaining handlers** (Pattern 1/2/6 probe coverage still owed):
+
+| Handler | What's needed |
+|---|---|
+| payouts-execute-transfer (non-lock sites) | Extract inner cron body into named export (mirror `tryAcquirePayoutLock`); probe DB-fail on lines 141-144 + 160-167. |
+| payouts-reconcile-processing | Same cron-internal refactor; probe DB-fail on lines 78-81 + 103-106. |
+| abuse-recompute-nightly | Cron-internal refactor; identify mutation sites. |
+| ai-pricing-cache-refresh | Cron-internal refactor; identify mutation sites. |
+| Stripe Connect webhook | Add concurrency lane (shares handler with platform). |
+| RAG feedback webhook | Wire `apps/rag/test/error-injection/` (parallel test directory); add to `pnpm test:error-injection` glob. |
+| tenant/billing route | Has 4 unchecked update sites (lines 136, 158, 183, 202) — probe + fix likely needed in same PR. |
+| tenant/chat-limits route | Audit + probe. |
+| Forums routes | Audit + probe. |
+
+**Sequencing recommendation:** ship the cron refactors as small per-cron PRs
+(one cron → one PR with extracted export + probe test). The tenant API
+routes can be batched (similar mocking surface across the three).
