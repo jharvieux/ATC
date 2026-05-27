@@ -168,8 +168,15 @@ export async function POST(
         variance_cents: varianceCents,
         price_lock_token: quote.price_lock_token,
         price_lock_expires_at: quote.price_lock_expires_at,
+        // D-091 Round-3 #48 — persist the FULL rendered HTML so a dispute
+        // months later can reconstruct exactly what the customer accepted.
+        // Pre-fix we wrote only the content hash + length, which proves
+        // tampering after the fact but doesn't show the original content.
+        // audit_log.changes is JSONB; ~30KB of HTML is well under the
+        // common audit-log row size threshold the §38.8 dashboards watch.
         pdf_content_hash: rendered.content_hash,
         pdf_html_length: rendered.html.length,
+        pdf_html: rendered.html,
       },
     });
 
