@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §27.12 — The ONLY file allowed to import Anthropic / OpenAI directly.
 //
 // Every other call site routes through this wrapper. The wrapper:
