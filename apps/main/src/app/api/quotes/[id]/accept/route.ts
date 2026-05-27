@@ -72,6 +72,28 @@ export async function POST(
 
     const kind = quote.price_kind ?? "estimate";
 
+    // D-091 Round-3 #47 — enforce price-lock expiry for CONFIRMED quotes.
+    // Confirmed quotes carry a locked price that's only valid until
+    // `price_lock_expires_at`. Accepting after expiry binds the system to a
+    // price the cruise line no longer guarantees; the customer must be
+    // re-quoted at the current cruise-line rate. Per §12.4, the customer-
+    // visible status flips to expired/needs_requote, and the API surface
+    // returns 409 so the client can render the "lock expired, request new
+    // quote" UX.
+    if (kind === "confirmed" && quote.price_lock_expires_at) {
+      const expiresAt = new Date(quote.price_lock_expires_at).getTime();
+      if (Number.isFinite(expiresAt) && expiresAt < Date.now()) {
+        return Response.json(
+          {
+            error: "price_lock_expired",
+            price_lock_expires_at: quote.price_lock_expires_at,
+            message: "The locked price on this quote has expired. Please request an updated quote.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     // Variance threshold from tenant_settings (or env default for tenants
     // that haven't customized it).
     const { data: settingsData } = await db
