@@ -33,10 +33,29 @@ REPO = Path(__file__).resolve().parent.parent
 IMPORT_LINE = 'import { safeAwait } from "@/lib/db/safe-mutation";'
 
 
+def detect_eslint_prefix(files):
+    """Pick the closest apps/<name> directory whose .eslintrc loads the
+    atc plugin. Falls back to apps/main."""
+    for f in files:
+        rel = Path(f).resolve()
+        try:
+            rel = rel.relative_to(REPO)
+        except ValueError:
+            continue
+        parts = rel.parts
+        if len(parts) >= 2 and parts[0] == "apps":
+            app = parts[1]
+            eslintrc = REPO / "apps" / app / ".eslintrc.json"
+            if eslintrc.exists():
+                return f"apps/{app}"
+    return "apps/main"
+
+
 def get_violations(files):
     """Run eslint and return list of {filePath, line, column}."""
+    prefix = detect_eslint_prefix(files)
     cmd = [
-        "npx", "--prefix", "apps/main", "eslint",
+        "npx", "--prefix", prefix, "eslint",
         "--rule", "atc/no-unchecked-supabase-mutation: error",
         "-f", "json",
     ] + files

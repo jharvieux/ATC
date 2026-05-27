@@ -223,6 +223,9 @@ importers:
       eslint-config-next:
         specifier: 14.2.35
         version: 14.2.35(eslint@8.57.1)(typescript@5.9.3)
+      eslint-plugin-atc:
+        specifier: workspace:*
+        version: link:../../packages/eslint-plugin-atc
       postcss:
         specifier: ^8.5.1
         version: 8.5.15
