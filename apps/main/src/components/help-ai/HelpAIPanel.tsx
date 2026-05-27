@@ -40,6 +40,14 @@ const FLOW_LABELS: Record<Props["sessionType"], string> = {
   feature: "Request a feature",
 };
 
+// §24.7 draft autosave — per-flow localStorage key. Help bug/feature flows
+// often involve longer-form input than the help-Q&A; a closed tab or
+// accidental refresh shouldn't lose the in-progress text. Per-flow key
+// so a bug-report draft doesn't appear in the feature-request box.
+function draftKeyFor(sessionType: Props["sessionType"]): string {
+  return `atc-help-ai-draft:${sessionType}`;
+}
+
 export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX.Element {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -47,6 +55,15 @@ export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Restore draft on mount; clear on send.
+  useEffect(() => {
+    const d = window.localStorage.getItem(draftKeyFor(sessionType));
+    if (d) setInput(d);
+  }, [sessionType]);
+  useEffect(() => {
+    window.localStorage.setItem(draftKeyFor(sessionType), input);
+  }, [input, sessionType]);
 
   useEffect(() => {
     (async () => {
@@ -73,6 +90,8 @@ export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX
     setError(null);
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setInput("");
+    // §24.7 — clear the draft once submitted.
+    window.localStorage.removeItem(draftKeyFor(sessionType));
 
     try {
       const res = await authFetch(`/api/help/sessions/${sessionId}/message`, {
