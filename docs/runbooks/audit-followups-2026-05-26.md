@@ -1,6 +1,6 @@
 # Audit follow-ups — 2026-05-26 (D-091 / Greptile review)
 
-Findings from Greptile's audit of auth, crypto, Stripe, Apify, and RAG surfaces, plus a grep-based sweep of the rest of the codebase using the same pattern templates.
+Findings from Greptile's audit of **10 high-risk subsystems** (two rounds) plus a grep-based sweep of the rest of the codebase using the same pattern templates. Round 1 covered auth, crypto, Stripe, Apify, RAG. Round 2 covered Inngest crons, tenant routes, forums routes, host-adapters + email, onboarding + consent.
 
 ## P1 — fix before launch
 
@@ -122,6 +122,63 @@ The 3 admin routes are intentional (platform admins see cross-tenant). The 2 for
 
 **Remediation**: refactor the 2 forum routes to return explicit field selection. Low priority. Note: the Greptile finding (PR #238 P2 #23) was about `/api/retrieve` returning `tenant_id` for global-scope chunks — that's the higher-impact case and is on the P2 punch list above.
 
+## Round 2 — additional Greptile findings (5 more subsystems)
+
+After D-091 anti-pattern infrastructure landed, 5 new Greptile audits ran on the next-tier high-risk surfaces. Confidence scores: 1/5 (tenant billing) and 2/5 (everything else).
+
+### Round 2 — P1 / money + security
+
+| # | File:Line | Issue | Notes |
+|---|---|---|---|
+| 24 | `apps/main/src/inngest/payouts-execute-transfer.ts` | **CAS lock guard non-functional.** `.update().eq("status", "available")` returns `error: null` on zero-row update (Supabase quirk). Two concurrent runs can both "acquire the lock" and double-process the payout | New pattern; ESLint can't catch — code-review rule |
+| 25 | `apps/main/src/inngest/payouts-execute-transfer.ts` | `stripe_transfer_id` write after Stripe success is unchecked — Pattern 1 in money path | Same as #1 Pattern 1 |
+| 26 | `apps/main/src/inngest/payouts-reconcile-processing.ts` | 60-second race-avoidance buffer uses `created_at` not a `processing_started_at` — reconcile can fire before in-flight Stripe call returns | Timing logic bug |
+| 27 | `apps/main/src/inngest/payouts-reconcile-processing.ts` | Stripe transfer-list `limit=10` — high-volume Connect accounts miss idempotency hits and recreate already-paid transfers | Pagination bug |
+| 28 | `apps/main/src/inngest/commission-split-on-received.ts` | `platform_revenue` insert unchecked — silent failure orphans the revenue row, commission ledger diverges from cash flows | Pattern 1 |
+| 29 | `apps/main/src/inngest/payouts-mark-available.ts` | Bulk mark-available update lacks `status='pending'` guard — overwrites out-of-band manual status changes | CAS-style guard missing |
+| 30 | `apps/main/src/inngest/abuse-recompute-nightly.ts` | All 4 `checkStateTransitionIfNeeded` calls are `void`-prefixed — state-machine enforcement is fire-and-forget; cron reports success even when nothing fired | New pattern: void-prefixed-async |
+| 31 | `apps/main/src/app/api/tenant/billing/route.ts` (lines 137, 159, 184, 203) | 4 unchecked `tenantClient.update()` sites in customer-facing billing flow. Stripe mutated first; silent DB failure returns `{ok:true}` to user while Stripe and DB are permanently inconsistent | Pattern 1 (highest-impact instance) |
+| 32 | `apps/main/src/app/api/tenant/billing/route.ts` | Reducing seats to 1 never updates Stripe — orphaned `additional_seats` line item continues overbilling the customer | Real-money bug |
+| 33 | `apps/main/src/app/api/tenant/billing/route.ts` | Monthly→annual transition only swaps base price; seat items stay on monthly pricing | Real-money bug |
+| 34 | `apps/main/src/app/api/forums/messages/[id]/route.ts` | All 4 mutation queries use service-role with NO `tenant_id` filter | Pattern 5 confirmed |
+| 35 | `apps/main/src/app/api/forums/messages/[id]/route.ts` | `assertPermission("forums", "edit_message")` covers both self-edit AND coordinator moderation — wrong-role users can do operations they shouldn't | New pattern: wrong-action-gate |
+| 36 | `apps/main/src/app/api/forums/messages/[id]/route.ts` | `userPerms.role` hardcoded to `"member"` — `tenant_owner` non-coordinators incorrectly blocked from valid moderation | Hardcoded role drift |
+| 37 | `apps/main/src/lib/host-adapters/select-adapter.ts` | Sub-host branch (Step 2) returns `credentials: null` — every sub-host adapter call runs with NO tenant-specific credentials | Stub-shaped code (Pattern from D-091) |
+| 38 | `apps/main/src/app/api/webhooks/resend/route.ts` | Svix signature decoded as hex; Svix uses base64url — **silently rejects every real bounce/complaint webhook.** Hard-bounce suppression currently inoperative | New pattern: signature encoding mismatch |
+| 39 | `apps/main/src/lib/onboarding/state-machine.ts` (`progressTo`) | **TOCTOU race.** UPDATE predicate filters on `tenantId` only, not current stage. Concurrent webhook + admin advance regresses tenant to earlier stage | Pattern 6 confirmed |
+| 40 | `apps/main/src/lib/onboarding/state-machine.ts` (`revertTo`) | Accepts target stage from untrusted JSON without checking it's a backwards transition — admin "request more info" can be called with `target: "complete"` to bypass review | Untrusted-input-to-state-machine |
+| 41 | `apps/main/src/lib/stripe/webhook-handler.ts` | Idempotency row written BEFORE dispatch — first-delivery crash after metadata write but before `progressTo` permanently strands tenant mid-stage (Stripe retries rejected as duplicate) | Idempotency-stranding |
+
+### Round 2 — new patterns added to the catalog
+
+These should be added to `docs/runbooks/anti-patterns.md` in a follow-up:
+
+7. **Zero-row update returns `error: null`.** Supabase JS does NOT distinguish "matched zero rows" from "succeeded." Every CAS-style lock using `.update().eq("status", "X")` has this bug. Cannot be ESLint-caught.
+8. **`void`-prefixed async** treated as fire-and-forget when the call's return value carries enforcement signal.
+9. **Wrong assertPermission action** for multi-operation routes (one action gate covers two semantically-different operations).
+10. **Idempotency-row-before-dispatch.** Writing the dedup row before completing the operation creates a stranded-state failure mode.
+11. **Untrusted input flowing into state-machine actions** with no validation of transition direction or target validity.
+12. **Webhook signature encoding mismatch** (e.g. hex vs base64url) — silently rejects all valid webhooks, defense-in-depth becomes attack vector by making downstream enforcement (suppression list) inoperative.
+
+### Round 2 — highest-business-impact issues
+
+| Severity | Issue (round-2 #) | Why it matters |
+|---|---|---|
+| **Real money** | #24 Payout CAS lock | Could double-process payouts (real money out the door twice) |
+| **Real money** | #31-#33 Tenant billing | Stripe/DB divergence; orphaned line items overbilling customers |
+| **Compliance** | #38 Resend signature mismatch | Bounce/complaint webhooks silently failing → CAN-SPAM exposure (re-sending to known-bouncers) |
+| **Security** | #40 `revertTo` accepts untrusted target | Bypasses admin review gate |
+| **Data integrity** | #39 `progressTo` TOCTOU | Stage regression under concurrent updates |
+
 ## Patterns identified — preventive infrastructure
 
-See `docs/runbooks/anti-patterns.md` for the consolidated pattern catalog and the ESLint rules / CLAUDE.md doctrine added to prevent recurrence.
+See `docs/runbooks/anti-patterns.md` for the consolidated pattern catalog (6 original patterns + 6 round-2 patterns, the latter to be appended in a follow-up) and the ESLint rules / CLAUDE.md doctrine added to prevent recurrence.
+
+## Summary statistics
+
+- **10 Greptile audits** run (5 round 1, 5 round 2)
+- **~40 actionable findings**, ~7 P1 from round 1 + ~10 P1-equivalent from round 2
+- **6 original patterns** + 6 new round-2 patterns = 12 recurring patterns identified
+- **3 ESLint rules** shipped + **7 CLAUDE.md doctrine additions** + **slop-check workflow** + **error-injection probe design doc** = preventive infrastructure in place
+- ~113 grep-found instances of Pattern 1 (unchecked Supabase mutations) across the codebase, confirmed widespread
+
