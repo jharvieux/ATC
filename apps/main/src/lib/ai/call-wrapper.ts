@@ -148,41 +148,29 @@ async function logAndIncrement(args: {
     "ai_call_log.insert",
   );
 
-  // 2. tenant_usage_metrics UPSERT. PostgREST upsert needs explicit
-  // onConflict; read-then-write keeps it simple here.
+  // 2. tenant_usage_metrics increment. D-094 follow-up (Greptile #265):
+  // pre-fix this was a SELECT → INSERT/UPDATE round trip that races on
+  // the first call of a new billing period (two concurrent inserts both
+  // see no row, both try to INSERT, the second hits 23505). Pre-PR-#265
+  // that 23505 was silently swallowed; post-PR-#265 with safeAwait the
+  // 23505 propagated as a SupabaseMutationError, making a successful
+  // AI call look like a failure to the caller (with ai_call_log already
+  // committed → retry-induced double-counting).
+  //
+  // Atomic fix: increment_tenant_ai_cost RPC does
+  // INSERT … ON CONFLICT DO UPDATE SET cost = existing + incoming
+  // server-side. No race, no surface. Migration 20260627000000.
   if (args.tenant_id === PLATFORM_TENANT_ID) return; // skip metrics for platform overhead
 
   const period = currentBillingPeriodRange();
-  const existing = await safeAwait(
-    args.db
-      .from("tenant_usage_metrics")
-      .select("id, ai_cost_cents")
-      .eq("tenant_id", args.tenant_id)
-      .eq("billing_period", period)
-      .maybeSingle(),
-    "tenant_usage_metrics.select.for_increment",
+  await safeAwait(
+    args.db.rpc("increment_tenant_ai_cost", {
+      p_tenant_id: args.tenant_id,
+      p_billing_period: period,
+      p_amount_cents: args.cost_cents.toString(),
+    }),
+    "tenant_usage_metrics.rpc.increment",
   );
-
-  if (existing) {
-    const current = BigInt((existing as { ai_cost_cents: string | number }).ai_cost_cents);
-    const updated = current + args.cost_cents;
-    await safeAwait(
-      args.db
-        .from("tenant_usage_metrics")
-        .update({ ai_cost_cents: updated.toString() })
-        .eq("id", (existing as { id: string }).id),
-      "tenant_usage_metrics.update.ai_cost",
-    );
-  } else {
-    await safeAwait(
-      args.db.from("tenant_usage_metrics").insert({
-        tenant_id: args.tenant_id,
-        billing_period: period,
-        ai_cost_cents: args.cost_cents.toString(),
-      }),
-      "tenant_usage_metrics.insert.ai_cost",
-    );
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
