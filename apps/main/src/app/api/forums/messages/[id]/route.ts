@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §19.7 (coordinator hide/unhide/pin) and §19.8 (self-edit/delete).
 //
 // PATCH /api/forums/messages/:id
