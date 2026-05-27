@@ -73,8 +73,26 @@ export const ragPiiRedact = inngest.createFunction(
       return { ok: true, quarantined: true, categories: regex.categories };
     }
 
-    // Haiku redaction for tolerable PII.
+    // Haiku redaction for tolerable PII. D-091 Round-3 #44 — `failed` is
+    // the fail-closed signal (missing key, vendor error, empty response).
+    // Quarantine the submission and DO NOT promote to normalization.
     const redact = await haikuPiiRedact(content, { tenant_id });
+    if (redact.status === "failed") {
+      console.warn(
+        `[rag-pii-redact] Haiku redaction failed, quarantining submission ${submission_id}: ${redact.reason}`,
+      );
+      await db
+        .from("rag_submissions")
+        .update({
+          pii_redaction_status: "quarantined",
+          quarantine_categories: ["haiku_redaction_failed"],
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", submission_id);
+      await runAggregationAndAlert(db, tenant_id, ["haiku_redaction_failed"], submission_id);
+      return { ok: false, quarantined: true, reason: redact.reason };
+    }
+
     await db
       .from("rag_submissions")
       .update({
