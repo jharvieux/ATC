@@ -99,41 +99,43 @@ priority order. Status per handler is tracked in
 
 | Handler | DB-fail | Resource-down | Concurrency |
 | --- | --- | --- | --- |
-| Stripe webhook (8 events) | ✅ (apps/main/test/unit/stripe/webhook-error-propagation.test.ts) | ✅ stripe-webhook.error.test.ts | ✅ stripe-webhook.error.test.ts |
+| Stripe webhook (8 events) | ✅ webhook-error-propagation.test.ts | ✅ stripe-webhook.error.test.ts | ✅ stripe-webhook.error.test.ts |
+| Stripe Connect webhook | ✅ (shares handler) | ✅ (shares) | ✅ (shares) |
 | GitHub webhook | ✅ github-webhook.error.test.ts | ✅ | ✅ |
-| payouts-execute-transfer | ✅ tryAcquirePayoutLock (other sites: needs cron-internal refactor) | 🔧 | ✅ tryAcquirePayoutLock |
-| payouts-reconcile-processing | 🔧 cron-internal refactor | 🔧 | 🔧 |
-| abuse-recompute-nightly | 🔧 cron-internal refactor | n/a | 🔧 |
-| ai-pricing-cache-refresh | 🔧 cron-internal refactor | n/a | 🔧 |
-| Stripe Connect webhook | shares Stripe webhook coverage | shares | ⏳ |
-| RAG feedback webhook (apps/rag) | 🔧 needs apps/rag test wiring | 🔧 | 🔧 |
-| tenant/billing route | ⏳ | ⏳ | ⏳ |
-| tenant/chat-limits route | ⏳ | ⏳ | ⏳ |
-| Forums routes | ⏳ | ⏳ | ⏳ |
+| payouts-execute-transfer | ✅ payouts-execute-transfer.error.test.ts | ✅ | ✅ tryAcquirePayoutLock |
+| payouts-reconcile-processing | ✅ payouts-reconcile-processing.error.test.ts | ✅ | n/a (single-run cron) |
+| abuse-recompute-nightly | ✅ abuse-recompute-nightly.error.test.ts (light — staging skip + audit wrapper failure) | n/a | n/a |
+| ai-pricing-cache-refresh | ✅ ai-pricing-cache-refresh.error.test.ts | n/a | n/a |
+| bookings-stuck-submitting-reconcile | ✅ bookings-stuck-submitting-reconcile.error.test.ts | n/a | ✅ CAS-race test |
+| RAG feedback webhook (apps/rag) | ✅ apps/rag/test/error-injection/feedback-webhook.error.test.ts | ✅ | n/a (HMAC-gated) |
+| tenant/billing route | deferred | deferred | deferred |
+| tenant/chat-limits route | deferred | deferred | deferred |
+| Forums routes | deferred | deferred | deferred |
 
-✅ = covered. ⏳ = handler is testable, just needs the test written.
-🔧 = handler needs structural refactor (extract testable inner function,
-wire apps/rag vitest config, etc.) before a probe test can attach.
-n/a = no external resource dep / no concurrent invocation surface.
+✅ = covered. n/a = no surface for this lane (e.g., HMAC-only webhooks
+don't race on insert because they're stateless; single-run nightly crons
+can't concurrent-execute under Inngest's per-function lock).
+deferred = post-migration the safeAwait + lint-rule combo blocks new
+Pattern 1 regressions, so per-handler DB-fail probes are belt-and-suspenders
+for these tenant routes. Heavy mocking surface (assertPermission +
+tenantClient + Stripe + Inngest) wasn't worth the additional safety. Pick
+back up only if a tenant-route regression slips past lint.
 
 ### Notes for the next contributor
 
-- **Inngest cron handlers** (`payouts-*`, `abuse-*`, `ai-pricing-*`)
-  store their handler inside `inngest.createFunction({...}, async fn)`.
-  Inngest does not expose `.fn` publicly across versions, so directly
-  invoking the inner async function from a unit test requires either
-  (a) extracting the body into a named exported function (the pattern
-  used for `tryAcquirePayoutLock`) or (b) running an Inngest dev-server
-  shim. Pattern (a) is the cheaper path and is recommended.
-- **RAG feedback webhook** lives in `apps/rag` and imports from
-  `apps/rag/src/lib/...`. `apps/main/test/error-injection/` is wired to
-  `apps/main`'s tsconfig + node_modules; a parallel
-  `apps/rag/test/error-injection/` (with its own vitest include and an
-  entry in `pnpm test:error-injection`) is the cleanest split.
-- **tenant/* routes** use `assertPermission` + `tenantClient` +
-  Stripe + Inngest. Mocking surface is large but mechanical. Follow
-  the github-webhook.error.test.ts mocking pattern: one `vi.mock`
-  block per import, behavior toggled via module-scoped `mock*` vars.
+- **Inngest cron handlers** that need probes: extract the body into a
+  named exported function (the `tryAcquirePayoutLock` / `runPayoutsExecuteTransfer`
+  precedent). Inngest doesn't publicly expose `.fn` across versions; direct
+  invocation of the named export is the cheapest path.
+- **apps/rag probes** live in `apps/rag/test/error-injection/` and run
+  via `pnpm test:error-injection`. The script does a 2-step run:
+  `vitest run apps/main/test/error-injection && pnpm --dir apps/rag exec vitest run test/error-injection`.
+  The split exists because each app has its own tsconfig path aliases
+  and node_modules.
+- **tenant/* routes** if needed: follow the github-webhook.error.test.ts
+  pattern. One `vi.mock` block per import, behavior toggled via
+  module-scoped `mock*` vars (vitest hoists vi.mock; only `mock`-prefixed
+  identifiers can be referenced inside the factory).
 
 Tracking: `docs/runbooks/audit-followups-2026-05-26.md` "Error-injection
 probe — handler coverage" section.
