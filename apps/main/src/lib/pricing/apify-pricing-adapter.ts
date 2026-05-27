@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // BP34 §33.3 — ApifyPricingAdapter.
 //
 // Production PricingDataSource. Routes per-line, enforces per-run and
