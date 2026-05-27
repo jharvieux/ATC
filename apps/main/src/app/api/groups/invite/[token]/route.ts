@@ -11,6 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { effectiveVisibility } from "@/lib/groups/visibility";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface Invitation {
   id: string;
@@ -94,10 +95,10 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
   const expiry = new Date(sailDate.getTime() + 30 * 24 * 60 * 60 * 1000);
   if (new Date() > expiry) {
     // Lazy-set expired_natural.
-    await svc.from("invitations").update({
+    await safeAwait(svc.from("invitations").update({
       token_revoked_at: new Date().toISOString(),
       token_revoked_reason: "expired_natural",
-    }).eq("id", invitation_id);
+    }).eq("id", invitation_id), "invitations.update");
     return Response.json({ error: "token_revoked", reason: "expired_natural", message: "This invitation link has expired." }, { status: 410 });
   }
 
@@ -117,7 +118,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     // First use — record it.
     const updates: Record<string, string | null> = { token_first_used_at: new Date().toISOString() };
     if (currentEmail) updates.token_bound_email = currentEmail;
-    await svc.from("invitations").update(updates).eq("id", invitation_id);
+    await safeAwait(svc.from("invitations").update(updates).eq("id", invitation_id), "invitations.update");
   } else if (invitation.token_bound_email && currentEmail && invitation.token_bound_email !== currentEmail) {
     return Response.json({
       error: "token_bound",

@@ -14,6 +14,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { inngest } from "@/inngest/client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   createBugIssue,
   GitHubAPIError,
@@ -133,14 +134,14 @@ export async function POST(req: Request): Promise<Response> {
     // 3. Attempt creation synchronously (§32.7.5 eager path).
     try {
       const result = await createBugIssue(githubInput);
-      await db
+      await safeAwait(db
         .from("bug_submissions")
         .update({
           github_issue_number: result.issue_number,
           github_issue_url: result.issue_url,
           github_issue_state: "open",
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "bug_submissions.update");
       await writeAuditLog({
         tenant_id: ctx.tenant_id,
         actor_user_id: user.id,
@@ -164,10 +165,10 @@ export async function POST(req: Request): Promise<Response> {
       if (err instanceof PIIZeroToleranceQuarantineError) {
         // §32.7.6 — quarantine path: do NOT create the issue, do NOT retry.
         const reason = `pii_zero_tolerance: ${[...new Set(err.hits.map((h) => h.kind))].join(",")}`;
-        await db
+        await safeAwait(db
           .from("bug_submissions")
           .update({ github_issue_state: "quarantined", quarantine_reason: reason })
-          .eq("id", submission_id);
+          .eq("id", submission_id), "bug_submissions.update");
         await writeAuditLog({
           tenant_id: ctx.tenant_id,
           actor_user_id: user.id,

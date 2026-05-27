@@ -12,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import { recoverMicrosoftEmail } from "@/lib/auth/microsoft-email-recovery";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -58,10 +59,10 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const ctx = await tenantContextFromRequest(req);
     const svc = createServiceRoleClient();
-    await svc.from("users").upsert(
+    await safeAwait(svc.from("users").upsert(
       { auth_user_id: authUser.id, tenant_id: ctx.tenant_id, email: email ?? "", status: "active" },
       { onConflict: "auth_user_id,tenant_id", ignoreDuplicates: false },
-    );
+    ), "users.upsert");
   } catch {
     // Non-fatal: tenant context may not resolve from this request's origin;
     // user row creation falls back to the signup flow client-side.

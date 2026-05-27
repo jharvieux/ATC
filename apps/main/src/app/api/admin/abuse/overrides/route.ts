@@ -11,6 +11,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const DIMENSIONS = new Set(["ai_cost", "rag_cap", "chat_volume", "email_volume", "group_invite"]);
 const TIER_OVERRIDES = new Set(["soft1", "soft2", "hard", "base_cap"]);
@@ -76,7 +77,7 @@ export async function POST(req: Request): Promise<Response> {
 
         // If linked to a pending request, mark it approved.
         if (resulting_request_id) {
-          await db
+          await safeAwait(db
             .from("tenant_override_requests")
             .update({
               status: "approved",
@@ -85,7 +86,7 @@ export async function POST(req: Request): Promise<Response> {
               resulting_override_id: overrideId,
             })
             .eq("id", resulting_request_id)
-            .eq("status", "pending");
+            .eq("status", "pending"), "tenant_override_requests.update");
           recordQuery({ op: "update", table: "tenant_override_requests" });
         }
         return { id: overrideId, effective_to: expiry };

@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function PATCH(
   req: Request,
@@ -47,7 +48,7 @@ export async function PATCH(
     else if (action === "delete") updates.deleted_at = new Date().toISOString();
     else return Response.json({ error: "unknown_action" }, { status: 400 });
 
-    await svc.from("forum_threads").update(updates).eq("id", params.id);
+    await safeAwait(svc.from("forum_threads").update(updates).eq("id", params.id), "forum_threads.update");
     return Response.json({ ok: true });
   } catch (err) {
     console.error("[forum-threads PATCH]", err);

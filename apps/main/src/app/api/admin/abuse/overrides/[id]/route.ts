@@ -7,6 +7,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
   let adminUserId: string;
@@ -37,10 +38,10 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
         if (!r) throw new Error("override_not_found");
 
         const today = new Date().toISOString().slice(0, 10);
-        await db
+        await safeAwait(db
           .from("tenant_usage_overrides")
           .update({ effective_to: today, expiry_notified_at: new Date().toISOString() })
-          .eq("id", id);
+          .eq("id", id), "tenant_usage_overrides.update");
         recordQuery({ op: "update", table: "tenant_usage_overrides", row_count: 1 });
         return r.tenant_id;
       },

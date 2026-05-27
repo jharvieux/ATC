@@ -10,6 +10,7 @@ import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -37,7 +38,7 @@ export async function POST(req: Request): Promise<Response> {
       connectAccountId = account.id;
 
       const db = tenantClient(ctx);
-      await db.from("tenants").update({ stripe_connect_account_id: connectAccountId }).eq("id", ctx.tenant_id);
+      await safeAwait(db.from("tenants").update({ stripe_connect_account_id: connectAccountId }).eq("id", ctx.tenant_id), "tenants.update");
     }
 
     const baseUrl = process.env.PLATFORM_PRIMARY_DOMAIN

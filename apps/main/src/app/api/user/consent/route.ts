@@ -4,6 +4,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface ConsentBody {
   document_type: string;
@@ -90,11 +91,11 @@ export async function POST(req: Request): Promise<Response> {
   if (insertErr) return Response.json({ error: insertErr.message }, { status: 500 });
 
   // Remove the pending row now that consent is recorded.
-  await db
+  await safeAwait(db
     .from("user_consent_pending")
     .delete()
     .eq("auth_user_id", authUserId)
-    .eq("document_type", body.document_type);
+    .eq("document_type", body.document_type), "user_consent_pending.delete");
 
   return Response.json({ ok: true, document_type: body.document_type });
 }

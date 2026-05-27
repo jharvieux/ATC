@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function PATCH(
   req: Request,
@@ -48,7 +49,7 @@ export async function PATCH(
       }
 
       if (action === "hide") {
-        await svc.from("forum_messages").update({ status: "hidden" }).eq("id", params.id);
+        await safeAwait(svc.from("forum_messages").update({ status: "hidden" }).eq("id", params.id), "forum_messages.update");
         await recordStrike(svc, {
           user_id: msg.user_id as string,
           forum_id: msg.forum_id as string,
@@ -62,7 +63,7 @@ export async function PATCH(
           tenant_id: ctx.tenant_id,
         });
       } else if (action === "unhide") {
-        await svc.from("forum_messages").update({ status: "visible" }).eq("id", params.id);
+        await safeAwait(svc.from("forum_messages").update({ status: "visible" }).eq("id", params.id), "forum_messages.update");
       } else if (action === "pin") {
         // Pin is a thread-level concept; mark via thread route. No-op here.
         return Response.json({ error: "use_thread_route_to_pin" }, { status: 400 });
@@ -76,7 +77,7 @@ export async function PATCH(
       if ((msg.user_id as string) !== user.id) {
         return Response.json({ error: "cannot_delete_others_message" }, { status: 403 });
       }
-      await svc.from("forum_messages").update({ deleted_at: new Date().toISOString() }).eq("id", params.id);
+      await safeAwait(svc.from("forum_messages").update({ deleted_at: new Date().toISOString() }).eq("id", params.id), "forum_messages.update");
       return Response.json({ ok: true });
     }
 
@@ -89,11 +90,11 @@ export async function PATCH(
       const editHistory = Array.isArray(msg.edit_history) ? msg.edit_history as unknown[] : [];
       editHistory.push({ content: msg.content, edited_at: msg.content_edited_at ?? msg.created_at });
 
-      await svc.from("forum_messages").update({
+      await safeAwait(svc.from("forum_messages").update({
         content,
         content_edited_at: new Date().toISOString(),
         edit_history: editHistory,
-      }).eq("id", params.id);
+      }).eq("id", params.id), "forum_messages.update");
 
       return Response.json({ ok: true });
     }

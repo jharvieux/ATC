@@ -12,6 +12,7 @@ import { inngest } from "@/inngest/client";
 import { withVendorHealthGate } from "@/lib/vendor-health/gate";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -133,7 +134,7 @@ export async function POST(req: Request): Promise<Response> {
       const { data: tierDef } = await srDb.from("tier_definitions").select("id").eq("slug", body.tier).maybeSingle();
 
       const db = tenantClient(ctx);
-      await db.from("tenants").update({ tier_id: tierDef?.id ?? tenant.tier_id, seat_count: newSeatCount }).eq("id", ctx.tenant_id);
+      await safeAwait(db.from("tenants").update({ tier_id: tierDef?.id ?? tenant.tier_id, seat_count: newSeatCount }).eq("id", ctx.tenant_id), "tenants.update");
 
       await inngest.send({ name: "tenant.subscription_changed", data: { tenant_id: ctx.tenant_id, change: "tier", new_tier: body.tier } });
     } else if (body.action === "update_seats") {
@@ -155,7 +156,7 @@ export async function POST(req: Request): Promise<Response> {
       }
 
       const db = tenantClient(ctx);
-      await db.from("tenants").update({ seat_count: newSeatCount }).eq("id", ctx.tenant_id);
+      await safeAwait(db.from("tenants").update({ seat_count: newSeatCount }).eq("id", ctx.tenant_id), "tenants.update");
 
       await inngest.send({ name: "tenant.subscription_changed", data: { tenant_id: ctx.tenant_id, change: "seats", new_seat_count: newSeatCount } });
     } else if (body.action === "switch_billing_period") {
@@ -180,7 +181,7 @@ export async function POST(req: Request): Promise<Response> {
           } catch { /* non-fatal */ }
         }
 
-        await db.from("tenants").update({ pending_billing_period_change_effective_at: effectiveAt }).eq("id", ctx.tenant_id);
+        await safeAwait(db.from("tenants").update({ pending_billing_period_change_effective_at: effectiveAt }).eq("id", ctx.tenant_id), "tenants.update");
 
         return Response.json({ ok: true, deferred: true, effective_at: effectiveAt });
       }
@@ -199,7 +200,7 @@ export async function POST(req: Request): Promise<Response> {
       }
 
       const db = tenantClient(ctx);
-      await db.from("tenants").update({ billing_period: "annual" }).eq("id", ctx.tenant_id);
+      await safeAwait(db.from("tenants").update({ billing_period: "annual" }).eq("id", ctx.tenant_id), "tenants.update");
     } else {
       return Response.json({ error: "unknown_action" }, { status: 422 });
     }

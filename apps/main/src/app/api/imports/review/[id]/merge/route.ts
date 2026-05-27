@@ -13,6 +13,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type Body = { target_contact_id: string };
 
@@ -172,7 +173,7 @@ async function markQueueRowMerged(
   fieldsFilled: string[],
 ): Promise<void> {
   const purgable_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  await svc
+  await safeAwait(svc
     .from("import_queue")
     .update({
       status: "accepted",
@@ -183,5 +184,5 @@ async function markQueueRowMerged(
         _merge: { target_contact_id: targetContactId, fields_filled: fieldsFilled },
       },
     })
-    .eq("id", queueRowId);
+    .eq("id", queueRowId), "import_queue.update");
 }

@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function PATCH(
   req: Request,
@@ -33,7 +34,7 @@ export async function PATCH(
     }
 
     const { action } = await req.json() as { action: "lock" | "unlock" };
-    await svc.from("forums").update({ is_locked: action === "lock" }).eq("id", params.forumId);
+    await safeAwait(svc.from("forums").update({ is_locked: action === "lock" }).eq("id", params.forumId), "forums.update");
     return Response.json({ ok: true });
   } catch (err) {
     console.error("[forum PATCH]", err);

@@ -11,6 +11,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(
   req: Request,
@@ -37,10 +38,10 @@ export async function POST(
   const { quote_id } = row as { quote_id: string };
 
   // Unselect any prior option on this quote.
-  await svc
+  await safeAwait(svc
     .from("quote_options")
     .update({ customer_selected: false, customer_selected_at: null })
-    .eq("quote_id", quote_id);
+    .eq("quote_id", quote_id), "quote_options.update");
 
   // Select this one.
   const now = new Date().toISOString();
@@ -51,10 +52,10 @@ export async function POST(
   if (updErr) return Response.json({ error: updErr.message }, { status: 500 });
 
   // Transition the quote container.
-  await svc
+  await safeAwait(svc
     .from("quotes")
     .update({ status: "accepted", accepted_at: now })
-    .eq("id", quote_id);
+    .eq("id", quote_id), "quotes.update");
 
   return Response.json({ ok: true, quote_id, option_id: optionId });
 }

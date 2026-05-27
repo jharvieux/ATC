@@ -7,6 +7,7 @@
 // redirected to per §38.4.3 step 3.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(
   req: Request,
@@ -47,20 +48,20 @@ export async function POST(
 
   const now = new Date().toISOString();
   // Unselect any prior selection on this quote.
-  await svc
+  await safeAwait(svc
     .from("quote_options")
     .update({ customer_selected: false, customer_selected_at: null })
-    .eq("quote_id", quote.id);
+    .eq("quote_id", quote.id), "quote_options.update");
   // Select this option.
-  await svc
+  await safeAwait(svc
     .from("quote_options")
     .update({ customer_selected: true, customer_selected_at: now })
-    .eq("id", optionId);
+    .eq("id", optionId), "quote_options.update");
   // Transition the quote container.
-  await svc
+  await safeAwait(svc
     .from("quotes")
     .update({ status: "accepted", accepted_at: now, updated_at: now })
-    .eq("id", quote.id);
+    .eq("id", quote.id), "quotes.update");
 
   return Response.json({
     ok: true,

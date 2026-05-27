@@ -37,6 +37,7 @@ import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { checkSentence } from "@/lib/supervisor/per-sentence-check";
 import { env } from "@/lib/env";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   advanceBugFlow,
   advanceFeatureFlow,
@@ -308,10 +309,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
       // Bump the session's ai_messages_count + record the draft snapshot
       // out-of-band. RLS-scoped update.
-      await db
+      await safeAwait(db
         .from("help_sessions")
         .update({ ai_messages_count: 1 })
-        .eq("id", sessionId);
+        .eq("id", sessionId), "help_sessions.update");
       void draftSnapshot; // v1 doesn't persist the per-message draft.
     } catch (err) {
       try {

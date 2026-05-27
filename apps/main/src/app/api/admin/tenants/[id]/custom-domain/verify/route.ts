@@ -7,6 +7,7 @@ import { lookupCname, lookupTxt } from "@/lib/dns/doh-resolver";
 import { vercelAddDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(
   req: Request,
@@ -77,14 +78,14 @@ export async function POST(
         await vercelAddDomain(t.custom_domain);
 
         recordQuery({ op: "update", table: "tenants" });
-        await db
+        await safeAwait(db
           .from("tenants")
           .update({
             custom_domain_verified_at: new Date().toISOString(),
             custom_domain_status: "verified",
             custom_domain_last_reverified_at: new Date().toISOString(),
           })
-          .eq("id", tenantId);
+          .eq("id", tenantId), "tenants.update");
 
         return { verified: true, custom_domain: t.custom_domain };
       },

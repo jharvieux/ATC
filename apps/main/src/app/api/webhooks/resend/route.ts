@@ -11,6 +11,7 @@
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { verifyResendSignature } from "@/lib/webhooks/resend-signature";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // D-091 P1 #38 — Svix signature verifier lives in lib/webhooks/ so the
 // route file only exports POST (Next.js Route export contract).
@@ -73,10 +74,10 @@ export async function POST(req: Request): Promise<Response> {
 
   switch (event.type) {
     case "email.delivered":
-      await svc
+      await safeAwait(svc
         .from("email_log")
         .update({ status: "delivered", delivered_at: now })
-        .eq("id", logId);
+        .eq("id", logId), "email_log.update");
       break;
 
     case "email.bounced": {
@@ -84,21 +85,21 @@ export async function POST(req: Request): Promise<Response> {
       const bounceMessage = (event.data.bounce as { message?: string } | undefined)?.message ?? "unknown";
 
       if (bounceType === "hard") {
-        await svc
+        await safeAwait(svc
           .from("email_log")
           .update({ status: "hard_bounced", bounced_at: now, bounce_reason: bounceMessage })
-          .eq("id", logId);
+          .eq("id", logId), "email_log.update");
         // Suppress future sends to this address for this tenant
-        await svc.from("email_suppressions").upsert(
+        await safeAwait(svc.from("email_suppressions").upsert(
           { tenant_id: tenantId, email_address: toEmail, reason: "hard_bounce", suppressed_at: now },
           { onConflict: "tenant_id,email_address,reason" },
-        );
+        ), "email_suppressions.upsert");
       } else {
         // Soft bounce — trigger retry Inngest job
-        await svc
+        await safeAwait(svc
           .from("email_log")
           .update({ status: "soft_bounced", bounced_at: now, bounce_reason: bounceMessage })
-          .eq("id", logId);
+          .eq("id", logId), "email_log.update");
         await inngest.send({
           name: "email/soft.bounce.retry",
           data: { email_log_id: logId, tenant_id: tenantId, attempt: 1 },
@@ -108,14 +109,14 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     case "email.complained":
-      await svc
+      await safeAwait(svc
         .from("email_log")
         .update({ status: "complained", complained_at: now })
-        .eq("id", logId);
-      await svc.from("email_suppressions").upsert(
+        .eq("id", logId), "email_log.update");
+      await safeAwait(svc.from("email_suppressions").upsert(
         { tenant_id: tenantId, email_address: toEmail, reason: "complaint", suppressed_at: now },
         { onConflict: "tenant_id,email_address,reason" },
-      );
+      ), "email_suppressions.upsert");
       break;
 
     case "email.opened":
