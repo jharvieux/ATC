@@ -91,6 +91,48 @@ export async function assertStageComplete(
 // progressTo advances the tenant's onboarding_stage to the next stage after
 // `currentStage`. Only advances if the current DB value matches currentStage
 // (optimistic guard).
+// D-091 P1 #39 — CAS-guarded UPDATE. The previous version filtered the
+// UPDATE on tenant_id only; a concurrent webhook + admin action could
+// regress the tenant to an earlier stage because both writes saw the same
+// pre-update stage value. Now the UPDATE also matches the current stage,
+// so only the caller whose `current` is still authoritative succeeds.
+export class StaleStageError extends Error {
+  constructor(
+    public readonly expected: OnboardingStage | null,
+    public readonly target: OnboardingStage,
+  ) {
+    super(
+      `Onboarding stage moved underneath progressTo/revertTo. Expected stage='${expected}', target='${target}'. Reload and retry.`,
+    );
+    this.name = "StaleStageError";
+  }
+}
+
+/** Pure check used by both the runtime path and unit tests.
+ *  Returns null if the target is a valid backwards revert from current,
+ *  or an error describing why not. Public so admin handlers can validate
+ *  before calling revertTo. */
+export function assertValidRevertTarget(
+  current: OnboardingStage | null,
+  target: unknown,
+): InvalidStageTransitionError | null {
+  // 1. Enum membership — protects against untrusted input being cast to
+  //    OnboardingStage at the call site (e.g. `body.revert_to_stage`).
+  if (typeof target !== "string" || !(target in STAGE_ORDER)) {
+    return new InvalidStageTransitionError(current, target as OnboardingStage);
+  }
+  // 2. Direction — revert must be backwards. Same-stage revert is rejected
+  //    too because it's an admin no-op masquerading as a state change.
+  if (current === null) {
+    // Reverting from null/unset is meaningless.
+    return new InvalidStageTransitionError(current, target as OnboardingStage);
+  }
+  if (stageIndex(target as OnboardingStage) >= stageIndex(current)) {
+    return new InvalidStageTransitionError(current, target as OnboardingStage);
+  }
+  return null;
+}
+
 export async function progressTo(
   tenantId: string,
   nextStageValue: OnboardingStage,
@@ -126,29 +168,69 @@ export async function progressTo(
     throw new InvalidStageTransitionError(current, nextStageValue);
   }
 
-  const { error: updateErr } = await db
+  // D-091 P1 #39 — CAS update. Match the current stage as a guard against
+  // concurrent writers. If 0 rows matched, someone else advanced the stage
+  // between our read and write; surface as StaleStageError so the caller
+  // can decide whether to retry.
+  const baseQuery = db
     .from("tenants")
     .update({ onboarding_stage: nextStageValue })
     .eq("id", tenantId);
+  const casQuery = current === null
+    ? baseQuery.is("onboarding_stage", null)
+    : baseQuery.eq("onboarding_stage", current);
+  const { data: updatedRows, error: updateErr } = await casQuery.select("id");
 
   if (updateErr) {
     throw new Error(`progressTo: DB update error: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length !== 1) {
+    throw new StaleStageError(current, nextStageValue);
   }
 }
 
 // revertTo is used by the admin "request more info" action to roll back a
 // tenant's onboarding_stage to a prior stage.
+//
+// D-091 P1 #40 — validates inputs at the function boundary so callers
+// can't pass untrusted JSON straight through:
+//   1. Enum membership check (target must be a valid OnboardingStage)
+//   2. Direction check (target must be BEFORE current)
+//   3. CAS-guarded UPDATE matches current stage
 export async function revertTo(
   tenantId: string,
   targetStage: OnboardingStage,
 ): Promise<void> {
   const db = createServiceRoleClient();
-  const { error } = await db
+
+  // Read the current stage first so we can validate direction.
+  const { data: row, error: fetchErr } = await db
+    .from("tenants")
+    .select("onboarding_stage")
+    .eq("id", tenantId)
+    .single();
+
+  if (fetchErr) {
+    throw new Error(`revertTo: DB fetch error: ${fetchErr.message}`);
+  }
+
+  const current = row?.onboarding_stage as OnboardingStage | null;
+
+  const validationError = assertValidRevertTarget(current, targetStage);
+  if (validationError) throw validationError;
+
+  // CAS UPDATE — current is guaranteed non-null here by assertValidRevertTarget.
+  const { data: updatedRows, error } = await db
     .from("tenants")
     .update({ onboarding_stage: targetStage })
-    .eq("id", tenantId);
+    .eq("id", tenantId)
+    .eq("onboarding_stage", current as OnboardingStage)
+    .select("id");
 
   if (error) {
     throw new Error(`revertTo: DB update error: ${error.message}`);
+  }
+  if (!updatedRows || updatedRows.length !== 1) {
+    throw new StaleStageError(current, targetStage);
   }
 }
