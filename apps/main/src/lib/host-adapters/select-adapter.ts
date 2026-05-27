@@ -20,6 +20,11 @@ import { Err } from "@atc/shared-types";
 export interface TenantForAdapterSelection {
   id: string;
   prong: "platform" | "sub_host" | "byo_host" | string;
+  // §15.12 sandbox: when true, every adapter selection short-circuits to the
+  // fallback email adapter regardless of the tenant's real host config. Callers
+  // MUST pass this — defaulting to false here would silently let real bookings
+  // submit on a sandboxed tenant.
+  is_sandbox: boolean;
 }
 
 type HostConfigRow = {
@@ -73,6 +78,12 @@ function makeCredentialFailedAdapter(adapterDisplayName: string): HostAgencyClie
 async function selectAdapterAndCredentials(
   tenant: TenantForAdapterSelection,
 ): Promise<{ adapter: HostAgencyClient; credentials: Record<string, unknown> | null }> {
+  // §15.12 sandbox: short-circuit to the fallback email adapter regardless of
+  // tenant's real host config. Sandbox bookings must not reach real hosts.
+  if (tenant.is_sandbox) {
+    return { adapter: new FallbackEmailAdapter(), credentials: null };
+  }
+
   const db = createServiceRoleClient();
 
   // Step 1: tenant has a verified host config
