@@ -12,6 +12,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendTaskReminderEmail } from "@/lib/tasks/send-reminder-email";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const BATCH_LIMIT = 200;
 
@@ -78,10 +79,10 @@ export const taskRemindersFire = inngest.createFunction(
       }
 
       try {
-        await svc
+        await safeAwait(svc
           .from("task_reminders")
           .update({ fired_at: new Date().toISOString(), fired_status: status })
-          .eq("id", r.id);
+          .eq("id", r.id), "task_reminders.update");
         if (status === "delivered") delivered++;
         else if (status === "suppressed") suppressed++;
         else failed++;

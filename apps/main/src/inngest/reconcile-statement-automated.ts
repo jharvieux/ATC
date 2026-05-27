@@ -15,6 +15,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import { writeAuditLog } from "@/lib/audit/write";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;   // $5
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;  // $50
@@ -126,7 +127,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
 
           if (!bookingData) {
             // Orphan — booking not found
-            await db.from("reconciliation_review_queue").insert({
+            await safeAwait(db.from("reconciliation_review_queue").insert({
               tenant_id: tenant.id,
               commission_id: null,
               provider_booking_ref: line.provider_booking_ref,
@@ -138,7 +139,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
                 received_cents: line.received_amount_cents,
                 period: periodStart,
               }),
-            });
+            }), "reconciliation_review_queue.insert");
             totalOrphans++;
             continue;
           }
@@ -150,7 +151,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
             .maybeSingle();
 
           if (!commData) {
-            await db.from("reconciliation_review_queue").insert({
+            await safeAwait(db.from("reconciliation_review_queue").insert({
               tenant_id: tenant.id,
               provider_booking_ref: line.provider_booking_ref,
               variance_cents: BigInt(line.received_amount_cents).toString(),
@@ -161,7 +162,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
                 booking_id: bookingData.id,
                 received_cents: line.received_amount_cents,
               }),
-            });
+            }), "reconciliation_review_queue.insert");
             totalOrphans++;
             continue;
           }
@@ -196,7 +197,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
           const defaultAction =
             varianceCents >= REVIEW_HOLD_THRESHOLD_CENTS ? "hold" : "accept";
 
-          await db.from("reconciliation_review_queue").insert({
+          await safeAwait(db.from("reconciliation_review_queue").insert({
             commission_id: commission.id,
             tenant_id: tenant.id,
             provider_booking_ref: line.provider_booking_ref,
@@ -209,7 +210,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
               default_action: defaultAction,
               period: periodStart,
             }),
-          });
+          }), "reconciliation_review_queue.insert");
           totalQueued++;
         }
       } catch (err) {

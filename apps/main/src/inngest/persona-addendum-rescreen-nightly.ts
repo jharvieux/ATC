@@ -6,6 +6,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -38,15 +39,15 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
         const result = await screenAddendumHaiku(row.content, { tenant_id: row.tenant_id });
 
         if (result.pass) {
-          await db
+          await safeAwait(db
             .from("persona_addendums")
             .update({
               haiku_screen_result: result as unknown as Record<string, unknown>,
               haiku_screened_at: new Date().toISOString(),
             })
-            .eq("id", row.id);
+            .eq("id", row.id), "persona_addendums.update");
         } else {
-          await db
+          await safeAwait(db
             .from("persona_addendums")
             .update({
               haiku_screen_result: result as unknown as Record<string, unknown>,
@@ -54,7 +55,7 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
               status: "suspended",
               updated_at: new Date().toISOString(),
             })
-            .eq("id", row.id);
+            .eq("id", row.id), "persona_addendums.update");
           suspended++;
           // Notify tenant owners that the addendum was suspended.
           try {

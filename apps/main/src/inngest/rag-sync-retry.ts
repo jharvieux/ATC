@@ -11,6 +11,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import type { TenantEvent } from "@/lib/rag-sync/publish-tenant-event";
 import { inngest } from "./client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // D-041 follow-up — events whose receiver lives at /api/platform-settings-events
 // rather than /api/tenant-events. Branch by event-type prefix at delivery time.
@@ -88,9 +89,9 @@ export const ragSyncRetry = inngest.createFunction(
 
         if (!res.ok) throw new Error(`RAG returned ${res.status}`);
 
-        await db.from("pending_rag_sync")
+        await safeAwait(db.from("pending_rag_sync")
           .update({ delivered_at: new Date().toISOString() })
-          .eq("id", row.id);
+          .eq("id", row.id), "pending_rag_sync.update");
 
         succeeded++;
       } catch (err) {
@@ -98,12 +99,12 @@ export const ragSyncRetry = inngest.createFunction(
         const newCount = (row.attempt_count as number) + 1;
         const nextRetryAt = new Date(Date.now() + nextBackoffMs(newCount)).toISOString();
 
-        await db.from("pending_rag_sync").update({
+        await safeAwait(db.from("pending_rag_sync").update({
           attempt_count: newCount,
           next_retry_at: nextRetryAt,
           last_attempt_at: new Date().toISOString(),
           last_error: lastError,
-        }).eq("id", row.id);
+        }).eq("id", row.id), "pending_rag_sync.update");
 
         if (newCount >= 10) {
           await sendOperatorAlert({

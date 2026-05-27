@@ -29,6 +29,7 @@ import { screenForPromptInjection } from "@/lib/external/cruisemapper/prompt-inj
 import { ingestReferenceToRag } from "@/lib/external/cruisemapper/rag-reference-ingest";
 import { recordDeckPlanImage } from "@/lib/external/cruisemapper/image-asset-recorder";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20; // don't halt on a tiny initial sample
@@ -140,24 +141,24 @@ async function processKind(
 
     if (fetched.status === "unchanged") {
       result.unchanged_fetch += 1;
-      await db.from("cruisemapper_url_inventory").update({
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
         last_seen_at: new Date().toISOString(),
         last_ingest_status: "unchanged",
         last_error: null,
-      }).eq("url", url);
+      }).eq("url", url), "cruisemapper_url_inventory.update");
       continue;
     }
 
     if (fetched.status !== "ok") {
       result.errors += 1;
-      await db.from("cruisemapper_url_inventory").update({
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
         last_seen_at: new Date().toISOString(),
         last_ingest_status: fetched.status === "robots_disallowed" ? "robots_disallowed"
           : fetched.status === "client_error" ? "client_error"
           : fetched.status === "server_error" ? "server_error"
           : "server_error",
         last_error: fetched.status,
-      }).eq("url", url);
+      }).eq("url", url), "cruisemapper_url_inventory.update");
       continue;
     }
 
@@ -171,22 +172,22 @@ async function processKind(
 
     if (!parsed) {
       result.parse_failed += 1;
-      await db.from("cruisemapper_url_inventory").update({
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
         last_seen_at: new Date().toISOString(),
         last_ingest_status: "parse_failed",
         last_error: "parser_returned_null",
-      }).eq("url", url);
+      }).eq("url", url), "cruisemapper_url_inventory.update");
       continue;
     }
 
     const injection = screenForPromptInjection(parsed.text);
     if (!injection.ok) {
       result.injection_quarantined += 1;
-      await db.from("cruisemapper_url_inventory").update({
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
         last_seen_at: new Date().toISOString(),
         last_ingest_status: "quarantined",
         last_error: `injection_pattern: ${injection.matchedPattern}`,
-      }).eq("url", url);
+      }).eq("url", url), "cruisemapper_url_inventory.update");
       continue;
     }
 
@@ -295,7 +296,7 @@ async function processKind(
         updateRow.last_ingest_status = "server_error";
         updateRow.last_error = outcome.reason ?? `HTTP ${outcome.httpStatus ?? "?"}`;
     }
-    await db.from("cruisemapper_url_inventory").update(updateRow).eq("url", url);
+    await safeAwait(db.from("cruisemapper_url_inventory").update(updateRow).eq("url", url), "cruisemapper_url_inventory.update");
   }
 
   return result;

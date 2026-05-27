@@ -5,6 +5,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const customerChatCounterRecompute = inngest.createFunction(
   {
@@ -31,11 +32,11 @@ export const customerChatCounterRecompute = inngest.createFunction(
         .eq("conversations.user_id", row.user_id)
         .eq("conversations.tenant_id", row.tenant_id);
       const count = Array.isArray(msgs) ? msgs.length : 0;
-      await svc
+      await safeAwait(svc
         .from("customer_chat_counters")
         .update({ current_count: count })
         .eq("user_id", row.user_id)
-        .eq("tenant_id", row.tenant_id);
+        .eq("tenant_id", row.tenant_id), "customer_chat_counters.update");
       processed++;
     }
     return { processed };

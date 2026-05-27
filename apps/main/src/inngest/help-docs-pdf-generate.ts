@@ -17,6 +17,7 @@ import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { renderHelpDocsPdf } from "@/lib/help-docs/help-docs-pdf";
 import { env } from "@/lib/env";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface ExportPayload {
   tenant_id: string;
@@ -46,10 +47,10 @@ export const helpDocsPdfGenerate = inngest.createFunction(
 
     const ttl = env().HELP_DOCS_CACHE_TTL_SECONDS;
     const expires_at = new Date(Date.now() + ttl * 1000).toISOString();
-    await db
+    await safeAwait(db
       .from("help_doc_versions")
       .update({ storage_path, expires_at, size_bytes: buffer.length })
-      .eq("id", data.job_id);
+      .eq("id", data.job_id), "help_doc_versions.update");
 
     return { job_id: data.job_id, storage_path, size_bytes: buffer.length };
   },

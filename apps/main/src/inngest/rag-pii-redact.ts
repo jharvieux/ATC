@@ -17,6 +17,7 @@ import { detectZeroTolerancePII } from "@/lib/rag-ingest/pii-regex-prefilter";
 import { haikuPiiRedact } from "@/lib/rag-ingest/haiku-pii-redact";
 import { computeAggregation, type AggregationState } from "@/lib/rag-ingest/pii-quarantine-aggregator";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const ragPiiRedact = inngest.createFunction(
   {
@@ -45,14 +46,14 @@ export const ragPiiRedact = inngest.createFunction(
 
     const row = sub as { extracted_content: string | null } | null;
     if (!row?.extracted_content) {
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           pii_redaction_status: "quarantined",
           quarantine_categories: ["empty_content"],
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
       return { ok: false, reason: "no_extracted_content" };
     }
 
@@ -60,14 +61,14 @@ export const ragPiiRedact = inngest.createFunction(
     const regex = detectZeroTolerancePII(content);
 
     if (regex.detected) {
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           pii_redaction_status: "quarantined",
           quarantine_categories: regex.categories,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
 
       await runAggregationAndAlert(db, tenant_id, regex.categories, submission_id);
       return { ok: true, quarantined: true, categories: regex.categories };
@@ -81,26 +82,26 @@ export const ragPiiRedact = inngest.createFunction(
       console.warn(
         `[rag-pii-redact] Haiku redaction failed, quarantining submission ${submission_id}: ${redact.reason}`,
       );
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           pii_redaction_status: "quarantined",
           quarantine_categories: ["haiku_redaction_failed"],
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
       await runAggregationAndAlert(db, tenant_id, ["haiku_redaction_failed"], submission_id);
       return { ok: false, quarantined: true, reason: redact.reason };
     }
 
-    await db
+    await safeAwait(db
       .from("rag_submissions")
       .update({
         pii_redaction_status: redact.status,
         redacted_content: redact.content,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", submission_id);
+      .eq("id", submission_id), "rag_submissions.update");
 
     await inngest.send({
       name: "rag.submission_ready_for_normalization",
@@ -152,7 +153,7 @@ async function runAggregationAndAlert(
     recurring_pattern_days: recurringDays,
   });
 
-  await db
+  await safeAwait(db
     .from("tenants")
     .update({
       pii_quarantine_alert_window_start: decision.next.pii_quarantine_alert_window_start?.toISOString() ?? null,
@@ -160,7 +161,7 @@ async function runAggregationAndAlert(
       pii_quarantine_recurring_days: decision.next.pii_quarantine_recurring_days,
       pii_quarantine_last_event_at: decision.next.pii_quarantine_last_event_at?.toISOString() ?? null,
     })
-    .eq("id", tenant_id);
+    .eq("id", tenant_id), "tenants.update");
 
   // TODO(bp23-email): swap to Resend send when the email pipeline lands in §23.
   // Until then log so operators see alerts in Inngest run output.

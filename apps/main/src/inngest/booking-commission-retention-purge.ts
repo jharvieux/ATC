@@ -11,6 +11,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const SEVEN_YEARS_MS = 7 * 365 * 24 * 60 * 60 * 1000;
 
@@ -23,9 +24,9 @@ export const bookingCommissionRetentionPurge = inngest.createFunction(
     const svc = createServiceRoleClient();
 
     if (process.env.STAGING_MODE === "true") {
-      await svc.from("staging_cron_skips").insert({
+      await safeAwait(svc.from("staging_cron_skips").insert({
         cron_id: "booking-commission-retention-purge",
-      });
+      }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 
@@ -62,7 +63,7 @@ export const bookingCommissionRetentionPurge = inngest.createFunction(
     //   booking_passengers + booking_options cascade via FK ON DELETE CASCADE.
     //   commissions don't cascade (financial ledger preservation rule) — but
     //   §25.2 says commissions linked to deleted bookings also purge.
-    await svc.from("commissions").delete().in("booking_id", deletable);
+    await safeAwait(svc.from("commissions").delete().in("booking_id", deletable), "commissions.delete");
     const { count, error: delErr } = await svc
       .from("bookings")
       .delete({ count: "exact" })

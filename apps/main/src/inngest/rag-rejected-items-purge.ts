@@ -6,6 +6,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const ragRejectedItemsPurge = inngest.createFunction(
   {
@@ -16,9 +17,9 @@ export const ragRejectedItemsPurge = inngest.createFunction(
     const svc = createServiceRoleClient();
 
     if (process.env.STAGING_MODE === "true") {
-      await svc.from("staging_cron_skips").insert({
+      await safeAwait(svc.from("staging_cron_skips").insert({
         cron_id: "rag-rejected-items-purge",
-      });
+      }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 

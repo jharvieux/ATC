@@ -29,6 +29,7 @@
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   createBugIssue,
   createFeatureIssue,
@@ -73,7 +74,10 @@ async function setSubmissionState(
   // owned by ctx.tenant_id; RLS lets the tenant client update it via id PK.
   const db = tenantClient(ctx);
   const table = kind === "bug" ? "bug_submissions" : "feature_requests";
-  await db.from(table).update(patch).eq("id", submission_id);
+  await safeAwait(
+    db.from(table).update(patch).eq("id", submission_id),
+    `${table}.update.github_issue_retry`,
+  );
 }
 
 export const githubIssueRetry = inngest.createFunction(

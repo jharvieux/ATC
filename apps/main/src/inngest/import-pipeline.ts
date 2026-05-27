@@ -19,6 +19,7 @@ import { extractIntakeForm } from "@/lib/import/extractors/intake-form";
 import { validate, type ValidationFlag, type ValidationInput } from "@/lib/import/validation";
 import { decideRoute } from "@/lib/import/auto-accept";
 import { promoteImport } from "@/lib/import/promote";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type ImportQueueRow = {
   id: string;
@@ -112,14 +113,14 @@ export const importPipeline = inngest.createFunction(
       return { failed: true, reason: classification.error };
     }
 
-    await svc
+    await safeAwait(svc
       .from("import_queue")
       .update({
         status: "pending_extraction",
         document_type: classification.type,
         classification_confidence: classification.confidence,
       })
-      .eq("id", row.id);
+      .eq("id", row.id), "import_queue.update");
 
     if (classification.type === "unknown" || classification.route_to_review) {
       await routeToReview(svc, row.id, "low_classification_confidence_or_unknown_type");
@@ -136,7 +137,7 @@ export const importPipeline = inngest.createFunction(
       return { failed: true, reason: extraction.error };
     }
 
-    await svc
+    await safeAwait(svc
       .from("import_queue")
       .update({
         status: "pending_validation",
@@ -144,17 +145,17 @@ export const importPipeline = inngest.createFunction(
         per_field_confidence: extraction.per_field_confidence,
         extraction_overall_confidence: extraction.overall_confidence,
       })
-      .eq("id", row.id);
+      .eq("id", row.id), "import_queue.update");
 
     // ── 5. Validate ─────────────────────────────────────────────────────
     const flags: ValidationFlag[] = await step.run("validate", async () => {
       return validate(buildValidationInput(classification.type, tenant_id, extraction.extracted), svc);
     });
 
-    await svc
+    await safeAwait(svc
       .from("import_queue")
       .update({ validation_flags: flags })
-      .eq("id", row.id);
+      .eq("id", row.id), "import_queue.update");
 
     // ── 6. Route ────────────────────────────────────────────────────────
     const decision = await step.run("decide-route", async () => {
@@ -280,14 +281,14 @@ async function markParseFailed(
   id: string,
   reason: string,
 ): Promise<void> {
-  await svc
+  await safeAwait(svc
     .from("import_queue")
     .update({
       status: "parse_failed",
       parse_failure_reason: reason,
       purgable_at: hoursFromNow(RETENTION_HOURS.parse_failed),
     })
-    .eq("id", id);
+    .eq("id", id), "import_queue.update");
 }
 
 async function routeToReview(
@@ -297,14 +298,14 @@ async function routeToReview(
 ): Promise<void> {
   // Review items don't get a purgable_at — they live until acted on. The
   // pending-review queue is the agent's responsibility.
-  await svc
+  await safeAwait(svc
     .from("import_queue")
     .update({
       status: "pending_review",
       parse_failure_reason: null,
       validation_flags: undefined, // already written upstream; this is a no-op
     })
-    .eq("id", id);
+    .eq("id", id), "import_queue.update");
   // Log the reason for operator visibility — Phase C wires a proper
   // operator alert; for now console.warn lands in Vercel logs.
   console.warn(`[import-pipeline] queue=${id} routed to review: ${reason}`);

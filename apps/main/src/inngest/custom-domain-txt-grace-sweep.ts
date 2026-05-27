@@ -3,6 +3,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { vercelRemoveDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const customDomainTxtGraceSweep = inngest.createFunction(
   {
@@ -40,13 +41,13 @@ export const customDomainTxtGraceSweep = inngest.createFunction(
         }
       }
 
-      await db
+      await safeAwait(db
         .from("tenants")
         .update({
           custom_domain_status: "txt_grace_expired",
           custom_domain_unbound_at: new Date().toISOString(),
         })
-        .eq("id", row.id);
+        .eq("id", row.id), "tenants.update");
       swept++;
       console.info("[custom-domain-txt-grace-sweep] expired grace for tenant=%s domain=%s", row.id, row.custom_domain);
     }

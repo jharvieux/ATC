@@ -10,6 +10,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const attributionRollupRefresh = inngest.createFunction(
   {
@@ -24,7 +25,7 @@ export const attributionRollupRefresh = inngest.createFunction(
     const svc = createServiceRoleClient();
 
     if (process.env.STAGING_MODE === "true") {
-      await svc.from("staging_cron_skips").insert({ cron_id: "attribution-rollup-refresh" });
+      await safeAwait(svc.from("staging_cron_skips").insert({ cron_id: "attribution-rollup-refresh" }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 

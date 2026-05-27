@@ -7,6 +7,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const abuseSignalRagPiiRecurring = inngest.createFunction(
   {
@@ -17,11 +18,11 @@ export const abuseSignalRagPiiRecurring = inngest.createFunction(
     const svc = createServiceRoleClient();
     const tenant_id = String((event.data as { tenant_id?: string }).tenant_id ?? "");
     if (!tenant_id) return { error: "no_tenant_id" };
-    await svc.from("abuse_signals").insert({
+    await safeAwait(svc.from("abuse_signals").insert({
       tenant_id,
       signal_kind: "rag_pii_recurring",
       detail: event.data as Record<string, unknown>,
-    });
+    }), "abuse_signals.insert");
     return { ok: true };
   },
 );
@@ -35,11 +36,11 @@ export const abuseSignalAnonChatBurst = inngest.createFunction(
     const svc = createServiceRoleClient();
     const tenant_id = String((event.data as { tenant_id?: string }).tenant_id ?? "");
     if (!tenant_id) return { error: "no_tenant_id" };
-    await svc.from("abuse_signals").insert({
+    await safeAwait(svc.from("abuse_signals").insert({
       tenant_id,
       signal_kind: "anon_chat_burst",
       detail: event.data as Record<string, unknown>,
-    });
+    }), "abuse_signals.insert");
     return { ok: true };
   },
 );
