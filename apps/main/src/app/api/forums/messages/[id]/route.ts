@@ -74,7 +74,10 @@ export async function PATCH(
       }
 
       if (action === "hide") {
-        await safeAwait(svc.from("forum_messages").update({ status: "hidden" }).eq("id", params.id), "forum_messages.update");
+        // D-091 Pattern 5 — service-role bypasses RLS. Add tenant_id filter
+        // as defense-in-depth: the upstream select already validated tenant,
+        // but this update is now self-contained.
+        await safeAwait(svc.from("forum_messages").update({ status: "hidden" }).eq("id", params.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
         await recordStrike(svc, {
           user_id: msg.user_id as string,
           forum_id: msg.forum_id as string,
@@ -88,7 +91,7 @@ export async function PATCH(
           tenant_id: ctx.tenant_id,
         });
       } else if (action === "unhide") {
-        await safeAwait(svc.from("forum_messages").update({ status: "visible" }).eq("id", params.id), "forum_messages.update");
+        await safeAwait(svc.from("forum_messages").update({ status: "visible" }).eq("id", params.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
       } else if (action === "pin") {
         // Pin is a thread-level concept; mark via thread route. No-op here.
         return Response.json({ error: "use_thread_route_to_pin" }, { status: 400 });
@@ -102,7 +105,7 @@ export async function PATCH(
       if ((msg.user_id as string) !== user.id) {
         return Response.json({ error: "cannot_delete_others_message" }, { status: 403 });
       }
-      await safeAwait(svc.from("forum_messages").update({ deleted_at: new Date().toISOString() }).eq("id", params.id), "forum_messages.update");
+      await safeAwait(svc.from("forum_messages").update({ deleted_at: new Date().toISOString() }).eq("id", params.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
       return Response.json({ ok: true });
     }
 
@@ -119,7 +122,7 @@ export async function PATCH(
         content,
         content_edited_at: new Date().toISOString(),
         edit_history: editHistory,
-      }).eq("id", params.id), "forum_messages.update");
+      }).eq("id", params.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
 
       return Response.json({ ok: true });
     }

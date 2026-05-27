@@ -103,11 +103,12 @@ export async function POST(req: Request): Promise<Response> {
   });
   if (upErr) {
     // Roll back the queue row so we don't leave an orphan.
-    await safeAwait(svc.from("import_queue").delete().eq("id", queueRowId), "import_queue.delete");
+    // D-091 Pattern 5 — tenant_id filter as defense-in-depth.
+    await safeAwait(svc.from("import_queue").delete().eq("id", queueRowId).eq("tenant_id", ctx.tenant_id), "import_queue.delete");
     return Response.json({ error: `upload_failed: ${upErr.message}` }, { status: 500 });
   }
 
-  await safeAwait(svc.from("import_queue").update({ uploaded_file_path: objectPath }).eq("id", queueRowId), "import_queue.update");
+  await safeAwait(svc.from("import_queue").update({ uploaded_file_path: objectPath }).eq("id", queueRowId).eq("tenant_id", ctx.tenant_id), "import_queue.update");
   await inngest.send({
     name: "import.queued",
     data: { tenant_id: ctx.tenant_id, import_queue_id: queueRowId },

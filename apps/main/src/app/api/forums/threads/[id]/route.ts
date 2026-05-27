@@ -24,7 +24,10 @@ export async function PATCH(
       .maybeSingle();
     if (!thread) return Response.json({ error: "thread_not_found" }, { status: 404 });
 
-    const { data: forum } = await svc.from("forums").select("*").eq("id", thread.forum_id).single();
+    // D-091 Pattern 5 — service-role bypasses RLS; filter the cross-table
+    // forum lookup by tenant_id too. thread.forum_id was returned with the
+    // tenant-scoped thread query above, so the filter is paranoid but cheap.
+    const { data: forum } = await svc.from("forums").select("*").eq("id", thread.forum_id).eq("tenant_id", ctx.tenant_id).single();
 
     const userPerms = {
       id: user.id,
@@ -48,7 +51,7 @@ export async function PATCH(
     else if (action === "delete") updates.deleted_at = new Date().toISOString();
     else return Response.json({ error: "unknown_action" }, { status: 400 });
 
-    await safeAwait(svc.from("forum_threads").update(updates).eq("id", params.id), "forum_threads.update");
+    await safeAwait(svc.from("forum_threads").update(updates).eq("id", params.id).eq("tenant_id", ctx.tenant_id), "forum_threads.update");
     return Response.json({ ok: true });
   } catch (err) {
     console.error("[forum-threads PATCH]", err);

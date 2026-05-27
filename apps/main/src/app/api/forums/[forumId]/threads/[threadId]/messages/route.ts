@@ -117,7 +117,10 @@ export async function POST(
     const { data: forum } = await svc.from("forums").select("*").eq("id", forumId).eq("tenant_id", ctx.tenant_id).single();
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
-    const { data: thread } = await svc.from("forum_threads").select("*").eq("id", threadId).eq("forum_id", forumId).single();
+    // D-091 Pattern 5 — add tenant_id filter (forum_id was already filtered
+    // to a tenant-owned forum above, but the explicit tenant_id makes the
+    // query self-contained).
+    const { data: thread } = await svc.from("forum_threads").select("*").eq("id", threadId).eq("forum_id", forumId).eq("tenant_id", ctx.tenant_id).single();
     if (!thread) return Response.json({ error: "thread_not_found" }, { status: 404 });
 
     // §19.10 — Post-sailing forum read-only mode. Once the group has
@@ -248,11 +251,12 @@ export async function POST(
 
     if (moderationError || !moderationResult) {
       // Fail-closed: put into pending_moderation
+      // D-091 Pattern 5 — tenant_id filter as defense-in-depth.
       await safeAwait(svc.from("forum_messages").update({
         status: "pending_moderation",
         pending_moderation_since: new Date().toISOString(),
         moderation_last_error: moderationError ?? "haiku_no_result",
-      }).eq("id", msg.id), "forum_messages.update");
+      }).eq("id", msg.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
 
       await inngest.send({
         name: "forum/message.needs_moderation_retry",
@@ -283,7 +287,7 @@ export async function POST(
       status,
       moderation_scores: moderationResult.scores,
       moderation_decision_reason: moderationResult.reasoning,
-    }).eq("id", msg.id), "forum_messages.update");
+    }).eq("id", msg.id).eq("tenant_id", ctx.tenant_id), "forum_messages.update");
 
     // Strike only on hidden (not flagged_review per §19.9)
     if (status === "hidden") {

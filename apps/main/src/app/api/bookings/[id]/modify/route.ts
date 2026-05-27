@@ -80,7 +80,16 @@ export async function POST(
       return Response.json({ error: result.error.message ?? "adapter_modify_failed", code: result.error.code }, { status: 502 });
     }
 
-    await safeAwait(svc.from("bookings").update({ status: "submitted", updated_at: new Date().toISOString() }).eq("id", bookingId), "bookings.update");
+    // D-091 Pattern 5 — service-role bypasses RLS. Add tenant_id filter for
+    // defense-in-depth: a request that smuggles in another tenant's bookingId
+    // is still scoped to ctx.tenant_id at the DB layer.
+    await safeAwait(
+      svc.from("bookings")
+        .update({ status: "submitted", updated_at: new Date().toISOString() })
+        .eq("id", bookingId)
+        .eq("tenant_id", ctx.tenant_id),
+      "bookings.update",
+    );
 
     return Response.json({ ok: true, adapter_response: result.value });
   } catch (err) {
