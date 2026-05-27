@@ -12,6 +12,7 @@ import { commissionSplitOnReceived } from "@/inngest/commission-split-on-receive
 import { payoutsMarkAvailable } from "@/inngest/payouts-mark-available";
 import { payoutsExecuteTransfer } from "@/inngest/payouts-execute-transfer";
 import { payoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
+import { bookingsStuckSubmittingReconcile } from "@/inngest/bookings-stuck-submitting-reconcile";
 import { reconcileStatementAutomated } from "@/inngest/reconcile-statement-automated";
 import { complianceNightly } from "@/inngest/compliance-nightly";
 import { tenantTerminationScheduled, tenantOnTerminatedSideEffects } from "@/inngest/tenant-on-terminated";
@@ -114,6 +115,7 @@ export const { GET, POST, PUT } = serve({
     payoutsMarkAvailable,
     payoutsExecuteTransfer,
     payoutsReconcileProcessing,
+    bookingsStuckSubmittingReconcile,
     reconcileStatementAutomated,
     complianceNightly,
     tenantTerminationScheduled,

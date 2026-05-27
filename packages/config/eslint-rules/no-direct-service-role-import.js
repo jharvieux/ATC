@@ -63,6 +63,9 @@ const ALLOWED_PATH_SUFFIXES = [
   "/inngest/payouts-execute-transfer.ts",
   // BP15: Payouts reconcile-processing cron — cross-tenant recovery scan. §14.7.
   "/inngest/payouts-reconcile-processing.ts",
+  // D-091 R3 #51 follow-up: bookings stuck-submitting reconcile cron —
+  // cross-tenant sweep of bookings stuck in 'submitting' state. §14.4.
+  "/inngest/bookings-stuck-submitting-reconcile.ts",
   // BP15: Statement reconciliation cron — cross-tenant daily fetch + match. §14.8.
   "/inngest/reconcile-statement-automated.ts",
   // BP15: Commission state machine — transitionCommissionState uses service_role
