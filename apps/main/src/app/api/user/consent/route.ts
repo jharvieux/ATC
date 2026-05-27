@@ -48,18 +48,32 @@ export async function POST(req: Request): Promise<Response> {
 
   const db = createServiceRoleClient();
 
-  // Find the pending row for this user + document type.
-  const { data: pending, error: pendingErr } = await db
+  // Find the pending row for this user + document type. The schema's
+  // UNIQUE (auth_user_id, document_type) constraint means at most one
+  // row matches; explicit .limit(1) + length check makes the contract
+  // load-bearing in code (D-091 Round-3 Pattern 18 — `maybeSingle()`
+  // returns null on either 0 OR >1 matches, silently failing if the
+  // schema invariant is ever dropped).
+  const { data: pendingRows, error: pendingErr } = await db
     .from("user_consent_pending")
     .select("document_id_pending, document_type")
     .eq("auth_user_id", authUserId)
     .eq("document_type", body.document_type)
-    .maybeSingle();
+    .limit(2);
 
   if (pendingErr) return Response.json({ error: pendingErr.message }, { status: 500 });
-  if (!pending) return Response.json({ error: "no_pending_consent_for_type" }, { status: 404 });
+  if (!pendingRows || pendingRows.length === 0) {
+    return Response.json({ error: "no_pending_consent_for_type" }, { status: 404 });
+  }
+  if (pendingRows.length > 1) {
+    console.error(
+      "[user/consent] schema invariant violated: %d pending rows for auth_user_id=%s document_type=%s",
+      pendingRows.length, authUserId, body.document_type,
+    );
+    return Response.json({ error: "consent_state_inconsistent" }, { status: 500 });
+  }
 
-  const typedPending = pending as { document_id_pending: string; document_type: string };
+  const typedPending = pendingRows[0] as { document_id_pending: string; document_type: string };
 
   // Fetch the document version.
   const { data: doc, error: docErr } = await db
