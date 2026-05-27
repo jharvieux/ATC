@@ -8,21 +8,12 @@
 //   email.clicked     → engagement metric
 //   email.sent        → no-op (already logged at send time)
 
-import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
+import { verifyResendSignature } from "@/lib/webhooks/resend-signature";
 
-function verifySignature(body: string, sig: string, secret: string): boolean {
-  try {
-    const mac = createHmac("sha256", secret).update(body).digest("hex");
-    const expected = Buffer.from(mac, "hex");
-    const actual = Buffer.from(sig, "hex");
-    if (expected.length !== actual.length) return false;
-    return timingSafeEqual(expected, actual);
-  } catch {
-    return false;
-  }
-}
+// D-091 P1 #38 — Svix signature verifier lives in lib/webhooks/ so the
+// route file only exports POST (Next.js Route export contract).
 
 interface ResendEvent {
   type: string;
@@ -40,10 +31,12 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("Webhook secret not configured", { status: 500 });
   }
 
-  const sig = req.headers.get("svix-signature") ?? req.headers.get("resend-signature") ?? "";
+  const msgId = req.headers.get("svix-id");
+  const timestamp = req.headers.get("svix-timestamp");
+  const signatureHeader = req.headers.get("svix-signature");
   const body = await req.text();
 
-  if (!verifySignature(body, sig.replace(/^v1,/, ""), secret)) {
+  if (!verifyResendSignature({ body, msgId, timestamp, signatureHeader, secret })) {
     return new Response("Invalid signature", { status: 401 });
   }
 
