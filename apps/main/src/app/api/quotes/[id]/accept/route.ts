@@ -162,14 +162,31 @@ export async function POST(
       updatePayload.customer_accepted_variance_cents = varianceCents;
     }
 
+    // D-091 Round-3 #49 — CAS guard: filter on the same status set we
+    // checked at line 69-71 so a concurrent acceptance can't race past
+    // the read. `.in("status", ["sent","viewed"])` makes the update
+    // atomic against the status field; chaining `.select("id")` gives
+    // us the affected-row count to detect the lost race.
     const { data, error } = await db
       .from("quotes")
       .update(updatePayload)
       .eq("id", id)
+      .in("status", ["sent", "viewed"])
       .select()
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) {
+      // 0-row CAS mismatch arrives as PGRST116 ("Cannot coerce the result
+      // to a single JSON object"). Both the audit log and the PDF content
+      // hash above were captured before this point — they're an honest
+      // record of the customer's view even if their acceptance lost the
+      // race. The reconciliation surface lets ops link both audit rows to
+      // the eventual winning acceptance.
+      if (error.code === "PGRST116") {
+        return Response.json({ error: "quote_status_changed_during_accept" }, { status: 409 });
+      }
+      return Response.json({ error: error.message }, { status: 500 });
+    }
 
     // §37.4.2 — fan-out task sequences whose trigger_event='quote_accepted'.
     // Non-fatal: a sequence-fan-out failure must not break quote acceptance.
