@@ -102,6 +102,16 @@ describe("assertValidRevertTarget — D-091 P1 #40", () => {
     expect(assertValidRevertTarget("complete", undefined)).toBeInstanceOf(InvalidStageTransitionError);
   });
 
+  it("rejects Object.prototype keys (Greptile follow-up on #259)", () => {
+    // The `in` operator walks the prototype chain — pre-fix this returned
+    // null (valid) because "constructor" exists on Object.prototype.
+    // Using Object.hasOwn closes the gap.
+    expect(assertValidRevertTarget("complete", "constructor")).toBeInstanceOf(InvalidStageTransitionError);
+    expect(assertValidRevertTarget("complete", "toString")).toBeInstanceOf(InvalidStageTransitionError);
+    expect(assertValidRevertTarget("complete", "hasOwnProperty")).toBeInstanceOf(InvalidStageTransitionError);
+    expect(assertValidRevertTarget("complete", "__proto__")).toBeInstanceOf(InvalidStageTransitionError);
+  });
+
   it("rejects forward revert (target >= current)", () => {
     // This is the AUDIT BUG: admin POST body sets revert_to_stage='complete'
     // while tenant is at 'review_submitted'. Pre-fix that bypasses review.
