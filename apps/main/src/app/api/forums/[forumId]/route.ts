@@ -34,7 +34,9 @@ export async function PATCH(
     }
 
     const { action } = await req.json() as { action: "lock" | "unlock" };
-    await safeAwait(svc.from("forums").update({ is_locked: action === "lock" }).eq("id", params.forumId), "forums.update");
+    // D-091 Pattern 5 — service-role bypasses RLS; tenant_id filter as
+    // defense-in-depth (the upstream forum row was loaded by id only).
+    await safeAwait(svc.from("forums").update({ is_locked: action === "lock" }).eq("id", params.forumId).eq("tenant_id", ctx.tenant_id), "forums.update");
     return Response.json({ ok: true });
   } catch (err) {
     console.error("[forum PATCH]", err);
