@@ -164,11 +164,16 @@ export async function POST(
     const payout = payoutData as PayoutRow;
 
     if (payout.status === "pending") {
-      // Within hold period — zero out and cancel payout, insert negative revenue row
+      // Within hold period — zero out and cancel payout, insert negative revenue row.
+      // D-091 R3 Pattern 7 — CAS guard via .eq("status", "pending") in addition to
+      // .eq("id", payout.id). Without it a payout that raced to 'processing' or
+      // 'available' between the read above and this update would still be zeroed,
+      // potentially clawing back money already wired to the sub-host.
       await safeAwait(adminDb
         .from("payout_records")
         .update({ status: "cancelled", amount_cents: 0 })
-        .eq("id", payout.id), "payout_records.update");
+        .eq("id", payout.id)
+        .eq("status", "pending"), "payout_records.update");
 
       // Negative platform_revenue row for clawback
       await safeAwait(adminDb.from("platform_revenue").insert({
