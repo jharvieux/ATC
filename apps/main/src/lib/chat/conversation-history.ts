@@ -29,8 +29,16 @@ interface MessagesRow {
 // Duck-typed — both the service-role client and tenantClient have a
 // compatible `.from(...)` shape, but their exact return types differ
 // across generics. `unknown` keeps the helper usable with either.
+//
+// tenantId is REQUIRED (Greptile #266 review): the service-role client
+// bypasses RLS, so we enforce tenant scoping at the query layer. This
+// satisfies the "two layers of tenant isolation" doctrine — app-layer
+// conversation-ownership check AND db-layer tenant_id filter. An IDOR
+// or future caller that hands us a foreign conversationId can no longer
+// leak messages because the row's tenant_id won't match.
 export async function loadConversationHistory(
   db: unknown,
+  tenantId: string,
   conversationId: string,
   options?: { maxChars?: number },
 ): Promise<ChatTurn[]> {
@@ -40,11 +48,13 @@ export async function loadConversationHistory(
     from: (t: string) => {
       select: (c: string) => {
         eq: (col: string, val: string) => {
-          in: (col: string, vals: readonly string[]) => {
-            order: (
-              col: string,
-              opts: { ascending: boolean },
-            ) => Promise<{ data: MessagesRow[] | null; error: { message: string } | null }>;
+          eq: (col: string, val: string) => {
+            in: (col: string, vals: readonly string[]) => {
+              order: (
+                col: string,
+                opts: { ascending: boolean },
+              ) => Promise<{ data: MessagesRow[] | null; error: { message: string } | null }>;
+            };
           };
         };
       };
@@ -52,6 +62,7 @@ export async function loadConversationHistory(
   })
     .from("messages")
     .select("role, content")
+    .eq("tenant_id", tenantId)
     .eq("conversation_id", conversationId)
     .in("role", ["user", "assistant"])
     .order("created_at", { ascending: true });
@@ -74,8 +85,11 @@ export async function loadConversationHistory(
 }
 
 // Exported for unit tests. Drops oldest turns until total content chars
-// fit under budget, then drops a leading assistant message if present
-// (Anthropic requires the first message to be `user`).
+// fit under budget, ensures the first message is `user` (Anthropic
+// requirement), and collapses runs of consecutive same-role messages
+// down to the last one in each run (Anthropic rejects non-alternating
+// histories; collapsing rather than dropping preserves the most recent
+// signal from each side).
 export function trimToBudget(turns: ChatTurn[], maxChars: number): ChatTurn[] {
   let totalChars = turns.reduce((sum, t) => sum + t.content.length, 0);
   let start = 0;
@@ -87,5 +101,23 @@ export function trimToBudget(turns: ChatTurn[], maxChars: number): ChatTurn[] {
   while (trimmed.length > 0 && trimmed[0]!.role === "assistant") {
     trimmed = trimmed.slice(1);
   }
-  return trimmed;
+  // Collapse consecutive same-role turns: keep the latest one in each
+  // run. A db with non-alternating rows (e.g. from a prior assistant
+  // failure that never wrote) would otherwise break the Anthropic
+  // alternation requirement on every turn.
+  return collapseConsecutiveSameRole(trimmed);
+}
+
+function collapseConsecutiveSameRole(turns: ChatTurn[]): ChatTurn[] {
+  if (turns.length <= 1) return turns;
+  const out: ChatTurn[] = [];
+  for (const t of turns) {
+    const last = out[out.length - 1];
+    if (last && last.role === t.role) {
+      out[out.length - 1] = t;
+    } else {
+      out.push(t);
+    }
+  }
+  return out;
 }

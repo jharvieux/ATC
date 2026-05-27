@@ -398,8 +398,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // budget so a runaway conversation can't blow the prompt window.
   // Computed once before the regen loop; reused across attempts so we
   // don't accidentally feed our own in-progress assistant draft back as
-  // context on regen.
-  const chatHistory = await loadConversationHistory(svc, conversationId);
+  // context on regen. tenantId is required (svc bypasses RLS — db-layer
+  // isolation matters here).
+  const chatHistory = await loadConversationHistory(svc, tenantId, conversationId);
 
   // BP27 §27.4 — bump chat-messages counter. Non-fatal: the message
   // already persisted; we don't want to surface a 500 over usage

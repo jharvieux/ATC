@@ -131,6 +131,23 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         return;
       }
 
+      // D-095 — Load the conversation history ONCE. Used for both:
+      //   (a) Flow-state reconstruction (bug/feature): we want user turns
+      //       in chronological order so we can count them and replay
+      //       answers into the draft.
+      //   (b) LLM context (below): full user+assistant turns prepended
+      //       to the current message.
+      // Earlier the route issued two separate queries against `messages`
+      // for the same conversation_id (loadPriorUserMessages and
+      // loadConversationHistory). Greptile P2 noted that the user-only
+      // subset can be derived from the full history in memory.
+      const fullHistory = session.conversation_id
+        ? await loadConversationHistory(db, ctx.tenant_id, session.conversation_id)
+        : [];
+      const priorUserMessages = fullHistory
+        .filter((t) => t.role === "user")
+        .map((t) => t.content);
+
       // For bug/feature flows we derive the current state by counting prior
       // user messages in this session's conversation — the bot asks each
       // step's question exactly once, so the count is the position in
@@ -139,9 +156,6 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       // recite back the user's own answers verbatim.
       let nextQuestion = "";
       let draftSnapshot: BugDraft | FeatureDraft | null = null;
-      const priorUserMessages = session.conversation_id
-        ? await loadPriorUserMessages(db, session.conversation_id)
-        : [];
 
       if (session.session_type === "bug") {
         const currentState = bugStateForIndex(priorUserMessages.length);
@@ -173,21 +187,12 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
       const model = env().ANTHROPIC_SONNET_MODEL;
 
-      // D-095 — conversation history for the LLM call.
-      // When the help session is linked to a chat conversation (typical
-      // customer_chat → help-AI handoff), pull prior turns so the LLM
-      // sees what the user was discussing instead of treating each turn
-      // as a cold start. The current userMessage is appended manually
-      // because this route does not (yet) persist help-AI user turns to
-      // the messages table — that gap is tracked separately as the
-      // remaining piece of help-AI multi-turn context.
-      let messagesForLlm: Array<{ role: "user" | "assistant"; content: string }>;
-      if (session.conversation_id) {
-        const prior = await loadConversationHistory(db, session.conversation_id);
-        messagesForLlm = [...prior, { role: "user", content: userMessage }];
-      } else {
-        messagesForLlm = [{ role: "user", content: userMessage }];
-      }
+      // D-095 — Conversation history for the LLM call. Reuses `fullHistory`
+      // loaded above (single DB roundtrip). Appends the current userMessage
+      // because this route doesn't (yet) persist help-AI user turns to the
+      // messages table.
+      const messagesForLlm: Array<{ role: "user" | "assistant"; content: string }> =
+        [...fullHistory, { role: "user", content: userMessage }];
 
       // BP24 — Help-AI streaming opt-in. Default off; flip
       // HELP_AI_STREAMING_ENABLED=true to use the streaming wrapper +
@@ -319,23 +324,6 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   })();
 
   return new Response(readable, { status: 200, headers: SSE_HEADERS });
-}
-
-type MessagesDb = ReturnType<typeof tenantClient>;
-
-async function loadPriorUserMessages(
-  db: MessagesDb,
-  conversation_id: string,
-): Promise<string[]> {
-  const { data } = await db
-    .from("messages")
-    .select("content, role, created_at")
-    .eq("conversation_id", conversation_id)
-    .eq("role", "user")
-    .order("created_at", { ascending: true });
-  return ((data ?? []) as Array<{ content: string }>)
-    .map((r) => (typeof r.content === "string" ? r.content : ""))
-    .filter((s) => s.length > 0);
 }
 
 function bugStateForIndex(priorUserMessageCount: number): BugFlowState {
