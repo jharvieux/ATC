@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §18.5 — Five-check invitation token validation contract.
 //
 // GET /api/groups/invite/[token]
