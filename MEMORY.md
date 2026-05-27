@@ -4,6 +4,55 @@ Newest entries on top.
 
 ---
 
+## D-091b — 2026-05-26 — Anti-pattern catalog + ESLint rules (post Greptile audit)
+
+The 2026-05-26 Greptile audit (D-091 follow-on) produced 25 findings across 5 high-risk subsystems. Pattern analysis reduced these to 6 recurring root causes. Shipped preventive infrastructure to catch these classes mechanically going forward.
+
+### The 6 recurring patterns
+1. **Stub-shaped code** — function signature lies (kid arg ignored, multi-kid maps to one PEM, dead else-if branch, JS timingSafeEqual that JIT can break)
+2. **Fail-open when enforcement layer goes down** — rate limit on Redis outage, unchecked DB error returns 200
+3. **Unchecked Supabase mutations** — `@supabase/supabase-js v2` doesn't throw; ~113 sites in this codebase discard the result
+4. **Credentials in URL query strings** — Apify token in `?token=`, visible in proxy/CDN/APM logs and Node fetch error messages
+5. **App-layer scope check without DB-layer enforcement** — service-role queries with no `.eq("tenant_id", ...)`, one bug from cross-tenant leak
+6. **TOCTOU stale-reads in budget/limit gates** — once-per-run cap check that doesn't catch mid-loop overruns or concurrent runs
+
+### What shipped
+
+`docs/runbooks/anti-patterns.md` — pattern catalog with examples, why-slips-through, and prevention layer per pattern.
+
+`docs/runbooks/audit-followups-2026-05-26.md` — punch list of 23 specific findings (7 P1, 16 P2) + grep-sweep results for codebase-wide instances.
+
+`CLAUDE.md` doctrine additions (7 new bullet lines under "guidance for writing/reviewing"):
+- No stub-shaped code
+- Fail-closed by default
+- Check every Supabase mutation
+- Two layers of tenant isolation
+- External credentials in headers, never URLs
+- Quota gates re-read between consuming ops
+
+3 new ESLint rules in `packages/config/eslint-rules/`:
+- `atc/no-unchecked-supabase-mutation` (default `off` — needs 113-site cleanup pass before flipping to `error`)
+- `atc/no-credentials-in-url` (default `error` — codebase already clean except for the 2 Greptile-flagged sites)
+- `atc/no-fail-open-on-resource-error` (default `off` — heuristic, needs audit pass)
+
+13 smoke tests in `tests/unit/eslint-rules-d091.test.ts`.
+
+### What was rejected
+
+- **Shipping `no-unchecked-supabase-mutation` at `warn` or `error` immediately.** The 113-site grep result confirmed widespread existing pattern. Flipping on would block every PR. Operator does the cleanup pass first, then flips.
+- **A rule for "service-role import without exemption."** The existing `atc/no-direct-service-role-import` already has an allowlist mechanism. The Greptile finding was about specific files that should have been on the allowlist but lacked the exemption comment — that's a one-time audit, not a recurring rule.
+- **A rule for "tenant_id leaked in JSON response."** Pattern is too context-dependent for static analysis. Better caught by Greptile audits on remaining surfaces or by extending the cross-tenant-probe test.
+
+### Calibration during implementation
+
+`no-credentials-in-url` shipped at `error` because grep confirmed zero existing violations in current code (Greptile's 2 hits were on already-known files). New code that introduces the pattern will be blocked at lint time.
+
+### Related artifacts
+
+`packages/config/eslint-rules/no-unchecked-supabase-mutation.js`, `no-credentials-in-url.js`, `no-fail-open-on-resource-error.js`, both eslint-plugin manifests (`packages/config/eslint-plugin.js`, `packages/eslint-plugin-atc/index.js`), `apps/main/.eslintrc.json` (rule enablement), `CLAUDE.md` (doctrine bullets), `docs/runbooks/anti-patterns.md`, `docs/runbooks/audit-followups-2026-05-26.md`, `tests/unit/eslint-rules-d091.test.ts`.
+
+---
+
 ## D-091 — 2026-05-26 — AI-slop detection infrastructure (3 layers)
 
 The CLAUDE.md doctrine and small custom-lint surface have kept this repo mostly slop-free. Adding two layers to catch what slips through and to give future PRs a mechanical advisory check.

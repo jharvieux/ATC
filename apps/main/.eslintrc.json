@@ -10,6 +10,9 @@
     "atc/no-ad-hoc-tenant-id-string": "off",
     "atc/no-direct-octokit-import": "error",
     "atc/no-orphan-todo": "error",
-    "atc/no-narrating-comments": "off"
+    "atc/no-narrating-comments": "off",
+    "atc/no-unchecked-supabase-mutation": "off",
+    "atc/no-credentials-in-url": "error",
+    "atc/no-fail-open-on-resource-error": "off"
   }
 }
