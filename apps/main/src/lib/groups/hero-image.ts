@@ -7,6 +7,7 @@
 //   4. Cruise-line default fallback
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const CRUISE_LINE_DEFAULTS: Record<string, string> = {
   "Royal Caribbean": "https://cdn.ai-travelconcierge.com/defaults/cruise-ship-ocean.jpg",
@@ -67,10 +68,10 @@ export async function selectHeroImage(ctx: HeroImageContext): Promise<string> {
     if ((count ?? 0) < limit) {
       const url = await generateWithDallE(ctx.destination, ctx.cruise_line);
       if (url) {
-        await db.from("destination_images_cache").upsert(
+        await safeAwait(db.from("destination_images_cache").upsert(
           { destination: ctx.destination, cruise_line: ctx.cruise_line, image_url: url, generated_at: new Date().toISOString() },
           { onConflict: "destination,cruise_line" },
-        );
+        ), "destination_images_cache.upsert");
         return url;
       }
     }

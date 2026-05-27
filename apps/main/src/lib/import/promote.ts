@@ -17,6 +17,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { resolveCommissionRate, type ResolvedCommissionRate } from "./resolve-commission-rate";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import type {
   BookingConfirmationFields,
   IntakeFormFields,
@@ -160,13 +161,13 @@ async function promoteBooking(
     getAdapterRate,
   });
   if (!rate) {
-    await svc
+    await safeAwait(svc
       .from("import_queue")
       .update({
         status: "pending_review",
         parse_failure_reason: "commission_rate_missing",
       })
-      .eq("id", row.id);
+      .eq("id", row.id), "import_queue.update");
     return { ok: false, needs_review: true, reason: "commission_rate_missing" };
   }
 
@@ -347,7 +348,7 @@ async function writeContactImportRow(
   contactId: string,
   acceptingUserId: string | null | undefined,
 ): Promise<void> {
-  await svc.from("contact_imports").insert({
+  await safeAwait(svc.from("contact_imports").insert({
     tenant_id: row.tenant_id,
     contact_id: contactId,
     import_path: row.import_path,
@@ -356,7 +357,7 @@ async function writeContactImportRow(
     confidence: row.extraction_overall_confidence,
     imported_by_user_id: acceptingUserId ?? row.submitted_by_user_id ?? null,
     raw_extracted_fields: row.raw_extracted_fields ?? null,
-  });
+  }), "contact_imports.insert");
 }
 
 async function finalizeQueueRowAccepted(
@@ -367,7 +368,7 @@ async function finalizeQueueRowAccepted(
 ): Promise<void> {
   // §34.4 — 24-hour retention on accepted rows; purge cron sweeps after.
   const purgable_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  await svc
+  await safeAwait(svc
     .from("import_queue")
     .update({
       status: "accepted",
@@ -376,5 +377,5 @@ async function finalizeQueueRowAccepted(
       promoted_booking_id: bookingId,
       purgable_at,
     })
-    .eq("id", queueRowId);
+    .eq("id", queueRowId), "import_queue.update");
 }

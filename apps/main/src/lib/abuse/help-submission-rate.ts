@@ -31,6 +31,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const SOFT1 = 20;
 const SOFT2 = 50;
@@ -136,7 +137,7 @@ export async function incrementHelpSubmissionCounter(
   const now = new Date().toISOString();
 
   if (existing) {
-    await db
+    await safeAwait(db
       .from("tenant_usage_metrics")
       .update({
         help_submission_count: newCount,
@@ -145,7 +146,7 @@ export async function incrementHelpSubmissionCounter(
         last_recomputed_at: now,
       })
       .eq("tenant_id", tenant_id)
-      .eq("billing_period", existing.billing_period);
+      .eq("billing_period", existing.billing_period), "tenant_usage_metrics.update");
   } else {
     // No metrics row yet — let the existing recompute path create it
     // on the next nightly run. For v1 we skip rather than synthesize a

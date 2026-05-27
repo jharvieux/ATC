@@ -10,6 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkStateTransitionIfNeeded } from "./state-machine";
 import type { TenantRevenueSnapshot } from "./revenue";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function currentBillingPeriodRange(): string {
   const now = new Date();
@@ -39,14 +40,14 @@ async function upsertMetrics(
       const current = Number(row[col] ?? 0);
       update[col] = current + delta;
     }
-    await db.from("tenant_usage_metrics").update(update).eq("id", row.id as string);
+    await safeAwait(db.from("tenant_usage_metrics").update(update).eq("id", row.id as string), "tenant_usage_metrics.update");
   } else {
-    await db.from("tenant_usage_metrics").insert({
+    await safeAwait(db.from("tenant_usage_metrics").insert({
       tenant_id,
       billing_period: period,
       ...patch,
       ...increments,
-    });
+    }), "tenant_usage_metrics.insert");
   }
 }
 
@@ -84,23 +85,23 @@ export async function incrementEmailSent(ctx: CounterContext): Promise<void> {
     const dayChanged = row.email_sent_day_ref !== today;
     const newToday = dayChanged ? 1 : (row.email_sent_today ?? 0) + 1;
     const newCount = (row.email_sent_count ?? 0) + 1;
-    await ctx.db
+    await safeAwait(ctx.db
       .from("tenant_usage_metrics")
       .update({
         email_sent_count: newCount,
         email_sent_today: newToday,
         email_sent_day_ref: today,
       })
-      .eq("id", row.id);
+      .eq("id", row.id), "tenant_usage_metrics.update");
     void checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "email_volume", metric_value: BigInt(newToday) });
   } else {
-    await ctx.db.from("tenant_usage_metrics").insert({
+    await safeAwait(ctx.db.from("tenant_usage_metrics").insert({
       tenant_id: ctx.tenant.tenant_id,
       billing_period: currentBillingPeriodRange(),
       email_sent_count: 1,
       email_sent_today: 1,
       email_sent_day_ref: today,
-    });
+    }), "tenant_usage_metrics.insert");
   }
 }
 
@@ -136,19 +137,19 @@ export async function adjustRagChunkCount(
 
   if (!row) {
     // Initialize the quota row on first chunk.
-    await ctx.db.from("tenant_rag_quotas").insert({
+    await safeAwait(ctx.db.from("tenant_rag_quotas").insert({
       tenant_id: ctx.tenant.tenant_id,
       base_cap: 0, // populated by resolveThresholds on read; default 0 here
       current_tenant_chunks_count: Math.max(0, delta),
       promoted_chunks_count,
-    });
+    }), "tenant_rag_quotas.insert");
   } else {
     const existing = row as { current_tenant_chunks_count: number };
     const next = Math.max(0, existing.current_tenant_chunks_count + delta);
-    await ctx.db
+    await safeAwait(ctx.db
       .from("tenant_rag_quotas")
       .update({ current_tenant_chunks_count: next, promoted_chunks_count })
-      .eq("tenant_id", ctx.tenant.tenant_id);
+      .eq("tenant_id", ctx.tenant.tenant_id), "tenant_rag_quotas.update");
   }
 
   const { data: after } = await ctx.db

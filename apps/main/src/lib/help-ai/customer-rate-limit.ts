@@ -18,6 +18,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // Read the limit straight from process.env with a fallback so tests can
 // run without the full verifyEnvAtBoot init. The Zod schema in env.ts
@@ -100,20 +101,20 @@ export async function recordCustomerBugSubmission(
 
   if (existing) {
     const row = existing as { id: string; submission_count: number };
-    await db
+    await safeAwait(db
       .from("customer_bug_submission_counters")
       .update({
         submission_count: row.submission_count + 1,
         last_submission_at: now,
       })
-      .eq("id", row.id);
+      .eq("id", row.id), "customer_bug_submission_counters.update");
   } else {
-    await db.from("customer_bug_submission_counters").insert({
+    await safeAwait(db.from("customer_bug_submission_counters").insert({
       user_id,
       tenant_id,
       day_anchor: day,
       submission_count: 1,
       last_submission_at: now,
-    });
+    }), "customer_bug_submission_counters.insert");
   }
 }

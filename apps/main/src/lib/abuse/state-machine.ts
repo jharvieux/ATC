@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
 import { resolveThresholds, type AbuseDimension, type ResolvedThresholds } from "./thresholds";
 import type { TenantRevenueSnapshot } from "./revenue";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type AbuseState = "ok" | "soft1" | "soft2" | "hard";
 export type RagState = "ok" | "approaching" | "at_cap" | "over_cap";
@@ -130,21 +131,21 @@ async function transitionMonthly(
     newState === "soft2" ? t.soft2 :
     newState === "soft1" ? t.soft1 : 0n;
 
-  await db.from("usage_limit_events").insert({
+  await safeAwait(db.from("usage_limit_events").insert({
     tenant_id: tenant.tenant_id,
     dimension,
     from_state: currentState,
     to_state: newState,
     metric_value: value.toString(),
     threshold_crossed: crossed.toString(),
-  });
-  await db
+  }), "usage_limit_events.insert");
+  await safeAwait(db
     .from("tenant_usage_metrics")
     .update({
       [meta.state_col]: newState,
       [meta.state_changed_col]: new Date().toISOString(),
     })
-    .eq("id", row.id as string);
+    .eq("id", row.id as string), "tenant_usage_metrics.update");
 
   await inngest.send({
     name: "abuse.state_transition",
@@ -178,12 +179,12 @@ async function transitionRag(
   const currentState = (row as { rag_state: RagState }).rag_state;
   if (currentState === newState) return;
 
-  await db
+  await safeAwait(db
     .from("tenant_rag_quotas")
     .update({ rag_state: newState, rag_state_changed_at: new Date().toISOString() })
-    .eq("tenant_id", tenant.tenant_id);
+    .eq("tenant_id", tenant.tenant_id), "tenant_rag_quotas.update");
 
-  await db.from("tenant_rag_cap_events").insert({
+  await safeAwait(db.from("tenant_rag_cap_events").insert({
     tenant_id: tenant.tenant_id,
     event_type: "state_transition",
     cap_before: thresholds.rag_cap_total.effective,
@@ -191,7 +192,7 @@ async function transitionRag(
     count_before: count,
     count_after: count,
     reason: `${currentState} → ${newState}`,
-  });
+  }), "tenant_rag_cap_events.insert");
 
   await inngest.send({
     name: "abuse.state_transition",
