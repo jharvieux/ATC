@@ -4,6 +4,97 @@ Newest entries on top.
 
 ---
 
+## D-093 — 2026-05-26 — Procedure change: read every Greptile review before merging
+
+Greptile posts comments separately from PR-body content (per operator setting flip). I had been treating Greptile as just another CI check — only verifying required-check pass and merging when green. That's wrong.
+
+### Why this matters
+
+Within this session, I shipped 7 Tier-1 fix PRs. Of those:
+- 3 merged before I started reading Greptile (#258, #259, #260)
+- #259 had a P1 inline finding I missed (`target in STAGE_ORDER` enum check leaks Object.prototype keys: `"constructor"`, `"toString"`, `__proto__`)
+- The leak got caught downstream by the DB CHECK constraint, but with wrong error type and broken validation contract
+- Fixed retroactively in #264 with 4 prototype-key regression tests
+
+The remaining PRs (#262, #263) had Greptile findings I addressed in-PR before merge:
+- #262: test coverage limited to 1 of 6 fixed handler branches → expanded to 8
+- #263: doc-stats inconsistency + 3 missing P1 items from quick-wins list
+
+### The procedure
+
+For every PR I create:
+
+1. Fetch the Greptile review body: `gh api repos/OWNER/REPO/issues/PR/comments` — bot is `greptile-apps[bot]`.
+2. Check the confidence score and read the "Greptile Summary" + "Outside Diff (N)" sections.
+3. For each finding, decide:
+   - **Fix in this PR** — preferred if the finding is small and within scope.
+   - **Follow-up PR** — preferred if the finding is larger or out of scope. Open the follow-up immediately so it's not forgotten.
+   - **Accept with reason** — leave a comment on the Greptile finding explaining why it's intentional.
+4. Never merge while a Greptile finding is unaddressed.
+
+### What was rejected
+
+- **Auto-merge based on Greptile confidence score alone.** Too risky — Greptile's confidence scores are good but not perfect, and the "Outside Diff" section often contains items the score doesn't reflect.
+- **Adding a hard CI gate that requires Greptile to be `5/5`.** Would bottleneck routine doc PRs that don't need a full review. Procedure is owner discipline, not automation.
+
+### Related artifacts
+
+Will be codified in `CLAUDE.md` in a follow-up PR. Captured here so future sessions don't repeat the gap.
+
+---
+
+## D-092 — 2026-05-26 — Round-3 Greptile audit (10 more subsystems) + 6 new patterns
+
+After the round-1 + round-2 D-091 audits found 12 patterns across 10 subsystems, ran a third round on the next 10 high-risk areas (AI wrappers, bookings, quotes, invitations, RAG ingestion, admin reconciliation, CCPA, imports, DNS/white-label, chat). ~18 new findings + 6 new recurring patterns identified.
+
+### Cross-round totals after round 3
+
+- **15 Greptile audits** across 3 rounds
+- **~90 actionable findings**
+- **18 recurring patterns** in the anti-patterns catalog
+
+### Round-3 new patterns
+
+13. **Stateless LLM call** — multi-turn product surface passes only the current message; LLM has no history. Confirmed in customer chat AND help-AI chat.
+14. **Kill switch checked AFTER streaming** — runtime kill switch fires post-hoc, not pre-emptively. Streaming bypasses the switch entirely.
+15. **LLM prompt injection via raw user content** — untrusted strings interpolated into the `content` of a `messages` user-turn. Mitigation: structured output (tool calls), explicit delimiters, or system-prompt warning to treat content as data.
+16. **Broken `withPlatformAdminAudit` callback signature** — callback declared `async () => {...}` drops the `(db, recordQuery)` args silently. Audit row ends up empty. Only 1 instance in the codebase (admin reconciliation upload) — confirmed via enumeration of all 29 callsites.
+17. **`select('*')` in user-facing data export** — exposes `tenant_id` + internal columns + any future migration columns. Concrete leak in CCPA export.
+18. **`maybeSingle()` masking multi-row matches** — returns `null` (not error) when query matches multiple rows. Multi-tenant users with the same `auth_user_id` across tenants get silently skipped. Concrete bug in CCPA purge + user-consent renewal.
+
+### Highest-impact round-3 findings (P1)
+
+- **#42 Chat conversation history absent** — `messages: [{ role: 'user', content: userMessage }]`. Every customer-chat turn is stateless. Product correctness, not just a bug.
+- **#43 Kill switch gap in streaming chat** — supervisor runs after sentence deltas already flushed.
+- **#44 Haiku PII redact fails OPEN** — missing API key returns input as `status: 'clean'`. PII flows into RAG store.
+- **#45 CCPA purge silently skips multi-tenant users** — compliance violation in waiting.
+- **#47 Confirmed-quote expiry never enforced** — stale price-lock can be accepted; contractually binding.
+- **#48 Dispute-defense PDF discarded** — §21.10.1 says rendered HTML "wins arbitrations"; code stores only hash.
+- **#52 Admin reconciliation audit-wrapper drops args** — real-money batch audit trail empty.
+- **#53 Admin reconciliation Haiku prompt injection** — raw CSV interpolated; "Ignore prior instructions..." can alter auto-accept.
+- **#58 OpenAI embedding path bypasses all Pattern-8 enforcement** — second AI path untracked.
+
+### Codebase grep sweep — confirmed scope of each new pattern
+
+- Pattern 13 (stateless LLM): 14 total LLM sites, 4 real bugs (2 customer chat + 2 help-AI). The other 10 are intentional single-shot tool calls.
+- Pattern 14 (kill switch in streaming): 1 site (chat); help-AI does it correctly.
+- Pattern 15 (prompt injection): 1 confirmed (admin reconciliation) + 8 candidate sites needing per-prompt review.
+- Pattern 16 (broken audit-wrapper signature): 1 site, no others.
+- Pattern 17 (`select('*')` in user-facing): 1 confirmed (CCPA export) + 4-5 lower-impact candidates in forum/CRM routes.
+- Pattern 18 (`maybeSingle` masks multi-row): 2 sites — CCPA purge + user-consent renewal.
+
+### What was rejected
+
+- **A new ESLint rule per round-3 pattern.** Most have only 1-2 instances. Maintaining a rule for each is more overhead than the prevention is worth.
+- **Building the full error-injection probe** as part of this work. Multi-day project; deferred per `docs/runbooks/error-injection-probe-design.md`.
+- **Per-route response-shape allowlist tests** for Pattern 17 NOW. Worth doing but its own ~1-day project; recommend scheduling after the codebase-wide Pattern 1 cleanup.
+
+### Related artifacts
+
+`docs/runbooks/audit-followups-2026-05-26.md` (full punch list with all 90 findings), `docs/runbooks/anti-patterns.md` (18-pattern catalog), Tier-1 fix PRs #258–#264 close the first batch of findings.
+
+---
+
 ## D-091b — 2026-05-26 — Anti-pattern catalog + ESLint rules (post Greptile audit)
 
 The 2026-05-26 Greptile audit (D-091 follow-on) produced 25 findings across 5 high-risk subsystems. Pattern analysis reduced these to 6 recurring root causes. Shipped preventive infrastructure to catch these classes mechanically going forward.

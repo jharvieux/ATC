@@ -243,9 +243,10 @@ Quick-win fixes after the original Tier-1 lands. Each ≤ 1h, all close real ris
 - **#51 Bookings draft-status CAS guard** — concurrent submit double-call prevention
 - **#52 Admin reconciliation audit-wrapper signature** — accept `(db, recordQuery)`
 - **#53 Admin reconciliation Haiku prompt-injection mitigation** — use tool-call/JSON mode OR explicit delimiter + system-prompt warning
+- **#56 `instrumentedClaudeCall` doesn't fail-closed on `hard` state** — same §27.6 enforcement gap as #58, same file. Wire hard-state refusal at the wrapper level instead of delegating to call sites that may forget.
 - **#58 OpenAI embedding path bypasses all enforcement** — wire `loadTenantSnapshot` + state-machine check, mirroring the Claude path
 
-(Greptile noted findings #50, #51, #58 were P1-flagged but missing from the original quick-wins list. Added explicitly so they're not silently deprioritized.)
+(Greptile noted findings #50, #51, #56, #58 were P1-flagged but missing from the original quick-wins list. Added explicitly so they're not silently deprioritized. #56 + #58 should ship together — they're the same `call-wrapper.ts` change.)
 
 ## Cross-round totals (after 15 audits, ~90 findings)
 
@@ -257,10 +258,13 @@ Quick-win fixes after the original Tier-1 lands. Each ≤ 1h, all close real ris
 | 8. void async / stateless LLM | 5/15 | Doctrine added; LLM-statelessness is the variant worth fixing |
 | 6. TOCTOU race | 7/15 | Doctrine added; in flight (state-machine fix in PR #259) |
 | 2. Fail-open on resource error | 4/15 | Doctrine added; Haiku PII fail-open is the highest-impact uncovered case |
+| 9. Wrong assertPermission action | 1/15 | Doctrine added (round 2); forums route fix not yet shipped |
 | 10. Idempotency-before-dispatch | 2/15 | Doctrine added; Stripe + imports both have the pattern |
 | 11. Untrusted state-machine input | 1/15 | Fixed (PR #259) |
 | 12. Webhook signature encoding | 1/15 | Fixed (PR #258) |
-| **NEW** Prompt injection (round 3) | 1/15 | Admin reconciliation only |
-| **NEW** Broken audit-wrapper signature (round 3) | 1/15 | Admin reconciliation only |
-| **NEW** `select('*')` leak (round 3) | 1/15 | CCPA export only |
-| **NEW** maybeSingle masks multi-row (round 3) | 1/15 | CCPA purge only |
+| 13. Stateless LLM call (round 3) | 1/15 found by Greptile (chat); grep found 1 more (help-AI) | Customer + help-AI chat both affected |
+| 14. Kill-switch gap in streaming (round 3) | 1/15 | Chat streaming path only |
+| 15. Prompt injection (round 3) | 1/15 found + ~8 grep candidates | Admin reconciliation confirmed; per-prompt review needed for others |
+| 16. Broken audit-wrapper signature (round 3) | 1/15 | Admin reconciliation only (verified via enumeration of all 29 callsites) |
+| 17. `select('*')` user-facing leak (round 3) | 1/15 found + ~5 candidates | CCPA export confirmed |
+| 18. maybeSingle masks multi-row (round 3) | 1/15 found + 1 grep | CCPA purge + user-consent renewal |
