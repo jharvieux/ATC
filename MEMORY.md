@@ -4,6 +4,62 @@ Newest entries on top.
 
 ---
 
+## D-101 — 2026-05-27 — Next 16 instrumentation timing required env-var placeholder cascade
+
+**Decision.** Added BP31 GitHub App env vars (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME`) as placeholders to `.github/workflows/e2e.yml`, plus Microsoft Graph placeholders. Updated `apps/main/.env.local` (gitignored) with the same placeholders. Updated `docs/local-development.md` to list the GitHub App vars in the required-at-boot section.
+
+**Why.** Next 14's instrumentation hook ran lazily — sometimes during `next dev` boot, sometimes not, depending on the request path that triggered it. Next 16 made instrumentation stable: it now runs on every Node startup, including `next dev`. `verifyEnvAtBoot()` therefore fires consistently and rejects any missing required env var. The Playwright (Tier 1 + 2 + 2.5) e2e job had been silently red since the Next 14 → 16 bump because the GitHub App vars added at BP31 (#88) were never propagated to the workflow's `env:` block. PR #307 had already hit this same root cause for the Vercel build phase with `INNGEST_SIGNING_KEY`. The user's local `apps/main/.env.local` (created May 26, pre-BP31) was missing the same vars; the local dev server crashed within milliseconds of "Ready" on every boot.
+
+**Rejected.**
+- *Make the env vars `.optional()` in `apps/main/src/lib/env.ts`.* Defeats the entire purpose of boot-time validation — the point is to catch misconfig at deploy time, not at the first request that touches GitHub-App code.
+- *Add `NEXT_PHASE !== "phase-production-build"`-style skip conditions at each enforcement-layer site.* Would have been ~5 separate skip clauses (BP31 GitHub App, MS Graph creds, AI cost gates, etc.). Centralized env validation is cleaner; the right answer is to inject placeholders in the CI/dev environments that don't exercise the real path.
+- *Document the failure mode and let future devs hit it.* Same wall hit twice in one session (CI and local dev). Doc update added in [[D-099]]'s PR #325 prevents the third occurrence.
+
+**Related artifacts.** PR #320 (e2e workflow placeholders), PR #321 ([[D-100]] — the `z.coerce.boolean` bug that the cascade incidentally surfaced), PR #325 (`docs/local-development.md` env-var section). Prior session: PR #307 (the analogous Vercel-build-phase fix). `apps/main/instrumentation.ts:4` is the call site.
+
+---
+
+## D-100 — 2026-05-27 — Replace `z.coerce.boolean()` with `envBoolean()` helper across env.ts
+
+**Decision.** New `envBoolean()` helper in `apps/main/src/lib/env.ts` explicitly parses `'true'`/`'false'`/`'1'`/`'0'`/`'yes'`/`'no'`/`'on'`/`'off'` (case-insensitive, trimmed) and the empty string before validation. All 28 callsites of `z.coerce.boolean()` in the file replaced with `envBoolean()`.
+
+**Why.** `z.coerce.boolean()` calls `Boolean(value)` under the hood. In JavaScript, `Boolean('false') === true` (any non-empty string is truthy). The string `'false'` was therefore coerced to `true` at every callsite — including `AI_GLOBAL_KILL_SWITCH`, `MAINTENANCE_MODE`, `RAG_INGESTION_PAUSED`, `SIGNUP_ENABLED`, all `OAUTH_*_ENABLED`, all 9 `APIFY_*_ENABLED` cost gates, and 12 other operational toggles. The bug was latent since BP29 (when env.ts was first written) but only surfaced this session: the Next 16 instrumentation cascade ([[D-101]]) made the CI workflow set `OAUTH_MICROSOFT_ENABLED='false'`, which the schema saw as `true`, which triggered the MS Graph "required-when-enabled" `superRefine`. Tracing back from that error revealed the broader pattern.
+
+**Rejected.**
+- *Per-callsite fix using `.transform(v => v === 'true')` at each site.* 28 callsites = 28 places to get wrong. Centralizing in one helper means a single regression surface.
+- *Add a comment near `z.coerce.boolean()` warning future readers about the JS Boolean coercion.* Strictly worse than fixing the bug.
+- *Fix only `OAUTH_MICROSOFT_ENABLED` (the immediate symptom).* Would have left 27 other ops flags as latent landmines, including the AI kill switch.
+
+**Related artifacts.** PR #321. Tests pinned in `apps/main/test/unit/env-boolean-coercion.test.ts` (25 cases covering false-spellings, true-spellings, defaults, unrecognized strings, the `OAUTH_MICROSOFT_ENABLED='false'` case, and `AI_GLOBAL_KILL_SWITCH`). `apps/main/test/unit/env/bp29-schema-discipline.test.ts` regex updated to also recognize `envBoolean(` as a schema entry alongside `z.`.
+
+---
+
+## D-099 — 2026-05-27 — Claude Code automation infrastructure for the ATC repo
+
+**Decision.** Installed the following Claude Code automations for this repo:
+
+- **Two read-only Supabase MCP servers** (`supabase-main`, `supabase-rag`), user-scoped, each pinned to one project-ref via `--read-only` so CLAUDE.md's "no writes to prod" rule is enforced at the server layer rather than by trust.
+- **`d091-reviewer` subagent** at `.claude/agents/d091-reviewer.md` — read-only auditor for the ~14 D-091 anti-patterns documented in CLAUDE.md. Tools restricted to `Read`, `Grep`, `Glob`, `Bash`.
+- **PreToolUse hook** (`.claude/hooks/block-spec-memory-edits.mjs`) blocking edits to `specs/**` and non-prepend writes to `MEMORY.md`. Fails closed on parse/read errors. (This entry's submission was caught by the hook on the first attempt — exactly the intended behavior.)
+- **PostToolUse hook** (`.claude/hooks/lint-changed-file.mjs`) running eslint on every TS/TSX edit in `apps/main` or `apps/rag` (~0.8s).
+- **Stop hook** (`.claude/hooks/typecheck-changed-workspaces.mjs`) running `tsc --noEmit` at turn-end on any workspace with uncommitted TS/TSX changes (~45s when fires; skips silently when nothing changed, which is most turns).
+- **`/memory-entry` slash command** at `.claude/commands/memory-entry.md` enforcing the Decision / Why / Rejected / Related-artifacts format and the prepend-only invariant.
+- **`docs/runbooks/claude-code-setup.md`** — per-developer wire-up steps for the local `.claude/settings.json` (which is gitignored per `.gitignore` line 43).
+- **`docs/site-urls.md`** — full inventory of browser-accessible pages by host context (platform admin / tenant subhost / public token links).
+
+**Why.** Per CLAUDE.md, the repo owner does not write or review code. Without human code review, the gap is bigger than "good intentions on Claude's part" can close. Each automation closes a specific failure mode: subagent for cross-pattern audits, PreToolUse hook for the two highest-cost rules (specs read-only, MEMORY history append-only), PostToolUse hook for lint, Stop hook for typecheck, `/memory-entry` for protocol compliance. The MCP servers reduce round-trip cost on D-091 audits that need DB introspection.
+
+**Rejected.**
+- *Full GitHub MCP.* `gh` CLI is already authenticated and broadly allowlisted in `.claude/settings.local.json`; GitHub MCP is incremental polish, not a new capability. Added complexity > marginal benefit.
+- *Change the `.claude/settings*.json` gitignore policy* to share team config in the repo. Existing convention is per-user state in those files (plugin enables, permission allowlists, MCP tokens). Repo's `commands/` / `hooks/` / `agents/` dirs are already shared. Per-developer setup runbook is the right seam.
+- *`supabase-mutation-auditor` standalone subagent.* Scope overlaps almost entirely with `d091-reviewer` Pattern 1. Specialized deep-scanners tend to fire and add value the general reviewer didn't already catch — usually not worth the maintenance.
+- *`session-start` slash command.* The protocol is enforced by CLAUDE.md prose and a habitual session-open by Claude; mechanical enforcement adds no incremental safety.
+- *Stop hook running the full test suite.* `pnpm test` takes minutes; typecheck-only at ~45s is the right wait/coverage tradeoff at turn-end.
+
+**Related artifacts.** PRs #318 (subagent), #319 (PreToolUse hook), #322 (PostToolUse hook), #325 (`/memory-entry` + local-dev doc), #326 (Stop hook + stryker cleanup), #323 (incidental: middleware → proxy rename), #324 (site-urls.md). Setup runbook at `docs/runbooks/claude-code-setup.md`. MCP config lives in `~/.claude.json` (user-level, not in repo).
+
+---
+
 ## D-098 — 2026-05-27 — Keep `react-hooks/set-state-in-effect` + `react-hooks/immutability` disabled
 
 **Decision.** Both rules — introduced in `eslint-plugin-react-hooks` 6.x and pulled in transitively through `eslint-config-next@16` — are explicitly `off` in `apps/main/eslint.config.mjs` and `apps/rag/eslint.config.mjs`.
