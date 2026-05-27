@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §14.7 — Stripe Connect transfer job with deterministic idempotency contract.
 //
 // CRITICAL ORDER: DB write FIRST, then Stripe call. This is NOT a preference.
