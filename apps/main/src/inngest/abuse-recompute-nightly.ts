@@ -51,17 +51,14 @@ async function logDriftIfAny(records: DriftRecord[]): Promise<void> {
   );
 }
 
-export const abuseRecomputeNightly = inngest.createFunction(
-  {
-    id: "abuse-recompute-nightly",
-    triggers: [{ cron: "0 3 * * *" }],
-  },
-  async () => {
-    if (process.env.STAGING_MODE === "true") {
-      // Staging skips per §25.10 / BP26 pattern.
-      return { skipped_for_staging: true };
-    }
-    return withPlatformAdminAudit(
+// D-091 / error-injection probe — inner body extracted for direct test
+// invocation. Returns the same shape as the cron wrapper would have.
+export async function runAbuseRecomputeNightly(): Promise<unknown> {
+  if (process.env.STAGING_MODE === "true") {
+    // Staging skips per §25.10 / BP26 pattern.
+    return { skipped_for_staging: true };
+  }
+  return withPlatformAdminAudit(
       {
         admin_user_id: "system-cron",
         reason: "cross_tenant_admin",
@@ -294,7 +291,14 @@ export const abuseRecomputeNightly = inngest.createFunction(
         };
       },
     );
+}
+
+export const abuseRecomputeNightly = inngest.createFunction(
+  {
+    id: "abuse-recompute-nightly",
+    triggers: [{ cron: "0 3 * * *" }],
   },
+  runAbuseRecomputeNightly,
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
