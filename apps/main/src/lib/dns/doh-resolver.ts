@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §16.3.1 — DNS-over-HTTPS resolver for custom-domain verification.
 //
 // Cloudflare and Google both implement RFC 8484 with JSON response support
