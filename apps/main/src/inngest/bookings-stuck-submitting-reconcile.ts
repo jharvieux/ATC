@@ -50,7 +50,10 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
   // that landed between the select and the update will safely not match.
   let reverted = 0;
   for (const row of stuck as Array<{ id: string; tenant_id: string }>) {
-    const { data: updated } = await safeAwait(
+    // safeAwait unwraps { data, error } and throws on truthy error. For
+    // a CAS update with .select("id"), the returned value is the
+    // affected-row array directly (NOT { data: ... }).
+    const updated = (await safeAwait(
       db
         .from("bookings")
         .update({ status: "draft", updated_at: new Date().toISOString() })
@@ -58,7 +61,7 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
         .eq("status", "submitting")
         .select("id"),
       "bookings.update.revert_stuck_submitting",
-    ) as unknown as { data: Array<{ id: string }> | null };
+    )) as Array<{ id: string }> | null;
     if (updated && updated.length > 0) {
       reverted++;
       console.info(
