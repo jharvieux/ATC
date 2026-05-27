@@ -4,6 +4,51 @@ Newest entries on top.
 
 ---
 
+## D-096 — 2026-05-27 — Overnight D-091 round-3 punch list completion
+
+After D-094 (safe-mutation wrapper) and D-095 (conversation history) landed, this overnight run completed most of the audit-followups punch list with a sequence of focused PRs, plus the codebase-wide `safeAwait` migration across `apps/main/src/inngest/`, `apps/main/src/app/api/`, and `apps/main/src/lib/`.
+
+### Structural fixes shipped (12 PRs)
+
+- **#268** (§22.4 #44): Haiku PII redact returns `{ status: 'failed', reason }` on missing API key, exception, or empty response. Caller quarantines instead of treating as `'clean'` (fail-OPEN → fail-CLOSED).
+- **#270** (§17 #45/#46): CCPA export uses explicit column allowlist (was `select('*')` leaking `tenant_id` + internal columns); purge cron re-reads by PK `user_id` (was `auth_user_id` + `maybeSingle()` silently skipping multi-tenant users).
+- **#271/#272/#273**: codemod-driven `safeAwait` migration across the 3 trees (~170 sites, 109 files).
+- **#274**: spec addendum at `specs/TechSpec/spec-addendum-d091-hardening.md` capturing the architectural deltas.
+- **#276** (§27.6 #56/#58): `instrumentedClaudeCall` + `instrumentedOpenAIEmbedding` both throw `AiCostHardStateError` on `hard` ai_cost_state. Previously the Claude wrapper only downgraded (silently allowed hard for non-customer-facing purposes); the OpenAI wrapper bypassed the state machine entirely.
+- **#277** (§10.6 #43): customer chat reads `platform_settings.ai_kill_switch_engaged` BEFORE the streaming wrapper is acquired (was missing from the customer route entirely; help-AI had it from day one).
+- **#278** (§12.4 #49): quote acceptance update is now atomic CAS — chains `.in("status", ["sent","viewed"])` so concurrent acceptances can't race past the status check.
+- **#280** (§12.4 #47): quote price-lock expiry enforced on accept for CONFIRMED quotes — returns 409 if `price_lock_expires_at < now()`.
+- **#281** (§14.4 #50/#51): booking submit acquires CAS lock `draft → submitting` BEFORE the host adapter call; reverts to `draft` on host failure. Migration adds `submitting` value to the booking_status enum.
+- **#282** (§12.4 #48): quote accept audit_log now persists the full rendered HTML (was only content_hash + length).
+- **#283** (§14.8 #52/#53): admin reconciliation upload — fixes `withPlatformAdminAudit` signature (now `(db, recordQuery)`) so audit_log records what was queried; mitigates Haiku prompt injection by moving instructions to the `system` parameter and wrapping untrusted CSV input in `<csv_input>` tags.
+
+### Procedural
+- **#279**: flipped `atc/no-unchecked-supabase-mutation` from `off` to `error`. Future regressions block CI.
+
+### Codemod
+- `scripts/codemod-safe-await.py` — Python codemod that wraps unchecked Supabase mutations with `safeAwait(<expr>, "<table>.<verb>")`. Conservative: skips already-wrapped, destructured, returned, or assigned awaits. Adds the import if missing. Handles multi-line chains, line comments, and string-with-semicolon edge cases.
+- Used for the 3 migration PRs; kept in-tree for future similar migrations.
+
+### Migration sequencing pattern adopted
+1. **Helper PR** — adds the wrapper + tests.
+2. **Doctrine PR** — adds the ESLint rule at severity `off`.
+3. **Migration PRs** — mechanical codemod grouped by directory; auto-merge on green.
+4. **Rule flip PR** — bumps severity to `error`.
+
+### What's still queued
+- apps/rag's ~42 unchecked-mutation sites — needs the atc/no-unchecked-supabase-mutation rule wired into apps/rag/.eslintrc.json first.
+- Error-injection probe Tier 2/3 handler coverage.
+- Help-AI assistant-turn persistence (needs product decision on metrics + tenant scoping).
+- Reconciliation cron for stuck 'submitting' bookings (sweep older than N min back to draft).
+
+### Related artifacts
+- Open PRs: #275, #276, #277, #278, #280, #281, #282, #283 — all mergeable, awaiting CI on the merge train.
+- Closed: #269 superseded by #275 (extraction had to be re-applied on top of post-migration state).
+- `apps/main/test/error-injection/` (#267 foundation) tracks remaining handler coverage in its README.
+- `docs/runbooks/audit-followups-2026-05-26.md` is the master punch list — most Tier-1 items are now ✅.
+
+---
+
 ## D-095 — 2026-05-26 — Chat conversation history (PR #266)
 
 Round-3 audit Pattern 13: customer chat and help-AI chat both called Anthropic with `messages: [{role:"user", content: userMessage}]` — single-turn, stateless. The LLM literally couldn't see prior turns; every multi-turn conversation looked like "the AI forgot what we said."

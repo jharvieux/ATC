@@ -1,124 +1,88 @@
-# Session state — last updated 2026-05-26 ~22:45 UTC
+# Session state — last updated 2026-05-27 ~05:00 UTC
 
-## Just completed
+## Just completed (overnight run)
 
-Continuation of the long D-091 / audit follow-up session. After Tier-1 fixes
-(PRs #258–#264), advanced through the "top-10 impact" list to items 1–3:
+Massive D-091 audit follow-up batch. ~19 PRs opened, most merged or
+near-merging at session end.
 
-### Item #1 — Safe-mutation wrapper (PR #265, open)
-- `apps/main/src/lib/db/safe-mutation.ts` — `SupabaseMutationError` class +
-  `unwrap`, `unwrapRequired`, `safeAwait`, `safeAwaitRowCount` helpers.
-- Migrated `apps/main/src/lib/ai/call-wrapper.ts:logAndIncrement` as proof
-  of pattern (4 mutation sites).
-- `CLAUDE.md` doctrine updated to point at the wrapper.
-- 18 unit tests, all passing.
+### Merged into dev tonight
+- **#265** safe-mutation wrapper (D-094) + atomic increment RPC for tenant_usage_metrics
+- **#266** chat conversation history (D-095) — tenant_id filter + alternation guard after Greptile review
+- **#267** error-injection probe foundation + Stripe/GitHub webhook coverage
+- **#268** Haiku PII redact fails closed (D-091 R3 #44)
+- **#270** CCPA export allowlist + multi-tenant purge fix (D-091 R3 #45/#46)
+- **#271** migration(inngest): wrap unchecked mutations with safeAwait (46 files, ~70 sites)
+- **#272** migration(api): wrap unchecked mutations with safeAwait (41 files, ~70 sites)
+- **#273** migration(lib): wrap unchecked mutations with safeAwait (22 files, ~30 sites)
+- **#274** spec addendum for D-091 hardening (specs/TechSpec/spec-addendum-d091-hardening.md)
+- **#279** flip atc/no-unchecked-supabase-mutation from off → error (rule now lint-blocks all future regressions)
 
-### Item #2 — Chat conversation history (PR #266, open)
-- `apps/main/src/lib/chat/conversation-history.ts` — `loadConversationHistory`
-  + `trimToBudget` with 50k-char cap, user-first first-message guarantee.
-- Customer chat (`apps/main/src/app/api/chat/route.ts`) — loads history once
-  after persisting the user message; reused across regen attempts so a
-  rewriting iteration doesn't feed its own draft back as context.
-- Help-AI chat — when `session.conversation_id` is set, inherits chat-history
-  context. Admin-source sessions stay single-turn pending the deeper help-AI
-  persistence fix (documented as a known gap).
-- 11 unit tests, all passing.
+### Open PRs at session end (awaiting CI / sequential merge)
+- **#275** refactor(inngest): extract Tier-1 cron bodies for testability
+- **#276** instrumented call wrappers fail-closed on hard state (#56/#58)
+- **#277** customer chat kill-switch BEFORE stream starts (#43)
+- **#278** quote acceptance CAS guard (#49)
+- **#280** quote price-lock expiry enforcement (#47)
+- **#281** booking submit CAS lock + revert-on-failure (#50/#51) + migration adds 'submitting' enum value
+- **#282** persist full PDF HTML on quote accept (#48)
+- **#283** admin reconciliation audit-wrapper signature + Haiku prompt injection mitigation (#52/#53)
 
-### Item #3 — Error-injection probe foundation (PR #267, open)
-- `apps/main/test/error-injection/_helpers.ts` — 4 reusable mocks
-  (makeFailingDbClient, makeMockStripeEvent/Request, invokeInngestFunction,
-  makeThrowingStripeClass/Fetch).
-- `pnpm test:error-injection` script + CI workflow step.
-- 11 probe tests passing across 2 handlers:
-  - **Stripe webhook** — resource-down + concurrency lanes
-    (`apps/main/test/error-injection/stripe-webhook.error.test.ts`).
-    DB-fail coverage was already shipped in PR #262
-    (`webhook-error-propagation.test.ts`).
-  - **GitHub webhook** — full Pattern 1/2/6 coverage
-    (`apps/main/test/error-injection/github-webhook.error.test.ts`).
-- Coverage table + per-handler remaining-work notes in
-  `apps/main/test/error-injection/README.md` and
-  `docs/runbooks/audit-followups-2026-05-26.md` "Error-injection probe —
-  handler coverage" section.
+The merge train is sequential because each merge invalidates the next branch's CI status — every rebase triggers a fresh ~3-5 min CI cycle. The operator can complete the train in the morning by repeating rebase → push → wait → merge for each branch.
 
-### Procedure reminder still active
-- **Read every Greptile review before merging.** Greptile posts comments
-  separately; missing one P1 cost a follow-up PR (#264) earlier this session.
+### Codemod shipped
+- `scripts/codemod-safe-await.py` — used to mechanically wrap ~170 unchecked Supabase mutations across apps/main. Kept in-tree for future migrations.
 
-## In flight
+### Spec addendum
+- `specs/TechSpec/spec-addendum-d091-hardening.md` captures the architectural deltas: safeAwait wrapper, conversation-history helper, error-injection probe, 12 new doctrine bullets, 7 ESLint rules, section-by-section deltas, procedure changes.
 
-- **PR #265** (safe-mutation wrapper) — awaiting CI + Greptile review before merge.
-- **PR #266** (chat conversation history) — awaiting CI + Greptile review.
-- **PR #267** (error-injection probe foundation) — awaiting CI + Greptile review.
+## In flight (8 open PRs)
 
-All three are independent — no merge ordering needed.
+All 8 are mergeable; CI is rerunning across the merge train. The script for the loop:
+
+```bash
+git fetch origin
+for br in refactor/extract-cron-handlers-v2 fix/call-wrapper-hard-state fix/chat-kill-switch-streaming fix/quote-accept-cas-guard fix/quote-price-lock-expiry-enforcement fix/bookings-host-submit-atomicity fix/quote-dispute-pdf-audit "fix/admin-reconciliation-#52-#53"; do
+  git checkout $br && git rebase origin/dev && git push --force-with-lease
+done
+# Then merge each as CI greens.
+```
 
 ## Next step
 
-Two equally-valid continuations:
+**A. Finish the merge train.** The 8 open PRs should merge in sequence once CI clears. The order doesn't matter (none conflict semantically), but each merge re-rebases the rest.
 
-**A. Finish item #3** (the user explicitly chose "Full Tier 1–3 multi-day"
-on the scope question). Remaining handlers, in priority order:
+**B. Read every Greptile review** on #275–#283 before final merge per the D-093 procedure.
 
-1. Extract Inngest cron bodies (`payouts-execute-transfer` non-lock sites,
-   `payouts-reconcile-processing`, `abuse-recompute-nightly`,
-   `ai-pricing-cache-refresh`) into named exports + add probe tests.
-   Recommended as small per-cron PRs following the `tryAcquirePayoutLock`
-   precedent.
-2. Add `apps/rag/test/error-injection/` for the RAG feedback webhook
-   (cross-app, needs its own vitest include + glob entry).
-3. Tenant API routes (`tenant/billing`, `tenant/chat-limits`, forums) —
-   probe tests + fix the unchecked-mutation Pattern 1 bugs they have
-   in the same PR.
-
-**B. Move to round-3 Tier-1 punch list** (the items the user deferred when
-they picked "Full Tier 1–3 (multi-day)" for #3):
-
-- #43 Chat kill switch in streaming mode
-- #44 Haiku PII redact fail-closed
-- #45 CCPA multi-tenant purge fix
-- #46 CCPA export explicit column allowlist
-- #47 Quote price-lock expiry enforcement
-- #48 Quote dispute PDF actually persisted to audit_log
-- #49 Quote acceptance CAS guard
-- #50–#51 Bookings non-atomic host submit + draft-status CAS
-- #52 Admin reconciliation audit-wrapper signature
-- #53 Admin reconciliation Haiku prompt-injection mitigation
-- #58 OpenAI embedding path enforcement
-
-All detail in `docs/runbooks/audit-followups-2026-05-26.md` "Round 3 —
-recommended Tier-1 additions" section.
+**C. Continuing work the operator may want:**
+- Migrate apps/rag's ~42 unchecked-mutation sites. apps/rag/.eslintrc.json doesn't currently load eslint-plugin-atc; needs `"eslint-plugin-atc": "workspace:*"` in package.json, plugin loaded in eslintrc, rule added at `error`. Then codemod the sites.
+- Help-AI assistant-turn persistence (deferred from #266). Within-help-AI multi-turn context is still single-turn pending the schema work (decide: should help-AI turns count toward chat metrics? what tenant scoping for admin-source sessions?).
+- Error-injection probe expansion — Tier 2/3 handlers still need coverage. Tracked in `apps/main/test/error-injection/README.md`.
+- Reconciliation cron for stuck 'submitting' bookings — sweep older than N min back to draft. Tracked in #281's PR body.
 
 ## Blocked on user
 
-- Vercel env vars largely populated; some optional still empty (Resend FROM
-  domain, GitHub App, OAuth Microsoft) — not blocking dev.
+- Vercel env vars largely populated; some optional still empty (Resend FROM domain, GitHub App, OAuth Microsoft) — not blocking dev.
 - Production deploy still requires cutting a `release/*` branch — not blocking.
 
 ## Open questions
 
-- **Help-AI assistant-turn persistence** — help-AI doesn't write its own
-  user/assistant rows to `messages`, so within-help-AI multi-turn context
-  is still single-turn after PR #266. Full fix is its own PR (decide:
-  should help-AI turns count toward chat metrics? what tenant_id scoping
-  for admin-source sessions?).
-- **113-site `atc/no-unchecked-supabase-mutation` cleanup** — rule still
-  `off` because flipping to `error` blocks every PR. After PR #265 lands,
-  incremental migration to `safeAwait` is the path; flip the rule after.
-- **Two ESLint rules sketched but not implemented:**
-  `atc/no-void-async-without-comment` (Pattern 8),
-  `atc/state-machine-input-must-be-literal` (Pattern 11). Both opt-in.
-- **Error-injection probe — Inngest crons** need the cron-internal refactor
-  documented in the probe README; each cron is its own small PR.
+- The merge-train pattern is slow (8 PRs × ~5 min CI each). Could be faster if branch-protection allowed `--auto` merges across stacked PRs.
+- apps/rag migration: include a similar codemod step or by hand? 42 sites is small enough for either.
+- Spec addendum locations: this PR put it at `specs/TechSpec/spec-addendum-d091-hardening.md` per direction. Future addendums may want a sibling pattern like `spec-addendum-DXXX-<topic>.md` so they form a discoverable series.
 
-## Carried forward (deferred work, unchanged from prior sessions)
+## Decisions logged tonight
+- **D-094** (PR #265 + RPC follow-up): safe-mutation wrapper + atomic increment RPC. Codifies "every Supabase mutation must check `{ error }`" across the codebase.
+- **D-095** (PR #266): conversation history helper. Two-layer tenant isolation restored after Greptile review. Alternation guard collapses consecutive same-role turns.
+- **D-096** (this batch): per-handler structural fixes — quote CAS, booking CAS, Haiku prompt injection, audit wrapper signatures, kill switch placement, hard-state enforcement, CCPA fixes.
+
+## Carried forward (deferred work, unchanged)
 
 - BP39 follow-up: retroactive react-pdf wire-up
-- BP31: Haiku tolerable-PII redaction + confidence/clarity scorer (cost-deferred)
+- BP31: Haiku tolerable-PII redaction confidence/clarity scorer (cost-deferred)
 - BP30: AI behavior eval harness (cost-deferred)
 - BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc
 - BP24: populate `platform_settings.supervisor_slur_deny_list`
 - BP23: populate `port_info_chunks` content for 17 ports
 - BP16/17: counsel sign-off on ICA + AI Liability Disclaimer
-- §13.9 active vs reactive health probing — operator decision deferred (currently reactive-only per D-087)
-- §20.4 / §38.8 / §38.8.1 / §39.5 — customer-facing AI chat panels build (~2 days, needs browser testing)
+- §13.9 active vs reactive health probing — operator decision (currently reactive-only per D-087)
+- §20.4 / §38.8 / §38.8.1 / §39.5 — customer-facing AI chat panels build (~2 days, browser testing)
