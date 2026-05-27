@@ -40,6 +40,16 @@ absent, or merge under existing keys):
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/typecheck-changed-workspaces.mjs\""
+          }
+        ]
+      }
     ]
   }
 }
@@ -59,6 +69,12 @@ absent, or merge under existing keys):
   TS/TSX edit in `apps/main` or `apps/rag` (~0.8s). Exit 2 surfaces lint
   errors to the agent so they get fixed in-loop instead of at CI. Skips
   test directories, generated output, and files outside the two apps.
+- **`typecheck-changed-workspaces` Stop hook** — runs `tsc --noEmit` at
+  turn-end on any workspace with uncommitted TS changes (~45s per
+  workspace). Skips entirely if `git status` shows no TS changes (most
+  turns). Catches the next category up from lint: type drift, missing
+  exports, broken import paths. Exit 2 prompts Claude to address before
+  the next turn.
 
 ## Optional MCP servers
 
