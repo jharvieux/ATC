@@ -1,7 +1,7 @@
 "use client";
 
 // §12.4 — Quote detail with line-item editor.
-// PDF rendering deferred per build prompt (TODO: @react-pdf/renderer).
+// PDF rendering deferred per build prompt — TODO(bp21-pdf): wire @react-pdf/renderer.
 
 import { useState, useEffect, use } from "react";
 import { COMMISSIONABLE_LINE_ITEMS } from "@/lib/commissions/commissionable-line-items";

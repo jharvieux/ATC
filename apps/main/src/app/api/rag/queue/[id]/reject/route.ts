@@ -2,7 +2,7 @@
 //
 // Tenant admin rejects: rag_submissions.review_status → 'rejected', records
 // the rejection reason, and emits 'tenant.rag_submission_rejected' for the
-// BP27 abuse-signal subsystem (consumer is TODO until §27 ships).
+// BP27 abuse-signal subsystem — consumer is deferred until §27 ships (see D-070).
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";

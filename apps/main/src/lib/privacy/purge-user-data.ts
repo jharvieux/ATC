@@ -137,7 +137,7 @@ export async function purgeUserDataPerRetention(
   //   sequentially and on any error return outcome='error' with the partial
   //   counts. The audit row records what was touched so operators can finish
   //   by hand if needed. A proper TRANSACTION wrap belongs in a future
-  //   refactor to a pg client (TODO).
+  //   refactor to a pg client (deferred — see §25.4 / D-053 for rationale).
   try {
     // Step 3 — Category 1: chat messages.
     const conversationIds = await loadConversationIds(db, user_id);

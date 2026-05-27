@@ -12,7 +12,7 @@
 //      pii_quarantine_recurring_days. When that counter hits
 //      RAG_INGEST_RECURRING_PATTERN_DAYS (default 3), emit
 //      Inngest event 'tenant.rag_pii_recurring_pattern_detected' for the
-//      BP27 abuse-signal subsystem (consumer is TODO until §27 ships).
+//      BP27 abuse-signal subsystem (no consumer yet — §27 ships separately).
 //
 // All state lives in the tenants table columns:
 //   pii_quarantine_alert_window_start,

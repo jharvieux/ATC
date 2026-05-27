@@ -78,6 +78,15 @@ Triggered by any of:
 Steps, in order:
 
 1. **Never leave the repo broken.** If there are uncommitted changes, ensure they typecheck and don’t break the build. If they don’t, either fix them or stash them on a WIP branch — don’t leave broken code on a working branch.
+1. **Slop sweep** (D-091). Before committing, re-read your own diff with an explicit anti-slop lens. Delete:
+   - Comments that explain WHAT the code does (delete unless they explain WHY).
+   - Helper functions called only once (inline at the call site).
+   - try/catch blocks that just re-throw or swallow (let the error propagate).
+   - JSDoc paragraphs on simple functions (one-line max).
+   - TODOs without an owner or issue ref (rewrite as `TODO(owner)` or `TODO(#123)` — `atc/no-orphan-todo` enforces this).
+   - Defensive validation for inputs that can't actually be invalid (trust internal code).
+
+   Optionally run `pnpm slop-check` against the current diff for a mechanical scan.
 1. Commit any uncommitted work with a descriptive message.
 1. Push to the remote.
 1. Update SESSION.md with the current state.
