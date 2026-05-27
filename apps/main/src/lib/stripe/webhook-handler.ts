@@ -98,10 +98,16 @@ export async function handleStripeWebhook(
 
         if (payoutRows && payoutRows.length > 0) {
           const ids = payoutRows.map((r) => (r as { id: string }).id);
-          await db
+          // D-091 P1 #1 — every Supabase mutation must check error.
+          // Silent failure here = payout stuck in 'processing' + 200 to Stripe
+          // = Stripe never retries = lost reconciliation.
+          const { error: updateErr } = await db
             .from("payout_records")
             .update({ status: "paid", settled_at: new Date().toISOString() })
             .in("id", ids);
+          if (updateErr) {
+            throw new Error(`transfer.paid update failed: ${updateErr.message}`);
+          }
           processingOutcome = "success";
         } else {
           console.warn(
@@ -124,10 +130,13 @@ export async function handleStripeWebhook(
               .eq("id", tenantId)
               .maybeSingle();
 
-            await db.from("tenants").update({
+            const { error: updateErr } = await db.from("tenants").update({
               stripe_subscription_id: String(session.subscription),
               stripe_customer_id: String(session.customer),
             }).eq("id", tenantId);
+            if (updateErr) {
+              throw new Error(`checkout.session.completed update failed: ${updateErr.message}`);
+            }
 
             if (tenant?.onboarding_stage === "subscription") {
               const { progressTo } = await import("@/lib/onboarding/state-machine");
@@ -155,18 +164,26 @@ export async function handleStripeWebhook(
 
           if (account.details_submitted && tenantRow.onboarding_stage === "tax_form") {
             updates.w9_received_at = new Date().toISOString();
-            await db.from("tenants").update(updates).eq("id", tenantRow.id);
+            const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
+            if (updateErr) {
+              throw new Error(`account.updated (tax_form) update failed: ${updateErr.message}`);
+            }
             await progressTo(tenantRow.id, "state_of_operation");
           } else if (
             account.payouts_enabled &&
             tenantRow.onboarding_stage === "connect_setup"
           ) {
             updates.connect_setup_completed_at = new Date().toISOString();
-            await db.from("tenants").update(updates).eq("id", tenantRow.id);
+            const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
+            if (updateErr) {
+              throw new Error(`account.updated (connect_setup) update failed: ${updateErr.message}`);
+            }
             await progressTo(tenantRow.id, "branding");
-          } else if (Object.keys(updates).length > 0) {
-            await db.from("tenants").update(updates).eq("id", tenantRow.id);
           }
+          // D-091 P2 #16 — removed dead `else if (Object.keys(updates).length > 0)`
+          // branch. `updates` is initialised as {} and ONLY populated inside the
+          // two branches above; reaching this branch means neither fired, so the
+          // condition was always false and the DB write was dead code.
           processingOutcome = "success";
         }
         break;
@@ -202,7 +219,10 @@ export async function handleStripeWebhook(
         } else if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }
-        await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        if (updateErr) {
+          throw new Error(`${event.type} update failed: ${updateErr.message}`);
+        }
         processingOutcome = "success";
         break;
       }
@@ -237,7 +257,10 @@ export async function handleStripeWebhook(
         if (cur !== "active" && cur !== "trialing") {
           updates.subscription_status = "active";
         }
-        await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        if (updateErr) {
+          throw new Error(`invoice.payment_succeeded update failed: ${updateErr.message}`);
+        }
         processingOutcome = "success";
         break;
       }
@@ -270,7 +293,10 @@ export async function handleStripeWebhook(
         if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }
-        await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
+        if (updateErr) {
+          throw new Error(`invoice.payment_failed update failed: ${updateErr.message}`);
+        }
         processingOutcome = "success";
         break;
       }
