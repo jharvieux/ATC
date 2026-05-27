@@ -11,6 +11,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { extractContent } from "@/lib/rag-ingest/extract-content";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const ragExtractContent = inngest.createFunction(
   {
@@ -44,21 +45,21 @@ export const ragExtractContent = inngest.createFunction(
 
     const row = sub as { original_file_path: string | null; original_file_mime_type: string | null };
     if (!row.original_file_path || !row.original_file_mime_type) {
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           extraction_status: "failed",
           extraction_error: "missing_file_path_or_mime",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
       return { ok: false, reason: "missing_file_inputs" };
     }
 
-    await db
+    await safeAwait(db
       .from("rag_submissions")
       .update({ extraction_status: "extracting", updated_at: new Date().toISOString() })
-      .eq("id", submission_id);
+      .eq("id", submission_id), "rag_submissions.update");
 
     const result = await extractContent({
       db,
@@ -67,14 +68,14 @@ export const ragExtractContent = inngest.createFunction(
     });
 
     if (result.status === "extracted" && result.content) {
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           extraction_status: "extracted",
           extracted_content: result.content,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
       await inngest.send({
         name: "rag.submission_ready_for_pii_redaction",
         data: { submission_id, tenant_id },
@@ -83,14 +84,14 @@ export const ragExtractContent = inngest.createFunction(
     }
 
     // Failed or unavailable: log the reason on the row.
-    await db
+    await safeAwait(db
       .from("rag_submissions")
       .update({
         extraction_status: "failed",
         extraction_error: result.error ?? "unknown",
         updated_at: new Date().toISOString(),
       })
-      .eq("id", submission_id);
+      .eq("id", submission_id), "rag_submissions.update");
     return { ok: false, reason: result.error ?? "extraction_failed" };
   },
 );

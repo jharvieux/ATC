@@ -7,6 +7,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
 import { writeAuditLog } from "@/lib/audit/write";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -54,7 +55,7 @@ export const personaAddendumScreen = inngest.createFunction(
 
     const newStatus = result.pass ? "approved" : "rejected";
 
-    await db
+    await safeAwait(db
       .from("persona_addendums")
       .update({
         haiku_screen_result: result as unknown as Record<string, unknown>,
@@ -62,7 +63,7 @@ export const personaAddendumScreen = inngest.createFunction(
         status: newStatus,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", a.id);
+      .eq("id", a.id), "persona_addendums.update");
 
     // On rejected, email tenant owners with findings summary so they can
     // revise + resubmit. Best-effort; the addendum row's status is the

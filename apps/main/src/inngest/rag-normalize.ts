@@ -19,6 +19,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { haikuNormalize } from "@/lib/rag-ingest/haiku-normalize";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const ragNormalize = inngest.createFunction(
   {
@@ -49,14 +50,14 @@ export const ragNormalize = inngest.createFunction(
     const row = sub as { redacted_content: string | null; extracted_content: string | null } | null;
     const content = row?.redacted_content ?? row?.extracted_content ?? "";
     if (content.length === 0) {
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           normalization_status: "failed",
           review_status: "ready_for_review",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
       return { ok: false, reason: "no_content" };
     }
 
@@ -70,7 +71,7 @@ export const ragNormalize = inngest.createFunction(
         throw new Error(`normalization_failed: ${norm.error}`);
       }
       // Exhausted: still surface for manual review, just without AI metadata.
-      await db
+      await safeAwait(db
         .from("rag_submissions")
         .update({
           normalization_status: "failed",
@@ -78,7 +79,7 @@ export const ragNormalize = inngest.createFunction(
           content_hash,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "rag_submissions.update");
       return { ok: false, reason: "normalization_exhausted", attempts: attempt };
     }
 
@@ -123,7 +124,7 @@ export const ragNormalize = inngest.createFunction(
 
       if (currentCount >= thresholds.rag_cap_total.effective) {
         // Auto-delete the submission per §27.4.2.
-        await db
+        await safeAwait(db
           .from("rag_submissions")
           .update({
             normalization_status: "normalized",
@@ -133,9 +134,9 @@ export const ragNormalize = inngest.createFunction(
             review_status: "auto_deleted",
             updated_at: new Date().toISOString(),
           })
-          .eq("id", submission_id);
+          .eq("id", submission_id), "rag_submissions.update");
 
-        await db.from("tenant_rag_cap_events").insert({
+        await safeAwait(db.from("tenant_rag_cap_events").insert({
           tenant_id,
           event_type: "submission_auto_deleted",
           queue_id: submission_id,
@@ -144,13 +145,13 @@ export const ragNormalize = inngest.createFunction(
           count_before: currentCount,
           count_after: currentCount,
           reason: `over_cap (score=${norm.result.global_relevance_score.toFixed(2)}, current=${currentCount}, cap=${thresholds.rag_cap_total.effective})`,
-        });
+        }), "tenant_rag_cap_events.insert");
 
         return { ok: true, auto_deleted: true, reason: "over_cap_low_relevance" };
       }
     }
 
-    await db
+    await safeAwait(db
       .from("rag_submissions")
       .update({
         normalization_status: "normalized",
@@ -160,7 +161,7 @@ export const ragNormalize = inngest.createFunction(
         review_status: "ready_for_review",
         updated_at: new Date().toISOString(),
       })
-      .eq("id", submission_id);
+      .eq("id", submission_id), "rag_submissions.update");
 
     return { ok: true, auto_flagged: autoFlag };
   },

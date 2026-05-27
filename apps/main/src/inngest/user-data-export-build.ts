@@ -6,6 +6,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface ExportPayload {
   auth_user_id: string;
@@ -129,11 +130,11 @@ export const userDataExportBuild = inngest.createFunction(
     }
 
     // Update the export request row.
-    await db.from("user_data_export_requests").update({
+    await safeAwait(db.from("user_data_export_requests").update({
       completed_at: new Date().toISOString(),
       signed_url: signedUrl,
       expires_at: expiresAt,
-    }).eq("id", export_request_id);
+    }).eq("id", export_request_id), "user_data_export_requests.update");
 
     // Email the user the signed URL. Best-effort: the row is already
     // updated with signed_url so the user can also retrieve it from the

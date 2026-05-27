@@ -3,6 +3,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const qualityLowApprovalSignal = inngest.createFunction(
   {
@@ -12,7 +13,7 @@ export const qualityLowApprovalSignal = inngest.createFunction(
   async () => {
     const svc = createServiceRoleClient();
     if (process.env.STAGING_MODE === "true") {
-      await svc.from("staging_cron_skips").insert({ cron_id: "quality-low-approval-signal-cron" });
+      await safeAwait(svc.from("staging_cron_skips").insert({ cron_id: "quality-low-approval-signal-cron" }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 
@@ -37,11 +38,11 @@ export const qualityLowApprovalSignal = inngest.createFunction(
       if (t.total <= 20) continue;
       const rate = t.approved / t.total;
       if (rate >= 0.5) continue;
-      await svc.from("abuse_signals").insert({
+      await safeAwait(svc.from("abuse_signals").insert({
         tenant_id,
         signal_kind: "quality_low_approval",
         detail: { total: t.total, approved: t.approved, approval_rate_percent: Math.round(rate * 100) },
-      });
+      }), "abuse_signals.insert");
       written++;
     }
     return { tenants_seen: tally.size, signals_written: written };

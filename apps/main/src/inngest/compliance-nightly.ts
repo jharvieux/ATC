@@ -25,6 +25,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
 import { sendEmail } from "@/lib/email/send";
 import { InactivityReminder, type InactivityNudgeLevel } from "@/emails/InactivityReminder";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type NudgeLevel = "30d" | "60d" | "90d" | "180d";
 
@@ -151,10 +152,10 @@ async function checkIcaVersionDrift(
     const accepted = (consentRows ?? [])[0] as { document_version: number } | undefined;
     const acceptedVersion = accepted?.document_version ?? 0;
     if (acceptedVersion < latest.version) {
-      await db
+      await safeAwait(db
         .from("tenants")
         .update({ requires_ica_reacceptance: true })
-        .eq("id", t.id);
+        .eq("id", t.id), "tenants.update");
       flagged++;
     }
   }
@@ -214,11 +215,11 @@ async function checkInactivity(
 
     // Record the nudge regardless of whether we end up sending the email,
     // so the "only send once per level" guard still works.
-    await db.from("tenant_inactivity_nudges").insert({
+    await safeAwait(db.from("tenant_inactivity_nudges").insert({
       tenant_id: tenant.id,
       nudge_level: level,
       sent_at: now.toISOString(),
-    });
+    }), "tenant_inactivity_nudges.insert");
     console.info(
       "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
       level, tenant.id, Math.floor(daysSinceActivity),

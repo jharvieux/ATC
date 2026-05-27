@@ -30,6 +30,7 @@ import { evaluateThreshold } from "@/lib/price-watches/evaluate-threshold";
 import { isFresh, resolveFreshHours } from "@/lib/price-watches/freshness";
 import { sailingKeyForWatch, type PriceWatch } from "@/lib/price-watches/types";
 import type { CabinClass, SailingKey } from "@/lib/pricing/types";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const evaluatePriceWatches = inngest.createFunction(
   {
@@ -144,7 +145,7 @@ export const evaluatePriceWatches = inngest.createFunction(
           if (notificationsEnabled) {
             updatePayload.notified_at = nowIso;
           }
-          await db.from("price_watches").update(updatePayload).eq("watch_id", w.watch_id);
+          await safeAwait(db.from("price_watches").update(updatePayload).eq("watch_id", w.watch_id), "price_watches.update");
           triggered += 1;
 
           if (notificationsEnabled) {

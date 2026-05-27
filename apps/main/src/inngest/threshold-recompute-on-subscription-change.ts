@@ -13,6 +13,7 @@ import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { resolveThresholds, type AbuseDimension } from "@/lib/abuse/thresholds";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
@@ -165,7 +166,7 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
           }
 
           if (Object.keys(updates).length > 0) {
-            await db.from("tenant_usage_metrics").update(updates).eq("id", rt.id);
+            await safeAwait(db.from("tenant_usage_metrics").update(updates).eq("id", rt.id), "tenant_usage_metrics.update");
           }
         }
 
@@ -174,10 +175,10 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
           const currentRagState = (quotaRow as { rag_state: string }).rag_state;
           const newRagState = classifyRag(currentChunks, thresholds.rag_cap_total);
           if (newRagState !== currentRagState) {
-            await db
+            await safeAwait(db
               .from("tenant_rag_quotas")
               .update({ rag_state: newRagState, rag_state_changed_at: new Date().toISOString() })
-              .eq("tenant_id", tenant_id);
+              .eq("tenant_id", tenant_id), "tenant_rag_quotas.update");
             transitions.push({
               dim: "rag_cap",
               from: currentRagState,
@@ -190,7 +191,7 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
 
         // Audit + notify per transition.
         for (const t of transitions) {
-          await db.from("usage_limit_events").insert({
+          await safeAwait(db.from("usage_limit_events").insert({
             tenant_id,
             dimension: t.dim,
             from_state: t.from,
@@ -198,7 +199,7 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
             metric_value: t.value,
             threshold_crossed: t.threshold,
             resolution_action: "subscription_change_recompute",
-          });
+          }), "usage_limit_events.insert");
           await inngest.send({
             name: "abuse.state_transition",
             data: {

@@ -16,6 +16,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const DEFAULT_RETENTION_DAYS = 7 * 365; // 7 years; leap years rounded down
 
@@ -28,7 +29,7 @@ export const auditLogRetentionPurge = inngest.createFunction(
     const svc = createServiceRoleClient();
 
     if (process.env.STAGING_MODE === "true") {
-      await svc.from("staging_cron_skips").insert({ cron_id: "audit-log-retention-purge" });
+      await safeAwait(svc.from("staging_cron_skips").insert({ cron_id: "audit-log-retention-purge" }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 

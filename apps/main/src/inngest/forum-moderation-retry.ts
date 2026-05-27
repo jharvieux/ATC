@@ -16,6 +16,7 @@ import { verifyEnvAtBoot } from "@/lib/env";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { instrumentedClaudeCall, type AICallPurpose } from "@/lib/ai/call-wrapper";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface ModerationScores {
   spam: number;
@@ -168,7 +169,7 @@ export const forumModerationRetry = inngest.createFunction(
 
     if (!result) {
       // Optimistic lock: increment attempt count only if we win the race
-      await svc
+      await safeAwait(svc
         .from("forum_messages")
         .update({
           moderation_attempt_count: expectedCount + 1,
@@ -176,7 +177,7 @@ export const forumModerationRetry = inngest.createFunction(
           moderation_last_error: lastError ?? "haiku_no_result",
         })
         .eq("id", message_id)
-        .eq("moderation_attempt_count", expectedCount);
+        .eq("moderation_attempt_count", expectedCount), "forum_messages.update");
 
       // Re-emit for the next backoff window
       await inngest.send({

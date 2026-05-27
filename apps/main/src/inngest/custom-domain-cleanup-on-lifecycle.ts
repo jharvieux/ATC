@@ -5,6 +5,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { vercelRemoveDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface LifecyclePayload {
   tenant_id: string;
@@ -42,13 +43,13 @@ async function unbindCustomDomain(tenantId: string, reason: string): Promise<{ s
     }
   }
 
-  await db
+  await safeAwait(db
     .from("tenants")
     .update({
       custom_domain_status: "unbound_lifecycle",
       custom_domain_unbound_at: new Date().toISOString(),
     })
-    .eq("id", tenantId);
+    .eq("id", tenantId), "tenants.update");
 
   console.info("[custom-domain-cleanup] unbound tenant=%s domain=%s reason=%s", tenantId, t.custom_domain, reason);
   return { status: "unbound" };

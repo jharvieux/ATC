@@ -20,6 +20,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface TenantTerminationScheduledPayload {
   tenant_id: string;
@@ -85,9 +86,9 @@ async function onTerminated(
   });
 
   // §15.14.2-2: Delete encrypted host adapter credentials.
-  await db.from("tenant_host_configs")
+  await safeAwait(db.from("tenant_host_configs")
     .update({ credentials_encrypted: null })
-    .eq("tenant_id", tenantId);
+    .eq("tenant_id", tenantId), "tenant_host_configs.update");
 
   // §15.14.2-3: Custom branding kept — no action.
   // §15.14.2-4: Customer data retained per §25.2 — no action.

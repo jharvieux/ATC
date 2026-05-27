@@ -12,6 +12,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type CommissionRow = {
   id: string;
@@ -98,14 +99,14 @@ export const commissionSplitOnReceived = inngest.createFunction(
     }
 
     // Insert platform_revenue row for revenue recognition at received time
-    await db.from("platform_revenue").insert({
+    await safeAwait(db.from("platform_revenue").insert({
       tenant_id: commission.tenant_id,
       commission_id,
       amount_cents: commission.platform_retained_cents.toString(),
       currency: commission.currency,
       tier_rate_applied: commission.platform_split_rate,
       revenue_recognized_at: receivedAt,
-    });
+    }), "platform_revenue.insert");
 
     return { ok: true, payout_intent: payoutIntent };
   },

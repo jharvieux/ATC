@@ -9,6 +9,7 @@
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function newPeriodRange(): string {
   const now = new Date();
@@ -81,14 +82,14 @@ export const billingPeriodRollover = inngest.createFunction(
           // Audit rollover for each dimension (any monotonic resets are visible
           // in the events table).
           for (const dim of ["ai_cost", "chat_volume", "email_volume", "group_invite"]) {
-            await db.from("usage_limit_events").insert({
+            await safeAwait(db.from("usage_limit_events").insert({
               tenant_id: t.id,
               dimension: dim,
               from_state: "rollover",
               to_state: "ok",
               metric_value: "0",
               threshold_crossed: "0",
-            });
+            }), "usage_limit_events.insert");
             rolloverEvents++;
           }
         }

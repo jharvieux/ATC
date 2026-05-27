@@ -12,6 +12,7 @@ import Stripe from "stripe";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertSafeStripeAmount, type Cents } from "@/lib/money";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type PayoutRow = {
   id: string;
@@ -138,10 +139,10 @@ export const payoutsExecuteTransfer = inngest.createFunction(
         );
 
         // Step 3: Write stripe_transfer_id; leave status='processing' for webhook
-        await db
+        await safeAwait(db
           .from("payout_records")
           .update({ stripe_transfer_id: transfer.id })
-          .eq("id", row.id);
+          .eq("id", row.id), "payout_records.update");
 
         processed++;
       } catch (err) {
@@ -157,14 +158,14 @@ export const payoutsExecuteTransfer = inngest.createFunction(
             );
           } else {
             // Step 4: Explicit Stripe error → transition to 'failed'
-            await db
+            await safeAwait(db
               .from("payout_records")
               .update({
                 status: "failed",
                 failed_at: new Date().toISOString(),
                 failure_reason: err.message,
               })
-              .eq("id", row.id);
+              .eq("id", row.id), "payout_records.update");
 
             console.error(
               `payouts-execute-transfer: Stripe error for payout ${row.id}: ${err.message}`,

@@ -10,6 +10,7 @@
 
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const abuseOverrideExpirySweep = inngest.createFunction(
   {
@@ -40,15 +41,15 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
         const touchedTenants = new Set<string>();
 
         for (const r of rows) {
-          await db
+          await safeAwait(db
             .from("tenant_usage_overrides")
             .update({ expiry_notified_at: new Date().toISOString() })
-            .eq("id", r.id);
+            .eq("id", r.id), "tenant_usage_overrides.update");
           touchedTenants.add(r.tenant_id);
 
           // Audit the expiry as a state-transition-like event so admins see
           // it in usage_limit_events history.
-          await db.from("usage_limit_events").insert({
+          await safeAwait(db.from("usage_limit_events").insert({
             tenant_id: r.tenant_id,
             dimension: r.dimension,
             from_state: "override_active",
@@ -56,7 +57,7 @@ export const abuseOverrideExpirySweep = inngest.createFunction(
             metric_value: "0",
             threshold_crossed: "0",
             resolution_action: `override_expired:${r.id}`,
-          });
+          }), "usage_limit_events.insert");
         }
 
         // Recompute state for each touched tenant (revert to tier caps).

@@ -18,6 +18,7 @@ import { env } from "@/lib/env";
 import { decryptCredential, encryptCredential } from "@/lib/crypto/credential-cipher";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const reEncryptOldRecords = inngest.createFunction(
   {
@@ -103,13 +104,13 @@ export const reEncryptOldRecords = inngest.createFunction(
       const now = new Date();
       let daysSinceFirstSeen = 0;
       if (!firstSeen) {
-        await db
+        await safeAwait(db
           .from("platform_settings")
           .upsert({
             key: "re_encrypt_backlog_first_seen_at",
             value: now.toISOString(),
             description: "§13.5.3 — set by re-encrypt-old-records cron when remaining > 0; cleared when remaining returns to 0.",
-          });
+          }), "platform_settings.upsert");
       } else {
         daysSinceFirstSeen = (now.getTime() - new Date(firstSeen).getTime()) / (1000 * 60 * 60 * 24);
       }
@@ -131,10 +132,10 @@ export const reEncryptOldRecords = inngest.createFunction(
     } else {
       // Backlog cleared — delete the marker so the next non-zero day starts
       // a fresh count.
-      await db
+      await safeAwait(db
         .from("platform_settings")
         .delete()
-        .eq("key", "re_encrypt_backlog_first_seen_at");
+        .eq("key", "re_encrypt_backlog_first_seen_at"), "platform_settings.delete");
     }
 
     return { credentials_at_previous_key_count: remaining, reencryptedCount, failedCount };

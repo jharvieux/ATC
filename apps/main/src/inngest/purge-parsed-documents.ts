@@ -23,6 +23,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const BATCH_LIMIT = 500;
 
@@ -34,7 +35,7 @@ export const purgeParsedDocuments = inngest.createFunction(
   async () => {
     if (process.env.STAGING_MODE === "true") {
       const svc = createServiceRoleClient();
-      await svc.from("staging_cron_skips").insert({ cron_id: "purge-parsed-documents" });
+      await safeAwait(svc.from("staging_cron_skips").insert({ cron_id: "purge-parsed-documents" }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 

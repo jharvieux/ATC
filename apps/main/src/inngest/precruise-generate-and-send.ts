@@ -21,6 +21,7 @@ import { PreCruiseT30, type PreCruiseT30Props } from "@/emails/PreCruiseT30";
 import { PreCruiseT7,  type PreCruiseT7Props  } from "@/emails/PreCruiseT7";
 import { PreCruiseT1,  type PreCruiseT1Props, type PortInfo } from "@/emails/PreCruiseT1";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
@@ -267,10 +268,10 @@ export const precruiseGenerateAndSend = inngest.createFunction(
     });
 
     if (result.status === "sent" && contentId) {
-      await svc
+      await safeAwait(svc
         .from("pre_cruise_email_content")
         .update({ sent_at: new Date().toISOString() })
-        .eq("id", contentId);
+        .eq("id", contentId), "pre_cruise_email_content.update");
     }
 
     console.info(`[precruise] booking=${booking_id} phase=${phase} status=${result.status}`);

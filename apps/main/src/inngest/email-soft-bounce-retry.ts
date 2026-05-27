@@ -7,6 +7,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const RETRY_DELAYS_HOURS = [6, 12, 24];
 
@@ -41,14 +42,14 @@ export const emailSoftBounceRetry = inngest.createFunction(
 
       if (logRow) {
         const toEmail = (logRow as { to_email: string }).to_email;
-        await svc
+        await safeAwait(svc
           .from("email_log")
           .update({ status: "hard_bounced", bounce_reason: "soft_bounce_max_retries" })
-          .eq("id", email_log_id);
-        await svc.from("email_suppressions").upsert(
+          .eq("id", email_log_id), "email_log.update");
+        await safeAwait(svc.from("email_suppressions").upsert(
           { tenant_id, email_address: toEmail, reason: "hard_bounce" },
           { onConflict: "tenant_id,email_address,reason" },
-        );
+        ), "email_suppressions.upsert");
       }
       return;
     }
@@ -91,15 +92,15 @@ export const emailSoftBounceRetry = inngest.createFunction(
       });
     } else {
       // Final attempt exhausted
-      await svc
+      await safeAwait(svc
         .from("email_log")
         .update({ status: "hard_bounced", bounce_reason: "soft_bounce_max_retries" })
-        .eq("id", email_log_id);
+        .eq("id", email_log_id), "email_log.update");
       const toEmail = row.to_email;
-      await svc.from("email_suppressions").upsert(
+      await safeAwait(svc.from("email_suppressions").upsert(
         { tenant_id, email_address: toEmail, reason: "hard_bounce" },
         { onConflict: "tenant_id,email_address,reason" },
-      );
+      ), "email_suppressions.upsert");
     }
   },
 );

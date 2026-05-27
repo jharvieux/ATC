@@ -5,6 +5,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { lookupCname, lookupTxt } from "@/lib/dns/doh-resolver";
 import { vercelRemoveDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const customDomainReverify = inngest.createFunction(
   {
@@ -46,10 +47,10 @@ export const customDomainReverify = inngest.createFunction(
 
         if (cnameOk && txtOk) {
           // Both still match — update timestamp, no tenant-visible signal.
-          await db
+          await safeAwait(db
             .from("tenants")
             .update({ custom_domain_last_reverified_at: new Date().toISOString() })
-            .eq("id", row.id);
+            .eq("id", row.id), "tenants.update");
           continue;
         }
 
@@ -62,13 +63,13 @@ export const customDomainReverify = inngest.createFunction(
               console.error("[custom-domain-reverify] Vercel remove failed for %s: %s", row.custom_domain, e);
             }
           }
-          await db
+          await safeAwait(db
             .from("tenants")
             .update({
               custom_domain_status: "cname_drifted",
               custom_domain_unbound_at: new Date().toISOString(),
             })
-            .eq("id", row.id);
+            .eq("id", row.id), "tenants.update");
           drifted++;
           console.warn("[custom-domain-reverify] CNAME drift tenant=%s domain=%s", row.id, row.custom_domain);
           await notifyDomainDrift(db, row.id, row.custom_domain, "cname_drifted");
@@ -76,13 +77,13 @@ export const customDomainReverify = inngest.createFunction(
         }
 
         // TXT drifted — keep binding for 72h grace, set status.
-        await db
+        await safeAwait(db
           .from("tenants")
           .update({
             custom_domain_status: "txt_drifted",
             custom_domain_last_reverified_at: new Date().toISOString(),
           })
-          .eq("id", row.id);
+          .eq("id", row.id), "tenants.update");
         drifted++;
         console.warn("[custom-domain-reverify] TXT drift tenant=%s domain=%s (72h grace started)", row.id, row.custom_domain);
         await notifyDomainDrift(db, row.id, row.custom_domain, "txt_drifted");

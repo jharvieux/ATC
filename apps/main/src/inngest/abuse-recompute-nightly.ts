@@ -15,6 +15,7 @@ import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { excludeNonPayingPastGrace } from "@/lib/billing/exclude-non-paying";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
@@ -39,7 +40,7 @@ async function logDriftIfAny(records: DriftRecord[]): Promise<void> {
   if (records.length === 0) return;
   const db = platformAdminClient();
   const period = currentPeriodRange();
-  await db.from("abuse_recompute_drift_log").insert(
+  await safeAwait(db.from("abuse_recompute_drift_log").insert(
     records.map((r) => ({
       tenant_id: r.tenant_id,
       dimension: r.dimension,
@@ -48,7 +49,7 @@ async function logDriftIfAny(records: DriftRecord[]): Promise<void> {
       drift_amount: (r.recomputed_value - r.real_time_value).toString(),
       billing_period: period,
     })),
-  );
+  ), "abuse_recompute_drift_log.insert");
 }
 
 export const abuseRecomputeNightly = inngest.createFunction(
@@ -154,7 +155,7 @@ export const abuseRecomputeNightly = inngest.createFunction(
           }
           const aiRt = BigInt(rt?.ai_cost_cents ?? 0);
           if (rt && (aiTrue > aiRt ? aiTrue - aiRt : aiRt - aiTrue) > 1n) {
-            await db.from("tenant_usage_metrics").update({ ai_cost_cents: aiTrue.toString() }).eq("id", rt.id);
+            await safeAwait(db.from("tenant_usage_metrics").update({ ai_cost_cents: aiTrue.toString() }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({ tenant_id: t.id, dimension: "ai_cost", real_time_value: aiRt, recomputed_value: aiTrue });
           }
 
@@ -170,7 +171,7 @@ export const abuseRecomputeNightly = inngest.createFunction(
           const chatTrue = Array.isArray(chatCountRows) ? chatCountRows.length : 0;
           const chatRt = rt?.chat_messages_count ?? 0;
           if (rt && Math.abs(chatTrue - chatRt) > 0) {
-            await db.from("tenant_usage_metrics").update({ chat_messages_count: chatTrue }).eq("id", rt.id);
+            await safeAwait(db.from("tenant_usage_metrics").update({ chat_messages_count: chatTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({
               tenant_id: t.id,
               dimension: "chat_volume",
@@ -192,7 +193,7 @@ export const abuseRecomputeNightly = inngest.createFunction(
             : 0;
           const emailRt = rt?.email_sent_count ?? 0;
           if (rt && Math.abs(emailTrue - emailRt) > 0) {
-            await db.from("tenant_usage_metrics").update({ email_sent_count: emailTrue }).eq("id", rt.id);
+            await safeAwait(db.from("tenant_usage_metrics").update({ email_sent_count: emailTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({
               tenant_id: t.id,
               dimension: "email_volume",
@@ -212,7 +213,7 @@ export const abuseRecomputeNightly = inngest.createFunction(
           const inviteTrue = Array.isArray(inviteRows) ? inviteRows.length : 0;
           const inviteRt = rt?.group_invitees_count ?? 0;
           if (rt && Math.abs(inviteTrue - inviteRt) > 0) {
-            await db.from("tenant_usage_metrics").update({ group_invitees_count: inviteTrue }).eq("id", rt.id);
+            await safeAwait(db.from("tenant_usage_metrics").update({ group_invitees_count: inviteTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({
               tenant_id: t.id,
               dimension: "group_invite",
@@ -248,14 +249,14 @@ export const abuseRecomputeNightly = inngest.createFunction(
             if (promotedDrifted) update.promoted_chunks_count = promotedTrue;
             if (chunksDrifted) update.current_tenant_chunks_count = chunksTrue;
             if (quota) {
-              await db.from("tenant_rag_quotas").update(update).eq("tenant_id", t.id);
+              await safeAwait(db.from("tenant_rag_quotas").update(update).eq("tenant_id", t.id), "tenant_rag_quotas.update");
             } else {
-              await db.from("tenant_rag_quotas").insert({
+              await safeAwait(db.from("tenant_rag_quotas").insert({
                 tenant_id: t.id,
                 base_cap: 0,
                 promoted_chunks_count: promotedTrue,
                 current_tenant_chunks_count: chunksTrue ?? 0,
-              });
+              }), "tenant_rag_quotas.insert");
             }
             // One drift row per dimension that moved.
             if (promotedDrifted) {

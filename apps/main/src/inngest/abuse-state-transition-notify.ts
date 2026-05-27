@@ -17,6 +17,7 @@ import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { sendTenantEmail } from "@/lib/email/send-tenant-email";
 import { AbuseStateTransition } from "@/emails/AbuseStateTransition";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface NotificationCopy {
   subject_template: string;
@@ -159,10 +160,10 @@ export const abuseStateTransitionNotify = inngest.createFunction(
           .limit(1)
           .maybeSingle();
         if (eventRow && sentTo.length > 0) {
-          await db
+          await safeAwait(db
             .from("usage_limit_events")
             .update({ notification_sent_to: sentTo })
-            .eq("id", (eventRow as { id: string }).id);
+            .eq("id", (eventRow as { id: string }).id), "usage_limit_events.update");
         }
 
         return {

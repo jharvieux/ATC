@@ -8,6 +8,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export const emailBounceRateMonitor = inngest.createFunction(
   {
@@ -17,7 +18,7 @@ export const emailBounceRateMonitor = inngest.createFunction(
   async () => {
     const svc = createServiceRoleClient();
     if (process.env.STAGING_MODE === "true") {
-      await svc.from("staging_cron_skips").insert({ cron_id: "email-bounce-rate-monitor" });
+      await safeAwait(svc.from("staging_cron_skips").insert({ cron_id: "email-bounce-rate-monitor" }), "staging_cron_skips.insert");
       return { skipped_for_staging: true };
     }
 
@@ -57,17 +58,17 @@ export const emailBounceRateMonitor = inngest.createFunction(
       const currentlyPaused = Boolean((settings as { email_paused_due_to_bounce_rate?: boolean } | null)?.email_paused_due_to_bounce_rate);
 
       if (shouldPause !== currentlyPaused) {
-        await svc
+        await safeAwait(svc
           .from("tenant_settings")
-          .upsert({ tenant_id, email_paused_due_to_bounce_rate: shouldPause }, { onConflict: "tenant_id" });
+          .upsert({ tenant_id, email_paused_due_to_bounce_rate: shouldPause }, { onConflict: "tenant_id" }), "tenant_settings.upsert");
         updated++;
       }
       if (shouldPause) {
-        await svc.from("abuse_signals").insert({
+        await safeAwait(svc.from("abuse_signals").insert({
           tenant_id,
           signal_kind: "email_bounce_rate",
           detail: { rate_percent: rate, sent: t.sent, bounced: t.bounced, window_hours: 24 },
-        });
+        }), "abuse_signals.insert");
       }
     }
     return { tenants_seen: tally.size, paused_flag_changes: updated };

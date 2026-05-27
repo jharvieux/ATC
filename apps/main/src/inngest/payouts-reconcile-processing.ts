@@ -12,6 +12,7 @@ import Stripe from "stripe";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertSafeStripeAmount, type Cents } from "@/lib/money";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type ProcessingRow = {
   id: string;
@@ -75,10 +76,10 @@ export const payoutsReconcileProcessing = inngest.createFunction(
 
         if (existing) {
           // Transfer found — write stripe_transfer_id
-          await db
+          await safeAwait(db
             .from("payout_records")
             .update({ stripe_transfer_id: existing.id })
-            .eq("id", row.id);
+            .eq("id", row.id), "payout_records.update");
           recovered++;
         } else {
           // Transfer not found — re-call with same idempotency key
@@ -100,10 +101,10 @@ export const payoutsReconcileProcessing = inngest.createFunction(
             { idempotencyKey },
           );
 
-          await db
+          await safeAwait(db
             .from("payout_records")
             .update({ stripe_transfer_id: transfer.id })
-            .eq("id", row.id);
+            .eq("id", row.id), "payout_records.update");
 
           recovered++;
         }

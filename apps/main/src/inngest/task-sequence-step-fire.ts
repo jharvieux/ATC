@@ -8,6 +8,7 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { applyTemplate, type SubstitutionContext } from "@/lib/tasks/template";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type SnapshotStep = {
   step_index: number;
@@ -162,7 +163,7 @@ export const taskSequenceStepFire = inngest.createFunction(
         remind_at: new Date(dueMs - minutes * 60 * 1000).toISOString(),
         channel: "in_app" as const,
       }));
-      await svc.from("task_reminders").insert(reminders);
+      await safeAwait(svc.from("task_reminders").insert(reminders), "task_reminders.insert");
     }
 
     return { ok: true, task_id: taskId };

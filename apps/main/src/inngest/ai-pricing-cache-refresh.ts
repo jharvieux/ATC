@@ -9,6 +9,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const STALENESS_DAYS = 30;
 
@@ -31,7 +32,7 @@ export const aiPricingCacheRefresh = inngest.createFunction(
       ? Date.now() - new Date(lastRefreshed).getTime() > STALENESS_DAYS * 24 * 60 * 60 * 1000
       : true;
 
-    await svc
+    await safeAwait(svc
       .from("platform_settings")
       .upsert(
         {
@@ -40,7 +41,7 @@ export const aiPricingCacheRefresh = inngest.createFunction(
           description: "§27.12 — true when ai_pricing_last_refreshed_at is older than STALENESS_DAYS.",
         },
         { onConflict: "key" },
-      );
+      ), "platform_settings.upsert");
 
     return { ok: true, last_refreshed_at: lastRefreshed, stale };
   },
