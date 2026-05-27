@@ -31,10 +31,20 @@ export default [
   },
   ...nextCoreWebVitals,
   {
-    // react-hooks 6.x (shipped with React 19 / Next 16) added two opinionated
-    // rules that flag patterns this codebase uses extensively. Following up
-    // on either would be a code-cleanup PR; downgrade to warning for now so
-    // the migration doesn't block on prior code shape.
+    // react-hooks 6.x (React 19 / Next 16) added two rules disabled here by
+    // deliberate decision (D-098):
+    //
+    // - `react-hooks/set-state-in-effect` — fires on the standard client-side
+    //   data-load pattern `useEffect(() => void fetchX(), [deps])` (33 sites
+    //   across the codebase). React team's compliant alternatives are
+    //   useSWR/TanStack-Query/Server-Components/`use()` — all of which are
+    //   significant refactors. Cascading-rerender cost is negligible on the
+    //   admin pages this pattern is used in.
+    //
+    // - `react-hooks/immutability` — flagged 4 setState calls inside `async
+    //   function`s declared AFTER the useEffect that references them; appears
+    //   to be a false positive in v6.0. Reassessment due when the rule
+    //   stabilizes.
     rules: {
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/immutability": "off",

@@ -19,6 +19,7 @@ export default [
   },
   ...nextCoreWebVitals,
   {
+    // D-098 — see apps/main/eslint.config.mjs for the full rationale.
     rules: {
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/immutability": "off",

@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-098 — 2026-05-27 — Keep `react-hooks/set-state-in-effect` + `react-hooks/immutability` disabled
+
+**Decision.** Both rules — introduced in `eslint-plugin-react-hooks` 6.x and pulled in transitively through `eslint-config-next@16` — are explicitly `off` in `apps/main/eslint.config.mjs` and `apps/rag/eslint.config.mjs`.
+
+**Why.**
+- `react-hooks/set-state-in-effect` fires on the standard client-side data-load pattern `useEffect(() => void fetchX(), [deps])` — 33 sites across the codebase. The React team's compliant alternatives are useSWR / TanStack-Query / Server-Components / the new `use()` hook with Suspense; each of those is a significant cross-cutting refactor and the cascading-rerender cost the rule warns about is negligible on the admin pages this pattern is used in.
+- `react-hooks/immutability` produced four false positives on `setState` calls inside `async function`s declared AFTER the `useEffect` that references them. The rule appears immature in v6.0; reassessment due when it stabilizes.
+
+**Rejected.**
+- *Refactor 33 sites to useSWR/TanStack-Query.* Too much surface area for marginal gain; admin pages with infrequent traffic don't show measurable rerender churn.
+- *Add `// eslint-disable-next-line` per site.* Same total maintenance burden as fixing them, but invisibly scattered.
+- *Downgrade to `warn`.* Either it's worth blocking on or it isn't; warn that's `--max-warnings=0`-enforced is the same as error with worse error messages.
+
+**Related artifacts.** PR #316 (the Next 14 → 16 + flat-config migration) introduced this disable as a deferral; this entry locks the decision in. Comment in `apps/main/eslint.config.mjs` references this entry.
+
+---
+
 ## D-097 — 2026-05-27 — Help-AI persists to `messages` table; counts toward chat metrics
 
 **Decision.** The help-AI chat endpoint (`/api/help/sessions/[id]/message`) now persists every user and assistant turn to the existing `messages` table — same schema and helpers as the customer chat route. Help-AI turns count toward the tenant's chat-message metric via `incrementChatMessages`, and admin-source sessions (which start without a `conversation_id`) get a lazily-created `conversations` row on the first turn that's then bound back to the help_session row via `update().eq("id", sessionId)`.
