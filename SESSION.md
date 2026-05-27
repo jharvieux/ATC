@@ -1,65 +1,48 @@
-# Session state — last updated 2026-05-27 ~08:30 UTC
+# Session state — last updated 2026-05-27 ~19:00 UTC
 
 ## Just completed
 
-Continuation of the D-091 audit follow-up + the Dependabot per-major bump
-backlog. Tonight landed 18 PRs total: 13 D-091 follow-ups + 5 Dependabot
-majors + 1 Vercel build fix.
+Full Claude Code setup session, plus the Next 16 fallout it surfaced. 9 PRs merged into `dev` (#318–#326). All checks green; Vercel rate-limit-exempt per user authorization.
 
-### Merged into dev this session
-- **#285** per-action assertPermission in forums message route (D-091 R2 Pattern 9)
-- **#286** dedup email-path imports on Gmail Pub/Sub redelivery (D-091 R2 Pattern 10)
-- **#287** consent renewal explicit length check (D-091 R3 Pattern 18)
-- **#288** apps/rag eslint-plugin-atc + safeAwait migration (D-094)
-- **#289** zero-row CAS guards on payout-records mutations (D-091 R3 Pattern 7)
-- **#290** bookings stuck-submitting reconcile cron (D-091 R3 #50/#51 follow-up)
-- **#291** payouts-execute-transfer error-injection probe
-- **#292** Tier 1 Inngest crons + stuck-submitting reconcile probes
-- **#293** RAG feedback webhook + apps/rag probe wiring (D-091 Tier 2)
-- **#294** Pattern 15 batch 1 — system/user split + delimited tags (extract-memory, forum-moderation)
-- **#298** Pattern 15 batch 2 — `<document>` / `<content>` / `<message>` tags on 4 more Haiku call sites
-- **#299** Pattern 5 — tenant_id filter on service-role mutations across 6 route files
-- **#301** @types/big.js 6 → 7 (type-only; aligns with runtime big.js@7)
-- **#303** D-097 help-AI persists user+assistant turns to messages table (re-open of #297/#300)
-- **#304** @types/node 22 → 24 (matches `engines.node` and Vercel default LTS)
-- **#305** TypeScript 5.7 → 6.0 (one ambient `*.css` declaration was the only breakage)
-- **#307** RAG inngest route: skip INNGEST_SIGNING_KEY throw during Next.js build phase (unblocks Vercel build)
-- **#308** vitest 1.6 → 4.1 + @stryker-mutator 8.7 → 9.6 + vite 7 (no source changes; 1702 tests still pass)
-- **#309** tailwindcss 3.4 → 4.3 (kept JS config via `@config` directive; build + tests + lint green; manual UI smoke recommended before prod)
+### PRs merged this session
+- **#318** d091-reviewer subagent (`.claude/agents/d091-reviewer.md`) — read-only auditor for the 14 D-091 anti-patterns from CLAUDE.md
+- **#319** PreToolUse hook blocking edits to `specs/**` and non-prepend writes to `MEMORY.md`
+- **#320** CI unblocker — GitHub App env-var placeholders in `.github/workflows/e2e.yml`. Playwright had been silently red since the Next 14 → 16 bump
+- **#321** `envBoolean()` helper replaces all 28 `z.coerce.boolean()` callsites in `apps/main/src/lib/env.ts` (silent kill-switch flip bug). 25 unit tests pin the behavior; bp29 schema-discipline regex updated to recognize the new helper
+- **#322** PostToolUse hook running eslint on every TS/TSX edit in `apps/main` or `apps/rag` (~0.8s)
+- **#323** `apps/main/src/middleware.ts` → `proxy.ts` (Next 16 deprecation). Function rename + test rename + stryker config + one comment path-reference
+- **#324** `docs/site-urls.md` — inventory of browser-accessible pages by host context
+- **#325** `/memory-entry` slash command + `docs/local-development.md` updated with the BP31 GitHub App env vars
+- **#326** Stop hook running `tsc --noEmit` at turn-end on workspaces with uncommitted TS changes. Plus stryker stale-entry cleanup (removed `apps/rag/src/middleware.ts` from mutate config — file never existed)
 
-### Open PRs at session end
-- **#310** docs (this PR — SESSION.md update)
+### Per-user / non-PR work
+- Two Supabase MCP servers wired locally (`supabase-main` + `supabase-rag`), user-scoped, `--read-only`, scoped to one project-ref each
+- Local dev server unwedged. Same Next 16 instrumentation root cause as #320 — `apps/main/.env.local` was missing the BP31 GitHub App vars; placeholders appended
+- Comprehensive Next 16 breakage sweep across 20 known patterns; only finding outside what we fixed was the middleware → proxy rename (#323)
 
-### Dependabot majors still deferred — they cascade into a Next.js bump
-- **eslint 8 → 10** — `eslint-config-next@16` peer-requires `eslint ≥9`, and `eslint-config-next` for `eslint@9+` requires **Next.js 15+**. We're on 14.2.35. This is unavoidably a Next.js 14 → 15 (or 16) framework migration — middleware rewrites, async dynamic routes, caching defaults, etc.
-- **@typescript-eslint/* 7 → 8** — peer-requires `eslint@9+`, so blocked behind the same cascade.
-- **eslint-config-next 14 → 16** — blocked behind the same cascade.
-
-Recommended sequencing for a future session: Next.js 14 → 15 first (own PR, careful migration with manual smoke), then ESLint 8 → 9 + flat-config conversion, then @typescript-eslint 7 → 8 and eslint-config-next 14 → 16 ride along.
+### Decisions logged tonight
+- **D-099** Claude Code automation infrastructure (subagent, 3 hooks, slash command, MCPs, setup runbook)
+- **D-100** `z.coerce.boolean()` JS gotcha → `envBoolean()` helper at all 28 sites
+- **D-101** Next 16 instrumentation timing change → env-var placeholder cascade
 
 ## In flight
 
-Nothing in flight after #310 merges — clean checkpoint.
-
-### GitHub backend caveat hit tonight
-- Some PRs got into a stuck state where the merge endpoint returned HTTP 500 with empty body after rebases. GitHub's PR head_sha cache desynced from the actual branch SHA. The workaround: push the rebased commit to a NEW branch name and open a fresh PR. Original PR can be closed; the work transfers cleanly.
-- Squash-merge endpoint returned 500 for a while tonight; falling back to `merge_method=merge` works. If GitHub backend is healthy again, switch back to squash merges for new PRs.
+Nothing in flight — clean checkpoint.
 
 ## Next step
 
-1. **Next.js 14 → 15+ migration** (own dedicated session, since it unlocks the ESLint chain). Vercel currently recommends Next 15+ for new projects.
-2. After Next is bumped: eslint 8 → 9/10 + flat-config conversion, @typescript-eslint 7 → 8, eslint-config-next 14 → 16.
-3. Manual UI smoke pass after #309 (Tailwind 4) lands in staging — no screenshot regression tests in the repo, so visual parity wasn't formally verified.
+1. **Switch model back to Sonnet** — `/model claude-sonnet-4-6`. Standing rule per CLAUDE.md at end of an Opus session.
+2. **Optional** — rotate the Supabase PAT pasted into this transcript (read-only, scoped to two project-refs; not urgent). Generate fresh at https://supabase.com/dashboard/account/tokens, re-run the two `claude mcp add supabase-*` commands, revoke the old one.
+3. **Optional** — open-source-extraction question (eslint-plugin-atc / safe-mutation as MIT-licensed standalone npm packages) was discussed but not actioned. Revisit after PMF / first revenue per the conversation.
 
 ## Blocked on user
-- Nothing.
+
+Nothing.
 
 ## Open questions
-- The GitHub PR-head-desync bug consumed real time tonight — if it recurs systematically, consider opening a support ticket. Not actionable code-side.
-- Tailwind 4's default-color shifts (border defaults to currentColor, etc.) — the shadcn CSS-var theming insulates us from most of these, but visual parity is not formally verified.
 
-## Decisions logged tonight
-- **D-097** (PR #297/#300/#303): Help-AI persists user + assistant turns to `messages` table (reusing existing schema rather than adding a `help_messages` table). Help-AI turns count toward customer chat metrics via `incrementChatMessages`. Admin-source sessions get a `conversations` row created lazily on first turn.
+- Whether to extract `packages/eslint-plugin-atc` or `apps/main/src/lib/db/safe-mutation.ts` as MIT-licensed standalone packages for credibility/recruiting. Conversation captured in chat; not yet decided.
+- Whether to pursue the full-repo AGPL path for the main product. Process and gotchas walked through in chat; deferred until post-PMF.
 
 ## Carried forward (unchanged from prior session)
 
