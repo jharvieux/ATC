@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // Spec ref: §7.9 / §26.3 (assertPermission canonical contract) + §26.2 RBAC
 //
 // assertPermission verifies three things:
