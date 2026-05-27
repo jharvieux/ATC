@@ -32,6 +32,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
+import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { checkSentence } from "@/lib/supervisor/per-sentence-check";
@@ -172,6 +173,22 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
       const model = env().ANTHROPIC_SONNET_MODEL;
 
+      // D-095 — conversation history for the LLM call.
+      // When the help session is linked to a chat conversation (typical
+      // customer_chat → help-AI handoff), pull prior turns so the LLM
+      // sees what the user was discussing instead of treating each turn
+      // as a cold start. The current userMessage is appended manually
+      // because this route does not (yet) persist help-AI user turns to
+      // the messages table — that gap is tracked separately as the
+      // remaining piece of help-AI multi-turn context.
+      let messagesForLlm: Array<{ role: "user" | "assistant"; content: string }>;
+      if (session.conversation_id) {
+        const prior = await loadConversationHistory(db, session.conversation_id);
+        messagesForLlm = [...prior, { role: "user", content: userMessage }];
+      } else {
+        messagesForLlm = [{ role: "user", content: userMessage }];
+      }
+
       // BP24 — Help-AI streaming opt-in. Default off; flip
       // HELP_AI_STREAMING_ENABLED=true to use the streaming wrapper +
       // per-sentence deny-list check. The chat route has its own flag
@@ -192,7 +209,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           purpose: "help_ai_main",
           max_tokens: 800,
           system: promptedSystem,
-          messages: [{ role: "user", content: userMessage }],
+          messages: messagesForLlm,
           signal: abortController.signal,
         });
 
@@ -264,7 +281,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
             purpose: "help_ai_main",
             max_tokens: 800,
             system: promptedSystem,
-            messages: [{ role: "user", content: userMessage }],
+            messages: messagesForLlm,
           });
           assistantText = result.text;
         } catch {
