@@ -58,15 +58,12 @@ export async function tryAcquirePayoutLock(
   return { acquired: true };
 }
 
-export const payoutsExecuteTransfer = inngest.createFunction(
-  {
-    id: "payouts-execute-transfer",
-    triggers: [{ cron: "0 3 * * *" }],
-  },
-  async () => {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
-    if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
-    const stripe = new Stripe(stripeKey);
+// D-091 / error-injection probe — inner body extracted for direct test
+// invocation. Mirrors the tryAcquirePayoutLock precedent.
+export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; failed: number; total: number }> {
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
+  const stripe = new Stripe(stripeKey);
 
     const db = createServiceRoleClient();
 
@@ -182,6 +179,13 @@ export const payoutsExecuteTransfer = inngest.createFunction(
       }
     }
 
-    return { processed, failed, total: available.length };
+  return { processed, failed, total: available.length };
+}
+
+export const payoutsExecuteTransfer = inngest.createFunction(
+  {
+    id: "payouts-execute-transfer",
+    triggers: [{ cron: "0 3 * * *" }],
   },
+  runPayoutsExecuteTransfer,
 );
