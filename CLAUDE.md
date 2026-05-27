@@ -154,6 +154,40 @@ If you genuinely think a convention is harmful, surface it. Don't fork silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
 
+— No stub-shaped code (D-091)
+If a function takes a parameter, every parameter must affect the output.
+If a function returns a tuple, every variant must be reachable.
+A `kid` arg that resolves to the same single key is worse than not having the arg —
+the signature lies about the behavior. Same for `if/else if/else` branches where
+one is dead code. See docs/runbooks/anti-patterns.md.
+
+— Fail-closed by default (D-091)
+When an enforcement layer can't run (Redis down, secret unset, DB error, signature
+absent), the answer is denial, not permission. Returning `{ allowed: true }` on
+Redis error, or 200 on a silent DB-write failure, is the worst possible failure mode
+because it's silent AND it disables retries. Permit only on positive confirmation.
+
+— Check every Supabase mutation (D-091)
+`@supabase/supabase-js` v2 does NOT throw on DB errors. Every `await x.update().eq(...)`,
+`.insert(...)`, `.delete()`, `.upsert(...)` must destructure `{ error }` and surface
+non-200 on truthy error. Discarding the result hides DB failures and (for webhook
+handlers) tells the caller everything succeeded.
+
+— Two layers of tenant isolation (D-091)
+Every tenant-scoped query needs BOTH an app-layer filter AND a DB-layer constraint
+(RLS via tenantClient, or an explicit `.eq("tenant_id", ...)` on service-role queries).
+A single defense — even a correct one — is one bug away from cross-tenant leakage.
+
+— External credentials in headers, never URLs (D-091)
+URLs end up in proxy logs, CDN logs, APM traces, and Node `TypeError` messages.
+Headers are routinely scrubbed; URLs are not. Use `Authorization: Bearer ...` even
+when the API also accepts `?token=...`.
+
+— Quota gates re-read between consuming ops (D-091)
+A budget gate read once before a multi-batch loop will not catch overruns mid-loop.
+Either re-check between batches, or use a DB-atomic reserve-row pattern. Concurrent
+crons + retries can both pass the gate at run-start and double-spend.
+
 ## Honesty about uncertainty
 
 **Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.  If unsure about what was in the spec re-read that section before assuming anything.
