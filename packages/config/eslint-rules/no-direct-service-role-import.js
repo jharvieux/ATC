@@ -66,6 +66,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // D-091 R3 #51 follow-up: bookings stuck-submitting reconcile cron —
   // cross-tenant sweep of bookings stuck in 'submitting' state. §14.4.
   "/inngest/bookings-stuck-submitting-reconcile.ts",
+  // D-097 — help-AI message route needs service-role for the
+  // loadTenantSnapshot + incrementChatMessages helpers (same pattern
+  // as the customer chat route). All upstream queries already use
+  // tenantClient(ctx); the service-role client is scoped to the abuse
+  // snapshot + counter increment. §32.4.4.
+  "/app/api/help/sessions/[id]/message/route.ts",
   // BP15: Statement reconciliation cron — cross-tenant daily fetch + match. §14.8.
   "/inngest/reconcile-statement-automated.ts",
   // BP15: Commission state machine — transitionCommissionState uses service_role
