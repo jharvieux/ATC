@@ -29,6 +29,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
@@ -38,6 +39,10 @@ import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { checkSentence } from "@/lib/supervisor/per-sentence-check";
 import { env } from "@/lib/env";
 import { safeAwait } from "@/lib/db/safe-mutation";
+// D-097 — help-AI turns now count toward customer chat metrics. Mirrors
+// the customer-chat route's counter increment pattern (D-091 R3 #56).
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementChatMessages } from "@/lib/abuse/counters";
 import {
   advanceBugFlow,
   advanceFeatureFlow,
@@ -78,10 +83,12 @@ const PER_SENTENCE_FALLBACK_MESSAGE =
 
 export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
   let ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"];
+  let user: Awaited<ReturnType<typeof assertPermission>>["user"];
   let userText: string;
   try {
     const auth = await assertPermission(req, { resource: "help_session", action: "update" });
     ctx = auth.ctx;
+    user = auth.user;
     const body = (await req.json().catch(() => ({}))) as { message?: string };
     userText = (body.message ?? "").trim();
     if (!userText) {
@@ -132,6 +139,42 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         return;
       }
 
+      // D-097 — help-AI persistence. Help sessions now write their own
+      // user + assistant turns to `messages`, so within-help-AI multi-turn
+      // context actually works (was deferred from D-095). For admin-source
+      // sessions where session.conversation_id is NULL, create the
+      // conversation row on first message and bind it to the help session.
+      let conversationId = session.conversation_id;
+      if (!conversationId) {
+        const { data: createdConv, error: convErr } = await db
+          .from("conversations")
+          .insert({
+            tenant_id: ctx.tenant_id,
+            user_id: user.id,
+            status: "active",
+            first_message_at: new Date().toISOString(),
+            last_message_at: new Date().toISOString(),
+            message_count: 0,
+          })
+          .select("id")
+          .single();
+        if (convErr || !createdConv) {
+          await writer.write(encoder.encode(sseLine(
+            `Error: help_conversation_create_failed: ${convErr?.message ?? "unknown"}`,
+          )));
+          await writer.write(encoder.encode(sseLine("[DONE]")));
+          await writer.close();
+          return;
+        }
+        conversationId = (createdConv as { id: string }).id;
+        await safeAwait(
+          db.from("help_sessions")
+            .update({ conversation_id: conversationId })
+            .eq("id", sessionId),
+          "help_sessions.update.bind_conversation",
+        );
+      }
+
       // D-095 — Load the conversation history ONCE. Used for both:
       //   (a) Flow-state reconstruction (bug/feature): we want user turns
       //       in chronological order so we can count them and replay
@@ -142,9 +185,20 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       // for the same conversation_id (loadPriorUserMessages and
       // loadConversationHistory). Greptile P2 noted that the user-only
       // subset can be derived from the full history in memory.
-      const fullHistory = session.conversation_id
-        ? await loadConversationHistory(db, ctx.tenant_id, session.conversation_id)
-        : [];
+      const fullHistory = await loadConversationHistory(db, ctx.tenant_id, conversationId);
+
+      // D-097 — persist the customer's current user message BEFORE the
+      // LLM call so any subsequent help-AI turn loading history sees this
+      // turn. Mirrors the customer-chat route's pattern.
+      await safeAwait(
+        db.from("messages").insert({
+          tenant_id: ctx.tenant_id,
+          conversation_id: conversationId,
+          role: "user",
+          content: userMessage,
+        }),
+        "messages.insert.help_ai_user_turn",
+      );
       const priorUserMessages = fullHistory
         .filter((t) => t.role === "user")
         .map((t) => t.content);
@@ -188,10 +242,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
       const model = env().ANTHROPIC_SONNET_MODEL;
 
-      // D-095 — Conversation history for the LLM call. Reuses `fullHistory`
-      // loaded above (single DB roundtrip). Appends the current userMessage
-      // because this route doesn't (yet) persist help-AI user turns to the
-      // messages table.
+      // D-095/D-097 — Conversation history for the LLM call. After D-097
+      // the current userMessage is already persisted, so re-loading would
+      // include it as the last turn. To avoid the extra roundtrip we just
+      // append the in-memory userMessage to the pre-persist fullHistory.
       const messagesForLlm: Array<{ role: "user" | "assistant"; content: string }> =
         [...fullHistory, { role: "user", content: userMessage }];
 
@@ -305,6 +359,36 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         }
         await writer.write(encoder.encode(sseLine("[DONE]")));
         await writer.close();
+      }
+
+      // D-097 — persist the assistant turn so the next help-AI message
+      // in this session sees this exchange. Skipped on the per-sentence
+      // abort path (handled inline above with early-return).
+      if (assistantText) {
+        await safeAwait(
+          db.from("messages").insert({
+            tenant_id: ctx.tenant_id,
+            conversation_id: conversationId,
+            role: "assistant",
+            content: assistantText,
+          }),
+          "messages.insert.help_ai_assistant_turn",
+        );
+      }
+
+      // D-096 — help-AI turns now count toward customer chat metrics.
+      // Same incrementChatMessages call the customer-chat route uses, so
+      // help-AI usage burns into the tenant's chat quota / cost ledger.
+      // Non-fatal: the message rows already persisted; we don't want to
+      // surface a 500 over usage attribution failure.
+      try {
+        const svc = createServiceRoleClient();
+        const snapshot = await loadTenantSnapshot(svc, ctx.tenant_id);
+        await incrementChatMessages({ db: svc, tenant: snapshot.tenant });
+      } catch (err) {
+        console.warn(
+          `[help-ai] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       // Bump the session's ai_messages_count + record the draft snapshot
