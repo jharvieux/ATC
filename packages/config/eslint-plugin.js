@@ -13,6 +13,9 @@ const noMoneyMath = require("./eslint-rules/no-money-math");
 const noDirectServiceRoleEnvImport = require("./eslint-rules/no-direct-service-role-env-import");
 const noAdHocTenantIdString = require("./eslint-rules/no-ad-hoc-tenant-id-string");
 const noDirectAnthropicOrOpenaiImport = require("./eslint-rules/no-direct-anthropic-or-openai-import");
+// D-091 — slop-reduction rules.
+const noOrphanTodo = require("./eslint-rules/no-orphan-todo");
+const noNarratingComments = require("./eslint-rules/no-narrating-comments");
 
 module.exports = {
   rules: {
@@ -24,5 +27,8 @@ module.exports = {
     "no-direct-service-role-env-import": noDirectServiceRoleEnvImport,
     "no-ad-hoc-tenant-id-string": noAdHocTenantIdString,
     "no-direct-anthropic-or-openai-import": noDirectAnthropicOrOpenaiImport,
+    // D-091
+    "no-orphan-todo": noOrphanTodo,
+    "no-narrating-comments": noNarratingComments,
   },
 };

@@ -4,6 +4,59 @@ Newest entries on top.
 
 ---
 
+## D-091 — 2026-05-26 — AI-slop detection infrastructure (3 layers)
+
+The CLAUDE.md doctrine and small custom-lint surface have kept this repo mostly slop-free. Adding two layers to catch what slips through and to give future PRs a mechanical advisory check.
+
+### Layer 1 — Two new ESLint rules
+
+`packages/config/eslint-rules/`:
+
+- **`atc/no-orphan-todo`** (default `error`). Flags `TODO`/`FIXME`/`XXX`/`HACK` markers without an owner or issue ref. Only fires when the marker is at a comment-line start OR inside a `(MARKER...)` paren-tag — does NOT match prose that mentions the word "TODO". Quoted literals (`"TODO" badge`) are skipped. Catches 5 pre-existing violations in this PR (all fixed inline).
+- **`atc/no-narrating-comments`** (default `off`). Flags short `//` comments (≤ 6 words) starting with a narrating verb (`fetch`, `loop`, `iterate`, `validate`, `create`, etc.). Heuristic — opt-in until operator does a one-pass cleanup. Rule code is shipped; toggle in `apps/main/.eslintrc.json` when ready.
+
+Both registered in `packages/config/eslint-plugin.js` AND `packages/eslint-plugin-atc/index.js` (the legacy `.eslintrc` resolver re-exports from there).
+
+### Layer 2 — `pnpm slop-check` (diff-aware scanner)
+
+`scripts/slop-check.ts`. Scans `git diff origin/dev...HEAD` for AI-slop patterns that benefit from PR-diff context:
+
+1. Orphan TODOs (same rule as ESLint, but evaluated on added lines only).
+2. Narrating comments (same).
+3. `try/catch (err) { throw err; }` no-op blocks.
+4. `export function foo(x) { return bar(x); }` single-expression wrappers.
+
+Output is markdown, exit 0 always. Wired to `.github/workflows/slop-check.yml` which posts/updates a PR comment with findings — **non-blocking** advisory only.
+
+### Layer 3 — CLAUDE.md "slop sweep" step
+
+Added to the End-of-session protocol: before committing, Claude re-reads its own diff with an explicit anti-slop checklist (comments that explain WHAT, single-use helpers, swallowing try/catch, JSDoc paragraphs on simple functions, defensive validation on trusted inputs). Optional mechanical scan via `pnpm slop-check`.
+
+### What was rejected
+
+- **AI-detection tools that classify code as "AI-likeness."** Punishes style instead of slop. High FP.
+- **Banning AI-generated code.** The doctrine is more useful than a ban.
+- **Blocking merge on slop findings.** Produces escape hatches that defeat the purpose. Advisory comments + operator review is the right pressure.
+- **Enabling `no-narrating-comments` at `error` immediately.** The heuristic is FP-prone and there's an unknown amount of pre-existing narration to audit. Shipped at `off`; operator flips on after sweep.
+- **Adding rules to `apps/rag/`.** The RAG project's `.eslintrc.json` doesn't reference the `atc` plugin at all; expanding scope to wire it in is outside this PR. Operator can add when convenient.
+- **Detecting "single-use helper functions" via static analysis.** Would need cross-file call-graph; not justified for advisory output.
+
+### Calibration during implementation
+
+`no-orphan-todo` was initially too aggressive (matched any `TODO` token anywhere in any comment, including prose `"the TODO marker"` and quoted UI strings `// show "TODO" badge`). Refined to only fire when:
+- The marker is at the start of a `//` comment line, OR
+- Inside a `(MARKER...)` paren-tag
+
+Two false-positive vectors closed:
+- Mid-prose mentions in JSDoc paragraphs (e.g. `* This module references the TODO marker on line 80`).
+- Quoted literals in code-describing comments.
+
+### Related artifacts
+
+`packages/config/eslint-rules/no-orphan-todo.js`, `packages/config/eslint-rules/no-narrating-comments.js`, `packages/config/eslint-plugin.js` (+1 mirror in `packages/eslint-plugin-atc/index.js`), `apps/main/.eslintrc.json` (rule enablement), `scripts/slop-check.ts`, `.github/workflows/slop-check.yml`, `docs/runbooks/slop-detection.md`, `CLAUDE.md` (slop-sweep step), 5 inline fixes for pre-existing orphan TODOs.
+
+---
+
 ## D-090 — 2026-05-26 — Apify-5: APIFY_API_TOKEN blast-radius mitigations
 
 `APIFY_API_TOKEN` is account-level on Apify — leaked = unbounded spend across every actor in the Apify store. Two defenses landed this PR:

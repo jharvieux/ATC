@@ -17,6 +17,9 @@ const noAdHocTenantIdString = require("../config/eslint-rules/no-ad-hoc-tenant-i
 const noDirectAnthropicOrOpenaiImport = require("../config/eslint-rules/no-direct-anthropic-or-openai-import");
 // BP31 (§32.7.1) — GitHub Octokit discipline.
 const noDirectOctokitImport = require("../config/eslint-rules/no-direct-octokit-import");
+// D-091 — slop-reduction rules.
+const noOrphanTodo = require("../config/eslint-rules/no-orphan-todo");
+const noNarratingComments = require("../config/eslint-rules/no-narrating-comments");
 
 module.exports = {
   rules: {
@@ -30,5 +33,8 @@ module.exports = {
     "no-direct-anthropic-or-openai-import": noDirectAnthropicOrOpenaiImport,
     // BP31
     "no-direct-octokit-import": noDirectOctokitImport,
+    // D-091
+    "no-orphan-todo": noOrphanTodo,
+    "no-narrating-comments": noNarratingComments,
   },
 };

@@ -5,7 +5,7 @@
 //   - were priced more than QUOTE_ESTIMATE_VALIDITY_DAYS ago
 //   - are still in status='sent' and unaccepted
 // and transitions them to status='expired'. A follow-up email with a
-// "request fresh quote" CTA is logged (TODO: wire to Resend when the
+// "request fresh quote" CTA is logged — TODO(bp23-email): wire to Resend when the
 // pre-cruise email pipeline lands in BP23 — same Resend integration).
 //
 // Cron: daily at 02:00 UTC. Cheap query; the partial index

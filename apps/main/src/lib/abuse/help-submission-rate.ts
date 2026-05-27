@@ -13,7 +13,7 @@
  * Enforcement:
  *   - soft1: admin in-app banner via sendOperatorAlert (severity 'low');
  *     no tenant notification, no throttle.
- *   - soft2: email tenant owner (TODO operator-content); throttle to
+ *   - soft2: email tenant owner — TODO(bp32-operator-content): wire copy; throttle to
  *     1 submission per 10 minutes — caller checks
  *     `last_submission_at` from tenant_usage_metrics for this.
  *   - hard: block submission for the rest of the day; surface the
