@@ -140,6 +140,25 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
         return;
       }
 
+      // §10.6 per-tenant kill switch (same as the customer chat route).
+      // Read tenants.ai_paused_by_platform; if true return the §10.6 fallback
+      // without calling Anthropic. Same fallback message as the global one
+      // because the customer experience is the same either way.
+      const { data: tenantKillRow } = await db
+        .from("tenants")
+        .select("ai_paused_by_platform")
+        .eq("id", ctx.tenant_id)
+        .maybeSingle();
+      const tenantPaused = Boolean(
+        (tenantKillRow as { ai_paused_by_platform?: boolean } | null)?.ai_paused_by_platform,
+      );
+      if (tenantPaused) {
+        await writer.write(encoder.encode(sseLine(KILL_SWITCH_MESSAGE)));
+        await writer.write(encoder.encode(sseLine("[DONE]")));
+        await writer.close();
+        return;
+      }
+
       // D-097 — help-AI persistence. Help sessions now write their own
       // user + assistant turns to `messages`, so within-help-AI multi-turn
       // context actually works (was deferred from D-095). For admin-source

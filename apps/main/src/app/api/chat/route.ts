@@ -564,6 +564,28 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     return;
   }
 
+  // §10.6 per-tenant AI kill switch. Same fallback as the global one but
+  // scoped to the resolved tenant — the platform-admin's lever for "this
+  // one tenant's persona is misbehaving" without taking the whole platform
+  // down. Read alongside the global check; either tripped → fallback.
+  const { data: tenantKillRow } = await svc
+    .from("tenants")
+    .select("ai_paused_by_platform")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const tenantPaused = Boolean(
+    (tenantKillRow as { ai_paused_by_platform?: boolean } | null)?.ai_paused_by_platform,
+  );
+  if (tenantPaused) {
+    const fallbackBody =
+      "Our AI is taking a brief break. A human will be in touch shortly.";
+    await send({ type: "delta", text: fallbackBody });
+    await send({ type: "supervisor", action: "allow", regens: 0 });
+    await send({ type: "done" });
+    await close();
+    return;
+  }
+
   // §26.9 — Anthropic vendor health gate. If the registry says Anthropic is
   // down, surface the §26.9 fallback message directly instead of attempting
   // the call. The probe cron updates the registry every minute; degraded
