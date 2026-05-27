@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §13.5 — Application-layer AES-256-GCM credential encryption.
 //
 // Ciphertext wire format: base64( iv[12] || tag[16] || ciphertext[n] )

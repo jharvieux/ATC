@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §25.4 / §25.4a — Deterministic customer-hash derivation.
 //
 // Same (user_id, tenant_id, PLATFORM_PEPPER) → same hash, every time.
