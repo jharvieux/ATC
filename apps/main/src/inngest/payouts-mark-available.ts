@@ -31,16 +31,31 @@ export const payoutsMarkAvailable = inngest.createFunction(
     }
 
     const ids = pending.map((r) => (r as { id: string }).id);
-    const { error: updateError } = await db
+    // D-091 R3 Pattern 7 — CAS guard via .eq("status", "pending"). Without
+    // it, a row transitioned out of 'pending' (e.g., manually cancelled or
+    // moved to 'failed' by an operator) between the select above and this
+    // update would still be flipped to 'available', creating a phantom
+    // payout. Chaining .select("id") gives us the affected-row count so
+    // we can detect partial transitions and log them.
+    const { data: transitionedRows, error: updateError } = await db
       .from("payout_records")
       .update({ status: "available" })
-      .in("id", ids);
+      .in("id", ids)
+      .eq("status", "pending")
+      .select("id");
 
     if (updateError) {
       throw new Error(`payouts-mark-available: update failed: ${updateError.message}`);
     }
 
-    console.info(`payouts-mark-available: transitioned ${ids.length} records to 'available'`);
-    return { transitioned: ids.length };
+    const transitioned = (transitionedRows as Array<{ id: string }> | null)?.length ?? 0;
+    if (transitioned !== ids.length) {
+      console.warn(
+        `payouts-mark-available: CAS mismatch — selected ${ids.length} 'pending' rows but only ${transitioned} transitioned (others raced to a non-pending status before update)`,
+      );
+    } else {
+      console.info(`payouts-mark-available: transitioned ${transitioned} records to 'available'`);
+    }
+    return { transitioned };
   },
 );
