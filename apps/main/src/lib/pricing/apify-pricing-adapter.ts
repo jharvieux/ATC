@@ -223,13 +223,20 @@ export class ApifyPricingAdapter implements PricingDataSource {
     // hardcoded allowlist before we send the token over the wire.
     assertActorAllowed(actorId);
     const token = getApifyToken();
-    const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token ?? "")}`;
+    // D-091 P1 #2 — token in Authorization header, NOT URL query string.
+    // URLs end up in proxy/CDN/APM logs and Node's fetch TypeError messages;
+    // the Apify token is account-level so a single log-scrape exposes
+    // unbounded spend. Apify accepts both auth methods.
+    const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), APIFY_RUN_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token ?? ""}`,
+        },
         body: JSON.stringify(input),
         signal: controller.signal,
       });
