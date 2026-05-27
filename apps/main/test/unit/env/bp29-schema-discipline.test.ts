@@ -19,8 +19,9 @@ const ENV_EXAMPLE_PATH = resolve(__dirname, "..", "..", "..", ".env.example");
 function readSchemaKeys(): string[] {
   const src = readFileSync(ENV_TS_PATH, "utf8");
   // Match keys of the z.object({...}) shape. Each key is at the start of a
-  // line, followed by ': z.' (the Zod chain). Captures the key name.
-  const re = /^\s{2}([A-Z][A-Z0-9_]*)\s*:\s*z\./gm;
+  // line, followed by either ': z.' (direct Zod chain) or ': envBoolean('
+  // (the local helper that wraps z.preprocess for boolean string parsing).
+  const re = /^\s{2}([A-Z][A-Z0-9_]*)\s*:\s*(?:z\.|envBoolean\b)/gm;
   const keys: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = re.exec(src)) !== null) {
