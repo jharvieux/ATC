@@ -174,11 +174,97 @@ These should be added to `docs/runbooks/anti-patterns.md` in a follow-up:
 
 See `docs/runbooks/anti-patterns.md` for the consolidated pattern catalog (6 original patterns + 6 round-2 patterns, the latter to be appended in a follow-up) and the ESLint rules / CLAUDE.md doctrine added to prevent recurrence.
 
-## Summary statistics
+## Summary statistics (rounds 1 + 2; cross-round totals after round 3 are at the end of the document)
 
-- **10 Greptile audits** run (5 round 1, 5 round 2)
+- **10 Greptile audits** run in rounds 1+2 (5 each)
 - **~40 actionable findings**, ~7 P1 from round 1 + ~10 P1-equivalent from round 2
 - **6 original patterns** + 6 new round-2 patterns = 12 recurring patterns identified
 - **3 ESLint rules** shipped + **7 CLAUDE.md doctrine additions** + **slop-check workflow** + **error-injection probe design doc** = preventive infrastructure in place
 - ~113 grep-found instances of Pattern 1 (unchecked Supabase mutations) across the codebase, confirmed widespread
 
+_Round 3 added 10 more audits, 18 more findings, and 6 more patterns — see the "Round 3 — additional Greptile findings" section above and the "Cross-round totals" table at the end. Latest figures: **15 audits / ~90 findings / 18 patterns**._
+
+
+---
+
+## Round 3 — additional Greptile findings (10 more subsystems)
+
+After Tier-1 fixes were drafted, 10 more Greptile audits ran on the next-tier high-risk surfaces. Confidence scores ranged from 1/5 (quotes) to 3/5 (imports, DNS). Every single audit found Pattern 1 (unchecked Supabase mutation) — confirming it's the dominant codebase-wide pattern.
+
+### Round 3 — P1 / highest impact
+
+| # | File:Line | Issue | Notes |
+|---|---|---|---|
+| 42 | `apps/main/src/app/api/chat/route.ts` | **Conversation history absent from every LLM call.** `messages: [{ role: 'user', content: userMessage }]` is single-turn; customers think they're chatting but each turn is stateless | Product correctness, not just a bug |
+| 43 | `apps/main/src/app/api/chat/route.ts` | **Kill switch gap in streaming mode.** `runSupervisor` (which checks `ai_kill_switch_state.global_paused`) runs AFTER all sentence deltas flushed → kill switch silently bypassed when streaming | §28.15 invariant violated |
+| 44 | `apps/main/src/lib/rag-ingest/haiku-pii-redact.ts` | **Haiku PII redact fails OPEN.** Missing API key OR Haiku error returns the original unredacted content with `status: 'clean'` → PII flows into RAG | §22.4 fail-closed contract violated |
+| 45 | `apps/main/src/inngest/user-data-purge-after-grace.ts` | **CCPA purge silently skips multi-tenant users.** Query by `auth_user_id` only with `maybeSingle()` returns null (not error) on multi-row match. Any user enrolled in 2+ tenants has right-to-erasure dropped | Compliance violation in waiting |
+| 46 | `apps/main/src/inngest/user-data-export-build.ts` | `select('*')` leaks `tenant_id` + internal columns into user-downloadable bundle | CCPA scope leak |
+| 47 | `apps/main/src/app/api/quotes/[id]/accept/route.ts` | **Confirmed-quote expiry never checked.** `price_lock_expires_at` read into audit snapshot but never compared with `new Date()` → customers can accept stale price locks | Real money — contractually bound to honor |
+| 48 | `apps/main/src/app/api/quotes/[id]/accept/route.ts` | **Dispute-defense PDF discarded.** §21.10.1 says the rendered HTML "is the document that wins arbitrations." Code computes it then stores only the hash. Audit toothless | Legal liability |
+| 49 | `apps/main/src/app/api/quotes/[id]/accept/route.ts` | Race: no `.in("status", ["sent","viewed"])` CAS guard on UPDATE → concurrent acceptances both pass status check, second overwrites `customer_accepted_audit_id` | Pattern 7 |
+| 50 | `apps/main/src/app/api/bookings/[id]/submit/route.ts` | **Non-atomic host submit.** `adapter.submitBooking()` runs BEFORE commissions insert + status transition. If commissions write fails: host has booking confirmed, our DB shows draft + no provider_booking_ref → client retry re-submits | Pattern 10 variant — real-money |
+| 51 | `apps/main/src/app/api/bookings/[id]/submit/route.ts` | Draft-status check has no CAS guard → concurrent submits both pass, both call adapter, both write `submitted` | Pattern 7 |
+| 52 | `apps/main/src/app/api/admin/reconciliation/upload/route.ts` | **Audit-wrapper callback signature wrong.** `withPlatformAdminAudit(opts, async () => {...})` declared with no params → `db` + `recordQuery` args dropped → every audit row for reconciliation uploads has empty `queries` array | New pattern — broken signature |
+| 53 | `apps/main/src/app/api/admin/reconciliation/upload/route.ts` | **Prompt injection.** Raw CSV text interpolated verbatim into Haiku user-turn → crafted booking-ref like `Ignore previous instructions...` alters auto-accept decisions | New pattern — LLM prompt injection |
+| 54 | `apps/main/src/app/api/groups/invite/[token]/route.ts` | First-use token binding TOCTOU. Two concurrent GETs both see `token_first_used_at = null`, both write, last writer wins → legitimate first-use caller locked out forever | Pattern 6 variant |
+| 55 | `apps/main/src/app/api/groups/invite/[token]/route.ts` | PATCH returns `{ ok: true }` when zero rows updated → false confidence on revoked/missing invitation | Pattern 7 variant |
+| 56 | `apps/main/src/lib/ai/call-wrapper.ts` | **`instrumentedClaudeCall` doesn't fail-closed on `hard` state.** Snapshot loaded + state visible, wrapper proceeds anyway → delegates hard-block to call sites that may forget | §27.6 enforcement gap |
+| 57 | `apps/main/src/lib/ai/call-wrapper.ts` | `tenant_usage_metrics` read-then-write counter has no atomicity → concurrent serverless calls systematically undercount spend | Pattern 6 variant — money tracking |
+| 58 | `apps/main/src/lib/ai/call-wrapper.ts` | **`instrumentedOpenAIEmbedding` bypasses ALL enforcement.** Never loads tenant snapshot → hard-state tenants are still served + embedding spend never triggers state machine | §27.6 gap — second AI path |
+| 59 | `apps/main/src/inngest/import-pipeline.ts` | Orphaned row on Inngest dispatch failure. Import row inserted before `inngest.send`; if send throws, row is stuck at `pending_classification` with no reconciliation cron | Pattern 10 variant |
+
+### Round 3 — P2
+
+Each subsystem has Pattern 1 mutations (15-20+ more unchecked Supabase mutations across all 10 audits). Documented but not enumerated here — covered by the existing `atc/no-unchecked-supabase-mutation` rule once codebase-wide cleanup pass lands.
+
+### Round 3 — new patterns added to the catalog
+
+13. **Stateless LLM call** (variant of Pattern 8): the LLM call passes only the current message instead of conversation history. Symptom: customers think the AI "forgot" prior turns.
+14. **Kill switch gap in streaming**: a runtime kill switch is checked AFTER the user-visible action completes. The switch becomes a post-hoc audit, not an enforcement.
+15. **LLM prompt injection via raw user input**: untrusted strings interpolated into the user-turn content of an LLM call. Mitigation: use tool-call/JSON mode, OR escape, OR move untrusted content to a separate stratum the prompt explicitly says to treat as data.
+16. **Broken audit-wrapper callback signature**: a higher-order audit wrapper passes `(db, recordQuery)` to its inner function, but the inner function ignores these args and uses an outer-scope client → wrapper's audit trail is empty.
+17. **`select('*')` in user-facing data export**: leaks internal columns (tenant_id, audit fields, new columns added by future migrations) to user-downloadable bundles.
+18. **`maybeSingle()` masks multi-row matches**: returns `null` on either zero OR multiple matches, silently skipping records when the query needs an iterator instead.
+
+### Round 3 — recommended Tier-1 additions
+
+Quick-win fixes after the original Tier-1 lands. Each ≤ 1h, all close real risk. Numbered references map to the P1/high-impact table above.
+
+- **#42 Chat conversation history** — highest product impact
+- **#43 Chat kill switch in streaming mode**
+- **#44 Haiku PII redact fail-closed**
+- **#45 CCPA multi-tenant purge fix** (iterate instead of `maybeSingle`)
+- **#46 CCPA export explicit column allowlist**
+- **#47 Quote price-lock expiry enforcement**
+- **#48 Quote dispute PDF actually persisted** to audit_log
+- **#49 Quote acceptance CAS guard** (`.in("status", ["sent","viewed"])` + row-count) — prevents stranded audit rows from concurrent acceptance
+- **#50 Bookings non-atomic host submit** — order operations so commission row is written BEFORE the host adapter call, OR add a reconciliation cron for orphaned bookings
+- **#51 Bookings draft-status CAS guard** — concurrent submit double-call prevention
+- **#52 Admin reconciliation audit-wrapper signature** — accept `(db, recordQuery)`
+- **#53 Admin reconciliation Haiku prompt-injection mitigation** — use tool-call/JSON mode OR explicit delimiter + system-prompt warning
+- **#56 `instrumentedClaudeCall` doesn't fail-closed on `hard` state** — same §27.6 enforcement gap as #58, same file. Wire hard-state refusal at the wrapper level instead of delegating to call sites that may forget.
+- **#58 OpenAI embedding path bypasses all enforcement** — wire `loadTenantSnapshot` + state-machine check, mirroring the Claude path
+
+(Greptile noted findings #50, #51, #56, #58 were P1-flagged but missing from the original quick-wins list. Added explicitly so they're not silently deprioritized. #56 + #58 should ship together — they're the same `call-wrapper.ts` change.)
+
+## Cross-round totals (after 15 audits, ~90 findings)
+
+| Pattern | Audits flagged | Status |
+|---|---|---|
+| 1. Unchecked Supabase mutation | 15/15 | `atc/no-unchecked-supabase-mutation` rule ready; ~113+ sites; codebase-wide cleanup is the structural fix |
+| 5. App-layer-only tenant scoping | 10/15 | Doctrine + grep audit done |
+| 7. Zero-row CAS update | 6/15 | Doctrine added; ~5 confirmed sites |
+| 8. void async / stateless LLM | 5/15 | Doctrine added; LLM-statelessness is the variant worth fixing |
+| 6. TOCTOU race | 7/15 | Doctrine added; in flight (state-machine fix in PR #259) |
+| 2. Fail-open on resource error | 4/15 | Doctrine added; Haiku PII fail-open is the highest-impact uncovered case |
+| 9. Wrong assertPermission action | 1/15 | Doctrine added (round 2); forums route fix not yet shipped |
+| 10. Idempotency-before-dispatch | 2/15 | Doctrine added; Stripe + imports both have the pattern |
+| 11. Untrusted state-machine input | 1/15 | Fixed (PR #259) |
+| 12. Webhook signature encoding | 1/15 | Fixed (PR #258) |
+| 13. Stateless LLM call (round 3) | 1/15 found by Greptile (chat); grep found 1 more (help-AI) | Customer + help-AI chat both affected |
+| 14. Kill-switch gap in streaming (round 3) | 1/15 | Chat streaming path only |
+| 15. Prompt injection (round 3) | 1/15 found + ~8 grep candidates | Admin reconciliation confirmed; per-prompt review needed for others |
+| 16. Broken audit-wrapper signature (round 3) | 1/15 | Admin reconciliation only (verified via enumeration of all 29 callsites) |
+| 17. `select('*')` user-facing leak (round 3) | 1/15 found + ~5 candidates | CCPA export confirmed |
+| 18. maybeSingle masks multi-row (round 3) | 1/15 found + 1 grep | CCPA purge + user-consent renewal |
