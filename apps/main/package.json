@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint --max-warnings=0",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -23,7 +23,7 @@
     "inngest": "^4.4.0",
     "jose": "^6.2.3",
     "mammoth": "^1.12.0",
-    "next": "^15.5.18",
+    "next": "^16.2.6",
     "officeparser": "^7.0.3",
     "openai": "^6.38.0",
     "pdf-parse": "^2.4.5",
@@ -45,7 +45,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^15.5.18",
+    "eslint-config-next": "^16.2.6",
     "eslint-plugin-atc": "workspace:*",
     "postcss": "^8.5.1",
     "tailwindcss": "^4.3.0",

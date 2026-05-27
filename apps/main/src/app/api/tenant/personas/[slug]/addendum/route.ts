@@ -41,7 +41,7 @@ export async function POST(
 
   // Detect unusual control characters per §16.6 (cheap pre-check; Haiku does the deeper screen).
   // Strip ordinary whitespace (\t, \n, \r) from the test; flag any other C0/C1 chars.
-  // eslint-disable-next-line no-control-regex
+   
   if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F​-‏‪-‮⁠-⁤]/.test(content)) {
     return Response.json({ error: "control_characters_disallowed" }, { status: 422 });
   }

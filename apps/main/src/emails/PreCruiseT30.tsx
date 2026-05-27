@@ -1,5 +1,5 @@
 // §23.4 — T-30 day pre-cruise email template (Final prep window).
-/* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";

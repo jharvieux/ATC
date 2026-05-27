@@ -1,5 +1,5 @@
 // §23.4 — T-90 day pre-cruise email template (Anticipation begins).
-/* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";

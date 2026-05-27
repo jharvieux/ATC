@@ -3,7 +3,7 @@
 // CRITICAL: The carry-on essentials callout is hardcoded and MUST NOT be
 // removed or AI-generated. It prevents the most common avoidable trip-ruining
 // mistakes (passport / medications in checked luggage).
-/* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";

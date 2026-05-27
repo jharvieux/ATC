@@ -10,7 +10,7 @@
 // Wrapped in BrandedLayout for visual consistency, but the message itself
 // is platform-shaped (from "AI Travel Concierge" to the tenant admin).
 
-/* eslint-disable @next/next/no-img-element */
+ 
 
 import * as React from "react";
 import { BrandedLayout } from "./BrandedLayout";
