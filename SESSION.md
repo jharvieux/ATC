@@ -1,10 +1,12 @@
-# Session state — last updated 2026-05-27 ~07:30 UTC
+# Session state — last updated 2026-05-27 ~08:30 UTC
 
 ## Just completed
 
-Continuation of the D-091 audit follow-up. From the prior session's "8 open PRs" merge train, all 8 have landed plus several new ones from this session.
+Continuation of the D-091 audit follow-up + the Dependabot per-major bump
+backlog. Tonight landed 18 PRs total: 13 D-091 follow-ups + 5 Dependabot
+majors + 1 Vercel build fix.
 
-### Merged into dev since last SESSION.md
+### Merged into dev this session
 - **#285** per-action assertPermission in forums message route (D-091 R2 Pattern 9)
 - **#286** dedup email-path imports on Gmail Pub/Sub redelivery (D-091 R2 Pattern 10)
 - **#287** consent renewal explicit length check (D-091 R3 Pattern 18)
@@ -18,44 +20,43 @@ Continuation of the D-091 audit follow-up. From the prior session's "8 open PRs"
 - **#298** Pattern 15 batch 2 — `<document>` / `<content>` / `<message>` tags on 4 more Haiku call sites
 - **#299** Pattern 5 — tenant_id filter on service-role mutations across 6 route files
 - **#301** @types/big.js 6 → 7 (type-only; aligns with runtime big.js@7)
-- **#303** D-097 help-AI persists user+assistant turns to messages table (re-open of #297/#300; originals hit a GitHub PR-state desync bug after rebase)
+- **#303** D-097 help-AI persists user+assistant turns to messages table (re-open of #297/#300)
 - **#304** @types/node 22 → 24 (matches `engines.node` and Vercel default LTS)
-- **#305** TypeScript 5.7 → 6.0 (one new ambient declaration in `apps/main/src/globals.d.ts` for `*.css` side-effect imports — that was the only TS 6 breakage in our tree)
+- **#305** TypeScript 5.7 → 6.0 (one ambient `*.css` declaration was the only breakage)
+- **#307** RAG inngest route: skip INNGEST_SIGNING_KEY throw during Next.js build phase (unblocks Vercel build)
+- **#308** vitest 1.6 → 4.1 + @stryker-mutator 8.7 → 9.6 + vite 7 (no source changes; 1702 tests still pass)
+- **#309** tailwindcss 3.4 → 4.3 (kept JS config via `@config` directive; build + tests + lint green; manual UI smoke recommended before prod)
 
-### Open PRs at session end (awaiting CI / merge)
-- **#306** docs (this PR — SESSION.md + MEMORY.md update)
+### Open PRs at session end
+- **#310** docs (this PR — SESSION.md update)
 
-### Carried-forward (deferred — bigger migrations, ≥1 evening each)
-- ESLint 8 → 10 (flat config rewrite)
-- Tailwind 3 → 4 (CSS-first config; complete build-pipeline change)
-- Vitest 1 → 4 (changes many APIs; blocks @stryker-mutator/* 9 which peer-requires vitest ≥2)
-- eslint-config-next 14 → 16 (tied to Next.js bump)
-- @typescript-eslint/* 7 → 8 (requires ESLint 9+)
-- @stryker-mutator/{core,vitest-runner} 8 → 9 (blocked behind vitest 2+)
+### Dependabot majors still deferred — they cascade into a Next.js bump
+- **eslint 8 → 10** — `eslint-config-next@16` peer-requires `eslint ≥9`, and `eslint-config-next` for `eslint@9+` requires **Next.js 15+**. We're on 14.2.35. This is unavoidably a Next.js 14 → 15 (or 16) framework migration — middleware rewrites, async dynamic routes, caching defaults, etc.
+- **@typescript-eslint/* 7 → 8** — peer-requires `eslint@9+`, so blocked behind the same cascade.
+- **eslint-config-next 14 → 16** — blocked behind the same cascade.
+
+Recommended sequencing for a future session: Next.js 14 → 15 first (own PR, careful migration with manual smoke), then ESLint 8 → 9 + flat-config conversion, then @typescript-eslint 7 → 8 and eslint-config-next 14 → 16 ride along.
 
 ## In flight
 
-Nothing in flight after #306 merges — clean checkpoint.
+Nothing in flight after #310 merges — clean checkpoint.
 
 ### GitHub backend caveat hit tonight
 - Some PRs got into a stuck state where the merge endpoint returned HTTP 500 with empty body after rebases. GitHub's PR head_sha cache desynced from the actual branch SHA. The workaround: push the rebased commit to a NEW branch name and open a fresh PR. Original PR can be closed; the work transfers cleanly.
-- Squash-merge endpoint returned 500 for a while tonight; falling back to `merge_method=merge` works. We can squash via the UI later if a clean linear history matters.
+- Squash-merge endpoint returned 500 for a while tonight; falling back to `merge_method=merge` works. If GitHub backend is healthy again, switch back to squash merges for new PRs.
 
 ## Next step
 
-1. Start one of the deferred Dependabot majors. Recommended order:
-   - **Vitest 1 → 4** first (unlocks @stryker-mutator/* 9 and @typescript-eslint 8 paths).
-   - **Tailwind 3 → 4** next (independent build-config rewrite; CSS-first).
-   - **ESLint 8 → 10** last (flat-config migration; cascades to eslint-config-next 14 → 16 and @typescript-eslint 7 → 8).
-   Each warrants ~1 evening of focused work per the operator's earlier direction.
-2. If GitHub backend is healthy again, switch back to squash merges for new PRs.
+1. **Next.js 14 → 15+ migration** (own dedicated session, since it unlocks the ESLint chain). Vercel currently recommends Next 15+ for new projects.
+2. After Next is bumped: eslint 8 → 9/10 + flat-config conversion, @typescript-eslint 7 → 8, eslint-config-next 14 → 16.
+3. Manual UI smoke pass after #309 (Tailwind 4) lands in staging — no screenshot regression tests in the repo, so visual parity wasn't formally verified.
 
 ## Blocked on user
 - Nothing.
 
 ## Open questions
 - The GitHub PR-head-desync bug consumed real time tonight — if it recurs systematically, consider opening a support ticket. Not actionable code-side.
-- Per-major Dependabot strategy is working but slow. Tailwind / Vitest / ESLint each warrant a full evening of focused work.
+- Tailwind 4's default-color shifts (border defaults to currentColor, etc.) — the shadcn CSS-var theming insulates us from most of these, but visual parity is not formally verified.
 
 ## Decisions logged tonight
 - **D-097** (PR #297/#300/#303): Help-AI persists user + assistant turns to `messages` table (reusing existing schema rather than adding a `help_messages` table). Help-AI turns count toward customer chat metrics via `incrementChatMessages`. Admin-source sessions get a `conversations` row created lazily on first turn.
