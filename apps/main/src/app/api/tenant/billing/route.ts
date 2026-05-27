@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §15.15 — Subscription management console API.
 // GET: current plan, invoice history.
 // POST actions: change_tier, update_seats, switch_billing_period.
