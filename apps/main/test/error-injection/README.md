@@ -95,17 +95,41 @@ priority order. Status per handler is tracked in
 
 | Handler | DB-fail | Resource-down | Concurrency |
 | --- | --- | --- | --- |
-| Stripe webhook (8 events) | ✅ (apps/main/test/unit/stripe/webhook-error-propagation.test.ts) | ⏳ | ⏳ |
-| payouts-execute-transfer | ✅ tryAcquirePayoutLock | ⏳ | ✅ tryAcquirePayoutLock |
-| payouts-reconcile-processing | ⏳ | ⏳ | ⏳ |
-| abuse-recompute-nightly | ⏳ | n/a | ⏳ |
-| ai-pricing-cache-refresh | ⏳ | n/a | ⏳ |
-| RAG feedback webhook | ⏳ | ⏳ | ⏳ |
-| GitHub webhook | ⏳ | ⏳ | ⏳ |
-| Stripe Connect webhook | shares Stripe webhook coverage | ⏳ | ⏳ |
+| Stripe webhook (8 events) | ✅ (apps/main/test/unit/stripe/webhook-error-propagation.test.ts) | ✅ stripe-webhook.error.test.ts | ✅ stripe-webhook.error.test.ts |
+| GitHub webhook | ✅ github-webhook.error.test.ts | ✅ | ✅ |
+| payouts-execute-transfer | ✅ tryAcquirePayoutLock (other sites: needs cron-internal refactor) | 🔧 | ✅ tryAcquirePayoutLock |
+| payouts-reconcile-processing | 🔧 cron-internal refactor | 🔧 | 🔧 |
+| abuse-recompute-nightly | 🔧 cron-internal refactor | n/a | 🔧 |
+| ai-pricing-cache-refresh | 🔧 cron-internal refactor | n/a | 🔧 |
+| Stripe Connect webhook | shares Stripe webhook coverage | shares | ⏳ |
+| RAG feedback webhook (apps/rag) | 🔧 needs apps/rag test wiring | 🔧 | 🔧 |
 | tenant/billing route | ⏳ | ⏳ | ⏳ |
 | tenant/chat-limits route | ⏳ | ⏳ | ⏳ |
 | Forums routes | ⏳ | ⏳ | ⏳ |
 
-✅ = covered. ⏳ = work-in-progress / not yet added. n/a = no external
-resource dep / no concurrent invocation surface for this handler.
+✅ = covered. ⏳ = handler is testable, just needs the test written.
+🔧 = handler needs structural refactor (extract testable inner function,
+wire apps/rag vitest config, etc.) before a probe test can attach.
+n/a = no external resource dep / no concurrent invocation surface.
+
+### Notes for the next contributor
+
+- **Inngest cron handlers** (`payouts-*`, `abuse-*`, `ai-pricing-*`)
+  store their handler inside `inngest.createFunction({...}, async fn)`.
+  Inngest does not expose `.fn` publicly across versions, so directly
+  invoking the inner async function from a unit test requires either
+  (a) extracting the body into a named exported function (the pattern
+  used for `tryAcquirePayoutLock`) or (b) running an Inngest dev-server
+  shim. Pattern (a) is the cheaper path and is recommended.
+- **RAG feedback webhook** lives in `apps/rag` and imports from
+  `apps/rag/src/lib/...`. `apps/main/test/error-injection/` is wired to
+  `apps/main`'s tsconfig + node_modules; a parallel
+  `apps/rag/test/error-injection/` (with its own vitest include and an
+  entry in `pnpm test:error-injection`) is the cleanest split.
+- **tenant/* routes** use `assertPermission` + `tenantClient` +
+  Stripe + Inngest. Mocking surface is large but mechanical. Follow
+  the github-webhook.error.test.ts mocking pattern: one `vi.mock`
+  block per import, behavior toggled via module-scoped `mock*` vars.
+
+Tracking: `docs/runbooks/audit-followups-2026-05-26.md` "Error-injection
+probe — handler coverage" section.

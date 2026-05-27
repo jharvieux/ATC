@@ -291,6 +291,6 @@ export function makeStripeConnectionError(): Error {
 // Throwing fetch mock — for handlers that use fetch() to call external
 // services (Apify, GitHub, Resend). Returns a vi-spied fn that rejects
 // every call. Restore via vi.restoreAllMocks() in afterEach.
-export function makeThrowingFetch(): ReturnType<typeof vi.fn> {
+export function makeThrowingFetch() {
   return vi.fn(() => Promise.reject(new Error("synthetic fetch failure")));
 }
