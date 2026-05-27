@@ -540,6 +540,30 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     return;
   }
 
+  // §10.6 / D-091 Round-3 #43 — global AI kill switch. Checked BEFORE the
+  // streaming wrapper is acquired so a paused AI doesn't leak partial
+  // tokens to the customer or burn a vendor call. The help-AI route has
+  // had this check from day one; the customer chat path was missing it,
+  // which the audit flagged as a kill-switch escape in streaming mode.
+  const { data: killRow } = await svc
+    .from("platform_settings")
+    .select("value")
+    .eq("key", "ai_kill_switch_engaged")
+    .maybeSingle();
+  const killEngaged = killRow
+    ? (killRow as { value?: unknown }).value === true ||
+      (killRow as { value?: unknown }).value === "true"
+    : false;
+  if (killEngaged) {
+    const fallbackBody =
+      "Our AI is paused right now. Please leave a message and we'll be in touch.";
+    await send({ type: "delta", text: fallbackBody });
+    await send({ type: "supervisor", action: "allow", regens: 0 });
+    await send({ type: "done" });
+    await close();
+    return;
+  }
+
   // §26.9 — Anthropic vendor health gate. If the registry says Anthropic is
   // down, surface the §26.9 fallback message directly instead of attempting
   // the call. The probe cron updates the registry every minute; degraded
