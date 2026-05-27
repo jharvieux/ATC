@@ -23,6 +23,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { deriveCustomerHash } from "./customer-hash";
 import { captureForensicsSnapshot } from "@/lib/forensics/capture";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export interface PurgeArgs {
   user_id: string;
@@ -282,7 +283,7 @@ export async function purgeUserDataPerRetention(
     //   No action.
 
     // Step 10 — record execution row + audit_log.
-    await db.from("ccpa_deletion_executions").insert({
+    await safeAwait(db.from("ccpa_deletion_executions").insert({
       user_id,
       grace_period_ended_at: graceEndedAt,
       executed_at: new Date().toISOString(),
@@ -297,7 +298,7 @@ export async function purgeUserDataPerRetention(
       forensics_snapshot_reason,
       customer_hash,
       purge_outcome: "success",
-    });
+    }), "ccpa_deletion_executions.insert");
 
     await writeAuditLog({
       actor_user_id: user_id,
@@ -346,7 +347,7 @@ async function finishError(
   forensics_snapshot_reason: string | null,
   error_detail: string,
 ): Promise<PurgeResult> {
-  await db.from("ccpa_deletion_executions").insert({
+  await safeAwait(db.from("ccpa_deletion_executions").insert({
     user_id,
     grace_period_ended_at,
     executed_at: new Date().toISOString(),
@@ -362,7 +363,7 @@ async function finishError(
     customer_hash,
     purge_outcome: "error",
     error_detail,
-  });
+  }), "ccpa_deletion_executions.insert");
   await writeAuditLog({
     actor_user_id: user_id,
     actor_type: "system",

@@ -6,6 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CabinClass, CachedPriceQuote, FreshnessFlag, SailingKey } from "./types";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function freshnessFor(stalenessHours: number): FreshnessFlag {
   const freshLimit = parseInt(process.env.PRICE_FRESHNESS_FRESH_HOURS ?? "72", 10);
@@ -99,7 +100,7 @@ export async function upsertPriceQuote(
     });
   }
   if (rows.length === 0) return;
-  await db
+  await safeAwait(db
     .from("pricing_cache")
-    .upsert(rows, { onConflict: "cruise_line,ship,sail_date,departure_port,duration_nights,cabin_class" });
+    .upsert(rows, { onConflict: "cruise_line,ship,sail_date,departure_port,duration_nights,cabin_class" }), "pricing_cache.upsert");
 }

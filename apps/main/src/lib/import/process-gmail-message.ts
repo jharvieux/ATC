@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { qualifiesForImport } from "./trigger-regex";
 import { inngest } from "@/inngest/client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type GmailProcessResult =
   | { qualified: true; import_queue_id: string }
@@ -30,18 +31,18 @@ export async function processGmailInboundMessage(args: {
   const { tenant_id, message_id, subject, body_text, svc } = args;
 
   if (!subject && !body_text) {
-    await svc
+    await safeAwait(svc
       .from("gmail_inbound_messages")
       .update({ qualifies_for_import: false })
-      .eq("message_id", message_id);
+      .eq("message_id", message_id), "gmail_inbound_messages.update");
     return { qualified: false, reason: "empty_body" };
   }
 
   if (!qualifiesForImport(subject, body_text)) {
-    await svc
+    await safeAwait(svc
       .from("gmail_inbound_messages")
       .update({ qualifies_for_import: false })
-      .eq("message_id", message_id);
+      .eq("message_id", message_id), "gmail_inbound_messages.update");
     return { qualified: false, reason: "no_trigger_word" };
   }
 
@@ -62,13 +63,13 @@ export async function processGmailInboundMessage(args: {
   }
   const import_queue_id = (inserted as { id: string }).id;
 
-  await svc
+  await safeAwait(svc
     .from("gmail_inbound_messages")
     .update({
       qualifies_for_import: true,
       triggered_at: new Date().toISOString(),
     })
-    .eq("message_id", message_id);
+    .eq("message_id", message_id), "gmail_inbound_messages.update");
 
   await inngest.send({
     name: "import.queued",

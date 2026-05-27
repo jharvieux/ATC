@@ -11,6 +11,7 @@
 import * as cheerio from "cheerio";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchCruiseMapperPage } from "./diy-fetcher";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const SHIP_INDEX_PATH = "/ships";
 const PORT_INDEX_PATH = "/ports";
@@ -111,12 +112,12 @@ async function upsertInventory(db: SupabaseClient, urls: string[], kind: "ship" 
   // Chunk by 500 to keep payloads reasonable.
   for (let i = 0; i < urls.length; i += 500) {
     const slice = urls.slice(i, i + 500);
-    await db
+    await safeAwait(db
       .from("cruisemapper_url_inventory")
       .upsert(
         slice.map((url) => ({ url, kind, last_seen_at: nowIso })),
         { onConflict: "url" },
-      );
+      ), "cruisemapper_url_inventory.upsert");
   }
 }
 

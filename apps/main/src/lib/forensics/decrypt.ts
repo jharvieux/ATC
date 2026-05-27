@@ -11,6 +11,7 @@
 import { createDecipheriv } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { platformAdminClient } from "@/lib/db/platform-admin-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
@@ -95,26 +96,31 @@ export async function decryptForensicsSnapshot(snapshot_id: string): Promise<{
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
   const payload = JSON.parse(plaintext);
 
-  // Update access bookkeeping. We don't await this strictly — but Supabase
-  // JS returns a thenable so we do.
-  await db
-    .from("forensics_log")
-    .update({
-      access_count: undefined, // PostgREST doesn't expose increment; do the read-then-write below
-      last_accessed_at: new Date().toISOString(),
-    })
-    .eq("id", snapshot_id);
-  // Read-then-write to increment.
+  // Update access bookkeeping. last_accessed_at first, then read-then-write
+  // for the access_count increment (PostgREST doesn't expose increment so we
+  // do it client-side — race here is benign; admin-only path, low concurrency).
+  await safeAwait(
+    db
+      .from("forensics_log")
+      .update({
+        last_accessed_at: new Date().toISOString(),
+      })
+      .eq("id", snapshot_id),
+    "forensics_log.update.last_accessed_at",
+  );
   const { data: countRow } = await db
     .from("forensics_log")
     .select("access_count")
     .eq("id", snapshot_id)
     .maybeSingle();
   const currentCount = (countRow as { access_count?: number } | null)?.access_count ?? 0;
-  await db
-    .from("forensics_log")
-    .update({ access_count: currentCount + 1 })
-    .eq("id", snapshot_id);
+  await safeAwait(
+    db
+      .from("forensics_log")
+      .update({ access_count: currentCount + 1 })
+      .eq("id", snapshot_id),
+    "forensics_log.update.access_count",
+  );
 
   return {
     payload,

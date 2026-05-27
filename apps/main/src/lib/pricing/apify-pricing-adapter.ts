@@ -11,6 +11,7 @@
 // surface small and the request shape inspectable.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import type {
   CachedPriceLookup,
   CruiseLineCode,
@@ -260,14 +261,14 @@ export class ApifyPricingAdapter implements PricingDataSource {
     status: "succeeded" | "failed" | "partial" | "estimated_skipped",
     context: Record<string, unknown>,
   ): Promise<void> {
-    await this.db.from("apify_spend_ledger").insert({
+    await safeAwait(this.db.from("apify_spend_ledger").insert({
       actor_id: actorId,
       actor_run_id: runId,
       spend_usd: spend,
       cruise_line: cruiseLine,
       status,
       context,
-    });
+    }), "apify_spend_ledger.insert");
   }
 }
 

@@ -9,6 +9,7 @@
 // Add to no-direct-service-role-import allowlist.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type PlatformEventType = "platform_settings.updated";
 
@@ -136,13 +137,13 @@ export async function publishPlatformEvent(event: PlatformEvent): Promise<void> 
 
   try {
     const db = createServiceRoleClient();
-    await db.from("pending_rag_sync").insert({
+    await safeAwait(db.from("pending_rag_sync").insert({
       tenant_id: null,
       event_type: toPublish.event_type,
       payload: toPublish.payload,
       source_revision: toPublish.source_revision,
       last_error: lastError,
-    });
+    }), "pending_rag_sync.insert");
   } catch (dbErr) {
     console.error("[rag-sync] Failed to insert platform event into pending_rag_sync:", dbErr);
   }

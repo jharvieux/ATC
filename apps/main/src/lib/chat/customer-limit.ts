@@ -15,6 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type CustomerLimitDecision =
   | { tier: "below"; resolved: ResolvedCaps; current_count: number }
@@ -173,11 +174,11 @@ export async function enforceCustomerLimit(
           "Note: this customer has had extensive chat time. Gently but directly steer toward a specific booking decision.",
         ),
       );
-      await db
+      await safeAwait(db
         .from("customer_chat_counters")
         .update({ soft2_last_issued_at: now })
         .eq("user_id", args.user_id)
-        .eq("tenant_id", args.tenant_id);
+        .eq("tenant_id", args.tenant_id), "customer_chat_counters.update");
       await writeAuditLog({
         tenant_id: args.tenant_id,
         actor_user_id: args.user_id,
@@ -198,11 +199,11 @@ export async function enforceCustomerLimit(
           "Note: this customer has been chatting actively. Gently encourage focusing on a specific cruise to book.",
         ),
       );
-      await db
+      await safeAwait(db
         .from("customer_chat_counters")
         .update({ soft1_last_issued_at: now })
         .eq("user_id", args.user_id)
-        .eq("tenant_id", args.tenant_id);
+        .eq("tenant_id", args.tenant_id), "customer_chat_counters.update");
       await writeAuditLog({
         tenant_id: args.tenant_id,
         actor_user_id: args.user_id,
@@ -239,17 +240,17 @@ async function upsertCounter(
     .eq("tenant_id", tenant_id)
     .maybeSingle();
   if (row) {
-    await db
+    await safeAwait(db
       .from("customer_chat_counters")
       .update(fields)
       .eq("user_id", user_id)
-      .eq("tenant_id", tenant_id);
+      .eq("tenant_id", tenant_id), "customer_chat_counters.update");
   } else {
-    await db.from("customer_chat_counters").insert({
+    await safeAwait(db.from("customer_chat_counters").insert({
       user_id,
       tenant_id,
       ...fields,
-    });
+    }), "customer_chat_counters.insert");
   }
 }
 

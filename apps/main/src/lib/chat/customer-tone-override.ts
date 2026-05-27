@@ -10,6 +10,7 @@
 // pipeline (BP12) to handle.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type ToneOverrideAction =
   | { kind: "bump_up" }
@@ -85,7 +86,7 @@ export async function applyToneOverride(
   }
 
   if (existing) {
-    await db
+    await safeAwait(db
       .from("customer_memories")
       .update({
         rapport_tone_level: nextLevel,
@@ -93,15 +94,15 @@ export async function applyToneOverride(
         rapport_level_set_at: new Date().toISOString(),
       })
       .eq("tenant_id", args.tenant_id)
-      .eq("user_id", args.user_id);
+      .eq("user_id", args.user_id), "customer_memories.update");
   } else {
-    await db.from("customer_memories").insert({
+    await safeAwait(db.from("customer_memories").insert({
       tenant_id: args.tenant_id,
       user_id: args.user_id,
       rapport_tone_level: nextLevel,
       rapport_tone_directive: nextDirective,
       rapport_level_set_at: new Date().toISOString(),
-    });
+    }), "customer_memories.insert");
   }
 
   return { new_level: nextLevel, new_directive: nextDirective };

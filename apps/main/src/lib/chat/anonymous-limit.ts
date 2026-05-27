@@ -10,6 +10,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type AnonLimitInput = {
   tenant_id: string;
@@ -126,21 +127,21 @@ export async function incrementAnonCounters(
       .maybeSingle();
     const current = (existing as { current_count?: number } | null)?.current_count ?? 0;
     if (existing) {
-      await db
+      await safeAwait(db
         .from("anonymous_chat_counters")
         .update({ current_count: current + 1, last_message_at: now })
         .eq("tenant_id", input.tenant_id)
         .eq("identifier_type", type)
-        .eq("identifier_value", value);
+        .eq("identifier_value", value), "anonymous_chat_counters.update");
     } else {
-      await db.from("anonymous_chat_counters").insert({
+      await safeAwait(db.from("anonymous_chat_counters").insert({
         tenant_id: input.tenant_id,
         identifier_type: type,
         identifier_value: value,
         current_count: 1,
         first_message_at: now,
         last_message_at: now,
-      });
+      }), "anonymous_chat_counters.insert");
     }
   }
 }
@@ -153,7 +154,7 @@ export async function recordLimitHitAndCheckBurst(
   input: AnonLimitInput & { hit_identifier_type: "session" | "ip" | "fingerprint" },
 ): Promise<void> {
   const now = new Date().toISOString();
-  await db
+  await safeAwait(db
     .from("anonymous_chat_counters")
     .update({ limit_hit_at: now })
     .eq("tenant_id", input.tenant_id)
@@ -161,7 +162,7 @@ export async function recordLimitHitAndCheckBurst(
     .eq("identifier_value",
       input.hit_identifier_type === "session" ? input.session_id
         : input.hit_identifier_type === "ip" ? input.ip
-        : input.fingerprint);
+        : input.fingerprint), "anonymous_chat_counters.update");
 
   // Burst detection: 3+ rows with the same IP that have all hit the limit
   // in the last 24h.

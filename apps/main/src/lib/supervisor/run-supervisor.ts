@@ -33,6 +33,7 @@ import { checkTopicEscalation } from "./checks/topic-escalation";
 import { writeAuditLog } from "@/lib/audit/write";
 import { loadUnionSlurDenyList } from "./load-deny-list";
 import { maybeSampleForReview } from "./sample-for-review";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const CHECKS_RUN = [
   "hallucination_risk",
@@ -223,20 +224,20 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
           : `Regen token cap reached (${maxRegenTokens})`,
       });
 
-      await db
+      await safeAwait(db
         .from("conversations")
         .update({
           regen_budget_exhausted_at: new Date().toISOString(),
           supervisor_slur_consecutive_count: newSlurConsecutiveCount,
         })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id), "conversations.update");
     } else {
       // Budget allows another regen
       action = "regenerate";
       regenCount = conversation.regen_count_total + 1;
       const estimatedTokensForIncrement = Math.ceil(candidate_response.length / 4) * 2;
 
-      await db
+      await safeAwait(db
         .from("conversations")
         .update({
           regen_count_total: regenCount,
@@ -244,22 +245,22 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
             conversation.regen_tokens_consumed + estimatedTokensForIncrement,
           supervisor_slur_consecutive_count: newSlurConsecutiveCount,
         })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id), "conversations.update");
     }
   } else {
     action = "allow";
 
     if (newSlurConsecutiveCount !== conversation.supervisor_slur_consecutive_count) {
-      await db
+      await safeAwait(db
         .from("conversations")
         .update({ supervisor_slur_consecutive_count: newSlurConsecutiveCount })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id), "conversations.update");
     }
   }
 
   // Auto-escalate after 3 consecutive slur hits (§10.2 tone_drift lexical)
   if (newSlurConsecutiveCount >= SLUR_CONSECUTIVE_ESCALATION_THRESHOLD) {
-    await db.from("escalation_topics").insert({
+    await safeAwait(db.from("escalation_topics").insert({
       tenant_id:
         input.ctx.source.kind === "http_request"
           ? input.ctx.tenant_id
@@ -270,7 +271,7 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
       status: "open",
       initiated_by: "supervisor",
       initiated_reason: `tone_drift lexical check fired ${newSlurConsecutiveCount} consecutive times`,
-    });
+    }), "escalation_topics.insert");
   }
 
   // Step 6: Persist findings to messages.supervisor_findings
@@ -281,10 +282,10 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
     final_action: action,
   };
 
-  await db
+  await safeAwait(db
     .from("messages")
     .update({ supervisor_findings: supervisorFindings })
-    .eq("id", message_id);
+    .eq("id", message_id), "messages.update");
 
   // §10.5a — probabilistic sample-for-review snapshot. Escalations always
   // insert; other categories sampled at configurable rates. Best-effort:

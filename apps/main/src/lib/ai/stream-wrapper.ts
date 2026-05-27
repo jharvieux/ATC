@@ -24,6 +24,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { getCostEstimate, primePricingCache } from "./pricing";
 import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
 import { checkStateTransitionIfNeeded } from "@/lib/abuse/state-machine";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   selectModelForPurpose,
   loadTenantSnapshot,
@@ -79,7 +80,7 @@ function currentBillingPeriodRange(): string {
 // exported from call-wrapper so the streaming and non-streaming paths can
 // diverge if future cost accounting differs (e.g. mid-stream caching).
 async function logAndIncrement(args: LogIncrementArgs): Promise<void> {
-  await args.db.from("ai_call_log").insert({
+  await safeAwait(args.db.from("ai_call_log").insert({
     tenant_id: args.tenant_id,
     conversation_id: args.conversation_id ?? null,
     user_id: args.user_id ?? null,
@@ -90,7 +91,7 @@ async function logAndIncrement(args: LogIncrementArgs): Promise<void> {
     output_tokens: args.output_tokens,
     cost_estimate_cents: args.cost_cents.toString(),
     latency_ms: args.latency_ms,
-  });
+  }), "ai_call_log.insert");
 
   if (args.tenant_id === PLATFORM_TENANT_ID) return;
 
@@ -105,16 +106,16 @@ async function logAndIncrement(args: LogIncrementArgs): Promise<void> {
   if (existing) {
     const current = BigInt((existing as { ai_cost_cents: string | number }).ai_cost_cents);
     const updated = current + args.cost_cents;
-    await args.db
+    await safeAwait(args.db
       .from("tenant_usage_metrics")
       .update({ ai_cost_cents: updated.toString() })
-      .eq("id", (existing as { id: string }).id);
+      .eq("id", (existing as { id: string }).id), "tenant_usage_metrics.update");
   } else {
-    await args.db.from("tenant_usage_metrics").insert({
+    await safeAwait(args.db.from("tenant_usage_metrics").insert({
       tenant_id: args.tenant_id,
       billing_period: period,
       ai_cost_cents: args.cost_cents.toString(),
-    });
+    }), "tenant_usage_metrics.insert");
   }
 }
 

@@ -24,6 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { checkMonthlyBudget } from "@/lib/pricing/budget-priority";
 import { assertActorAllowed } from "@/lib/pricing/line-routing";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const APIFY_RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -157,13 +158,13 @@ async function writeLedger(
   status: "succeeded" | "failed",
   context: Record<string, unknown>,
 ): Promise<void> {
-  await db.from("apify_spend_ledger").insert({
+  await safeAwait(db.from("apify_spend_ledger").insert({
     actor_id: actorId,
     actor_run_id: runId,
     spend_usd: spend,
     status,
     context,
-  });
+  }), "apify_spend_ledger.insert");
 }
 
 function skip(reason: string, detail: string): ActorRunResult {

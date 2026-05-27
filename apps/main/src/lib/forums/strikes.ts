@@ -4,6 +4,7 @@
 // Coordinator has final say per spec §19.9.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type StrikeKind = "ai_hidden" | "coordinator_hidden";
 
@@ -29,7 +30,7 @@ export async function recordStrike(
     kind: StrikeKind;
   },
 ): Promise<void> {
-  await db.from("forum_strikes").insert({ user_id, forum_id, tenant_id, message_id, strike_kind: kind });
+  await safeAwait(db.from("forum_strikes").insert({ user_id, forum_id, tenant_id, message_id, strike_kind: kind }), "forum_strikes.insert");
 }
 
 export async function checkStrikePatterns(
@@ -61,7 +62,7 @@ export async function checkStrikePatterns(
   // Auto-mute at 3 ai_hidden within 24h
   if (aiHiddenLast24h >= 3) {
     const muteUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    await db
+    await safeAwait(db
       .from("forum_user_state")
       .upsert(
         {
@@ -73,7 +74,7 @@ export async function checkStrikePatterns(
           mute_reason: "auto_three_ai_hidden_24h",
         },
         { onConflict: "forum_id,user_id" },
-      );
+      ), "forum_user_state.upsert");
     return { auto_muted: true, coordinator_review_prompt: false, recommend_removal: false };
   }
 

@@ -8,6 +8,7 @@
 // This file is in the no-direct-service-role-import allowlist.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type TenantEventType =
   | "tenant.created"
@@ -99,13 +100,13 @@ export async function publishTenantEvent(event: TenantEvent): Promise<void> {
 
   try {
     const db = createServiceRoleClient();
-    await db.from("pending_rag_sync").insert({
+    await safeAwait(db.from("pending_rag_sync").insert({
       tenant_id: event.tenant_id,
       event_type: event.event_type,
       payload: event.payload,
       source_revision: event.source_revision,
       last_error: lastError,
-    });
+    }), "pending_rag_sync.insert");
   } catch (dbErr) {
     console.error("[rag-sync] Failed to insert into pending_rag_sync:", dbErr);
   }

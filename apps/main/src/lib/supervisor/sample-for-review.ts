@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SupervisorFinding } from "./types";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const CONTEXT_MESSAGE_WINDOW = 5;
 
@@ -99,7 +100,7 @@ export async function maybeSampleForReview(input: SampleForReviewInput): Promise
     Date.now() + retentionDays * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  await db.from("supervisor_review_queue").insert({
+  await safeAwait(db.from("supervisor_review_queue").insert({
     tenant_id,
     message_id,
     conversation_id,
@@ -107,5 +108,5 @@ export async function maybeSampleForReview(input: SampleForReviewInput): Promise
     supervisor_findings_snapshot: { findings, final_action: action },
     conversation_context_snapshot: { messages: recentMessages ?? [] },
     purge_after: purgeAfter,
-  });
+  }), "supervisor_review_queue.insert");
 }
