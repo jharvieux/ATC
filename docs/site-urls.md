@@ -10,8 +10,8 @@ strips the port, and routes by hostname:
 
 | Host pattern | Resolves to | Example (local dev) | Example (production) |
 |---|---|---|---|
-| `<PLATFORM_PRIMARY_DOMAIN>` (bare) | Platform admin | `http://localhost:3000` | `https://aitravelconcierge.com` |
-| `<slug>.<PLATFORM_PRIMARY_DOMAIN>` | Tenant by slug (via `getTenantBySlug`) | `http://acme.localhost:3000` | `https://acme.aitravelconcierge.com` |
+| `<PLATFORM_PRIMARY_DOMAIN>` (bare) | Platform admin | `http://localhost:3000` | `https://ai-travelconcierge.com` |
+| `<slug>.<PLATFORM_PRIMARY_DOMAIN>` | Tenant by slug (via `getTenantBySlug`) | `http://acme.localhost:3000` | `https://acme.ai-travelconcierge.com` |
 | custom domain | Tenant by full hostname (BYO-host) | n/a | `https://book.acme.com` |
 
 Local-dev quirks:

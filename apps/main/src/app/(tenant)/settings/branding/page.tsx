@@ -349,7 +349,7 @@ function CustomDomainRequestCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-gray-600">
-          By default your concierge lives at <code>&lt;your-slug&gt;.aitravelconcierge.com</code>.
+          By default your concierge lives at <code>&lt;your-slug&gt;.ai-travelconcierge.com</code>.
           To use your own subdomain (e.g. <code>concierge.yourdomain.com</code>), submit it here.
           Our team emails you DNS instructions and provisions the HTTPS certificate.
         </p>

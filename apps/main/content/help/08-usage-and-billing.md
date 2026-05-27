@@ -98,7 +98,7 @@ Portal.
 
 If you need an invoice with custom line items, your business name on
 the invoice, or split billing across departments — email
-`billing@aitravelconcierge.com` and we'll set it up.
+`billing@ai-travelconcierge.com` and we'll set it up.
 
 ## Changing your subscription tier
 
@@ -133,7 +133,7 @@ After cancellation:
 update the card. Update it within 7 days to avoid service interruption.
 
 **Can I pay annually?** Yes, on Pro and Agency. Email
-`billing@aitravelconcierge.com` and we'll set up annual invoicing —
+`billing@ai-travelconcierge.com` and we'll set up annual invoicing —
 typically with a 10% discount.
 
 **I'm on BYO and my Anthropic bill seems wrong.** That's between you
