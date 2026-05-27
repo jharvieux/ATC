@@ -12,13 +12,54 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 
-function verifySignature(body: string, sig: string, secret: string): boolean {
+// Resend webhooks use Svix's signing scheme:
+//   HMAC-SHA256(secret_bytes, `${svix-id}.${svix-timestamp}.${body}`)
+//   then base64-encode the HMAC output.
+//   Header `svix-signature` may carry multiple space-separated entries
+//   like `v1,<base64> v1,<base64>` — any match is valid.
+// The secret is stored as `whsec_<base64-of-secret-bytes>`; strip the
+// prefix and base64-decode to get the raw key material.
+//
+// Reject messages older than 5 minutes per Svix's replay-protection guidance.
+const SVIX_TOLERANCE_SECONDS = 5 * 60;
+
+function decodeSecret(secret: string): Buffer {
+  const stripped = secret.startsWith("whsec_") ? secret.slice("whsec_".length) : secret;
+  return Buffer.from(stripped, "base64");
+}
+
+export function verifyResendSignature(args: {
+  body: string;
+  msgId: string | null;
+  timestamp: string | null;
+  signatureHeader: string | null;
+  secret: string;
+  nowSeconds?: number;
+}): boolean {
+  const { body, msgId, timestamp, signatureHeader, secret } = args;
+  if (!msgId || !timestamp || !signatureHeader) return false;
+
+  // Reject messages outside the tolerance window — replay protection.
+  const now = args.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const tsNum = Number(timestamp);
+  if (!Number.isFinite(tsNum)) return false;
+  if (Math.abs(now - tsNum) > SVIX_TOLERANCE_SECONDS) return false;
+
   try {
-    const mac = createHmac("sha256", secret).update(body).digest("hex");
-    const expected = Buffer.from(mac, "hex");
-    const actual = Buffer.from(sig, "hex");
-    if (expected.length !== actual.length) return false;
-    return timingSafeEqual(expected, actual);
+    const key = decodeSecret(secret);
+    const signedContent = `${msgId}.${timestamp}.${body}`;
+    const expected = createHmac("sha256", key).update(signedContent).digest();
+
+    // Header may carry multiple `v1,<base64>` entries separated by spaces.
+    // Accept the request if ANY entry matches (timing-safe).
+    for (const entry of signatureHeader.split(/\s+/)) {
+      const [scheme, sig] = entry.split(",");
+      if (scheme !== "v1" || !sig) continue;
+      const actual = Buffer.from(sig, "base64");
+      if (actual.length !== expected.length) continue;
+      if (timingSafeEqual(expected, actual)) return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -40,10 +81,12 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("Webhook secret not configured", { status: 500 });
   }
 
-  const sig = req.headers.get("svix-signature") ?? req.headers.get("resend-signature") ?? "";
+  const msgId = req.headers.get("svix-id");
+  const timestamp = req.headers.get("svix-timestamp");
+  const signatureHeader = req.headers.get("svix-signature");
   const body = await req.text();
 
-  if (!verifySignature(body, sig.replace(/^v1,/, ""), secret)) {
+  if (!verifyResendSignature({ body, msgId, timestamp, signatureHeader, secret })) {
     return new Response("Invalid signature", { status: 401 });
   }
 
