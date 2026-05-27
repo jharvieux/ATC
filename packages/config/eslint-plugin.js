@@ -13,9 +13,12 @@ const noMoneyMath = require("./eslint-rules/no-money-math");
 const noDirectServiceRoleEnvImport = require("./eslint-rules/no-direct-service-role-env-import");
 const noAdHocTenantIdString = require("./eslint-rules/no-ad-hoc-tenant-id-string");
 const noDirectAnthropicOrOpenaiImport = require("./eslint-rules/no-direct-anthropic-or-openai-import");
-// D-091 — slop-reduction rules.
+// D-091 — slop-reduction + anti-pattern rules.
 const noOrphanTodo = require("./eslint-rules/no-orphan-todo");
 const noNarratingComments = require("./eslint-rules/no-narrating-comments");
+const noUncheckedSupabaseMutation = require("./eslint-rules/no-unchecked-supabase-mutation");
+const noCredentialsInUrl = require("./eslint-rules/no-credentials-in-url");
+const noFailOpenOnResourceError = require("./eslint-rules/no-fail-open-on-resource-error");
 
 module.exports = {
   rules: {
@@ -27,8 +30,12 @@ module.exports = {
     "no-direct-service-role-env-import": noDirectServiceRoleEnvImport,
     "no-ad-hoc-tenant-id-string": noAdHocTenantIdString,
     "no-direct-anthropic-or-openai-import": noDirectAnthropicOrOpenaiImport,
-    // D-091
+    // D-091 — slop reduction
     "no-orphan-todo": noOrphanTodo,
     "no-narrating-comments": noNarratingComments,
+    // D-091 — anti-pattern rules
+    "no-unchecked-supabase-mutation": noUncheckedSupabaseMutation,
+    "no-credentials-in-url": noCredentialsInUrl,
+    "no-fail-open-on-resource-error": noFailOpenOnResourceError,
   },
 };

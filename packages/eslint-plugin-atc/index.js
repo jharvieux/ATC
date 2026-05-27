@@ -17,9 +17,12 @@ const noAdHocTenantIdString = require("../config/eslint-rules/no-ad-hoc-tenant-i
 const noDirectAnthropicOrOpenaiImport = require("../config/eslint-rules/no-direct-anthropic-or-openai-import");
 // BP31 (§32.7.1) — GitHub Octokit discipline.
 const noDirectOctokitImport = require("../config/eslint-rules/no-direct-octokit-import");
-// D-091 — slop-reduction rules.
+// D-091 — slop-reduction + anti-pattern rules.
 const noOrphanTodo = require("../config/eslint-rules/no-orphan-todo");
 const noNarratingComments = require("../config/eslint-rules/no-narrating-comments");
+const noUncheckedSupabaseMutation = require("../config/eslint-rules/no-unchecked-supabase-mutation");
+const noCredentialsInUrl = require("../config/eslint-rules/no-credentials-in-url");
+const noFailOpenOnResourceError = require("../config/eslint-rules/no-fail-open-on-resource-error");
 
 module.exports = {
   rules: {
@@ -33,8 +36,12 @@ module.exports = {
     "no-direct-anthropic-or-openai-import": noDirectAnthropicOrOpenaiImport,
     // BP31
     "no-direct-octokit-import": noDirectOctokitImport,
-    // D-091
+    // D-091 — slop reduction
     "no-orphan-todo": noOrphanTodo,
     "no-narrating-comments": noNarratingComments,
+    // D-091 — anti-pattern rules (post Greptile audit)
+    "no-unchecked-supabase-mutation": noUncheckedSupabaseMutation,
+    "no-credentials-in-url": noCredentialsInUrl,
+    "no-fail-open-on-resource-error": noFailOpenOnResourceError,
   },
 };
