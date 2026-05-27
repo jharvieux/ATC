@@ -1,3 +1,4 @@
+// audit-2026-05-26: Greptile review checkpoint (will be reverted; do not merge)
 // §24 — Chat backend POST handler.
 //
 // Single entry point for chat traffic — both anonymous (no Authorization)
