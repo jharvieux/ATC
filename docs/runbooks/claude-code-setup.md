@@ -29,6 +29,17 @@ absent, or merge under existing keys):
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-changed-file.mjs\""
+          }
+        ]
+      }
     ]
   }
 }
@@ -44,6 +55,10 @@ absent, or merge under existing keys):
   read-only auditor for the D-091 anti-patterns documented in CLAUDE.md.
   Invokable explicitly ("have d091-reviewer audit my changes") or
   proactively by the main Claude session before commits/PRs.
+- **`lint-changed-file` PostToolUse hook** — runs eslint on every
+  TS/TSX edit in `apps/main` or `apps/rag` (~0.8s). Exit 2 surfaces lint
+  errors to the agent so they get fixed in-loop instead of at CI. Skips
+  test directories, generated output, and files outside the two apps.
 
 ## Optional MCP servers
 
