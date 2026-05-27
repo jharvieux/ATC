@@ -23,7 +23,7 @@
     "apps/main/src/lib/**/*.ts",
     "apps/main/src/inngest/**/*.ts",
     "apps/main/src/app/api/**/route.ts",
-    "apps/main/src/middleware.ts",
+    "apps/main/src/proxy.ts",
     "apps/rag/src/lib/**/*.ts",
     "apps/rag/src/app/api/**/route.ts",
     "apps/rag/src/middleware.ts",
