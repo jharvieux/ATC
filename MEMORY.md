@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-097 — 2026-05-27 — Help-AI persists to `messages` table; counts toward chat metrics
+
+**Decision.** The help-AI chat endpoint (`/api/help/sessions/[id]/message`) now persists every user and assistant turn to the existing `messages` table — same schema and helpers as the customer chat route. Help-AI turns count toward the tenant's chat-message metric via `incrementChatMessages`, and admin-source sessions (which start without a `conversation_id`) get a lazily-created `conversations` row on the first turn that's then bound back to the help_session row via `update().eq("id", sessionId)`.
+
+**Why.** The prior implementation called the LLM and streamed the response back to the UI without ever writing the turn to a database. That left help-AI conversations un-auditable and un-resumable, and meant help-AI was effectively free for tenants while customer chat was metered. Reusing the existing `messages` table avoids a parallel `help_messages` schema, lets the same conversation-history helper drive both flows, and lets help-AI usage roll up into the same dashboards.
+
+**Rejected.** A separate `help_messages` table was considered (cleaner separation of customer-facing vs internal traffic) but rejected because: (a) the help-AI panel will eventually share the same chat UI conventions as the customer panel, (b) per-tenant metric rollups would need to UNION two tables instead of one, and (c) the conversation-history helper would have to grow a discriminator. The current schema accommodates both with no migration.
+
+**Related artifacts.** PR #303 (the second re-open; original PRs #297 and #300 hit a GitHub PR-state desync bug after rebase and couldn't be merged). Allowlist update for service-role usage in `packages/config/eslint-rules/no-direct-service-role-import.js`.
+
+---
+
 ## D-096 — 2026-05-27 — Overnight D-091 round-3 punch list completion
 
 After D-094 (safe-mutation wrapper) and D-095 (conversation history) landed, this overnight run completed most of the audit-followups punch list with a sequence of focused PRs, plus the codebase-wide `safeAwait` migration across `apps/main/src/inngest/`, `apps/main/src/app/api/`, and `apps/main/src/lib/`.
