@@ -169,7 +169,7 @@ describe.skipIf(SKIP)("scope isolation — §8.9", () => {
       return Response.json({ chunks: data ?? [] });
     });
 
-    const res = await handler(makeReq(token, {}));
+    const res = await handler(makeReq(token, {}), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const body = await res.json() as { chunks: Array<{ scope: string; tenant_id: string | null }> };
 
@@ -194,7 +194,7 @@ describe.skipIf(SKIP)("scope isolation — §8.9", () => {
       }
       return Response.json({ ok: true });
     });
-    const res = await handler(makeReq(token, { tenant_id: tenantB }));
+    const res = await handler(makeReq(token, { tenant_id: tenantB }), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "tenant_id_mismatch_with_jwt" });
   });
@@ -206,7 +206,7 @@ describe.skipIf(SKIP)("scope isolation — §8.9", () => {
       if (ctx.scope !== "write") return Response.json({ error: "insufficient_scope" }, { status: 403 });
       return Response.json({ ok: true });
     });
-    const res = await handler(makeReq(token, {}));
+    const res = await handler(makeReq(token, {}), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
   });
 
@@ -219,7 +219,7 @@ describe.skipIf(SKIP)("scope isolation — §8.9", () => {
       }
       return Response.json({ ok: true });
     });
-    const res = await handler(makeReq(token, {}));
+    const res = await handler(makeReq(token, {}), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
   });
 
@@ -253,7 +253,7 @@ describe.skipIf(SKIP)("scope isolation — §8.9", () => {
       }
       return Response.json({ ok: true, approved_as: "platform-admin" });
     });
-    const res = await handler(makeReq(token, { queue_item_id: queueItem.id }));
+    const res = await handler(makeReq(token, { queue_item_id: queueItem.id }), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, approved_as: "platform-admin" });
   });

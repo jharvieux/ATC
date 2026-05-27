@@ -16,10 +16,8 @@ const VALID_SLUGS = new Set([
   "jenny-hartwell",
 ]);
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: { slug: string } },
-): Promise<Response> {
+export async function PATCH(req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx } = await assertPermission(req, {
       resource: "tenant.personas",

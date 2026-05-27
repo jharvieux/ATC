@@ -7,10 +7,8 @@ import { PatchWatchSchema } from "@/lib/price-watches/schemas";
 
 export const dynamic = "force-dynamic";
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function PATCH(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "price_watches", action: "update" });
     let body: ReturnType<typeof PatchWatchSchema.parse>;

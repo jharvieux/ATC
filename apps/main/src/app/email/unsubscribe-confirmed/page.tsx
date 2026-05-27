@@ -2,6 +2,8 @@
 // CAN-SPAM requires unsubscribe requests to be honored within 10 business days.
 // The platform processes them immediately.
 
+import Link from "next/link";
+
 export default function UnsubscribeConfirmedPage() {
   return (
     <main style={{ maxWidth: 500, margin: "80px auto", padding: "0 16px", fontFamily: "system-ui, sans-serif", textAlign: "center" }}>
@@ -13,7 +15,7 @@ export default function UnsubscribeConfirmedPage() {
       <p style={{ color: "#6b7280", fontSize: 14 }}>
         You can manage your email preferences at any time from your account settings.
       </p>
-      <a
+      <Link
         href="/"
         style={{
           display: "inline-block",
@@ -26,7 +28,7 @@ export default function UnsubscribeConfirmedPage() {
         }}
       >
         Back to home
-      </a>
+      </Link>
     </main>
   );
 }

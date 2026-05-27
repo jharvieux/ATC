@@ -3,10 +3,8 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: { id: string; emoji: string } },
-): Promise<Response> {
+export async function DELETE(req: Request, props: { params: Promise<{ id: string; emoji: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "forums", action: "react" });
     const svc = createServiceRoleClient();

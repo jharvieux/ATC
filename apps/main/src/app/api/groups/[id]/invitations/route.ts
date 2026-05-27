@@ -9,9 +9,10 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-type RouteProps = { params: { id: string } };
+type RouteProps = { params: Promise<{ id: string }> };
 
-export async function GET(req: Request, { params }: RouteProps): Promise<Response> {
+export async function GET(req: Request, props: RouteProps): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "group.invitations", action: "list" });
 
@@ -43,7 +44,8 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
   }
 }
 
-export async function POST(req: Request, { params }: RouteProps): Promise<Response> {
+export async function POST(req: Request, props: RouteProps): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "group.invitations", action: "manage" });
     const body = await req.json() as { action: string; invitation_id?: string };

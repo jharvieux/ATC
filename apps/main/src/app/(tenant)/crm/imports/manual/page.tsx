@@ -6,6 +6,7 @@
 // type hint. After submission, the pipeline classifies/extracts; the
 // agent is sent to the pending-review list to track the row.
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -46,9 +47,9 @@ export default function ManualImportPage() {
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <div className="mb-6">
-        <a href="/crm/imports" className="text-sm text-blue-600 hover:underline">
+        <Link href="/crm/imports" className="text-sm text-blue-600 hover:underline">
           ← Back to pending review
-        </a>
+        </Link>
         <h1 className="text-2xl font-semibold mt-2">Manual entry</h1>
         <p className="text-sm text-gray-500 mt-1">
           Paste a forwarded email body, lead-board screenshot transcript, or hand-typed details.
@@ -100,12 +101,12 @@ export default function ManualImportPage() {
           >
             {busy ? "Submitting…" : "Submit to pipeline"}
           </button>
-          <a
+          <Link
             href="/crm/imports"
             className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50"
           >
             Cancel
-          </a>
+          </Link>
         </div>
       </div>
     </div>

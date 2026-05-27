@@ -11,10 +11,8 @@ import { canModerate } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function PATCH(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     // D-091 Round-2 Pattern 9 — one assertPermission per semantic operation.
     // Previously every branch went through a single edit_message check, which

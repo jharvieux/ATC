@@ -3,7 +3,8 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 
-export async function GET(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx } = await assertPermission(req, { resource: "feature_request", action: "read" });
     const db = tenantClient(ctx);

@@ -38,9 +38,10 @@ interface Group {
   hero_image_url: string | null;
 }
 
-type RouteProps = { params: { token: string } };
+type RouteProps = { params: Promise<{ token: string }> };
 
-export async function GET(req: Request, { params }: RouteProps): Promise<Response> {
+export async function GET(req: Request, props: RouteProps): Promise<Response> {
+  const params = await props.params;
   const { token } = params;
 
   // Check 1 — HMAC signature valid.
@@ -154,7 +155,8 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
   });
 }
 
-export async function PATCH(req: Request, { params }: RouteProps): Promise<Response> {
+export async function PATCH(req: Request, props: RouteProps): Promise<Response> {
+  const params = await props.params;
   const { token } = params;
   const { invitation_id, ok } = parseAndVerifyHmac(token);
   if (!ok) return Response.json({ error: "invalid_token" }, { status: 400 });

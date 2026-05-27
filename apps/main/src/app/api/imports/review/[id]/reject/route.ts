@@ -14,7 +14,8 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 const REJECT_RETENTION_HOURS = 24;
 const RETAIN_FOLLOWUP_HOURS = 7 * 24;
 
-export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const { ctx, user } = await assertPermission(req, { resource: "imports.review", action: "reject" });
   const svc = createServiceRoleClient();
   const queueRowId = params.id;

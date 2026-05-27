@@ -137,30 +137,30 @@ afterEach(() => { vi.clearAllMocks(); });
 describe("POST /api/ingest/itinerary", () => {
   it("rejects non-platform-admin with 403", async () => {
     currentCtx.service_identifier = "tenant-app";
-    const res = await POST(makeReq(VALID_BODY));
+    const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
   });
 
   it("rejects non-write scope with 403", async () => {
     currentCtx.scope = "read";
-    const res = await POST(makeReq(VALID_BODY));
+    const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
   });
 
   it("rejects malformed payload with 400", async () => {
-    const res = await POST(makeReq({ cruise_line: "RCL" })); // missing required fields
+    const res = await POST(makeReq({ cruise_line: "RCL" }), { params: Promise.resolve({}) }); // missing required fields
     expect(res.status).toBe(400);
   });
 
   it("quarantines text containing SSN with 422", async () => {
     const piiText = VALID_BODY.text + " SSN: 123-45-6789 (this should never appear).";
-    const res = await POST(makeReq({ ...VALID_BODY, text: piiText }));
+    const res = await POST(makeReq({ ...VALID_BODY, text: piiText }), { params: Promise.resolve({}) });
     expect(res.status).toBe(422);
     expect(embedCalls).toHaveLength(0); // never embedded
   });
 
   it("ingests fresh itinerary: embeds, inserts chunk, upserts itinerary", async () => {
-    const res = await POST(makeReq(VALID_BODY));
+    const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { status: string };
     expect(json.status).toBe("ingested");
@@ -175,7 +175,7 @@ describe("POST /api/ingest/itinerary", () => {
     const hash = createHash("sha256").update(VALID_BODY.text).digest("hex");
     existingItinerary = { id: "existing-id", content_hash: hash, related_chunk_id: "existing-chunk-id" };
 
-    const res = await POST(makeReq(VALID_BODY));
+    const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { status: string; itinerary_id: string; chunk_id: string };
     expect(json.status).toBe("unchanged");
@@ -188,7 +188,7 @@ describe("POST /api/ingest/itinerary", () => {
 
   it("updates in place when content_hash changes", async () => {
     existingItinerary = { id: "existing-id", content_hash: "OLDHASH", related_chunk_id: "existing-chunk-id" };
-    const res = await POST(makeReq(VALID_BODY));
+    const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { status: string };
     expect(json.status).toBe("updated");

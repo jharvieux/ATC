@@ -118,7 +118,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     rpcChunks = [rpcChunk({ id: "c1" })];
     assetLinks = [{ id: "c1", related_asset_ids: [], scope: "global" }];
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { chunks: Array<{ id: string; related_asset_ids: string[] }>; assets: unknown[] };
     expect(json.assets).toEqual([]);
@@ -137,7 +137,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
       { asset_id: "a-2222-2222-2222-222222222222", kind: "deck_plan", entity_type: "deck", entity_id: "e2", scope: "global", tenant_id: null, image_url: "https://www.cruisemapper.com/y.jpg", source_page_url: "https://www.cruisemapper.com/p2", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
     ];
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
     const json = (await res.json()) as { chunks: Array<{ id: string; related_asset_ids: string[] }>; assets: Array<{ asset_id: string }> };
     expect(json.assets).toHaveLength(2);
     expect(json.chunks[0]!.related_asset_ids).toEqual(["a-1111-1111-1111-111111111111"]);
@@ -155,7 +155,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
       { asset_id: shared, kind: "deck_plan", entity_type: "deck", entity_id: "e9", scope: "global", tenant_id: null, image_url: "https://www.cruisemapper.com/shared.jpg", source_page_url: "https://www.cruisemapper.com/p", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
     ];
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
     const json = (await res.json()) as { chunks: Array<{ related_asset_ids: string[] }>; assets: Array<{ asset_id: string }> };
     expect(json.assets).toHaveLength(1);
     expect(json.assets[0]!.asset_id).toBe(shared);
@@ -175,7 +175,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { chunks: Array<{ related_asset_ids: string[] }>; assets: Array<{ asset_id: string }> };
     expect(json.assets).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
       { asset_id: offlimits, kind: "deck_plan", entity_type: "deck", entity_id: "x", scope: "tenant", tenant_id: "11111111-1111-1111-1111-111111111111", image_url: "https://www.cruisemapper.com/z.jpg", source_page_url: "https://www.cruisemapper.com/p", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
     ];
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
     const json = (await res.json()) as { chunks: Array<{ related_asset_ids: string[] }>; assets: Array<unknown> };
     expect(json.assets).toEqual([]);
     expect(json.chunks[0]!.related_asset_ids).toEqual([]);

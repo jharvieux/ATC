@@ -5,6 +5,7 @@
 // Filters per §34.6.1: import_path, document_type, submitted_by_user_id.
 // Bulk-accept selection for high-confidence batches.
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 interface ImportItem {
@@ -117,9 +118,9 @@ export default function ImportsReviewPage() {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Pending review</h1>
-        <a href="/crm/imports/manual" className="text-sm text-blue-600 hover:underline">
+        <Link href="/crm/imports/manual" className="text-sm text-blue-600 hover:underline">
           + Manual entry
-        </a>
+        </Link>
       </div>
 
       <div className="flex gap-3 mb-4">

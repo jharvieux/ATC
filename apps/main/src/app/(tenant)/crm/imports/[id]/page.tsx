@@ -8,6 +8,7 @@
 // dialog and posts to /api/imports/review/:id/merge (field-level
 // non-destructive merge — see the route docstring).
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
@@ -169,9 +170,9 @@ export default function ImportReviewItemPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <a href="/crm/imports" className="text-sm text-blue-600 hover:underline">
+        <Link href="/crm/imports" className="text-sm text-blue-600 hover:underline">
           ← Back to pending review
-        </a>
+        </Link>
         <h1 className="text-2xl font-semibold mt-2">
           {item.document_type ?? "(no classification)"}{" "}
           <span className="text-base text-gray-500 font-normal">

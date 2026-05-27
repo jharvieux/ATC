@@ -7,7 +7,8 @@ import { tenantClient } from "@/lib/db/tenant-client";
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour per §32.3.3
 
-export async function GET(req: Request, { params }: { params: { jobId: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ jobId: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx } = await assertPermission(req, { resource: "help_docs", action: "read" });
     // §11.2.2 tenant-scoped surface: help_doc_versions row is owned by the

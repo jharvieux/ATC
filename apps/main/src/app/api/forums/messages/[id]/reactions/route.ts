@@ -8,10 +8,8 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 const ALLOWED_EMOJI = new Set(["thumbs_up", "heart", "laugh", "surprised", "celebrate", "eyes"]);
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "forums", action: "react" });
     const svc = createServiceRoleClient();

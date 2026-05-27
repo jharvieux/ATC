@@ -7,6 +7,7 @@
 // the manual selection just adds metadata; if no cookie, the manual
 // category becomes the first-touch source_origin='agent_set'.
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -78,9 +79,9 @@ export default function ContactCreatePage(): JSX.Element {
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
-      <a href="/crm/contacts" className="text-sm text-blue-600 hover:underline">
+      <Link href="/crm/contacts" className="text-sm text-blue-600 hover:underline">
         ← Back to contacts
-      </a>
+      </Link>
       <h1 className="text-2xl font-semibold mt-2 mb-6">New contact</h1>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
@@ -191,9 +192,9 @@ export default function ContactCreatePage(): JSX.Element {
         >
           {busy ? "Creating…" : "Create contact"}
         </button>
-        <a href="/crm/contacts" className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50">
+        <Link href="/crm/contacts" className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50">
           Cancel
-        </a>
+        </Link>
       </div>
     </div>
   );

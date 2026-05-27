@@ -16,7 +16,8 @@ function shortReferenceId(bug_id: string): string {
   return "BR-" + createHash("sha256").update(bug_id).digest("hex").slice(0, 8).toUpperCase();
 }
 
-export async function GET(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "bug_submission", action: "read" });
     const db = tenantClient(ctx);

@@ -2,7 +2,8 @@
 // Shown when a sensitive route detects a session older than 4 hours.
 // Re-initiates the OAuth flow and returns to the original page.
 
-export default function ReauthPage({ searchParams }: { searchParams: Record<string, string> }): React.ReactElement {
+export default async function ReauthPage(props: { searchParams: Promise<Record<string, string>> }): Promise<React.ReactElement> {
+  const searchParams = await props.searchParams;
   const returnTo = searchParams.return ?? "/";
 
   return (

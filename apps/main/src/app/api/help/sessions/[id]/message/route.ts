@@ -81,7 +81,8 @@ const REWRITE_SENTINEL = "[REWRITE]";
 const PER_SENTENCE_FALLBACK_MESSAGE =
   "Sorry — that response didn't come out right. Please rephrase or try again.";
 
-export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   let ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"];
   let user: Awaited<ReturnType<typeof assertPermission>>["user"];
   let userText: string;

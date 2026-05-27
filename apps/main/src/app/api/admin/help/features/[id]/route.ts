@@ -5,7 +5,8 @@ import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platf
 
 const DECISIONS = new Set(["accepted", "rejected", "deferred", "duplicate"]);
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function PATCH(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   let adminUserId: string;
   try {
     adminUserId = (await assertPlatformAdmin(req)).admin_user_id;

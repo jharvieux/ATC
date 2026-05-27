@@ -9,7 +9,8 @@ import { inngest } from "@/inngest/client";
 
 const OUTCOMES = new Set(["resolved", "submitted", "escalated", "abandoned"]);
 
-export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   try {
     const { ctx, user } = await assertPermission(req, { resource: "help_session", action: "update" });
     const body = (await req.json().catch(() => ({}))) as { outcome?: string };

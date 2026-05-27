@@ -13,10 +13,8 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
-export async function POST(
-  req: Request,
-  { params }: { params: { tenant_id: string } },
-): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ tenant_id: string }> }): Promise<Response> {
+  const params = await props.params;
   let adminUserId: string;
   try {
     adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
