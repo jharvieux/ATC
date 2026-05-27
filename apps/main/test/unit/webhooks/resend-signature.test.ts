@@ -6,7 +6,7 @@
 
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { verifyResendSignature } from "../../../src/app/api/webhooks/resend/route";
+import { verifyResendSignature } from "../../../src/lib/webhooks/resend-signature";
 
 // Generate a Svix-style signed fixture. Mirrors the production signing
 // path exactly so the test fails the moment that path drifts.
