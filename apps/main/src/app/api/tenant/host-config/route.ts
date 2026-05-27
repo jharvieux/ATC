@@ -10,6 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { encryptCredential } from "@/lib/crypto/credential-cipher";
 import { getAdapter, listActiveAdapters } from "@/lib/host-adapters/registry";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -109,13 +110,13 @@ export async function POST(req: Request): Promise<Response> {
       newStatus = "rejected";
     }
 
-    await db
+    await safeAwait(db
       .from("tenant_host_configs")
       .update({
         credential_status: newStatus,
         credential_verified_at: newStatus === "verified" ? new Date().toISOString() : null,
       })
-      .eq("adapter_id", adapter_id);
+      .eq("adapter_id", adapter_id), "tenant_host_configs.update");
 
     return Response.json({ ok: true, credential_status: newStatus });
   } catch (err) {

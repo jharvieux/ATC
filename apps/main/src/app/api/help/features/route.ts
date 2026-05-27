@@ -8,6 +8,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { inngest } from "@/inngest/client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   createFeatureIssue,
   GitHubAPIError,
@@ -86,14 +87,14 @@ export async function POST(req: Request): Promise<Response> {
 
     try {
       const result = await createFeatureIssue(githubInput);
-      await db
+      await safeAwait(db
         .from("feature_requests")
         .update({
           github_issue_number: result.issue_number,
           github_issue_url: result.issue_url,
           github_issue_state: "open",
         })
-        .eq("id", submission_id);
+        .eq("id", submission_id), "feature_requests.update");
       await writeAuditLog({
         tenant_id: ctx.tenant_id,
         actor_user_id: user.id,
@@ -112,10 +113,10 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ id: submission_id, github_issue_state: "open", issue_url: result.issue_url }, { status: 201 });
     } catch (err) {
       if (err instanceof PIIZeroToleranceQuarantineError) {
-        await db
+        await safeAwait(db
           .from("feature_requests")
           .update({ github_issue_state: "quarantined" })
-          .eq("id", submission_id);
+          .eq("id", submission_id), "feature_requests.update");
         await writeAuditLog({
           tenant_id: ctx.tenant_id,
           actor_user_id: user.id,

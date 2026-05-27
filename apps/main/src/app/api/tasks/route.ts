@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertAssignmentAllowed } from "@/lib/tasks/tier-gate";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const TaskCreateSchema = z
   .object({
@@ -97,7 +98,7 @@ export async function POST(req: Request): Promise<Response> {
       remind_at: new Date(dueMs - minutes * 60 * 1000).toISOString(),
       channel: "in_app" as const,
     }));
-    await db.from("task_reminders").insert(reminders);
+    await safeAwait(db.from("task_reminders").insert(reminders), "task_reminders.insert");
   }
 
   return Response.json(data, { status: 201 });

@@ -14,6 +14,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface PutBody {
   catalog: Record<string, ModelPricing>;
@@ -117,7 +118,7 @@ export async function PUT(req: Request): Promise<Response> {
           );
         if (catalogErr) return { error: catalogErr.message };
 
-        await db
+        await safeAwait(db
           .from("platform_settings")
           .upsert(
             {
@@ -126,7 +127,7 @@ export async function PUT(req: Request): Promise<Response> {
               description: "§27.12 — timestamp of last successful AI pricing cache refresh (manual or auto).",
             },
             { onConflict: "key" },
-          );
+          ), "platform_settings.upsert");
 
         return { ok: true, last_refreshed_at: now, model_count: Object.keys(body.catalog).length };
       },

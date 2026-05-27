@@ -4,6 +4,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -93,7 +94,7 @@ export async function POST(req: Request): Promise<Response> {
         // Supersede the previous current version.
         if (prevVersion) {
           recordQuery({ op: "update", table: "legal_documents" });
-          await db.from("legal_documents").update({ superseded_at: effectiveAt }).eq("id", prevVersion.id);
+          await safeAwait(db.from("legal_documents").update({ superseded_at: effectiveAt }).eq("id", prevVersion.id), "legal_documents.update");
         }
 
         // Insert new version.
@@ -123,12 +124,12 @@ export async function POST(req: Request): Promise<Response> {
           recordQuery({ op: "insert", table: "user_consent_pending", row_count: uniqueUsers.length });
 
           for (const authUserId of uniqueUsers) {
-            await db.from("user_consent_pending").upsert({
+            await safeAwait(db.from("user_consent_pending").upsert({
               auth_user_id: authUserId,
               document_type: body.document_type,
               document_id_pending: (newDoc as { id: string }).id,
               flagged_at: new Date().toISOString(),
-            }, { onConflict: "auth_user_id,document_type" });
+            }, { onConflict: "auth_user_id,document_type" }), "user_consent_pending.upsert");
           }
 
           // CodeQL log-injection narrowing: body.document_type is validated

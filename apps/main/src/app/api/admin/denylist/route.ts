@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 function hashTerm(term: string): string {
   return createHash("sha256").update(term.toLowerCase()).digest("hex").slice(0, 12);
@@ -83,10 +84,10 @@ export async function POST(req: Request): Promise<Response> {
         }
         const updated = [...terms, term];
         recordQuery({ op: "update", table: "platform_settings" });
-        await db
+        await safeAwait(db
           .from("platform_settings")
           .update({ value: updated })
-          .eq("key", "supervisor_slur_deny_list");
+          .eq("key", "supervisor_slur_deny_list"), "platform_settings.update");
         // Audit changes carry COUNT ONLY (§24.5 — never the term itself).
         return { added: true, count: updated.length, _changes: { added_count: 1, removed_count: 0 } };
       },
@@ -121,10 +122,10 @@ export async function DELETE(req: Request): Promise<Response> {
           return { removed: false, count: terms.length };
         }
         recordQuery({ op: "update", table: "platform_settings" });
-        await db
+        await safeAwait(db
           .from("platform_settings")
           .update({ value: remaining })
-          .eq("key", "supervisor_slur_deny_list");
+          .eq("key", "supervisor_slur_deny_list"), "platform_settings.update");
         return { removed: true, count: remaining.length, _changes: { added_count: 0, removed_count: 1 } };
       },
     );

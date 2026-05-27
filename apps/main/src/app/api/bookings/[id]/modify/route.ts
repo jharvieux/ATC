@@ -10,6 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import type { ModificationRequest } from "@atc/shared-types";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(
   req: Request,
@@ -79,7 +80,7 @@ export async function POST(
       return Response.json({ error: result.error.message ?? "adapter_modify_failed", code: result.error.code }, { status: 502 });
     }
 
-    await svc.from("bookings").update({ status: "submitted", updated_at: new Date().toISOString() }).eq("id", bookingId);
+    await safeAwait(svc.from("bookings").update({ status: "submitted", updated_at: new Date().toISOString() }).eq("id", bookingId), "bookings.update");
 
     return Response.json({ ok: true, adapter_response: result.value });
   } catch (err) {

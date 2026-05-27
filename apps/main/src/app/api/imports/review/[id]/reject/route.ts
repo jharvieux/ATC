@@ -9,6 +9,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const REJECT_RETENTION_HOURS = 24;
 const RETAIN_FOLLOWUP_HOURS = 7 * 24;
@@ -43,7 +44,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const hours = retainForFollowup ? RETAIN_FOLLOWUP_HOURS : REJECT_RETENTION_HOURS;
   const purgable_at = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 
-  await svc
+  await safeAwait(svc
     .from("import_queue")
     .update({
       status: "rejected",
@@ -52,7 +53,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       rejected_reason: body.reason,
       purgable_at,
     })
-    .eq("id", queueRowId);
+    .eq("id", queueRowId), "import_queue.update");
 
   await writeAuditLog({
     tenant_id: ctx.tenant_id,

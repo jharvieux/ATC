@@ -22,6 +22,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertIntakePathPermitted } from "@/lib/import/tier-gate";
 import { inngest } from "@/inngest/client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const BUCKET = "imported-documents";
@@ -102,11 +103,11 @@ export async function POST(req: Request): Promise<Response> {
   });
   if (upErr) {
     // Roll back the queue row so we don't leave an orphan.
-    await svc.from("import_queue").delete().eq("id", queueRowId);
+    await safeAwait(svc.from("import_queue").delete().eq("id", queueRowId), "import_queue.delete");
     return Response.json({ error: `upload_failed: ${upErr.message}` }, { status: 500 });
   }
 
-  await svc.from("import_queue").update({ uploaded_file_path: objectPath }).eq("id", queueRowId);
+  await safeAwait(svc.from("import_queue").update({ uploaded_file_path: objectPath }).eq("id", queueRowId), "import_queue.update");
   await inngest.send({
     name: "import.queued",
     data: { tenant_id: ctx.tenant_id, import_queue_id: queueRowId },

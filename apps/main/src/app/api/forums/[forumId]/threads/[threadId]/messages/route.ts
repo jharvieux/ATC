@@ -18,6 +18,7 @@ import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { inngest } from "@/inngest/client";
 import { verifyEnvAtBoot } from "@/lib/env";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 interface ModerationScores {
   spam: number;
@@ -247,11 +248,11 @@ export async function POST(
 
     if (moderationError || !moderationResult) {
       // Fail-closed: put into pending_moderation
-      await svc.from("forum_messages").update({
+      await safeAwait(svc.from("forum_messages").update({
         status: "pending_moderation",
         pending_moderation_since: new Date().toISOString(),
         moderation_last_error: moderationError ?? "haiku_no_result",
-      }).eq("id", msg.id);
+      }).eq("id", msg.id), "forum_messages.update");
 
       await inngest.send({
         name: "forum/message.needs_moderation_retry",
@@ -278,11 +279,11 @@ export async function POST(
       });
     }
 
-    await svc.from("forum_messages").update({
+    await safeAwait(svc.from("forum_messages").update({
       status,
       moderation_scores: moderationResult.scores,
       moderation_decision_reason: moderationResult.reasoning,
-    }).eq("id", msg.id);
+    }).eq("id", msg.id), "forum_messages.update");
 
     // Strike only on hidden (not flagged_review per §19.9)
     if (status === "hidden") {

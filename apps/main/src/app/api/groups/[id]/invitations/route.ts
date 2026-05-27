@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type RouteProps = { params: { id: string } };
 
@@ -97,11 +98,11 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
       if (fetchErr) return Response.json({ error: fetchErr.message }, { status: 500 });
 
       // Revoke existing.
-      await svc
+      await safeAwait(svc
         .from("invitations")
         .update({ token_revoked_at: now, token_revoked_reason: "coordinator_revoked" })
         .eq("group_id", params.id)
-        .is("token_revoked_at", null);
+        .is("token_revoked_at", null), "invitations.update");
 
       // Insert fresh rows with new tokens.
       if (active && active.length > 0) {

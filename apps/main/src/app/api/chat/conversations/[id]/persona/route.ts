@@ -9,6 +9,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const KNOWN_SLUGS = new Set([
   "marcus-cole",
@@ -39,11 +40,11 @@ export async function POST(
 
     // Persist the switch as a system transcript line so the chat handler's
     // next turn can pick it up and generate the context summary in-character.
-    await db.from("messages").insert({
+    await safeAwait(db.from("messages").insert({
       conversation_id: id,
       role: "system",
       content: `[persona_switch] active_persona_slug=${slug}`,
-    });
+    }), "messages.insert");
     const { error } = await db
       .from("conversations")
       // active_persona_id is a TODO(personas-fk) UUID column — until the

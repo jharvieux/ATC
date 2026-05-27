@@ -12,6 +12,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const PRO_PLUS_TIERS = new Set(["sub_pro", "sub_agency", "byo_professional", "byo_agency"]);
 
@@ -126,7 +127,7 @@ export async function PUT(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
     if (existing) {
-      await db
+      await safeAwait(db
         .from("customer_chat_tenant_overrides")
         .update({
           soft1_cap: s1,
@@ -136,16 +137,16 @@ export async function PUT(req: Request): Promise<Response> {
           updated_at: new Date().toISOString(),
           updated_by_user_id: userId,
         })
-        .eq("tenant_id", ctx.tenant_id);
+        .eq("tenant_id", ctx.tenant_id), "customer_chat_tenant_overrides.update");
     } else {
-      await db.from("customer_chat_tenant_overrides").insert({
+      await safeAwait(db.from("customer_chat_tenant_overrides").insert({
         tenant_id: ctx.tenant_id,
         soft1_cap: s1,
         soft2_cap: s2,
         hard_cap: hd,
         booking_bonus_percent: bn,
         updated_by_user_id: userId,
-      });
+      }), "customer_chat_tenant_overrides.insert");
     }
 
     // §24.9 audit.

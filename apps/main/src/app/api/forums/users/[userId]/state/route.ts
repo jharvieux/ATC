@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function PATCH(
   req: Request,
@@ -40,7 +41,7 @@ export async function PATCH(
     }
 
     if (action === "mute") {
-      await svc.from("forum_user_state").upsert(
+      await safeAwait(svc.from("forum_user_state").upsert(
         {
           forum_id,
           user_id: params.userId,
@@ -51,9 +52,9 @@ export async function PATCH(
           mute_reason: "coordinator_manual",
         },
         { onConflict: "forum_id,user_id" },
-      );
+      ), "forum_user_state.upsert");
     } else if (action === "unmute") {
-      await svc.from("forum_user_state").upsert(
+      await safeAwait(svc.from("forum_user_state").upsert(
         {
           forum_id,
           user_id: params.userId,
@@ -64,7 +65,7 @@ export async function PATCH(
           mute_reason: null,
         },
         { onConflict: "forum_id,user_id" },
-      );
+      ), "forum_user_state.upsert");
     } else {
       return Response.json({ error: "unknown_action" }, { status: 400 });
     }

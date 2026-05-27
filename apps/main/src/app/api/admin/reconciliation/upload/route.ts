@@ -21,6 +21,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;
@@ -190,7 +191,7 @@ async function processLineItem(
     .maybeSingle();
 
   if (!bookingData) {
-    await db.from("reconciliation_review_queue").insert({
+    await safeAwait(db.from("reconciliation_review_queue").insert({
       tenant_id: tenantId,
       commission_id: null,
       provider_booking_ref: line.provider_booking_ref,
@@ -202,7 +203,7 @@ async function processLineItem(
         received_cents: line.received_amount_cents,
         description: line.description,
       }),
-    });
+    }), "reconciliation_review_queue.insert");
     counts.orphans++;
     return;
   }
@@ -214,14 +215,14 @@ async function processLineItem(
     .maybeSingle();
 
   if (!commData) {
-    await db.from("reconciliation_review_queue").insert({
+    await safeAwait(db.from("reconciliation_review_queue").insert({
       tenant_id: tenantId,
       provider_booking_ref: line.provider_booking_ref,
       variance_cents: BigInt(line.received_amount_cents).toString(),
       source_path: sourcePath,
       status: "orphan",
       notes: JSON.stringify({ reason: "commission_not_found", booking_id: bookingData.id }),
-    });
+    }), "reconciliation_review_queue.insert");
     counts.orphans++;
     return;
   }
@@ -253,7 +254,7 @@ async function processLineItem(
 
   const defaultAction = varianceCents >= REVIEW_HOLD_THRESHOLD_CENTS ? "hold" : "accept";
 
-  await db.from("reconciliation_review_queue").insert({
+  await safeAwait(db.from("reconciliation_review_queue").insert({
     commission_id: comm.id,
     tenant_id: tenantId,
     provider_booking_ref: line.provider_booking_ref,
@@ -266,6 +267,6 @@ async function processLineItem(
       default_action: defaultAction,
       description: line.description,
     }),
-  });
+  }), "reconciliation_review_queue.insert");
   counts.queued++;
 }

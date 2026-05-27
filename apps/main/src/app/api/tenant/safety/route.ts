@@ -10,6 +10,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const PRO_PLUS_TIERS = new Set(["sub_pro", "sub_agency", "byo_professional", "byo_agency"]);
 
@@ -87,14 +88,14 @@ export async function POST(req: Request): Promise<Response> {
     const updated = [...current, term];
 
     if (existing) {
-      await db
+      await safeAwait(db
         .from("tenant_settings")
         .update({ supplemental_hate_speech_denylist: updated, updated_at: new Date().toISOString() })
-        .eq("tenant_id", ctx.tenant_id);
+        .eq("tenant_id", ctx.tenant_id), "tenant_settings.update");
     } else {
-      await db
+      await safeAwait(db
         .from("tenant_settings")
-        .insert({ tenant_id: ctx.tenant_id, supplemental_hate_speech_denylist: updated });
+        .insert({ tenant_id: ctx.tenant_id, supplemental_hate_speech_denylist: updated }), "tenant_settings.insert");
     }
     return Response.json({ ok: true, added: true, count: updated.length });
   } catch (err) {
@@ -130,10 +131,10 @@ export async function DELETE(req: Request): Promise<Response> {
     if (updated.length === current.length) {
       return Response.json({ ok: true, removed: false });
     }
-    await db
+    await safeAwait(db
       .from("tenant_settings")
       .update({ supplemental_hate_speech_denylist: updated, updated_at: new Date().toISOString() })
-      .eq("tenant_id", ctx.tenant_id);
+      .eq("tenant_id", ctx.tenant_id), "tenant_settings.update");
     return Response.json({ ok: true, removed: true });
   } catch (err) {
     return respondToAuthError(err);

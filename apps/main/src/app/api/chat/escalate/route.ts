@@ -8,6 +8,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -33,18 +34,18 @@ export async function POST(req: Request): Promise<Response> {
     });
     if (esErr) return Response.json({ error: esErr.message }, { status: 500 });
 
-    await db
+    await safeAwait(db
       .from("conversations")
       .update({ status: "escalated", last_message_at: new Date().toISOString() })
-      .eq("id", conversationId);
+      .eq("id", conversationId), "conversations.update");
 
     // System transcript entry surfaced to the customer in the UI.
-    await db.from("messages").insert({
+    await safeAwait(db.from("messages").insert({
       conversation_id: conversationId,
       role: "system",
       content:
         "Thanks for chatting! I'm bringing in someone from the team — they'll be in touch shortly.",
-    });
+    }), "messages.insert");
 
     return Response.json({ ok: true });
   } catch (err) {

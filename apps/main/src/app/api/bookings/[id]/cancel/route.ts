@@ -12,6 +12,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { transitionCommissionState } from "@/lib/commissions/state-machine";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type CommissionRow = {
   id: string;
@@ -49,14 +50,14 @@ async function writeClawbackFields(
   amount: bigint,
   reason: string,
 ): Promise<void> {
-  await adminDb
+  await safeAwait(adminDb
     .from("commissions")
     .update({
       clawback_amount_cents: amount.toString(),
       clawback_at: new Date().toISOString(),
       clawback_reason: reason,
     })
-    .eq("id", commissionId);
+    .eq("id", commissionId), "commissions.update");
 }
 
 export async function POST(
@@ -111,7 +112,7 @@ export async function POST(
     }
 
     // Mark booking as cancelled
-    await db
+    await safeAwait(db
       .from("bookings")
       .update({
         status: "cancelled",
@@ -120,7 +121,7 @@ export async function POST(
         cancellation_reason: reason,
         cancellation_reason_category: reasonCategory,
       })
-      .eq("id", bookingId);
+      .eq("id", bookingId), "bookings.update");
 
     // Load commissions
     const { data: commissionData } = await db
@@ -164,20 +165,20 @@ export async function POST(
 
     if (payout.status === "pending") {
       // Within hold period — zero out and cancel payout, insert negative revenue row
-      await adminDb
+      await safeAwait(adminDb
         .from("payout_records")
         .update({ status: "cancelled", amount_cents: 0 })
-        .eq("id", payout.id);
+        .eq("id", payout.id), "payout_records.update");
 
       // Negative platform_revenue row for clawback
-      await adminDb.from("platform_revenue").insert({
+      await safeAwait(adminDb.from("platform_revenue").insert({
         tenant_id: ctx.tenant_id,
         commission_id: commission.id,
         amount_cents: (-BigInt(commission.platform_retained_cents)).toString(),
         currency: commission.currency,
         tier_rate_applied: commission.platform_split_rate,
         notes: "clawback_within_hold_period",
-      });
+      }), "platform_revenue.insert");
 
       // §34.8.2 — record clawback for §36 "Lost revenue from cancellations" report.
       await writeClawbackFields(adminDb, commission.id, commission.gross_commission_cents, "cancelled_during_hold");
@@ -230,14 +231,14 @@ export async function POST(
         );
 
         // Negative revenue row for the reversal
-        await adminDb.from("platform_revenue").insert({
+        await safeAwait(adminDb.from("platform_revenue").insert({
           tenant_id: ctx.tenant_id,
           commission_id: commission.id,
           amount_cents: (-BigInt(commission.platform_retained_cents)).toString(),
           currency: commission.currency,
           tier_rate_applied: commission.platform_split_rate,
           notes: `stripe_reversal:${reversalKey}`,
-        });
+        }), "platform_revenue.insert");
 
         // §34.8.2 — record clawback for §36 report.
         const receivedAmount = commission.received_commission_cents ?? commission.gross_commission_cents;

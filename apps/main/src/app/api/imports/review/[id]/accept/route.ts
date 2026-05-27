@@ -18,6 +18,7 @@ import { promoteImport } from "@/lib/import/promote";
 import { matchStatementLineItems } from "@/lib/import/match-statement-line-items";
 import type { CommissionStatementFields } from "@/lib/import/extractors/types";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type Body = {
   edited_fields?: Record<string, unknown>;
@@ -63,10 +64,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   }
 
   if (body.edited_fields || agentSetRate) {
-    await svc
+    await safeAwait(svc
       .from("import_queue")
       .update({ raw_extracted_fields: merged, parse_failure_reason: null })
-      .eq("id", queueRowId);
+      .eq("id", queueRowId), "import_queue.update");
   }
 
   // §34.5.4 — commission_statement doesn't go through promoteImport (no
@@ -82,7 +83,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     });
 
     const purgable_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    await svc
+    await safeAwait(svc
       .from("import_queue")
       .update({
         status: "accepted",
@@ -93,7 +94,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         // without re-running matching.
         raw_extracted_fields: { ...(merged as object), _match_report: report },
       })
-      .eq("id", queueRowId);
+      .eq("id", queueRowId), "import_queue.update");
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
@@ -131,10 +132,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   // supplied the rate (the promoter's resolver couldn't distinguish
   // agent-edit-on-doc from real doc-parsed).
   if (agentSetRate && result.commission_id) {
-    await svc
+    await safeAwait(svc
       .from("commissions")
       .update({ commission_rate_source: "agent_set" })
-      .eq("id", result.commission_id);
+      .eq("id", result.commission_id), "commissions.update");
   }
 
   return Response.json({

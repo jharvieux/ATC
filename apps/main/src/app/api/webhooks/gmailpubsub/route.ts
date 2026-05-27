@@ -24,6 +24,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { processGmailInboundMessage } from "@/lib/import/process-gmail-message";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISS = ["https://accounts.google.com", "accounts.google.com"];
@@ -137,7 +138,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     const { subject, from_email, to_email, body_text, body_html, threadId, internalDate } = extractMessageFields(msg.value);
 
-    await svc
+    await safeAwait(svc
       .from("gmail_inbound_messages")
       .upsert({
         message_id: messageId,
@@ -151,7 +152,7 @@ export async function POST(req: Request): Promise<Response> {
         received_at: new Date(internalDate).toISOString(),
         raw_payload: msg.value,
         qualifies_for_import: false, // updated by processGmailInboundMessage if it triggers
-      });
+      }), "gmail_inbound_messages.upsert");
 
     const procResult = await processGmailInboundMessage({
       tenant_id: tokenRow.tenant_id,
@@ -168,14 +169,14 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // ── 6. Update the stored history pointer ─────────────────────────────
-  await svc
+  await safeAwait(svc
     .from("gmail_oauth_tokens")
     .update({
       pubsub_history_id: payload.historyId,
       last_healthy_at: new Date().toISOString(),
       last_health_check_at: new Date().toISOString(),
     })
-    .eq("tenant_id", tokenRow.tenant_id);
+    .eq("tenant_id", tokenRow.tenant_id), "gmail_oauth_tokens.update");
 
   return Response.json({ processed: results.length, results });
 }
@@ -299,12 +300,12 @@ async function markHealth(
   status: "token_expired" | "revoked" | "disconnected",
   error: string,
 ): Promise<void> {
-  await svc
+  await safeAwait(svc
     .from("gmail_oauth_tokens")
     .update({
       health_status: status,
       last_health_check_at: new Date().toISOString(),
       last_health_error: error,
     })
-    .eq("tenant_id", tenant_id);
+    .eq("tenant_id", tenant_id), "gmail_oauth_tokens.update");
 }

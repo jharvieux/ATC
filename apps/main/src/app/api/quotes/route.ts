@@ -10,6 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { populateConversionTouch } from "@/lib/attribution/populate-conversion-touch";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -79,12 +80,12 @@ export async function POST(req: Request): Promise<Response> {
     // quote_options row. Multi-option callers post additional options to
     // /api/quotes/:id/options.
     if (Object.keys(optionFields).length > 0) {
-      await db.from("quote_options").insert({
+      await safeAwait(db.from("quote_options").insert({
         tenant_id: ctx.tenant_id,
         quote_id: quoteId,
         option_index: 1,
         ...optionFields,
-      });
+      }), "quote_options.insert");
     }
 
     // §35.6.1 — populate conversion_touch_* from the contact's most

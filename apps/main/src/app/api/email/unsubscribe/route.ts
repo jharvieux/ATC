@@ -6,6 +6,7 @@
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyUnsubscribeToken } from "@/lib/email/unsubscribe-token";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -30,10 +31,10 @@ export async function GET(req: Request): Promise<Response> {
         : "unsubscribe_all";
 
   const svc = createServiceRoleClient();
-  await svc.from("email_suppressions").upsert(
+  await safeAwait(svc.from("email_suppressions").upsert(
     { tenant_id, email_address: email, reason, suppressed_at: new Date().toISOString() },
     { onConflict: "tenant_id,email_address,reason" },
-  );
+  ), "email_suppressions.upsert");
 
   return Response.redirect(new URL("/email/unsubscribe-confirmed", url.origin));
 }

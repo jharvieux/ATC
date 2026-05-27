@@ -18,6 +18,7 @@ import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import { multiplyRate, subtractFee, toRate, type Cents } from "@/lib/money";
 import { writeAuditLog } from "@/lib/audit/write";
 import type { BookingSubmissionRequest } from "@atc/shared-types";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type BookingRow = {
   id: string;
@@ -207,14 +208,14 @@ export async function POST(
 
     // §14.4 Fail-closed: if commission_rate or platform_split_rate is unresolvable, do NOT proceed
     if (commission_rate === null || !health.ok) {
-      await db
+      await safeAwait(db
         .from("bookings")
         .update({
           status: "pending_host_review",
           review_reason: health.ok ? "commission_rate_unresolvable" : "host_adapter_unhealthy",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", bookingId);
+        .eq("id", bookingId), "bookings.update");
 
       await writeAuditLog({
         tenant_id: ctx.tenant_id,
@@ -241,14 +242,14 @@ export async function POST(
     }
 
     if (platform_split_rate === null) {
-      await db
+      await safeAwait(db
         .from("bookings")
         .update({
           status: "pending_host_review",
           review_reason: "missing_platform_split",
           updated_at: new Date().toISOString(),
         })
-        .eq("id", bookingId);
+        .eq("id", bookingId), "bookings.update");
 
       await writeAuditLog({
         tenant_id: ctx.tenant_id,
@@ -354,13 +355,13 @@ export async function POST(
           const variance = Math.abs(hostCents - estimateCents);
           if (variance > allowedVariance) {
             // Pause for customer reconfirmation; do NOT submit to host.
-            await db
+            await safeAwait(db
               .from("bookings")
               .update({
                 status: "pending_customer_reconfirmation",
                 updated_at: new Date().toISOString(),
               })
-              .eq("id", bookingId);
+              .eq("id", bookingId), "bookings.update");
             await writeAuditLog({
               tenant_id: ctx.tenant_id,
               actor_type: "user",
@@ -430,7 +431,7 @@ export async function POST(
     }
 
     // Transition booking to submitted
-    await db
+    await safeAwait(db
       .from("bookings")
       .update({
         status: "submitted",
@@ -439,7 +440,7 @@ export async function POST(
         submitted_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", bookingId);
+      .eq("id", bookingId), "bookings.update");
 
     // §35.6 — populate conversion_touch_* on the booking from the
     // contact's most recent attribution touch. Per §35.6.2 this is read

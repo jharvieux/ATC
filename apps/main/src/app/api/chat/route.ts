@@ -34,6 +34,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import { writeAuditLog } from "@/lib/audit/write";
 import { vendorHealthStatus } from "@/lib/vendor-health/registry";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   checkAnonLimit,
   incrementAnonCounters,
@@ -271,11 +272,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         changes: { audit_correlation_id: auditId, current_count: decision.current_count, summary },
       });
       // Persist the audit id on the counter row so the alert can be re-linked.
-      await svc
+      await safeAwait(svc
         .from("customer_chat_counters")
         .update({ hard_limit_summary_audit_id: auditId })
         .eq("user_id", userId)
-        .eq("tenant_id", tenantId);
+        .eq("tenant_id", tenantId), "customer_chat_counters.update");
 
       await send({ type: "done" });
       await close();
@@ -385,12 +386,12 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   // Persist user message.
-  await svc.from("messages").insert({
+  await safeAwait(svc.from("messages").insert({
     tenant_id: tenantId,
     conversation_id: conversationId,
     role: "user",
     content: userMessage,
-  });
+  }), "messages.insert");
 
   // D-095 — load multi-turn history so the LLM sees prior context.
   // Pulls user+assistant rows in chronological order (the user message
@@ -715,10 +716,10 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         .single();
       assistantMessageId = (ins as { id?: string } | null)?.id ?? null;
     } else {
-      await svc
+      await safeAwait(svc
         .from("messages")
         .update({ content: candidate })
-        .eq("id", assistantMessageId);
+        .eq("id", assistantMessageId), "messages.update");
     }
     if (!assistantMessageId) {
       await send({ type: "error", message: "message_persist_failed" });
@@ -768,16 +769,16 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       "Thanks for chatting! I'm bringing in someone from the team — they'll be in touch shortly.";
     await send({ type: "escalation", body: escalationBody });
     // Persist the escalation message as a separate row so the transcript reflects it.
-    await svc.from("messages").insert({
+    await safeAwait(svc.from("messages").insert({
       tenant_id: tenantId,
       conversation_id: conversationId,
       role: "system",
       content: escalationBody,
-    });
-    await svc
+    }), "messages.insert");
+    await safeAwait(svc
       .from("conversations")
       .update({ status: "escalated", last_message_at: new Date().toISOString() })
-      .eq("id", conversationId);
+      .eq("id", conversationId), "conversations.update");
     await send({ type: "message_id", message_id: assistantMessageId!, conversation_id: conversationId });
     await send({ type: "done" });
     await close();
@@ -799,7 +800,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       malformed: assetValidation.metrics.malformed_count,
     });
     // Persist the sanitized content over the original candidate.
-    await svc.from("messages").update({ content: candidate }).eq("id", assistantMessageId!);
+    await safeAwait(svc.from("messages").update({ content: candidate }).eq("id", assistantMessageId!), "messages.update");
   }
 
   // Surface assets to the client so it can render the [[display_asset:<id>]]
@@ -838,11 +839,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   await close();
 
   // Bump conversation last_message_at + count.
-  await svc
+  await safeAwait(svc
     .from("conversations")
     .update({
       last_message_at: new Date().toISOString(),
       message_count: Math.max(1, customerCurrentCount + 1),
     })
-    .eq("id", conversationId);
+    .eq("id", conversationId), "conversations.update");
 }
