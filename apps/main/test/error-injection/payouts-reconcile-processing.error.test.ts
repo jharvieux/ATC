@@ -1,0 +1,165 @@
+// Tier 1 — payouts-reconcile-processing error-injection.
+//
+// Uses `runPayoutsReconcileProcessing` from PR #275. The cron sweeps
+// payout_records stuck in 'processing' with no stripe_transfer_id,
+// checks Stripe for an existing transfer (via metadata idempotency key),
+// and either writes the recovered ID or re-calls stripe.transfers.create.
+//
+// Failure modes covered:
+//   - Initial fetch returns { error } → throw.
+//   - Missing STRIPE_SECRET_KEY → fail-closed throw.
+//   - Stripe.transfers.list throws → caught per-row, no count bump.
+//   - Tenant lookup returns no stripe_connect_account_id → skip row.
+//   - Existing transfer found → recovered++.
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  /** Rows returned by the initial 'processing' fetch. */
+  processingRows: [] as Array<{
+    id: string;
+    tenant_id: string;
+    amount_cents: number;
+    attempt_generation: number;
+    currency: string;
+    stripe_transfer_id: string | null;
+  }>,
+  /** What initial fetch's error field looks like. */
+  fetchError: null as { message: string } | null,
+  /** Tenant row returned per .from("tenants") lookup. */
+  tenantRow: { stripe_connect_account_id: "acct_test_1" } as { stripe_connect_account_id: string | null } | null,
+  /** Whether stripe.transfers.list returns a matching transfer. */
+  existingTransferMatches: false,
+  /** Whether stripe.transfers.list throws. */
+  listThrows: false,
+}));
+
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({
+    from(table: string) {
+      if (table === "payout_records") {
+        return {
+          select() {
+            const chain: Record<string, unknown> = {
+              eq() { return chain; },
+              is() { return chain; },
+              lt() { return chain; },
+              then(resolve: (v: { data: unknown; error: unknown }) => unknown) {
+                return resolve({ data: mocks.processingRows, error: mocks.fetchError });
+              },
+            };
+            return chain;
+          },
+          // Update of stripe_transfer_id after recovery.
+          update(_payload: unknown) {
+            void _payload;
+            const chain: Record<string, unknown> = {
+              eq() { return chain; },
+              then(resolve: (v: { data: null; error: null }) => unknown) {
+                return resolve({ data: null, error: null });
+              },
+            };
+            return chain;
+          },
+        };
+      }
+      if (table === "tenants") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  single: async () => ({ data: mocks.tenantRow, error: null }),
+                };
+              },
+            };
+          },
+        };
+      }
+      return { select: () => ({}), update: () => ({}), insert: async () => ({ error: null }) };
+    },
+  }),
+}));
+
+vi.mock("stripe", () => {
+  class FakeStripeError extends Error {}
+  class FakeStripe {
+    transfers = {
+      list: async () => {
+        if (mocks.listThrows) throw new Error("synthetic stripe list failure");
+        const baseTransfer = {
+          metadata: { idempotency_key: "payout-payout-1-gen0" },
+          id: "tr_recovered",
+        };
+        return { data: mocks.existingTransferMatches ? [baseTransfer] : [] };
+      },
+      create: async () => ({ id: "tr_new" }),
+    };
+    static errors = { StripeError: FakeStripeError, StripeConnectionError: class extends FakeStripeError {} };
+  }
+  return { default: FakeStripe };
+});
+
+import { runPayoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
+
+const ORIG = process.env.STRIPE_SECRET_KEY;
+
+beforeEach(() => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
+  mocks.processingRows = [
+    {
+      id: "payout-1",
+      tenant_id: "t-1",
+      amount_cents: 5000,
+      attempt_generation: 0,
+      currency: "USD",
+      stripe_transfer_id: null,
+    },
+  ];
+  mocks.fetchError = null;
+  mocks.tenantRow = { stripe_connect_account_id: "acct_test_1" };
+  mocks.existingTransferMatches = false;
+  mocks.listThrows = false;
+});
+
+afterEach(() => {
+  if (ORIG === undefined) delete process.env.STRIPE_SECRET_KEY;
+  else process.env.STRIPE_SECRET_KEY = ORIG;
+  vi.restoreAllMocks();
+});
+
+describe("runPayoutsReconcileProcessing — Pattern 1 (initial fetch DB-fail)", () => {
+  it("throws when the initial payout_records fetch returns error", async () => {
+    mocks.fetchError = { message: "synthetic fetch failure" };
+    await expect(runPayoutsReconcileProcessing()).rejects.toThrow(/synthetic fetch failure/);
+  });
+});
+
+describe("runPayoutsReconcileProcessing — Pattern 2 (Stripe vendor down + missing key)", () => {
+  it("throws when STRIPE_SECRET_KEY is missing", async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    await expect(runPayoutsReconcileProcessing()).rejects.toThrow(/STRIPE_SECRET_KEY/);
+  });
+
+  it("catches per-row Stripe failure and does NOT count it as recovered", async () => {
+    mocks.listThrows = true;
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(0);
+    expect(result.total_processing).toBe(1);
+  });
+});
+
+describe("runPayoutsReconcileProcessing — happy paths", () => {
+  it("recovered++ when an existing matching Stripe transfer is found", async () => {
+    mocks.existingTransferMatches = true;
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(1);
+  });
+
+  it("skips row when tenant has no stripe_connect_account_id", async () => {
+    mocks.tenantRow = { stripe_connect_account_id: null };
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(0);
+    expect(result.total_processing).toBe(1);
+  });
+});
