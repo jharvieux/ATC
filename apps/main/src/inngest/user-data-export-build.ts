@@ -29,16 +29,49 @@ export const userDataExportBuild = inngest.createFunction(
     const db = createServiceRoleClient();
 
     // Gather all data for this user.
+    //
+    // D-091 Round-3 #46 — explicit column allowlist. `select('*')` leaks
+    // internal fields (tenant_id, deleted_at, RLS-internal flags, audit
+    // timestamps) into the CCPA export. The CCPA disclosure obligation
+    // is the user's OWN data, not our internal record-keeping. Each list
+    // below is the user-facing subset; columns added in future migrations
+    // are excluded from the export by default until explicitly added here.
     const [
       { data: userRows },
       { data: convRows },
       { data: bookingRows },
       { data: consentRows },
     ] = await Promise.all([
-      db.from("users").select("*").eq("auth_user_id", auth_user_id),
-      db.from("conversations").select("*").eq("auth_user_id", auth_user_id),
-      db.from("bookings").select("*").eq("auth_user_id", auth_user_id),
-      db.from("legal_consents").select("*").eq("auth_user_id", auth_user_id),
+      db
+        .from("users")
+        .select(
+          "id, email, display_name, first_name, last_name, " +
+            "preferred_persona_slug, marketing_email_opt_in, travel_news_opt_in, " +
+            "memory_opt_out, notif_preferences, email_status, " +
+            "last_signed_in_at, created_at, updated_at",
+        )
+        .eq("auth_user_id", auth_user_id),
+      db
+        .from("conversations")
+        .select(
+          "id, status, active_persona_id, first_message_at, last_message_at, " +
+            "message_count, created_at, updated_at",
+        )
+        .eq("auth_user_id", auth_user_id),
+      db
+        .from("bookings")
+        .select(
+          "id, status, source, total_amount_cents, currency, " +
+            "booked_at, submitted_at, sailed_at, cancelled_at, " +
+            "created_at, updated_at",
+        )
+        .eq("auth_user_id", auth_user_id),
+      db
+        .from("legal_consents")
+        .select(
+          "id, doc_type, doc_version, accepted_at, ip_address, user_agent, created_at",
+        )
+        .eq("auth_user_id", auth_user_id),
     ]);
 
     // Knowledge-chunks live on the RAG service; fetch via signed service JWT.
