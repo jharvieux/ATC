@@ -1,7 +1,7 @@
 // §15.16 — Persistent banner shown when the tenant is non-paying.
 //
 // Server component. Reads the x-payment-banner-state header set by
-// middleware (apps/main/src/middleware.ts), so the banner appears across
+// the proxy (apps/main/src/proxy.ts), so the banner appears across
 // the whole app without per-page wiring.
 //
 // Visibility:

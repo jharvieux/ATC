@@ -165,7 +165,7 @@ function adminForbidden(): NextResponse {
   );
 }
 
-export async function middleware(req: NextRequest): Promise<NextResponse> {
+export async function proxy(req: NextRequest): Promise<NextResponse> {
   const pathname = req.nextUrl.pathname;
 
   // 0. Admin API gate — runs BEFORE everything else so no later code path
