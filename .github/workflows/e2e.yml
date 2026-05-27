@@ -55,6 +55,24 @@ jobs:
       FORENSICS_ENCRYPTION_KEY_CURRENT: p4zfG+1D1S1KXF33Z9wqwfybOnOVGWe4L1dmRDmVk7s=
       FORENSICS_ENCRYPTION_KEY_ID_CURRENT: forensics-v1
       OAUTH_MICROSOFT_ENABLED: 'false'
+      # Microsoft Graph placeholders — env.ts:331 uses z.coerce.boolean() which
+      # treats the string 'false' as truthy (JS gotcha: Boolean('false') === true),
+      # so the schema thinks OAUTH_MICROSOFT_ENABLED is true and requires these.
+      # Real fix lives in env.ts; placeholders unblock CI in the meantime.
+      MICROSOFT_GRAPH_CLIENT_ID: ci-placeholder-msgraph-client-id
+      MICROSOFT_GRAPH_CLIENT_SECRET: ci-placeholder-msgraph-client-secret
+      # GitHub App placeholders — required by env.ts schema since BP31 (#88).
+      # Next 16's instrumentation runs on `next dev` boot, so verifyEnvAtBoot()
+      # now fires during Playwright's webServer startup. Real values aren't
+      # needed for e2e since no test path exercises GitHub App auth.
+      GITHUB_APP_ID: '0'
+      GITHUB_APP_INSTALLATION_ID: '0'
+      GITHUB_APP_PRIVATE_KEY: |
+        -----BEGIN RSA PRIVATE KEY-----
+        ci-placeholder
+        -----END RSA PRIVATE KEY-----
+      GITHUB_REPO_OWNER: ci-placeholder-owner
+      GITHUB_REPO_NAME: ci-placeholder-repo
       # Tier-2 auth bypass
       TEST_AUTH_BYPASS_TOKEN: tier2-local-test-secret
       TEST_AUTH_BYPASS_TENANT_ID: 22222222-0000-0000-0000-0000000000a1
