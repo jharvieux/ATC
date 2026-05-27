@@ -16,7 +16,35 @@ export async function PATCH(
   { params }: { params: { id: string } },
 ): Promise<Response> {
   try {
-    const { ctx, user } = await assertPermission(req, { resource: "forums", action: "edit_message" });
+    // D-091 Round-2 Pattern 9 — one assertPermission per semantic operation.
+    // Previously every branch went through a single edit_message check, which
+    // was over-permissive for coordinator branches (hide/unhide/pin) and
+    // misleading at audit time. Parse the body first, then dispatch with the
+    // correct (resource, action) pair. Body parsing is cheap and the auth
+    // failure case still produces a 401 before any DB read.
+    const body = await req.json().catch(() => ({})) as { action?: string; content?: string };
+    const { action, content } = body;
+
+    const isCoordinatorAction = action === "hide" || action === "unhide" || action === "pin";
+    const isSelfDelete = action === "delete";
+    const isSelfEdit = content !== undefined && !action;
+
+    let ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"];
+    let user: Awaited<ReturnType<typeof assertPermission>>["user"];
+    if (isCoordinatorAction) {
+      // Coordinator hide/unhide/pin — require moderate_thread (owner-only
+      // grant). The is_coordinator instance check below still gates the
+      // specific forum.
+      ({ ctx, user } = await assertPermission(req, { resource: "forums", action: "moderate_thread" }));
+    } else if (isSelfDelete || isSelfEdit) {
+      ({ ctx, user } = await assertPermission(req, { resource: "forums", action: "edit_message" }));
+    } else {
+      // Unknown action — still require the baseline permission so probes can't
+      // distinguish unauthenticated from invalid-body via response timing.
+      ({ ctx, user } = await assertPermission(req, { resource: "forums", action: "edit_message" }));
+      return Response.json({ error: "no_action" }, { status: 400 });
+    }
+
     const svc = createServiceRoleClient();
 
     const { data: msg } = await svc
@@ -39,11 +67,8 @@ export async function PATCH(
       is_coordinator: forum?.coordinator_user_id === user.id,
     };
 
-    const body = await req.json() as { action?: string; content?: string };
-    const { action, content } = body;
-
-    // Coordinator actions
-    if (action === "hide" || action === "unhide" || action === "pin") {
+    // Coordinator actions — instance check (this specific forum's coordinator).
+    if (isCoordinatorAction) {
       if (!canModerate({ user: userPerms, forum: forum ?? { is_locked: false, coordinator_user_id: "" } })) {
         return Response.json({ error: "requires_coordinator" }, { status: 403 });
       }
@@ -73,7 +98,7 @@ export async function PATCH(
     }
 
     // Self-delete (soft)
-    if (action === "delete") {
+    if (isSelfDelete) {
       if ((msg.user_id as string) !== user.id) {
         return Response.json({ error: "cannot_delete_others_message" }, { status: 403 });
       }
