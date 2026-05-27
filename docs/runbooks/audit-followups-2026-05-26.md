@@ -72,23 +72,55 @@ Most are the "allowed on the ok path" pattern (legitimate). The two real problem
 
 **Recommended remediation**: case-by-case review of the 5 ambiguous sites. No lint rule (heuristic too false-positive-prone).
 
-### Credentials in URL — needs targeted sweep
+### Credentials in URL — 2 outbound calls (both Greptile-flagged), 2 customer-channel URLs (safe)
 
-Greptile flagged 2 sites: `apify-pricing-adapter.ts:226` and `cruisemapper-actor.ts:102`. Grep with stricter regex came back empty; the pattern is too varied to grep cleanly.
+Refined grep found 5 matches:
 
-**Recommended remediation**: Ship `atc/no-credentials-in-url` ESLint rule (this PR). Catches the pattern at lint time on any future fetch with credentials in URL.
+```
+apps/main/src/app/api/email/unsubscribe/route.ts:2      ← route doc comment (FP)
+apps/main/src/inngest/precruise-generate-and-send.ts:176 ← customer unsubscribe link (intended channel)
+apps/main/src/lib/tasks/send-reminder-email.ts:96       ← customer unsubscribe link (intended channel)
+apps/main/src/lib/external/cruisemapper/cruisemapper-actor.ts:102 ← OUTBOUND Apify call (Greptile P1)
+apps/main/src/lib/pricing/apify-pricing-adapter.ts:226  ← OUTBOUND Apify call (Greptile P1)
+```
 
-### Service-role usage without ESLint exemption — many sites in `apps/main/src/app/api/forums/*`
+**Real findings: only the 2 Greptile already flagged.** The unsubscribe URLs are customer-facing one-time signed-token channels — token IS the credential, intended URL channel, sent in email body not over fetch.
 
-Forums + sandbox routes import `createServiceRoleClient` directly. The existing `atc/no-direct-service-role-import` rule must be using an allowlist (need to check). Audit: does each forum route legitimately need service-role, or should it use `tenantClient(ctx)`?
+The new `atc/no-credentials-in-url` ESLint rule correctly distinguishes these — it only fires on `fetch()` call-sites, not on URL construction for email bodies.
 
-**Recommended remediation**: separate scoped audit — not infrastructure work.
+**Remediation**: fix the 2 Apify sites per Greptile P1 #2 (move token to `Authorization: Bearer` header). Rule prevents recurrence.
 
-### Tenant_id leak in responses — needs Greptile-style analysis
+### Service-role usage — existing rule already has comprehensive allowlist
 
-Grep can't distinguish data-leak `Response.json({...row})` from validation-error `Response.json({error: "tenant_id required"})`. Pattern requires AST-aware analysis.
+139 sites import `createServiceRoleClient` across the codebase. The existing `atc/no-direct-service-role-import` rule uses a **path-suffix allowlist** (`ALLOWED_PATH_SUFFIXES` in `packages/config/eslint-rules/no-direct-service-role-import.js`) with ~150 documented entries — every Inngest cron, webhook handler, admin endpoint, cross-tenant scan, etc. Each entry has a one-line comment explaining why service-role is required.
 
-**Recommended remediation**: cover via Greptile audits on remaining high-risk areas (next 5 in queue).
+Greptile's finding "`assert-platform-admin.ts` and `factories.ts` import service-role without an `// eslint-disable` exemption comment" describes the WRONG mechanism — the rule uses an allowlist, not inline disable comments. Both files ARE governed by the rule's allowlist (assert-platform-admin.ts is explicitly listed; factories.ts is the more interesting case worth a closer look).
+
+**Real audit-worthy concern**: ensure every NEW service-role caller gets added to the allowlist with a justification comment. The rule itself is the enforcement; the comment is the trail.
+
+**Remediation**: no codebase change needed. Discipline carried forward via the rule.
+
+### Tenant_id leak in responses — 0 cross-tenant leaks, 2 minor over-exposure cases
+
+Refined grep found these spread patterns:
+
+```
+apps/main/src/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts:261, 303
+   return Response.json({ ...msg, ... })    ← spreads forum_messages row (includes tenant_id)
+
+apps/main/src/app/api/admin/legal-docs/route.ts:181
+   return Response.json({ ok: true, ...result })          ← admin (cross-tenant intended)
+apps/main/src/app/api/admin/tenants/review-queue/route.ts:46
+   return Response.json({ ...result, page, ... })          ← admin (cross-tenant intended)
+apps/main/src/app/api/admin/tenants/[id]/custom-domain/route.ts:142
+   return Response.json({ ok: true, ...result })          ← admin (cross-tenant intended)
+```
+
+The 3 admin routes are intentional (platform admins see cross-tenant). The 2 forum routes spread `msg` (a `forum_messages` row) — the response goes to an authenticated tenant user who already knows their own tenant_id, so this is NOT a cross-tenant leak. The risk is **unnecessary attack surface** — fields like `created_by_internal_id` or `moderation_scores_raw` get exposed when they shouldn't be in the public response shape.
+
+**Real findings: 0 cross-tenant leaks. 2 minor over-exposure cases** in forum routes worth tightening to explicit field selection.
+
+**Remediation**: refactor the 2 forum routes to return explicit field selection. Low priority. Note: the Greptile finding (PR #238 P2 #23) was about `/api/retrieve` returning `tenant_id` for global-scope chunks — that's the higher-impact case and is on the P2 punch list above.
 
 ## Patterns identified — preventive infrastructure
 
