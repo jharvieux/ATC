@@ -1,74 +1,80 @@
-# Session state — last updated 2026-05-28 ~03:00 UTC (overnight close)
+# Session state — last updated 2026-05-28 ~19:30 UTC (EOS)
 
 ## Just completed
 
-Overnight autonomous run. Closed F1 + F2 + F3 + #56 + #58 (partial) + #59 + persona-backstory verification. Earlier this session: full P1 + P2 close-out + Node version cleanup.
+Long arc this session: cost-optimization → tool-dispatch polish → automation infrastructure → code-review automation → CI shift-left → session-start auto-triage. 15 PRs merged.
 
 ### PRs merged this session
-- **#331–#351** see prior SESSION snapshot — full P1/P2 close-out + customer AI panel + spec edits
-- **#328** canonical-domain rename (rebased after sitting unmerged) — applied to help docs (`03-branding.md`, `08-usage-and-billing.md`)
-- **#349** booking-detail page (P2 #24)
-- **#350** quote-builder co-pilot (P2 #25)
-- **#352** session+memory+punchlist update
-- **#353** `.nvmrc` + workflow conversion (fix Node 20 deprecation warnings)
-- **#354** F2 (booking list page) + F3 (PATCH state-machine gating)
-- **#355** #59 AI-mode cost-display + projection
-- **#356** persona ↔ backstory verification (no edits — all 6 personas aligned with the doc); commits `specs/TechSpec/agent-backstories-photo-guide.md` extracted from `Review/`
+- **#362** vendor-health Anthropic GET probe drop (1,440 wasted req/day → 0) — _wait, see "Still open" below_
+- **#363** AI Message Batches infra + pre-cruise migration + T-1/multiphase scheduler split
+- **#364** reality-delta appendix + F12 absorbed into P3 #33
+- **#365** F10 + F11 (extract-memory + persona-addendum-screen batches)
+- **#367** F11 sibling — persona-addendum-rescreen-nightly batches
+- **#368** F12 RAG Stage 2 PII redaction batches
+- **#369** §9.6 ai_tool_calls audit table + dispatcher wire-in
+- **#370** §9.6 contact_id threading in chat tool dispatch
+- **#372** dependabot full auto-merge loop: automerge workflow + daily retry-ci + regression detector + vite-major ignore
+- **#375** pre-pr-reviewer subagent + audit-section gate workflow + shift-left planning doc
+- **#376** ai_tool_calls RLS deny policies (migration-lint regression fix from #369)
+- **#377** Phase 1 CI shift-left: affected-tests on PR + nightly full-test on dev
+- **#378** audit-section workflow bot bypass + mandatory pre-push `pnpm verify` rule
+- **#379** Session-start auto-triage protocol
 
-### PRs opened overnight (in flight)
-- **#357** F1 — full supervisor pipeline on `/api/public/chat/[token]`. Adds `public_token_chat` source kind to TenantContext, `tenantContextForPublicTokenChat` factory, `conversations.public_access_token_hash` column (migration `20260627000008`). Closes D-102.
-- **#358** P5 #56 — persona tools registry with full dispatch. 3 real handlers (escalate_to_human, get_customer_context, update_memory), 3 honest placeholders (search_host_inventory, generate_quote, collect_booking_details — each returns structured `not_implemented` + `can_fall_back_to: escalate_to_human`). Wired into `/api/chat` non-streaming branch; streaming-mode + ai_tool_calls audit table are follow-ups.
-- **#359** P5 #58 (partial) — wired Stage 1 prefetch+save end-to-end + built the `/booking/confirmation/[id]` landing page Stage 4 was redirecting to. Stages 2/3 deferred (need new tables / endpoints).
+### Repo + branch protection changes
+- `allow_auto_merge=true` flipped at repo level (enables `gh pr merge --auto`)
+- `pr-audit-section-check` added to dev's required-status-checks
+- Labels created/exist: `regression-suspected`, `nightly-failure`, `full-test`, `auto-triaged` (last one will be created on first auto-triage)
 
-### Punch-list close-outs this overnight
-- **F1** supervisor on token-gated chat — ✅ #357
-- **F2** booking list page — ✅ #354
-- **F3** booking PATCH state-machine — ✅ #354
-- **P5 #56** persona tools registry + dispatch — ✅ #358 (3 real + 3 placeholder)
-- **P5 #58** customer booking flow UI — 🟡 #359 (Stage 1 + confirmation page only; Stages 2/3 deferred)
-- **P5 #59** AI-mode cost display — ✅ #355
-- **Persona ↔ backstory verification** — ✅ #356 (no edits needed)
+### Decisions logged this session (in MEMORY.md, this PR)
+- **D-108** Code-review automation: pre-pr-reviewer subagent + audit-section gate + mandatory pre-push verify; cold-read Layer-2 reviewer deferred until non-me PRs appear
+- **D-109** Dependabot self-managing auto-merge loop: automerge + daily retry-ci + regression detector + vite-major ignore
+- **D-110** CI shift-left Phase 1: vitest related on PR + nightly full-test on dev + fallback rules (label, deep utility, config, refactor threshold)
+- **D-111** Session-start auto-triage protocol — enumerate open issues + PRs, auto-fix mechanical cases, surface judgement cases in the state summary
 
-### Decisions logged this session
-- **D-102** Token-gated public chat ships without §10 supervisor (LATER closed in #357)
-- **D-103** Customer-context system-prompt injection uses server-resolved refs
+### Still open (carried from earlier sessions, NOT merged today)
+- **#362** fix(vendor-health): drop Anthropic from probe — BEHIND, mergeable once update-branched. Pre-dates audit-section requirement; doesn't have an `## Audit` block, will fail the new required check after rebase.
+- **#366** docs(session): log D-106/D-107 and update SESSION.md — BEHIND, same audit-section issue. Carries D-106 (Anthropic Batches) and D-107 (pre-cruise scheduler split) that should land in MEMORY.
 
-### Documented gaps still open
-- **Dependabot PRs #329 #330** — both have real CI failures (Lint, Typecheck, Build, Test fail — not just Vercel). Version bumps must be breaking something. Need human investigation before merge.
-- **Streaming-mode tool support** in `/api/chat` — non-streaming branch wires tools; streaming branch unchanged. Material work (delta buffering + partial tool_use blocks).
-- **`contact_id` threading** in chat tool dispatch — hardcoded to `null` today. Small touch to pull from the conversation row.
-- **Booking flow Stages 2/3** — passenger details + options scaffolding intact but not wired. Need `booking_passengers` CRUD + an addons table.
-- **`ai_tool_calls` audit table** — recommended for queryable post-hoc analysis of which tools fired when.
+Both need audit sections appended before they can merge under the new gate. Quick fix in next session — paste a minimal "clean — no findings" audit block + update-branch.
+
+### Open Dependabot PRs (auto-flow per #372)
+- **#373** dev-dependencies bump (2 updates) — auto-merge enabled, waiting on CI
+- **#374** production-minor-patch bump (9 updates) — auto-merge enabled, waiting on CI
+
+These should self-merge per the new automation. If they're still open in the next session, check the `regression-suspected` label.
 
 ## In flight
 
-Background merge script `/tmp/atc-merge-overnight-final.sh` processing #357 → #358 → #359. Estimated 15-30 min depending on CI rerun cycles.
-
-This docs PR (`docs/overnight-session-wrap`) is separate and will need its own merge.
+Nothing in flight — clean checkpoint.
 
 ## Next step
 
-1. Wait for background merge cascade. If anything fails (DIRTY conflict — likely on `apps/main/src/lib/ai/call-wrapper.ts` since #357 and #358 both touch `AICallPurpose`), resolve and retry.
-2. Investigate dependabot #329/#330 failures. Pin to safe versions if a transitive dep broke something.
-3. Optional: book Stages 2/3 wiring follow-up. Tables + endpoints first.
+1. **First task**: handle #362 and #366 — add audit sections, update-branch, merge. ~5 min.
+2. **Check dependabot**: verify #373/#374 either merged overnight or got `regression-suspected`-labeled by the new detector.
+3. **Verify auto-triage works**: this session protocol is new — the next session should fire the auto-triage step and report findings in the state summary. If it doesn't, we have a bug in the prompt-following.
 
 ## Blocked on user
 
-- **Dependabot #329 / #330** failing CI — needs decision: bump anyway with version-pin escape hatch, or hold until upstream fixes? Look at the actual failure output before deciding.
-- **Streaming tool-use support** — non-streaming is wired but streaming is a real chunk of work. Worth doing? Or accept streaming users get the response without tool calls?
+- **Counsel sign-off** items (P4 #37-#43) — unchanged
+- **Operator decisions** P4 #48-#55 — unchanged
+- **Streaming tool support browser test** — was deferred earlier; #371 didn't merge today (it went DIRTY during the rebase). Track in next session.
+- **#371 streaming-mode tool support** — actually closed/abandoned? Need to check next session.
 
 ## Open questions
 
-- **Persona tool follow-ups**: 3 of the 6 tools (search_host_inventory, generate_quote, collect_booking_details) ship as honest placeholders. Should real implementations happen alongside their owning BPs (BP14 host adapter, §38 quote builder, §20.4 booking submit) or as standalone work?
-- **`ai_tool_calls` audit table** — yes/no for queryable history of tool dispatches? Tonight's logging is just `console.info`.
+- **Phase 2 shift-left**: Turbo remote cache is the next lever (~90s/PR savings). ~2h to wire. Worth doing soon.
+- **`ai_tool_calls` retention**: no purge cron yet. §26.5 audit retention is 7 years; should `ai_tool_calls` follow that or have its own?
+- **Layer 2 cold-read reviewer**: deferred per D-108. Revisit when §32 self-service help ships and bug-fix PRs come from Inngest paths.
 
-## Carried forward (unchanged from prior session)
+## Carried forward (unchanged)
 
-- BP39 follow-up: retroactive react-pdf wire-up
-- BP31: Haiku tolerable-PII redaction confidence/clarity scorer (cost-deferred — punch list P3 #32)
-- BP30: AI behavior eval harness (cost-deferred — punch list P3 #35)
-- BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc (punch list P4 #46)
-- BP24: populate `platform_settings.supervisor_slur_deny_list` (punch list P4 #45)
-- BP23: populate `port_info_chunks` content for 17 ports (punch list P4 #44)
-- BP16/17: counsel sign-off on ICA + AI Liability Disclaimer (punch list P4 #41)
-- §13.9 active vs reactive health probing — operator decision (punch list P4 #48)
+- BP39: retroactive react-pdf wire-up
+- BP31: Haiku tolerable-PII confidence/clarity scorer (cost-deferred — P3 #32)
+- BP30: AI behavior eval harness (cost-deferred — P3 #35)
+- BP25: PLATFORM_PEPPER offsite + DO-NOT-ROTATE doc (P4 #46)
+- BP24: populate `platform_settings.supervisor_slur_deny_list` (P4 #45)
+- BP23: populate `port_info_chunks` for 17 ports (P4 #44)
+- BP16/17: counsel sign-off on ICA + AI Liability Disclaimer (P4 #41)
+- §13.9 active vs reactive health probing — operator decision (P4 #48)
+- Booking flow Stages 2/3 (passenger details + options)
+- persona-addendum-rescreen flush window (4:30→12:30 UTC) — revisit if approved-addendum count grows
