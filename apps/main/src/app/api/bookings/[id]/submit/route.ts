@@ -42,6 +42,7 @@ type TenantRow = {
   id: string;
   prong: string;
   tier_id: string | null;
+  is_sandbox: boolean;
 };
 
 type TierRow = {
@@ -150,20 +151,30 @@ async function submitBooking(
       throw err;
     }
 
-    // Load the tenant (to determine prong and tier)
-    const { data: tenantData } = await adminDb
+    // Load the tenant (to determine prong, tier, and §15.12 sandbox state).
+    // Fail CLOSED on read error per D-091 fail-closed doctrine — a null/errored
+    // tenant must not silently default to non-sandbox posture (would let a
+    // sandboxed tenant's booking reach a real host adapter).
+    const { data: tenantData, error: tenantErr } = await adminDb
       .from("tenants")
-      .select("id, prong, tier_id")
+      .select("id, prong, tier_id, is_sandbox")
       .eq("id", ctx.tenant_id)
       .single();
 
-    const tenant = tenantData as TenantRow | null;
+    if (tenantErr || !tenantData) {
+      return Response.json(
+        { error: "tenant_lookup_failed", detail: tenantErr?.message ?? "no row" },
+        { status: 500 },
+      );
+    }
+
+    const tenant = tenantData as TenantRow;
 
     // Step 1: Resolve platform_split_rate from tier
     let platform_split_rate: number | null = null;
     let hold_period_days = 7;
 
-    if (tenant?.tier_id) {
+    if (tenant.tier_id) {
       const { data: tierData } = await adminDb
         .from("tier_definitions")
         .select("id, platform_split_rate, hold_period_days")
@@ -183,7 +194,11 @@ async function submitBooking(
     // the tenant's actual credentials.
     const correlation_id = crypto.randomUUID();
     const { adapter, ctx: hostCtx } = await selectAdapterForCall(
-      { id: ctx.tenant_id, prong: tenant?.prong ?? "byo_host" },
+      {
+        id: ctx.tenant_id,
+        prong: tenant.prong,
+        is_sandbox: tenant.is_sandbox,
+      },
       { tenant_id: ctx.tenant_id, user_id: null, correlation_id },
     );
 
@@ -471,25 +486,32 @@ async function submitBooking(
 
     const { provider_booking_ref } = submitResult.value;
 
-    // Write commissions row with locked rates and fee snapshot
-    const { error: commissionError } = await db.from("commissions").insert({
-      tenant_id: ctx.tenant_id,
-      booking_id: bookingId,
-      commissionable_fare_cents: fare.toString(),
-      commission_rate,
-      platform_split_rate,
-      gross_commission_cents: gross_commission_cents.toString(),
-      host_booking_fee_cents: host_booking_fee_cents.toString(),
-      host_booking_fee_rule_ref,
-      net_commission_cents: net_commission_cents.toString(),
-      platform_retained_cents: platform_retained_cents.toString(),
-      subhost_payable_cents: subhost_payable_cents.toString(),
-      currency: booking.currency,
-      status: "expected",
-    });
+    // §15.12 sandbox: commissions are NOT created in sandbox mode. The booking
+    // still transitions to 'submitted' so the tenant can exercise the rest of
+    // the flow (confirmation email, status display, etc.) — but no row hits
+    // the commissions table, so no payout balance accrues and no statement
+    // reconciliation will look for it.
+    if (!tenant.is_sandbox) {
+      // Write commissions row with locked rates and fee snapshot
+      const { error: commissionError } = await db.from("commissions").insert({
+        tenant_id: ctx.tenant_id,
+        booking_id: bookingId,
+        commissionable_fare_cents: fare.toString(),
+        commission_rate,
+        platform_split_rate,
+        gross_commission_cents: gross_commission_cents.toString(),
+        host_booking_fee_cents: host_booking_fee_cents.toString(),
+        host_booking_fee_rule_ref,
+        net_commission_cents: net_commission_cents.toString(),
+        platform_retained_cents: platform_retained_cents.toString(),
+        subhost_payable_cents: subhost_payable_cents.toString(),
+        currency: booking.currency,
+        status: "expected",
+      });
 
-    if (commissionError) {
-      return Response.json({ error: "Failed to record commission." }, { status: 500 });
+      if (commissionError) {
+        return Response.json({ error: "Failed to record commission." }, { status: 500 });
+      }
     }
 
     // Transition booking to submitted

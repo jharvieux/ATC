@@ -9,6 +9,7 @@
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { createClient } from "@supabase/supabase-js";
+import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 
 const VALID_RSVP = new Set(["pending", "interested", "not_going", "booked"]);
 
@@ -53,17 +54,36 @@ export async function POST(req: Request, props: { params: Promise<{ token: strin
   // Token-bound-email check: mirror the GET handler. If the token has
   // already been bound to an email, the caller must present a session for
   // that email. Unbound tokens (first use) skip this check.
+  //
+  // Also pull group_id so we can apply §18.10 sailed read-only gate below.
   const { data: invitationRow } = await svc
     .from("invitations")
-    .select("token_bound_email")
+    .select("token_bound_email, group_id")
     .eq("id", invitation_id)
     .maybeSingle();
-  const bound =
-    (invitationRow as { token_bound_email?: string | null } | null)?.token_bound_email ?? null;
+  const inv = invitationRow as { token_bound_email?: string | null; group_id?: string } | null;
+  const bound = inv?.token_bound_email ?? null;
   if (bound) {
     const callerEmail = await authenticatedEmail(req);
     if (!callerEmail || callerEmail !== bound.toLowerCase()) {
       return Response.json({ error: "token_bound_to_different_email" }, { status: 403 });
+    }
+  }
+
+  // §18.10 — RSVP edits blocked once the group has sailed. Travel-start date
+  // marks the group read-only for RSVP/member management (forum stays open
+  // separately per §19.10).
+  if (inv?.group_id) {
+    try {
+      await assertGroupNotSailed(svc, inv.group_id);
+    } catch (e) {
+      if (e instanceof GroupSailedError) {
+        return Response.json(
+          { error: "group_sailed", sailed_at: e.sailed_at, message: "This trip has sailed. RSVP changes are no longer accepted." },
+          { status: 410 },
+        );
+      }
+      return Response.json({ error: "group_sailed_lookup_failed" }, { status: 500 });
     }
   }
 

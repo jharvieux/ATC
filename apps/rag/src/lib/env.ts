@@ -30,9 +30,16 @@ const envSchema = z.object({
   // §28.4 — service-to-service JWT verification. Operator-confirmed waiver
   // on naming (SERVICE_JWT_* instead of INTER_SERVICE_JWT_*).
   SERVICE_JWT_PUBLIC_KEY: z.string().min(1),
+  // Key ID stamped onto JWTs signed with SERVICE_JWT_PUBLIC_KEY. Required —
+  // the verifier maps incoming `kid` headers to the right PEM via this value.
+  // Without it, every kid would map to the same PEM (Greptile audit #7).
+  SERVICE_JWT_KEY_ID_CURRENT: z.string().min(1),
   // Previous public key during rotation overlap. Optional — present only
   // during the overlap window when keys are being rotated.
   SERVICE_JWT_PUBLIC_KEY_PREVIOUS: z.string().optional(),
+  // Required IF SERVICE_JWT_PUBLIC_KEY_PREVIOUS is set. Identifies the kid
+  // that maps to the previous PEM during the rotation overlap window.
+  SERVICE_JWT_KEY_ID_PREVIOUS: z.string().optional(),
   SERVICE_JWT_ACCEPTED_KEY_IDS: z.string().min(1),
   // §28.4 — jti replay cache for inter-service auth (§8.3 fail-closed contract).
   // Spec name: INTER_SERVICE_JTI_CACHE_URL; code reuses REDIS_URL.
@@ -48,6 +55,47 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
   // §28.1 — Vercel-set deployment env (auto on Vercel; passthrough otherwise).
   VERCEL_ENV: z.string().optional(),
+}).superRefine((env, ctx) => {
+  // If a PREVIOUS public key is set (rotation overlap), the corresponding kid
+  // is required so the verifier can route incoming tokens to the right PEM.
+  // Without this pair, a rotation overlap would silently accept tokens but
+  // verify them against the wrong key — Greptile audit #7 inverted.
+  if (env.SERVICE_JWT_PUBLIC_KEY_PREVIOUS && !env.SERVICE_JWT_KEY_ID_PREVIOUS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SERVICE_JWT_KEY_ID_PREVIOUS"],
+      message: "Required when SERVICE_JWT_PUBLIC_KEY_PREVIOUS is set (kid→PEM mapping).",
+    });
+  }
+  if (env.SERVICE_JWT_KEY_ID_PREVIOUS && !env.SERVICE_JWT_PUBLIC_KEY_PREVIOUS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SERVICE_JWT_PUBLIC_KEY_PREVIOUS"],
+      message: "Required when SERVICE_JWT_KEY_ID_PREVIOUS is set (kid→PEM mapping).",
+    });
+  }
+  // Sanity: both current and previous (when set) kids must appear in the
+  // accepted-key-IDs allowlist. A token signed with current kid would be
+  // rejected at the kid-allowlist step if SERVICE_JWT_ACCEPTED_KEY_IDS is
+  // misconfigured to omit it.
+  const acceptedKids = env.SERVICE_JWT_ACCEPTED_KEY_IDS
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!acceptedKids.includes(env.SERVICE_JWT_KEY_ID_CURRENT)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SERVICE_JWT_ACCEPTED_KEY_IDS"],
+      message: `Must include SERVICE_JWT_KEY_ID_CURRENT='${env.SERVICE_JWT_KEY_ID_CURRENT}'.`,
+    });
+  }
+  if (env.SERVICE_JWT_KEY_ID_PREVIOUS && !acceptedKids.includes(env.SERVICE_JWT_KEY_ID_PREVIOUS)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SERVICE_JWT_ACCEPTED_KEY_IDS"],
+      message: `Must include SERVICE_JWT_KEY_ID_PREVIOUS='${env.SERVICE_JWT_KEY_ID_PREVIOUS}'.`,
+    });
+  }
 });
 
 type Env = z.infer<typeof envSchema>;
