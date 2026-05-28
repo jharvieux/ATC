@@ -12,6 +12,7 @@
 //   subhost_payable_cents   = subtractFee(net_commission_cents, platform_retained_cents)
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
@@ -19,6 +20,7 @@ import { multiplyRate, subtractFee, toRate, type Cents } from "@/lib/money";
 import { writeAuditLog } from "@/lib/audit/write";
 import type { BookingSubmissionRequest } from "@atc/shared-types";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { withIdempotencyKey } from "@/lib/http/idempotency";
 
 type BookingRow = {
   id: string;
@@ -63,6 +65,35 @@ export async function POST(
   try {
     const { ctx, user } = await assertPermission(req, { resource: "bookings", action: "submit" });
     const { id: bookingId } = await params;
+
+    // §7.9 — Idempotency-Key support. Wraps the rest of the handler.
+    // If the client sends the same key for the same (route, user) within
+    // 24h, the cached response is replayed and the handler does NOT
+    // re-run. Defends against a retry that lands after the original
+    // network call completed but before the client saw the response.
+    // Bookings/submit is the highest-impact mutation (real money + host
+    // adapter call); this is the first proof-point route to wrap.
+    return await withIdempotencyKey(
+      req,
+      {
+        route: "bookings.submit",
+        auth_user_id: user.id,
+        tenant_id: ctx.tenant_id,
+      },
+      () => submitBooking(req, bookingId, ctx, user),
+    );
+  } catch (err) {
+    return respondToAuthError(err);
+  }
+}
+
+async function submitBooking(
+  req: Request,
+  bookingId: string,
+  ctx: Awaited<ReturnType<typeof assertPermission>>["ctx"],
+  user: Awaited<ReturnType<typeof assertPermission>>["user"],
+): Promise<Response> {
+  try {
 
     const db = tenantClient(ctx);
     const adminDb = createServiceRoleClient();

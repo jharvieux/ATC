@@ -305,6 +305,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // grant a member.
   "/app/api/user/pending-transfer/route.ts",
   "/app/api/auth/transfer-session/undo/route.ts",
+  // §7.9 — Idempotency-Key middleware: reads/writes the cross-tenant
+  // request_idempotency cache (locked down to service_role only via RLS).
+  "/lib/http/idempotency.ts",
+  // §7.9 — request_idempotency purge cron: background Inngest job, no
+  // user session.
+  "/inngest/request-idempotency-purge.ts",
 ];
 
 function endsWithAllowed(filename) {
