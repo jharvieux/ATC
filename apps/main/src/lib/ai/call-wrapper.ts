@@ -66,6 +66,8 @@ export type AICallPurpose =
   // BP34 §34.3.2-3.3 — Inbound import parsing pipeline.
   | "import_classify"
   | "import_extract"
+  // §38.8 — Agent-facing quote-builder AI co-pilot.
+  | "quote_copilot"
   // §38.8.1 / §39.5 — Token-gated customer chat (quote view, itinerary).
   | "public_token_chat";
 
