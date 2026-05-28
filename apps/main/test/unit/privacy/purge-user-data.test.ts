@@ -26,6 +26,9 @@ interface Scenario {
   bookingsNotesNulled: number;
   memoriesDeleted: number;
   conversationIds: string[];
+  // Greptile P2 #13 — count of conversations rows whose user_id was nulled.
+  // Typically equals conversationIds.length unless some were already detached.
+  conversationsUserIdNulled?: number;
 }
 
 function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
@@ -91,6 +94,10 @@ function makeFake(scenario: Scenario, log: CallLog): SupabaseClient {
       let affected: unknown[];
       if (table === "messages") {
         affected = Array.from({ length: scenario.messagesNulled }, (_, i) => ({ id: `m${i}` }));
+      } else if (table === "conversations" && "user_id" in values && values.user_id === null) {
+        // Greptile P2 #13 — conversations.user_id null pass.
+        const n = scenario.conversationsUserIdNulled ?? scenario.conversationIds.length;
+        affected = Array.from({ length: n }, (_, i) => ({ id: `cv${i}` }));
       } else if (table === "quotes") {
         affected = Array.from({ length: scenario.quotesNarrativesNulled }, (_, i) => ({ id: `q${i}` }));
       } else if (table === "bookings" && "notes" in values) {
@@ -195,6 +202,8 @@ describe("purgeUserDataPerRetention", () => {
     const result = await purgeUserDataPerRetention(db, { user_id: "user-1" });
     expect(result.purge_outcome).toBe("success");
     expect(result.counts.category_1_messages_nulled).toBe(5);
+    // Greptile P2 #13 — conversations.user_id is also nulled (1 conv in scenario).
+    expect(result.counts.category_1_conversations_user_id_nulled).toBe(1);
     expect(result.counts.category_2_narratives_nulled).toBe(2);
     expect(result.counts.category_2_memories_deleted).toBe(1);
     expect(result.counts.category_3_notes_anonymized).toBe(2);
