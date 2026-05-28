@@ -9,6 +9,12 @@
 //   The user_id assertion below is defense-in-depth: if the event payload
 //   has a conversation that belongs to a different user, we fail loud.
 // ═══════════════════════════════════════════════════════════════
+//
+// INNGEST-PROBE-ALLOW-MIXED: producer uses tenantClient for all tenant-scoped
+// reads (users / tenants / conversations / messages / customer_memories), then
+// uses createServiceRoleClient ONLY for the ai_batch_requests insert. That
+// table is service-role-only RLS by design (§27.12) — no tenant_id filter
+// would apply. The two surfaces don't overlap; no privilege escalation.
 
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
