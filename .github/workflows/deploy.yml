@@ -68,6 +68,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need enough history for `git diff origin/<base>...HEAD` to find
+          # a merge base. fetch-depth: 0 = full history. Slightly slower
+          # checkout (~5s on this repo) but correct on any divergence depth.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -85,9 +90,8 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        # Fetch base ref so `git diff` can compute the file list.
         run: |
-          git fetch --no-tags --depth=50 origin "${{ github.base_ref }}"
+          git fetch --no-tags origin "${{ github.base_ref }}"
           node scripts/ci-decide-tests.mjs | tee -a "$GITHUB_OUTPUT"
 
       - name: Run full vitest suite (with coverage)

@@ -59,8 +59,12 @@ const CONFIG_PATTERNS = [
 const REFACTOR_FILE_THRESHOLD = 50;
 
 function emit(mode, reason, files = "") {
+  // GitHub Actions $GITHUB_OUTPUT parses one `key=value` per line; multi-line
+  // values break the parser. Collapse whitespace + cap length so any error
+  // detail (e.g. git stderr) stays on one line.
+  const safeReason = String(reason).replace(/\s+/g, " ").trim().slice(0, 200);
   console.log(`mode=${mode}`);
-  console.log(`reason=${reason}`);
+  console.log(`reason=${safeReason}`);
   if (files) console.log(`files=${files}`);
 }
 
