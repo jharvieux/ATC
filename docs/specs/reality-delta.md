@@ -528,3 +528,29 @@ Things the spec describes but that have no implementation yet. Different from §
 - **Don't update entries in-place when more changes land.** Add a new sub-entry with a date stamp. The spec-update pass should incorporate the latest entry.
 - **PR numbers refer to the GitHub repo `jharvieux/ATC`.** Spec updates should link back to the PR for context.
 - **When the spec is updated to match an entry, mark the entry with `> **Spec updated YYYY-MM-DD in commit XXXXX**` rather than deleting it** — gives auditors a paper trail.
+
+---
+
+# Appended 2026-05-27 — operator decisions on punch-list items
+
+Two punch-list items (P2 #17, P2 #18) were resolved by operator decision as spec edits rather than engineering work. Recording them here so the next spec-sync pass applies them; both are pure spec-text changes.
+
+---
+
+## §4 feature matrix — rename "Downline (sub-hosts)" row to "Subcontractor tracking"
+- **Spec said:** §4 feature matrix lists `Downline (sub-hosts) — Y unlimited` for Sub-Host Pro and Sub-Host Agency.
+- **Conflict:** §1.5 explicitly forbids tenant nesting ("strictly two-level structure… No tenant nests beneath another tenant"). Grep confirms zero downline-shaped code in the repo. The matrix row was likely a copy/paste from MLM-tier templates and never applied to this platform.
+- **Operator decision (2026-05-27):** rename the row to `Subcontractor tracking (internal)` — the real sub-host-internal feature documented at §3.4a (which IS implemented per the `subcontractors` table + `(tenant)/settings/subcontractors/page.tsx`). The renamed row also clarifies that the feature is private bookkeeping inside one sub-host's tenant, not platform-managed.
+- **Action for spec update:** §4 matrix — rename the row. Keep the Y/Y values for Sub-Host Pro and Sub-Host Agency (matches the existing UI gating which shows subcontractor tracking for tenant_type='sub_host' regardless of tier sub-level).
+
+## §7.9 / §9.9 — strike "Last-Event-ID for reconnect" claim from SSE prose
+- **Spec said:**
+  - §7.9 "Streaming: chat uses Server-Sent Events (SSE) with Last-Event-ID for reconnect"
+  - §9.9 "Reconnect supported via Last-Event-ID header"
+- **Reality:** chat route streams SSE deltas via TransformStream but never emits `id:` lines per event and never reads the `Last-Event-ID` request header. EventSource's built-in connection-level auto-reconnect works, but server-side resumption from the last delivered event is NOT implemented. For LLM streams, server-side resumption is fundamentally hard (the model has already moved past that point in generation — the right answer is usually to start a fresh turn, not to resume from the middle).
+- **Operator decision (2026-05-27):** strike from spec. EventSource browser-level auto-reconnect IS the actual contract.
+- **Action for spec update:**
+  - §7.9 conventions: change "SSE with Last-Event-ID for reconnect" to "SSE; EventSource browser-level auto-reconnect on connection drop. No application-level resumption — a drop mid-stream prompts the user to re-send."
+  - §9.9: replace "Reconnect supported via Last-Event-ID header" with the same.
+
+---
