@@ -327,6 +327,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // Background Inngest job, no user session; service-role required to
   // read pending requests across tenants.
   "/inngest/ai-batch-flush.ts",
+  // §11.2 / §27.12 — Memory-extraction batch producer/consumer:
+  // ai_batch_requests writes are service-role-only RLS so the producer
+  // can't use tenantClient. The consumer also writes back to
+  // customer_memories using its own tenantClient via factory; the
+  // service-role import here is scoped to enqueue + audit reads.
+  "/inngest/extract-memory.ts",
 ];
 
 function endsWithAllowed(filename) {
