@@ -3,6 +3,18 @@
 // Runs every minute. Pings a lightweight read endpoint on each vendor we
 // depend on. Per-instance — each Vercel function instance maintains its
 // own view of vendor health.
+//
+// NOT probed: Anthropic. Two reasons:
+//   1. Anthropic doesn't expose a free GET endpoint — /v1/messages is
+//      POST only, so the previous probe was returning 405 every minute
+//      (1440 wasted requests/day against the per-minute rate limit, with
+//      no useful signal).
+//   2. Every real Anthropic call already records vendor health via
+//      recordVendorSuccess/Failure in lib/ai/call-wrapper.ts +
+//      lib/ai/stream-wrapper.ts. Real traffic is the right signal; an
+//      idle probe tells us nothing the real path doesn't.
+// If Anthropic ever exposes a cheap GET (e.g., /v1/models for org-key
+// holders), wire it back in.
 
 import { inngest } from "./client";
 import { recordVendorFailure, recordVendorSuccess } from "@/lib/vendor-health/registry";
@@ -33,10 +45,6 @@ export const vendorHealthProbe = inngest.createFunction(
     }
 
     await Promise.allSettled([
-      ping("anthropic", "https://api.anthropic.com/v1/messages", {
-        "anthropic-version": "2023-06-01",
-        "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
-      }),
       ping("openai", "https://api.openai.com/v1/models", {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
       }),
