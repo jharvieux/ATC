@@ -19,6 +19,7 @@ import { updateMemory } from "./handlers/update-memory";
 import { searchHostInventory } from "./handlers/search-host-inventory";
 import { generateQuote } from "./handlers/generate-quote";
 import { collectBookingDetails } from "./handlers/collect-booking-details";
+import { recordToolCall } from "./record-tool-call";
 
 export interface ToolDispatchContext {
   ctx: TenantContext;
@@ -28,6 +29,12 @@ export interface ToolDispatchContext {
   conversation_id: string;
   /** Optional contact id for the current customer (from CRM lookup). */
   contact_id?: string | null;
+  /**
+   * Anthropic's tool_use.id from the source content block. Passed
+   * through so the audit row can correlate with the LLM response.
+   * Optional because some test paths build their own dispatch context.
+   */
+  tool_use_id?: string;
 }
 
 export interface ToolResult {
@@ -54,9 +61,10 @@ export async function dispatchTool(
   input: Record<string, unknown>,
   dispatchCtx: ToolDispatchContext,
 ): Promise<ToolResult> {
+  const startedAt = Date.now();
   const handler = HANDLERS.get(name);
   if (!handler) {
-    return {
+    const result: ToolResult = {
       content: JSON.stringify({
         error: "unknown_tool",
         tool_name: name,
@@ -64,22 +72,49 @@ export async function dispatchTool(
       }),
       was_mutating: false,
     };
+    await recordToolCall({
+      dispatchCtx,
+      tool_name: name,
+      input,
+      result,
+      duration_ms: Date.now() - startedAt,
+      error_text: "unknown_tool",
+    });
+    return result;
   }
   try {
-    return await handler(input, dispatchCtx);
+    const result = await handler(input, dispatchCtx);
+    await recordToolCall({
+      dispatchCtx,
+      tool_name: name,
+      input,
+      result,
+      duration_ms: Date.now() - startedAt,
+    });
+    return result;
   } catch (err) {
     // A handler error becomes a tool_result the LLM can reason about
     // (e.g., "the system can't reach the host adapter — apologize and
     // offer to email the client back"). Throwing here would abort the
     // whole turn which is worse UX.
-    return {
+    const detail = err instanceof Error ? err.message : String(err);
+    const result: ToolResult = {
       content: JSON.stringify({
         error: "tool_handler_failed",
         tool_name: name,
-        detail: err instanceof Error ? err.message : String(err),
+        detail,
       }),
       was_mutating: false,
     };
+    await recordToolCall({
+      dispatchCtx,
+      tool_name: name,
+      input,
+      result,
+      duration_ms: Date.now() - startedAt,
+      error_text: detail,
+    });
+    return result;
   }
 }
 

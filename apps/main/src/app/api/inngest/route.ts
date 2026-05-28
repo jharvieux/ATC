@@ -4,7 +4,7 @@ import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
 import { stripeWebhookIncompleteReconcile } from "@/inngest/stripe-webhook-incomplete-reconcile";
 import { ragSyncRetry, ragSyncCleanup } from "@/inngest/rag-sync-retry";
-import { extractMemory } from "@/inngest/extract-memory";
+import { extractMemory, extractMemoryFromBatchResult } from "@/inngest/extract-memory";
 import { dobEstimateRepromptEligible } from "@/inngest/dob-estimate-reprompt-eligible";
 import { transferFinalize } from "@/inngest/transfer-finalize";
 import { reEncryptOldRecords, backupVerificationReminder } from "@/inngest/re-encrypt-old-records";
@@ -29,8 +29,14 @@ import {
   customDomainCleanupOnTenantRemoval,
 } from "@/inngest/custom-domain-cleanup-on-lifecycle";
 import { crownJewelAnnualAudit } from "@/inngest/crown-jewel-annual-audit";
-import { personaAddendumScreen } from "@/inngest/persona-addendum-screen";
-import { personaAddendumRescreenNightly } from "@/inngest/persona-addendum-rescreen-nightly";
+import {
+  personaAddendumScreen,
+  personaAddendumScreenFromBatchResult,
+} from "@/inngest/persona-addendum-screen";
+import {
+  personaAddendumRescreenNightly,
+  personaAddendumRescreenFromBatchResult,
+} from "@/inngest/persona-addendum-rescreen-nightly";
 // BP34: Inbound import pipeline (§34.3) + retention sweep (§34.4)
 import { importPipeline } from "@/inngest/import-pipeline";
 import { purgeParsedDocuments } from "@/inngest/purge-parsed-documents";
@@ -49,7 +55,10 @@ import { ragPiiRedact } from "@/inngest/rag-pii-redact";
 import { ragNormalize } from "@/inngest/rag-normalize";
 import { ragTenantApprovalRateNightly } from "@/inngest/rag-tenant-approval-rate-nightly";
 // BP23: Email infrastructure + in-app notifications (§23)
-import { preCruiseEmailScheduler } from "@/inngest/pre-cruise-email-scheduler";
+import {
+  preCruiseEmailSchedulerT1,
+  preCruiseEmailSchedulerMultiphase,
+} from "@/inngest/pre-cruise-email-scheduler";
 import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send";
 import { emailSoftBounceRetry } from "@/inngest/email-soft-bounce-retry";
 // BP24: Chat UI maintenance crons (§24)
@@ -101,6 +110,15 @@ import { taskSequenceStepFire } from "@/inngest/task-sequence-step-fire";
 import { taskRemindersFire } from "@/inngest/task-reminders-fire";
 // BP36 §36.6 — attribution_rollup nightly refresh
 import { attributionRollupRefresh } from "@/inngest/attribution-rollup-refresh";
+// §27.12 — Anthropic Message Batches integration.
+import { aiBatchReconcile } from "@/inngest/ai-batch-reconcile";
+import {
+  aiBatchFlushPrecruise,
+  aiBatchFlushMemoryExtraction,
+  aiBatchFlushPersonaAddendumScreen,
+  aiBatchFlushPersonaAddendumRescreen,
+} from "@/inngest/ai-batch-flush";
+import { precruiseSendFromBatchResult } from "@/inngest/precruise-generate-and-send";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -109,6 +127,7 @@ export const { GET, POST, PUT } = serve({
     ragSyncRetry,
     ragSyncCleanup,
     extractMemory,
+    extractMemoryFromBatchResult,
     dobEstimateRepromptEligible,
     transferFinalize,
     reEncryptOldRecords,
@@ -134,7 +153,9 @@ export const { GET, POST, PUT } = serve({
     customDomainCleanupOnTenantRemoval,
     crownJewelAnnualAudit,
     personaAddendumScreen,
+    personaAddendumScreenFromBatchResult,
     personaAddendumRescreenNightly,
+    personaAddendumRescreenFromBatchResult,
     // BP34: Inbound import pipeline (§34.3) + retention sweep (§34.4)
     importPipeline,
     purgeParsedDocuments,
@@ -153,7 +174,8 @@ export const { GET, POST, PUT } = serve({
     ragNormalize,
     ragTenantApprovalRateNightly,
     // BP23: Email infrastructure + in-app notifications (§23)
-    preCruiseEmailScheduler,
+    preCruiseEmailSchedulerT1,
+    preCruiseEmailSchedulerMultiphase,
     precruiseGenerateAndSend,
     emailSoftBounceRetry,
     // BP24: Chat UI maintenance crons (§24)
@@ -209,5 +231,12 @@ export const { GET, POST, PUT } = serve({
     taskRemindersFire,
     // BP36: attribution_rollup nightly refresh (§36.6)
     attributionRollupRefresh,
+    // §27.12 — AI Message Batches.
+    aiBatchReconcile,
+    aiBatchFlushPrecruise,
+    aiBatchFlushMemoryExtraction,
+    aiBatchFlushPersonaAddendumScreen,
+    aiBatchFlushPersonaAddendumRescreen,
+    precruiseSendFromBatchResult,
   ],
 });

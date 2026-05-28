@@ -200,16 +200,21 @@ function buildMockDb(opts: MockOptions): SupabaseClient {
   return db;
 }
 
-// ── Mock the AI call wrapper ──────────────────────────────────────────────
-// BP27: extract-memory now calls instrumentedClaudeCall instead of the
-// Anthropic SDK directly. Mock the wrapper to avoid hitting the real
-// service-role client + ai_call_log insert paths.
+// ── Mock the batch enqueue path ───────────────────────────────────────────
+// §27.12 — extract-memory now enqueues a batch request instead of calling
+// instrumentedClaudeCall directly. The actual Haiku call + merge + write
+// happens in extractMemoryFromBatchResult on completion. Mock the enqueue
+// + the service-role client so the producer's step.run returns cleanly.
 
-vi.mock("@/lib/ai/call-wrapper", () => ({
-  instrumentedClaudeCall: async () => ({
-    text: '{"notes_freeform":"loves ocean views"}',
-    raw: {},
+vi.mock("@/lib/ai/batch/enqueue", () => ({
+  enqueueBatchRequest: async () => ({
+    request_id: "test-request-id-0000-0000-0000-000000000000",
+    enqueued_at: "2026-05-28T00:00:00Z",
   }),
+}));
+
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({}),
 }));
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -243,8 +248,10 @@ describe("runExtractMemory — cross-tenant scope (§11.2.2 mandatory contract)"
       step,
     });
 
-    // Extraction ran successfully against TENANT_A.
-    expect(result.status).toBe("ok");
+    // Producer enqueued the batch successfully against TENANT_A.
+    // (§27.12: the actual write happens in the consumer when the batch
+    // completes; the producer only enqueues.)
+    expect(result.status).toBe("enqueued");
     // Tenant B was never consulted — mock DB only knows TENANT_A.
     // The scope contract is enforced by tenantContextFromInngestEvent → tenantClient(ctx).
   });
@@ -382,101 +389,11 @@ describe("runExtractMemory — debounce (§11.2.3)", () => {
       step,
     });
 
-    expect(result.status).toBe("ok");
+    expect(result.status).toBe("enqueued");
   });
 });
 
-describe("runExtractMemory — optimistic lock conflict (§11.2.4)", () => {
-  it("re-enqueues when UPDATE returns 0 rows (concurrent write detected)", async () => {
-    // Build a DB where the memory UPDATE returns 0 rows (simulating concurrent write)
-    const db = {
-      from: (table: string) => {
-        if (table === "users") {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({ data: { memory_opt_out: false }, error: null }),
-              }),
-            }),
-          };
-        }
-        if (table === "tenants") {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: { ai_mode: "autonomous", background_ai_enabled: true },
-                  error: null,
-                }),
-              }),
-            }),
-          };
-        }
-        if (table === "conversations") {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: { id: CONV_A, user_id: USER_A, status: "active" },
-                  error: null,
-                }),
-              }),
-            }),
-          };
-        }
-        if (table === "messages") {
-          return {
-            select: () => ({
-              eq: () => ({
-                order: () => ({
-                  limit: async () => ({ data: [], error: null }),
-                }),
-              }),
-            }),
-          };
-        }
-        if (table === "customer_memories") {
-          return {
-            select: () => ({
-              eq: () => ({
-                maybeSingle: async () => ({
-                  data: { id: "mem-uuid", user_id: USER_A, last_extracted_at: OLD_TS, updated_at: OLD_TS },
-                  error: null,
-                }),
-              }),
-            }),
-            update: () => ({
-              eq: () => ({
-                eq: () => ({
-                  select: () => ({
-                    // 0 rows — concurrent write won the race
-                    data: [],
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
-          };
-        }
-        return {
-          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
-        };
-      },
-    } as unknown as SupabaseClient;
-
-    const step = makeMockStep();
-    process.env.MEMORY_EXTRACTION_DEBOUNCE_SECONDS = "30"; // 30s < 1h → passes debounce
-
-    const result = await runExtractMemory({
-      tenant_id: TENANT_A,
-      conversation_id: CONV_A,
-      user_id: USER_A,
-      db,
-      step,
-    });
-
-    expect(result.status).toBe("requeued_optimistic_lock_conflict");
-    expect(step.sleptMs).toHaveLength(1);
-    expect(step.sentEvents).toHaveLength(1);
-  });
-});
+// Note: the optimistic-lock-conflict path moved to the consumer
+// (applyExtractedMemory) when extract-memory migrated to the §27.12
+// batch pipeline. Coverage for that path now lives in
+// apps/main/test/unit/inngest/extract-memory-consumer.test.ts.

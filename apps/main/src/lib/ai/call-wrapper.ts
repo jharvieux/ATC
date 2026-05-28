@@ -63,6 +63,7 @@ export type AICallPurpose =
   | "rag_pii_redaction"
   | "rag_relevance_scoring"
   | "persona_addendum_screen"
+  | "persona_addendum_rescreen"
   | "forum_moderation"
   | "precruise_generation"
   | "quote_narrative"
@@ -189,7 +190,10 @@ function currentBillingPeriodRange(): string {
   return `[${start},${end})`;
 }
 
-async function logAndIncrement(args: {
+// Exported so the batch reconciler can write the same shape per-row
+// when results land. Private to lib/ai/* by convention — callers
+// outside lib/ai should not need to invoke this directly.
+export async function logAndIncrement(args: {
   db: ReturnType<typeof createServiceRoleClient>;
   tenant_id: string;
   conversation_id?: string | null;
@@ -346,6 +350,149 @@ export async function instrumentedClaudeCall(
     .map((c) => (c.type === "text" ? c.text : ""))
     .join("");
   return { text, raw: resp };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Anthropic Message Batches — §27.12 cost optimization.
+// ─────────────────────────────────────────────────────────────────────
+//
+// ~50% cheaper per token vs the real-time API, async (up to 24h, usually
+// minutes). Right for any AICallPurpose where the caller isn't a
+// customer waiting on a reply — pre-cruise email generation, memory
+// extraction, RAG ingest enrichment, etc.
+//
+// Producers enqueue via lib/ai/batch/enqueue.ts; the flush cron
+// submits via submitAnthropicBatch; the reconcile cron polls
+// getAnthropicBatchStatus and streams results via getAnthropicBatchResults.
+
+export interface BatchRequest {
+  /** Pairing key — Anthropic returns this on each result row. */
+  custom_id: string;
+  params: {
+    model: string;
+    max_tokens: number;
+    system?: string;
+    messages: Array<{ role: "user" | "assistant"; content: string }>;
+  };
+}
+
+export interface BatchSubmissionResult {
+  /** Anthropic-issued batch identifier. */
+  batch_id: string;
+  /** Anthropic's processing_status field — usually "in_progress" at submit time. */
+  processing_status: string;
+  request_count: number;
+}
+
+export interface BatchStatus {
+  batch_id: string;
+  processing_status: string;
+  /** Totals from Anthropic; only reliable when processing_status==='ended'. */
+  request_counts: {
+    processing: number;
+    succeeded: number;
+    errored: number;
+    canceled: number;
+    expired: number;
+  };
+  ended_at: string | null;
+}
+
+export interface BatchResultRow {
+  custom_id: string;
+  result:
+    | { type: "succeeded"; message: Anthropic.Messages.Message }
+    | { type: "errored"; error: { type: string; message: string } }
+    | { type: "canceled" }
+    | { type: "expired" };
+}
+
+/**
+ * Submit a batch of message-creation requests. No per-request cost
+ * attribution happens here — that's the reconciler's job once results
+ * land, because the actual token counts aren't known at submit time.
+ *
+ * Vendor health is recorded so a submit failure (auth, network) shows
+ * up in the same dashboard as live-call failures.
+ */
+export async function submitAnthropicBatch(args: {
+  requests: BatchRequest[];
+}): Promise<BatchSubmissionResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("submitAnthropicBatch: ANTHROPIC_API_KEY not set");
+  if (args.requests.length === 0) {
+    throw new Error("submitAnthropicBatch: requests array is empty");
+  }
+  // Anthropic limit: 100,000 requests per batch, 256 MB payload. We don't
+  // enforce locally; the SDK surfaces a 4xx if exceeded.
+
+  const anthropic = new Anthropic({ apiKey });
+  try {
+    const batch = await anthropic.messages.batches.create({
+      requests: args.requests.map((r) => ({
+        custom_id: r.custom_id,
+        params: {
+          model: r.params.model,
+          max_tokens: r.params.max_tokens,
+          ...(r.params.system ? { system: r.params.system } : {}),
+          messages: r.params.messages,
+        },
+      })),
+    });
+    recordVendorSuccess("anthropic");
+    return {
+      batch_id: batch.id,
+      processing_status: batch.processing_status ?? "in_progress",
+      request_count: args.requests.length,
+    };
+  } catch (err) {
+    recordVendorFailure("anthropic", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
+
+export async function getAnthropicBatchStatus(batch_id: string): Promise<BatchStatus> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("getAnthropicBatchStatus: ANTHROPIC_API_KEY not set");
+
+  const anthropic = new Anthropic({ apiKey });
+  try {
+    const batch = await anthropic.messages.batches.retrieve(batch_id);
+    recordVendorSuccess("anthropic");
+    return {
+      batch_id: batch.id,
+      processing_status: batch.processing_status ?? "unknown",
+      request_counts: {
+        processing: batch.request_counts?.processing ?? 0,
+        succeeded: batch.request_counts?.succeeded ?? 0,
+        errored: batch.request_counts?.errored ?? 0,
+        canceled: batch.request_counts?.canceled ?? 0,
+        expired: batch.request_counts?.expired ?? 0,
+      },
+      ended_at: batch.ended_at ?? null,
+    };
+  } catch (err) {
+    recordVendorFailure("anthropic", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
+
+/**
+ * Stream batch results as they're parsed. Caller iterates and persists
+ * per row. Anthropic returns these as JSONL; the SDK exposes an async
+ * iterator that yields one BatchResultRow per line.
+ */
+export async function* getAnthropicBatchResults(
+  batch_id: string,
+): AsyncIterableIterator<BatchResultRow> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("getAnthropicBatchResults: ANTHROPIC_API_KEY not set");
+
+  const anthropic = new Anthropic({ apiKey });
+  const stream = await anthropic.messages.batches.results(batch_id);
+  for await (const entry of stream) {
+    yield entry as BatchResultRow;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
