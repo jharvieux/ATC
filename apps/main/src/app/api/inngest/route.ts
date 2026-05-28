@@ -49,7 +49,10 @@ import { ragPiiRedact } from "@/inngest/rag-pii-redact";
 import { ragNormalize } from "@/inngest/rag-normalize";
 import { ragTenantApprovalRateNightly } from "@/inngest/rag-tenant-approval-rate-nightly";
 // BP23: Email infrastructure + in-app notifications (§23)
-import { preCruiseEmailScheduler } from "@/inngest/pre-cruise-email-scheduler";
+import {
+  preCruiseEmailSchedulerT1,
+  preCruiseEmailSchedulerMultiphase,
+} from "@/inngest/pre-cruise-email-scheduler";
 import { precruiseGenerateAndSend } from "@/inngest/precruise-generate-and-send";
 import { emailSoftBounceRetry } from "@/inngest/email-soft-bounce-retry";
 // BP24: Chat UI maintenance crons (§24)
@@ -101,6 +104,10 @@ import { taskSequenceStepFire } from "@/inngest/task-sequence-step-fire";
 import { taskRemindersFire } from "@/inngest/task-reminders-fire";
 // BP36 §36.6 — attribution_rollup nightly refresh
 import { attributionRollupRefresh } from "@/inngest/attribution-rollup-refresh";
+// §27.12 — Anthropic Message Batches integration.
+import { aiBatchReconcile } from "@/inngest/ai-batch-reconcile";
+import { aiBatchFlushPrecruise, aiBatchFlushMemoryExtraction } from "@/inngest/ai-batch-flush";
+import { precruiseSendFromBatchResult } from "@/inngest/precruise-generate-and-send";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -153,7 +160,8 @@ export const { GET, POST, PUT } = serve({
     ragNormalize,
     ragTenantApprovalRateNightly,
     // BP23: Email infrastructure + in-app notifications (§23)
-    preCruiseEmailScheduler,
+    preCruiseEmailSchedulerT1,
+    preCruiseEmailSchedulerMultiphase,
     precruiseGenerateAndSend,
     emailSoftBounceRetry,
     // BP24: Chat UI maintenance crons (§24)
@@ -209,5 +217,10 @@ export const { GET, POST, PUT } = serve({
     taskRemindersFire,
     // BP36: attribution_rollup nightly refresh (§36.6)
     attributionRollupRefresh,
+    // §27.12 — AI Message Batches.
+    aiBatchReconcile,
+    aiBatchFlushPrecruise,
+    aiBatchFlushMemoryExtraction,
+    precruiseSendFromBatchResult,
   ],
 });
