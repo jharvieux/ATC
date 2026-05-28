@@ -686,3 +686,94 @@ Two punch-list items (P2 #17, P2 #18) were resolved by operator decision as spec
 - **Action for spec update:**
   - §7.9 conventions: change "SSE with Last-Event-ID for reconnect" to "SSE; EventSource browser-level auto-reconnect on connection drop. No application-level resumption — a drop mid-stream prompts the user to re-send."
   - §9.9: replace "Reconnect supported via Last-Event-ID header" with the same.
+
+---
+
+# Appended 2026-05-28 — F1/F2/F3 + P5 close-out + shift-left + Batches migration
+
+Covers PRs #354–#363. Bigger updates that move spec text; small deviations land at the end as bullet points.
+
+---
+
+## §10.1a / §38.8.1 / §39.5 — supervisor IS now wired through token-gated chat
+
+- **Spec said:** §10 supervisor "runs on every reply"; D-102 (memory) recorded a gap where token-gated chat surfaces (`/api/public/chat/[token]` for quote view + trip itinerary) shipped without supervisor.
+- **Reality (since #357):** Full §10 pipeline now runs on token-gated chat. New tenant_context source kind `public_token_chat` + factory `tenantContextForPublicTokenChat`. New `conversations.public_access_token_hash TEXT` column (migration 20260627000008) with partial unique index on `(tenant_id, public_access_token_hash) WHERE NOT NULL`. Token is SHA-256-hashed before storage (raw token never persisted alongside the conversation).
+- **Source:** PR #357, MEMORY D-104.
+- **Action for spec update:** §10.1a footnote on supervisor coverage should drop the "deferred for token-only surfaces" note. §38.8.1 + §39.5 prose can describe the supervisor + regen-budget shape directly (was previously hedged).
+
+## §9.6 — persona tools now dispatched; 3 real handlers + 3 honest placeholders
+
+- **Spec said:** §9.6 lists 6 persona tools: `search_host_inventory`, `get_customer_context`, `generate_quote`, `collect_booking_details`, `escalate_to_human`, `update_memory`. Implied each tool runs end-to-end via Anthropic tool_use.
+- **Reality (since #358):** Tool dispatcher + single-pass tool_use loop wired into `/api/chat` non-streaming branch. Three handlers are real: `escalate_to_human` (writes `escalation_topics`), `get_customer_context` (reads contact + recent bookings + customer_memories tenant-scoped), `update_memory` (writes `memory_extractions` queue with `status='pending_customer_review'` — `/settings/memory` is the §11.4 consent gate, NOT direct write to `customer_memories`). Three are honest placeholders returning structured `{ error: "not_implemented", can_fall_back_to: "escalate_to_human" }`: `search_host_inventory` (waits on BP14 adapter standardization), `generate_quote` (conflicts with §38 agent-owned pricing), `collect_booking_details` (conflicts with §20.4 on-page flow). Streaming-mode chat does NOT yet pass tools (F4 follow-up — buffering tool_use blocks across streamed deltas is materially harder).
+- **Source:** PR #358, MEMORY D-105.
+- **Action for spec update:** §9.6 should distinguish real handlers from placeholders, document the placeholder fallback contract, and note streaming-mode tool support is deferred.
+
+## §20.2 — booking-flow customer UI: Stage 1 wired + confirmation page; Stages 2/3 placeholders
+
+- **Spec said:** §20.2 platform-native fallback booking flow assumes 4 stages all wired.
+- **Reality (since #359):** Stage 1 (Trip Details) is end-to-end — prefetches from `GET /api/bookings/[id]`, saves via PATCH, advances. New `/booking/confirmation/[id]` landing page Stage 4 was already redirecting to (pre-PR that target 404'd). Stages 2 (passengers) + 3 (options) remain form scaffolding without backing endpoints — `booking_passengers` CRUD + addons table are the missing surfaces.
+- **Source:** PR #359; F8 follow-up tracks the remaining stages.
+- **Action for spec update:** §20.2 should explicitly mark Stages 2/3 as scaffolding-only and reference the F8 follow-up. §20.4 booking-detail flow assumes the confirmation page exists — that's now true.
+
+## §26.9 — vendor-health probe MUST NOT include Anthropic
+
+- **Spec said:** §26.9 vendor-health probe pings each vendor's lightweight read endpoint every minute.
+- **Reality (since #362):** Anthropic doesn't expose a free GET endpoint — `/v1/messages` is POST-only, so the pre-fix probe sent `GET /v1/messages` every minute and got HTTP 405 every time (1,440 wasted requests/day against the per-minute rate limit, with no useful signal). #362 removes Anthropic from the probe list. Vendor-health for Anthropic still works because every real `instrumentedClaudeCall` / `instrumentedClaudeStream` records `recordVendorSuccess` / `recordVendorFailure`.
+- **Source:** PR #362.
+- **Action for spec update:** §26.9 should call out that Anthropic is intentionally NOT in the probe list (the call-wrapper records vendor health on real traffic). Note the condition for adding it back: Anthropic exposes a cheap GET endpoint (e.g., `/v1/models` for org-tier keys).
+
+## §27.12 — Anthropic Message Batches pipeline shipped
+
+- **Spec said:** §27.12 covers AI cost attribution but does not describe a batch-API pathway. Real-time `instrumentedClaudeCall` is the only documented surface.
+- **Reality (since #363):** New batch pipeline. Two tables (migration `20260528000000_ai_batches.sql`):
+  - **`ai_batch_requests`** — 1 row per unit of work. `tenant_id`, `purpose` (one of `precruise_generation` / `memory_extraction` / `persona_addendum_screen` / `rag_pii_redaction` / `rag_normalization`), `status` (pending → submitted → completed|failed), `request_params` (JSONB — Anthropic message-create payload), `caller_metadata` (JSONB — producer's downstream context), `result_text` / `result_metadata` / `cost_cents` on completion.
+  - **`ai_batch_jobs`** — 1 row per submitted Anthropic batch. `anthropic_batch_id`, `request_count`, `status`, totals.
+
+  Service-role-only RLS; never read by user JWTs.
+
+  New library at `apps/main/src/lib/ai/batch/{enqueue,flush,reconcile,types}.ts` + new public surfaces in `call-wrapper.ts` (`submitAnthropicBatch`, `getAnthropicBatchStatus`, `getAnthropicBatchResults`, plus `logAndIncrement` now exported so the reconciler writes the same `ai_call_log` + `tenant_usage_metrics` shape per row).
+
+  Three new Inngest crons: `ai-batch-reconcile` (every 5 min, concurrency 1), `ai-batch-flush-precruise` (daily 9:30 UTC), `ai-batch-flush-memory-extraction` (hourly).
+
+  Pre-cruise migration: scheduler split into `pre-cruise-email-scheduler-t1` (hourly + direct) and `pre-cruise-email-scheduler-multiphase` (daily 9:00 UTC + batched, ±12h window). Consumer `precruise-generate-and-send` is dual-path via `event.data.via` discriminator. New consumer `precruiseSendFromBatchResult` fires on `ai.batch_request.completed.precruise_generation`. Batched path folds 4-5 separate Haiku calls into 1 structured-JSON request (additional ~75% Anthropic round-trip reduction on top of the ~50% batch discount).
+
+  Cost: T-7/T-30/T-90 emails ~50% cheaper at Haiku layer; T-1 unchanged.
+
+- **Source:** PR #363; lays groundwork for F10–F12 (extract-memory, persona-addendum-screen, RAG ingest enrichment).
+- **Action for spec update:** Add a new subsection §27.12.X "Async pipeline (Anthropic Batches)" describing:
+  - The two-table model + their RLS posture
+  - The `BatchablePurpose` whitelist + how to add a new one
+  - Per-row cost attribution (same `ai_call_log` shape as real-time)
+  - Dual-path producer/consumer pattern (Inngest events as the seam)
+  - When to use batches (async, customer not waiting) vs real-time (chat, supervisor, agent co-pilot)
+
+## §23.4 — pre-cruise scheduler is now TWO functions, not one
+
+- **Spec said:** §23.4 implies a single hourly cron that checks all four T-N phases.
+- **Reality (since #363):**
+  - **`pre-cruise-email-scheduler-t1`** — hourly, ±1h window, T-1 only, fires `precruise/email.due { via: "direct" }`.
+  - **`pre-cruise-email-scheduler-multiphase`** — daily 9:00 UTC, ±12h window, T-7/T-30/T-90, fires `precruise/email.due { via: "batched" }`.
+- **Source:** PR #363.
+- **Action for spec update:** §23.4 schedule prose should describe the split. Cadence table should show T-1 hourly + T-7/30/90 daily.
+
+## §5.4.4 — atc/no-direct-service-role-import error message now self-healing
+
+- **Spec said:** §5.4.4 forbids importing `service-role-client.ts` outside `tenant-client.ts` and `platform-admin-client.ts`; allowlist exceptions live in `packages/config/eslint-rules/no-direct-service-role-import.js`.
+- **Reality (since #361):** Same rule, same allowlist. The error message now derives the exact path suffix the developer needs to add and embeds it in the violation:
+  > "If this route MUST use service-role, add this path suffix to ALLOWED_PATH_SUFFIXES in packages/config/eslint-rules/no-direct-service-role-import.js, with a // comment naming the spec section that justifies it: `"/app/api/foo/route.ts"`,"
+- **Source:** PR #361.
+- **Action for spec update:** §5.4.4 prose can mention that the rule self-suggests the allowlist entry.
+
+## Build / dev infrastructure (no spec impact)
+
+These don't change spec text — recorded so a future spec-sync pass knows they're intentional:
+
+- **`.claude/settings.json` is now committed** (was gitignored); `.claude/settings.local.json` is the per-user override path. The shared file wires three hooks: `block-spec-memory-edits.mjs` (PreToolUse), `lint-changed-file.mjs` (PostToolUse), `typecheck-changed-workspaces.mjs` + `run-affected-tests.mjs` (Stop).
+- **New `pnpm verify` (full) + `pnpm verify:fast` (typecheck + lint) scripts** in root `package.json`. Pre-PR self-review checklist in `docs/runbooks/pr-self-review.md`.
+- **`.nvmrc` carved out** to `24`; all 5 workflows read `node-version-file: ".nvmrc"` (PR #353). Fixes Node 20 deprecation warnings.
+
+## Persona ↔ backstory alignment verified (no spec impact)
+
+- **Source:** PR #356.
+- **What:** The 6 travel personas (`apps/main/src/lib/personas/base-blocks/{marcus,marco,priya,dave,maya,jenny}.ts`) verified faithful to `specs/TechSpec/agent-backstories-photo-guide.md` (mammoth-converted from `Review/specs/Agent Backstories Photo Guide v2.docx`). Report at `docs/specs/persona-backstory-alignment-report.md`. No persona edits needed.
