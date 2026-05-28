@@ -14,6 +14,15 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+
+// Re-export the Anthropic types tool-use callers need, so they don't
+// have to import the SDK directly (the lint rule forbids it outside
+// this file + the stream wrapper).
+export type AnthropicMessage = Anthropic.Messages.Message;
+export type AnthropicContentBlockParam = Anthropic.Messages.ContentBlockParam;
+export type AnthropicToolResultBlockParam = Anthropic.Messages.ToolResultBlockParam;
+export type AnthropicToolUseBlock = Anthropic.Messages.ToolUseBlock;
+export type AnthropicTool = Anthropic.Messages.Tool;
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { getCostEstimate, primePricingCache } from "./pricing";
@@ -251,7 +260,16 @@ export interface InstrumentedClaudeArgs {
   purpose: AICallPurpose;
   max_tokens: number;
   system?: string;
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  // Anthropic accepts string content OR an array of content blocks. The
+  // array form is required for tool_result blocks in the tool-use loop.
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string | Anthropic.Messages.ContentBlockParam[];
+  }>;
+  // §9.6 — optional tool registry. Anthropic returns tool_use blocks in
+  // the response content when the model decides to call one. Callers
+  // dispatch + loop themselves; this wrapper just passes the param.
+  tools?: Anthropic.Messages.Tool[];
 }
 
 export async function instrumentedClaudeCall(
@@ -287,7 +305,8 @@ export async function instrumentedClaudeCall(
       model,
       max_tokens: args.max_tokens,
       ...(cachedSystem ? { system: cachedSystem } : {}),
-      messages: args.messages,
+      messages: args.messages as Anthropic.Messages.MessageParam[],
+      ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
     });
     recordVendorSuccess("anthropic");
   } catch (err) {
