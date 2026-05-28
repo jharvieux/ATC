@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 
 type RouteProps = { params: Promise<{ id: string }> };
 
@@ -63,6 +64,20 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
     if (gErr || !group) return Response.json({ error: "Group not found" }, { status: 404 });
     if (group.coordinator_user_id !== user.id) {
       return Response.json({ error: "Only the group coordinator can manage invitations" }, { status: 403 });
+    }
+
+    // §18.10 — Group invitations management (revoke / reissue) is part of
+    // "member management" which is blocked once the group has sailed.
+    try {
+      await assertGroupNotSailed(svc, params.id);
+    } catch (e) {
+      if (e instanceof GroupSailedError) {
+        return Response.json(
+          { error: "group_sailed", sailed_at: e.sailed_at, message: "This trip has sailed. Invitation management is no longer available." },
+          { status: 410 },
+        );
+      }
+      return Response.json({ error: "group_sailed_lookup_failed" }, { status: 500 });
     }
 
     const now = new Date().toISOString();

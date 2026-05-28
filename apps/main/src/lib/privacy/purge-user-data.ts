@@ -39,6 +39,7 @@ export interface PurgeResult {
   forensics_snapshot_reason: string | null;
   counts: {
     category_1_messages_nulled: number;
+    category_1_conversations_user_id_nulled: number;
     category_2_narratives_nulled: number;
     category_2_memories_deleted: number;
     category_3_notes_anonymized: number;
@@ -56,6 +57,7 @@ export interface PurgeResult {
 
 const empty = {
   category_1_messages_nulled: 0,
+  category_1_conversations_user_id_nulled: 0,
   category_2_narratives_nulled: 0,
   category_2_memories_deleted: 0,
   category_3_notes_anonymized: 0,
@@ -153,6 +155,24 @@ export async function purgeUserDataPerRetention(
         .select("id");
       if (error) throw new Error(`category_1_failed: ${error.message}`);
       counts.category_1_messages_nulled = Array.isArray(nulled) ? nulled.length : 0;
+
+      // Greptile audit-followups P2 #13 — also null conversations.user_id.
+      // Per §25.4a, message bodies are deleted but conversation metadata is
+      // retained for tenant analytics ("N messages of which K were
+      // customer-sent"). The FK to public.users, however, ties the conversation
+      // row to the soon-to-be-purged user — analytics doesn't need the user_id
+      // (already aggregated by conversation_id), and leaving the FK in place
+      // means the user row can't be hard-deleted (FK constraint) and the
+      // anonymization is incomplete (an audit query can still join
+      // conversations -> users to find the deleted user).
+      const { data: convNulled, error: convErr } = await db
+        .from("conversations")
+        .update({ user_id: null })
+        .in("id", conversationIds)
+        .not("user_id", "is", null)
+        .select("id");
+      if (convErr) throw new Error(`category_1_conversations_failed: ${convErr.message}`);
+      counts.category_1_conversations_user_id_nulled = Array.isArray(convNulled) ? convNulled.length : 0;
     }
 
     // Step 4 — Category 2: AI-generated narratives.
@@ -288,6 +308,7 @@ export async function purgeUserDataPerRetention(
       grace_period_ended_at: graceEndedAt,
       executed_at: new Date().toISOString(),
       category_1_messages_nulled_count: counts.category_1_messages_nulled,
+      category_1_conversations_user_id_nulled_count: counts.category_1_conversations_user_id_nulled,
       category_2_narratives_nulled_count: counts.category_2_narratives_nulled,
       category_2_memories_deleted_count: counts.category_2_memories_deleted,
       category_3_notes_anonymized_count: counts.category_3_notes_anonymized,
@@ -352,6 +373,7 @@ async function finishError(
     grace_period_ended_at,
     executed_at: new Date().toISOString(),
     category_1_messages_nulled_count: counts.category_1_messages_nulled,
+    category_1_conversations_user_id_nulled_count: counts.category_1_conversations_user_id_nulled,
     category_2_narratives_nulled_count: counts.category_2_narratives_nulled,
     category_2_memories_deleted_count: counts.category_2_memories_deleted,
     category_3_notes_anonymized_count: counts.category_3_notes_anonymized,

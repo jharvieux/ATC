@@ -33,6 +33,14 @@ export interface SendEmailInput {
     tenant_resend_api_key_encrypted?: string | null;
     email_from_address?: string | null;
     email_from_name?: string | null;
+    // §16.4 — when a tenant has verified their own from-domain via the
+    // /api/tenant/branding/email-domain/verify endpoint, prefer it for the
+    // from address. email_from_domain_verified_at acts as the gate; until
+    // verification succeeds the field is null and we fall back to the
+    // platform default below. Both fields are optional — callers that
+    // don't fetch them get the default behavior.
+    email_from_domain?: string | null;
+    email_from_domain_verified_at?: string | null;
   };
   to: string;
   subject: string;
@@ -56,6 +64,39 @@ export interface EmailSendResult {
 }
 
 const RESEND_API_URL = "https://api.resend.com/emails";
+
+const PLATFORM_DEFAULT_FROM = "noreply@ai-travelconcierge.com";
+
+/**
+ * §16.4 from-address resolver. Precedence:
+ *   1. If a verified email_from_domain exists AND email_from_address looks
+ *      like a local-part-only string (no @), combine them: "support@acme.com".
+ *   2. If email_from_address is a full address (contains @), use it as-is.
+ *      (Legacy behavior — predates the verified-domain feature; the operator
+ *      already typed a full address, so honor it.)
+ *   3. If a verified email_from_domain exists but no email_from_address,
+ *      use "noreply@<verified-domain>".
+ *   4. Fall back to the platform default "noreply@ai-travelconcierge.com".
+ *
+ * "Verified" means email_from_domain_verified_at is non-null. An unverified
+ * domain (set in the UI but DNS not yet confirmed) is ignored to prevent
+ * sending under a domain we haven't proven we own — Resend would reject the
+ * send and the customer would see a bounce.
+ */
+export function resolveFromAddress(args: {
+  email_from_address: string | null;
+  email_from_domain: string | null;
+  email_from_domain_verified_at: string | null;
+}): string {
+  const verifiedDomain = args.email_from_domain_verified_at ? args.email_from_domain : null;
+  const addr = args.email_from_address?.trim() ?? null;
+
+  if (addr && addr.includes("@")) return addr; // legacy full-address override
+  if (verifiedDomain && addr) return `${addr}@${verifiedDomain}`;
+  if (verifiedDomain) return `noreply@${verifiedDomain}`;
+  if (addr) return addr; // operator typed something but no domain — best effort
+  return PLATFORM_DEFAULT_FROM;
+}
 
 export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult> {
   const { db, tenant, to, subject, template_id, category, html } = input;
@@ -96,7 +137,11 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
   // 3 — Resolve from-address
   let apiKey: string;
   const fromName = tenant.email_from_name ?? tenant.legal_name ?? "AI Travel Concierge";
-  const fromAddr = tenant.email_from_address ?? "noreply@ai-travelconcierge.com";
+  const fromAddr = resolveFromAddress({
+    email_from_address: tenant.email_from_address ?? null,
+    email_from_domain: tenant.email_from_domain ?? null,
+    email_from_domain_verified_at: tenant.email_from_domain_verified_at ?? null,
+  });
   const from = `${fromName} <${fromAddr}>`;
 
   if (tenant.email_send_pattern === "tenant_resend") {
