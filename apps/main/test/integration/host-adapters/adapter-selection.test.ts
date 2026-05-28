@@ -70,7 +70,7 @@ describe("selectAdapter — §13.7 flow", () => {
       }),
     });
 
-    const adapter = await selectAdapter({ id: "tenant-123", prong: "byo_host" });
+    const adapter = await selectAdapter({ id: "tenant-123", prong: "byo_host", is_sandbox: false });
     expect(adapter).toBeInstanceOf(FallbackEmailAdapter);
     expect(adapter.adapterId).toBe("fallback-email");
   });
@@ -137,7 +137,7 @@ describe("selectAdapter — §13.7 flow", () => {
       }),
     });
 
-    const adapter = await selectAdapter({ id: "tenant-456", prong: "byo_host" });
+    const adapter = await selectAdapter({ id: "tenant-456", prong: "byo_host", is_sandbox: false });
     // The degraded adapter's adapterId is 'credential-failed'
     expect(adapter.adapterId).toBe("credential-failed");
 
@@ -186,10 +186,42 @@ describe("selectAdapter — §13.7 flow", () => {
       }),
     });
 
-    const adapter = await selectAdapter({ id: "tenant-789", prong: "byo_host" });
+    const adapter = await selectAdapter({ id: "tenant-789", prong: "byo_host", is_sandbox: false });
     const health = await adapter.healthCheck();
     expect(health.ok).toBe(false);
     expect(health.message).toContain("Credential decryption failed");
+  });
+
+  it("§15.12 — is_sandbox=true short-circuits to FallbackEmailAdapter even when a verified config exists", async () => {
+    // Simulate a verified tenant_host_configs row that WOULD have been used
+    // if not for sandbox mode. The short-circuit must run BEFORE the DB query,
+    // so the mock should never be hit. We still set it to a non-null value to
+    // prove the short-circuit isn't accidentally consulting the row.
+    const encrypted = encryptCredential(JSON.stringify({ api_key: "real-tenant-key" }));
+    mockFrom.mockReturnValue({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: {
+                  adapter_id: "test-adapter",
+                  credentials: encrypted,
+                  credential_status: "verified",
+                },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    const adapter = await selectAdapter({ id: "tenant-sandbox", prong: "byo_host", is_sandbox: true });
+    expect(adapter).toBeInstanceOf(FallbackEmailAdapter);
+    expect(adapter.adapterId).toBe("fallback-email");
+    // The mock was set but the short-circuit means it should not have been called.
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });
 
