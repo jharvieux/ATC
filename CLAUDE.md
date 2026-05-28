@@ -321,9 +321,20 @@ Use **Opus 4.7** (`claude-opus-4-7`) only when a build prompt explicitly calls f
 1. The work is complete (not a WIP).
 1. The merge isn’t into a protected release branch.
 
+**Mandatory `## Audit` section in every PR description.**
+
+Before opening a PR, you MUST run both audit subagents and paste their combined output into the PR body under an `## Audit` heading:
+
+1. Invoke `d091-reviewer` for D-091 anti-pattern coverage.
+2. Invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
+3. Combine both outputs into a single `## Audit` block in the PR description. Keep the format `pre-pr-reviewer` emits (Scope / Findings / Tests / Status lines).
+4. If `Status` is anything other than `clean — no findings`, fix the findings or explain why each is acceptable in the same block, BEFORE pushing.
+
+The `pr-audit-section-check` workflow enforces this — it reads the PR body, fails if the `## Audit` section is missing or empty or marked `TBD`. The check is required to merge. **You cannot bypass it.** Dependabot PRs are exempt (they're version bumps with no code logic).
+
 **Workflow:**
 
-- Open PR from feature branch into `dev` with a clear title and body summarizing the change.
+- Open PR from feature branch into `dev` with a clear title and body summarizing the change. Include the `## Audit` block.
 - Wait for CI to complete.
 - If all checks pass, merge (squash merge by default unless the PR has logically separate commits worth preserving).
 - Delete the feature branch after merge.

@@ -1,0 +1,102 @@
+# Enforce that every human-authored PR description includes an
+# `## Audit` section produced by the d091-reviewer + pre-pr-reviewer
+# subagents.
+#
+# This is the Layer-2 forcing function for our local-subagent code review
+# (see CLAUDE.md "Pull requests"). Because only the project maintainer
+# submits PRs (Claude Code sessions), checking that THIS PR's author
+# actually ran the audit is a sufficient proxy for "this PR was audited."
+#
+# What it does:
+#   1. Fetches the PR body.
+#   2. Locates an `## Audit` heading.
+#   3. Confirms the section is non-empty and not a TBD placeholder.
+#   4. Confirms a `Status:` line exists (the subagent's verdict marker).
+#   5. Fails the check if any of the above is missing.
+#
+# Exemptions:
+#   - dependabot[bot] — version-only PRs, no code logic to review
+#   - claude-code-action[bot] / claude[bot] / github-actions[bot] — bots
+#     don't review themselves; the human who triggered the bot owns the PR
+#
+# Listener events include `edited` so that updating the PR body re-runs
+# the check (without `edited`, you can't fix a failed run by editing
+# the description — you'd have to push a no-op commit).
+
+name: pr-audit-section-check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Skip bot-authored PRs.
+    if: |
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'github-actions[bot]' &&
+      github.event.pull_request.user.login != 'claude[bot]' &&
+      github.event.pull_request.user.login != 'claude-code-action[bot]'
+    steps:
+      - name: Verify ## Audit section is present and non-trivial
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BODY:-}" ]; then
+            echo "::error::PR body is empty — no Audit section."
+            echo ""
+            echo "Per CLAUDE.md, every PR description must include an '## Audit' block."
+            echo "Run d091-reviewer + pre-pr-reviewer subagents and paste their combined"
+            echo "output into the PR body under an '## Audit' heading."
+            exit 1
+          fi
+
+          # Extract from "## Audit" to next "## " (or EOF).
+          # awk: print lines between the marker and the next h2.
+          SECTION=$(printf '%s' "$BODY" | awk '
+            BEGIN { capture = 0 }
+            /^## Audit/ { capture = 1; next }
+            /^## / && capture { capture = 0 }
+            capture { print }
+          ')
+
+          if [ -z "$SECTION" ]; then
+            echo "::error::No '## Audit' section found in PR body."
+            echo ""
+            echo "Add an '## Audit' heading + the d091-reviewer + pre-pr-reviewer output."
+            echo "See CLAUDE.md 'Pull requests' for the mandatory format."
+            exit 1
+          fi
+
+          # TBD / placeholder rejection.
+          if printf '%s' "$SECTION" | grep -qiE "^[[:space:]]*(tbd|todo|to be done|n/a)[[:space:]]*$"; then
+            echo "::error::Audit section is a TBD placeholder — actually run the audit."
+            exit 1
+          fi
+
+          # Must contain a Status line — the subagent always emits one.
+          if ! printf '%s' "$SECTION" | grep -qE "^[[:space:]]*\*?\*?Status\*?\*?[[:space:]]*:"; then
+            echo "::error::Audit section is missing a 'Status:' line."
+            echo ""
+            echo "The pre-pr-reviewer subagent emits a Status line (e.g."
+            echo "'Status: clean — no findings' or 'Status: 2 must-fix')."
+            echo "Make sure you pasted the full subagent output, not just notes."
+            exit 1
+          fi
+
+          # Non-trivial content: at least 50 chars after the heading.
+          CHAR_COUNT=$(printf '%s' "$SECTION" | wc -c | tr -d ' ')
+          if [ "$CHAR_COUNT" -lt 50 ]; then
+            echo "::error::Audit section is too short ($CHAR_COUNT chars) — actually paste the audit output."
+            exit 1
+          fi
+
+          echo "✓ Audit section present (chars=$CHAR_COUNT)"
+          printf '%s' "$SECTION" | head -20
