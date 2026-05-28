@@ -364,6 +364,25 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     }
     conversationActivePersonaId = (conv as { active_persona_id?: string } | null)?.active_persona_id ?? null;
   } else {
+    // §15.12 sandbox: stamp is_test on the conversation row at creation time.
+    // Snapshot semantics — a tenant who toggles is_sandbox later does NOT
+    // retroactively flip existing rows.
+    //
+    // Fail CLOSED on read error: if we can't confirm the tenant is non-sandbox,
+    // stamp is_test=true. The flag is immutable after insert, and the audit
+    // surface (analytics dashboards, supervisor sampling) is meant to exclude
+    // test traffic — mislabeling a real conversation as test under-counts real
+    // metrics (recoverable), but mislabeling a sandbox conversation as real
+    // corrupts the firewall (not recoverable). Bias toward over-tagging.
+    const { data: sandboxRow, error: sandboxErr } = await svc
+      .from("tenants")
+      .select("is_sandbox")
+      .eq("id", tenantId)
+      .maybeSingle();
+    const isTest = sandboxErr
+      ? true
+      : Boolean((sandboxRow as { is_sandbox?: boolean } | null)?.is_sandbox);
+
     const { data: created, error: createErr } = await svc
       .from("conversations")
       .insert({
@@ -374,6 +393,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         first_message_at: new Date().toISOString(),
         last_message_at: new Date().toISOString(),
         message_count: 0,
+        is_test: isTest,
       })
       .select("id")
       .single();
