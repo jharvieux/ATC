@@ -1,16 +1,33 @@
 // §16.6 — Nightly re-screen of all approved persona addendums.
 // Catches model improvements + newly-discovered adversarial patterns.
 // Runs daily at 04:00 UTC.
+//
+// §27.12 batch migration: this function used to call Haiku synchronously
+// per addendum. It now ENQUEUES one batch request per approved row via
+// the §27.12 batch pipeline. A new consumer
+// (`personaAddendumRescreenFromBatchResult`) handles the
+// suspend-on-fail + notification + audit when each row's result lands.
+//
+// Why a separate purpose from `persona_addendum_screen`:
+//   The pass/fail semantics differ. On the initial screen,
+//   pass→approved + fail→rejected (a freshly-submitted addendum is in
+//   "pending"). On rescreen, the row is already "approved" so the only
+//   action is to suspend (or no-op on pass). Different downstream
+//   behavior = different purpose, separate consumer + flush cron.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { screenAddendumHaiku } from "@/lib/personas/screen-addendum-haiku";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
+import { HAIKU_MODEL, SCREENING_SYSTEM_PROMPT, parseScreenResult } from "./persona-addendum-screen";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+
+// ── Producer ─────────────────────────────────────────────────────────────────
 
 export const personaAddendumRescreenNightly = inngest.createFunction(
   {
@@ -27,91 +44,189 @@ export const personaAddendumRescreenNightly = inngest.createFunction(
 
     if (error) {
       console.error("[persona-addendum-rescreen-nightly] fetch failed: %s", error.message);
-      return;
+      return { enqueued: 0, error: error.message };
     }
 
-    let reviewed = 0;
-    let suspended = 0;
+    const approved = (rows ?? []) as Array<{
+      id: string;
+      tenant_id: string;
+      persona_slug: string;
+      content: string;
+    }>;
 
-    for (const row of (rows ?? []) as { id: string; tenant_id: string; persona_slug: string; content: string }[]) {
-      reviewed++;
+    let enqueued = 0;
+    for (const row of approved) {
       try {
-        const result = await screenAddendumHaiku(row.content, { tenant_id: row.tenant_id });
-
-        if (result.pass) {
-          await safeAwait(db
-            .from("persona_addendums")
-            .update({
-              haiku_screen_result: result as unknown as Record<string, unknown>,
-              haiku_screened_at: new Date().toISOString(),
-            })
-            .eq("id", row.id), "persona_addendums.update");
-        } else {
-          await safeAwait(db
-            .from("persona_addendums")
-            .update({
-              haiku_screen_result: result as unknown as Record<string, unknown>,
-              haiku_screened_at: new Date().toISOString(),
-              status: "suspended",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", row.id), "persona_addendums.update");
-          suspended++;
-          // Notify tenant owners that the addendum was suspended.
-          try {
-            const { data: owners } = await db
-              .from("users")
-              .select("email")
-              .eq("tenant_id", row.tenant_id)
-              .eq("status", "active");
-            const recipients = ((owners ?? []) as Array<{ email: string }>).map((u) => u.email);
-            if (recipients.length > 0) {
-              const { sendTenantNotification } = await import("@/lib/email/notifications");
-              const findingsList = result.findings
-                .map((f) => `<li><strong>${f.category}:</strong> ${escapeHtml(f.evidence)}</li>`)
-                .join("");
-              const html = `<h2>Persona addendum suspended</h2>
-                <p>The nightly rescreen flagged your <strong>${row.persona_slug}</strong> addendum
-                for policy concerns. It has been suspended pending review.</p>
-                <ul>${findingsList}</ul>
-                <p>Please revise and resubmit from your tenant settings, or contact support.</p>`;
-              for (const to of recipients) {
-                await sendTenantNotification({
-                  db,
-                  tenant_id: row.tenant_id,
-                  to,
-                  subject: "Persona addendum suspended",
-                  html,
-                  category: "transactional",
-                  template_id: "persona_addendum_suspended",
-                });
-              }
-            }
-          } catch (notifyErr) {
-            console.warn(
-              "[persona-addendum-rescreen-nightly] notification failed: %s",
-              notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
-            );
-          }
-          await writeAuditLog({
+        await enqueueBatchRequest({
+          tenant_id: row.tenant_id,
+          purpose: "persona_addendum_rescreen",
+          request_params: {
+            model: HAIKU_MODEL,
+            max_tokens: 1024,
+            system: SCREENING_SYSTEM_PROMPT,
+            messages: [
+              {
+                role: "user",
+                content: `Screen the following persona addendum:\n\n---\n${row.content}\n---`,
+              },
+            ],
+          },
+          caller_metadata: {
             tenant_id: row.tenant_id,
-            actor_type: "system",
-            action: "persona_addendum.suspended_on_rescreen",
-            resource_type: "persona_addendum",
-            resource_id: row.id,
-            changes: { persona_slug: row.persona_slug, findings_count: result.findings.length },
-          });
-          console.warn(
-            "[persona-addendum-rescreen-nightly] SUSPENDED tenant=%s persona=%s findings=%d",
-            row.tenant_id, row.persona_slug, result.findings.length,
-          );
-        }
+            addendum_id: row.id,
+            persona_slug: row.persona_slug,
+          },
+          db,
+        });
+        enqueued++;
       } catch (e) {
-        console.error("[persona-addendum-rescreen-nightly] error addendum=%s: %s", row.id, e);
+        console.error(
+          "[persona-addendum-rescreen-nightly] enqueue failed addendum=%s: %s",
+          row.id,
+          e instanceof Error ? e.message : String(e),
+        );
       }
     }
 
-    console.info("[persona-addendum-rescreen-nightly] reviewed=%d suspended=%d", reviewed, suspended);
-    return { reviewed, suspended };
+    console.info("[persona-addendum-rescreen-nightly] enqueued=%d total_approved=%d", enqueued, approved.length);
+    return { enqueued, total_approved: approved.length };
+  },
+);
+
+// ── Consumer ─────────────────────────────────────────────────────────────────
+//
+// Fires per row when the reconciler completes a persona_addendum_rescreen batch.
+// On pass: update screened_at + cached result (status stays "approved").
+// On fail: suspend the row, email tenant owners, audit-log.
+
+export interface ApplyRescreenInput {
+  db: SupabaseClient;
+  tenant_id: string;
+  addendum_id: string;
+  persona_slug: string;
+  result_text: string;
+}
+
+export type ApplyRescreenResult =
+  | { status: "approved"; findings_count: 0 }
+  | { status: "suspended"; findings_count: number };
+
+export async function applyRescreenResult({
+  db,
+  tenant_id,
+  addendum_id,
+  persona_slug,
+  result_text,
+}: ApplyRescreenInput): Promise<ApplyRescreenResult> {
+  const result = parseScreenResult(result_text);
+
+  if (result.pass) {
+    await safeAwait(
+      db
+        .from("persona_addendums")
+        .update({
+          haiku_screen_result: result as unknown as Record<string, unknown>,
+          haiku_screened_at: new Date().toISOString(),
+        })
+        .eq("id", addendum_id),
+      "persona_addendums.update",
+    );
+    return { status: "approved", findings_count: 0 };
+  }
+
+  // Suspend on fail (different from initial screen which rejects).
+  await safeAwait(
+    db
+      .from("persona_addendums")
+      .update({
+        haiku_screen_result: result as unknown as Record<string, unknown>,
+        haiku_screened_at: new Date().toISOString(),
+        status: "suspended",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", addendum_id),
+    "persona_addendums.update",
+  );
+
+  try {
+    const { data: owners } = await db
+      .from("users")
+      .select("email")
+      .eq("tenant_id", tenant_id)
+      .eq("status", "active");
+    const recipients = ((owners ?? []) as Array<{ email: string }>).map((u) => u.email);
+    if (recipients.length > 0) {
+      const { sendTenantNotification } = await import("@/lib/email/notifications");
+      const findingsList = result.findings
+        .map((f) => `<li><strong>${f.category}:</strong> ${escapeHtml(f.evidence)}</li>`)
+        .join("");
+      const html = `<h2>Persona addendum suspended</h2>
+        <p>The nightly rescreen flagged your <strong>${persona_slug}</strong> addendum
+        for policy concerns. It has been suspended pending review.</p>
+        <ul>${findingsList}</ul>
+        <p>Please revise and resubmit from your tenant settings, or contact support.</p>`;
+      for (const to of recipients) {
+        await sendTenantNotification({
+          db,
+          tenant_id,
+          to,
+          subject: "Persona addendum suspended",
+          html,
+          category: "transactional",
+          template_id: "persona_addendum_suspended",
+        });
+      }
+    }
+  } catch (notifyErr) {
+    console.warn(
+      "[persona-addendum-rescreen:consumer] notification failed: %s",
+      notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+    );
+  }
+
+  await writeAuditLog({
+    tenant_id,
+    actor_type: "system",
+    action: "persona_addendum.suspended_on_rescreen",
+    resource_type: "persona_addendum",
+    resource_id: addendum_id,
+    changes: { persona_slug, findings_count: result.findings.length },
+  });
+
+  console.warn(
+    "[persona-addendum-rescreen:consumer] SUSPENDED tenant=%s persona=%s findings=%d",
+    tenant_id,
+    persona_slug,
+    result.findings.length,
+  );
+  return { status: "suspended", findings_count: result.findings.length };
+}
+
+export const personaAddendumRescreenFromBatchResult = inngest.createFunction(
+  {
+    id: "persona-addendum-rescreen-from-batch-result",
+    triggers: [{ event: "ai.batch_request.completed.persona_addendum_rescreen" }],
+  },
+  async ({ event }) => {
+    const { tenant_id, result_text, caller_metadata } = event.data as {
+      tenant_id: string;
+      result_text: string;
+      caller_metadata: { tenant_id: string; addendum_id: string; persona_slug: string } | null;
+    };
+    if (!caller_metadata) {
+      console.error("[persona-addendum-rescreen:consumer] missing caller_metadata");
+      return { error: "missing_caller_metadata" };
+    }
+    const { addendum_id, persona_slug } = caller_metadata;
+    const db = createServiceRoleClient();
+
+    const outcome = await applyRescreenResult({
+      db,
+      tenant_id,
+      addendum_id,
+      persona_slug,
+      result_text,
+    });
+    return { addendum_id, ...outcome };
   },
 );

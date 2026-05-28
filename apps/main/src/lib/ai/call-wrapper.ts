@@ -63,6 +63,7 @@ export type AICallPurpose =
   | "rag_pii_redaction"
   | "rag_relevance_scoring"
   | "persona_addendum_screen"
+  | "persona_addendum_rescreen"
   | "forum_moderation"
   | "precruise_generation"
   | "quote_narrative"
