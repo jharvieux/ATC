@@ -1,0 +1,84 @@
+# Re-trigger failed CI on open Dependabot PRs, daily.
+#
+# Why this exists:
+#   pnpm's `minimumReleaseAge` policy rejects any lockfile entry whose
+#   package was published less than 24h before the install. Dependabot
+#   often opens PRs minutes after a package publishes, so the initial CI
+#   run fails on the supply-chain check. CI does not re-run by itself —
+#   so the PR sits forever with auto-merge enabled but pending.
+#
+#   This cron fires at 22:00 UTC daily (chosen so the typical
+#   morning-Pacific-time package-publish window has cleared the 24h
+#   cutoff by then), enumerates open Dependabot PRs that have at least
+#   one failed required check, and reruns the failed jobs. Once the
+#   release-age threshold has passed, the rerun succeeds and the
+#   companion `dependabot-automerge.yml` fires the auto-merge.
+#
+#   The cron does NOT touch PRs that are passing CI but blocked on
+#   review or conflicts — those are policy decisions a human owns.
+#
+# Manual trigger: this workflow exposes `workflow_dispatch` so a human
+# can nudge it after a one-off package update without waiting for the
+# cron.
+
+name: dependabot-retry-ci
+
+on:
+  schedule:
+    # 22:00 UTC daily — late enough for morning-PT publishes (~17:00 UTC)
+    # to clear the 24h cutoff, early enough that retries finish before
+    # the next workday in Pacific time.
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-run failed required checks on open Dependabot PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Names of required checks worth re-running. Skipping non-blocking
+          # checks (CodeQL, Vercel) avoids re-burning compute for free.
+          REQUIRED_CHECKS='Lint Typecheck Build Test "Slop check" "Lint, Typecheck, Build"'
+
+          # All open PRs authored by dependabot in this repo.
+          PRS=$(gh pr list \
+            --author "app/dependabot" \
+            --state open \
+            --json number,headRefName \
+            --jq '.[] | "\(.number) \(.headRefName)"')
+
+          if [ -z "$PRS" ]; then
+            echo "No open Dependabot PRs."
+            exit 0
+          fi
+
+          while read -r line; do
+            [ -z "$line" ] && continue
+            PR_NUMBER=$(echo "$line" | awk '{print $1}')
+            HEAD_REF=$(echo "$line" | awk '{print $2}')
+            echo "── PR #$PR_NUMBER ($HEAD_REF) ──"
+
+            # Latest workflow run on this PR's head. -L 1 = most recent.
+            RUN_ID=$(gh run list \
+              --branch "$HEAD_REF" \
+              --status failure \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
+
+            if [ -z "$RUN_ID" ]; then
+              echo "  no failed run on $HEAD_REF — skipping"
+              continue
+            fi
+
+            echo "  rerunning failed jobs on run $RUN_ID"
+            gh run rerun "$RUN_ID" --failed || echo "  rerun failed; PR may need attention"
+          done <<< "$PRS"

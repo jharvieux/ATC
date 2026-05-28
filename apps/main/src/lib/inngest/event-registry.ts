@@ -71,12 +71,16 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   // Persona addendums (BP18)
   "persona_addendum.submitted": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 
-  // §27.12 — AI Message Batches per-row completion events.
+  // §27.12 — AI Message Batches per-row completion + failure events.
   // Reconciler emits one event per row when its batch result lands.
-  "ai.batch_request.completed.memory_extraction":        { kind: "tenant_scoped", payload_shape: tenantScopedShape },
-  "ai.batch_request.completed.persona_addendum_screen":  { kind: "tenant_scoped", payload_shape: tenantScopedShape },
-  "ai.batch_request.completed.persona_addendum_rescreen":{ kind: "tenant_scoped", payload_shape: tenantScopedShape },
-  "ai.batch_request.completed.precruise_generation":     { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "ai.batch_request.completed.memory_extraction":         { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "ai.batch_request.completed.persona_addendum_screen":   { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "ai.batch_request.completed.persona_addendum_rescreen": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "ai.batch_request.completed.precruise_generation":      { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "ai.batch_request.completed.rag_pii_redaction":         { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  // Failure variant — currently consumed by rag_pii_redaction (which
+  // quarantines on failure). Other surfaces let Inngest retry naturally.
+  "ai.batch_request.failed.rag_pii_redaction":            { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 
   // BP34 §34.3 — inbound import pipeline
   "import.queued": { kind: "tenant_scoped", payload_shape: tenantScopedShape },

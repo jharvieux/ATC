@@ -20,3 +20,9 @@ updates:
     labels:
       - "dependencies"
       - "automerge-candidate"
+    ignore:
+      # vite 8.x breaks vitest 4's JSX/TSX transform — three test files fail
+      # to load at module-resolution time (#330, 2026-05-28). Hold the major
+      # bump until vitest publishes a confirmed-compatible release.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
