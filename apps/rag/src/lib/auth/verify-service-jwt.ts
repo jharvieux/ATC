@@ -52,10 +52,45 @@ type ServiceJwtPayload = JWTPayload & {
 // Cache parsed public keys by key ID to avoid re-importing on every request.
 const keyCache = new Map<string, CryptoKey>();
 
+/**
+ * Resolve the PEM for an incoming `kid` header.
+ *
+ * Greptile audit-followups #7 fix: previously every kid mapped to the same
+ * SERVICE_JWT_PUBLIC_KEY, which made zero-downtime key rotation impossible —
+ * during the overlap window, tokens signed with the OLD kid would still be
+ * verified against the NEW PEM (and silently fail signature_invalid).
+ *
+ * New routing rule:
+ *   - kid === SERVICE_JWT_KEY_ID_CURRENT  → SERVICE_JWT_PUBLIC_KEY
+ *   - kid === SERVICE_JWT_KEY_ID_PREVIOUS → SERVICE_JWT_PUBLIC_KEY_PREVIOUS
+ *   - else → signature_invalid (the kid allowlist check upstream catches this
+ *     too, but a kid that's allowlisted yet not mapped is itself a config bug)
+ *
+ * Env validation in apps/rag/src/lib/env.ts enforces that both halves of each
+ * pair are set together and that both kids appear in SERVICE_JWT_ACCEPTED_KEY_IDS.
+ */
 async function getPublicKey(kid: string): Promise<CryptoKey> {
   if (keyCache.has(kid)) return keyCache.get(kid)!;
-  const pem = process.env.SERVICE_JWT_PUBLIC_KEY?.replace(/\\n/g, "\n");
-  if (!pem) throw new ServiceAuthError("internal", 500, "SERVICE_JWT_PUBLIC_KEY not set");
+
+  const currentKid = process.env.SERVICE_JWT_KEY_ID_CURRENT;
+  const previousKid = process.env.SERVICE_JWT_KEY_ID_PREVIOUS;
+
+  let pem: string | undefined;
+  if (kid === currentKid) {
+    pem = process.env.SERVICE_JWT_PUBLIC_KEY?.replace(/\\n/g, "\n");
+  } else if (previousKid && kid === previousKid) {
+    pem = process.env.SERVICE_JWT_PUBLIC_KEY_PREVIOUS?.replace(/\\n/g, "\n");
+  } else {
+    throw new ServiceAuthError("signature_invalid", 401, `kid '${kid}' has no mapped PEM`);
+  }
+
+  if (!pem) {
+    throw new ServiceAuthError(
+      "internal",
+      500,
+      `kid '${kid}' mapped env var is unset (config drift)`,
+    );
+  }
   const key = await importSPKI(pem, "RS256");
   keyCache.set(kid, key);
   return key;
