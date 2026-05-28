@@ -2,7 +2,7 @@
 
 Working list of open gaps from `reality-delta.md`, `reality-delta-supplement.md`, and `reality-delta-supplement-2.md`. Items here are things to **close** (build, decide, or wait on) — not spec-text edits (those live in `reality-delta.md` and get applied in a future spec-sync pass).
 
-**As of 2026-05-27.**
+**As of 2026-05-27 (post-P1/P2 close-out).**
 
 ---
 
@@ -13,98 +13,102 @@ Working list of open gaps from `reality-delta.md`, `reality-delta-supplement.md`
 | `§` | Spec subsection ref |
 | **Action** | `BUILD` (engineer it) · `DECIDE` (operator picks one of the listed options) · `WAIT` (blocked on external party) · `FIX` (audit follow-up bug) · `CONTENT` (non-engineering content work) |
 | **Effort** | S = under 1 day · M = 1-3 days · L = 4-10 days · XL = multi-week |
-| **Source** | `delta` = original reality-delta.md · `s1` = supplement · `s2` = supplement-2 (new) |
-| **Status** | `open` · `partially-closed` · `blocked-on-X` |
+| **Source** | `delta` = original reality-delta.md · `s1` = supplement · `s2` = supplement-2 |
+| **Status** | `closed` · `open` · `partially-closed` · `blocked-on-X` |
 
-When an item is closed, mark `> **Closed YYYY-MM-DD in #PR**` next to it.
+Closed items are kept with their PR reference rather than deleted, so a future reader can see what shipped and why.
 
 ---
 
 ## P1 — close before launch (customer / money / compliance impact)
 
+**All P1 items closed.** ✅
+
 ### Real-money / data-integrity
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 1 | §15.12 | Sandbox mode only pauses Stripe; `is_sandbox` never read elsewhere. Tenant flipping sandbox=true still creates real bookings + commissions | DECIDE → BUILD | M | s2 | Decide: wire `is_sandbox` through chat/bookings/commissions to suppress real ops, OR rename feature to "billing pause" and update spec |
-| 2 | §18.5 | First-use token TOCTOU (Greptile P1 #54). Concurrent first-uses race; legitimate caller can be locked out | FIX | S | s2 / audit-followups | Add `.eq("token_first_used_at", null)` CAS guard via `safeAwaitRowCount`. Verified still open in code 2026-05-27 |
-| 3 | RAG JWT | All `kid` values map to same PEM (Greptile P1 #7). Zero-downtime JWT key rotation is impossible | FIX | M | audit-followups | `apps/rag/src/lib/auth/verify-service-jwt.ts:55-63` — needs kid→PEM map env var |
-| 4 | §25.4a | CCPA purge: `conversations.user_id` never nulled (Greptile P2 #13). Contacts.notes IS nulled — this is the remaining piece | FIX | S | s2 / audit-followups | Add `UPDATE conversations SET user_id = NULL` after the contacts-notes nulling step in `purge-user-data.ts` |
-| 5 | §17.5 | Email blast on legal-doc version update missing. Users only see new ToU via the consent gate on next sign-in | BUILD | S | s2 | Add Inngest job dispatched on `/api/admin/legal-docs` publish |
+| # | § | What | Status |
+|---|---|---|---|
+| 1 | §15.12 | Sandbox mode wired through chat/bookings/commissions | ✅ Closed in #331 |
+| 2 | §18.5 | Invite first-use TOCTOU CAS guard | ✅ Closed in #332 |
+| 3 | RAG JWT | kid→PEM mapping for zero-downtime rotation | ✅ Closed in #333 |
+| 4 | §25.4a | CCPA purge nulls `conversations.user_id` | ✅ Closed in #334 |
+| 5 | §17.5 | Email blast on legal-doc version update | ✅ Closed (verified already wired in `/api/admin/legal-docs/route.ts:143-175`) |
 
 ### Customer-facing UX
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 6 | §11.3 | Customer `/settings/memory` page doesn't exist. Only in-chat sidebar Memory tab (D-097) | BUILD | M | s2 | Standalone customer settings route; reuses existing `/api/memory` |
-| 7 | §25.3 | Customer `/settings/profile` page doesn't exist (right-to-correct claimed in policy) | BUILD | M | s2 | Sister page to #6; same auth surface |
-| 8 | §11.6 | `/settings/conversations` page doesn't exist — needed to mount `UndoBanner` for 24h soft-commit window | BUILD | M | delta §9 | Component already exists; page is the missing piece |
-| 9 | §18.10 | Group "sailed" read-only mode not enforced — group details / RSVP / members editable after travel_start_date | BUILD | S | s2 | Add `sailed_at` / `status='sailed'` check to groups/[id] PATCH + groups/[id]/members POST |
-| 10 | §20.5 | DOB confirmation gate — server-side enforcement missing | BUILD | S-M | s1 | `bookings/[id]/submit/route.ts` doesn't check `dob_confirmed_at` on passengers; add column + gate |
+| # | § | What | Status |
+|---|---|---|---|
+| 6 | §11.3 | Customer `/settings/memory` page | ✅ Closed in #337 |
+| 7 | §25.3 | Customer `/settings/profile` page | ✅ Closed in #337 |
+| 8 | §11.6 | Customer `/settings/conversations` page | ✅ Closed in #337 |
+| 9 | §18.10 | Group "sailed" read-only mode enforced | ✅ Closed in #335 (`assertGroupNotSailed`) |
+| 10 | §20.5 | DOB confirmation gate | ✅ Closed (verified already wired at `bookings/submit:109` via `assertNoEstimatedDOBs`) |
 
 ### Security / compliance
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 11 | §34.3.1 | Document virus scanning not implemented (Gmail attachments + manual upload reach operator unscanned) | DECIDE → BUILD | M-L | s2 | Vercel doesn't support sidecars; needs Fly.io ClamAV or Supabase native scan OR documented risk acceptance |
-| 12 | §32.3 | 10 of 12 help docs missing. Blocks BP31 Phase C PDF/Word export from being useful at launch | CONTENT | L | s1 | Not engineering; content authoring workstream |
+| # | § | What | Status |
+|---|---|---|---|
+| 11 | §34.3.1 | Document virus scanning | ✅ Closed in #336 — risk acceptance documented in `docs/runbooks/upload-virus-scanning-risk-acceptance.md` |
+| 12 | §32.3 | Help docs (was: 10 of 12 missing) | ✅ Closed in #345 — `01-getting-started.md`, `12-troubleshooting.md`, `settings-ai-mode.md` rewritten for non-technical travel agents; other docs were already present |
 
 ---
 
-## P2 — spec promises not implemented (lower urgency than P1)
+## P2 — spec promises not implemented
 
-### Easy wins (small effort, real value)
+**All P2 build items closed or queued.** ✅
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 13 | §9.3 | Anthropic prompt caching declared (env var `ANTHROPIC_PROMPT_CACHE_ENABLED=true`) but unwired. No `cache_control` markers anywhere | BUILD | S | s2 | 30-50% input-token cost reduction on multi-turn chats. Real $ on the table — easy ROI |
-| 14 | §24.7 | Chat draft autosave not implemented. Closing tab loses in-progress text | BUILD | S | s2 | localStorage-backed is fine; no server roundtrip needed |
-| 15 | §10.6 | Per-tenant kill switch missing (only global exists). Spec says "globally or per-tenant" | BUILD | S | s2 | Add `platform_tenant_overrides.ai_paused_by_platform` column + admin UI surface; chat route already reads platform_settings, mirror for tenant |
+### Easy wins
+
+| # | § | What | Status |
+|---|---|---|---|
+| 13 | §9.3 | Anthropic prompt caching | ✅ Closed in #338 (via `buildSystemArg`) |
+| 14 | §24.7 | Chat draft autosave | ✅ Closed in #339 |
+| 15 | §10.6 | Per-tenant kill switch | 🚧 PR #340 queued (`ai_paused_by_platform` column wiring) |
 
 ### Decision-required (spec edit vs build)
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 16 | §4 / §16.4 | "Custom email-from domain" UI captures `email_from_domain` but value is never read. No Resend domain creation/verification | DECIDE | M (if BUILD) | s2 | Decide: wire domain verification + Resend domain creation OR strike the feature from §4 matrix and rename to "email-from address" only |
-| 17 | §4 / §1.5 | Feature matrix "Downline (sub-hosts) Y unlimited" contradicts §1.5 forbidden tenant nesting. Zero downline code | DECIDE | S | s2 | Likely a spec-text bug — matrix row probably meant "subcontractor tracking" (§3.4a). Strike row OR rename per delta §12 |
-| 18 | §7.9 / §9.9 | SSE `Last-Event-ID` reconnect — header never read | DECIDE | S (spec edit) / L (build) | s2 | Likely spec text overspec — actual application-level resumption is hard for LLM streams. Recommend dropping from spec |
-| 19 | §7.9 | `Idempotency-Key` HTTP header not implemented for client mutations | DECIDE | S (spec edit) / M (build) | s2 | If building: need `request_idempotency` table + 24h cleanup cron. Bookings already have CAS guards (#51) so retry-safety exists differently |
+| # | § | What | Status |
+|---|---|---|---|
+| 16 | §4 / §16.4 | Custom email-from domain verification | ✅ Closed in #343 (Resend domain registration + verify) and #346 (verification card UI) |
+| 17 | §4 / §1.5 | "Downline (sub-hosts)" matrix row rename | 🚧 PR #342 queued — operator decision: rename to "Subcontractor tracking (internal)"; spec edit recorded in `reality-delta.md` appendix |
+| 18 | §7.9 / §9.9 | SSE `Last-Event-ID` reconnect | 🚧 PR #342 queued — operator decision: strike from spec; EventSource browser-level auto-reconnect IS the actual contract |
+| 19 | §7.9 | `Idempotency-Key` HTTP header for client mutations | 🚧 PR #344 queued (`request_idempotency` table + 24h cache + purge cron) |
 
-### Customer-facing AI panels (bundled build)
+### Customer-facing AI panels
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 20 | §20.4 / §38.8 / §38.8.1 / §39.5 | Customer-facing AI chat panels for booking flow, quote builder, customer quote view, trip itinerary | BUILD | L | s1 | Dedicated build prompt; needs token-bound auth + context payload to system prompt + supervisor preflight. ~2 days work + browser testing |
+| # | § | What | Status |
+|---|---|---|---|
+| 20 | §20.4 / §38.8.1 / §39.5 | Customer-facing AI on booking flow, customer quote view, trip itinerary | ✅ Phase 1 closed in #347 (booking flow with `<CustomerContextChatPanel>` + server-resolved context). 🚧 PR #351 queued for Phases 2+3 (token-gated `/api/public/chat/[token]` + new `/q/[token]` page + AI mount on `/i/[token]`). **Documented gap:** supervisor not wired through `/api/public/chat/[token]` — mitigated by strong system-prompt ground rules + read-only context, see D-102. |
 
 ### Tenant admin UI gaps
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 21 | §16 | Tenant branding UI (logo, colors, custom domain) — API exists, page missing | BUILD | M | s1 | `(tenant)/settings/branding/page.tsx` — partially exists per supplement-2 grep (captures email_from fields) — verify completeness |
-| 22 | §16.5 / §9 | Tenant persona overrides + addendum UI — API + screening cron exist; UI missing | BUILD | M | s1 | `(tenant)/settings/personas/page.tsx` |
-| 23 | §22.5 | Tenant RAG submission review queue UI — API exists; tenant UI is what's missing (admin-side review queue exists) | BUILD | M | s1 | Note: supplement said this was closed in PR #205, but supplement-2 didn't re-verify. Spot-check before building |
+| # | § | What | Status |
+|---|---|---|---|
+| 21 | §16 | Tenant branding UI | ✅ Closed in #346 (stale canonical domain string fixed + `EmailDomainVerificationCard` added; supplement-2 had flagged the page as incomplete but the page was already 90% there) |
+| 22 | §16.5 / §9 | Tenant persona overrides + addendum UI | ✅ Verified complete (`(tenant)/settings/personas/page.tsx` — 371 lines, full implementation with addendum screening status) |
+| 23 | §22.5 | Tenant RAG submission review queue UI | ✅ Verified complete (`(tenant)/crm/rag/queue/page.tsx` — 318 lines: filters, bulk-approve with >10 confirmation, per-item approve/reject + reason, preview expand, PII redacted badge, auto-flagged-for-global badge) |
 
-### Editor / co-pilot UI wiring (depends on booking-detail page)
+### Editor / co-pilot UI wiring
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 24 | §39.7 / §40.5 | Itinerary editor, resources editor, line items panel — components exist but `(tenant)/crm/bookings/[id]/page.tsx` doesn't exist to mount them on | BUILD | M | delta §9 | Build booking-detail page first; then mount three editor panels |
-| 25 | §38.8 | AI Co-Pilot in quote builder (per-option suggestions) | BUILD | M | s1 | Separate from #20 customer-facing AI panels — this is the tenant-agent-facing co-pilot |
+| # | § | What | Status |
+|---|---|---|---|
+| 24 | §39.7 / §40.5 | Booking detail page + mount 3 editor panels | ✅ Closed in #349 (`(tenant)/crm/bookings/[id]/page.tsx` + GET endpoint + 3-tab layout mounting `ItineraryEditor` / `ResourcesEditor` / `LineItemsPanel`) |
+| 25 | §38.8 | AI Co-Pilot in quote builder (agent-facing) | ✅ Closed in #350 (`/api/agent/quote-copilot` stateless endpoint + `<QuoteCopilotPanel>` on `(tenant)/crm/quotes/[id]/page.tsx`) |
 
-### Spec sweeps / UX reviews (research, not engineering)
+### Spec sweeps / UX reviews (closed via verification, not build)
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 26 | §10.5 | Supervisor dashboard — UX review against spec for completeness (244-line page exists) | DECIDE → BUILD | S (review) + variable | s1 | Confirm all dimensions render (sample category counts, regen budget, kill-switch, drift chart) |
-| 27 | §32.9 | Interactive bug triage console — UX review against spec | DECIDE | S | s1 | Reclassified to slash-command path per supplement; verify operator workflow matches §32.9 |
-| 28 | §32.16 | Sweep §32 "Calls Worth Flagging" items against MEMORY D-067/D-068 for completeness | DECIDE | S | s1 | Doc audit; surfaces follow-up gaps if any |
-| 29 | §27.13 | Cross-section abuse integrations spot-check (§13 / §22 / §23 / §26) | DECIDE | S | s1 | Per-integration verification; most are wired |
+| # | § | What | Status |
+|---|---|---|---|
+| 26 | §10.5 | Supervisor dashboard UX completeness | ✅ Closed in #346 — directive bug fixed (`"use server"` → Server Component) + header comment trimmed to match actual JSX. Core §10.5 dimensions all rendered (kill switch, escalations, flagged by check, regen exhaustion, drift trend, per-persona metrics) |
+| 27 | §32.9 | Bug-triage console operator workflow | ✅ Verified — implemented as `.claude/commands/fix-bugs.md` slash command per supplement reclassification. All §32.9.5 safeguards present (issue-content-as-data, scoped fixes, no exfiltration, human-in-the-loop) |
+| 28 | §32.16 | §32 "Calls Worth Flagging" audit vs D-067/D-068 | ✅ Verified clean — D-068 follow-up #2 (wire bug-intent recognizer into customer chat handler) confirmed done at `chat/route.ts:62` |
+| 29 | §27.13 | Cross-section abuse integrations spot-check | ✅ Verified clean — §22 RAG (rag-pii-redact, rag-normalize, rag-tenant-approval-rate-nightly), §23 email (`send.ts` uses `incrementEmailSent`), §26 monitoring crons emit signals via dedicated path (correct layering — forensic detectors, not quota counters). §13 host-adapter: no quota integration (correct — host calls aren't a BP27 dimension) |
 
-### Backend orphans (wire-in or remove)
+### Backend orphans
 
-| # | § | What | Action | Effort | Source | Notes |
-|---|---|---|---|---|---|---|
-| 30 | §27.6 | `lib/abuse/enforcement.ts` — exists with structural scaffolding but no callers. Knip flagged as unused | DECIDE | S | delta §9 | Wire it in OR delete |
+| # | § | What | Status |
+|---|---|---|---|
+| 30 | §27.6 | `lib/abuse/enforcement.ts` orphan | ✅ Closed in #341 (deleted) |
 
 ---
 
@@ -119,7 +123,7 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 | 33 | §22.4 | Tolerable-PII Haiku redaction (Stage 2) — pass-through; Stage 1 regex still runs | ~$1-3/day @ 1K chunks | delta §1 | Highest-impact cost-deferred item per d091 follow-ups |
 | 34 | §24 | Tone-match Haiku — TODO; heuristic int-1-to-5 match is the baseline today | ~$1.50/mo | delta §1 | Low priority |
 | 35 | §12 / §30.6 | AI evaluation harness — design-only; no CI hook, no golden set, no cron | $20-50/run; $100-250/mo @ weekly | delta §1 / D-024 | Designed at `docs/evals/design.md`; productionize after launch with real conversation data |
-| 36 | §32.10 | Customer-chat / Help-AI Gmail auto-reply — downstream of Gmail OAuth start (still WAIT-on-operator) | TBD | delta §1 | Cross-ref #46 below |
+| 36 | §32.10 | Customer-chat / Help-AI Gmail auto-reply — downstream of Gmail OAuth start (still WAIT-on-operator) | TBD | delta §1 | Cross-ref #47 |
 
 ---
 
@@ -133,7 +137,7 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 | 38 | §16.7.1 | Always-on legal-page attribution wording — attorney finalize | WAIT | delta §3 | Same engagement as #37 |
 | 39 | §15.7 | SOT / E&O attorney engagement for 5 states (CA/FL/HI/IA/WA) | WAIT | delta §3 / s1 | Phase-2 sub-host onboarding launch gate |
 | 40 | §25.9 | Breach notification email templates — `TODO(legal-counsel)` markers in `emails/BreachNotification{User,TenantAdmin}.tsx` | WAIT | delta §1 §3 / s1 | Templates wired, code-ready; wording blocks send-path activation |
-| 41 | §16 / §17 | Counsel sign-off on ICA + AI Liability Disclaimer (SESSION.md carried-forward BP16/17) | WAIT | s1 / SESSION | Bundle with #37/#38/#39 in same engagement |
+| 41 | §16 / §17 | Counsel sign-off on ICA + AI Liability Disclaimer | WAIT | s1 / SESSION | Bundle with #37/#38/#39 in same engagement |
 | 42 | §33.9.1 | Counsel ToS review (cruise-line scraping + CruiseMapper + image hot-linking) | WAIT | s1 | Same legal engagement |
 | 43 | §25.5 | Sub-processors disclosure annual review cadence — operator commits to cycle | WAIT | delta §3 / s1 | Operator commits to schedule; small spec note |
 
@@ -155,14 +159,14 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 
 | # | § | What | Decision needed | Source | Notes |
 |---|---|---|---|---|---|
-| 48 | §13.9 | Host-adapter active health probing — keep reactive-only (current, cheaper) OR add nightly probe | DECIDE | delta §4 / s1 / D-087 | Operator-confirmed reactive-only 2026-05-26; this is to revisit if signal arrives slowly |
-| 49 | §33.12 | Per-line actor coverage for Carnival / Holland America / MSC / Disney — commission Apify actors OR block price-watch for those lines | DECIDE | s1 | Currently `enabled: false` with `TBC/<line>` placeholders; UI blocks creation |
-| 50 | §33.12 | UX for uncovered cruise lines (Virgin / Viking / Oceania / Regent / Silversea / Seabourn) — verify "no price-watch available" copy renders explicitly | DECIDE | s1 | Quick verification + copy tweak if needed |
-| 51 | §33.12 | Authority-override platform-admin UI for elevating/demoting batches of itinerary chunks | DECIDE | s1 | Build, defer, or rule out — operator owes a decision |
-| 52 | §33.9.3 | Apify token scoping — confirm whether Apify offers a scoped-token shape; use it or document risk acceptance | DECIDE | s1 | `APIFY_API_TOKEN` is account-level — platform caps don't constrain the raw token |
-| 53 | §33.9.3 | Budget priority for general-pricing vs tracked-sailings refresh — currently no priority order; both share same monthly cap | DECIDE → BUILD | s1 | Spec wants subscriber watches (tracked-sailings) to pause LAST. Add sub-cap or priority flag |
-| 54 | §10.6 | Kill-switch permission model — today: any `assertPlatformAdmin` user can flip. Spec doesn't explicitly scope further | DECIDE | s1 | Tighten permission or accept current model |
-| 55 | §11.5 | DOB estimation re-prompt cycle is yearly (>365d). Operator confirm intended cadence | DECIDE | s1 | Could be punishingly slow for a customer who provided an estimated DOB |
+| 48 | §13.9 | Host-adapter active health probing — keep reactive-only OR add nightly probe | DECIDE | delta §4 / s1 / D-087 | Operator-confirmed reactive-only 2026-05-26; revisit if signal arrives slowly |
+| 49 | §33.12 | Per-line actor coverage for Carnival / Holland America / MSC / Disney | DECIDE | s1 | Currently `enabled: false` with `TBC/<line>` placeholders |
+| 50 | §33.12 | UX for uncovered cruise lines (Virgin / Viking / Oceania / Regent / Silversea / Seabourn) | DECIDE | s1 | Quick verification + copy tweak if needed |
+| 51 | §33.12 | Authority-override platform-admin UI for elevating/demoting batches of itinerary chunks | DECIDE | s1 | Build, defer, or rule out |
+| 52 | §33.9.3 | Apify token scoping — confirm scoped-token shape OR document risk acceptance | DECIDE | s1 | `APIFY_API_TOKEN` is account-level |
+| 53 | §33.9.3 | Budget priority for general-pricing vs tracked-sailings refresh | DECIDE → BUILD | s1 | Subscriber watches should pause LAST. Add sub-cap or priority flag |
+| 54 | §10.6 | Kill-switch permission model — today any `assertPlatformAdmin` user can flip | DECIDE | s1 | Tighten permission or accept current model |
+| 55 | §11.5 | DOB estimation re-prompt cycle is yearly (>365d) | DECIDE | s1 | Could be punishingly slow for a customer with estimated DOB |
 
 ---
 
@@ -173,7 +177,7 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 | 56 | §9.6 | Persona tools registry (real schemas) — `TODO(prompt-12/13/14)` | delta §2 | Tool dispatch works; schemas are placeholder shapes |
 | 57 | §17.4 | Legal documents render from `legal_documents` table — `TODO(prompt-17)` | delta §2 | Schema + publish flow + consent gate work; onboarding render still uses inline placeholders |
 | 58 | §20.2 | Platform-native fallback booking flow customer UI — `TODO(prompt-24)` | delta §2 / s1 | Booking ENGINE built (adapters, commissions, payouts); customer-facing flow is what's missing |
-| 59 | §27.4 / §27.12 | Cost-display surfaces in tenant `/settings/ai-mode` — `TODO(§27.12-cost-display)` | delta §2 | Hardcoded "varies based on usage" today; wire once `tenant_usage_metrics` aggregation lands |
+| 59 | §27.4 / §27.12 | Cost-display surfaces in tenant `/settings/ai-mode` | delta §2 | Hardcoded "varies based on usage" today; wire once `tenant_usage_metrics` aggregation lands |
 
 ---
 
@@ -183,7 +187,19 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 |---|---|---|---|---|
 | 60 | `docs/runbooks/supabase-setup.md` for production Supabase project provisioning | BUILD-doc | s1 | New environments + ops handoff need this |
 | 61 | `docs/runbooks/pentest-scoping.md` before scheduling first annual engagement (§26.11) | BUILD-doc | s1 | Operator scoping aid |
-| 62 | Verify `docs/local-development.md` matches `apps/main/.env.example` after BP29 + BP31 env reconciliation | DECIDE-doc | s1 / D-101 | Quick audit; D-101 already updated local-dev for GitHub App vars |
+| 62 | Verify `docs/local-development.md` matches `apps/main/.env.example` after BP29 + BP31 env reconciliation | DECIDE-doc | s1 / D-101 | D-101 already updated local-dev for GitHub App vars |
+
+---
+
+## Follow-up gaps surfaced by this session's work
+
+These weren't in the original punch list — they're new gaps created or made-visible while closing the original items.
+
+| # | What | Source | Notes |
+|---|---|---|---|
+| F1 | Wire §10 supervisor through `/api/public/chat/[token]` (token-gated customer chat) | D-102 / PR #351 | The endpoint ships without supervisor; mitigated by strong system-prompt ground rules + read-only surface. Wiring requires ephemeral conversations table or `public_token` identity in conversations + writeback shape for supervisor findings against the token's resource. Multi-day effort. |
+| F2 | Tenant-facing booking list page `(tenant)/crm/bookings/page.tsx` | PR #349 | Detail page exists now; list page doesn't. Same gap as quotes had. Small effort. |
+| F3 | Booking PATCH endpoint integration with state-machine transitions | PR #349 | PATCH currently allows direct edits of cruise/ship/cabin fields; doesn't enforce status-machine constraints (e.g., editing cabin on a submitted booking). Acceptable for draft-state edits; tighten for non-draft. |
 
 ---
 
@@ -197,26 +213,19 @@ These don't need engineering work — they're updates to the audit-followups doc
 
 ---
 
-## Effort summary (rough total)
+## Effort summary (remaining)
 
-If a small team picked through this top-to-bottom:
-
-| Bucket | Count | Total effort |
+| Bucket | Open count | Notes |
 |---|---|---|
-| P1 launch-blocking | 12 items | ~3-5 weeks of engineering + 1 content workstream (10 help docs) |
-| P2 spec-promised gaps | 18 items | ~4-6 weeks if all built (some are DECIDE-then-spec-edit, cheaper) |
-| P3 cost-deferred | 6 items | ~$30-280/month operating cost when all enabled — engineering is small (mostly removing the stub) |
-| P4 external-blocked | 19 items | Calendar-bound on attorney + operator availability; engineering work is small once unblocked |
-| P5 future build prompts | 4 items | Scheduled work; each is its own BP |
-| P6 docs | 3 items | <1 day total |
+| **P1 launch-blocking** | 0 | ✅ All closed this session |
+| **P2 spec-promised gaps** | 0 build items remaining | ✅ All closed or queued in merge chain |
+| **P3 cost-deferred** | 6 items | ~$30-280/month operating cost when all enabled — small eng work (mostly removing the stub) |
+| **P4 external-blocked** | 19 items | Calendar-bound on attorney + operator availability |
+| **P5 future build prompts** | 4 items | Each is its own scheduled BP |
+| **P6 docs** | 3 items | <1 day total |
+| **Follow-ups from this session** | 3 items | F1 is the most significant (supervisor on token chat) |
 
-**Highest-ROI early targets:**
-
-- **#13 Anthropic prompt caching** — small effort, real $ saved.
-- **#2 First-use TOCTOU fix** — small, closes a P1 audit finding.
-- **#4 conversations.user_id CCPA nulling** — small, closes a P2 audit finding.
-- **#5 legal-doc email blast** — small, closes a customer-trust gap.
-- **#9 group sailed read-only** — small, closes a data-integrity gap.
-- **#1 Sandbox mode decision** — small DECIDE, then either spec-text edit (no code) or moderate BUILD.
-
-That cluster (~1 week of engineering) closes 6 items and the highest-impact P1s.
+**Highest-priority remaining engineering work:**
+1. **F1** Wire supervisor on token-gated chat — closes a real customer-AI safety gap
+2. **#47** Gmail Step-5 build (waits on operator GCP)
+3. **P3 #33** Tolerable-PII Stage 2 ($1-3/day; the most-used cost-deferred surface)
