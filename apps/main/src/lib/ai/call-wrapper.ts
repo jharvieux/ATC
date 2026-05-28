@@ -80,6 +80,52 @@ const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([
 export const PLATFORM_TENANT_ID = SHARED_PLATFORM_TENANT_ID;
 
 // ─────────────────────────────────────────────────────────────────────
+// §9.3 — Anthropic prompt caching
+// ─────────────────────────────────────────────────────────────────────
+//
+// Anthropic's prompt cache marks a stable prefix of the request as
+// reusable. When the same prefix arrives again within the cache TTL
+// (~5 minutes) AND the system + model match, input tokens for the
+// cached portion are billed at ~10% of the normal rate. The cache is
+// content-addressed; identical text → cache hit.
+//
+// For chat-style calls the system prompt is the stable prefix: it
+// contains the persona block, platform constraints, and (per turn)
+// the RAG knowledge block. The persona block dominates token count
+// and is invariant within a conversation, so caching the system
+// gives a real win on multi-turn chats where the RAG block adds a
+// short delta but the bulk is reused.
+//
+// Caveat: the cache breakpoint applies to the WHOLE text block. If
+// the RAG block at the END of the system text changes turn-over-turn,
+// the cache misses for the WHOLE system. A future optimization is to
+// split into 2 blocks (persona = cached, RAG = uncached), but Anthropic
+// only allows 4 cache breakpoints per request and the 2-block split
+// is invasive. Single-block is the right MVP.
+//
+// Min token requirement: Anthropic only caches blocks ≥1024 tokens for
+// Sonnet, ≥2048 for Opus. Below that the marker is silently ignored.
+// Most personas + constraints exceed this; short system prompts
+// (single-line "Be concise") won't see a benefit but also won't pay
+// any cost — the API just ignores the marker.
+//
+// Gated by ANTHROPIC_PROMPT_CACHE_ENABLED (default true). Operator can
+// flip to false for an A/B test or to debug cache-related anomalies.
+
+type SystemArg = string | Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> | undefined;
+
+export function buildSystemArg(system: string | undefined): SystemArg {
+  if (!system) return undefined;
+  const enabled = process.env.ANTHROPIC_PROMPT_CACHE_ENABLED;
+  // envBoolean coerces to "true"/"false" strings; the default is "true" when
+  // unset per env.ts. Treat anything other than the literal string "false"
+  // as enabled so a misconfigured env doesn't silently disable caching.
+  const cacheOn = enabled !== "false";
+  if (!cacheOn) return system;
+  return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // selectModelForPurpose — §27.6 AI cost enforcement, soft1+
 // ─────────────────────────────────────────────────────────────────────
 
@@ -232,10 +278,11 @@ export async function instrumentedClaudeCall(
   const start = Date.now();
   let resp: Anthropic.Messages.Message;
   try {
+    const cachedSystem = buildSystemArg(args.system);
     resp = await anthropic.messages.create({
       model,
       max_tokens: args.max_tokens,
-      ...(args.system ? { system: args.system } : {}),
+      ...(cachedSystem ? { system: cachedSystem } : {}),
       messages: args.messages,
     });
     recordVendorSuccess("anthropic");
