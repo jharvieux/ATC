@@ -70,7 +70,7 @@ export async function runToolUseLoop(
     const dispatched = await dispatchTool(
       block.name,
       (block.input ?? {}) as Record<string, unknown>,
-      dispatchCtx,
+      { ...dispatchCtx, tool_use_id: block.id },
     );
     dispatchedTools.push(block.name);
     if (dispatched.was_mutating) mutated = true;
