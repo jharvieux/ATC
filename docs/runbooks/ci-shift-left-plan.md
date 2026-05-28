@@ -29,7 +29,8 @@ Three classes of CI work, ordered by replaceability:
 PR #361 landed:
 - `pnpm verify` runs typecheck + lint + tests + slop-check
 - `pnpm verify:fast` runs typecheck + lint only (sub-30s sanity)
-- `scripts/run-affected-tests.mjs` (test-affected-by-diff)
+- `.claude/hooks/run-affected-tests.mjs` (Stop hook: runs `vitest related` at turn-end against modified files)
+- `scripts/ci-decide-tests.mjs` (Phase 1, see below): CI-side variant that decides full vs affected for PR runs
 - Stop hook runs typecheck + affected-tests at end of each turn
 - PostToolUse hook lints every Edit/Write
 - PreToolUse hook protects MEMORY.md / specs/ from corruption
@@ -133,12 +134,12 @@ After Phase 1+2 are stable, consider:
 
 ## Risks not to ignore
 
-- **Affected-tests is a heuristic.** If `scripts/run-affected-tests.mjs` mis-detects an affected file, a PR can pass CI on a broken codebase. The nightly catches it within ~24h, but a feature merged in the meantime could be built on the regression. Mitigation: ensure the script's "if in doubt, run full suite" fallback is conservative.
+- **Affected-tests is a heuristic.** If `scripts/ci-decide-tests.mjs` mis-detects an affected file, a PR can pass CI on a broken codebase. The nightly catches it within ~24h, but a feature merged in the meantime could be built on the regression. Mitigation: ensure the script's "if in doubt, run full suite" fallback is conservative.
 - **Turbo cache poisoning.** Theoretically a malicious cache push could ship bad output. Vercel's hosted cache mitigates this (signed, scoped to the team). Self-hosted is riskier.
 - **Drift from the deterministic floor.** Each lever we ship is a thing that "used to be checked unconditionally" and is now conditional. The nightly is the safety net. If it stops running or stops paging, regressions accumulate silently.
 
 ## Decision needed before Phase 1
 
-- [ ] Confirm `scripts/run-affected-tests.mjs` is reliable enough on this codebase (sample 20 PRs, check it caught the right tests).
+- [ ] Confirm `scripts/ci-decide-tests.mjs` is reliable enough on this codebase (sample 20 PRs, check it caught the right tests).
 - [ ] Confirm nightly failure notifications go somewhere (Slack / email / GitHub issue?).
 - [ ] Confirm `[full-test]` label exists or create it.
