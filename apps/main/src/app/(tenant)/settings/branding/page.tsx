@@ -253,6 +253,8 @@ export default function BrandingSettingsPage() {
         </CardContent>
       </Card>
 
+      <EmailDomainVerificationCard />
+
       <CustomDomainRequestCard />
 
       <div className="flex justify-end gap-3">
@@ -307,6 +309,151 @@ function ColorPicker(props: { label: string; value: string; onChange: (v: string
   );
 }
 
+interface DnsRecord {
+  record?: string;
+  name?: string;
+  type?: string;
+  value?: string;
+  ttl?: number | string;
+  priority?: number | string;
+  status?: string;
+}
+
+interface VerifyStatusResponse {
+  domain?: string | null;
+  status: "verified" | "pending" | "not_configured";
+  verified_at?: string | null;
+  dns_records?: DnsRecord[];
+}
+
+function EmailDomainVerificationCard() {
+  const [status, setStatus] = useState<VerifyStatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function loadStatus() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/tenant/branding/email-domain/verify");
+      if (!res.ok) throw new Error(`status_${res.status}`);
+      const data = (await res.json()) as VerifyStatusResponse;
+      setStatus(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "load_failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadStatus();
+  }, []);
+
+  async function triggerVerify() {
+    setVerifying(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/tenant/branding/email-domain/verify", {
+        method: "POST",
+      });
+      const data = (await res.json()) as VerifyStatusResponse & { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "verify_failed");
+        return;
+      }
+      setStatus({
+        domain: status?.domain ?? null,
+        status: data.status,
+        verified_at: data.verified_at ?? null,
+        dns_records: data.dns_records ?? [],
+      });
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="text-base">Email-from domain verification</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-gray-600">
+          Once you&apos;ve set your from domain above and saved, verify it here so outbound
+          emails come from your domain instead of the platform default.
+        </p>
+        {loading ? (
+          <p className="text-sm text-gray-500">Loading verification status…</p>
+        ) : error ? (
+          <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+            {error}
+          </div>
+        ) : status?.status === "not_configured" || !status?.domain ? (
+          <p className="text-sm text-gray-500">
+            No email-from domain set yet. Add one in the section above, click Save, then return here.
+          </p>
+        ) : (
+          <>
+            <div className="text-sm flex items-center gap-2">
+              <span className="font-medium">{status.domain}</span>
+              {status.status === "verified" ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800">
+                  ✓ Verified
+                  {status.verified_at && (
+                    <span className="text-green-700">
+                      &nbsp;{new Date(status.verified_at).toLocaleDateString()}
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                  Pending DNS
+                </span>
+              )}
+            </div>
+
+            {status.status !== "verified" && status.dns_records && status.dns_records.length > 0 && (
+              <div className="overflow-hidden rounded border">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">Type</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">Name</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">Value</th>
+                      <th className="text-left px-3 py-2 font-medium text-gray-600">TTL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {status.dns_records.map((r, i) => (
+                      <tr key={i} className="border-t align-top">
+                        <td className="px-3 py-2 text-gray-700">{r.type ?? r.record ?? "—"}</td>
+                        <td className="px-3 py-2 text-gray-700 font-mono break-all">{r.name ?? "—"}</td>
+                        <td className="px-3 py-2 text-gray-700 font-mono break-all">{r.value ?? "—"}</td>
+                        <td className="px-3 py-2 text-gray-700">{r.ttl ?? "auto"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-xs text-gray-500 px-3 py-2 bg-gray-50 border-t">
+                  Add these records at your DNS registrar, wait a few minutes for propagation, then click Verify.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button onClick={() => void triggerVerify()} disabled={verifying}>
+                {verifying ? "Verifying…" : status.status === "verified" ? "Re-verify" : "Verify now"}
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function CustomDomainRequestCard() {
   const [hostname, setHostname] = useState("");
   const [notes, setNotes] = useState("");
@@ -349,7 +496,7 @@ function CustomDomainRequestCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-gray-600">
-          By default your concierge lives at <code>&lt;your-slug&gt;.aitravelconcierge.com</code>.
+          By default your concierge lives at <code>&lt;your-slug&gt;.ai-travelconcierge.com</code>.
           To use your own subdomain (e.g. <code>concierge.yourdomain.com</code>), submit it here.
           Our team emails you DNS instructions and provisions the HTTPS certificate.
         </p>
