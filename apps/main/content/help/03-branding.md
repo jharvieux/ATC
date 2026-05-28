@@ -68,7 +68,7 @@ Two patterns:
 
 - **Platform send (default)** — emails go from our Resend account on
   your behalf. Simple to set up; the "from" address shows your domain
-  but with `via aitravelconcierge.com` in some inboxes.
+  but with `via ai-travelconcierge.com` in some inboxes.
 - **Your own Resend account** — emails go from your Resend account
   using your verified domain. Cleaner branding; requires you to have a
   Resend account and add the domain there yourself.
@@ -86,7 +86,7 @@ Most tenants stick with platform send for the first six months.
 
 ## Custom domain
 
-By default your concierge lives at `<your-slug>.aitravelconcierge.com`.
+By default your concierge lives at `<your-slug>.ai-travelconcierge.com`.
 If you want it at `concierge.yourdomain.com` instead:
 
 1. Click the email link on the Branding page.

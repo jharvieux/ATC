@@ -34,6 +34,8 @@ type TenantRow = {
   tenant_type: string;
   stripe_connect_account_id: string | null;
   tier_id: string | null;
+  // §15.12 sandbox — short-circuits adapter selection to fallback.
+  is_sandbox: boolean;
   // §15.16 — fields excludeNonPayingPastGrace reads.
   status: string;
   subscription_status: string | null;
@@ -63,9 +65,15 @@ export const reconcileStatementAutomated = inngest.createFunction(
 
     const { data: tenantsRaw } = await db
       .from("tenants")
-      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id, status, subscription_status, non_paying_since")
+      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id, is_sandbox, status, subscription_status, non_paying_since")
       .in("tenant_type", ["sub_host"])
-      .eq("status", "active");
+      .eq("status", "active")
+      // §15.12 sandbox: exclude at the query layer (defense-in-depth). The
+      // adapter short-circuit already returns FallbackEmailAdapter for sandbox
+      // tenants and the capability check then `continue`s, but skipping these
+      // tenants entirely avoids the wasted loop iteration and protects against
+      // a future FallbackEmailAdapter gaining supports_commission_api=true.
+      .eq("is_sandbox", false);
 
     if (!tenantsRaw || tenantsRaw.length === 0) {
       return { ok: true, processed: 0 };
@@ -86,7 +94,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
       try {
         const correlation_id = crypto.randomUUID();
         const { adapter, ctx } = await selectAdapterForCall(
-          { id: tenant.id, prong: tenant.tenant_type },
+          { id: tenant.id, prong: tenant.tenant_type, is_sandbox: tenant.is_sandbox },
           { tenant_id: tenant.id, user_id: null, correlation_id },
         );
 

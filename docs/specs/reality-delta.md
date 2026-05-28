@@ -528,3 +528,161 @@ Things the spec describes but that have no implementation yet. Different from §
 - **Don't update entries in-place when more changes land.** Add a new sub-entry with a date stamp. The spec-update pass should incorporate the latest entry.
 - **PR numbers refer to the GitHub repo `jharvieux/ATC`.** Spec updates should link back to the PR for context.
 - **When the spec is updated to match an entry, mark the entry with `> **Spec updated YYYY-MM-DD in commit XXXXX**` rather than deleting it** — gives auditors a paper trail.
+
+---
+
+# Appended 2026-05-27 — second full-spec sweep findings
+
+The sections below were appended after a read-every-line sweep against current `dev` state (see `docs/specs/reality-delta-supplement-2.md` for the sweep notes). They follow the same conventions as §1–§9 above. They are appended rather than interleaved into §4/§6/§8 so the original entries stay byte-identical.
+
+---
+
+## 10. Runtime decisions (not in spec) — second pass
+
+These extend §4 with deviations the original delta missed.
+
+### Next.js version: spec says 14, reality is 16
+- **Spec said:** §1.2 / §2.1 / §29.2 — "Next.js 14 (App Router)" across the topology, stack, and deployment sections.
+- **Reality:** Next.js 16 across both apps after the framework bump. Forced by upstream upgrade; surfaced the Next 16 instrumentation timing cascade (D-101) and the middleware → proxy rename below.
+- **Source:** MEMORY D-101 (instrumentation cascade), PR #323 (middleware → proxy file rename was the most visible artifact).
+- **Action for spec update:** §1.2 ASCII diagram, §2.1 stack table, §29.2 build settings table — change all "Next.js 14" references to "Next.js 16."
+
+### `middleware.ts` → `proxy.ts` file rename (Next 16 deprecation)
+- **Spec said:** §1.4 and §3.6 reference `apps/main/src/middleware.ts` and a function named `tenantResolverMiddleware`.
+- **Reality:** Next 16 deprecated the `middleware.ts` filename convention. File is `apps/main/src/proxy.ts`; function is `tenantResolverProxy`. Stryker config + test file + one comment path-reference also updated in the same PR.
+- **Source:** PR #323.
+- **Action for spec update:** §1.4 / §3.6 code excerpts — change `middleware.ts` to `proxy.ts`, `tenantResolverMiddleware` to `tenantResolverProxy`. The "runs in middleware" prose still reads correctly because middleware-as-concept is unchanged; only the filename + function name moved.
+
+### `SERVICE_JWT_*` env vars (spec writes `INTER_SERVICE_JWT_*`)
+- **Spec said:** §28.4 lists `INTER_SERVICE_JWT_PRIVATE_KEY`, `INTER_SERVICE_JWT_PUBLIC_KEY`, `INTER_SERVICE_JWT_KEY_ID`, `INTER_SERVICE_JWT_TTL_SECONDS`, `INTER_SERVICE_JTI_CACHE_URL`, `INTER_SERVICE_JWT_PUBLIC_KEY_PREVIOUS` (for rotation overlap).
+- **Reality:** Code uses `SERVICE_JWT_PRIVATE_KEY`, `SERVICE_JWT_KEY_ID`, `SERVICE_JWT_TTL_SECONDS`. Rotation overlap is done via `SERVICE_JWT_ACCEPTED_KEY_IDS` (comma-separated kid allowlist) rather than `_PUBLIC_KEY_PREVIOUS`. JTI cache uses the generic `REDIS_URL`, not a dedicated `INTER_SERVICE_JTI_CACHE_URL`.
+- **Source:** `apps/main/src/lib/env.ts:70-74`, `apps/rag/src/lib/auth/verify-service-jwt.ts:30-95`. Tracked in `docs/env-audit.md` with a "scope flag" noting the rename touches RAG + GitHub Actions + Vercel env vars (operator-side).
+- **Action for spec update:** Either (a) drop the `INTER_` prefix in §28.4 and replace `_PUBLIC_KEY_PREVIOUS` with `_ACCEPTED_KEY_IDS`, or (b) schedule the rename as a coordinated env migration (touches main+RAG+CI+Vercel) — see env-audit.md for the rename scope.
+
+### `RAG_SERVICE_URL` env var (spec writes `PLATFORM_RAG_SUBDOMAIN`)
+- **Spec said:** §28.1 — `PLATFORM_RAG_SUBDOMAIN` (subdomain-shaped).
+- **Reality:** `RAG_SERVICE_URL` (full URL, not subdomain). Equivalent surface; different shape.
+- **Source:** `docs/env-audit.md`.
+- **Action for spec update:** §28.1 should use `RAG_SERVICE_URL` and note it's the full URL.
+
+### `PLATFORM_TENANT_SUBDOMAIN_BASE` env var — does not exist in code
+- **Spec said:** §28.1 — required env var.
+- **Reality:** Code derives tenant subdomains from `PLATFORM_DOMAIN_REGEX` matched against `PLATFORM_PRIMARY_DOMAIN`. The base-domain string is computed, not configured.
+- **Source:** `docs/env-audit.md`.
+- **Action for spec update:** §28.1 — either remove `PLATFORM_TENANT_SUBDOMAIN_BASE` and document the regex-based equivalence, or schedule adding the explicit var.
+
+### `INNGEST_SIGNING_KEY` is required at boot (cascade from D-101)
+- **Spec said:** §28.11 — listed as required.
+- **Reality matches spec** but is worth recording explicitly because Next 16's instrumentation timing means missing this (or any other spec-listed required var) crashes the dev server within milliseconds of "Ready." PR #307 hit this on the Vercel build phase; PR #320 hit it on the e2e workflow.
+- **Source:** MEMORY D-101.
+- **Action for spec update:** §28.19 boot verification subsection should add a "Next 16 timing" callout — env validation now runs deterministically on every Node startup including `next dev`, so any unset required var fails-loud immediately.
+
+### §15.13 — 180-day auto-suspend deliberately disabled for paying tenants
+- **Spec said:** "Inactive sub-host: 30/60/90/180-day nudges; auto-downgrade or suspend at 180 days inactivity."
+- **Reality:** `apps/main/src/inngest/compliance-nightly.ts` head comment (lines 14-20) explicitly says: "No 180-day auto-suspend for inactive PAYING tenants. The user's framing: paying customers shouldn't lose access because they're not using the app. The 180d level row stays in NUDGE_LEVELS as a final reminder; the suspend branch is gone." The 180d level is a log breadcrumb only — no email, no suspension. Non-paying past-grace tenants are handled via middleware redirect + a separate cron, not this branch.
+- **Source:** PR #121 (referenced in the cron's comment).
+- **Action for spec update:** §15.13 should add `> **Status:** 180-day auto-suspend deliberately disabled for paying tenants per PR #121. 180d level is now a log-only breadcrumb. Non-paying past-grace handled by middleware redirect, not this cron.`
+
+---
+
+## 11. Architecture additions (Greptile / D-091 follow-ons) — spec sync needed
+
+These are the architectural primitives that landed across the three D-091 audit rounds. They have a dedicated spec addendum at `specs/TechSpec/spec-addendum-d091-hardening.md` and aren't strictly missing from the spec — but the **main sections they affect (§5.4, §7.9a, §14.7, §17.9, §22.4, §24, §27.12, §32) still reference the pre-D-091 patterns**. The action below names which main-spec sections need a callout pointing at the addendum.
+
+### `safeAwait` mutation wrapper (D-094)
+- **Where:** `apps/main/src/lib/db/safe-mutation.ts`.
+- **Why:** Supabase JS v2 returns `{ error }` tuples instead of throwing. Roughly 113 unchecked-mutation sites across the codebase silently swallowed DB errors.
+- **Lint:** `atc/no-unchecked-supabase-mutation` at `error` repo-wide after migration PRs #271/#272/#273.
+- **Action for spec update:** §5.4 should add a callout — `safeAwait(query, "context.label")` is the canonical Supabase mutation pattern; the previously-allowed destructured-`{ error }` pattern is now lint-restricted to `safe-mutation.ts` itself. Cross-reference `spec-addendum-d091-hardening.md` §2.1.
+
+### `safeAwaitRowCount` for CAS-style status guards (D-091 round 2)
+- **Where:** `apps/main/src/lib/db/safe-mutation.ts`.
+- **Why:** Supabase JS `.update().eq("status", X)` returns `{ error: null }` whether 0 or N rows matched. Every CAS lock pattern needs `.select("id")` + row-count assertion.
+- **Action for spec update:** §14.7 (Stripe transfer lock), §22.12 (RAG re-ingest), §15.x (onboarding state machine), §18.5 (invitation first-use binding) — each should reference the `safeAwaitRowCount` pattern. Same addendum cross-ref.
+
+### Conversation history helper (D-095)
+- **Where:** `apps/main/src/lib/chat/conversation-history.ts`.
+- **Why:** Prior chat / help-AI calls passed only the current user message — every turn was stateless. Customers thought the AI "forgot" prior turns.
+- **Two-layer isolation:** helper requires `tenantId` positional arg + uses both `.eq("tenant_id", …)` and `.eq("conversation_id", …)` so service-role bypass of RLS still has the second filter.
+- **Action for spec update:** §24 should describe the multi-turn history shape + alternation guard. Same addendum cross-ref.
+
+### Atomic increment RPC for tenant AI cost (D-094 follow-up)
+- **Where:** `apps/main/supabase/migrations/20260627000000_tenant_usage_atomic_increment.sql` defines `increment_tenant_ai_cost(tenant_id, billing_period, amount_cents)` as `SECURITY DEFINER` with `search_path = ''`.
+- **Why:** Replaces the prior read-then-write TOCTOU in `lib/ai/call-wrapper.ts:logAndIncrement` that — after `safeAwait` started surfacing errors — would make a successful AI call appear to fail under concurrent first-period inserts.
+- **Action for spec update:** §27.12 cost-attribution prose should reference the RPC and the `SECURITY DEFINER` discipline from §5.1.1.
+
+### Error-injection probe (`apps/main/test/error-injection/`)
+- **Where:** Dedicated CI step `pnpm test:error-injection` runs alongside lint/typecheck/build.
+- **What:** Forces handlers into DB-error / resource-down / concurrent-execution failure modes that happy-path tests don't exercise.
+- **Coverage table:** `apps/main/test/error-injection/README.md`.
+- **Action for spec update:** §30 (Testing Requirements) should add a §30.X for error-injection probes alongside the cross-tenant probe and the cross-tenant Inngest probe.
+
+### Round-3 #43 chat kill switch in streaming mode — FIXED but addendum says "pending"
+- **Where:** `apps/main/src/app/api/chat/route.ts:543-565`. Kill switch now checked BEFORE the stream is acquired.
+- **Why this entry exists:** `specs/TechSpec/spec-addendum-d091-hardening.md` §3 footnote on §10.6 says "still pending implementation as of this addendum" — the addendum is stale.
+- **Action for spec update:** Update spec-addendum-d091-hardening.md §3 §10.6 footnote to mark this fixed. Pattern catalog (§6 of addendum) item 14 (Kill-switch gap in streaming) should be marked closed.
+
+### Round-3 #47 quote price-lock expiry — FIXED but cross-round table says "Tier-1 quick win"
+- **Where:** `apps/main/src/app/api/quotes/[id]/accept/route.ts:83-89`. Confirmed-quote acceptance now rejects if `price_lock_expires_at` is past.
+- **Action for spec update:** `docs/runbooks/audit-followups-2026-05-26.md` should mark #47 closed; the addendum's "Recommended Tier-1 additions" list should mark it shipped.
+
+---
+
+## 12. Spec internal inconsistencies (caught during the sweep)
+
+These are places where one part of the spec contradicts another part of the same spec, or contradicts the live migration. They aren't deviations from spec — they're internal-to-spec bugs that should be fixed in the spec text.
+
+### §12.4 quotes schema — `NUMERIC(12,2)` money columns still in spec text
+- **Spec §12.4:** Schema block shows `commissionable_fare NUMERIC(12,2)`, `non_commissionable_total NUMERIC(12,2)`, `total_amount NUMERIC(12,2)`.
+- **Spec §14.0.1:** "All money columns store integer cents as BIGINT. No NUMERIC money columns. No DECIMAL money columns."
+- **Reality:** Migration `20260621000000_bp38_quote_options_expand.sql` added parallel `commissionable_fare_cents BIGINT`, `non_commissionable_total_cents BIGINT`, `total_amount_cents BIGINT` columns. The legacy NUMERIC columns still exist for backward-compat dual-write; new code writes to `*_cents`.
+- **Action for spec update:** §12.4 schema block should either drop the NUMERIC columns (preferred — matches §14.0.1 doctrine) or document the dual-write transition and the eventual NUMERIC-drop migration.
+
+### §14.12 platform_revenue — `tier_rate_applied NUMERIC(5,2)` contradicts §14.0.2
+- **Spec §14.12:** `tier_rate_applied NUMERIC(5,2)`.
+- **Spec §14.0.2:** "Rates and percentages are stored as `NUMERIC(5,4)`."
+- **Migration `20260525000000_money_columns.sql:73`:** `tier_rate_applied NUMERIC(5,4)` — and the migration header comment explicitly calls out the spec deviation (it says §14.12 shows wrong precision).
+- **Action for spec update:** §14.12 should read `NUMERIC(5,4)` to match §14.0.2 and the live schema.
+
+### §4 feature matrix vs §1.5 — "Downline (sub-hosts)" contradicts strict two-level structure
+- **Spec §4 feature matrix:** Row "Downline (sub-hosts) — Y unlimited" for Sub-Host Pro and Sub-Host Agency.
+- **Spec §1.5:** "The platform supports a strictly two-level structure: the platform, and direct tenants… No tenant nests beneath another tenant. If a sub-host engages subcontractors to help operate their agency, those subcontractors are users inside the sub-host's tenant — not separate tenants on the platform."
+- **Reality:** Grep for `downline`, `sub_host_of`, `parent_tenant`, `downstream_tenant` returns zero matches in code or migrations. The platform genuinely has no tenant-nesting concept.
+- **Resolution direction:** §1.5 is the correct statement. The §4 matrix row likely meant "subcontractors" (per §3.4a — the sub-host-internal subcontractor tracking feature) but used the misleading word "downline" which connotes MLM-style hierarchy.
+- **Action for spec update:** §4 — either delete the "Downline (sub-hosts)" row entirely OR rename it to "Subcontractor tracking (internal, sub-host only)" with rate matching the §3.4a feature.
+
+### §19.10 — reality-delta-supplement.md's "MISSING" claim is a misread
+- **Supplement says:** §19.10 forum read-only mode is MISSING; spec requires auto-closure when sailing date passes.
+- **Actual spec §19.10:** "Forum stays fully active for in-trip and post-trip conversation. Coordinator can post updates, photos, post-trip thanks. AI screening continues. **No automatic forum closure** — coordinator can manually lock when group has run its course."
+- **Resolution:** The supplement misread §19.10. The spec doesn't require auto-closure. The actual real gap is §18.10 (group details / RSVP / member management become read-only on travel_start_date — which IS unenforced in code; see supplement-2 entry).
+- **Action:** Annotate the §19.10 entry in `reality-delta-supplement.md` as "not actually a gap; spec was misread — see reality-delta.md §12." The real gap is the §18.10 one tracked in supplement-2.
+
+### §32.13.2 — wording inconsistency on screenshot PII initial mode
+- **Spec §32.13.2:** "Optional vision-based PII detection before issue attachment — initial behavior: warn the user, do not block."
+- **Spec §32.15.1 (Phased Rollout):** "Phase 3: … Vision-based screenshot PII detection moves from warn to block if calibration supports it."
+- **Reality:** Reality-delta §1 documents the whole detector as cost-deferred (stub returns `{ detected: false }`). So even the "warn" mode is dead because there's nothing to warn about.
+- **Action for spec update:** Both §32.13.2 and §32.15.1 should add a status callout noting the detector itself is stubbed; warn-mode is functionally inactive. See reality-delta.md §1.
+
+---
+
+# Appended 2026-05-27 — operator decisions on punch-list items
+
+Two punch-list items (P2 #17, P2 #18) were resolved by operator decision as spec edits rather than engineering work. Recording them here so the next spec-sync pass applies them; both are pure spec-text changes.
+
+---
+
+## §4 feature matrix — rename "Downline (sub-hosts)" row to "Subcontractor tracking"
+- **Spec said:** §4 feature matrix lists `Downline (sub-hosts) — Y unlimited` for Sub-Host Pro and Sub-Host Agency.
+- **Conflict:** §1.5 explicitly forbids tenant nesting ("strictly two-level structure… No tenant nests beneath another tenant"). Grep confirms zero downline-shaped code in the repo. The matrix row was likely a copy/paste from MLM-tier templates and never applied to this platform.
+- **Operator decision (2026-05-27):** rename the row to `Subcontractor tracking (internal)` — the real sub-host-internal feature documented at §3.4a (which IS implemented per the `subcontractors` table + `(tenant)/settings/subcontractors/page.tsx`). The renamed row also clarifies that the feature is private bookkeeping inside one sub-host's tenant, not platform-managed.
+- **Action for spec update:** §4 matrix — rename the row. Keep the Y/Y values for Sub-Host Pro and Sub-Host Agency (matches the existing UI gating which shows subcontractor tracking for tenant_type='sub_host' regardless of tier sub-level).
+
+## §7.9 / §9.9 — strike "Last-Event-ID for reconnect" claim from SSE prose
+- **Spec said:**
+  - §7.9 "Streaming: chat uses Server-Sent Events (SSE) with Last-Event-ID for reconnect"
+  - §9.9 "Reconnect supported via Last-Event-ID header"
+- **Reality:** chat route streams SSE deltas via TransformStream but never emits `id:` lines per event and never reads the `Last-Event-ID` request header. EventSource's built-in connection-level auto-reconnect works, but server-side resumption from the last delivered event is NOT implemented. For LLM streams, server-side resumption is fundamentally hard (the model has already moved past that point in generation — the right answer is usually to start a fresh turn, not to resume from the middle).
+- **Operator decision (2026-05-27):** strike from spec. EventSource browser-level auto-reconnect IS the actual contract.
+- **Action for spec update:**
+  - §7.9 conventions: change "SSE with Last-Event-ID for reconnect" to "SSE; EventSource browser-level auto-reconnect on connection drop. No application-level resumption — a drop mid-stream prompts the user to re-send."
+  - §9.9: replace "Reconnect supported via Last-Event-ID header" with the same.

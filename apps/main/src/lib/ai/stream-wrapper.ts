@@ -29,6 +29,7 @@ import {
   selectModelForPurpose,
   loadTenantSnapshot,
   PLATFORM_TENANT_ID,
+  buildSystemArg,
   type AICallPurpose,
   type InstrumentedClaudeArgs,
 } from "./call-wrapper";
@@ -170,10 +171,11 @@ export function instrumentedClaudeStream(
       const start = Date.now();
 
       try {
+        const cachedSystem = buildSystemArg(args.system);
         const stream = anthropic.messages.stream({
           model,
           max_tokens: args.max_tokens,
-          ...(args.system ? { system: args.system } : {}),
+          ...(cachedSystem ? { system: cachedSystem } : {}),
           messages: args.messages,
         });
 

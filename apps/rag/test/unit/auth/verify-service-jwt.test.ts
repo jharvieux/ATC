@@ -80,6 +80,7 @@ async function callHandler(req: Request): Promise<Response> {
 describe("verifyServiceJwt — fail-closed contract", () => {
   beforeEach(() => {
     vi.stubEnv("SERVICE_JWT_PUBLIC_KEY", publicKeyPem.replace(/\n/g, "\\n"));
+    vi.stubEnv("SERVICE_JWT_KEY_ID_CURRENT", KEY_ID);
     vi.stubEnv("SERVICE_JWT_ACCEPTED_KEY_IDS", KEY_ID);
     vi.stubEnv("SUPABASE_RAG_URL", "http://supabase.test");
     vi.stubEnv("SUPABASE_RAG_SERVICE_ROLE_KEY", "test-service-key");
@@ -214,6 +215,82 @@ describe("verifyServiceJwt — fail-closed contract", () => {
     const res = await handler(makeReq(token), { params: Promise.resolve({}) });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "tenant_inactive" });
+  });
+
+  // ── kid→PEM rotation mapping (Greptile audit #7) ────────────────────────
+  it("rejects with signature_invalid when kid is allowlisted but has no mapped PEM", async () => {
+    // Set up an allowlist that includes the test kid but DON'T set
+    // SERVICE_JWT_KEY_ID_CURRENT to match. The kid passes the allowlist check
+    // upstream but fails the kid→PEM mapping in getPublicKey.
+    //
+    // Use vi.resetModules + dynamic import to force a FRESH keyCache. Without
+    // it, the module-level cache from earlier tests still holds the test KEY_ID
+    // mapped to the real PEM and the new mapping check never runs.
+    vi.stubEnv("SERVICE_JWT_KEY_ID_CURRENT", "different-kid");
+    vi.stubEnv("SERVICE_JWT_ACCEPTED_KEY_IDS", `${KEY_ID},different-kid`);
+
+    vi.resetModules();
+    const { withServiceAuth: freshWrapper } = await import(
+      "@/lib/auth/with-service-auth"
+    );
+
+    const token = await makeToken({ kid: KEY_ID });
+    const handler = freshWrapper(async () => Response.json({ ok: true }));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ error: "signature_invalid" });
+  });
+
+  it("routes PREVIOUS kid to SERVICE_JWT_PUBLIC_KEY_PREVIOUS during rotation overlap", async () => {
+    // Generate a SECOND keypair representing the previous rotation generation.
+    const prevPair = await generateKeyPair("RS256");
+    const prevPem = await exportSPKI(prevPair.publicKey);
+    const PREV_KID = "test-v0";
+
+    vi.stubEnv("SERVICE_JWT_PUBLIC_KEY_PREVIOUS", prevPem.replace(/\n/g, "\\n"));
+    vi.stubEnv("SERVICE_JWT_KEY_ID_PREVIOUS", PREV_KID);
+    vi.stubEnv("SERVICE_JWT_ACCEPTED_KEY_IDS", `${KEY_ID},${PREV_KID}`);
+
+    vi.resetModules();
+    vi.doMock("@supabase/supabase-js", () => ({
+      createClient: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { tenant_id: "rotating-tenant", status: "active" },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    vi.doMock("@/lib/redis/client", () => ({
+      getRedis: () => ({ set: async () => "OK" }),
+    }));
+
+    const { withServiceAuth: freshWrapper } = await import(
+      "@/lib/auth/with-service-auth"
+    );
+
+    // Sign a token with the PREVIOUS private key + the PREVIOUS kid header.
+    // Pre-fix this would have failed signature_invalid because the verifier
+    // used the CURRENT PEM for every kid.
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({
+      tenant_id: "rotating-tenant",
+      scope: "read",
+      jti: randomUUID(),
+    })
+      .setProtectedHeader({ alg: "RS256", kid: PREV_KID })
+      .setIssuedAt(now)
+      .setExpirationTime(now + 300)
+      .sign(prevPair.privateKey);
+
+    const handler = freshWrapper(async () => Response.json({ ok: true }));
+    const res = await handler(makeReq(token), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
   });
 
   // ── 7. success path ──────────────────────────────────────────────────────
