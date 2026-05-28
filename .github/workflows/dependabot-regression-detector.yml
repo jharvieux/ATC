@@ -1,0 +1,138 @@
+# Stuck-PR regression detector for Dependabot.
+#
+# Why:
+#   The automerge + retry workflows handle the 24h release-age hold
+#   automatically. Real regressions look identical to release-age failures
+#   from the outside — both leave the PR open with failing CI. This
+#   workflow distinguishes them so a regression doesn't silently rot in
+#   the queue.
+#
+# Logic:
+#   Once a day at 23:30 UTC (90 min after the retry workflow at 22:00),
+#   for each open Dependabot PR:
+#     1. Skip if not failing required checks.
+#     2. Pull the latest failed run's log; grep for MINIMUM_RELEASE_AGE.
+#     3. If found → release-age hold; the retry workflow will catch it.
+#        Do nothing.
+#     4. If NOT found → real regression. Label the PR `regression-suspected`
+#        and post (or update) a comment with the first error line.
+#   Already-labeled PRs are skipped so the comment doesn't get re-posted
+#   on every cron firing.
+#
+# Operator workflow:
+#   Filter your GitHub notifications on `label:regression-suspected` to
+#   surface these. Triage by reading the comment, then either:
+#     - Close the PR (and let Dependabot reopen next cycle if a newer
+#       version of the same package fixes it), or
+#     - Add a dependabot.yml ignore for the specific version range.
+
+name: dependabot-regression-detector
+
+on:
+  schedule:
+    - cron: "30 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure regression-suspected label exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "regression-suspected" \
+            --color "d93f0b" \
+            --description "Dependabot PR failing CI for reasons other than the 24h release-age hold." \
+            --force \
+            --repo "${{ github.repository }}" || true
+
+      - name: Label Dependabot PRs whose failures aren't release-age
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          PRS=$(gh pr list \
+            --repo "$REPO" \
+            --author "app/dependabot" \
+            --state open \
+            --json number,headRefName,labels \
+            --jq '.[] | "\(.number)|\(.headRefName)|\([.labels[].name] | join(","))"')
+
+          if [ -z "$PRS" ]; then
+            echo "No open Dependabot PRs."
+            exit 0
+          fi
+
+          while IFS='|' read -r PR_NUMBER HEAD_REF LABELS; do
+            [ -z "$PR_NUMBER" ] && continue
+            echo "── PR #$PR_NUMBER ($HEAD_REF) ──"
+
+            # Skip if already labeled — comment was already posted.
+            if echo ",$LABELS," | grep -q ",regression-suspected,"; then
+              echo "  already labeled, skipping"
+              continue
+            fi
+
+            RUN_ID=$(gh run list \
+              --repo "$REPO" \
+              --branch "$HEAD_REF" \
+              --status failure \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')
+
+            if [ -z "$RUN_ID" ]; then
+              echo "  no failed run — CI either passing or never ran"
+              continue
+            fi
+
+            # Pull failure logs. If grep matches "MINIMUM_RELEASE_AGE", this
+            # is a 24h supply-chain hold — the retry workflow will catch it.
+            LOG=$(gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>/dev/null || true)
+            if [ -z "$LOG" ]; then
+              echo "  could not fetch log — skipping"
+              continue
+            fi
+
+            if echo "$LOG" | grep -q "MINIMUM_RELEASE_AGE"; then
+              echo "  release-age hold — retry workflow handles this"
+              continue
+            fi
+
+            # Real regression. Extract the first meaningful error line.
+            # Common patterns from this repo's CI: TypeScript `error TS`,
+            # ESLint `error` (with file path), Vitest `FAIL`, generic `Error:`.
+            FIRST_ERR=$(echo "$LOG" | grep -E "error TS[0-9]+|^.*\berror\b.*|^FAIL\b|Error: " | head -1 | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-300)
+            if [ -z "$FIRST_ERR" ]; then
+              FIRST_ERR="(could not extract a specific error line — see run logs)"
+            fi
+
+            COMMENT_BODY=$(cat <<EOF
+          ⚠️ This Dependabot PR's CI failure does NOT match the 24h release-age hold pattern — likely a real regression.
+
+          First error line from run #$RUN_ID:
+          \`\`\`
+          $FIRST_ERR
+          \`\`\`
+
+          Next steps:
+          - Triage by reading the [full failed run]($GITHUB_SERVER_URL/$REPO/actions/runs/$RUN_ID).
+          - If a specific version is the culprit, close this PR and add an \`ignore\` entry to \`.github/dependabot.yml\` for that version range. Dependabot will respect it on the next daily cycle.
+          - If transient, close + let Dependabot reopen on its next daily run.
+
+          (Posted by \`dependabot-regression-detector\`. Labeled \`regression-suspected\` so it shows up in notification filters.)
+          EOF
+          )
+
+            echo "  posting regression comment + label"
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "regression-suspected"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT_BODY"
+          done <<< "$PRS"

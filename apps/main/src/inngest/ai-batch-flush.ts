@@ -90,3 +90,25 @@ export const aiBatchFlushPersonaAddendumRescreen = inngest.createFunction(
     return result;
   },
 );
+
+// RAG Stage 2 redaction (F12). Submissions flow through the ingest
+// pipeline at unpredictable rates — operators bulk-upload PDFs, then
+// drip-feed CSVs. Hourly is a good middle ground: 50/batch cap on
+// Anthropic means high-volume bursts get split across a few flushes,
+// and the pipeline downstream (normalization → review queue) tolerates
+// hour-scale latency since nothing is customer-facing until publish.
+export const aiBatchFlushRagPiiRedaction = inngest.createFunction(
+  {
+    id: "ai-batch-flush-rag-pii-redaction",
+    triggers: [{ cron: "10 * * * *" }], // hourly at minute 10 (offset from memory_extraction at :00)
+    concurrency: { limit: 1 },
+  },
+  async () => {
+    const db = createServiceRoleClient();
+    const result = await flushPendingForPurpose({
+      purpose: "rag_pii_redaction",
+      db,
+    });
+    return result;
+  },
+);
