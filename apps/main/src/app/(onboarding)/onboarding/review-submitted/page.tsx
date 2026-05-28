@@ -16,8 +16,8 @@ export default function OnboardingReviewSubmittedPage() {
       </p>
       <p className="text-sm text-gray-400">
         Questions? Contact us at{" "}
-        <a href="mailto:support@aitravelconcierge.com" className="underline">
-          support@aitravelconcierge.com
+        <a href="mailto:support@ai-travelconcierge.com" className="underline">
+          support@ai-travelconcierge.com
         </a>
       </p>
     </div>

@@ -110,8 +110,8 @@ Create from the dashboard or via `supabase storage`. Set bucket access to **priv
 
 In the dashboard → **Authentication → Settings**:
 
-- **Site URL**: the public app URL (`https://<env>.aitravelconcierge.com` for prod-like environments).
-- **Redirect URLs**: every domain users sign in from. For multi-tenant subdomains, use a wildcard pattern (`https://*.aitravelconcierge.com`).
+- **Site URL**: the public app URL (`https://<env>.ai-travelconcierge.com` for prod-like environments).
+- **Redirect URLs**: every domain users sign in from. For multi-tenant subdomains, use a wildcard pattern (`https://*.ai-travelconcierge.com`).
 - **JWT expiry**: 3600 (1 hour) — matches the default. Raising it requires §26.6 monitoring updates.
 - **Email auth**: enabled. Use Supabase's default email provider initially; swap to a custom SMTP when production-ready.
 
