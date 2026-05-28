@@ -26,6 +26,9 @@
 import { randomUUID } from "node:crypto";
 import { redactPii } from "@/lib/pii/redact";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
+import { PERSONA_TOOLS } from "@/lib/personas/tools";
+import { runToolUseLoop } from "@/lib/personas/tools/run-tool-use-loop";
+import type { AnthropicTool } from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
 import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
@@ -764,20 +767,56 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         return;
       }
     } else {
-      // ── Non-streaming branch — original behaviour, unchanged ──
+      // ── Non-streaming branch ──
+      // §9.6 tool-use loop: pass PERSONA_TOOLS; if the response includes
+      // tool_use blocks, dispatch them and make a follow-up call with
+      // tool_result blocks attached. Streaming mode does NOT yet support
+      // tools — that's a follow-up since tool_use + delta buffering is
+      // materially harder. Single-pass: if the follow-up itself triggers
+      // another tool_use, that's the supervisor / regen's problem.
       try {
         // instrumentedClaudeCall records vendor health + ai_call_log +
         // tenant_usage_metrics increment + state-transition check.
-        const result = await instrumentedClaudeCall({
+        const baseArgs = {
           tenant_id: tenantId,
           conversation_id: conversationId,
           user_id: userId,
           model: generationModel,
-          purpose: "chat_main",
+          purpose: "chat_main" as const,
           max_tokens: 1024,
           system: sys,
+        };
+        let result = await instrumentedClaudeCall({
+          ...baseArgs,
           messages: chatHistory,
+          tools: PERSONA_TOOLS as unknown as AnthropicTool[],
         });
+
+        // Tool-use loop. Returns null if no tool_use blocks — common case.
+        const ctxForTools = ctx;
+        if (ctxForTools) {
+          const loopOut = await runToolUseLoop({
+            result,
+            originalMessages: chatHistory,
+            dispatchCtx: {
+              ctx: ctxForTools,
+              db: svc,
+              conversation_id: conversationId,
+              contact_id: null, // §9.6 follow-up: thread contact_id through conversation row
+            },
+          });
+          if (loopOut) {
+            // Follow-up call with tool_result blocks appended.
+            result = await instrumentedClaudeCall({
+              ...baseArgs,
+              messages: loopOut.followUpMessages,
+              tools: PERSONA_TOOLS as unknown as AnthropicTool[],
+            });
+            console.info(
+              `[chat:tool-use] dispatched=${loopOut.dispatchedTools.join(",")} mutated=${loopOut.mutated}`,
+            );
+          }
+        }
         candidateText = result.text;
       } catch {
         // Vendor failure was already recorded inside the wrapper.
