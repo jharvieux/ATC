@@ -374,10 +374,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // ── 4. Load or create conversation; persist user message.
   let conversationId = args.conversationIdInput;
   let conversationActivePersonaId: string | null = null;
+  let conversationContactId: string | null = null;
   if (conversationId) {
     const { data: conv } = await svc
       .from("conversations")
-      .select("id, active_persona_id")
+      .select("id, active_persona_id, contact_id")
       .eq("id", conversationId)
       .eq("tenant_id", tenantId)
       .maybeSingle();
@@ -387,6 +388,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       return;
     }
     conversationActivePersonaId = (conv as { active_persona_id?: string } | null)?.active_persona_id ?? null;
+    conversationContactId = (conv as { contact_id?: string | null } | null)?.contact_id ?? null;
   } else {
     // §15.12 sandbox: stamp is_test on the conversation row at creation time.
     // Snapshot semantics — a tenant who toggles is_sandbox later does NOT
@@ -802,7 +804,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
               ctx: ctxForTools,
               db: svc,
               conversation_id: conversationId,
-              contact_id: null, // §9.6 follow-up: thread contact_id through conversation row
+              contact_id: conversationContactId,
             },
           });
           if (loopOut) {

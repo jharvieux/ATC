@@ -68,6 +68,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need enough history for `git diff origin/<base>...HEAD` to find
+          # a merge base. fetch-depth: 0 = full history. Slightly slower
+          # checkout (~5s on this repo) but correct on any divergence depth.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -80,8 +85,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run Vitest with coverage
-        run: pnpm test
+      - name: Decide test scope (full vs affected)
+        id: scope
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          node scripts/ci-decide-tests.mjs | tee -a "$GITHUB_OUTPUT"
+
+      - name: Run full vitest suite (with coverage)
+        if: steps.scope.outputs.mode == 'full'
+        run: |
+          echo "::notice::Running FULL test suite — ${{ steps.scope.outputs.reason }}"
+          pnpm test
+
+      - name: Run affected vitest tests
+        if: steps.scope.outputs.mode == 'affected'
+        run: |
+          echo "::notice::Running affected tests — ${{ steps.scope.outputs.reason }}"
+          # `vitest related <files>` resolves test files transitively via vitest's
+          # own import graph. Run from repo root; vitest discovers config.
+          pnpm --silent vitest related ${{ steps.scope.outputs.files }}
 
   secret-scan:
     name: Secret Scan
