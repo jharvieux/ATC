@@ -68,6 +68,29 @@ export const aiBatchFlushPersonaAddendumScreen = inngest.createFunction(
   },
 );
 
+// Nightly rescreen enqueues all approved addendums in one shot at 04:00 UTC.
+// We flush starting at 04:30 UTC and then hourly until the queue drains —
+// the rescreen producer can enqueue more rows than fit in one Anthropic batch
+// (cap 50 per submission today), so we want a few flush ticks to drain the
+// queue same-day. Hourly is plenty: even a tenant with hundreds of approved
+// addendums clears in a couple of hours, and the suspend semantics aren't
+// time-sensitive (tenant can keep using the addendum until results land).
+export const aiBatchFlushPersonaAddendumRescreen = inngest.createFunction(
+  {
+    id: "ai-batch-flush-persona-addendum-rescreen",
+    triggers: [{ cron: "30 4-12 * * *" }], // 04:30 → 12:30 UTC hourly
+    concurrency: { limit: 1 },
+  },
+  async () => {
+    const db = createServiceRoleClient();
+    const result = await flushPendingForPurpose({
+      purpose: "persona_addendum_rescreen",
+      db,
+    });
+    return result;
+  },
+);
+
 // RAG Stage 2 redaction (F12). Submissions flow through the ingest
 // pipeline at unpredictable rates — operators bulk-upload PDFs, then
 // drip-feed CSVs. Hourly is a good middle ground: 50/batch cap on

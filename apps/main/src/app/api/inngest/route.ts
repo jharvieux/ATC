@@ -33,7 +33,10 @@ import {
   personaAddendumScreen,
   personaAddendumScreenFromBatchResult,
 } from "@/inngest/persona-addendum-screen";
-import { personaAddendumRescreenNightly } from "@/inngest/persona-addendum-rescreen-nightly";
+import {
+  personaAddendumRescreenNightly,
+  personaAddendumRescreenFromBatchResult,
+} from "@/inngest/persona-addendum-rescreen-nightly";
 // BP34: Inbound import pipeline (§34.3) + retention sweep (§34.4)
 import { importPipeline } from "@/inngest/import-pipeline";
 import { purgeParsedDocuments } from "@/inngest/purge-parsed-documents";
@@ -117,6 +120,7 @@ import {
   aiBatchFlushPrecruise,
   aiBatchFlushMemoryExtraction,
   aiBatchFlushPersonaAddendumScreen,
+  aiBatchFlushPersonaAddendumRescreen,
   aiBatchFlushRagPiiRedaction,
 } from "@/inngest/ai-batch-flush";
 import { precruiseSendFromBatchResult } from "@/inngest/precruise-generate-and-send";
@@ -156,6 +160,7 @@ export const { GET, POST, PUT } = serve({
     personaAddendumScreen,
     personaAddendumScreenFromBatchResult,
     personaAddendumRescreenNightly,
+    personaAddendumRescreenFromBatchResult,
     // BP34: Inbound import pipeline (§34.3) + retention sweep (§34.4)
     importPipeline,
     purgeParsedDocuments,
@@ -238,6 +243,7 @@ export const { GET, POST, PUT } = serve({
     aiBatchFlushPrecruise,
     aiBatchFlushMemoryExtraction,
     aiBatchFlushPersonaAddendumScreen,
+    aiBatchFlushPersonaAddendumRescreen,
     aiBatchFlushRagPiiRedaction,
     precruiseSendFromBatchResult,
   ],
