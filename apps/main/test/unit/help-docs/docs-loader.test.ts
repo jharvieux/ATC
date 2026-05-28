@@ -81,10 +81,13 @@ describe("searchDocs", () => {
   });
 
   it("matches body content and includes a snippet", () => {
+    // Multiple docs mention CNAME (branding intro + troubleshooting). Test
+    // that the search finds them and surfaces a snippet — but don't pin
+    // first-place ranking, which can flip when doc copy is edited.
     const hits = searchDocs("CNAME");
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]?.snippet).toContain("cname");
-    expect(hits[0]?.slug).toBe("troubleshooting");
+    expect(hits.map((h) => h.slug)).toContain("troubleshooting");
   });
 
   it("ranks title matches higher than body-only matches", () => {
