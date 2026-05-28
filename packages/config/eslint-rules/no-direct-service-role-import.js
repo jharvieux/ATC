@@ -299,6 +299,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // bucket. Both require service-role; the route still gates on
   // assertPermission('quotes', 'send') for the tenant-user auth side.
   "/app/api/quotes/[id]/send/route.ts",
+  // §7.9 — Idempotency-Key middleware: reads/writes the cross-tenant
+  // request_idempotency cache (locked down to service_role only via RLS).
+  "/lib/http/idempotency.ts",
+  // §7.9 — request_idempotency purge cron: background Inngest job, no
+  // user session.
+  "/inngest/request-idempotency-purge.ts",
 ];
 
 function endsWithAllowed(filename) {
