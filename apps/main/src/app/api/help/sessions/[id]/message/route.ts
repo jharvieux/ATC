@@ -166,6 +166,21 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       // conversation row on first message and bind it to the help session.
       let conversationId = session.conversation_id;
       if (!conversationId) {
+        // §15.12 sandbox: stamp is_test on the conversation row at creation time
+        // (snapshot semantics, same as the customer chat route).
+        //
+        // Fail CLOSED on read error: default isTest=true when we can't confirm
+        // the tenant's sandbox state. Same reasoning as the chat route — the
+        // audit firewall must not be silently leaked to.
+        const { data: sandboxRow, error: sandboxErr } = await db
+          .from("tenants")
+          .select("is_sandbox")
+          .eq("id", ctx.tenant_id)
+          .maybeSingle();
+        const isTest = sandboxErr
+          ? true
+          : Boolean((sandboxRow as { is_sandbox?: boolean } | null)?.is_sandbox);
+
         const { data: createdConv, error: convErr } = await db
           .from("conversations")
           .insert({
@@ -175,6 +190,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
             first_message_at: new Date().toISOString(),
             last_message_at: new Date().toISOString(),
             message_count: 0,
+            is_test: isTest,
           })
           .select("id")
           .single();
