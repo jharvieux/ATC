@@ -33,7 +33,10 @@ function key(resource: string, action: string): GrantKey {
   return `${resource}:${action}`;
 }
 
-// READ-only grants — `viewer` gets exactly these.
+// READ-only grants — `viewer` gets exactly these. Includes customer
+// self-service reads — the routes themselves scope to the caller's own
+// user.id, so granting the (resource, action) does not expose other
+// users' data.
 const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("bookings", "read"),
   key("bug_submission", "read"),
@@ -49,6 +52,12 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("tasks", "list"),
   key("team_members", "list"),
   key("tenant_branding", "read"),
+  // Customer self-service reads (§11.3 / §25.3 / §11.6). End customers
+  // default to role='tenant_owner' (per migration 20260625000001), and
+  // tenant staff may also use the same endpoints when acting as a user.
+  key("CustomerMemory", "read"),
+  key("UserProfile", "read"),
+  key("PendingTransfer", "read"),
 ]);
 
 // AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
@@ -78,6 +87,13 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("price_watches", "create"),
   key("price_watches", "rearm"),
   key("price_watches", "update"),
+  // Customer self-service writes (§11.3 / §25.3 / §11.6 — each route
+  // scopes to caller's own user.id).
+  key("CustomerMemory", "update"),
+  key("CustomerMemory", "delete"),
+  key("CustomerMemory", "opt_out"),
+  key("UserProfile", "update"),
+  key("SessionTransfer", "undo"),
   // Forums — operational, not moderation
   key("forums", "edit_message"),
   key("forums", "post_message"),
