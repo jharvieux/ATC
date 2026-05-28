@@ -169,20 +169,145 @@ function StageContent({ bookingId, stage }: { bookingId: string; stage: StageNum
   }
 }
 
-// Stage 1: Trip details — pre-filled if entry was from quote or AI chat.
+// Stage 1: Trip details — pre-filled from the booking row on mount,
+// PATCHed back to /api/bookings/[id] on save. Save-then-advance UX.
 function Stage1TripDetails({ bookingId }: { bookingId: string }): React.ReactElement {
+  const [values, setValues] = useState({
+    cruise_line: "",
+    ship_name: "",
+    sailing_date: "",
+    departure_port: "",
+    duration_nights: "",
+    cabin_category: "",
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/bookings/${bookingId}`);
+        if (!res.ok) {
+          setLoading(false);
+          return;
+        }
+        const data = (await res.json()) as {
+          booking: {
+            cruise_line: string | null;
+            ship_name: string | null;
+            sailing_date: string | null;
+            departure_port: string | null;
+            duration_nights: number | null;
+            cabin_category: string | null;
+          };
+        };
+        if (cancelled) return;
+        const b = data.booking;
+        setValues({
+          cruise_line: b.cruise_line ?? "",
+          ship_name: b.ship_name ?? "",
+          sailing_date: b.sailing_date ?? "",
+          departure_port: b.departure_port ?? "",
+          duration_nights: b.duration_nights !== null ? String(b.duration_nights) : "",
+          cabin_category: b.cabin_category ?? "",
+        });
+      } catch {
+        // Soft-fail prefetch — user can fill the form from scratch.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bookingId]);
+
+  async function handleSubmit(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const patchBody: Record<string, unknown> = {
+        cruise_line: values.cruise_line || null,
+        ship_name: values.ship_name || null,
+        sailing_date: values.sailing_date || null,
+        departure_port: values.departure_port || null,
+        cabin_category: values.cabin_category || null,
+      };
+      if (values.duration_nights) {
+        const n = parseInt(values.duration_nights, 10);
+        if (!Number.isNaN(n) && n > 0) patchBody.duration_nights = n;
+      }
+      const res = await fetch(`/api/bookings/${bookingId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patchBody),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string; message?: string };
+      if (!res.ok) {
+        setError(body.message ?? body.error ?? `Save failed (${res.status}).`);
+        return;
+      }
+      // Advance to Stage 2.
+      window.location.href = `/booking/flow/${bookingId}/2`;
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function update(k: keyof typeof values, v: string) {
+    setValues((s) => ({ ...s, [k]: v }));
+  }
+
+  if (loading) {
+    return (
+      <section>
+        <p style={{ color: "#6b7280" }}>Loading your booking…</p>
+      </section>
+    );
+  }
+
   return (
     <section>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Trip Details</h2>
       <p style={{ color: "#6b7280", fontSize: 13, marginBottom: 20 }}>Booking ID: {bookingId}</p>
-      <form style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <FormField label="Cruise Line" name="cruise_line" required />
-        <FormField label="Ship Name" name="ship_name" required />
-        <FormField label="Sailing Date" name="sailing_date" type="date" required />
-        <FormField label="Departure Port" name="departure_port" required />
-        <FormField label="Duration (nights)" name="duration_nights" type="number" required />
-        <FormField label="Cabin Category" name="cabin_category" required />
-        <StageNavButtons bookingId={bookingId} stage={1} />
+
+      {error && (
+        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <FormField label="Cruise Line" name="cruise_line" required value={values.cruise_line} onChange={(v) => update("cruise_line", v)} />
+        <FormField label="Ship Name" name="ship_name" required value={values.ship_name} onChange={(v) => update("ship_name", v)} />
+        <FormField label="Sailing Date" name="sailing_date" type="date" required value={values.sailing_date} onChange={(v) => update("sailing_date", v)} />
+        <FormField label="Departure Port" name="departure_port" required value={values.departure_port} onChange={(v) => update("departure_port", v)} />
+        <FormField label="Duration (nights)" name="duration_nights" type="number" required value={values.duration_nights} onChange={(v) => update("duration_nights", v)} />
+        <FormField label="Cabin Category" name="cabin_category" required value={values.cabin_category} onChange={(v) => update("cabin_category", v)} />
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              padding: "10px 24px",
+              background: saving ? "#9ca3af" : "#6366f1",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: saving ? "not-allowed" : "pointer",
+            }}
+          >
+            {saving ? "Saving…" : "Save & continue →"}
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -433,23 +558,39 @@ function FormField({
   name,
   type = "text",
   required,
+  value,
+  onChange,
 }: {
   label: string;
   name: string;
   type?: string;
   required?: boolean;
+  value?: string;
+  onChange?: (v: string) => void;
 }): React.ReactElement {
+  const isControlled = value !== undefined && onChange !== undefined;
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
         {label} {required && <span style={{ color: "#dc2626" }}>*</span>}
       </span>
-      <input
-        type={type}
-        name={name}
-        required={required}
-        style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
-      />
+      {isControlled ? (
+        <input
+          type={type}
+          name={name}
+          required={required}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
+        />
+      ) : (
+        <input
+          type={type}
+          name={name}
+          required={required}
+          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
+        />
+      )}
     </label>
   );
 }
