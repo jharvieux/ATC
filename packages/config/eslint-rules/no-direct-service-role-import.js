@@ -319,6 +319,14 @@ const ALLOWED_PATH_SUFFIXES = [
   // call tenant-scoped. The /q and /i page surfaces are themselves
   // token-only.
   "/app/api/public/chat/[token]/route.ts",
+  // §27.12 — AI batch reconciler cron: cross-tenant scan of
+  // ai_batch_jobs + per-row writes to ai_batch_requests. Background
+  // Inngest job, no user session.
+  "/inngest/ai-batch-reconcile.ts",
+  // §27.12 — AI batch flush cron: per-purpose batch submission.
+  // Background Inngest job, no user session; service-role required to
+  // read pending requests across tenants.
+  "/inngest/ai-batch-flush.ts",
 ];
 
 function endsWithAllowed(filename) {
