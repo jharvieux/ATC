@@ -15,9 +15,9 @@ import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
 
-const HAIKU_MODEL = process.env.PERSONA_ADDENDUM_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
+export const HAIKU_MODEL = process.env.PERSONA_ADDENDUM_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
-const SCREENING_SYSTEM_PROMPT = `You are a platform safety screener for an AI travel concierge.
+export const SCREENING_SYSTEM_PROMPT = `You are a platform safety screener for an AI travel concierge.
 
 A tenant (travel agency) is submitting a persona-positioning addendum that will be
 added to an AI persona's system prompt. Detect ANY of the following:

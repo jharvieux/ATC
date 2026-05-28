@@ -9,6 +9,7 @@ export type BatchablePurpose =
   | "precruise_generation"
   | "memory_extraction"
   | "persona_addendum_screen"
+  | "persona_addendum_rescreen"
   | "rag_pii_redaction"
   | "rag_normalization";
 
@@ -16,6 +17,7 @@ export const BATCHABLE_PURPOSES: ReadonlySet<BatchablePurpose> = new Set([
   "precruise_generation",
   "memory_extraction",
   "persona_addendum_screen",
+  "persona_addendum_rescreen",
   "rag_pii_redaction",
   "rag_normalization",
 ]);
