@@ -6,8 +6,11 @@
 -- Tables with RLS enabled:
 -- public.abuse_recompute_drift_log (rls_enabled)
 -- public.abuse_signals (rls_enabled)
+-- public.ai_batch_jobs (rls_enabled)
+-- public.ai_batch_requests (rls_enabled)
 -- public.ai_call_log (rls_enabled)
 -- public.ai_kill_switch_state (rls_enabled)
+-- public.ai_tool_calls (rls_enabled)
 -- public.anonymous_chat_counters (rls_enabled)
 -- public.anonymous_sessions (rls_enabled)
 -- public.attribution_touches (rls_enabled)
@@ -41,6 +44,7 @@
 -- public.forum_threads (rls_enabled)
 -- public.forum_user_state (rls_enabled)
 -- public.forums (rls_enabled)
+-- public.general_pricing_ranges (rls_enabled)
 -- public.gmail_inbound_messages (rls_enabled)
 -- public.gmail_oauth_tokens (rls_enabled)
 -- public.group_invite_pending_approval (rls_enabled)
@@ -70,6 +74,7 @@
 -- public.quotes (rls_enabled)
 -- public.rag_global_promotions (rls_enabled)
 -- public.rag_submissions (rls_enabled)
+-- public.request_idempotency (rls_enabled)
 -- public.security_incidents (rls_enabled)
 -- public.staging_cron_skips (rls_enabled)
 -- public.stripe_webhook_events (rls_enabled)
@@ -140,6 +145,18 @@ CREATE POLICY "abuse_signals_update_service" ON public.abuse_signals
   FOR UPDATE TO PUBLIC
   USING (false);
 
+-- TABLE: public.ai_batch_jobs
+CREATE POLICY "ai_batch_jobs_service_role_all" ON public.ai_batch_jobs
+  FOR ALL TO PUBLIC
+  USING (auth.role() = 'service_role'::text)
+  WITH CHECK (auth.role() = 'service_role'::text);
+
+-- TABLE: public.ai_batch_requests
+CREATE POLICY "ai_batch_requests_service_role_all" ON public.ai_batch_requests
+  FOR ALL TO PUBLIC
+  USING (auth.role() = 'service_role'::text)
+  WITH CHECK (auth.role() = 'service_role'::text);
+
 -- TABLE: public.ai_call_log
 CREATE POLICY "ai_call_log_delete_service" ON public.ai_call_log
   FOR DELETE TO PUBLIC
@@ -158,6 +175,20 @@ CREATE POLICY "ai_call_log_update_service" ON public.ai_call_log
 CREATE POLICY "ai_kill_switch_state_select_policy" ON public.ai_kill_switch_state
   FOR SELECT TO PUBLIC
   USING (auth.uid() IS NOT NULL);
+
+-- TABLE: public.ai_tool_calls
+CREATE POLICY "ai_tool_calls_no_user_delete" ON public.ai_tool_calls
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "ai_tool_calls_no_user_insert" ON public.ai_tool_calls
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "ai_tool_calls_no_user_update" ON public.ai_tool_calls
+  FOR UPDATE TO PUBLIC
+  USING (false);
+CREATE POLICY "ai_tool_calls_select_policy" ON public.ai_tool_calls
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
 
 -- TABLE: public.anonymous_chat_counters
 CREATE POLICY "anonymous_chat_counters_delete_service" ON public.anonymous_chat_counters
@@ -657,6 +688,20 @@ CREATE POLICY "forums_update" ON public.forums
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.general_pricing_ranges
+CREATE POLICY "general_pricing_ranges_delete" ON public.general_pricing_ranges
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "general_pricing_ranges_insert" ON public.general_pricing_ranges
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "general_pricing_ranges_select" ON public.general_pricing_ranges
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "general_pricing_ranges_update" ON public.general_pricing_ranges
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
 -- TABLE: public.gmail_inbound_messages
 CREATE POLICY "gmail_inbound_select" ON public.gmail_inbound_messages
   FOR SELECT TO authenticated
@@ -1044,6 +1089,20 @@ CREATE POLICY "rag_submissions_update_policy" ON public.rag_submissions
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.request_idempotency
+CREATE POLICY "request_idempotency_no_user_delete" ON public.request_idempotency
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "request_idempotency_no_user_insert" ON public.request_idempotency
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "request_idempotency_no_user_select" ON public.request_idempotency
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "request_idempotency_no_user_update" ON public.request_idempotency
+  FOR UPDATE TO PUBLIC
+  USING (false);
 
 -- TABLE: public.security_incidents
 CREATE POLICY "security_incidents_delete_service" ON public.security_incidents
