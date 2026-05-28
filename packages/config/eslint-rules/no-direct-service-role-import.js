@@ -299,6 +299,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // bucket. Both require service-role; the route still gates on
   // assertPermission('quotes', 'send') for the tenant-user auth side.
   "/app/api/quotes/[id]/send/route.ts",
+  // §11.6 — pending-transfer + undo routes query anonymous_sessions which
+  // is RLS-tenant-scoped. Both routes filter by tenant_id explicitly so
+  // the service-role bypass restores no broader access than RLS would
+  // grant a member.
+  "/app/api/user/pending-transfer/route.ts",
+  "/app/api/auth/transfer-session/undo/route.ts",
 ];
 
 function endsWithAllowed(filename) {
