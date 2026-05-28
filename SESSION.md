@@ -1,74 +1,64 @@
-# Session state — last updated 2026-05-28 ~03:00 UTC (overnight close)
+# Session state — last updated 2026-05-28 ~14:00 UTC
 
 ## Just completed
 
-Overnight autonomous run. Closed F1 + F2 + F3 + #56 + #58 (partial) + #59 + persona-backstory verification. Earlier this session: full P1 + P2 close-out + Node version cleanup.
+Cost-optimization sweep triggered by Anthropic Haiku rate-limit alert. Root caused, migrated three Haiku surfaces to the Message Batches API (§27.12), split the pre-cruise scheduler into hourly T-1 and daily T-7/30/90 lanes, and updated specs.
 
 ### PRs merged this session
-- **#331–#351** see prior SESSION snapshot — full P1/P2 close-out + customer AI panel + spec edits
-- **#328** canonical-domain rename (rebased after sitting unmerged) — applied to help docs (`03-branding.md`, `08-usage-and-billing.md`)
-- **#349** booking-detail page (P2 #24)
-- **#350** quote-builder co-pilot (P2 #25)
-- **#352** session+memory+punchlist update
-- **#353** `.nvmrc` + workflow conversion (fix Node 20 deprecation warnings)
-- **#354** F2 (booking list page) + F3 (PATCH state-machine gating)
-- **#355** #59 AI-mode cost-display + projection
-- **#356** persona ↔ backstory verification (no edits — all 6 personas aligned with the doc); commits `specs/TechSpec/agent-backstories-photo-guide.md` extracted from `Review/`
+- **#362** vendor-health probe fix — drop Anthropic from probe (`/v1/messages` is POST-only; GET returned 405 every minute = 1,440 wasted requests/day → 0). Real Anthropic calls already record vendor health via the call-wrapper.
+- **#363** AI batches infrastructure + pre-cruise migration
+  - `ai_batch_requests` + `ai_batch_jobs` tables (service-role RLS), migration `20260528000000_ai_batches.sql`
+  - call-wrapper: `submitAnthropicBatch` / `getAnthropicBatchStatus` / `getAnthropicBatchResults`, `logAndIncrement` exported
+  - `lib/ai/batch/`: `types.ts` (BatchablePurpose), `enqueue.ts`, `flush.ts`, `reconcile.ts`
+  - `ai-batch-reconcile.ts` cron (every 5 min, concurrency 1)
+  - `ai-batch-flush-precruise` daily 9:30 UTC; `ai-batch-flush-memory-extraction` hourly
+  - Pre-cruise scheduler split: `preCruiseEmailSchedulerT1` (hourly, direct, T-1 only, ±1h precision) + `preCruiseEmailSchedulerMultiphase` (daily 9:00 UTC, batched, T-7/30/90, ±12h)
+  - Pre-cruise consumer dual-path by `event.data.via`: direct (legacy 4-5 calls) or batched (one structured-JSON prompt, then `precruiseSendFromBatchResult`)
+- **#364** reality-delta appendix for PRs #354–#363; F12 absorbed into P3 #33 (RAG Stage 2 redaction goes through batch pipeline when wired)
 
-### PRs opened overnight (in flight)
-- **#357** F1 — full supervisor pipeline on `/api/public/chat/[token]`. Adds `public_token_chat` source kind to TenantContext, `tenantContextForPublicTokenChat` factory, `conversations.public_access_token_hash` column (migration `20260627000008`). Closes D-102.
-- **#358** P5 #56 — persona tools registry with full dispatch. 3 real handlers (escalate_to_human, get_customer_context, update_memory), 3 honest placeholders (search_host_inventory, generate_quote, collect_booking_details — each returns structured `not_implemented` + `can_fall_back_to: escalate_to_human`). Wired into `/api/chat` non-streaming branch; streaming-mode + ai_tool_calls audit table are follow-ups.
-- **#359** P5 #58 (partial) — wired Stage 1 prefetch+save end-to-end + built the `/booking/confirmation/[id]` landing page Stage 4 was redirecting to. Stages 2/3 deferred (need new tables / endpoints).
+### PRs in flight
+- **#365** F10 + F11 — extract-memory + persona-addendum-screen migrated to batches. Open, mergeable, waiting on CI checks. Background merge loop `/tmp/atc-merge-364-365.sh` is polling and will squash-merge once checks pass.
 
-### Punch-list close-outs this overnight
-- **F1** supervisor on token-gated chat — ✅ #357
-- **F2** booking list page — ✅ #354
-- **F3** booking PATCH state-machine — ✅ #354
-- **P5 #56** persona tools registry + dispatch — ✅ #358 (3 real + 3 placeholder)
-- **P5 #58** customer booking flow UI — 🟡 #359 (Stage 1 + confirmation page only; Stages 2/3 deferred)
-- **P5 #59** AI-mode cost display — ✅ #355
-- **Persona ↔ backstory verification** — ✅ #356 (no edits needed)
+### F10 / F11 details (in #365)
+- **F10 extract-memory** — producer enqueues with `caller_metadata: { tenant_id, conversation_id, user_id }`; new consumer `extractMemoryFromBatchResult` re-loads memory row for fresh optimistic-lock state, parses + Zod-validates, merges, writes with optimistic lock; conflict requeues via `conversation.memory_extract_requested`. `applyExtractedMemory` exported. 6 new consumer unit tests + integration mocks updated.
+- **F11 persona-addendum-screen** — producer enqueues with `caller_metadata: { tenant_id, addendum_id }`; new consumer `personaAddendumScreenFromBatchResult` parses fail-closed (parse errors → rejected), updates row, emails owners on reject, audit-logs. `parseScreenResult` exported. 6 new parse unit tests. `aiBatchFlushPersonaAddendumScreen` cron added (every 30 min).
+- Lint allowlist: `/inngest/extract-memory.ts` added with §27.12 rationale (`ai_batch_requests` is service-role-only RLS).
 
 ### Decisions logged this session
-- **D-102** Token-gated public chat ships without §10 supervisor (LATER closed in #357)
-- **D-103** Customer-context system-prompt injection uses server-resolved refs
-
-### Documented gaps still open
-- **Dependabot PRs #329 #330** — both have real CI failures (Lint, Typecheck, Build, Test fail — not just Vercel). Version bumps must be breaking something. Need human investigation before merge.
-- **Streaming-mode tool support** in `/api/chat` — non-streaming branch wires tools; streaming branch unchanged. Material work (delta buffering + partial tool_use blocks).
-- **`contact_id` threading** in chat tool dispatch — hardcoded to `null` today. Small touch to pull from the conversation row.
-- **Booking flow Stages 2/3** — passenger details + options scaffolding intact but not wired. Need `booking_passengers` CRUD + an addons table.
-- **`ai_tool_calls` audit table** — recommended for queryable post-hoc analysis of which tools fired when.
+- **D-106** Migrate to Anthropic Message Batches API for backgroundable Haiku surfaces (~50% token discount + separate rate-limit pool that doesn't compete with real-time chat). Scope: precruise generation, memory extraction, persona-addendum screen. Real-time chat stays direct.
+- **D-107** Split pre-cruise email scheduler into hourly T-1 (direct, ±1h precision) and daily T-7/30/90 (batched, ±12h precision). T-1 customer expectation is "tomorrow!" at the right hour; T-90/30/7 are fine with daily granularity.
 
 ## In flight
 
-Background merge script `/tmp/atc-merge-overnight-final.sh` processing #357 → #358 → #359. Estimated 15-30 min depending on CI rerun cycles.
-
-This docs PR (`docs/overnight-session-wrap`) is separate and will need its own merge.
+Background merge loop `/tmp/atc-merge-364-365.sh` PID 30316 watching #365. Will squash-merge once required checks turn green. Estimated 5-15 min depending on CI.
 
 ## Next step
 
-1. Wait for background merge cascade. If anything fails (DIRTY conflict — likely on `apps/main/src/lib/ai/call-wrapper.ts` since #357 and #358 both touch `AICallPurpose`), resolve and retry.
-2. Investigate dependabot #329/#330 failures. Pin to safe versions if a transitive dep broke something.
-3. Optional: book Stages 2/3 wiring follow-up. Tables + endpoints first.
+1. Wait for #365 to merge. If checks fail, read the failure output and fix in-PR.
+2. Optional follow-up: migrate `persona-addendum-rescreen-nightly.ts` to batches (similar pattern; deferred because volume is bounded by cron rate, not tenant edits).
+3. Optional follow-up: wire F12 (RAG Stage 2 tolerable-PII redaction through batch pipeline) when P3 #33 comes off the punch list.
 
 ## Blocked on user
 
-- **Dependabot #329 / #330** failing CI — needs decision: bump anyway with version-pin escape hatch, or hold until upstream fixes? Look at the actual failure output before deciding.
-- **Streaming tool-use support** — non-streaming is wired but streaming is a real chunk of work. Worth doing? Or accept streaming users get the response without tool calls?
+- **Dependabot #329 / #330** still failing CI — unchanged from prior session.
+- **Streaming tool-use support** in `/api/chat` — unchanged from prior session.
 
 ## Open questions
 
-- **Persona tool follow-ups**: 3 of the 6 tools (search_host_inventory, generate_quote, collect_booking_details) ship as honest placeholders. Should real implementations happen alongside their owning BPs (BP14 host adapter, §38 quote builder, §20.4 booking submit) or as standalone work?
-- **`ai_tool_calls` audit table** — yes/no for queryable history of tool dispatches? Tonight's logging is just `console.info`.
+- **persona-addendum-rescreen-nightly** — migrate now or defer? Low-volume so less urgent, but the same direct-call surface still exists.
+- **batch metrics** — should the reconciler expose per-purpose latency + cost-per-row in `tenant_usage_metrics`? Today it attributes raw cost via `logAndIncrement`; per-purpose roll-up would need a new metric key.
 
 ## Carried forward (unchanged from prior session)
 
 - BP39 follow-up: retroactive react-pdf wire-up
-- BP31: Haiku tolerable-PII redaction confidence/clarity scorer (cost-deferred — punch list P3 #32)
+- BP31: Haiku tolerable-PII redaction confidence/clarity scorer (cost-deferred — punch list P3 #32, also now F12 in P3 #33 batched-path)
 - BP30: AI behavior eval harness (cost-deferred — punch list P3 #35)
 - BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc (punch list P4 #46)
 - BP24: populate `platform_settings.supervisor_slur_deny_list` (punch list P4 #45)
 - BP23: populate `port_info_chunks` content for 17 ports (punch list P4 #44)
 - BP16/17: counsel sign-off on ICA + AI Liability Disclaimer (punch list P4 #41)
 - §13.9 active vs reactive health probing — operator decision (punch list P4 #48)
+- Streaming-mode tool support in `/api/chat`
+- `contact_id` threading in chat tool dispatch
+- Booking flow Stages 2/3 (passenger details + options)
+- `ai_tool_calls` audit table
