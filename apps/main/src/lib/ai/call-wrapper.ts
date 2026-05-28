@@ -65,7 +65,9 @@ export type AICallPurpose =
   | "help_ai_supervisor"
   // BP34 §34.3.2-3.3 — Inbound import parsing pipeline.
   | "import_classify"
-  | "import_extract";
+  | "import_extract"
+  // §38.8.1 / §39.5 — Token-gated customer chat (quote view, itinerary).
+  | "public_token_chat";
 
 // Purposes that run customer-facing turns. NOT downgraded at soft1.
 const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([

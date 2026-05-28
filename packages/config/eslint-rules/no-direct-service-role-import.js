@@ -287,6 +287,8 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/resources/[id]/route.ts",
   // BP39 §39.2.6 — public tokenized itinerary viewer (no user session).
   "/app/i/[token]/page.tsx",
+  // §38.4 — public tokenized quote viewer (no user session).
+  "/app/q/[token]/page.tsx",
   // BP36 §36.6 — attribution_rollup nightly refresh + reports.
   "/inngest/attribution-rollup-refresh.ts",
   "/app/api/reports/leads-by-source/route.ts",
@@ -305,6 +307,12 @@ const ALLOWED_PATH_SUFFIXES = [
   // grant a member.
   "/app/api/user/pending-transfer/route.ts",
   "/app/api/auth/transfer-session/undo/route.ts",
+  // §38.8.1 / §39.5 — Token-gated public chat for quote view + trip
+  // itinerary. Auth is the URL token; no user session. Resolves tenant
+  // from the token's resource via service_role lookup, then runs the AI
+  // call tenant-scoped. The /q and /i page surfaces are themselves
+  // token-only.
+  "/app/api/public/chat/[token]/route.ts",
 ];
 
 function endsWithAllowed(filename) {
