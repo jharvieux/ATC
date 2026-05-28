@@ -88,6 +88,41 @@ export async function GET(
   });
 }
 
+// §7.6 / §14.4 — Allowed PATCH fields per status. Direct edits are only
+// safe in draft. submitting / submitted / confirmed must go through the
+// cancel / modify flows so the host adapter stays in sync. Internal
+// platform-only fields (status, host_*, ai_paused_by_platform, is_test)
+// are never editable via this endpoint.
+const PATCHABLE_FIELDS_BY_STATUS: Record<string, ReadonlyArray<keyof BookingRow>> = {
+  draft: [
+    "cruise_line",
+    "ship_name",
+    "sailing_date",
+    "duration_nights",
+    "cabin_category",
+    "departure_port",
+    "total_amount_cents",
+    "commissionable_fare_cents",
+    "currency",
+  ],
+  pending_host_review: [
+    // Host has rejected automatic submission; agent can fix trip details
+    // and resubmit. Same fields as draft.
+    "cruise_line",
+    "ship_name",
+    "sailing_date",
+    "duration_nights",
+    "cabin_category",
+    "departure_port",
+    "total_amount_cents",
+    "commissionable_fare_cents",
+    "currency",
+  ],
+  // submitting: lock held by submit flow — refuse any edit.
+  // submitted / confirmed: must use modify flow.
+  // cancelled / failed: terminal — refuse edits.
+};
+
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -108,20 +143,62 @@ export async function PATCH(
     return Response.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const ALLOWED: Array<keyof BookingRow> = [
-    "cruise_line",
-    "ship_name",
-    "sailing_date",
-    "duration_nights",
-    "cabin_category",
-    "departure_port",
-    "total_amount_cents",
-    "commissionable_fare_cents",
-    "currency",
-  ];
+  // Load current status to gate the patch.
+  const { data: currentData, error: currentErr } = await db
+    .from("bookings")
+    .select("id, status")
+    .eq("id", id)
+    .maybeSingle();
+  if (currentErr) {
+    return Response.json(
+      { error: "booking_lookup_failed", detail: currentErr.message },
+      { status: 500 },
+    );
+  }
+  if (!currentData) {
+    return Response.json({ error: "not_found" }, { status: 404 });
+  }
+  const currentStatus = (currentData as { status: string }).status;
+
+  const allowed = PATCHABLE_FIELDS_BY_STATUS[currentStatus];
+  if (!allowed) {
+    return Response.json(
+      {
+        error: "status_locks_edits",
+        current_status: currentStatus,
+        message:
+          currentStatus === "submitting"
+            ? "Booking submission is in flight. Wait for it to finish before editing."
+            : currentStatus === "submitted" || currentStatus === "confirmed"
+              ? "Submitted bookings must be changed via the modify flow, not direct edit."
+              : `Edits not allowed in '${currentStatus}' state.`,
+      },
+      { status: 409 },
+    );
+  }
+
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const key of ALLOWED) {
-    if (body[key] !== undefined) patch[key] = body[key];
+  const rejected: string[] = [];
+  for (const key of Object.keys(body) as Array<keyof BookingRow>) {
+    if (key === "id" || key === "tenant_id" || key === "status" || key === "created_at" || key === "updated_at") {
+      // Silently ignore — these are platform-managed.
+      continue;
+    }
+    if ((allowed as ReadonlyArray<keyof BookingRow>).includes(key)) {
+      patch[key as string] = body[key];
+    } else if (body[key] !== undefined) {
+      rejected.push(String(key));
+    }
+  }
+  if (rejected.length > 0) {
+    return Response.json(
+      {
+        error: "field_not_editable_in_status",
+        current_status: currentStatus,
+        rejected_fields: rejected,
+      },
+      { status: 400 },
+    );
   }
   if (Object.keys(patch).length === 1) {
     return Response.json({ error: "no_updatable_fields" }, { status: 400 });
@@ -132,7 +209,7 @@ export async function PATCH(
     "bookings.update",
   );
 
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, status: currentStatus });
 }
 
 // bigint isn't JSON-serializable; format via fromCents to a decimal string
