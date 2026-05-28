@@ -263,17 +263,8 @@ describe("luhnValid — boundaries", () => {
     expect(luhn("4111111111111111")).toBe(true);
   });
   it("returns true for the 19-digit Luhn-valid number (upper boundary)", () => {
-    // 4111111111111111 + 6-digit checksummed extension; just use a well-known
-    // 19-digit Maestro: 6759649826438453 is 16-digit. Build a 19-digit by
-    // appending digits and computing Luhn manually is fragile — instead, pick
-    // a known generated Luhn-valid 19-digit: "5111111111111111119" is NOT
-    // necessarily valid. Use simpler test: known 17 isn'\''t in the test
-    // numbers list. We accept this test'\''s coverage focus as just upper-
-    // bound digit-count rejection.
-    // Confirmed via Luhn calculator: 4929939187355598777 → false. Skip
-    // claiming exact upper boundary; cover the rejection edge in the next
-    // case instead.
-    expect(true).toBe(true);
+    // 19-digit Luhn-valid number (check digit computed against luhnValid).
+    expect(luhn("4111111111111111110")).toBe(true);
   });
   it("returns false for non-digit characters inside", () => {
     // Strips non-digits FIRST in the function, so "4111-1111-1111-1111" with hyphens IS valid.
@@ -289,14 +280,10 @@ describe("luhnValid — exact length boundaries", () => {
     expect(luhn("422222222222")).toBe(false);
   });
   it("returns true for a Luhn-valid 19-digit number (upper boundary inclusive)", () => {
-    // Build a 19-digit Luhn-valid number by appending a checksum-correcting
-    // digit to a known valid 18-digit prefix. Visa's 19-digit test number:
-    // 4485862500000010 is 16-digit; for 19-digit just verify the function
-    // accepts it when length=19 + Luhn passes. Use known generator:
-    expect(luhn("6759649826438453000")).toBe(false); // not Luhn but length 19
-    // Lock the length boundary itself — a length-19 string DOES pass the
-    // length gate (only Luhn determines accept).
-    expect(luhn("1234567890123456789")).toBe(false); // length 19, Luhn fail expected
+    // 19-digit Luhn-valid number (check digit computed against luhnValid).
+    expect(luhn("4111111111111111110")).toBe(true);
+    // A length-19 string clears the length gate; Luhn alone decides accept.
+    expect(luhn("1234567890123456789")).toBe(false);
   });
   it("returns false for a 20-digit number (above upper boundary)", () => {
     expect(luhn("12345678901234567890")).toBe(false);
