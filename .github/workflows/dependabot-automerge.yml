@@ -1,0 +1,62 @@
+# Auto-merge Dependabot PRs as soon as required checks pass.
+#
+# Behavior:
+#   - Fires on every PR opened or updated by dependabot[bot].
+#   - Reads the dependabot metadata to confirm the PR is in our managed
+#     groups (production-minor-patch / dev-dependencies) and is a minor
+#     or patch bump. Majors require human review by default — except dev
+#     deps which Dependabot already groups majors into. Adjust the
+#     `update-type` filter below if that posture changes.
+#   - Enables `gh pr merge --auto --squash`. GitHub merges automatically
+#     once all required status checks pass.
+#
+# Why the schedule + the auto-merge combo:
+#   pnpm's minimumReleaseAge policy (24h supply-chain hold) routinely fails
+#   the initial Dependabot CI run when a fresh package is included. Auto-
+#   merge sits the PR in a "merge when checks pass" state. The companion
+#   workflow `dependabot-retry-ci.yml` reruns failed CI on a daily cron,
+#   so once the 24h hold elapses the PR's checks turn green and the merge
+#   fires automatically — no human nudge required.
+#
+# Security: `pull_request_target` runs in the base-repo context, which is
+# necessary so Dependabot PRs get the `GITHUB_TOKEN` permissions needed
+# to enable auto-merge. We DO NOT check out the PR head and do not run
+# any user-controlled code in this workflow — only `gh` CLI calls against
+# the PR's metadata. That keeps the standard pull_request_target attack
+# surface (running attacker code with elevated perms) closed.
+
+name: dependabot-automerge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge (squash)
+        # Allow auto-merge for patch + minor bumps from any group.
+        # Dependabot also opens grouped PRs for dev-dependencies majors
+        # (see .github/dependabot.yml) — we allow those too because the
+        # dev-deps group is intentionally permissive. Production majors
+        # are NOT auto-merged (they require human review).
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+          (steps.meta.outputs.update-type == 'version-update:semver-major' &&
+           steps.meta.outputs.dependency-type == 'direct:development')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
