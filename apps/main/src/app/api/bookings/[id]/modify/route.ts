@@ -41,17 +41,29 @@ export async function POST(
       return Response.json({ error: "field_and_new_value_required" }, { status: 400 });
     }
 
-    const { data: tenantRow } = await svc
+    // Fail CLOSED on tenant read — never default sandbox to false on error
+    // (would let a sandboxed tenant's modify reach a real host adapter).
+    const { data: tenantRow, error: tenantErr } = await svc
       .from("tenants")
-      .select("prong")
+      .select("prong, is_sandbox")
       .eq("id", ctx.tenant_id)
       .single();
+
+    if (tenantErr || !tenantRow) {
+      return Response.json(
+        { error: "tenant_lookup_failed", detail: tenantErr?.message ?? "no row" },
+        { status: 500 },
+      );
+    }
+
+    const tenantForAdapter = tenantRow as { prong: string; is_sandbox: boolean };
 
     const correlation_id = crypto.randomUUID();
     const { adapter, ctx: hostCtx } = await selectAdapterForCall(
       {
         id: ctx.tenant_id,
-        prong: (tenantRow as { prong: string } | null)?.prong ?? "byo_host",
+        prong: tenantForAdapter.prong,
+        is_sandbox: tenantForAdapter.is_sandbox,
       },
       { tenant_id: ctx.tenant_id, user_id: null, correlation_id },
     );
