@@ -172,12 +172,12 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 
 ## P5 — future build prompts (scheduled, blocked on prior phases)
 
-| # | § | What | Source | Notes |
-|---|---|---|---|---|
-| 56 | §9.6 | Persona tools registry (real schemas) — `TODO(prompt-12/13/14)` | delta §2 | Tool dispatch works; schemas are placeholder shapes |
-| 57 | §17.4 | Legal documents render from `legal_documents` table — `TODO(prompt-17)` | delta §2 | Schema + publish flow + consent gate work; onboarding render still uses inline placeholders |
-| 58 | §20.2 | Platform-native fallback booking flow customer UI — `TODO(prompt-24)` | delta §2 / s1 | Booking ENGINE built (adapters, commissions, payouts); customer-facing flow is what's missing |
-| 59 | §27.4 / §27.12 | Cost-display surfaces in tenant `/settings/ai-mode` | delta §2 | Hardcoded "varies based on usage" today; wire once `tenant_usage_metrics` aggregation lands |
+| # | § | What | Status |
+|---|---|---|---|
+| 56 | §9.6 | Persona tools registry + dispatch | 🟡 PR #358 in flight — 3 real handlers (escalate_to_human, get_customer_context, update_memory) + 3 honest placeholders (search_host_inventory, generate_quote, collect_booking_details) returning structured `not_implemented` + `can_fall_back_to: escalate_to_human`. Wired into `/api/chat` non-streaming branch. Follow-ups: streaming-mode wire-in, `contact_id` threading, `ai_tool_calls` audit table, real implementations for the 3 placeholders (each gated on its owning BP). See [[D-105]]. |
+| 57 | §17.4 | Legal documents render from `legal_documents` table — `TODO(prompt-17)` | open — small DB-lookup swap once prioritized |
+| 58 | §20.2 | Platform-native fallback booking flow customer UI — `TODO(prompt-24)` | 🟡 PR #359 (partial) — Stage 1 (Trip Details) wired end-to-end (prefetch from `GET /api/bookings/[id]`, save via PATCH, advance). Confirmation landing page built at `/booking/confirmation/[id]` (was Stage 4's redirect target; pre-PR it 404'd). Stages 2 (passengers) + 3 (options) deferred — need `booking_passengers` CRUD endpoint + addons table. |
+| 59 | §27.4 / §27.12 | Cost-display surfaces in tenant `/settings/ai-mode` | ✅ Closed in #355 — new `GET /api/tenant/ai-config/cost-projection` reads `tenant_usage_metrics.ai_cost_cents` + linear-extrapolates month-end. Page shows MTD + projection. All 4 `TODO(§27.12-cost-display)` markers removed. |
 
 ---
 
@@ -195,11 +195,22 @@ Each has a stub that returns a known-safe default; enabling requires a config fl
 
 These weren't in the original punch list — they're new gaps created or made-visible while closing the original items.
 
-| # | What | Source | Notes |
-|---|---|---|---|
-| F1 | Wire §10 supervisor through `/api/public/chat/[token]` (token-gated customer chat) | D-102 / PR #351 | The endpoint ships without supervisor; mitigated by strong system-prompt ground rules + read-only surface. Wiring requires ephemeral conversations table or `public_token` identity in conversations + writeback shape for supervisor findings against the token's resource. Multi-day effort. |
-| F2 | Tenant-facing booking list page `(tenant)/crm/bookings/page.tsx` | PR #349 | Detail page exists now; list page doesn't. Same gap as quotes had. Small effort. |
-| F3 | Booking PATCH endpoint integration with state-machine transitions | PR #349 | PATCH currently allows direct edits of cruise/ship/cabin fields; doesn't enforce status-machine constraints (e.g., editing cabin on a submitted booking). Acceptable for draft-state edits; tighten for non-draft. |
+| # | What | Status |
+|---|---|---|
+| F1 | Wire §10 supervisor through `/api/public/chat/[token]` (token-gated customer chat) | 🟡 PR #357 in flight. Adds `conversations.public_access_token_hash` column + `public_token_chat` TenantContext kind + full regen loop. SHA-256-hashes the URL token (never stores raw); one stable conversation per (tenant, token). See [[D-104]]. |
+| F2 | Tenant-facing booking list page `(tenant)/crm/bookings/page.tsx` | ✅ Closed in #354 — list with status filter, customer-name search, status pills, pagination. Backed by new `GET /api/bookings` (paginated + filterable). |
+| F3 | Booking PATCH endpoint integration with state-machine transitions | ✅ Closed in #354 — `PATCHABLE_FIELDS_BY_STATUS` allowlist: draft + pending_host_review can edit trip details; submitting/submitted/confirmed/cancelled/failed reject with 409 + friendly explanation pointing at modify flow. Platform-only fields (host_*, ai_paused_by_platform, is_test, status) never editable. 6 unit tests. |
+
+## New follow-ups from this overnight session
+
+| # | What | Notes |
+|---|---|---|
+| F4 | Streaming-mode tool support in `/api/chat` | Non-streaming branch wires `PERSONA_TOOLS`; streaming branch unchanged. Material work — `tool_use` blocks during streaming require delta buffering + partial-block reassembly. Tenants with `CHAT_STREAMING_ENABLED=true` currently don't see tool calls. |
+| F5 | `contact_id` threading through chat tool dispatch | Hardcoded to `null` in #358. Small touch to pull `conversations.contact_id` into the dispatch context so `get_customer_context` and `update_memory` work. |
+| F6 | `ai_tool_calls` audit table | Tonight's logging is `console.info`. A queryable history of tool dispatches would help post-hoc cost / abuse analysis. |
+| F7 | Real `search_host_inventory` handler | Placeholder today. Needs host-adapter search API standardization across adapter types (BP14 scope). |
+| F8 | Booking flow Stages 2/3 wiring | #359 ships Stage 1 + confirmation page. Stage 2 (passenger details) needs a `booking_passengers` CRUD endpoint; Stage 3 (options) needs an addons table + endpoint. |
+| F9 | Dependabot PRs #329/#330 | Both have real CI failures (Lint, Typecheck, Build, Test fail — not just Vercel waivers). Version bumps must be breaking something. Need human investigation before merge. |
 
 ---
 
@@ -217,15 +228,18 @@ These don't need engineering work — they're updates to the audit-followups doc
 
 | Bucket | Open count | Notes |
 |---|---|---|
-| **P1 launch-blocking** | 0 | ✅ All closed this session |
-| **P2 spec-promised gaps** | 0 build items remaining | ✅ All closed or queued in merge chain |
-| **P3 cost-deferred** | 6 items | ~$30-280/month operating cost when all enabled — small eng work (mostly removing the stub) |
+| **P1 launch-blocking** | 0 | ✅ All closed |
+| **P2 spec-promised gaps** | 0 build items | ✅ All closed |
+| **P3 cost-deferred** | 6 items | ~$30-280/month operating cost when all enabled — small eng work |
 | **P4 external-blocked** | 19 items | Calendar-bound on attorney + operator availability |
-| **P5 future build prompts** | 4 items | Each is its own scheduled BP |
+| **P5 future build prompts** | #57 fully open · #56 #58 partials in flight (#358 #359) · #59 ✅ | |
 | **P6 docs** | 3 items | <1 day total |
-| **Follow-ups from this session** | 3 items | F1 is the most significant (supervisor on token chat) |
+| **F1/F2/F3 follow-ups** | F1 🟡 in flight (#357), F2 ✅, F3 ✅ | |
+| **F4–F9 new follow-ups** | 6 items | F4 streaming-mode tools, F5 contact_id threading, F6 ai_tool_calls audit, F7 real host inventory, F8 booking flow Stages 2/3, F9 dependabot CI fails |
 
 **Highest-priority remaining engineering work:**
-1. **F1** Wire supervisor on token-gated chat — closes a real customer-AI safety gap
-2. **#47** Gmail Step-5 build (waits on operator GCP)
-3. **P3 #33** Tolerable-PII Stage 2 ($1-3/day; the most-used cost-deferred surface)
+1. **F9** Investigate dependabot #329/#330 CI failures (Lint/Build/Test failing — version bump must be breaking something; needs eyeballs not autonomous fix)
+2. **F8** Booking flow Stages 2/3 wiring — completes #58
+3. **#47** Gmail Step-5 build (waits on operator GCP)
+4. **F4** Streaming-mode tool support — completes #56's wire-in
+5. **P3 #33** Tolerable-PII Stage 2 ($1-3/day; the most-used cost-deferred surface)
