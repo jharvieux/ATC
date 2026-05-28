@@ -34,16 +34,36 @@ permissions:
   pull-requests: read
 
 jobs:
-  check:
+  pr-audit-section-check:
+    name: pr-audit-section-check
     runs-on: ubuntu-latest
-    # Skip bot-authored PRs.
-    if: |
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      github.event.pull_request.user.login != 'github-actions[bot]' &&
-      github.event.pull_request.user.login != 'claude[bot]' &&
-      github.event.pull_request.user.login != 'claude-code-action[bot]'
+    # The job runs unconditionally so it ALWAYS reports a status.
+    # Bot-authored PRs short-circuit to success inside the steps below —
+    # if we job-level `if:` skipped them, branch protection would treat
+    # the missing status as failed and block dependabot auto-merges.
+    #
+    # Job name MUST match the required-status-check context name set on
+    # branch protection. The status-check context defaults to the JOB name
+    # (not the workflow `name:`), so this is named `pr-audit-section-check`
+    # to match the required-status-check entry added via gh api.
     steps:
+      - name: Detect bot author (auto-pass)
+        id: bot-check
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          case "$AUTHOR" in
+            dependabot\[bot\]|github-actions\[bot\]|claude\[bot\]|claude-code-action\[bot\])
+              echo "::notice::Bot-authored PR ($AUTHOR) — skipping audit-section check"
+              echo "is_bot=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "is_bot=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
       - name: Verify ## Audit section is present and non-trivial
+        if: steps.bot-check.outputs.is_bot != 'true'
         env:
           BODY: ${{ github.event.pull_request.body }}
         run: |

@@ -11,10 +11,77 @@ Every session, in this order:
 1. Read `/MEMORY.md` in full.
 2. Read `/SESSION.md` in full.
 3. If a build prompt is being executed, read it.
-4 State in one short paragraph: what you understand the current state to be, and what you’re about to do.
-5. Wait for the user to confirm or correct before acting.
+4. **Auto-triage open issues + PRs** per the rules in "Auto-triage on session start" below.
+5. State in one short paragraph: what you understand the current state to be, what auto-triage did and found, and what you’re about to do.
+6. Wait for the user to confirm or correct before acting on anything that needed a judgement call.
 
-Step 4 is cheap and prevents expensive misreads of context.
+Step 5 is cheap and prevents expensive misreads of context.
+
+-----
+
+## Auto-triage on session start
+
+After reading MEMORY/SESSION, run the auto-triage sweep. Goal: surface anything the user would otherwise have to ask about, and silently fix anything that doesn’t need judgement.
+
+### Open issues
+
+Enumerate open GitHub issues:
+
+```bash
+gh issue list --state open --json number,title,labels,createdAt
+```
+
+For each issue:
+
+- **`nightly-failure` label** — read the failing test names. If a single test failure is clearly fixable from the diff history (e.g. snapshot drift, fixture mismatch), open a fix branch + PR. Otherwise include in the state summary as "needs decision."
+- **`regression-suspected` label** (from `dependabot-regression-detector`) — read the failure comment. If the regression is a known-broken transitive (e.g. vite 8 / vitest break), add a dependabot ignore + close. Otherwise surface as "needs your call."
+- **Customer/tenant-reported bug labels** (`customer-reported`, `tenant-admin-reported`) — DON'T auto-fix. Surface in the state summary; the user routes these.
+- **Any issue without a label** — DON'T auto-fix. Surface and ask.
+
+Fix-PRs opened during auto-triage carry the `auto-triaged` label and a comment referencing the source issue.
+
+### Open PRs
+
+Enumerate open PRs:
+
+```bash
+gh pr list --state open --json number,title,mergeStateStatus,author,headRefName,labels,updatedAt
+```
+
+For each PR, classify:
+
+- **MERGEABLE + CLEAN + all required checks green** → merge (squash) and delete branch. No judgement needed.
+- **MERGEABLE + BEHIND** → `gh pr update-branch`. Re-check in next pass.
+- **MERGEABLE + UNSTABLE (only non-required checks failing)** → merge if the PR is yours (Claude-authored) AND was opened in a prior session AND no `regression-suspected` label. Surface otherwise.
+- **DIRTY (merge conflict)** — if the conflict is one we know how to resolve (event-registry additions, ai-batch-flush additions, route registrations — additive lists), attempt a rebase + push. Otherwise surface as "needs your call."
+- **BLOCKED on missing audit section** — if Claude-authored, run the audit subagents + edit the PR body + re-request the audit-check. If human-authored, surface.
+- **Failing CI on dependabot PRs** — let the `dependabot-retry-ci` workflow handle. Don't intervene.
+- **Failing CI with the `regression-suspected` label** — DON'T touch. Surface to user.
+- **Open > 7 days with no progress AND no `regression-suspected` label** — surface for triage; ask whether to close or push forward.
+
+### What auto-triage MUST NOT do
+
+- Don't close issues without explicit user permission.
+- Don't merge PRs whose only blocker is a real test/typecheck failure on the application surface (those need investigation).
+- Don't override branch protection or skip required checks.
+- Don't run `gh pr update-branch` on a PR more than once per session — repeated update-branches with no other changes are wasted CI cycles.
+
+### Output format in the state summary
+
+After auto-triage, the state summary (step 5 above) MUST include:
+
+```
+Auto-triage:
+- Merged: #X, #Y
+- Update-branched: #Z
+- Opened fix PR for issue #N (auto-triaged)
+- Needs your call:
+  - PR #M — <one line: what's blocking, what I'd do if I knew the answer>
+  - Issue #P — <one line: why I can't auto-fix>
+- Skipped (waiting on workflow): #Q (dependabot, retry workflow handles)
+```
+
+If nothing needed action, the line is `Auto-triage: clean — nothing open needed attention.`
 
 -----
 
@@ -312,6 +379,14 @@ Use **Opus 4.7** (`claude-opus-4-7`) only when a build prompt explicitly calls f
 - Never commit directly to `dev` — always via PR.
 - Never commit directly to `main` ever. `main` is updated only by the production pipeline’s auto-merge step.
 - Never auto-merge `release/*` branches anywhere. Release branches go through the manual approval gate in the CI/CD pipeline. You may push to `release/*` if executing a release task, but the pipeline owns promotion.
+
+### Before every push
+
+Run `pnpm verify` (full: typecheck + lint + tests + slop-check) before `git push`. The Stop hook covers turn-end pushes; mid-session pushes bypass it. CI catches everything `pnpm verify` would catch, but each CI run costs minutes and creates noise on failing PRs. Running locally first surfaces breaks while you still have the context to fix them cleanly.
+
+The rule is mandatory for application-code PRs. For PRs touching only docs, workflow YAML, or other non-code files, `pnpm verify` is fast (most steps are no-ops on those files) — still run it.
+
+If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-existing on dev (not caused by your branch), call it out to the user and don't block.
 
 ### Pull requests
 
