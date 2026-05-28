@@ -93,7 +93,7 @@ claude mcp add supabase-rag --scope user -- \
 # Main db
 claude mcp add supabase-main --scope user -- \
   npx -y @supabase/mcp-server-supabase@latest \
-  --read-only --project-ref=ucypskudkmzjphixsshx --access-token=<PAT>
+  --read-only --project-ref=mfaknjyqiwcjojukcnea --access-token=<PAT>
 ```
 
 Both stay `--read-only` to honor the CLAUDE.md rule against prod writes.
