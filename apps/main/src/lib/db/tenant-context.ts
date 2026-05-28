@@ -14,5 +14,9 @@ export type TenantContext = {
     | { kind: "http_request"; user_id: string }
     | { kind: "stripe_webhook"; stripe_event_id: string }
     | { kind: "inngest_job"; function_name: string; event_id: string }
-    | { kind: "platform_admin"; admin_user_id: string; reason: string };
+    | { kind: "platform_admin"; admin_user_id: string; reason: string }
+    // F1 — Token-gated customer chat (/api/public/chat/[token]). The
+    // token IS the credential; no user_id exists. token_hash is the
+    // SHA-256 hex of the customer access token — never the raw token.
+    | { kind: "public_token_chat"; token_hash: string };
 };

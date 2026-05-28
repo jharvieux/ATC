@@ -293,3 +293,30 @@ export async function tenantContextForPlatformAdmin(
     "tenantContextForPlatformAdmin: superseded by withPlatformAdminAudit.",
   );
 }
+
+// F1 — Construct a TenantContext for /api/public/chat/[token].
+//
+// The token is the credential. We've already resolved it to a tenant via
+// resolvePublicToken before this is called — the caller passes in the
+// resolved tenant_id and the SHA-256 hex of the token (NOT the raw
+// token) so audit / supervisor writes can name the session without
+// leaking the credential.
+//
+// Sync (not async) because there's no DB lookup left to do — the caller
+// has already validated. Naming intentionally short — this is the only
+// path callers should use.
+export function tenantContextForPublicTokenChat(args: {
+  tenant_id: string;
+  token_hash: string;
+}): TenantContext {
+  if (!args.tenant_id || !/^[0-9a-f]{8}-/i.test(args.tenant_id)) {
+    throw new Error(`tenantContextForPublicTokenChat: invalid tenant_id`);
+  }
+  if (!args.token_hash || !/^[0-9a-f]{64}$/.test(args.token_hash)) {
+    throw new Error(`tenantContextForPublicTokenChat: token_hash must be 64-char hex SHA-256`);
+  }
+  return {
+    tenant_id: args.tenant_id,
+    source: { kind: "public_token_chat", token_hash: args.token_hash },
+  };
+}
