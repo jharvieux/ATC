@@ -48,7 +48,11 @@ import { forumModerationTimeoutSweep } from "@/inngest/forum-moderation-timeout-
 import { quoteEstimateExpirySweep } from "@/inngest/quote-estimate-expiry-sweep";
 // BP22: RAG ingestion pipeline (§22)
 import { ragExtractContent } from "@/inngest/rag-extract-content";
-import { ragPiiRedact } from "@/inngest/rag-pii-redact";
+import {
+  ragPiiRedact,
+  ragPiiRedactFromBatchResult,
+  ragPiiRedactFromBatchFailure,
+} from "@/inngest/rag-pii-redact";
 import { ragNormalize } from "@/inngest/rag-normalize";
 import { ragTenantApprovalRateNightly } from "@/inngest/rag-tenant-approval-rate-nightly";
 // BP23: Email infrastructure + in-app notifications (§23)
@@ -113,6 +117,7 @@ import {
   aiBatchFlushPrecruise,
   aiBatchFlushMemoryExtraction,
   aiBatchFlushPersonaAddendumScreen,
+  aiBatchFlushRagPiiRedaction,
 } from "@/inngest/ai-batch-flush";
 import { precruiseSendFromBatchResult } from "@/inngest/precruise-generate-and-send";
 
@@ -166,6 +171,8 @@ export const { GET, POST, PUT } = serve({
     // BP22: RAG ingestion pipeline (§22)
     ragExtractContent,
     ragPiiRedact,
+    ragPiiRedactFromBatchResult,
+    ragPiiRedactFromBatchFailure,
     ragNormalize,
     ragTenantApprovalRateNightly,
     // BP23: Email infrastructure + in-app notifications (§23)
@@ -231,6 +238,7 @@ export const { GET, POST, PUT } = serve({
     aiBatchFlushPrecruise,
     aiBatchFlushMemoryExtraction,
     aiBatchFlushPersonaAddendumScreen,
+    aiBatchFlushRagPiiRedaction,
     precruiseSendFromBatchResult,
   ],
 });
