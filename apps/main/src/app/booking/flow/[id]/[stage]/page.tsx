@@ -13,6 +13,7 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
 import { TenantOfRecordDisclosure } from "@/components/booking/TenantOfRecordDisclosure";
+import { CustomerContextChatPanel } from "@/components/chat/CustomerContextChatPanel";
 
 const STAGES = [
   { num: 1, label: "Trip Details" },
@@ -52,23 +53,23 @@ export default function BookingFlowPage({ params }: PageProps): React.ReactEleme
           )}
         </div>
 
-        {/* §20.4 AI co-pilot panel */}
+        {/* §20.4 — AI co-pilot panel, scoped to this booking. */}
         <aside
           style={{
             background: "#f9fafb",
             borderRadius: 10,
             border: "1px solid #e5e7eb",
-            padding: 20,
+            padding: 16,
             height: "fit-content",
             position: "sticky",
             top: 24,
           }}
         >
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: "#374151", marginBottom: 8 }}>AI Travel Assistant</h3>
-          {/* TODO(prompt-24): embed the chat component here with booking context */}
-          <p style={{ fontSize: 13, color: "#9ca3af" }}>
-            Your AI concierge will appear here to help answer questions while you book.
-          </p>
+          <CustomerContextChatPanel
+            contextRef={{ type: "booking", id: resolvedParams.id }}
+            title="AI Travel Assistant"
+            placeholder="Ask about cabins, ports, options…"
+          />
         </aside>
       </div>
     </NoAnonGuard>

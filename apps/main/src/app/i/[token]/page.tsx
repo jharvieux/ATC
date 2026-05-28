@@ -8,6 +8,7 @@ import { notFound } from "next/navigation";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { headers } from "next/headers";
+import { PublicTokenChatPanel } from "@/components/chat/PublicTokenChatPanel";
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -150,6 +151,10 @@ export default async function PublicItineraryPage({ params }: PageProps): Promis
           <p style={{ whiteSpace: "pre-wrap" }}>{row.agent_notes}</p>
         </section>
       )}
+
+      <section style={{ marginTop: 32 }}>
+        <PublicTokenChatPanel token={token} surface="itinerary" />
+      </section>
 
       <footer style={{ marginTop: 48, borderTop: "1px solid #ddd", paddingTop: 16, color: "#888", fontSize: 13 }}>
         Your travel agent will be in touch with updates.
