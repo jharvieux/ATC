@@ -115,11 +115,48 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
     currentEmail = authData?.user?.email ?? null;
   }
 
+  // Greptile audit-followups round-2 #54: first-use binding TOCTOU.
+  // Two concurrent GETs both see token_first_used_at=null, both write, last
+  // writer wins on token_bound_email — locking the legitimate first-user out.
+  // Fix: CAS update predicated on token_first_used_at still being null.
+  // If the row count is zero we lost the race; re-fetch the row to see who
+  // won and apply the not-first-use branch with the now-bound email.
   if (invitation.token_first_used_at === null) {
-    // First use — record it.
     const updates: Record<string, string | null> = { token_first_used_at: new Date().toISOString() };
     if (currentEmail) updates.token_bound_email = currentEmail;
-    await safeAwait(svc.from("invitations").update(updates).eq("id", invitation_id), "invitations.update");
+    const winRows = await safeAwait(
+      svc.from("invitations")
+        .update(updates)
+        .eq("id", invitation_id)
+        .is("token_first_used_at", null)
+        .select("id, token_bound_email"),
+      "invitations.first_use_cas",
+    );
+    const winArr = winRows as Array<{ id: string; token_bound_email: string | null }> | null;
+    if (!winArr || winArr.length === 0) {
+      // Lost the race. Re-read the invitation to see the winner's bound email.
+      // Fail CLOSED on read error: never silently let a caller through when we
+      // can't verify the bound email — would defeat the entire CAS guard.
+      const { data: refetch, error: refetchError } = await svc
+        .from("invitations")
+        .select("token_bound_email")
+        .eq("id", invitation_id)
+        .maybeSingle();
+      if (refetchError) {
+        return Response.json(
+          { error: "invitation_refetch_failed", detail: refetchError.message },
+          { status: 500 },
+        );
+      }
+      const boundEmail = (refetch as { token_bound_email: string | null } | null)?.token_bound_email ?? null;
+      if (boundEmail && currentEmail && boundEmail !== currentEmail) {
+        return Response.json({
+          error: "token_bound",
+          message: "This invitation link is already linked to a different account. Each invitation is personal.",
+        }, { status: 403 });
+      }
+      // Same email or no-auth caller — let them through into the not-first-use branch.
+    }
   } else if (invitation.token_bound_email && currentEmail && invitation.token_bound_email !== currentEmail) {
     return Response.json({
       error: "token_bound",
