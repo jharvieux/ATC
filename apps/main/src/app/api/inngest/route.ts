@@ -65,6 +65,8 @@ import { subprocessorsAnnualReview } from "@/inngest/subprocessors-annual-review
 import { forensicsLogPurgeCron } from "@/inngest/forensics-log-purge-cron";
 // §26.5 — audit_log 7-year retention purge
 import { auditLogRetentionPurge } from "@/inngest/audit-log-retention-purge";
+// §7.9 — request_idempotency expired-row purge (hourly)
+import { requestIdempotencyPurge } from "@/inngest/request-idempotency-purge";
 // BP26: Vendor health probe (§26.9)
 import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
 // BP26: §26.6 monitoring crons
@@ -167,6 +169,8 @@ export const { GET, POST, PUT } = serve({
     forensicsLogPurgeCron,
     // §26.5 — audit_log 7-year retention purge
     auditLogRetentionPurge,
+    // §7.9 — request_idempotency expired-row purge
+    requestIdempotencyPurge,
     // BP26: Vendor health probe (§26.9)
     vendorHealthProbe,
     // BP26: §26.6 monitoring crons
