@@ -32,7 +32,7 @@ describe("buildSystemArg (§9.3 Anthropic prompt cache gate)", () => {
     process.env.ANTHROPIC_PROMPT_CACHE_ENABLED = "true";
     const r = buildSystemArg("hello") as Array<{ cache_control?: unknown }>;
     expect(Array.isArray(r)).toBe(true);
-    expect(r[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(r[0]?.cache_control).toEqual({ type: "ephemeral" });
   });
 
   it("returns the plain string when env is 'false' (caching off)", () => {
@@ -44,6 +44,6 @@ describe("buildSystemArg (§9.3 Anthropic prompt cache gate)", () => {
     process.env.ANTHROPIC_PROMPT_CACHE_ENABLED = "yes";
     const r = buildSystemArg("hello") as Array<{ cache_control?: unknown }>;
     expect(Array.isArray(r)).toBe(true);
-    expect(r[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(r[0]?.cache_control).toEqual({ type: "ephemeral" });
   });
 });
