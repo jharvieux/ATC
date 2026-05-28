@@ -1,17 +1,13 @@
-"use server";
-
-// §10.5 Supervisor Dashboard — platform admin, read-only
+// §10.5 Supervisor Dashboard — platform admin, read-only Server Component.
 //
 // Shows:
 // - Kill-switch state (global pause)
 // - Open topic-level escalations (assigned + unassigned)
-// - Recent flagged messages by check type (last 7 days)
-// - Sample category counts (supervisor_findings.findings by check)
+// - Flagged messages grouped by check type (last 7 days)
 // - Regen budget exhaustion (messages that hit max_regen)
 // - Drift trend (last-7-day vs prior-7-day flagged-rate delta)
-// - Per-persona metrics: response count, regen rate
-// - Per-tenant aggregates
-// - Link to /admin/supervisor/review-queue (Prompt 12 lands the detail page)
+// - Per-persona metrics: response count, regen rate, thumbs-down count
+// - Link to /admin/supervisor/review-queue
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 

@@ -60,6 +60,7 @@ import { buildDisplayableAssetsBlock } from "@/lib/ai/display-assets-block";
 import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-id-validation";
 // BP32 §32.10.1 — bug-intent recognizer fires before LLM call.
 import { detectBugIntent } from "@/lib/help-ai/bug-intent-recognizer";
+import { resolveCustomerContext, type CustomerContextRef } from "@/lib/chat/customer-context";
 // BP27 §27.4 — chat-message counter + state-machine wire-up.
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementChatMessages } from "@/lib/abuse/counters";
@@ -122,12 +123,19 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  let body: { message?: string; conversation_id?: string | null; persona_slug?: string | null };
+  let body: {
+    message?: string;
+    conversation_id?: string | null;
+    persona_slug?: string | null;
+    customer_context_ref?: CustomerContextRef | null;
+  };
   try {
     body = (await req.json()) as typeof body;
   } catch {
     return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 });
   }
+
+  const customerContextRef = parseCustomerContextRef(body.customer_context_ref);
 
   const rawUserMessage = (body.message ?? "").toString().trim();
   if (!rawUserMessage) {
@@ -185,6 +193,7 @@ export async function POST(req: Request): Promise<Response> {
     userMessage,
     conversationIdInput: body.conversation_id ?? null,
     personaSlugInput: body.persona_slug ?? null,
+    customerContextRef,
     send,
     close,
   }).catch(async (err) => {
@@ -210,13 +219,25 @@ type HandleChatArgs = {
   userMessage: string;
   conversationIdInput: string | null;
   personaSlugInput: string | null;
+  customerContextRef: CustomerContextRef | null;
   send: (ev: SseEvent) => Promise<void>;
   close: () => Promise<void>;
 };
 
+const VALID_CONTEXT_TYPES = new Set(["booking", "trip_itinerary", "quote"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseCustomerContextRef(raw: unknown): CustomerContextRef | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { type?: unknown; id?: unknown };
+  if (typeof r.type !== "string" || typeof r.id !== "string") return null;
+  if (!VALID_CONTEXT_TYPES.has(r.type) || !UUID_RE.test(r.id)) return null;
+  return { type: r.type as CustomerContextRef["type"], id: r.id };
+}
+
 async function handleChat(args: HandleChatArgs): Promise<void> {
   const svc = createServiceRoleClient();
-  const { tenantId, isAuthenticated, userMessage, send, close } = args;
+  const { tenantId, isAuthenticated, userMessage, customerContextRef, send, close } = args;
 
   // ── 1. Identify caller (anonymous OR authenticated)
   let ctx: TenantContext | null = null;
@@ -364,6 +385,25 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     }
     conversationActivePersonaId = (conv as { active_persona_id?: string } | null)?.active_persona_id ?? null;
   } else {
+    // §15.12 sandbox: stamp is_test on the conversation row at creation time.
+    // Snapshot semantics — a tenant who toggles is_sandbox later does NOT
+    // retroactively flip existing rows.
+    //
+    // Fail CLOSED on read error: if we can't confirm the tenant is non-sandbox,
+    // stamp is_test=true. The flag is immutable after insert, and the audit
+    // surface (analytics dashboards, supervisor sampling) is meant to exclude
+    // test traffic — mislabeling a real conversation as test under-counts real
+    // metrics (recoverable), but mislabeling a sandbox conversation as real
+    // corrupts the firewall (not recoverable). Bias toward over-tagging.
+    const { data: sandboxRow, error: sandboxErr } = await svc
+      .from("tenants")
+      .select("is_sandbox")
+      .eq("id", tenantId)
+      .maybeSingle();
+    const isTest = sandboxErr
+      ? true
+      : Boolean((sandboxRow as { is_sandbox?: boolean } | null)?.is_sandbox);
+
     const { data: created, error: createErr } = await svc
       .from("conversations")
       .insert({
@@ -374,6 +414,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         first_message_at: new Date().toISOString(),
         last_message_at: new Date().toISOString(),
         message_count: 0,
+        is_test: isTest,
       })
       .select("id")
       .single();
@@ -515,6 +556,13 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     ships: retrieval.entities.ships,
   });
 
+  // §20.4 — Customer context: server-resolves the ref against the tenant.
+  // A bad/cross-tenant ref returns null; we silently drop it (no error
+  // surfaced to the client because context is best-effort enrichment).
+  const customerContext = customerContextRef
+    ? await resolveCustomerContext({ ref: customerContextRef, tenant_id: tenantId, db: svc })
+    : null;
+
   const systemPromptBase = await buildSystemPrompt({
     persona_slug: personaSlug,
     tenant_id: tenantId,
@@ -524,6 +572,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     knowledge_block: retrieval.knowledge_block,
     ...(displayableAssetsBlock ? { displayable_assets_block: displayableAssetsBlock } : {}),
     ...(pricingAnchorsBlock ? { pricing_anchors_block: pricingAnchorsBlock } : {}),
+    ...(customerContext ? { customer_context: customerContext } : {}),
   });
 
   // Append the §24.9 persona augmentation if Soft1/Soft2 fired.
