@@ -313,6 +313,14 @@ Use **Opus 4.7** (`claude-opus-4-7`) only when a build prompt explicitly calls f
 - Never commit directly to `main` ever. `main` is updated only by the production pipeline’s auto-merge step.
 - Never auto-merge `release/*` branches anywhere. Release branches go through the manual approval gate in the CI/CD pipeline. You may push to `release/*` if executing a release task, but the pipeline owns promotion.
 
+### Before every push
+
+Run `pnpm verify` (full: typecheck + lint + tests + slop-check) before `git push`. The Stop hook covers turn-end pushes; mid-session pushes bypass it. CI catches everything `pnpm verify` would catch, but each CI run costs minutes and creates noise on failing PRs. Running locally first surfaces breaks while you still have the context to fix them cleanly.
+
+The rule is mandatory for application-code PRs. For PRs touching only docs, workflow YAML, or other non-code files, `pnpm verify` is fast (most steps are no-ops on those files) — still run it.
+
+If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-existing on dev (not caused by your branch), call it out to the user and don't block.
+
 ### Pull requests
 
 **You can open and merge PRs into `dev`** under these conditions:
