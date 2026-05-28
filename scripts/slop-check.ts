@@ -16,7 +16,7 @@
 // surfaces *new* slop in the diff context regardless of whether the rules
 // are switched on at warn/error level in the affected file.
 
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import * as path from "node:path";
 
 const BASE_REF = process.env.SLOP_CHECK_BASE_REF ?? "origin/dev";
@@ -65,10 +65,13 @@ function getChangedFiles(): string[] {
 
 function getAddedLinesForFile(file: string): Map<number, string> {
   // Use `git diff --unified=0` to get just the changed hunks. Parse to map
-  // new-file line numbers → content.
-  const diff = execSync(`git diff --unified=0 ${BASE_REF}...HEAD -- ${file}`, {
-    encoding: "utf8",
-  });
+  // new-file line numbers → content. execFileSync (not execSync) so paths
+  // with shell metacharacters like `(admin)` route groups don't break.
+  const diff = execFileSync(
+    "git",
+    ["diff", "--unified=0", `${BASE_REF}...HEAD`, "--", file],
+    { encoding: "utf8" },
+  );
   const lines = new Map<number, string>();
   let newLineNum = 0;
   for (const raw of diff.split("\n")) {

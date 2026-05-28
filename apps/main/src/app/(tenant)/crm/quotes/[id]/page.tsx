@@ -5,6 +5,7 @@
 
 import { useState, useEffect, use } from "react";
 import { COMMISSIONABLE_LINE_ITEMS } from "@/lib/commissions/commissionable-line-items";
+import { QuoteCopilotPanel } from "@/components/quote/QuoteCopilotPanel";
 
 interface Quote {
   id: string;
@@ -98,11 +99,13 @@ export default function QuoteDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       {quote.custom_notes && (
-        <div className="border-t border-gray-200 pt-4 text-sm text-gray-600">
+        <div className="border-t border-gray-200 pt-4 text-sm text-gray-600 mb-6">
           <p className="font-medium text-gray-500 mb-1">Notes</p>
           <p>{quote.custom_notes}</p>
         </div>
       )}
+
+      <QuoteCopilotPanel quote_id={quote.id} />
     </div>
   );
 }

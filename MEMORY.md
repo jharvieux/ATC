@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-103 — 2026-05-27 — Customer-context system-prompt injection uses server-resolved refs, never client text
+
+**Decision.** The customer-facing chat surfaces (booking flow via `/api/chat`, token-only views via `/api/public/chat/[token]`) take a `customer_context_ref` of shape `{ type: "booking" | "quote" | "trip_itinerary", id: <uuid> }` — never a free-form context string from the client. The server's `apps/main/src/lib/chat/customer-context.ts::resolveCustomerContext({ ref, tenant_id, db })` fetches the row, formats it into the system-prompt block, and returns it. Tenant-scoping (every lookup filters by `tenant_id`) means a token / cookie scoped to tenant A can never resolve a row from tenant B; cross-tenant refs return `null` and the system prompt simply lacks the context block.
+
+**Why.** The customer can otherwise inject arbitrary text into the model's system prompt by lying about their booking. A client-supplied string field would let a malicious customer rewrite the AI's persona, override platform constraints, or extract context from prior conversations. Server-side resolution is the only way to bind the context block to the customer's actual entitlement. Same pattern as how tenant resolution from middleware is the only source of truth for `tenant_id` — never trust the client for security-relevant attributes.
+
+**Rejected.**
+- *Accept a `customer_context: string` body field directly and trust the client.* Defeats the entire defense. The client can put anything in the system prompt, including jailbreak instructions, exfil prompts, or competitor poisoning.
+- *Use a signed JWT-style context token containing the formatted text.* Still server-controlled but adds key management + rotation overhead. The ref-based pattern is simpler and gets the same end-state for free.
+- *Skip the context block entirely on token-only surfaces.* The whole reason the panel exists on `/q/[token]` and `/i/[token]` is so the AI knows what the customer is looking at. Without context, the AI fields generic questions and the feature loses ~70% of its value.
+
+**Related artifacts.** `apps/main/src/lib/chat/customer-context.ts` (booking/quote/trip_itinerary resolvers), `apps/main/src/app/api/chat/route.ts` (auth surface; takes `customer_context_ref`), `apps/main/src/app/api/public/chat/[token]/route.ts` (token surface; derives the ref from the token). PRs #347 (booking flow) and #351 (token surfaces). Tenant-scope assertion test: `apps/main/test/unit/chat/customer-context.test.ts`.
+
+---
+
+## D-102 — 2026-05-27 — Token-gated public chat ships without §10 supervisor; mitigated by ground rules + read-only context
+
+**Decision.** `/api/public/chat/[token]` (PR #351) does NOT run the §10 AI supervisor pipeline today. The full `/api/chat` route runs supervisor on every reply with regen loops for hallucination / persona-drift / asset-id-validation; the public token endpoint skips this. Mitigations: (1) strong system-prompt ground rules that explicitly forbid pricing, commitments, or invented details; (2) the surface is read-only — the customer can't book, quote, or change anything from chat (on-page actions handle those with full auth + tenant-scoped writes). The route header documents the gap and points at the punch list.
+
+**Why.** Running the supervisor requires a `conversations` row keyed to a `TenantContext` so `messages.supervisor_findings` can persist. Token-only customers don't have a Supabase user JWT and don't get a stable conversation thread on the server (the panel keeps recent turns in component state and replays them as `previous_turns`). Wiring this end-to-end means: (a) creating an ephemeral `public_conversations` table or marking conversations with `is_public_token=true`, (b) writing supervisor findings against the token's resource, (c) deciding what regen-budget tracking looks like for a session that has no stable identity. That's a multi-day chunk of work and would have blocked shipping the customer-facing AI on quote-view + itinerary entirely.
+
+**Rejected.**
+- *Wire the full supervisor inline before shipping.* Would have multiplied the PR scope and pushed the customer-facing AI past launch readiness. Real-world risk profile favored ship-with-mitigations over ship-perfect-or-not-at-all.
+- *Ship without the AI on token surfaces.* Three of four customer-facing AI surfaces would have been empty (booking flow has supervisor via `/api/chat`; quote view + itinerary would have been blank). The whole point of `#20 customer AI panels` was the customer can ask questions about their trip — gutting it defeats the purpose.
+- *Run supervisor but skip the conversation persistence.* Half-measure. Either you can track per-conversation regen budgets and tone-drift signals, or you can't; if you can't, the supervisor's value collapses to one-shot per-message safety checks that the strong system prompt already covers.
+
+**Related artifacts.** `apps/main/src/app/api/public/chat/[token]/route.ts` header documents this gap; punch list (`docs/specs/spec-gap-punch-list.md`) tracks "wire supervisor on token-gated chat" as a follow-up. PR #351. Customer-facing surfaces inventory: booking flow `/booking/flow/[id]/[stage]` (full supervisor via `/api/chat`), quote view `/q/[token]` (no supervisor), itinerary `/i/[token]` (no supervisor).
+
+---
+
 ## D-101 — 2026-05-27 — Next 16 instrumentation timing required env-var placeholder cascade
 
 **Decision.** Added BP31 GitHub App env vars (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_REPO_OWNER`, `GITHUB_REPO_NAME`) as placeholders to `.github/workflows/e2e.yml`, plus Microsoft Graph placeholders. Updated `apps/main/.env.local` (gitignored) with the same placeholders. Updated `docs/local-development.md` to list the GitHub App vars in the required-at-boot section.

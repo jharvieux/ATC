@@ -1,39 +1,62 @@
-# Session state — last updated 2026-05-27 ~19:00 UTC
+# Session state — last updated 2026-05-27 ~22:00 UTC
 
 ## Just completed
 
-Full Claude Code setup session, plus the Next 16 fallout it surfaced. 9 PRs merged into `dev` (#318–#326). All checks green; Vercel rate-limit-exempt per user authorization.
+Closed the full P1 + P2 punch list. ~22 PRs in flight or merged this session. Punch list condensed from 62 items to a residual P3-P6 (cost-deferred / blocked-on-external / future BPs).
 
 ### PRs merged this session
-- **#318** d091-reviewer subagent (`.claude/agents/d091-reviewer.md`) — read-only auditor for the 14 D-091 anti-patterns from CLAUDE.md
-- **#319** PreToolUse hook blocking edits to `specs/**` and non-prepend writes to `MEMORY.md`
-- **#320** CI unblocker — GitHub App env-var placeholders in `.github/workflows/e2e.yml`. Playwright had been silently red since the Next 14 → 16 bump
-- **#321** `envBoolean()` helper replaces all 28 `z.coerce.boolean()` callsites in `apps/main/src/lib/env.ts` (silent kill-switch flip bug). 25 unit tests pin the behavior; bp29 schema-discipline regex updated to recognize the new helper
-- **#322** PostToolUse hook running eslint on every TS/TSX edit in `apps/main` or `apps/rag` (~0.8s)
-- **#323** `apps/main/src/middleware.ts` → `proxy.ts` (Next 16 deprecation). Function rename + test rename + stryker config + one comment path-reference
-- **#324** `docs/site-urls.md` — inventory of browser-accessible pages by host context
-- **#325** `/memory-entry` slash command + `docs/local-development.md` updated with the BP31 GitHub App env vars
-- **#326** Stop hook running `tsc --noEmit` at turn-end on workspaces with uncommitted TS changes. Plus stryker stale-entry cleanup (removed `apps/rag/src/middleware.ts` from mutate config — file never existed)
+- **#331** sandbox-mode wiring (`is_sandbox` short-circuit through chat/bookings/commissions) + spec-gap docs
+- **#332** invite first-use TOCTOU fix (`safeAwaitRowCount` CAS guard)
+- **#333** RAG JWT kid→PEM mapping for zero-downtime rotation
+- **#334** CCPA purge nulls `conversations.user_id`
+- **#335** groups sailed read-only enforcement (`assertGroupNotSailed` helper)
+- **#336** virus-scan risk-acceptance runbook
+- **#337** customer settings pages (/memory, /profile, /conversations) + permission grants
+- **#338** Anthropic prompt caching wired via `buildSystemArg`
+- **#339** help-AI chat draft autosave
+- **#341** delete unwired `lib/abuse/enforcement.ts`
+- **#343** email-from domain verification API + send.ts uses verified domain
+- **#345** help docs (01 getting-started, 12 troubleshooting, settings-ai-mode)
+- **#346** branding email-domain verify card + supervisor `"use server"` directive fix
+- **#347** customer AI panel on booking flow (P2 #20 phase 1) — server-resolved context + `<CustomerContextChatPanel>`
+- **#348** slop-check `execFileSync` so Next.js `(admin)` route-group paths don't break the shell
+- **#349** booking-detail page mounts itinerary + resources + line-items editors (P2 #24)
+- **#350** quote-builder AI co-pilot panel (P2 #25)
 
-### Per-user / non-PR work
-- Two Supabase MCP servers wired locally (`supabase-main` + `supabase-rag`), user-scoped, `--read-only`, scoped to one project-ref each
-- Local dev server unwedged. Same Next 16 instrumentation root cause as #320 — `apps/main/.env.local` was missing the BP31 GitHub App vars; placeholders appended
-- Comprehensive Next 16 breakage sweep across 20 known patterns; only finding outside what we fixed was the middleware → proxy rename (#323)
+### PRs queued for merge (rebased / conflicts resolved this turn)
+- **#340** per-tenant AI kill switch (rebased onto dev)
+- **#342** spec edits for P2 #17/#18 (reality-delta.md conflict resolved — both appendices preserved)
+- **#344** Idempotency-Key middleware + 24h cache (lint allowlist conflict resolved)
+- **#351** token-gated `/api/public/chat/[token]` + customer quote view `/q/[token]` + AI mount on `/i/[token]` (call-wrapper.ts AICallPurpose conflict resolved)
 
-### Decisions logged tonight
-- **D-099** Claude Code automation infrastructure (subagent, 3 hooks, slash command, MCPs, setup runbook)
-- **D-100** `z.coerce.boolean()` JS gotcha → `envBoolean()` helper at all 28 sites
-- **D-101** Next 16 instrumentation timing change → env-var placeholder cascade
+Background `/tmp/atc-merge-final-p2.sh` is draining these now.
+
+### Punch-list status after this session
+- **P1 (12 items):** 100% closed
+- **P2 (18 items):** all build items done or queued. 7 closed via spot-check verification (#22 #23 #27 #28 #29 + 2 from #346)
+- **P3 cost-deferred:** unchanged (operator opt-in path documented)
+- **P4 blocked-on-external:** unchanged (legal / operator decisions)
+- **P5 future BPs:** unchanged
+- **P6 docs:** unchanged
+
+See `docs/specs/spec-gap-punch-list.md` for the updated state.
+
+### Documented gaps from this session's work
+- **Supervisor on token-gated chat surfaces** — the `/api/public/chat/[token]` endpoint (PR #351) ships without §10 supervisor coverage. Mitigated by strong system-prompt ground rules + read-only context (customer can't book/quote/change from chat — must use on-page actions). Tracked in route header + punch list follow-ups.
+
+### Decisions logged this session
+- **D-102** Token-gated public chat ships without §10 supervisor; mitigated by ground rules + read-only context. Supervisor wiring deferred as follow-up.
+- **D-103** Customer-context system-prompt injection uses server-resolved refs (never client-supplied text) to defeat prompt injection. `resolveCustomerContext({ ref, tenant_id, db })` is the only path.
 
 ## In flight
 
-Nothing in flight — clean checkpoint.
+Background merge script `/tmp/atc-merge-final-p2.sh` processing #340 → #342 → #344 → #351. Estimated 30-90 min depending on CI rerun cycles.
 
 ## Next step
 
-1. **Switch model back to Sonnet** — `/model claude-sonnet-4-6`. Standing rule per CLAUDE.md at end of an Opus session.
-2. **Optional** — rotate the Supabase PAT pasted into this transcript (read-only, scoped to two project-refs; not urgent). Generate fresh at https://supabase.com/dashboard/account/tokens, re-run the two `claude mcp add supabase-*` commands, revoke the old one.
-3. **Optional** — open-source-extraction question (eslint-plugin-atc / safe-mutation as MIT-licensed standalone npm packages) was discussed but not actioned. Revisit after PMF / first revenue per the conversation.
+Wait for the background merge cascade to complete. Once done, the punch list should reflect 0 open P2 build items.
+
+If anything fails, hand-merge the residual.
 
 ## Blocked on user
 
@@ -41,17 +64,16 @@ Nothing.
 
 ## Open questions
 
-- Whether to extract `packages/eslint-plugin-atc` or `apps/main/src/lib/db/safe-mutation.ts` as MIT-licensed standalone packages for credibility/recruiting. Conversation captured in chat; not yet decided.
-- Whether to pursue the full-repo AGPL path for the main product. Process and gotchas walked through in chat; deferred until post-PMF.
+- **Token-gated chat supervisor coverage** — should the next session wire the §10 supervisor pipeline through `/api/public/chat/[token]`? Adds operational complexity (need conversations row for the supervisor write-back) but closes a real safety gap on customer-facing AI surfaces.
+- **Booking list page** — `/crm/bookings/[id]` exists now (PR #349) but `/crm/bookings` (the list) doesn't. Same pattern as quotes — minor gap, not on the punch list.
 
 ## Carried forward (unchanged from prior session)
 
 - BP39 follow-up: retroactive react-pdf wire-up
-- BP31: Haiku tolerable-PII redaction confidence/clarity scorer (cost-deferred)
-- BP30: AI behavior eval harness (cost-deferred)
-- BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc
-- BP24: populate `platform_settings.supervisor_slur_deny_list`
-- BP23: populate `port_info_chunks` content for 17 ports
-- BP16/17: counsel sign-off on ICA + AI Liability Disclaimer
-- §13.9 active vs reactive health probing — operator decision
-- §20.4 / §38.8 / §38.8.1 / §39.5 — customer-facing AI chat panels build (~2 days, browser testing)
+- BP31: Haiku tolerable-PII redaction confidence/clarity scorer (cost-deferred — punch list P3 #32)
+- BP30: AI behavior eval harness (cost-deferred — punch list P3 #35)
+- BP25: PLATFORM_PEPPER offsite storage + DO-NOT-ROTATE doc (punch list P4 #46)
+- BP24: populate `platform_settings.supervisor_slur_deny_list` (punch list P4 #45)
+- BP23: populate `port_info_chunks` content for 17 ports (punch list P4 #44)
+- BP16/17: counsel sign-off on ICA + AI Liability Disclaimer (punch list P4 #41)
+- §13.9 active vs reactive health probing — operator decision (punch list P4 #48)
