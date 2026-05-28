@@ -334,6 +334,21 @@ function endsWithAllowed(filename) {
   return ALLOWED_PATH_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
 }
 
+// Derive the path suffix a developer would add to ALLOWED_PATH_SUFFIXES
+// to allowlist this file. Strips the workspace-prefix so the suggestion
+// matches the existing entry style ("/app/api/foo/route.ts" rather than
+// "/Users/.../apps/main/src/app/api/foo/route.ts").
+function suggestAllowlistEntry(filename) {
+  const normalized = filename.replace(/\\/g, "/");
+  // Strip everything up to and including the workspace `src/` segment.
+  const match = normalized.match(/\/apps\/(?:main|rag)\/src(\/.+)$/);
+  if (match) return match[1];
+  // Fallback: anything after the last "src/" in the path.
+  const srcIdx = normalized.lastIndexOf("/src/");
+  if (srcIdx >= 0) return normalized.slice(srcIdx + 4);
+  return normalized;
+}
+
 function isServiceRoleClientImport(source) {
   if (!source) return false;
   // Match any path whose final segment is service-role-client(.ts)? — covers
@@ -341,6 +356,9 @@ function isServiceRoleClientImport(source) {
   // and @/lib/db/service-role-client equally.
   return /(?:^|[\\/])service-role-client(?:\.ts)?$/.test(source);
 }
+
+const ALLOWLIST_FILE =
+  "packages/config/eslint-rules/no-direct-service-role-import.js";
 
 module.exports = {
   meta: {
@@ -352,7 +370,10 @@ module.exports = {
     schema: [],
     messages: {
       forbidden:
-        "Importing service-role-client is not allowed here. Use tenantClient(ctx) or withPlatformAdminAudit(...) instead (spec §5.4.4).",
+        "Importing service-role-client is not allowed here. Use tenantClient(ctx) or withPlatformAdminAudit(...) instead (spec §5.4.4).\n" +
+        "\n" +
+        "If this route MUST use service-role (token-only auth, cross-tenant cron, etc.), add this path suffix to ALLOWED_PATH_SUFFIXES in {{ allowlistFile }}, with a // comment naming the spec section that justifies it:\n" +
+        "    \"{{ suggestion }}\",\n",
     },
   },
   create(context) {
@@ -362,10 +383,15 @@ module.exports = {
     if (endsWithAllowed(filename)) {
       return {};
     }
+    const suggestion = suggestAllowlistEntry(filename);
     return {
       ImportDeclaration(node) {
         if (isServiceRoleClientImport(node.source.value)) {
-          context.report({ node, messageId: "forbidden" });
+          context.report({
+            node,
+            messageId: "forbidden",
+            data: { suggestion, allowlistFile: ALLOWLIST_FILE },
+          });
         }
       },
       CallExpression(node) {
@@ -378,7 +404,11 @@ module.exports = {
           node.arguments[0].type === "Literal" &&
           isServiceRoleClientImport(node.arguments[0].value)
         ) {
-          context.report({ node, messageId: "forbidden" });
+          context.report({
+            node,
+            messageId: "forbidden",
+            data: { suggestion, allowlistFile: ALLOWLIST_FILE },
+          });
         }
       },
     };
