@@ -4,7 +4,7 @@
 // Shows three mode cards (autonomous / draft_only / disabled) and
 // the Background AI toggle. Turning off Background AI requires confirmation.
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -27,8 +27,9 @@ type ModeCard = {
   title: string;
   description: string;
   features: string[];
-  // TODO(§27.12-cost-display): replace with real cost range from API
-  costRange: string;
+  // Relative-cost descriptor (per message). See the current-period spend
+  // block at the top of the page for the actual dollar figure.
+  costHint: string;
 };
 
 const MODE_CARDS: ModeCard[] = [
@@ -44,7 +45,7 @@ const MODE_CARDS: ModeCard[] = [
       "Pre-cruise emails: AI personalized",
       "Forum moderation: Haiku-screened",
     ],
-    costRange: "varies based on usage", // TODO(§27.12-cost-display)
+    costHint: "Highest per-message",
   },
   {
     mode: "draft_only",
@@ -58,7 +59,7 @@ const MODE_CARDS: ModeCard[] = [
       "Pre-cruise emails: AI personalized",
       "Forum moderation: Haiku-screened",
     ],
-    costRange: "varies based on usage", // TODO(§27.12-cost-display)
+    costHint: "Slightly less than Autonomous",
   },
   {
     mode: "disabled",
@@ -72,7 +73,7 @@ const MODE_CARDS: ModeCard[] = [
       "Pre-cruise emails: still AI personalized",
       "Forum moderation: still active",
     ],
-    costRange: "varies based on usage", // TODO(§27.12-cost-display)
+    costHint: "Background-AI only (lowest)",
   },
 ];
 
@@ -99,6 +100,16 @@ type PageState = {
   error: string | null;
 };
 
+interface CostProjection {
+  period_start: string;
+  period_end: string;
+  days_elapsed: number;
+  total_days_in_month: number;
+  current_period_spend: string;
+  projected_month_end_spend: string;
+  currency: string;
+}
+
 export default function AIModePage() {
   const [state, setState] = useState<PageState>({
     ai_mode: "autonomous",
@@ -110,6 +121,24 @@ export default function AIModePage() {
 
   const [disabledExpanded, setDisabledExpanded] = useState(false);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [costProjection, setCostProjection] = useState<CostProjection | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/tenant/ai-config/cost-projection");
+        if (!res.ok) return;
+        const data = (await res.json()) as CostProjection;
+        if (!cancelled) setCostProjection(data);
+      } catch {
+        // Cost display is best-effort; failure shows the fallback string.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function saveMode(ai_mode: AIMode) {
     setState((s) => ({ ...s, saving: true, error: null }));
@@ -177,9 +206,39 @@ export default function AIModePage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-semibold mb-2">AI Mode Configuration</h1>
-      <p className="text-gray-500 mb-8">
+      <p className="text-gray-500 mb-4">
         Control how AI responds to your customers and which background AI features are active.
       </p>
+
+      {/* §27.12 — current-period AI spend display.
+          Single shared block above the cards (no per-mode multipliers
+          — historical data isn't deep enough to make those honest yet). */}
+      {costProjection && (
+        <Card className="mb-8 bg-blue-50 border-blue-200">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-xs text-gray-600 uppercase tracking-wide">This billing period</p>
+                <p className="text-xl font-semibold text-gray-900">
+                  {costProjection.currency} {costProjection.current_period_spend}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Day {costProjection.days_elapsed} of {costProjection.total_days_in_month}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-600 uppercase tracking-wide">Projected month-end</p>
+                <p className="text-xl font-semibold text-gray-900">
+                  {costProjection.currency} {costProjection.projected_month_end_spend}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Linear extrapolation from current pace
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {state.error && (
         <div className="mb-6 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
@@ -209,7 +268,7 @@ export default function AIModePage() {
                         </span>
                       )}
                     </CardTitle>
-                    <span className="text-xs text-gray-500">Cost: {card.costRange}</span>
+                    <span className="text-xs text-gray-500">{card.costHint}</span>
                   </div>
                 </CardHeader>
                 <CardContent>
