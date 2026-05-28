@@ -49,6 +49,11 @@ export interface InstrumentedClaudeStreamResult {
   // to ai_call_log + tenant_usage_metrics here, NOT mid-stream.
   done: Promise<{
     text: string;
+    // §9.6 — the raw assembled Anthropic Message. Includes tool_use
+    // content blocks when the model decided to call a tool. Callers
+    // that pass `tools` use this to feed into runToolUseLoop after
+    // streaming completes.
+    raw: Anthropic.Messages.Message;
     input_tokens: number;
     output_tokens: number;
     cost_cents: bigint;
@@ -177,6 +182,10 @@ export function instrumentedClaudeStream(
           max_tokens: args.max_tokens,
           ...(cachedSystem ? { system: cachedSystem } : {}),
           messages: args.messages,
+          // §9.6 — pass through tool registry. Anthropic emits tool_use
+          // content blocks alongside text deltas; the text channel only
+          // sees text events. Callers extract tool_use from `done.raw`.
+          ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
         });
 
         // Forward text deltas to the iterator queue. The `text` event fires
@@ -231,7 +240,7 @@ export function instrumentedClaudeStream(
         streamEnded = true;
         notify();
 
-        return { text, input_tokens, output_tokens, cost_cents, latency_ms };
+        return { text, raw: finalMessage, input_tokens, output_tokens, cost_cents, latency_ms };
       } catch (err) {
         recordVendorFailure("anthropic", err instanceof Error ? err.message : String(err));
         streamError = err;

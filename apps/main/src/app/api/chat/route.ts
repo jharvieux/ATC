@@ -692,6 +692,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       await send({ type: "delta_start" });
 
       const abortController = new AbortController();
+      // §9.6 — streaming mode now passes the tool registry. The text
+      // channel only sees text deltas; tool_use blocks are returned
+      // alongside in `done.raw` and dispatched after the stream ends.
       const { textStream, done } = instrumentedClaudeStream({
         tenant_id: tenantId,
         conversation_id: conversationId,
@@ -702,6 +705,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         system: sys,
         messages: chatHistory,
         signal: abortController.signal,
+        tools: PERSONA_TOOLS as unknown as AnthropicTool[],
       });
 
       let abortedByPerSentence = false;
@@ -751,9 +755,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       // Stream completed cleanly. The wrapper's done promise gives us the
       // canonical text + final usage; trust it over our locally-assembled
       // string (the wrapper strips non-text content blocks consistently).
+      let firstStreamRaw: Awaited<typeof done>["raw"];
       try {
         const finalResult = await done;
         candidateText = finalResult.text;
+        firstStreamRaw = finalResult.raw;
       } catch (doneErr) {
         // Stream looked clean but final-message resolution failed (network
         // blip after last chunk). Fall back to vendor-down message rather
@@ -767,6 +773,92 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         await send({ type: "done" });
         await close();
         return;
+      }
+
+      // §9.6 — streaming tool-use loop. If the streamed response includes
+      // tool_use blocks, the model paused mid-turn to call tools; dispatch
+      // them and start a SECOND streaming call with tool_result blocks.
+      // We emit `rewriting` so the client clears any pre-tool prose that
+      // already arrived as deltas.
+      const ctxForToolsStream = ctx;
+      if (ctxForToolsStream) {
+        const loopOut = await runToolUseLoop({
+          result: { raw: firstStreamRaw },
+          originalMessages: chatHistory,
+          dispatchCtx: {
+            ctx: ctxForToolsStream,
+            db: svc,
+            conversation_id: conversationId,
+            contact_id: conversationContactId,
+          },
+        });
+        if (loopOut) {
+          await send({ type: "rewriting" });
+          await send({ type: "delta_start" });
+
+          const toolAbort = new AbortController();
+          const toolStream = instrumentedClaudeStream({
+            tenant_id: tenantId,
+            conversation_id: conversationId,
+            user_id: userId,
+            model: generationModel,
+            purpose: "chat_main",
+            max_tokens: 1024,
+            system: sys,
+            messages: loopOut.followUpMessages,
+            signal: toolAbort.signal,
+            // No tools on the follow-up: single-pass dispatch (matches
+            // the non-streaming branch). Chaining is the regen loop's
+            // problem.
+          });
+
+          let toolAbortedByPerSentence = false;
+          try {
+            for await (const sentence of bufferToSentences(toolStream.textStream)) {
+              const check = checkSentence(sentence, slurDenyList);
+              if (check.hit) {
+                toolAbort.abort();
+                toolAbortedByPerSentence = true;
+                perSentenceFires++;
+                break;
+              }
+              await send({ type: "delta", text: sentence + " " });
+            }
+          } catch {
+            await send({
+              type: "delta",
+              text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
+            });
+            await send({ type: "supervisor", action: "allow", regens: attempt });
+            await send({ type: "done" });
+            await close();
+            return;
+          }
+
+          if (toolAbortedByPerSentence) {
+            try { await toolStream.done; } catch { /* expected on abort */ }
+            await send({ type: "rewriting" });
+            extraInstruction = HATE_SPEECH_REGEN_INSTRUCTION;
+            continue;
+          }
+
+          try {
+            const toolFinal = await toolStream.done;
+            candidateText = toolFinal.text;
+          } catch {
+            await send({
+              type: "delta",
+              text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
+            });
+            await send({ type: "supervisor", action: "allow", regens: attempt });
+            await send({ type: "done" });
+            await close();
+            return;
+          }
+          console.info(
+            `[chat:tool-use:stream] dispatched=${loopOut.dispatchedTools.join(",")} mutated=${loopOut.mutated}`,
+          );
+        }
       }
     } else {
       // ── Non-streaming branch ──
