@@ -8,7 +8,10 @@ export function constantTimeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   if (ab.length !== bb.length) {
-    // Burn a comparable amount of CPU so a length mismatch doesn't leak via timing.
+    // Burn comparable CPU so a length mismatch doesn't leak via timing. Pass
+    // `ab` twice on purpose: timingSafeEqual throws unless both args are the
+    // same byteLength, and self-comparison satisfies that for any length
+    // (including 0). Changing this to timingSafeEqual(ab, bb) would throw here.
     timingSafeEqual(ab, ab);
     return false;
   }
