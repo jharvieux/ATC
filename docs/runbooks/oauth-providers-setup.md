@@ -60,8 +60,8 @@ That means there are **two redirect URIs to register**, in two different places:
 
 | Layer | Where to register it | Value |
 |---|---|---|
-| Provider console | The provider's OAuth app | `https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback` |
-| Supabase dashboard | Authentication → URL Configuration → Redirect URLs allow-list | `https://<your-domain>/api/auth/callback` (+ `http://localhost:3000/api/auth/callback` for dev) |
+| Provider console | The provider's OAuth app | `https://mfaknjyqiwcjojukcnea.supabase.co/auth/v1/callback` |
+| Supabase dashboard | Authentication → URL Configuration → Redirect URLs allow-list | `https://ai-travelconcierge.com/api/auth/callback` (+ `http://localhost:3000/api/auth/callback` for dev) |
 
 Miss the provider-side one and consent fails. Miss the Supabase allow-list one
 and the final hop back into the app is rejected.
@@ -92,12 +92,12 @@ Set in Vercel (all environments) and `.env.local` for dev. **Defaults matter:**
    Services → Credentials → Create Credentials → OAuth client ID**.
 2. Application type: **Web application**.
 3. Authorized redirect URI:
-   `https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback`.
+   `https://mfaknjyqiwcjojukcnea.supabase.co/auth/v1/callback`.
 4. Copy the **Client ID** and **Client Secret**.
 5. Supabase Dashboard → **Authentication → Providers → Google** → paste both →
    **Enable**.
 6. Supabase Dashboard → **Authentication → URL Configuration** → add
-   `https://<your-domain>/api/auth/callback` (and the localhost variant) to the
+   `https://ai-travelconcierge.com/api/auth/callback` (and the localhost variant) to the
    **Redirect URLs** allow-list.
 7. `OAUTH_GOOGLE_ENABLED=true` in Vercel (all envs) → redeploy.
 
