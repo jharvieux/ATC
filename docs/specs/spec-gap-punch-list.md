@@ -4,6 +4,40 @@ Working list of open gaps from `reality-delta.md`, `reality-delta-supplement.md`
 
 **As of 2026-05-27 (post-P1/P2 close-out).**
 
+> **Reconciled 2026-05-29 — open gaps now tracked as GitHub issues #421–#430.** This list was re-checked against `dev`. Every item the inline rows below mark 🚧 *queued* / 🟡 *in-flight* has since **merged**; those rows are preserved as the 2026-05-27 snapshot (history), so use the two tables in this section for current status.
+
+### Still open → issue
+
+| Punch-list item | Issue | Note |
+|---|---|---|
+| F4 — streaming-branch persona tools | [#421](https://github.com/jharvieux/ATC/issues/421) | unblocked |
+| #57 §17.4 — legal docs from table + consents | [#422](https://github.com/jharvieux/ATC/issues/422) | + attorney sign-off / open-questions notes |
+| F7 — real persona-tool handlers | [#423](https://github.com/jharvieux/ATC/issues/423) | `search_host_inventory` blocked on BP14 |
+| #58 / F8 §20.2 — booking flow Stages 2/3 | [#424](https://github.com/jharvieux/ATC/issues/424) | needs `booking_passengers` + add-ons tables |
+| #62 — `local-development.md` vs `.env.example` | [#425](https://github.com/jharvieux/ATC/issues/425) | #60/#61 runbooks already exist |
+| P3 #31–36 — cost-deferred AI surfaces | [#426](https://github.com/jharvieux/ATC/issues/426) | intentional opt-in stubs |
+| P4 #37–55 — external-blocked (legal/operator) | [#427](https://github.com/jharvieux/ATC/issues/427) | umbrella |
+| §28.9 — OAuth sign-in provider setup | [#428](https://github.com/jharvieux/ATC/issues/428) | manual op step (instructions inline) |
+| #47 §23.9 — Gmail inbound provisioning | [#429](https://github.com/jharvieux/ATC/issues/429) | runbook exists |
+| #46 / #52 / Vercel / Stripe / Supabase / admin-seed | [#430](https://github.com/jharvieux/ATC/issues/430) | operator provisioning checklist |
+
+### Merged / done since this snapshot (status corrections)
+
+| Item | Was | Now |
+|---|---|---|
+| #15 §10.6 per-tenant kill switch | 🚧 PR #340 queued | ✅ merged #340 |
+| #17 downline rename · #18 SSE Last-Event-ID | 🚧 PR #342 | ✅ merged #342 |
+| #19 Idempotency-Key header | 🚧 PR #344 | ✅ merged #344 |
+| #20 customer-AI phases 2+3 | 🚧 PR #351 | ✅ merged #351 |
+| #33 §22.4 Stage-2 PII batch path | 🚧 #363 | ✅ batch path merged #368 (Haiku call still cost-deferred → #426) |
+| #56 §9.6 persona tools | 🟡 PR #358 | ✅ merged #358 |
+| #58 §20.2 booking Stage 1 | 🟡 PR #359 | ✅ Stage 1 merged #359 (Stages 2/3 → #424) |
+| #60 supabase-setup · #61 pentest-scoping runbooks | BUILD-doc | ✅ both exist (181 / 203 lines) |
+| F1 supervisor via public chat | 🟡 PR #357 | ✅ merged #357 |
+| F5 contact_id threading | open | ✅ merged #370 |
+| F6 ai_tool_calls audit table | open | ✅ merged #369 |
+| F9 dependabot #329/#330 | needs investigation | ✅ both closed |
+
 ---
 
 ## Conventions
@@ -237,9 +271,11 @@ These don't need engineering work — they're updates to the audit-followups doc
 | **F1/F2/F3 follow-ups** | F1 🟡 in flight (#357), F2 ✅, F3 ✅ | |
 | **F4–F9 new follow-ups** | 6 items | F4 streaming-mode tools, F5 contact_id threading, F6 ai_tool_calls audit, F7 real host inventory, F8 booking flow Stages 2/3, F9 dependabot CI fails |
 
-**Highest-priority remaining engineering work:**
-1. **F9** Investigate dependabot #329/#330 CI failures (Lint/Build/Test failing — version bump must be breaking something; needs eyeballs not autonomous fix)
-2. **F8** Booking flow Stages 2/3 wiring — completes #58
-3. **#47** Gmail Step-5 build (waits on operator GCP)
-4. **F4** Streaming-mode tool support — completes #56's wire-in
-5. **P3 #33** Tolerable-PII Stage 2 ($1-3/day; the most-used cost-deferred surface)
+**Highest-priority remaining engineering work (reconciled 2026-05-29 — see issues #421–#430):**
+1. **#421 / F4** Streaming-mode tool support — completes #56's wire-in (unblocked)
+2. **#422 / #57** Legal docs from table + `legal_consents` writes (unblocked; attorney wording is a separate content gate)
+3. **#424 / F8** Booking flow Stages 2/3 — needs `booking_passengers` + add-ons tables
+4. **#429 / #47** Gmail Step-5 build (waits on operator GCP provisioning)
+5. **#426 / P3 #33** Tolerable-PII Stage-2 Haiku ($1-3/day; batch path already landed #368)
+
+(F9 is resolved — dependabot #329/#330 are both closed.)
