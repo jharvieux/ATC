@@ -39,7 +39,11 @@ loudly on misconfiguration — no surprises in production.
 
 ## Required env vars to actually boot
 
-The schema marks the following as required-at-boot (truncated; see `apps/main/.env.example` for the full list):
+This is the **complete** set the schema (`apps/main/src/lib/env.ts`) marks as
+required-at-boot. Every other variable in `apps/main/.env.example` is optional —
+it has a schema default, or it fails later at its call site rather than at boot.
+So the short list here is intentional, not a documentation gap (reconciled against
+`env.ts` 2026-05-29, punch-list #62).
 
 - `PLATFORM_PRIMARY_DOMAIN`, `PLATFORM_DOMAIN_REGEX`
 - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
@@ -72,7 +76,7 @@ The schema marks the following as required-at-boot (truncated; see `apps/main/.e
     GITHUB_REPO_OWNER=ci-placeholder-owner
     GITHUB_REPO_NAME=ci-placeholder-repo
     ```
-  - The `PRIVATE_KEY` must contain `-----BEGIN` to satisfy the zod schema's PEM-format check (`apps/main/src/lib/env.ts:261`).
+  - The `PRIVATE_KEY` must contain `-----BEGIN` to satisfy the zod schema's PEM-format check on `GITHUB_APP_PRIVATE_KEY` in `apps/main/src/lib/env.ts`.
   - These were added to `.github/workflows/e2e.yml` in PR #320; missing them locally is what caused the Next 14 → 16 instrumentation crash described under "When boot fails" below.
 
 ## Local-dev shortcuts
