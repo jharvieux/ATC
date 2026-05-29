@@ -10,7 +10,12 @@
 //   REDIS_URL — for jti replay cache
 //   OPENAI_API_KEY — for embedding generation
 //
-// Skip via: omit ENABLE_RAG_INTEGRATION_TESTS=true (default in CI)
+// DEFERRED — ENABLE_RAG_INTEGRATION_TESTS is set nowhere, so this suite never
+// runs in CI. Wiring it needs a dedicated test RAG project (the only RAG creds
+// today point at the prod-serving RAG DB, and this suite seeds/deletes rows).
+// Separately, tests 2-5 below define their auth gate inline rather than calling
+// the real route handlers, so they need a rewrite to be worth activating.
+// Tracked in #384. Do not flip the flag against the prod RAG DB.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";

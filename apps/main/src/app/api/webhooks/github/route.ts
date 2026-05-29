@@ -15,24 +15,15 @@
  * secret + missing header.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { env } from "@/lib/env";
 import { inngest } from "@/inngest/client";
+import { verifyGitHubSignature } from "@/lib/webhooks/github-signature";
 
 interface GitHubIssuePayload {
   action: string;
   issue?: { number: number; state?: string; state_reason?: string };
   comment?: { body?: string };
-}
-
-function verifySignature(rawBody: string, signature: string | null, secret: string): boolean {
-  if (!signature || !signature.startsWith("sha256=")) return false;
-  const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("hex");
-  const a = Buffer.from(expected);
-  const b = Buffer.from(signature);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -44,7 +35,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const rawBody = await req.text();
   const signature = req.headers.get("x-hub-signature-256");
-  if (!verifySignature(rawBody, signature, secret)) {
+  if (!verifyGitHubSignature(rawBody, signature, secret)) {
     return Response.json({ error: "invalid_signature" }, { status: 401 });
   }
 
