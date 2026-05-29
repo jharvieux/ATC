@@ -19,6 +19,7 @@ import { inngest } from "@/inngest/client";
 import { verifyEnvAtBoot } from "@/lib/env";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { decideModerationStatus } from "@/lib/forums/moderation-status";
 
 interface ModerationScores {
   spam: number;
@@ -94,12 +95,6 @@ ${content.slice(0, 2000)}
     clearTimeout(timer);
     throw err;
   }
-}
-
-function decideModerationStatus(result: ModerationResult): "visible" | "flagged_review" | "hidden" {
-  if (result.max_score < 0.4) return "visible";
-  if (result.max_score <= 0.7) return "flagged_review";
-  return "hidden";
 }
 
 export async function POST(
@@ -268,7 +263,7 @@ export async function POST(
     }
 
     // Decide status
-    let status: "visible" | "flagged_review" | "hidden" = decideModerationStatus(moderationResult);
+    let status: "visible" | "flagged_review" | "hidden" = decideModerationStatus(moderationResult.max_score);
 
     // PII zero-tolerance: credit card pattern override
     const scores = moderationResult.scores as ModerationScores & { credit_card_pattern?: boolean };

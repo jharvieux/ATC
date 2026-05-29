@@ -1,126 +1,52 @@
-// §19.3 — Forum moderation retry: optimistic-locking idempotency contract.
+// §19.3 — Forum moderation retry path.
 //
-// Critical contract: if the same retry event fires 3× in parallel (e.g. from
-// Inngest at-least-once delivery), exactly one worker wins the
-// `UPDATE ... WHERE moderation_attempt_count = N` lock. The others are no-ops.
+// The score→status decision imports the real decideModerationStatus used by
+// BOTH the message-post route and the retry job, so a threshold change fails
+// this suite (D-091 / #384 — no in-test reimplementation).
 //
-// This test verifies the optimistic-locking mechanism by simulating three
-// concurrent workers reading the same message state (count=0) and racing to
-// update it. Only the first updater wins; the others get 0 rows back.
+// The optimistic-lock idempotency contract (only one of N parallel retry
+// workers wins the `UPDATE ... WHERE moderation_attempt_count = N` CAS) is a
+// database guarantee with no pure-function seam — the prior JS simulation
+// asserted nothing about production code. Real coverage needs a DB-backed
+// integration harness (blocked on #386); the contract is marked skipped below
+// rather than faked.
 
 import { describe, it, expect } from "vitest";
+import { decideModerationStatus } from "@/lib/forums/moderation-status";
 
-// Simulates the optimistic-lock update logic:
-//   UPDATE forum_messages SET status = ?, moderation_attempt_count = N+1
-//   WHERE id = ? AND moderation_attempt_count = N
-// Returns true if the row was updated (this worker won the lock).
-function simulateOptimisticUpdate(
-  state: { id: string; moderation_attempt_count: number; status: string },
-  expectedCount: number,
-  newStatus: string,
-): boolean {
-  if (state.moderation_attempt_count !== expectedCount) {
-    // Another worker already incremented the count — this is a no-op
-    return false;
-  }
-  state.moderation_attempt_count += 1;
-  state.status = newStatus;
-  return true;
-}
-
-// Simulates the full retry worker logic:
-//   1. Read message (count = N at read time)
-//   2. Call "Haiku" (always succeeds with "visible" in this sim)
-//   3. Update WHERE count = N
-async function retryWorker(
-  sharedState: { id: string; moderation_attempt_count: number; status: string },
-): Promise<{ won: boolean; status: string }> {
-  // Step 1: Read (each worker reads the SAME snapshot — simulating a race)
-  const readCount = sharedState.moderation_attempt_count;
-
-  // Step 2: "Haiku call" — simulate success
-  await Promise.resolve(); // yields so workers interleave
-
-  // Step 3: Optimistic update
-  const won = simulateOptimisticUpdate(sharedState, readCount, "visible");
-  return { won, status: sharedState.status };
-}
-
-describe("Forum moderation retry — optimistic locking (§19.3)", () => {
-  it("exactly one of 3 parallel workers wins the optimistic lock", async () => {
-    const message = { id: "msg-001", moderation_attempt_count: 0, status: "pending_moderation" };
-
-    // All three workers read moderation_attempt_count = 0 simultaneously.
-    // First to execute the update wins; the other two see count != 0 → no-op.
-    const results = await Promise.all([
-      retryWorker(message),
-      retryWorker(message),
-      retryWorker(message),
-    ]);
-
-    const winners = results.filter((r) => r.won);
-    const noOps = results.filter((r) => !r.won);
-
-    expect(winners).toHaveLength(1);
-    expect(noOps).toHaveLength(2);
-
-    // Final state: exactly one status transition
-    expect(message.moderation_attempt_count).toBe(1);
-    expect(message.status).toBe("visible");
+describe("forum moderation status decision (§19.3)", () => {
+  it("max_score < 0.4 → visible", () => {
+    expect(decideModerationStatus(0.1)).toBe("visible");
+    expect(decideModerationStatus(0.39)).toBe("visible");
   });
 
-  it("second run of the same event (retry already resolved) is a no-op", async () => {
-    // Simulate a message that was already resolved by a prior worker
-    const message = { id: "msg-002", moderation_attempt_count: 1, status: "visible" };
-
-    // This worker reads count=1 but message is already resolved —
-    // the route handler checks `status !== 'pending_moderation'` and skips.
-    // Here we verify the optimistic update alone won't clobber resolved state.
-    const won = simulateOptimisticUpdate(message, 0 /* stale read */, "flagged_review");
-    expect(won).toBe(false);
-    expect(message.status).toBe("visible"); // unchanged
+  it("max_score 0.4–0.7 → flagged_review", () => {
+    expect(decideModerationStatus(0.4)).toBe("flagged_review");
+    expect(decideModerationStatus(0.55)).toBe("flagged_review");
+    expect(decideModerationStatus(0.7)).toBe("flagged_review");
   });
 
-  it("optimistic lock counter increments per-win, not per-attempt", () => {
-    const message = { id: "msg-003", moderation_attempt_count: 0, status: "pending_moderation" };
-
-    // Worker 1 wins
-    const w1 = simulateOptimisticUpdate(message, 0, "visible");
-    // Worker 2 is a no-op (expected count is stale)
-    const w2 = simulateOptimisticUpdate(message, 0, "hidden");
-    // Worker 3 is a no-op (expected count is still stale)
-    const w3 = simulateOptimisticUpdate(message, 0, "flagged_review");
-
-    expect(w1).toBe(true);
-    expect(w2).toBe(false);
-    expect(w3).toBe(false);
-
-    // Count incremented exactly once; status is from worker 1 only
-    expect(message.moderation_attempt_count).toBe(1);
-    expect(message.status).toBe("visible");
+  it("max_score > 0.7 → hidden", () => {
+    expect(decideModerationStatus(0.701)).toBe("hidden");
+    expect(decideModerationStatus(0.95)).toBe("hidden");
   });
 
-  it("status decision: max_score < 0.4 → visible, 0.4–0.7 → flagged_review, > 0.7 → hidden", () => {
-    function decideStatus(maxScore: number): "visible" | "flagged_review" | "hidden" {
-      if (maxScore < 0.4) return "visible";
-      if (maxScore <= 0.7) return "flagged_review";
-      return "hidden";
-    }
-
-    expect(decideStatus(0.1)).toBe("visible");
-    expect(decideStatus(0.39)).toBe("visible");
-    expect(decideStatus(0.4)).toBe("flagged_review");
-    expect(decideStatus(0.7)).toBe("flagged_review");
-    expect(decideStatus(0.701)).toBe("hidden");
-    expect(decideStatus(0.95)).toBe("hidden");
+  it("thresholds are inclusive on the flagged_review band (0.4 and 0.7)", () => {
+    // Guards against an off-by-one flip to strict inequalities, which would
+    // silently auto-hide 0.7 content or auto-show 0.4 content.
+    expect(decideModerationStatus(0.4)).toBe("flagged_review");
+    expect(decideModerationStatus(0.7)).toBe("flagged_review");
+    expect(decideModerationStatus(0.700001)).toBe("hidden");
   });
+});
 
-  it("24h escalation: pending messages older than timeout become flagged_review", () => {
-    const timeoutHours = 24;
-    const pendingSince = new Date(Date.now() - (timeoutHours + 1) * 60 * 60 * 1000);
-    const hoursElapsed = (Date.now() - pendingSince.getTime()) / (1000 * 60 * 60);
-    expect(hoursElapsed).toBeGreaterThanOrEqual(timeoutHours);
-    // If hoursElapsed >= FORUM_MODERATION_RETRY_TIMEOUT_HOURS → escalate to flagged_review
-    // This is the contract tested in the sweep; here we verify the math
+describe.skip("forum moderation retry — optimistic-lock idempotency (§19.3) — needs DB harness (#386)", () => {
+  // The `UPDATE ... WHERE moderation_attempt_count = N` CAS guarantees exactly
+  // one of N parallel retry workers wins; the others see 0 rows and no-op.
+  // This is a database guarantee, not app logic — it can only be exercised
+  // against a real Postgres. Unskip once the #386 integration test DB lands.
+  it("exactly one of N parallel workers wins the attempt-count CAS", () => {
+    // TODO(#386): seed a forum_messages row at count=0, fire N concurrent
+    // retries against the real DB, assert exactly one transition.
   });
 });

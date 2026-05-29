@@ -17,6 +17,7 @@ import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { instrumentedClaudeCall, type AICallPurpose } from "@/lib/ai/call-wrapper";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { decideModerationStatus } from "@/lib/forums/moderation-status";
 
 interface ModerationScores {
   spam: number;
@@ -88,12 +89,6 @@ async function callHaikuModeration(
   } catch (err) {
     throw new Error(`haiku_api_error: invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
-}
-
-function decideModerationStatus(result: ModerationResult): "visible" | "flagged_review" | "hidden" {
-  if (result.max_score < 0.4) return "visible";
-  if (result.max_score <= 0.7) return "flagged_review";
-  return "hidden";
 }
 
 // Backoff schedule (minutes from pending_moderation_since)
@@ -207,7 +202,7 @@ export const forumModerationRetry = inngest.createFunction(
     }
 
     // Success path: determine status and update with optimistic lock
-    const status = decideModerationStatus(result);
+    const status = decideModerationStatus(result.max_score);
 
     const { data: updated } = await svc
       .from("forum_messages")
