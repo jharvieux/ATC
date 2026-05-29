@@ -1,40 +1,38 @@
-# Session state — last updated 2026-05-29 ~01:45 UTC
+# Session state — last updated 2026-05-29 ~02:30 UTC
 
 ## Just completed
 
-Test-integrity quick wins (PR #388, squash-merged to dev) + this docs PR.
+Three PRs merged to dev this session (all squash, branches deleted):
 
-- **PR #388 merged** (squash, branch deleted). Three fixes from the #384 per-file sweep:
-  - **github-closure → real import.** Extracted the route's HMAC verifier into `apps/main/src/lib/webhooks/github-signature.ts` (`verifyGitHubSignature`, mirroring `resend-signature.ts`); route + test now import the real function. The test previously reproduced it in-test and downgraded `timingSafeEqual` to `===`. 6/6 pass.
-  - **stripe-webhook activation.** Added `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` CI placeholders to `nightly-full-test.yml` so the dead suite runs. It self-signs events + imports the real handler (pure HMAC, no Stripe API), so placeholders suffice. 3/3 pass against the seeded DB locally.
-  - **rag scope-isolation deferred.** Documented in-file (gate var set nowhere; only RAG creds point at prod-serving DB; tests 2–5 reimplement auth gates inline). NOT wired.
-- **#384 catalog comment posted**: 7 Class A reimplementation files (with line refs) + the two dead suites + verified-legit exclusions (e.g. `money.test.ts`). This is the test-rewrite backlog.
-- **D-113 logged** (this docs PR).
-- Audits: d091-reviewer clean; pre-pr-reviewer 1 warning (`§32.10.7` citation — verified real) + 2 accepted nits. All 9 required CI checks green on #388. Vercel preview deploys failed on a 24h rate-limit — non-required, did not block.
+- **PR #388** — test-integrity quick wins: github-closure → real `verifyGitHubSignature` import (extracted to `apps/main/src/lib/webhooks/github-signature.ts`); Stripe nightly secrets (`STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` placeholders) added to `nightly-full-test.yml`; RAG scope-isolation documented as deferred; #384 reimplementation catalog comment posted.
+- **PR #389** — docs: MEMORY.md **D-113** + SESSION.md checkpoint.
+- **PR #390** — docs(CLAUDE.md): added a concrete "how to write to it" recipe for the `block-spec-memory-edits.mjs` append-only hook (Edit: `new_string` must end with `old_string`, anchor on current top entry's header; Write: new content must end with current file verbatim) + a note that SESSION.md is the opposite (plain whole-file overwrite, no hook). Requested by the user after repeated MEMORY.md write friction this session. Read the hook source directly to make the recipe accurate.
 
-Verification: `pnpm verify` green (1920 passed / 61 skipped, lint + slop clean); github-closure 6/6 + stripe-webhook 3/3 against the seeded DB.
+No MEMORY.md entry for #390 — once it's in CLAUDE.md it's documented there; a D-entry would be log noise.
+
+Verification: `pnpm verify` green before each push (lint + slop clean, tests pass). All required checks green on all three PRs.
 
 ## In flight
 
-- **This docs PR** (`docs/session-2026-05-29-d113-test-integrity`): carries MEMORY.md D-113 + this SESSION.md. Being pushed + opened + merged now. If you're reading this and it is NOT merged, finish that first.
+- **This SESSION.md refresh** (`docs/session-2026-05-29-eos`): standalone EOS checkpoint, being pushed + opened + merged now. If you're reading this and it is NOT merged, finish that first (CI green → squash → delete branch).
+- Otherwise nothing in flight — dev at 491feb6 + this PR, synced with origin.
 
 ## Next step
 
-1. Merge this docs PR once CI passes (then delete the branch).
-2. **Switch the model back to Sonnet** — this session ran on Opus. Run `/model claude-sonnet-4-6` (the agent cannot invoke `/model` itself).
-3. Optional: `workflow_dispatch` `nightly-full-test` to confirm the stripe-webhook suite now runs green end-to-end (placeholders + DB seed are in place; PR CI does not exercise the nightly).
+1. **Switch the model back to Sonnet** — this session ran on Opus. Run `/model claude-sonnet-4-6` (the agent cannot invoke `/model` itself).
+2. Nothing else pending from this thread. Pick up from the backlog / blocked-on-user items below when ready.
 
 ## Blocked on user
 
 - **Operator follow-ups from D-112 (unchanged, still open):** re-point the `supabase-main` MCP server (still on the deleted ref `ucypskudkmzjphixsshx` → new `mfaknjyqiwcjojukcnea`); production redeploy so the new DB takes effect in prod.
-- **Issue #386** — dedicated test Supabase project (main AND now RAG) before customer data lands; user routes timing. Now also blocks wiring the RAG scope-isolation suite (per D-113).
+- **Issue #386** — dedicated test Supabase project (main AND now RAG) before customer data lands; user routes timing. Also blocks wiring the RAG scope-isolation suite (per D-113).
 - Counsel sign-off (P4 #37–#43) and operator decisions (P4 #48–#55) — unchanged.
 
 ## Open questions
 
 - **#384** test-rewrite backlog — the 7 Class A reimplementations remain (largest: `crm/contacts.test.ts`). No action pending; tracked.
 - **#366** docs(session) D-106/D-107 — still open, likely BEHIND. D-106/D-107 may still be absent from dev's MEMORY.md (stuck in that PR). Needs an `## Audit` section + update-branch + merge.
-- **Dependabot PRs** — at session start, `dependabot/npm_and_yarn/dev-dependencies-*` and `production-minor-patch-*` branches were pushed to origin. Check open dependabot PR merge state / `regression-suspected` label (retry workflow handles CI; don't intervene unless flagged).
+- **Dependabot PRs** — check open dependabot PR merge state / `regression-suspected` label (retry workflow handles CI; don't intervene unless flagged).
 - Phase 2 shift-left (Turbo remote cache), `ai_tool_calls` retention policy, Layer-2 cold-read reviewer — unchanged.
 
 ## Carried forward (unchanged)
