@@ -186,7 +186,10 @@ describeIf("BP30 Tier 3 — userDataPurgeAfterGrace grace-window short-circuit",
       },
     );
     // Past wake → sleepUntil no-ops → handler proceeds, finds no such user
-    // (d002 isn't seeded) and short-circuits. The point: it did NOT defer.
+    // (d002 isn't seeded), returns { skipped: true }. No `status` check
+    // needed here: the no-defer path sets no `status`, so !deferred alone
+    // proves it (unlike the future test, which must also accept
+    // status === "deferred").
     expect(Boolean(result.deferred)).toBe(false);
     expect(result.skipped).toBe(true);
   });
