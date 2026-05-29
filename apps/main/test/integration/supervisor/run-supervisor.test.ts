@@ -52,6 +52,7 @@ type MockConversationRow = ReturnType<typeof makeConversation>;
 function buildMockDb(opts: {
   conversation: MockConversationRow;
   killSwitchPaused?: boolean;
+  killSwitchError?: boolean;
   slurDenyList?: string[];
   conversationUpdates?: (patch: Record<string, unknown>) => void;
   escalationInserts?: (row: Record<string, unknown>) => void;
@@ -59,6 +60,7 @@ function buildMockDb(opts: {
   const {
     conversation,
     killSwitchPaused = false,
+    killSwitchError = false,
     slurDenyList = [],
     conversationUpdates,
     escalationInserts,
@@ -89,10 +91,10 @@ function buildMockDb(opts: {
         return {
           select: () => ({
             eq: () => ({
-              single: async () => ({
-                data: { global_paused: killSwitchPaused },
-                error: null,
-              }),
+              single: async () =>
+                killSwitchError
+                  ? { data: null, error: { message: "kill-switch read failed" } }
+                  : { data: { global_paused: killSwitchPaused }, error: null },
             }),
           }),
         };
@@ -302,6 +304,29 @@ describe("runSupervisor — kill switch (§10.6)", () => {
     });
 
     expect(result.action).toBe("allow");
+  });
+
+  it("fails closed (escalate) when the kill-switch read errors (#399)", async () => {
+    // A DB read failure on the global safety switch must NOT fall through to
+    // "not paused" and let generation proceed. An unreadable kill switch is an
+    // unknown pause state, so the supervisor escalates to a human. If anyone
+    // reverts to discarding the read error, this flips from escalate to allow.
+    const db = buildMockDb({
+      conversation: makeConversation(),
+      killSwitchError: true,
+    });
+
+    const result = await runSupervisor({
+      ctx,
+      conversation_id: CONVERSATION_ID,
+      message_id: MESSAGE_ID,
+      candidate_response: CLEAN_RESPONSE,
+      db,
+    });
+
+    expect(result.action).toBe("escalate");
+    expect(result.findings[0]?.check).toBe("kill_switch_read_error");
+    expect(result.regen_count).toBe(0);
   });
 });
 
