@@ -1,8 +1,10 @@
-# Runbook — Migrate the nightly DB-backed suites off the prod-serving `atc-main` DB
+# Nightly test-DB migration runbook
 
-**Status:** REQUIRED before customer data is loaded into `atc-main`.
-**Owner:** operator (platform/infra). Not automatable — every step needs the Supabase dashboard or the GitHub repo secret store.
-**Refs:** decision **D-112**, implementing PR **#385**, tracking issue **#386**.
+Migrate the nightly DB-backed suites off the prod-serving `atc-main` DB.
+
+**Owner:** operator (platform/infra) — not automatable; every step needs the Supabase dashboard or the GitHub repo secret store.
+**Status:** REQUIRED before customer data is loaded into `atc-main` (see "Why this exists").
+**Refs:** D-112, PR #385, issue #386.
 
 ---
 
