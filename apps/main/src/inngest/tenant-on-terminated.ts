@@ -41,24 +41,14 @@ export const tenantTerminationScheduled = inngest.createFunction(
     // Wait until suspension_end_at before terminating.
     const terminateTime = new Date(terminate_at).getTime();
     if (Date.now() < terminateTime) {
-      // Reschedule — Inngest's sleep or delay mechanism.
-      // TODO(inngest-delay): use inngest.sleep() when Inngest step functions are available.
-      // For now, emit the event again for the reconcile cron to pick up.
+      // Not yet due. The tenant-termination-finalize cron reconciles every
+      // suspended-with-termination_kind tenant past its suspension_end_at, so
+      // we defer here rather than self-rescheduling (no Inngest step/sleep yet).
       return { deferred: true, terminate_at };
     }
 
-    // Finalize termination.
-    const { error } = await db.from("tenants").update({
-      status: "terminated",
-      terminated_at: new Date().toISOString(),
-    }).eq("id", tenant_id).eq("status", "suspended");
-
-    if (error) {
-      throw new Error(`Failed to terminate tenant ${tenant_id}: ${error.message}`);
-    }
-
-    await onTerminated(db, tenant_id, kind);
-    return { ok: true };
+    const { finalized } = await finalizeTermination(db, tenant_id, kind);
+    return { ok: true, finalized };
   },
 );
 
@@ -73,6 +63,35 @@ export const tenantOnTerminatedSideEffects = inngest.createFunction(
     await onTerminated(db, tenant_id, kind as "voluntary" | "involuntary_content" | "involuntary_other");
   },
 );
+
+// Guarded CAS: suspended → terminated. Returns finalized:false (NOT an error)
+// when zero rows match — that means the tenant was un-suspended / the
+// termination was rescinded within the 90-day window (§15.14.3), a valid
+// outcome that must not throw, or the nightly finalize cron would retry the
+// same tenant forever. On a real transition we emit tenant.terminated so the
+// idempotent tenantOnTerminatedSideEffects consumer runs the §15.14.2
+// side-effects on its own Inngest function boundary (independent retry).
+export async function finalizeTermination(
+  db: ReturnType<typeof createServiceRoleClient>,
+  tenantId: string,
+  kind: "voluntary" | "involuntary_content" | "involuntary_other",
+): Promise<{ finalized: boolean }> {
+  const updated = await safeAwait(
+    db.from("tenants")
+      .update({ status: "terminated", terminated_at: new Date().toISOString() })
+      .eq("id", tenantId)
+      .eq("status", "suspended")
+      .select("id"),
+    "tenants.finalize-termination",
+  );
+
+  if (!updated || (updated as Array<{ id: string }>).length === 0) {
+    return { finalized: false };
+  }
+
+  await inngest.send({ name: "tenant.terminated", data: { tenant_id: tenantId, kind } });
+  return { finalized: true };
+}
 
 async function onTerminated(
   db: ReturnType<typeof createServiceRoleClient>,
