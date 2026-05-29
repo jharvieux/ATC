@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-117 — 2026-05-29 — Remove the CI `slop-check` GitHub Action; keep the scanner local-only (`pnpm verify` + pre-pr-reviewer)
+
+**Decision.** Deleted `.github/workflows/slop-check.yml`. The slop scanner stays exactly as-is everywhere it actually catches things — `scripts/slop-check.ts`, the `pnpm slop-check` script, its place in the `pnpm verify` chain, and the `pre-pr-reviewer` subagent that reads its output before a PR opens. Only the **CI job** (which posted an advisory PR comment and gated nothing) is gone.
+
+**Why.** User asked whether the CI slop-check adds value over the audit check simply verifying it ran locally; I recommended removal and the user said "Remove." Three concrete reasons: (1) the only *hard* rule slop-check carries — orphan TODOs — is already enforced at CI by the **required** `Lint` check (`atc/no-orphan-todo` at `error`), so removing the CI slop job loses no enforcement; (2) the soft heuristics false-positive on the exact extractions the #384 work produces — e.g. the 2-caller wrapper functions in [[D-116]] flagged as "single-expression wrapper, consider inlining," where inlining would re-introduce the anti-pattern; (3) the workflow's `$GITHUB_OUTPUT` heredoc step crashed on any non-empty report (surfaced in [[D-116]]), so the **non-required** check showed RED on every findings-producing PR — pure noise on a check that never gated merge. Net: a CI job that enforced nothing, false-flagged good changes, and rendered RED on its own infra bug.
+
+**Rejected.**
+- *Keep the workflow and just fix the heredoc + add a false-positive suppression mechanism.* More surface area (an inline-silence syntax the scanner doesn't have, plus the comment-posting plumbing) to maintain a check that gates nothing and duplicates the required `Lint` rule. The user picked remove over this explicitly.
+- *Promote slop-check to a required check.* Would block merge on advisory heuristics, contradicting the deliberate design in `docs/runbooks/slop-detection.md` ("we deliberately do NOT block merge on slop findings" — blocking produces escape hatches that defeat the purpose).
+- *Edit the read-only spec reference and the MEMORY history.* `specs/TechSpec/spec-addendum-d091-hardening.md:250` still describes "the GitHub Actions workflow that runs against every PR's diff" — left untouched (specs are read-only; **flagged to the user** as a now-stale line needing their approval to update). Prior MEMORY entries that mention the workflow are historical and append-only — left intact.
+
+**Related artifacts.** This PR: **deleted** `.github/workflows/slop-check.yml`; **edited** `docs/runbooks/slop-detection.md` (layer-3 retitled "(local)", + a 2026-05-29 calibration-log entry), `.github/workflows/dependabot-retry-ci.yml` (dropped the dead `"Slop check"` name from `REQUIRED_CHECKS`), `docs/runbooks/anti-patterns.md` (line 213 "Posts advisory PR comments" → "Runs locally via `pnpm verify`"), `docs/runbooks/ci-shift-left-plan.md` (removed "Slop check" from the "what CI runs today" matrix). **Kept:** `scripts/slop-check.ts`, `package.json` (`slop-check`/`verify`), CLAUDE.md + `d091-reviewer`/`pre-pr-reviewer`/`pr-self-review.md` local references (all correct — they invoke the local command). Tie-in: [[D-116]] (where the heredoc bug + the false-positive were first surfaced), D-091 (the doctrine the scanner serves).
+
+---
+
 ## D-116 — 2026-05-29 — #384 batch 2: unit-test the 2 judgment files that have pure-fn seams (bookings allowlist, moderation thresholds); defer the DB-coupled rest to #386; reinterpret the user's "integration tests" pick (PR #417)
 
 **Decision.** Shipped #384 **batch 2** as squash-merged PR #417 — the two of the four "judgment" Class-A files (surfaced in [[D-115]]) that have a **genuine pure-function seam**, using the D-113 template (delete in-test logic → extract real symbol → import in BOTH prod and test):

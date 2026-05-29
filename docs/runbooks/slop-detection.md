@@ -21,7 +21,7 @@ Two rules in `packages/config/eslint-rules/`:
 
 To enable `no-narrating-comments` after auditing existing code, flip to `warn` or `error` in `apps/main/.eslintrc.json`.
 
-### 3. `slop-check` diff scanner (PR-level)
+### 3. `slop-check` diff scanner (local)
 
 `pnpm slop-check` scans **lines added in the current branch vs `origin/dev`** for:
 
@@ -30,7 +30,7 @@ To enable `no-narrating-comments` after auditing existing code, flip to `warn` o
 3. `try/catch` blocks that just re-throw the caught error
 4. `export function foo(...) { return bar(...); }` single-expression wrappers
 
-Output: markdown, advisory only. Wired to a GitHub Action (`.github/workflows/slop-check.yml`) that posts findings as a PR comment. **Non-blocking** — the check is informational; merging is never gated on it.
+Output: markdown, advisory only. Runs **locally** as part of `pnpm verify` (and on demand via `pnpm slop-check`); the `pre-pr-reviewer` audit subagent also reads its output before a PR is opened. It is deliberately **not** a CI check — see the 2026-05-29 calibration-log entry for why the GitHub Action was removed.
 
 Run locally:
 
@@ -50,9 +50,10 @@ SLOP_CHECK_BASE_REF=origin/release/2026.05 pnpm slop-check
 
 - 2026-05-26: `no-orphan-todo` shipped at `error`. Cleaned up 5 pre-existing violations in the same PR.
 - 2026-05-26: `no-narrating-comments` shipped at `off` — codebase has not been audited for prior narration. Flip on after a sweep.
+- 2026-05-29: removed the `slop-check` GitHub Action (`.github/workflows/slop-check.yml`); the scanner is now local-only (`pnpm verify` / `pnpm slop-check`). Reasons: (1) the only hard rule it carries — orphan TODOs — is already enforced at CI by the required `Lint` check (`atc/no-orphan-todo` at `error`); (2) the soft heuristics false-positive on intentional extractions (e.g. a 2-caller wrapper extracted precisely so prod + test import one symbol) and aren't worth a PR comment or status line; (3) the workflow's `$GITHUB_OUTPUT` heredoc step crashed on any non-empty report, so the non-required check showed RED on every findings-producing PR. See D-117.
 
 ## What we deliberately do NOT do
 
 - **No AI-detection tools** that classify code as "AI-likeness." Punishes style, not slop. High false-positive rate.
 - **No banning of AI-generated code.** The CLAUDE.md doctrine is a more useful guardrail than a ban.
-- **No blocking merge on slop findings.** Slop is a tradeoff (sometimes a TODO without an owner is genuinely temporary); blocking merge produces escape hatches that defeat the purpose. Advisory comments + operator review is the right pressure.
+- **No blocking merge on slop findings.** Slop is a tradeoff (sometimes a TODO without an owner is genuinely temporary); blocking merge produces escape hatches that defeat the purpose. Local `pnpm verify` output + the `pre-pr-reviewer` audit is the right pressure.
