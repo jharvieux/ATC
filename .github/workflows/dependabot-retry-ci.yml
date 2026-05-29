@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           # Names of required checks worth re-running. Skipping non-blocking
           # checks (CodeQL, Vercel) avoids re-burning compute for free.
-          REQUIRED_CHECKS='Lint Typecheck Build Test "Slop check" "Lint, Typecheck, Build"'
+          REQUIRED_CHECKS='Lint Typecheck Build Test "Lint, Typecheck, Build"'
 
           # All open PRs authored by dependabot in this repo.
           PRS=$(gh pr list \

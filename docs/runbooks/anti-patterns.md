@@ -210,7 +210,7 @@ Recurring bug-class patterns identified in the 2026-05-26 Greptile audit. Each p
 
 - **At authoring time**: the CLAUDE.md doctrine lines (added to the "Things to be wary of" section) shape what gets written. Re-read every session.
 - **At lint time**: ESLint rules in `packages/config/eslint-rules/` catch the mechanical patterns. Some default `error`, some opt-in `warn`.
-- **At diff time**: `pnpm slop-check` (D-091) extends to cover these patterns where reasonable. Posts advisory PR comments.
+- **At diff time**: `pnpm slop-check` (D-091) extends to cover these patterns where reasonable. Runs locally via `pnpm verify`; advisory only.
 - **At CI time**: `cross-tenant-probe` and the new `error-injection-probe` catch the runtime-only failure modes.
 
 ## Adding a new pattern
