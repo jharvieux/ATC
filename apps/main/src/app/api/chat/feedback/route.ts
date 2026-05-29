@@ -57,6 +57,8 @@ export async function POST(req: Request): Promise<Response> {
       const rag = (msgRow as { rag_chunks_used: { ids?: string[] } | null }).rag_chunks_used;
       const chunkIds = rag?.ids ?? [];
       if (chunkIds.length > 0) {
+        // allow-void-async: best-effort RAG signal; publishChunkFeedback never throws
+        // (returns {ok:false} on failure) and the parent feedback write already persisted.
         void publishChunkFeedback({
           message_id: messageId,
           signal_direction: score > 0 ? "up" : "down",

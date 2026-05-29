@@ -187,8 +187,8 @@ export async function POST(req: Request): Promise<Response> {
     await writer.close();
   };
 
-  // Run the chat logic asynchronously so the Response can return immediately
-  // with the readable stream attached.
+  // allow-void-async: SSE handler — the chat logic must run after the Response
+  // returns with the readable stream attached; rejections are handled by the .catch below.
   void handleChat({
     req,
     tenantId,
