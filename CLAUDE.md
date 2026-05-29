@@ -95,6 +95,18 @@ If nothing needed action, the line is `Auto-triage: clean — nothing open neede
 - **You can add entries. You cannot edit prior entries** without explicit permission — they are the historical record.
 - If a user request conflicts with a logged decision, stop and surface the conflict before proceeding.
 
+### How to write to it (a hook enforces append-only)
+
+A PreToolUse hook (`.claude/hooks/block-spec-memory-edits.mjs`) rejects any MEMORY.md change that isn't a pure prepend, and **fails closed** — a malformed edit is blocked, not silently allowed. This is what trips up naive edits. Two ways to satisfy it:
+
+- **Edit (preferred — surgical):** the hook's rule is literally `new_string` must *end with* `old_string`. So anchor on the **current newest entry's header line** (it's unique) and repeat that line verbatim at the *end* of `new_string`:
+  - `old_string` → `## D-113 — 2026-05-29 — <title>` (whatever the top entry happens to be right now)
+  - `new_string` → `## D-114 — <today> — <title>\n\n<body>\n\n---\n\n## D-113 — 2026-05-29 — <title>`
+  - The new entry lands above the anchor; the anchor survives as the suffix, so the `endsWith` check passes. Pick the anchor line so it's unique in the file (the full header is) — the Edit tool also requires `old_string` to be unique.
+- **Write (whole-file fallback):** the new content must *end with* the entire current file verbatim (trailing whitespace aside). Read the file first, then write `<new entry>\n\n---\n\n<entire current content>`. Bigger payload, more truncation risk — prefer Edit.
+
+Do not reword or replace a prior entry — the hook blocks it and the rule above forbids it. If you truly must, ask the user for explicit permission first.
+
 -----
 
 ## SESSION.md — resume state
@@ -131,6 +143,8 @@ Required fields (overwrite the file each time — no history):
 ```
 
 At session start, read SESSION.md and resume from “Next step” unless the user redirects.
+
+**Writing it is a plain whole-file overwrite — no hook, no prepend rule (the opposite of MEMORY.md).** Use the Write tool to replace the file with the fields above, freshly filled in. Don't try to preserve or prepend prior state: SESSION.md is transient working state, not history, so last-write-wins is correct.
 
 -----
 
