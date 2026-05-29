@@ -1,22 +1,9 @@
 // §18.8 — Reminder cadence interval logic tests.
-// Tests the interval selection and 3-per-24h rate limit logic in isolation.
+// Imports the real symbols from the Inngest job's lib module so a change to the
+// cadence thresholds fails this suite (D-091 / #384 — no in-test reimplementation).
 
 import { describe, it, expect } from "vitest";
-
-// Extract pure functions from the Inngest job for unit testing.
-// These mirror the internal cadenceIntervalDays / monthsBetween helpers.
-
-function monthsBetween(from: Date, to: Date): number {
-  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
-}
-
-function cadenceIntervalDays(monthsUntilSailing: number): number | null {
-  if (monthsUntilSailing >= 24) return 42;
-  if (monthsUntilSailing >= 12) return 30;
-  if (monthsUntilSailing >= 6)  return 14;
-  if (monthsUntilSailing >= 1)  return 7;
-  return null;
-}
+import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
 
 describe("reminder cadence interval (§18.8)", () => {
   const now = new Date("2026-01-01");
@@ -66,18 +53,5 @@ describe("reminder cadence interval (§18.8)", () => {
     const lastSent = new Date(now.getTime() - 25 * 24 * 60 * 60 * 1000);
     const daysSinceLast = (now.getTime() - lastSent.getTime()) / (1000 * 60 * 60 * 24);
     expect(daysSinceLast >= interval).toBe(false); // should skip
-  });
-});
-
-describe("3-per-24h rate limit logic (§18.8)", () => {
-  it("allows up to 3 sends in 24h", () => {
-    const limit = 3;
-    expect(2 < limit).toBe(true); // 2 prior sends → send
-    expect(3 < limit).toBe(false); // 3 prior sends → skip
-  });
-
-  it("4th email in 24h to same invitee is suppressed", () => {
-    const recentCount = 3; // 3 already sent in the window
-    expect(recentCount >= 3).toBe(true); // suppress
   });
 });

@@ -3,6 +3,7 @@
 // POST: upserts visual brand fields for the calling tenant.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { resolveShowPoweredBy } from "@/lib/branding/powered-by";
 import { tenantClient } from "@/lib/db/tenant-client";
 
 interface BrandingBody {
@@ -27,9 +28,6 @@ const HEX_RE = /^#[0-9A-Fa-f]{6}$/;
 function isValidHex(s: string | undefined | null): boolean {
   return !s || HEX_RE.test(s);
 }
-
-// Forced-true tiers per §16.7 — toggle hidden, value coerced to TRUE.
-const FORCED_POWERED_BY_TIERS = new Set(["byo_research", "byo_professional", "sub_starter"]);
 
 export async function GET(req: Request): Promise<Response> {
   let auth;
@@ -79,19 +77,17 @@ export async function POST(req: Request): Promise<Response> {
 
   // Read tier to enforce powered-by forcing per §16.7.
   const { data: tenant } = await db.from("tenants").select("tier_id").eq("id", ctx.tenant_id).maybeSingle();
-  let forcePoweredBy = false;
+  let tierCode: string | null = null;
   if (tenant) {
     const { data: tier } = await db
       .from("tier_definitions")
       .select("code")
       .eq("id", (tenant as { tier_id: string }).tier_id)
       .maybeSingle();
-    if (tier && FORCED_POWERED_BY_TIERS.has((tier as { code: string }).code)) {
-      forcePoweredBy = true;
-    }
+    if (tier) tierCode = (tier as { code: string }).code;
   }
 
-  const showPoweredBy = forcePoweredBy ? true : (body.show_powered_by ?? true);
+  const showPoweredBy = resolveShowPoweredBy(tierCode, body.show_powered_by);
 
   const payload: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
