@@ -36,7 +36,7 @@ export interface LineRoute {
   /** Market code the actor expects for US results — sercul codes vary
    *  ("USA" for RCL/NCL/PCL/CEL/COS, "US" for CCL/HAL/MSC/DSY). */
   marketCode: string;
-  inputBuilder: (sailings: SailingKey[]) => ActorInput;
+  inputBuilder: () => ActorInput;
   outputMapper: (item: unknown) => Omit<CachedPriceQuote, "stalenessHours" | "freshnessFlag"> | null;
 }
 
@@ -111,16 +111,11 @@ function maxRowsPerRun(): number {
 }
 
 function buildSerculInputFor(marketCode: string) {
-  return (sailings: SailingKey[]): ActorInput => {
-    // Input is market-level. `sailings` is intentionally unused — its
-    // role moved to client-side filtering on the response items.
-    void sailings;
-    return {
-      region: marketCode,
-      maxRows: maxRowsPerRun(),
-      useApifyProxy: true,
-    };
-  };
+  return (): ActorInput => ({
+    region: marketCode,
+    maxRows: maxRowsPerRun(),
+    useApifyProxy: true,
+  });
 }
 
 // ──────────────────────────────────────────────────────────────────────────

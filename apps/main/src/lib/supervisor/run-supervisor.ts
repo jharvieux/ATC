@@ -278,10 +278,7 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
   // Auto-escalate after 3 consecutive slur hits (§10.2 tone_drift lexical)
   if (newSlurConsecutiveCount >= SLUR_CONSECUTIVE_ESCALATION_THRESHOLD) {
     await safeAwait(db.from("escalation_topics").insert({
-      tenant_id:
-        input.ctx.source.kind === "http_request"
-          ? input.ctx.tenant_id
-          : input.ctx.tenant_id,
+      tenant_id: input.ctx.tenant_id,
       conversation_id,
       topic_summary: `Automated escalation: ${newSlurConsecutiveCount} consecutive tone_drift critical hits`,
       topic_tags: ["tone_drift", "auto_escalated"],

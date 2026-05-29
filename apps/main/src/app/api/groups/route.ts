@@ -93,11 +93,10 @@ export async function POST(req: Request): Promise<Response> {
     // Generate HMAC tokens and insert invitations.
     if (invitees.length > 0) {
       const rows = invitees.map((inv) => {
-        const { data: row, error: idErr } = { data: { id: crypto.randomUUID() }, error: null };
-        void idErr;
-        const token = generateToken(row.id);
+        const id = crypto.randomUUID();
+        const token = generateToken(id);
         return {
-          id: row.id,
+          id,
           group_id: group.id,
           invitee_email: inv.email,
           invitee_name: inv.name ?? null,
