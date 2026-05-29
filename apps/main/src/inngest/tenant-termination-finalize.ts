@@ -45,7 +45,9 @@ export const tenantTerminationFinalize = inngest.createFunction(
         const { finalized } = await finalizeTermination(db, t.id, t.termination_kind);
         if (finalized) finalizedCount++;
       } catch (e) {
-        failures.push({ tenant_id: t.id, error: e instanceof Error ? e.message : String(e) });
+        const message = e instanceof Error ? e.message : String(e);
+        console.error("[tenant-termination-finalize] tenant %s failed: %s", t.id, message);
+        failures.push({ tenant_id: t.id, error: message });
       }
     }
 

@@ -76,6 +76,15 @@ export async function finalizeTermination(
   tenantId: string,
   kind: "voluntary" | "involuntary_content" | "involuntary_other",
 ): Promise<{ finalized: boolean }> {
+  // Boundary guard: both callers cast `kind` from a DB column / event payload.
+  // It drives the post_termination_review_status branch in onTerminated (where
+  // the non-content `else` is a catch-all), so an out-of-enum value would
+  // silently route an involuntary_content termination away from the mandated
+  // §15.14.4 review queue. Assert here rather than trusting the caller.
+  if (kind !== "voluntary" && kind !== "involuntary_content" && kind !== "involuntary_other") {
+    throw new Error(`finalizeTermination: invalid termination kind "${String(kind)}"`);
+  }
+
   const updated = await safeAwait(
     db.from("tenants")
       .update({ status: "terminated", terminated_at: new Date().toISOString() })

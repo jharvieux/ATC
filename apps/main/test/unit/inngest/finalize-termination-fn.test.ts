@@ -76,4 +76,14 @@ describe("finalizeTermination — CAS transition + tenant.terminated emit (#403)
     await expect(finalizeTermination(db, "t-1", "voluntary")).rejects.toThrow(/connection reset/);
     expect(mocks.send).not.toHaveBeenCalled();
   });
+
+  it("rejects an out-of-enum kind before touching the DB or emitting", async () => {
+    // Guards onTerminated's postTermStatus catch-all: a bad kind must not
+    // silently route an involuntary_content termination to reviewed_retained.
+    const db = makeMockDb({ data: [{ id: "t-1" }], error: null });
+    await expect(
+      finalizeTermination(db, "t-1", "involuntary_cuntent" as never),
+    ).rejects.toThrow(/invalid termination kind/);
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
 });
