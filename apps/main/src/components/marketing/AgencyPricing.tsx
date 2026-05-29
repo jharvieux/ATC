@@ -101,7 +101,6 @@ export function AgencyPricing() {
 
   return (
     <div>
-      {/* billing toggle */}
       <div className="mx-auto mt-6 inline-flex rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
         <button
           type="button"
@@ -123,7 +122,6 @@ export function AgencyPricing() {
         </button>
       </div>
 
-      {/* tier cards */}
       <div className="mx-auto mt-10 grid max-w-[420px] items-stretch gap-6 text-left md:max-w-none md:grid-cols-3">
         {tiers.map((tier) => (
           <div
@@ -177,7 +175,6 @@ export function AgencyPricing() {
         ))}
       </div>
 
-      {/* seat ladder */}
       <div className="mt-10 rounded-2xl border border-slate-200 bg-white p-7 text-left shadow-sm">
         <h3 className="text-lg font-bold text-[#16243a]">
           Agency seat pricing — the more agents, the lower the per-seat cost
