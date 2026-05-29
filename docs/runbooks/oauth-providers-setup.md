@@ -37,6 +37,17 @@ const ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"]);
 
 ---
 
+## Prerequisites
+
+- A Supabase project for the target environment (the same one the app's
+  `NEXT_PUBLIC_SUPABASE_URL` points at).
+- Operator access to the Supabase Dashboard (Authentication settings).
+- Operator access to Vercel environment variables (to set the flags + redeploy).
+- An account in each provider's developer console you intend to enable
+  (Google Cloud, Azure/Entra, Meta for Developers).
+
+---
+
 ## The redirect flow (so the two layers make sense)
 
 1. Browser hits `GET /api/auth/oauth-initiate?provider=<google|azure|facebook>`.
