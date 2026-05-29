@@ -837,7 +837,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
 
     // Insert/UPDATE assistant message row so supervisor has a message_id to write findings to.
     if (!assistantMessageId) {
-      const { data: ins } = await svc
+      const { data: ins, error: insErr } = await svc
         .from("messages")
         .insert({
           tenant_id: tenantId,
@@ -850,6 +850,10 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         })
         .select("id")
         .single();
+      // Surface the discarded write error (D-091, #400). The null-guard below
+      // still drives the user-facing message_persist_failed path; this logs
+      // the root cause so a persist failure isn't invisible in production.
+      if (insErr) console.error(`[chat] assistant message insert failed: ${insErr.message}`);
       assistantMessageId = (ins as { id?: string } | null)?.id ?? null;
     } else {
       await safeAwait(svc
