@@ -1,30 +1,31 @@
-# Session state — last updated 2026-05-29 ~05:00 UTC
+# Session state — last updated 2026-05-29 07:10 UTC
 
 ## Just completed
-- **Retroactive D-091 anti-pattern sweep — COMPLETE (all 3 waves filed).** Ran parallel `d091-reviewer` passes partitioned by domain, hand-verified every finding against live code @ `dev ae4c727`, filed grouped by anti-pattern (not by file). Nothing auto-fixed — the issues are the deliverable for the user to route.
-  - **Pattern issues (label `d091-audit`):** #392 [P1] void-async, #393 [P2] fail-open/swallowed-read (incl. the Wave 3 Inngest-cron error-swallow sub-cluster), #394 [P2] CAS missing row-count, #395 [P2] single-layer isolation, #396 [P2] GCV key in URL, #397 [P2] non-constant-time bearer, #399 [P1] supervisor kill-switch fail-open, #400 [P2] unchecked mutation, #401 [P2] stub-shaped. Master index/epic: **#398**.
-  - **Wave 2** (commerce, admin/supervisor, tenant/CRM, AI/persona) → NEW #399/#400/#401 + appends to #392–#395.
-  - **Wave 3** (help/imports/public, Inngest serve+client, all 78 Inngest jobs) → **no new pattern issues**; all sites appended as comments onto #392/#393/#394/#400/#401; epic #398 body updated with the Wave 3 section.
-  - **Severity honesty:** agents over-rated (~9 phantom "P1/BLOCKER" in Wave 3 → none survived hand-verify as clean P1, all re-rated P2). 3 false positives caught + documented-rejected (user/privacy ternary; help close/escalate — `help_sessions` is tenant-scoped; `admin-fetch.ts` client wrapper).
-- MEMORY.md decision-log entry **D-114** added (audit method + severity-honesty outcome + the one open question).
+Overnight autonomous GitHub-issue run — scope "D-091 fixes + #403 + #384" — COMPLETE for all executable items:
+- **D-091 fix issues #392–#401** + **#403** termination finalizer → all squash-merged to dev (PRs #404–#413). #380 closed (authorized).
+- **#386** operator runbook (nightly test-DB migration off prod-serving atc-main) → PR #414 merged. Operator-blocked; docs-only.
+- **#384 batch 1 (clean Class-A extractions)** → PR #415 merged (commit `e98ccad`), branch deleted. Extracted `powered-by` (`resolveShowPoweredBy`) + `reminder-cadence` (`monthsBetween`/`cadenceIntervalDays`) to importable lib modules; tests now import the REAL symbols; deleted a tautology describe block. `pnpm verify` green; both audit subagents run, 2 NITs fixed pre-merge.
+- MEMORY.md **D-115** added (the #384 batch-1 decision + what was surfaced vs. executed).
 
 ## In flight
-- **EOS checkpoint PR** for the two repo doc changes (MEMORY.md D-114 + this SESSION.md). Branch + PR being opened now; no code changed this session. If interrupted before merge: the branch holds both files; finish the PR into `dev` with the mandatory `## Audit` block, wait for CI, squash-merge, delete branch.
+- Nothing in flight — clean checkpoint. Local `dev` synced to `origin/dev @ e98ccad`. Working tree clean.
 
 ## Next step
-- Finish the EOS checkpoint PR (CI green → squash-merge → delete branch).
+- Await user direction on the surfaced #384 judgment items (below) and the Sonnet switch. No autonomous work remains in scope.
 
 ## Blocked on user
-- **#394 / `apps/main/src/inngest/tenant-on-terminated.ts:51` — P1-candidate needs a PRODUCT answer, not code review:** the CAS `.eq("status","suspended")` has no row-count assert, so on a zero-row match the irreversible `onTerminated()` (unbinds custom domain, deletes OAuth creds) still runs. **Does the un-suspend flow cancel the scheduled `tenant.termination_scheduled` event?** If yes → P2; if no → real P1 (can nuke an active paying tenant). User to confirm.
-- **Triage routing of all 9 `d091-audit` issues** — these are the deliverable; none auto-fixed. User decides which to fix and in what order.
-- Operator follow-ups from D-112 (re-point `supabase-main` MCP to mfaknjyqiwcjojukcnea; prod redeploy). Issue #386 (dedicated test Supabase project). Counsel sign-off (P4 #37-#43), operator decisions (P4 #48-#55) — unchanged.
+- **Sonnet switch:** session is on Opus 4.7 — run `/model claude-sonnet-4-6` (agent cannot self-invoke).
+- **#384 — delete-vs-rewrite-vs-integration-test judgment** on the 4 remaining Class-A files (no clean pure-fn seam / need write-path refactor): `bookings-patch-state-machine.test.ts`, `forums/moderation-retry-idempotency.test.ts`, `legal/consent.test.ts`, `crm/contacts.test.ts`.
+- **#384 — blocked main-body items:** Cross-Tenant Probe (needs §30.4 fixtures + dedicated test DB; couples to #386), Contract Tests (impl files `anthropic/chat.ts` + `stripe/customers.ts` don't exist; STRIPE_TEST_SECRET_KEY pending), E2E (28 empty `test.skip`; needs §7.2/product decisions).
+- **#394 / `tenant-on-terminated.ts:51` product question** (carried from D-114): does the un-suspend flow cancel the scheduled `tenant.termination_scheduled` event? If no → real P1.
+- All `d091-audit` issues #392–#401, #403, epic #398, #386, #384 remain OPEN by design (PRs used "Implements #N"); user closes after review.
 
 ## Open questions
-- Issue granularity = one per anti-pattern (grouped across sites), not one per site. Revisit if the user wants finer tracking.
-- #384 Class-A test reimplementations, dependabot PR state — unchanged from prior session, not touched.
-
-## Reminder
-- Session is on **Opus** — run `/model claude-sonnet-4-6` to switch back (the agent cannot self-invoke `/model`).
+- **Out-of-scope open PRs (NOT touched, surface only):**
+  - **#373** — dependabot dev-deps bump, label `regression-suspected`, BEHIND. Per CLAUDE.md leave to `dependabot-retry-ci`; don't touch.
+  - **#366** — user's own docs PR (`docs/session-d106-d107`) adding D-106/D-107 to /MEMORY.md, BEHIND. Will CONFLICT with current MEMORY.md (now D-115) on the append-only prepend. Needs the user's attention — I did not touch it.
+- **#401 follow-up:** prior-session twin-ternary note at `apify-pricing-adapter.ts:164` — unverified whether it's a genuine stub-shaped remnant.
+- d091-reviewer re-surfaced `group-reminder-cadence.ts` unchecked mutations — already tracked under #400 + #393; no new issue filed.
 
 ## Carried forward (unchanged)
-- BP39 react-pdf wire-up; BP31 Haiku PII scorer (P3 #32); BP30 eval harness (P3 #35); BP25 PLATFORM_PEPPER offsite (P4 #46); BP24 supervisor_slur_deny_list (P4 #45); BP23 port_info_chunks (P4 #44); BP16/17 counsel sign-off (P4 #41); §13.9 health probing (P4 #48); Booking Stages 2/3; persona-addendum-rescreen flush window.
+- BP39 react-pdf wire-up; BP31 Haiku PII scorer (P3 #32); BP30 eval harness (P3 #35); BP25 PLATFORM_PEPPER offsite (P4 #46); BP24 supervisor_slur_deny_list (P4 #45); BP23 port_info_chunks (P4 #44); BP16/17 counsel sign-off (P4 #41); §13.9 health probing (P4 #48); Booking Stages 2/3; persona-addendum-rescreen flush window. Operator follow-ups from D-112 (re-point `supabase-main` MCP off dead ref; prod redeploy).
