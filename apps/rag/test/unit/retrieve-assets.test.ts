@@ -37,20 +37,31 @@ interface AssetRow { asset_id: string; kind: string; entity_type: string; entity
 let rpcChunks: ChunkRpcRow[] = [];
 let assetLinks: AssetLinkRow[] = [];
 let assetRows: AssetRow[] = [];
+// Captures the .or() filter the rag_media_assets query applies, so a test can
+// assert the DB-layer tenant predicate is present (D-091 #395).
+let capturedAssetOrFilter: string | null = null;
 
 vi.mock("@/lib/db/supabase", () => ({
   getRagDb: () => ({
     rpc: async () => ({ data: rpcChunks, error: null }),
     from(table: string) {
+      const result =
+        table === "knowledge_chunks"
+          ? { data: assetLinks as unknown[], error: null }
+          : table === "rag_media_assets"
+            ? { data: assetRows as unknown[], error: null }
+            : { data: [] as unknown[], error: null };
       return {
         select() {
-          return {
-            in: async () => {
-              if (table === "knowledge_chunks") return { data: assetLinks, error: null };
-              if (table === "rag_media_assets")  return { data: assetRows, error: null };
-              return { data: [], error: null };
+          const builder = {
+            in: () => builder,
+            or: (filter: string) => {
+              if (table === "rag_media_assets") capturedAssetOrFilter = filter;
+              return builder;
             },
+            then: (resolve: (v: typeof result) => unknown) => resolve(result),
           };
+          return builder;
         },
         insert: () => Promise.resolve({ data: null, error: null }),
       };
@@ -109,6 +120,7 @@ beforeEach(() => {
   rpcChunks = [];
   assetLinks = [];
   assetRows = [];
+  capturedAssetOrFilter = null;
   currentCtx = { scope: "read", service_identifier: "tenant-app", user_id: USER_ID, tenant_id: TENANT_ID };
 });
 afterEach(() => { vi.clearAllMocks(); });
@@ -199,5 +211,21 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     const json = (await res.json()) as { chunks: Array<{ related_asset_ids: string[] }>; assets: Array<unknown> };
     expect(json.assets).toEqual([]);
     expect(json.chunks[0]!.related_asset_ids).toEqual([]);
+  });
+
+  it("two-layer isolation (#395): the rag_media_assets query carries a DB-layer scope/tenant .or() predicate", async () => {
+    // The JS `continue` (tested above) is layer two. This pins layer one — the
+    // DB-side filter — so a regression that drops .or() and leaves only the JS
+    // check (the exact single-layer pattern D-091 #395 flags) fails here.
+    rpcChunks = [rpcChunk({ id: "c1" })];
+    const assetId = "a-1111-1111-1111-111111111111";
+    assetLinks = [{ id: "c1", related_asset_ids: [assetId], scope: "global" }];
+    assetRows = [
+      { asset_id: assetId, kind: "deck_plan", entity_type: "deck", entity_id: "e1", scope: "global", tenant_id: null, image_url: "https://www.cruisemapper.com/x.jpg", source_page_url: "https://www.cruisemapper.com/p", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
+    ];
+
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    expect(capturedAssetOrFilter).toBe(`scope.eq.global,tenant_id.eq.${TENANT_ID}`);
   });
 });
