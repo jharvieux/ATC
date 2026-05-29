@@ -55,9 +55,13 @@ async function ocrWithGcv(bytes: ArrayBuffer): Promise<OcrResult> {
 
   const base64 = Buffer.from(bytes).toString("base64");
   try {
-    const res = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(key)}`, {
+    // API key travels in the X-goog-api-key header, never the ?key= query
+    // param — URLs leak into proxy/CDN logs, APM traces, and fetch TypeError
+    // messages; headers are scrubbed (D-091, #396). Google supports both and
+    // recommends the header.
+    const res = await fetch("https://vision.googleapis.com/v1/images:annotate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-goog-api-key": key },
       body: JSON.stringify({
         requests: [
           {
