@@ -15,6 +15,7 @@ import { filterChunks } from "./filter-chunks";
 import { formatKnowledgeBlock, type FormattedBlock } from "./format-block";
 import { RetrieveResponseSchema, type RetrievedChunk, type RetrievedAsset } from "@atc/contracts";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { sendOperatorAlert, type OperatorAlertSeverity } from "@/lib/monitoring/send-operator-alert";
 
 export interface RetrieveForChatInput {
   message: string;
@@ -124,6 +125,26 @@ interface RagRetrieveCallResult {
   retrieval_latency_ms: number | null;
 }
 
+// callRagRetrieve runs on every chat message, so a RAG outage or misconfig
+// would otherwise fire one operator alert per message. Throttle to one alert
+// per signal per window per serverless instance — enough to make an otherwise-
+// silent RAG outage visible without storming the alert channel on the hot path.
+const ALERT_THROTTLE_MS = 5 * 60_000;
+const lastAlertAt = new Map<string, number>();
+
+async function alertRagDegraded(
+  signal: string,
+  severity: OperatorAlertSeverity,
+  detail: string,
+): Promise<void> {
+  const now = Date.now();
+  if (now - (lastAlertAt.get(signal) ?? 0) < ALERT_THROTTLE_MS) return;
+  lastAlertAt.set(signal, now);
+  // Best-effort: an alert failure must never escalate this graceful degradation
+  // (serve ungrounded chat) into a hard failure of the chat path.
+  await sendOperatorAlert({ severity, signal, detail }).catch(() => {});
+}
+
 async function callRagRetrieve(
   body: RagRetrieveCallInput,
 ): Promise<RagRetrieveCallResult> {
@@ -147,7 +168,11 @@ async function callRagRetrieve(
       persona_id: body.persona_id ?? null,
     });
   } catch (err) {
-    console.warn("[retrieve-for-chat] JWT signing failed:", String(err));
+    await alertRagDegraded(
+      "rag_retrieve_jwt_sign_failed",
+      "high",
+      `RAG retrieval JWT signing failed: ${String(err)}. RAG is silently disabled for chat until the signing key is fixed.`,
+    );
     return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
   }
 
@@ -161,7 +186,11 @@ async function callRagRetrieve(
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      console.warn(`[retrieve-for-chat] RAG service ${res.status}`);
+      await alertRagDegraded(
+        "rag_retrieve_non_200",
+        "medium",
+        `RAG service returned ${res.status} for /api/retrieve. Chat is serving ungrounded answers until RAG recovers.`,
+      );
       return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
     }
     // BP38 — validate the response shape at the boundary. A schema mismatch
@@ -171,12 +200,20 @@ async function callRagRetrieve(
     const raw = await res.json();
     const parsed = RetrieveResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      console.warn("[retrieve-for-chat] RAG response failed contract validation:", parsed.error.message);
+      await alertRagDegraded(
+        "rag_retrieve_contract_invalid",
+        "high",
+        `RAG /api/retrieve response failed contract validation: ${parsed.error.message}. Likely a deploy skew between main and rag.`,
+      );
       return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
     }
     return parsed.data;
   } catch (err) {
-    console.warn("[retrieve-for-chat] RAG service unreachable:", String(err));
+    await alertRagDegraded(
+      "rag_retrieve_unreachable",
+      "medium",
+      `RAG service unreachable at /api/retrieve: ${String(err)}. Chat is serving ungrounded answers until RAG recovers.`,
+    );
     return { chunks: [], assets: [], retrieval_id: null, retrieval_latency_ms: null };
   }
 }
