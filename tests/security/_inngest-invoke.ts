@@ -10,7 +10,8 @@
 //   - step.sleep is a no-op; tests must not rely on real time passing.
 //   - step.sleepUntil with a future wake time defers the run: the handler
 //     stops there and invoke returns `{ deferred: true }`, mirroring Inngest's
-//     suspend semantics. A past/now wake time is a no-op (the run continues).
+//     suspend semantics. A past/now wake time is a no-op (the run continues);
+//     an uninterpretable wake time throws (fail-loud, not a silent skip).
 //   - step.sendEvent collects events into the returned object so tests
 //     can assert what would have been fired.
 //   - Concurrency / retry semantics are NOT modelled.
@@ -69,7 +70,10 @@ export async function invokeInngestHandler<T = unknown>(
           : typeof time === "string" ? Date.parse(time)
             : typeof time === "number" ? time
               : NaN;
-      if (Number.isFinite(wakeMs) && wakeMs > Date.now()) throw new InngestRunDeferred();
+      if (!Number.isFinite(wakeMs)) {
+        throw new Error(`invokeInngestHandler: uninterpretable step.sleepUntil time (${typeof time})`);
+      }
+      if (wakeMs > Date.now()) throw new InngestRunDeferred();
     },
     run: async <R>(_id: string, fn: () => Promise<R> | R) => fn(),
     sendEvent: async (id, payload) => { enqueuedEvents.push({ id, payload }); },
