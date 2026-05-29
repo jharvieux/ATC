@@ -37,6 +37,12 @@ jobs:
       # that PR CI shifts left. Without it they describe.skip and the nightly
       # safety net would silently cover nothing.
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+      # Activates the stripe-webhook integration suite. Placeholders are fine:
+      # the suite self-signs events with STRIPE_WEBHOOK_SECRET and the handler
+      # verifies with the same value (pure HMAC, no Stripe API call). The Stripe
+      # client is constructed but never makes a network request on this path.
+      STRIPE_SECRET_KEY: sk_test_ci-placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci-placeholder
     steps:
       - name: Checkout dev
         uses: actions/checkout@v4
