@@ -13,13 +13,16 @@
 // non-sync-eligible keys before writing them into the replica.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 
 export async function GET(req: Request): Promise<Response> {
   const adminKey = process.env.MAIN_APP_ADMIN_API_KEY;
   if (!adminKey) return Response.json({ error: "server_misconfigured" }, { status: 500 });
 
+  // Constant-time compare: a plain `!==` on the bearer secret leaks the key
+  // byte-by-byte via response timing (D-091, #397).
   const auth = req.headers.get("authorization") ?? "";
-  if (auth !== `Bearer ${adminKey}`) {
+  if (!constantTimeEqual(auth, `Bearer ${adminKey}`)) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
