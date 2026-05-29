@@ -101,12 +101,21 @@ export async function handleStripeWebhook(
           // D-091 P1 #1 — every Supabase mutation must check error.
           // Silent failure here = payout stuck in 'processing' + 200 to Stripe
           // = Stripe never retries = lost reconciliation.
-          const { error: updateErr } = await db
+          const { data: updatedRows, error: updateErr } = await db
             .from("payout_records")
             .update({ status: "paid", settled_at: new Date().toISOString() })
-            .in("id", ids);
+            .in("id", ids)
+            .select("id");
           if (updateErr) {
             throw new Error(`transfer.paid update failed: ${updateErr.message}`);
+          }
+          // ids were just SELECTed for status='processing'; a short count means
+          // a concurrent reconcile/webhook moved some rows first (TOCTOU). Throw
+          // → non-200 → Stripe retries; the retry's SELECT converges (D-091).
+          if ((updatedRows ?? []).length !== ids.length) {
+            throw new Error(
+              `transfer.paid updated ${(updatedRows ?? []).length} of ${ids.length} expected rows`,
+            );
           }
           processingOutcome = "success";
         } else {

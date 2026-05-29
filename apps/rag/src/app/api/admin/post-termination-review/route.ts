@@ -45,33 +45,50 @@ export const POST = withServiceAuth(async (req, ctx) => {
   // (post_termination_review_status='pending'). Audit Finding 2 recommended
   // this so even a future bypass of the platform-admin gate can't reach
   // arbitrary chunks.
+  // Each branch chains .select("id") and asserts a row matched: the
+  // .eq(...,"pending") guard is CAS-style, and supabase-js returns
+  // { error: null } whether one row matched or zero did. Without the count
+  // check the admin UI gets { ok: true } for a no-op (chunk already reviewed,
+  // or wrong id) — a silent false success (D-091).
   if (body.action === "hard_delete") {
-    const { error } = await db
+    const { data, error } = await db
       .from("knowledge_chunks")
       .delete()
       .eq("id", body.chunk_id)
-      .eq("post_termination_review_status", "pending");
+      .eq("post_termination_review_status", "pending")
+      .select("id");
     if (error) return Response.json({ error: error.message }, { status: 500 });
+    if ((data ?? []).length === 0) {
+      return Response.json({ error: "chunk_not_found_or_not_pending" }, { status: 404 });
+    }
     return Response.json({ ok: true, action: "hard_delete", chunk_id: body.chunk_id });
   }
 
   if (body.action === "demote") {
-    const { error } = await db
+    const { data, error } = await db
       .from("knowledge_chunks")
       .update({ scope: "tenant", post_termination_review_status: newStatus })
       .eq("id", body.chunk_id)
-      .eq("post_termination_review_status", "pending");
+      .eq("post_termination_review_status", "pending")
+      .select("id");
     if (error) return Response.json({ error: error.message }, { status: 500 });
+    if ((data ?? []).length === 0) {
+      return Response.json({ error: "chunk_not_found_or_not_pending" }, { status: 404 });
+    }
     return Response.json({ ok: true, action: "demote", chunk_id: body.chunk_id });
   }
 
   // retain — just update the status.
-  const { error } = await db
+  const { data, error } = await db
     .from("knowledge_chunks")
     .update({ post_termination_review_status: newStatus })
     .eq("id", body.chunk_id)
-    .eq("post_termination_review_status", "pending");
+    .eq("post_termination_review_status", "pending")
+    .select("id");
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+  if ((data ?? []).length === 0) {
+    return Response.json({ error: "chunk_not_found_or_not_pending" }, { status: 404 });
+  }
   return Response.json({ ok: true, action: "retain", chunk_id: body.chunk_id });
 });

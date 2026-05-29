@@ -141,8 +141,15 @@ export async function POST(
       return Response.json({ error: "rag_approve_no_chunk_id", upstream: approved }, { status: 502 });
     }
 
-    // Update the rag_submissions row.
-    const { error: updateErr } = await db
+    // CAS on review_status so only the approval that still sees
+    // 'ready_for_review' commits. The line-70 check is a snapshot read; two
+    // reviewers racing both pass it and both finish the RAG round-trip, so
+    // without this guard both would write 'approved' + double-count the chunk.
+    // .select("id") + count turns the loser into a 409 (D-091).
+    // Residual: the loser's RAG chunk is already created by the fetches above —
+    // this prevents the duplicate submission write + counter bump, not the
+    // duplicate chunk. Eliminating that needs a pre-claim 'approving' state.
+    const { data: updatedRows, error: updateErr } = await db
       .from("rag_submissions")
       .update({
         review_status: "approved",
@@ -151,9 +158,14 @@ export async function POST(
         tenant_review_decision_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("review_status", "ready_for_review")
+      .select("id");
     if (updateErr) {
       return Response.json({ error: updateErr.message }, { status: 500 });
+    }
+    if ((updatedRows ?? []).length === 0) {
+      return Response.json({ error: "already_resolved" }, { status: 409 });
     }
 
     // BP27 §27.4 — bump the rag-chunks counter (+1 for this approval).

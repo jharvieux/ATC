@@ -100,13 +100,20 @@ export const POST = withServiceAuth(async (req, ctx) => {
   if (body.source_url !== undefined) update.source_url = body.source_url;
   if (body.category) update.category = body.category;
 
-  const { error: updErr } = await db
+  const { data: updated, error: updErr } = await db
     .from("knowledge_chunks")
     .update(update)
-    .eq("id", body.chunk_id);
+    .eq("id", body.chunk_id)
+    .select("id");
   if (updErr) {
     console.error("[replace-chunk] update failed: %s", updErr.message);
     return Response.json({ error: updErr.message }, { status: 500 });
+  }
+  if ((updated ?? []).length === 0) {
+    // Existence was checked above; a zero-row update means the chunk was
+    // hard-deleted between that read and this write — surface it instead of a
+    // false { ok: true } (D-091).
+    return Response.json({ error: "chunk_not_found" }, { status: 404 });
   }
 
   console.info("[replace-chunk] chunk=%s scope=%s replaced", body.chunk_id, chunk.scope);
