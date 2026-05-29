@@ -1,24 +1,25 @@
-# Session state — last updated 2026-05-29 07:20 UTC
+# Session state — last updated 2026-05-29 09:05 UTC
 
 ## Just completed
-- **#419 MERGED** — removed the advisory CI `slop-check` GitHub Action (user said "Remove"). PR #419 squash-merged → dev (commit `be6e18e`), branch deleted. Scanner kept local-only (`scripts/slop-check.ts` + `pnpm slop-check` in `pnpm verify` + `pre-pr-reviewer`). Cleaned dead refs (dependabot-retry check list + 3 runbooks). MEMORY.md **D-117** logged. Resolves the slop-check heredoc bug carried from last session.
-- **D-106/D-107 RESCUED from stale PR #366** — those two decisions (Anthropic Message Batches pipeline §27.12; pre-cruise scheduler split T-1 direct / T-7-30-90 batched) were drafted 2026-05-28 in PR #366 but never merged, leaving a gap in the live log (D-105 → D-108). Imported verbatim as **D-118** with original numbers + date preserved. (This PR — `docs/import-d106-d107` — in flight.)
+- **#425/#62 MERGED** — reconciled `docs/local-development.md` against `env.ts` (the required-at-boot list was already complete; fixed misleading "truncated" wording + a stale line-ref). PR #432 squash-merged → dev.
+- **#428 doc-half MERGED** — authored `docs/runbooks/oauth-providers-setup.md` (issue #428 names that path; no runbook existed, unlike Gmail's). Content corrected against code: **Apple is deferred in `ALLOWED_PROVIDERS`** (needs a code change, not just dashboard config), **Microsoft = `azure`** provider, flags default ON except Apple. PR #433 squash-merged → dev (merged UNSTABLE: only failing check was the non-required `Vercel – atc-main` preview deploy hitting a free-tier 24h rate-limit — irrelevant to a docs-only change; all required checks green + both audits clean).
+- **#37/#38 investigated → concluded DB-harness-gated** (logged as **D-119**). They are NOT #35/#36-style pure-logic extractions: quote accept-transition is a DB CAS status guard (`quotes/[id]/accept/route.ts:199-216`); legal publish-plan is a version-comparison query + supersede/insert/flag sequence (`admin/legal-docs/route.ts:82-133`). Only trivially-extractable bits (`version+1`, a `Set` dedup) → unit tests would assert ~nothing (anti-#384). Belong in the #386 real-DB harness.
+- **#394 RESOLVED (not a P1)** — un-suspend is the backstop: `finalizeTermination`'s guarded CAS (`.eq("status","suspended")`, `tenant-on-terminated.ts:88-95`) returns `{finalized:false}` and emits no `tenant.terminated` when status has moved off "suspended"; the finalize cron filters `status='suspended' AND termination_kind IS NOT NULL`. No event cancellation needed.
 
 ## In flight
-- **Branch `docs/import-d106-d107`** (off dev @ `be6e18e`): MEMORY.md D-118 prepend (imports D-106 + D-107) + this SESSION.md update. Next: `pnpm verify` → audit subagents → open docs PR with Audit block → merge on green.
+- **Branch `docs/session-d119`** (off dev @ `9e446a1`): MEMORY.md **D-119** prepend + this SESSION.md update. Next: `pnpm verify` → audit subagents → open docs PR with Audit block → merge on green.
 
 ## Next step
-- Push `docs/import-d106-d107`, open the PR, merge on green. Then recommend the user close stale PR #366 (its unique content is now in D-118).
+- Push `docs/session-d119`, open the PR, merge on green. Then deliver the consolidated end-of-run report to the user (already drafted in conversation).
 
 ## Blocked on user
 - **Sonnet switch:** session is on Opus 4.7 — run `/model claude-sonnet-4-6` (agent cannot self-invoke). STILL PENDING.
-- **Close PR #366?** Its unique content (D-106/D-107) is now imported as D-118. Recommend closing #366 — but closing a PR is a visible action, so awaiting user OK (won't auto-close).
+- **Close #425?** Resolved by PR #432 (cross-referenced); recommend closing — won't close without OK.
+- **Close PR #366?** Its unique content (D-106/D-107) is now imported as D-118. Recommend closing — awaiting OK (won't auto-close).
 - **Stale spec line (low priority):** `specs/TechSpec/spec-addendum-d091-hardening.md:250` still references the removed slop-check workflow. Specs are read-only — needs explicit user approval to edit.
-- **CONFIRM the #384 reinterpretation:** user picked "rewrite as integration tests" for the 4 judgment files. Batch 2 (#417) instead UNIT-tested the 2 with pure-fn seams (bookings allowlist, moderation thresholds) — a DB integration test of pure logic would assert nothing. OK to proceed this way?
-- **#384 remaining work is BLOCKED on #386** (integration-test DB harness — does not exist yet): moderation-retry CAS idempotency, `legal/consent.test.ts` publish-plan, `crm/contacts.test.ts` quote-lifecycle + cross-tenant. None have a pure-fn seam.
-- **#384 contract tests — FALSIFIED PREMISE** (user picked "build the client wrappers"): Anthropic wrapper already exists (`apps/main/src/lib/ai/call-wrapper.ts`); a new `src/lib/anthropic/chat.ts` would be stub-shaped + violate `atc/no-direct-anthropic-or-openai-import`. No prod code creates a Stripe customer (`checkout.sessions.create` does) → `createCustomer` would be stub-shaped. Point the contract tests at the REAL wrapper / real Stripe call sites instead.
-- **#384 E2E** (user picked "build all 28"): 28 Playwright `test.skip` placeholders need a running app + auth fixtures + spec §7.2 product decisions — separate project.
-- **#394 / `tenant-on-terminated.ts:51`** (carried): does un-suspend cancel the scheduled `tenant.termination_scheduled` event? If no → real P1.
+- **#386 is the gating dependency** for the remaining #384 DB-harness items (incl. #37/#38). #386 itself is 100% manual operator DB provisioning (stand up a dedicated test Supabase project, repoint 4 `SUPABASE_TEST_*` secrets, dispatch nightly). Not autonomous.
+- **Human-gated open issues** (left for the user): #421 (streaming persona-tools — product/UX + hard tool_use+delta work), #422 (legal render/consents — attorney sign-off), #423 (real persona-tool handlers — product + underlying features), #424 (booking Stages 2/3 — substantial feature), #426 (P3 cost-deferred AI — awaiting cost/flip decision), #427/#429/#430 (operator/attorney/Gmail-GCP provisioning).
 
 ## Open questions
 - **#373** — dependabot dev-deps bump, `regression-suspected`, BEHIND. Left to `dependabot-retry-ci` per CLAUDE.md.
+- Of the open issues, **only #425 + the #428 doc-half were autonomously completable** — both now shipped. Everything else needs a product, legal, or operator decision. Full reasoning in the end-of-run report.
