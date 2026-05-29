@@ -35,7 +35,7 @@ export async function GET(
       return Response.json({ duplicate: false, reason: "no_content_hash_yet" });
     }
 
-    const { data: matches } = await db
+    const { data: matches, error: matchErr } = await db
       .from("rag_submissions")
       .select("id, chunk_id_created, source_title, source_url, created_at")
       .eq("content_hash", hash)
@@ -43,6 +43,7 @@ export async function GET(
       .neq("id", id)
       .order("created_at", { ascending: false })
       .limit(5);
+    if (matchErr) return Response.json({ error: matchErr.message }, { status: 500 });
 
     const list = (matches ?? []) as Array<{
       id: string;

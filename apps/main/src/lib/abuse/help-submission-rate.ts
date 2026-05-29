@@ -74,13 +74,20 @@ function stateForCount(count: number): HelpSubmissionState {
 async function loadCurrentMetrics(db: SupabaseClient, tenant_id: string): Promise<MetricsRow | null> {
   // Most-recent metrics row for the tenant (any billing_period — the per-day
   // help_submission_count is reset by the cron regardless of billing period).
-  const { data } = await db
-    .from("tenant_usage_metrics")
-    .select("help_submission_count, help_submission_limit_state, last_recomputed_at, billing_period")
-    .eq("tenant_id", tenant_id)
-    .order("last_recomputed_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // safeAwait so a read FAILURE throws (caller surfaces 5xx, submission denied)
+  // instead of being swallowed as `null` — which checkHelpSubmissionRate would
+  // read as "first submission ever" and ALLOW, bypassing the hard cap on any
+  // transient DB error (D-091 fail-closed).
+  const data = await safeAwait(
+    db
+      .from("tenant_usage_metrics")
+      .select("help_submission_count, help_submission_limit_state, last_recomputed_at, billing_period")
+      .eq("tenant_id", tenant_id)
+      .order("last_recomputed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    "tenant_usage_metrics.load-current-metrics",
+  );
   return (data as MetricsRow | null) ?? null;
 }
 

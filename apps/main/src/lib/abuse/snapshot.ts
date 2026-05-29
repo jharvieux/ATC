@@ -15,6 +15,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantRevenueSnapshot } from "./revenue";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // All-zero UUID — must match lib/ai/call-wrapper.ts PLATFORM_TENANT_ID.
 export const PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000000";
@@ -52,11 +53,18 @@ export async function loadTenantSnapshot(
     return fresh;
   }
 
-  const { data: tenantRow } = await db
-    .from("tenants")
-    .select("id, tier_id, seat_count, billing_period")
-    .eq("id", tenant_id)
-    .maybeSingle();
+  // safeAwait so a read FAILURE throws (fail-closed) rather than being swallowed
+  // as `null` and conflated with "tenant not found" → which returns the healthy
+  // stub below (tier byo_research, ai_cost_state "ok") and under-enforces the
+  // §27 AI cost gates downstream on any transient DB error (D-091).
+  const tenantRow = await safeAwait(
+    db
+      .from("tenants")
+      .select("id, tier_id, seat_count, billing_period")
+      .eq("id", tenant_id)
+      .maybeSingle(),
+    "tenants.load-snapshot",
+  );
   if (!tenantRow) {
     return {
       tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
@@ -68,24 +76,26 @@ export async function loadTenantSnapshot(
 
   let tier_code: TenantRevenueSnapshot["tier_code"] = "byo_research";
   if (tr.tier_id) {
-    const { data: tierRow } = await db
-      .from("tier_definitions")
-      .select("code")
-      .eq("id", tr.tier_id)
-      .maybeSingle();
+    const tierRow = await safeAwait(
+      db.from("tier_definitions").select("code").eq("id", tr.tier_id).maybeSingle(),
+      "tier_definitions.load-snapshot",
+    );
     const code = (tierRow as { code?: string } | null)?.code;
     if (code && VALID_TIER_CODES.has(code as TenantRevenueSnapshot["tier_code"])) {
       tier_code = code as TenantRevenueSnapshot["tier_code"];
     }
   }
 
-  const { data: metricsRow } = await db
-    .from("tenant_usage_metrics")
-    .select("ai_cost_limit_state")
-    .eq("tenant_id", tenant_id)
-    .order("billing_period", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const metricsRow = await safeAwait(
+    db
+      .from("tenant_usage_metrics")
+      .select("ai_cost_limit_state")
+      .eq("tenant_id", tenant_id)
+      .order("billing_period", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    "tenant_usage_metrics.load-ai-cost-state",
+  );
   const ai_cost_state = ((metricsRow as { ai_cost_limit_state?: string } | null)?.ai_cost_limit_state ?? "ok") as AiCostState;
 
   const fresh: CachedTenantSnapshot = {
