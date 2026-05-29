@@ -118,11 +118,28 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
   const budgetAlreadyExhausted = conversation.regen_budget_exhausted_at !== null;
 
   // Step 2: Check kill switch
-  const { data: killSwitch } = await db
+  const { data: killSwitch, error: ksErr } = await db
     .from("ai_kill_switch_state")
     .select("global_paused")
     .eq("id", 1)
     .single();
+
+  if (ksErr) {
+    // Fail closed: the kill switch is a global safety control (§10.6). If the
+    // read fails we don't know the pause state, so escalate rather than let AI
+    // generation proceed on the assumption that the switch is off.
+    return {
+      action: "escalate",
+      findings: [
+        {
+          check: "kill_switch_read_error",
+          severity: "critical",
+          details: `Cannot read global AI kill switch: ${ksErr.message}`,
+        },
+      ],
+      regen_count: 0,
+    };
+  }
 
   if (killSwitch?.global_paused === true) {
     return {
