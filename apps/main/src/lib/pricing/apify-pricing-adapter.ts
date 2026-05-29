@@ -150,7 +150,7 @@ export class ApifyPricingAdapter implements PricingDataSource {
       return refuse("per_run_estimate_over_cap", `est $${estimatedSpend.toFixed(2)} > cap $${runBudgetCap()}`);
     }
 
-    const input = route.inputBuilder(sailings);
+    const input = route.inputBuilder();
 
     let response: ApifyResponse | null = null;
     let runStatus: "succeeded" | "failed" | "partial" = "succeeded";

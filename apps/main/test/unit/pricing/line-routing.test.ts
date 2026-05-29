@@ -58,22 +58,22 @@ describe("LINE_ROUTES — D-088 Apify-4 catalog", () => {
 });
 
 describe("buildSerculInput — actor-shape correct", () => {
-  it("produces { region, maxRows, useApifyProxy } regardless of sailings input", () => {
+  it("produces a market-level { region, maxRows, useApifyProxy } envelope", () => {
     const route = LINE_ROUTES.RCL!;
-    const input = route.inputBuilder([sailing(), sailing({ ship: "wonder-of-the-seas" })]);
+    const input = route.inputBuilder();
     expect(input).toEqual({ region: "USA", maxRows: 2000, useApifyProxy: true });
   });
 
   it("respects APIFY_MAX_ROWS_PER_RUN override", () => {
     process.env.APIFY_MAX_ROWS_PER_RUN = "500";
-    const input = LINE_ROUTES.RCL!.inputBuilder([sailing()]);
+    const input = LINE_ROUTES.RCL!.inputBuilder();
     expect(input.maxRows).toBe(500);
     delete process.env.APIFY_MAX_ROWS_PER_RUN;
   });
 
   it("ignores invalid APIFY_MAX_ROWS_PER_RUN values and uses the default", () => {
     process.env.APIFY_MAX_ROWS_PER_RUN = "not-a-number";
-    const input = LINE_ROUTES.RCL!.inputBuilder([sailing()]);
+    const input = LINE_ROUTES.RCL!.inputBuilder();
     expect(input.maxRows).toBe(2000);
     delete process.env.APIFY_MAX_ROWS_PER_RUN;
   });
