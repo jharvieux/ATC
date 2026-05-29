@@ -68,14 +68,21 @@ export async function POST(
 
     if (body.mode === "add_with_supersedes") {
       // Record the supersedes link; the normal approve flow handles the rest.
-      const { error } = await db
+      // .select("id") + count: a zero-row match means the submission was deleted
+      // between the gate above and here — surface 404 instead of a false
+      // { supersedes_recorded } that sends the caller on to /approve (D-091).
+      const { data, error } = await db
         .from("rag_submissions")
         .update({
           supersedes_chunk_id: body.target_chunk_id,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", id);
+        .eq("id", id)
+        .select("id");
       if (error) return Response.json({ error: error.message }, { status: 500 });
+      if ((data ?? []).length === 0) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
       return Response.json({
         status: "supersedes_recorded",
         next: `POST /api/rag/queue/${id}/approve to complete approval`,
@@ -137,7 +144,7 @@ export async function POST(
       );
     }
 
-    const { error: updErr } = await db
+    const { data: updated, error: updErr } = await db
       .from("rag_submissions")
       .update({
         review_status: "superseded",
@@ -146,8 +153,15 @@ export async function POST(
         supersedes_chunk_id: body.target_chunk_id,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .select("id");
     if (updErr) return Response.json({ error: updErr.message }, { status: 500 });
+    // The RAG chunk was already swapped above, so a zero-row match here means
+    // the submission was hard-deleted mid-flight. Surface 409 (the RAG side is
+    // done — caller must reconcile) instead of a false { status: "replaced" }.
+    if ((updated ?? []).length === 0) {
+      return Response.json({ error: "submission_gone_after_replace" }, { status: 409 });
+    }
 
     return Response.json({ status: "replaced", target_chunk_id: body.target_chunk_id });
   } catch (err) {
