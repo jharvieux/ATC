@@ -1,4 +1,4 @@
-// OAuth error page. The auth callback (§17.1–17.3) redirects here with
+// §17.1–17.3 — OAuth error page. The auth callback redirects here with
 // ?message=<reason> when the provider returns an error or Supabase rejects
 // the session exchange. Without this route those redirects 404.
 
