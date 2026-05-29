@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-120 — 2026-05-29 — Formalize the §34.3.1 upload virus-scanning deferral as a logged risk acceptance
+
+**Decision.** Ratify and log the existing risk acceptance to **defer §34.3.1 document virus-scanning at launch** (written up 2026-05-27 in `docs/runbooks/upload-virus-scanning-risk-acceptance.md`; punch-list P1 #11; closed in #336). No ClamAV sidecar / scan gate ships now; the Gmail-attachment and manual-upload paths route straight into the parsing pipeline. Surfaced when the user asked whether AV scanning serves a purpose "if we're not storing the files."
+
+**Why.** The deferral turns on the *threat model*, not retention (§34.4 already discards parsed files ~24h post-accept, so "we don't store them" is not the operative reason). At launch the exposure is bounded: no customer-facing upload path exists; tenant-admin uploads + opt-in Gmail attachments land only in that tenant's RLS-scoped bucket with **no fan-out** to other users; the parsers (`pdf-parse` / `mammoth` / SheetJS) read text and do not execute macros. The one residual risk — a malicious file tripping a parser CVE — is weakly addressed by signature-based ClamAV anyway and better covered by controls already in place: ephemeral Vercel isolates, Dependabot/Snyk dependency-CVE scanning (§30.8), Sentry on parse failures. Vercel Fluid Compute can't host a sidecar, so ClamAV means a separate Fly.io service (~$5-10/mo + ops) for little launch-time risk reduction.
+
+**Re-evaluation triggers (revisit = implement).** (1) a tenant requires AV scanning for a compliance program (SOC 2 / HIPAA / GDPR / procurement); (2) a customer-facing upload path lands (untrusted uploaders + potential fan-out — materially changes the model); (3) any real incident or near-miss (parser crash, phishing-style attachment); (4) Supabase Storage ships native scanning (cheap to enable); (5) attachment volume exceeds ~100/day across tenants. When triggered, build per the runbook design (clamav-rest on Fly.io, fail-CLOSED on scan error, quarantine bucket, 30-day purge, `VIRUS_SCAN_SIDECAR_URL` + `platform_settings` flag).
+
+**Rejected.**
+- *Ship ClamAV now to match the spec literally.* Real cost + ops burden for negligible launch-time risk reduction given no fan-out and read-only parsers; signature scanning doesn't stop the zero-day parser-CVE case that is the actual residual risk.
+- *Treat "files are discarded after parse" as the justification.* Wrong basis — scanning gates *before* parsing regardless of retention; the real basis is the bounded attack surface (no customer uploads, no fan-out, read-not-execute parsers).
+
+**Related artifacts.** `docs/runbooks/upload-virus-scanning-risk-acceptance.md` (full threat model + when-implementing design); spec §34.3.1 / §34.4 (`specs/TechSpec/section-34-addendum-inbound-import.html`); `docs/specs/spec-gap-punch-list.md` P1 #11 (closed #336); `docs/specs/reality-delta-supplement-2.md`. Prior related direction: 2026-05-23 PDF-only / no-virus-scan upload allowlist. Spec annotation of §34.3.1 with the deferred-status note remains pending user approval (specs are read-only).
+
+---
+
 ## D-119 — 2026-05-29 — Overnight open-issue sweep: only #425 + #428-doc-half were autonomously completable; #37/#38 are DB-harness-gated (#386), not pure-logic extractions
 
 **Decision.** Worked the open-issue backlog autonomously per the standing overnight mandate. Two deliverables were genuinely autonomous and shipped: (1) **#425/#62** — reconciled `docs/local-development.md` against `env.ts` (PR #432, merged); (2) the **doc-half of #428** — authored `docs/runbooks/oauth-providers-setup.md` (PR #433). Everything else in the open set is human-gated and was left for the user: #421 (streaming persona-tools — product/UX + hard tool_use+delta work), #422 (legal-doc render/consents — attorney sign-off), #423 (real persona-tool handlers — product + underlying features), #424 (booking Stages 2/3 — substantial feature), #426 (P3 cost-deferred AI — awaiting a cost/flip decision), #427/#429/#430 (operator/attorney/Gmail-GCP provisioning), #386 (manual operator DB provisioning).
