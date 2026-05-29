@@ -16,10 +16,12 @@ function makeDb({
   suppressions = [] as unknown[],
   logCount = 0,
   insertId = "log-1",
+  logInsertError = null as { message: string } | null,
 }: {
   suppressions?: unknown[];
   logCount?: number;
   insertId?: string;
+  logInsertError?: { message: string } | null;
 } = {}): SupabaseClient {
   return {
     from: (table: string) => {
@@ -45,7 +47,9 @@ function makeDb({
           not: vi.fn().mockResolvedValue({ data: Array(logCount).fill({ id: "x" }), error: null }),
           insert: () => ({
             select: () => ({
-              single: vi.fn().mockResolvedValue({ data: { id: insertId }, error: null }),
+              single: vi.fn().mockResolvedValue(
+                logInsertError ? { data: null, error: logInsertError } : { data: { id: insertId }, error: null },
+              ),
             }),
           }),
         };
@@ -123,6 +127,27 @@ describe("sendEmail — §23", () => {
     });
     expect(result.status).toBe("rate_limited");
     expect(result.reason).toBe("marketing_monthly_limit_reached");
+  });
+
+  it("still returns sent when the email_log insert errors (#400 — log failure is non-fatal)", async () => {
+    // The email was already handed to the vendor; a failed audit-log insert
+    // must NOT flip the result to "failed". Pre-fix the error was discarded;
+    // post-fix it is warned-and-swallowed, so the send still reports sent.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const db = makeDb({ logInsertError: { message: "email_log insert boom" } });
+    const result = await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+    });
+    expect(result.status).toBe("sent");
+    expect(result.email_log_id).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("email_log insert failed"));
+    warn.mockRestore();
   });
 
   it("returns failed when RESEND_API_KEY is not set", async () => {

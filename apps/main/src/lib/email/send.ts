@@ -219,7 +219,12 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
     ...(input.related_group_id ? { related_group_id: input.related_group_id } : {}),
   };
 
-  const { data: logRow_ } = await db.from("email_log").insert(logRow).select("id").single();
+  // Non-fatal: the email was already handed to the vendor above, so a failed
+  // audit-log insert must NOT flip a delivered email to "failed". Surface the
+  // discarded error as a warning (D-091, #400) — the row is missing, not the
+  // send.
+  const { data: logRow_, error: logErr } = await db.from("email_log").insert(logRow).select("id").single();
+  if (logErr) console.warn(`[email/send] email_log insert failed (non-fatal): ${logErr.message}`);
   const emailLogId = (logRow_ as { id?: string } | null)?.id;
 
   if (sendStatus === "failed") {
