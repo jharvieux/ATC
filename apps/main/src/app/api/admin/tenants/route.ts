@@ -7,6 +7,7 @@
 // This file is in the no-direct-service-role-import allowlist.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 
 export async function GET(req: Request): Promise<Response> {
   const apiKey = process.env.MAIN_APP_ADMIN_API_KEY;
@@ -14,8 +15,10 @@ export async function GET(req: Request): Promise<Response> {
     return Response.json({ error: "server_misconfigured" }, { status: 500 });
   }
 
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${apiKey}`) {
+  // Constant-time compare: a plain `!==` on the bearer secret leaks the key
+  // byte-by-byte via response timing (D-091, #397).
+  const auth = req.headers.get("authorization") ?? "";
+  if (!constantTimeEqual(auth, `Bearer ${apiKey}`)) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
