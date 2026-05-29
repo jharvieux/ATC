@@ -9,7 +9,6 @@ const ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"]);
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const provider = url.searchParams.get("provider");
-  const redirectTo = url.searchParams.get("redirect_to") ?? "/auth/callback";
 
   if (!provider || !ALLOWED_PROVIDERS.has(provider)) {
     return Response.json({ error: "Invalid or unsupported OAuth provider" }, { status: 400 });
@@ -25,16 +24,12 @@ export async function GET(req: Request): Promise<Response> {
   callbackUrl.pathname = "/api/auth/callback";
   callbackUrl.search = "";
 
-  const oauthOptions: Parameters<typeof supabase.auth.signInWithOAuth>[0]["options"] = {
-    redirectTo: `${callbackUrl.origin}${callbackUrl.pathname}`,
-  };
-  if (redirectTo) {
-    oauthOptions.queryParams = { state: encodeURIComponent(redirectTo) };
-  }
-
+  // Do NOT set options.queryParams.state — `state` is reserved by Supabase's
+  // PKCE/CSRF flow. Overriding it makes Supabase reject the provider callback
+  // with "OAuth state parameter is invalid" (the prior bug here).
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: provider as "google" | "azure" | "facebook",
-    options: oauthOptions,
+    options: { redirectTo: `${callbackUrl.origin}${callbackUrl.pathname}` },
   });
 
   if (error || !data.url) {
