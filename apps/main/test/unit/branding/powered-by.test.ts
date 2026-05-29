@@ -1,15 +1,9 @@
 // §16.7 — Powered-by tier-gating rules.
-// The branding API forces show_powered_by=TRUE for the three lowest tiers
-// regardless of what the tenant sends. Higher tiers can toggle freely.
+// Imports the real resolveShowPoweredBy used by the branding route so a change to
+// the forced-tier set fails this suite (D-091 / #384 — no in-test reimplementation).
 
 import { describe, it, expect } from "vitest";
-
-const FORCED_POWERED_BY_TIERS = new Set(["byo_research", "byo_professional", "sub_starter"]);
-
-function resolveShowPoweredBy(tierCode: string, requested: boolean | undefined): boolean {
-  if (FORCED_POWERED_BY_TIERS.has(tierCode)) return true;
-  return requested ?? true;
-}
+import { resolveShowPoweredBy } from "@/lib/branding/powered-by";
 
 describe("powered-by visibility tier rules (§16.7)", () => {
   it("byo_research is forced TRUE regardless of request", () => {
@@ -44,5 +38,12 @@ describe("powered-by visibility tier rules (§16.7)", () => {
   it("default for togglable tier is TRUE when requested is undefined", () => {
     expect(resolveShowPoweredBy("sub_pro", undefined)).toBe(true);
     expect(resolveShowPoweredBy("byo_agency", undefined)).toBe(true);
+  });
+
+  it("null/undefined tier (tenant or tier lookup miss) defers to the request", () => {
+    // Route passes null when the tenant or tier_definitions row is absent.
+    expect(resolveShowPoweredBy(null, false)).toBe(false);
+    expect(resolveShowPoweredBy(undefined, false)).toBe(false);
+    expect(resolveShowPoweredBy(null, undefined)).toBe(true);
   });
 });

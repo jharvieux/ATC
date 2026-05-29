@@ -11,18 +11,7 @@
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-
-function monthsBetween(from: Date, to: Date): number {
-  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
-}
-
-function cadenceIntervalDays(monthsUntilSailing: number): number | null {
-  if (monthsUntilSailing >= 24) return 42;
-  if (monthsUntilSailing >= 12) return 30;
-  if (monthsUntilSailing >= 6)  return 14;
-  if (monthsUntilSailing >= 1)  return 7;
-  return null;
-}
+import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
 
 interface InvitationRow {
   id: string;
