@@ -33,6 +33,10 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
+      # Activates the DB-backed suites (rls, proxy, cross-tenant-inngest probes)
+      # that PR CI shifts left. Without it they describe.skip and the nightly
+      # safety net would silently cover nothing.
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
     steps:
       - name: Checkout dev
         uses: actions/checkout@v4
@@ -60,15 +64,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Seed Tier-2 fixture tenant
+        # The DB-backed inngest probes act on the Tier-2 fixture tenant; seed it
+        # idempotently so their FK targets exist. Fails the run loudly (no issue
+        # filed) if seeding breaks — that's an infra fault, not a test regression.
+        run: pnpm tsx scripts/seed-tier2-test.ts
+
       - name: Run full vitest suite
         id: vitest
         # JSON reporter writes per-test results we parse for failure detail.
         # exit 0 so this step doesn't short-circuit the workflow before the
         # issue-open step runs — we'd rather report a failure than silently
         # red-X the workflow without an issue.
+        #
+        # --no-file-parallelism: the DB-backed suites share one Supabase project
+        # and some inngest probes run global crons (billing-period-rollover,
+        # abuse-recompute) that touch every tenant; running them concurrently
+        # with the rls suite's ephemeral tenants corrupts its teardown. Serial
+        # execution isolates them. Acceptable cost for a nightly.
         run: |
           set +e
-          pnpm vitest run --reporter=json --outputFile=vitest-report.json
+          pnpm vitest run --reporter=json --outputFile=vitest-report.json --no-file-parallelism
           STATUS=$?
           echo "exit_status=$STATUS" >> "$GITHUB_OUTPUT"
           exit 0
