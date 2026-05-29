@@ -39,4 +39,11 @@ describe("powered-by visibility tier rules (§16.7)", () => {
     expect(resolveShowPoweredBy("sub_pro", undefined)).toBe(true);
     expect(resolveShowPoweredBy("byo_agency", undefined)).toBe(true);
   });
+
+  it("null/undefined tier (tenant or tier lookup miss) defers to the request", () => {
+    // Route passes null when the tenant or tier_definitions row is absent.
+    expect(resolveShowPoweredBy(null, false)).toBe(false);
+    expect(resolveShowPoweredBy(undefined, false)).toBe(false);
+    expect(resolveShowPoweredBy(null, undefined)).toBe(true);
+  });
 });
