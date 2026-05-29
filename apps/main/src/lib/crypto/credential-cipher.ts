@@ -99,8 +99,8 @@ function logDecryptionFailure(payload: {
   const ciphertext_sha256 = createHash("sha256")
     .update(payload.ciphertext)
     .digest("hex");
-  // Fire-and-forget — the decrypt path can't await this without changing
-  // its signature, and the audit row isn't load-bearing for the result.
+  // allow-void-async: audit row is not load-bearing for the decrypt result;
+  // the decrypt path is synchronous and can't await without changing its signature. Best-effort.
   void writeAuditLog({
     actor_type: "system",
     action: "credential.decryption_failed",

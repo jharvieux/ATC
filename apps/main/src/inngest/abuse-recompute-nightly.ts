@@ -275,10 +275,12 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           }
 
           // Re-evaluate state machine for each dimension after corrections.
-          void checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "ai_cost", metric_value: aiTrue });
-          void checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "chat_volume", metric_value: BigInt(chatTrue) });
-          void checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "email_volume", metric_value: BigInt(emailTrue) });
-          void checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "group_invite", metric_value: BigInt(inviteTrue) });
+          await Promise.all([
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "ai_cost", metric_value: aiTrue }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "chat_volume", metric_value: BigInt(chatTrue) }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "email_volume", metric_value: BigInt(emailTrue) }),
+            checkStateTransitionIfNeeded({ db, tenant: tenantSnapshot, dimension: "group_invite", metric_value: BigInt(inviteTrue) }),
+          ]);
         }
 
         await logDriftIfAny(drifts);

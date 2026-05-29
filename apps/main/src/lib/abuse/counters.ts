@@ -67,7 +67,7 @@ export async function incrementChatMessages(ctx: CounterContext): Promise<void> 
     .limit(1)
     .maybeSingle();
   const count = Number((data as { chat_messages_count?: number } | null)?.chat_messages_count ?? 0);
-  void checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "chat_volume", metric_value: BigInt(count) });
+  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "chat_volume", metric_value: BigInt(count) });
 }
 
 export async function incrementEmailSent(ctx: CounterContext): Promise<void> {
@@ -93,7 +93,7 @@ export async function incrementEmailSent(ctx: CounterContext): Promise<void> {
         email_sent_day_ref: today,
       })
       .eq("id", row.id), "tenant_usage_metrics.update");
-    void checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "email_volume", metric_value: BigInt(newToday) });
+    await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "email_volume", metric_value: BigInt(newToday) });
   } else {
     await safeAwait(ctx.db.from("tenant_usage_metrics").insert({
       tenant_id: ctx.tenant.tenant_id,
@@ -116,7 +116,7 @@ export async function incrementGroupInvitees(ctx: CounterContext, count: number)
     .limit(1)
     .maybeSingle();
   const total = Number((data as { group_invitees_count?: number } | null)?.group_invitees_count ?? 0);
-  void checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "group_invite", metric_value: BigInt(total) });
+  await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "group_invite", metric_value: BigInt(total) });
 }
 
 /**
@@ -158,7 +158,7 @@ export async function adjustRagChunkCount(
     .eq("tenant_id", ctx.tenant.tenant_id)
     .maybeSingle();
   const count = Number((after as { current_tenant_chunks_count?: number } | null)?.current_tenant_chunks_count ?? 0);
-  void checkStateTransitionIfNeeded({
+  await checkStateTransitionIfNeeded({
     db: ctx.db,
     tenant: ctx.tenant,
     dimension: "rag_cap",

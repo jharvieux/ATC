@@ -51,7 +51,8 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
     const latency_ms = Date.now() - start;
 
-    // Write retrieval log (non-blocking; don't fail the request if this fails)
+    // allow-void-async: retrieval log is best-effort analytics, idempotent on
+    // retrieval_id (PK); the retrieval path is latency-sensitive so we don't block on it.
     void db.from("rag_retrieval_log").insert({
       id: retrieval_id,
       tenant_id: ctx.tenant_id,

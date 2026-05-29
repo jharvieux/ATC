@@ -106,6 +106,9 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const sessionId = params.id;
   const userMessage = userText;
 
+  // allow-void-async: SSE handler — work feeds the TransformStream whose readable is
+  // returned in the Response below, so it must run after the Response returns. Errors
+  // are written into the stream; the durable message insert happens inside.
   void (async () => {
     try {
       const db = tenantClient(ctx);
