@@ -9,6 +9,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { fromCents, type Cents } from "@/lib/money";
+import { isStatusPatchable, isFieldPatchable } from "@/lib/bookings/patchable-fields";
 
 interface BookingRow {
   id: string;
@@ -88,41 +89,6 @@ export async function GET(
   });
 }
 
-// §7.6 / §14.4 — Allowed PATCH fields per status. Direct edits are only
-// safe in draft. submitting / submitted / confirmed must go through the
-// cancel / modify flows so the host adapter stays in sync. Internal
-// platform-only fields (status, host_*, ai_paused_by_platform, is_test)
-// are never editable via this endpoint.
-const PATCHABLE_FIELDS_BY_STATUS: Record<string, ReadonlyArray<keyof BookingRow>> = {
-  draft: [
-    "cruise_line",
-    "ship_name",
-    "sailing_date",
-    "duration_nights",
-    "cabin_category",
-    "departure_port",
-    "total_amount_cents",
-    "commissionable_fare_cents",
-    "currency",
-  ],
-  pending_host_review: [
-    // Host has rejected automatic submission; agent can fix trip details
-    // and resubmit. Same fields as draft.
-    "cruise_line",
-    "ship_name",
-    "sailing_date",
-    "duration_nights",
-    "cabin_category",
-    "departure_port",
-    "total_amount_cents",
-    "commissionable_fare_cents",
-    "currency",
-  ],
-  // submitting: lock held by submit flow — refuse any edit.
-  // submitted / confirmed: must use modify flow.
-  // cancelled / failed: terminal — refuse edits.
-};
-
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -160,8 +126,7 @@ export async function PATCH(
   }
   const currentStatus = (currentData as { status: string }).status;
 
-  const allowed = PATCHABLE_FIELDS_BY_STATUS[currentStatus];
-  if (!allowed) {
+  if (!isStatusPatchable(currentStatus)) {
     return Response.json(
       {
         error: "status_locks_edits",
@@ -184,7 +149,7 @@ export async function PATCH(
       // Silently ignore — these are platform-managed.
       continue;
     }
-    if ((allowed as ReadonlyArray<keyof BookingRow>).includes(key)) {
+    if (isFieldPatchable(currentStatus, key)) {
       patch[key as string] = body[key];
     } else if (body[key] !== undefined) {
       rejected.push(String(key));
