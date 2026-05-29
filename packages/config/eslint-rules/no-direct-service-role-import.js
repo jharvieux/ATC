@@ -120,6 +120,9 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/admin/tenants/[id]/terminate/route.ts",
   // BP17: Tenant termination Inngest — finalizes termination, calls RAG. §15.14.2.
   "/inngest/tenant-on-terminated.ts",
+  // BP17: Tenant termination finalize cron — cross-tenant nightly scan that
+  // drives suspended-past-window tenants to terminated. §15.14.
+  "/inngest/tenant-termination-finalize.ts",
   // BP17: RAG tenant-scoped purge cron — finds terminated tenants, calls RAG. §15.14.3.
   "/inngest/rag-tenant-scoped-purge.ts",
   // BP17: CCPA export request — rate-limit check, inserts export_request row. §17.9.

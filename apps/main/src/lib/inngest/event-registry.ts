@@ -36,6 +36,7 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   "tenant.activated": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.submitted_for_review": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.termination_scheduled": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+  "tenant.terminated": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.suspended": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.subscription_changed": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "tenant.custom_domain_removed_by_lifecycle": { kind: "tenant_scoped", payload_shape: tenantScopedShape },

@@ -16,6 +16,7 @@ import { bookingsStuckSubmittingReconcile } from "@/inngest/bookings-stuck-submi
 import { reconcileStatementAutomated } from "@/inngest/reconcile-statement-automated";
 import { complianceNightly } from "@/inngest/compliance-nightly";
 import { tenantTerminationScheduled, tenantOnTerminatedSideEffects } from "@/inngest/tenant-on-terminated";
+import { tenantTerminationFinalize } from "@/inngest/tenant-termination-finalize";
 import { ragTenantScopedPurgeOnTermination } from "@/inngest/rag-tenant-scoped-purge";
 import { userDataExportBuild } from "@/inngest/user-data-export-build";
 import { userDataPurgeAfterGrace } from "@/inngest/user-data-purge-after-grace";
@@ -146,6 +147,7 @@ export const { GET, POST, PUT } = serve({
     complianceNightly,
     tenantTerminationScheduled,
     tenantOnTerminatedSideEffects,
+    tenantTerminationFinalize,
     ragTenantScopedPurgeOnTermination,
     userDataExportBuild,
     userDataPurgeAfterGrace,

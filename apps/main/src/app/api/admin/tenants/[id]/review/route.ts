@@ -105,6 +105,8 @@ export async function POST(
             .from("tenants")
             .update({
               status: "terminated",
+              terminated_at: new Date().toISOString(),
+              termination_kind: "involuntary_other",
               review_decision: "rejected",
               review_decision_reason: body.reason ?? null,
               review_decided_at: new Date().toISOString(),
@@ -118,6 +120,15 @@ export async function POST(
           if (tenant.stripe_subscription_id) {
             await stripe.subscriptions.cancel(tenant.stripe_subscription_id, { prorate: false });
           }
+
+          // §15.14.2 — run termination side-effects for the rejected applicant
+          // (domain unbind, host-credential deletion, RAG chunk marking). This
+          // path goes straight to terminated (never suspended), so we emit the
+          // event directly rather than via the suspended→terminated finalizer.
+          await inngest.send({
+            name: "tenant.terminated",
+            data: { tenant_id: tenantId, kind: "involuntary_other" },
+          });
         } else if (body.action === "request_more_info") {
           if (!body.revert_to_stage) {
             throw new Error("revert_to_stage is required for request_more_info");
