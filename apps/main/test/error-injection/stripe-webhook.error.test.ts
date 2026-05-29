@@ -200,6 +200,13 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
               const u: Record<string, unknown> = {
                 eq() { return u; },
                 in() { return u; },
+                select() {
+                  return {
+                    then(resolve: (v: { data: unknown[]; error: null }) => unknown) {
+                      return resolve({ data: [{ id: "p-1" }], error: null });
+                    },
+                  };
+                },
                 then(resolve: (v: { data: null; error: null }) => unknown) {
                   return resolve({ data: null, error: null });
                 },

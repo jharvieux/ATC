@@ -41,7 +41,10 @@ export async function POST(
     }
 
     if (body.mode === "cancel") {
-      const { error } = await db
+      // CAS on review_status: .select("id") + count so a concurrent review
+      // decision (no row still 'ready_for_review') surfaces as 409 instead of
+      // a false { status: "superseded" } on a zero-row no-op (D-091).
+      const { data, error } = await db
         .from("rag_submissions")
         .update({
           review_status: "superseded",
@@ -50,8 +53,12 @@ export async function POST(
           updated_at: new Date().toISOString(),
         })
         .eq("id", id)
-        .eq("review_status", "ready_for_review");
+        .eq("review_status", "ready_for_review")
+        .select("id");
       if (error) return Response.json({ error: error.message }, { status: 500 });
+      if ((data ?? []).length === 0) {
+        return Response.json({ error: "not_in_reviewable_state" }, { status: 409 });
+      }
       return Response.json({ status: "superseded" });
     }
 

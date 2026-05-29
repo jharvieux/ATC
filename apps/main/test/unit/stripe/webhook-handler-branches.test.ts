@@ -21,6 +21,11 @@ let progressToCalls: Array<{ tenantId: string; stage: string }>;
 
 let insertResult: { error: { code?: string; message: string } | null } = { error: null };
 let updateResult: { data: unknown; error: { message: string } | null } = { data: null, error: null };
+// Result of an `.update(...).select("id")` chain (CAS row-count assert). null =
+// fall back to the pre-SELECTed rows, which is the consistent happy-path value
+// (the update affects exactly the rows just selected). Set explicitly to script
+// a short-count TOCTOU race.
+let updateSelectResult: { data: unknown[]; error: { message: string } | null } | null = null;
 let selectMaybeSingle: { data: unknown; error: null } = { data: null, error: null };
 let selectArray: { data: unknown[]; error: null } = { data: [], error: null };
 
@@ -53,6 +58,16 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const u: Record<string, unknown> = {
             eq() { return u; },
             in() { return u; },
+            select(_cols: string) {
+              void _cols;
+              return {
+                then(resolve: (v: { data: unknown[]; error: { message: string } | null }) => unknown) {
+                  return resolve(
+                    updateSelectResult ?? { data: selectArray.data, error: updateResult.error },
+                  );
+                },
+              };
+            },
             then(resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) {
               return resolve(updateResult);
             },
@@ -101,6 +116,7 @@ beforeEach(() => {
   progressToCalls = [];
   insertResult = { error: null };
   updateResult = { data: null, error: null };
+  updateSelectResult = null;
   selectMaybeSingle = { data: null, error: null };
   selectArray = { data: [], error: null };
   mockEventType = "transfer.paid";
@@ -200,6 +216,24 @@ describe("Stripe webhook — transfer.paid", () => {
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
     expect(outcome!.processing_outcome).toBe("unhandled");
+  });
+
+  it("returns 500 outcome='error' when the update affects fewer rows than were selected (TOCTOU)", async () => {
+    // #394 — two processing rows were SELECTed, but a concurrent reconcile
+    // moved one to 'paid' first, so the .in(ids) update touches only one. The
+    // row-count assert must fire (→ throw → 500 → Stripe retries) instead of
+    // reporting success on a partial write.
+    mockEventType = "transfer.paid";
+    mockEventData = { id: "tr_race" };
+    selectArray = { data: [{ id: "p-1" }, { id: "p-2" }], error: null };
+    updateSelectResult = { data: [{ id: "p-1" }], error: null };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(500);
+    const outcome = dbCalls.find(
+      (c) => c.table === "stripe_webhook_events" && c.op === "update",
+    )?.payload as Record<string, unknown> | undefined;
+    expect(outcome!.processing_outcome).toBe("error");
+    expect(outcome!.error_detail).toEqual(expect.stringContaining("1 of 2"));
   });
 });
 
