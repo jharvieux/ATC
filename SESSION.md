@@ -1,70 +1,41 @@
-# Session state — last updated 2026-05-28 ~19:30 UTC (EOS)
+# Session state — last updated 2026-05-29 ~00:55 UTC
 
 ## Just completed
 
-Long arc this session: cost-optimization → tool-dispatch polish → automation infrastructure → code-review automation → CI shift-left → session-start auto-triage. 15 PRs merged.
+Continuation session: recreated the `atc-main` Supabase DB in the correct region and activated the nightly DB-backed test safety net against it.
 
-### PRs merged this session
-- **#362** vendor-health Anthropic GET probe drop (1,440 wasted req/day → 0) — _wait, see "Still open" below_
-- **#363** AI Message Batches infra + pre-cruise migration + T-1/multiphase scheduler split
-- **#364** reality-delta appendix + F12 absorbed into P3 #33
-- **#365** F10 + F11 (extract-memory + persona-addendum-screen batches)
-- **#367** F11 sibling — persona-addendum-rescreen-nightly batches
-- **#368** F12 RAG Stage 2 PII redaction batches
-- **#369** §9.6 ai_tool_calls audit table + dispatcher wire-in
-- **#370** §9.6 contact_id threading in chat tool dispatch
-- **#372** dependabot full auto-merge loop: automerge workflow + daily retry-ci + regression detector + vite-major ignore
-- **#375** pre-pr-reviewer subagent + audit-section gate workflow + shift-left planning doc
-- **#376** ai_tool_calls RLS deny policies (migration-lint regression fix from #369)
-- **#377** Phase 1 CI shift-left: affected-tests on PR + nightly full-test on dev
-- **#378** audit-section workflow bot bypass + mandatory pre-push `pnpm verify` rule
-- **#379** Session-start auto-triage protocol
+- **DB recreation.** `atc-main` recreated in us-east-1. New ref `mfaknjyqiwcjojukcnea`; old mis-regioned ref `ucypskudkmzjphixsshx` deleted; RAG ref `jjznkprbotkqqnuvcost` unchanged. User repointed 4 GitHub Actions test secrets out-of-band (`SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY`, `SUPABASE_TEST_SERVICE_KEY`, `SUPABASE_TEST_DB_URL`).
+- **PR #385 merged** (squash, branch deleted). `nightly-full-test.yml` now sets `SUPABASE_DB_URL` so the 6 DB-backed suites (rls, proxy, 4 cross-tenant inngest probes) run instead of silently `describe.skip`-ing. Added an idempotent Tier-2 seed step (`scripts/seed-tier2-test.ts`) + `--no-file-parallelism`. Fixed the `_inngest-invoke` harness to model `step.sleepUntil` suspend semantics (future wake → defers; bad wake → throws fail-loud) and added the missing past-`purge_at` branch test. All CI green; both audit subagents clean (one D-091 nit addressed inline).
+- **D-112 logged** (in this docs PR): the recreation + the pre-launch prod-as-test exception.
+- **Issue #386 opened**: pre-launch follow-up — migrate the nightly DB suites off the prod-serving DB before customer data lands (they invoke destructive global crons).
 
-### Repo + branch protection changes
-- `allow_auto_merge=true` flipped at repo level (enables `gh pr merge --auto`)
-- `pr-audit-section-check` added to dev's required-status-checks
-- Labels created/exist: `regression-suspected`, `nightly-failure`, `full-test`, `auto-triaged` (last one will be created on first auto-triage)
-
-### Decisions logged this session (in MEMORY.md, this PR)
-- **D-108** Code-review automation: pre-pr-reviewer subagent + audit-section gate + mandatory pre-push verify; cold-read Layer-2 reviewer deferred until non-me PRs appear
-- **D-109** Dependabot self-managing auto-merge loop: automerge + daily retry-ci + regression detector + vite-major ignore
-- **D-110** CI shift-left Phase 1: vitest related on PR + nightly full-test on dev + fallback rules (label, deep utility, config, refactor threshold)
-- **D-111** Session-start auto-triage protocol — enumerate open issues + PRs, auto-fix mechanical cases, surface judgement cases in the state summary
-
-### Still open (carried from earlier sessions, NOT merged today)
-- **#362** fix(vendor-health): drop Anthropic from probe — BEHIND, mergeable once update-branched. Pre-dates audit-section requirement; doesn't have an `## Audit` block, will fail the new required check after rebase.
-- **#366** docs(session): log D-106/D-107 and update SESSION.md — BEHIND, same audit-section issue. Carries D-106 (Anthropic Batches) and D-107 (pre-cruise scheduler split) that should land in MEMORY.
-
-Both need audit sections appended before they can merge under the new gate. Quick fix in next session — paste a minimal "clean — no findings" audit block + update-branch.
-
-### Open Dependabot PRs (auto-flow per #372)
-- **#373** dev-dependencies bump (2 updates) — auto-merge enabled, waiting on CI
-- **#374** production-minor-patch bump (9 updates) — auto-merge enabled, waiting on CI
-
-These should self-merge per the new automation. If they're still open in the next session, check the `regression-suspected` label.
+Verification: 6 DB-backed suites pass against the live seeded DB (44 tests); `pnpm verify` green with `SUPABASE_DB_URL` unset (1920 passed / 61 skipped, lint + slop clean).
 
 ## In flight
 
-Nothing in flight — clean checkpoint.
+- **This docs PR** (`docs/session-2026-05-28-d112-nightly-db`): carries MEMORY.md D-112 + this SESSION.md. Being pushed + opened + merged now. If you're reading this and it is NOT merged, finish that first.
 
 ## Next step
 
-1. **First task**: handle #362 and #366 — add audit sections, update-branch, merge. ~5 min.
-2. **Check dependabot**: verify #373/#374 either merged overnight or got `regression-suspected`-labeled by the new detector.
-3. **Verify auto-triage works**: this session protocol is new — the next session should fire the auto-triage step and report findings in the state summary. If it doesn't, we have a bug in the prompt-following.
+1. Merge this docs PR once CI passes (then delete the branch).
+2. **Switch the model back to Sonnet** — this session ran on Opus. Run `/model claude-sonnet-4-6` (the agent cannot invoke `/model` itself).
+3. **Operator follow-ups for the new DB** (Claude cannot do these):
+   - Re-point the `supabase-main` MCP server — it still targets the **deleted** ref `ucypskudkmzjphixsshx`. Re-add with new ref `mfaknjyqiwcjojukcnea` (`claude mcp ...`).
+   - Production redeploy so the new DB takes effect in prod (Vercel env for `atc-main` must point at the new ref).
+   - Optional: `workflow_dispatch` `nightly-full-test` to confirm the DB suites run green end-to-end against the seeded DB (PR CI does not exercise the nightly — it runs only on schedule / manual dispatch).
 
 ## Blocked on user
 
-- **Counsel sign-off** items (P4 #37-#43) — unchanged
-- **Operator decisions** P4 #48-#55 — unchanged
-- **Streaming tool support browser test** — was deferred earlier; #371 didn't merge today (it went DIRTY during the rebase). Track in next session.
-- **#371 streaming-mode tool support** — actually closed/abandoned? Need to check next session.
+- **Operator follow-ups above** (MCP re-point, prod redeploy) — required for the new DB to be fully live in prod.
+- **Issue #386** — needs a dedicated test Supabase project stood up before customer data lands; user routes timing.
+- Counsel sign-off (P4 #37–#43) and operator decisions (P4 #48–#55) — unchanged.
 
 ## Open questions
 
-- **Phase 2 shift-left**: Turbo remote cache is the next lever (~90s/PR savings). ~2h to wire. Worth doing soon.
-- **`ai_tool_calls` retention**: no purge cron yet. §26.5 audit retention is 7 years; should `ai_tool_calls` follow that or have its own?
-- **Layer 2 cold-read reviewer**: deferred per D-108. Revisit when §32 self-service help ships and bug-fix PRs come from Inngest paths.
+- **#366** docs(session) D-106/D-107 — still open, BEHIND. D-106 and D-107 are **not** yet in dev's MEMORY.md (stuck in that PR). Needs an `## Audit` section + update-branch + merge. It edits MEMORY.md near D-105, away from this PR's top-of-file D-112 prepend — likely no conflict, but watch for one.
+- **Dependabot #373/#374** — still open from the prior session (merge state UNKNOWN). Prior SESSION expected self-merge; they did not. Check for a `regression-suspected` label or failing required checks.
+- **#384** test-scaffolding backlog (`bug`) — tracking issue from this session's sweep; no action pending.
+- Phase 2 shift-left (Turbo remote cache), `ai_tool_calls` retention policy, Layer-2 cold-read reviewer — unchanged.
 
 ## Carried forward (unchanged)
 
