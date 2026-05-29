@@ -23,24 +23,9 @@
 // right HTTP status (401 for missing/invalid token, 403 for token-valid-but-
 // not-an-admin, 500 for misconfiguration).
 
-import { timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-
-// Constant-time string equality. The two existing call sites compare a
-// caller-supplied bearer token against a high-value secret in env. V8's
-// `===` short-circuits on the first byte mismatch, which is a textbook
-// timing-attack primitive (audit pass 2, Finding 2).
-function constantTimeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) {
-    // Burn a comparable amount of CPU so length mismatch doesn't leak via timing.
-    timingSafeEqual(ab, ab);
-    return false;
-  }
-  return timingSafeEqual(ab, bb);
-}
+import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 
 export interface PlatformAdminContext {
   /** auth_user_id from Supabase (human admin), or "service:bearer" for the service-to-service bearer path. */
