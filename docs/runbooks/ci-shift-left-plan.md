@@ -20,7 +20,7 @@ Three classes of CI work, ordered by replaceability:
 
 | Class | Examples | Local? | Why |
 |---|---|---|---|
-| **Reproducible from a clean checkout** | Typecheck, Lint, Test, Slop check, Build | Yes — already runs locally via `pnpm verify` | Pure functions of the source code |
+| **Reproducible from a clean checkout** | Typecheck, Lint, Test, Build | Yes — already runs locally via `pnpm verify` | Pure functions of the source code |
 | **Needs external state** | RLS Snapshot Diff, Contract Tests, CVE Scan | Partly — can run locally if dev env wired | Needs a DB / vendor APIs |
 | **Slow-but-must-run** | Playwright Tier 1+2+2.5 | No — heavy + flaky if not isolated | Browser automation has its own infra needs |
 
