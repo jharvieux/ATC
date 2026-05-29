@@ -47,6 +47,8 @@ export async function checkFeedbackRateLimit(
     // process at boot otherwise — so reaching here in production means the
     // rate-limit enforcement layer genuinely cannot run: fail CLOSED (D-091).
     // In local dev (no REDIS_URL) keep the endpoint usable by failing open.
+    // NODE_ENV === "production" is the proxy for "verifyEnvAtBoot is in force";
+    // staging runs in production mode too, so it correctly fails closed there.
     if (process.env.NODE_ENV === "production") throw err;
     console.warn("[feedback-rate-limit] REDIS_URL not set — fail-open (non-production)");
     return { allowed: true, remaining: limit, reset_seconds: WINDOW_SECONDS };

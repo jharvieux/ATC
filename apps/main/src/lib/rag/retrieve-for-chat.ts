@@ -139,6 +139,11 @@ async function alertRagDegraded(
 ): Promise<void> {
   const now = Date.now();
   if (now - (lastAlertAt.get(signal) ?? 0) < ALERT_THROTTLE_MS) return;
+  // Stamp BEFORE dispatch, not after: under a burst of concurrent messages
+  // during an outage, many requests reach here before the first await resolves;
+  // stamping first lets only one through. Trade-off: if the alert channel itself
+  // is down the window is still consumed, but sendOperatorAlert always emits a
+  // console.warn breadcrumb, so visibility isn't fully lost.
   lastAlertAt.set(signal, now);
   // Best-effort: an alert failure must never escalate this graceful degradation
   // (serve ungrounded chat) into a hard failure of the chat path.
