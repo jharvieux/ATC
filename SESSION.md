@@ -1,40 +1,40 @@
-# Session state — last updated 2026-05-29 ~00:55 UTC
+# Session state — last updated 2026-05-29 ~01:45 UTC
 
 ## Just completed
 
-Continuation session: recreated the `atc-main` Supabase DB in the correct region and activated the nightly DB-backed test safety net against it.
+Test-integrity quick wins (PR #388, squash-merged to dev) + this docs PR.
 
-- **DB recreation.** `atc-main` recreated in us-east-1. New ref `mfaknjyqiwcjojukcnea`; old mis-regioned ref `ucypskudkmzjphixsshx` deleted; RAG ref `jjznkprbotkqqnuvcost` unchanged. User repointed 4 GitHub Actions test secrets out-of-band (`SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY`, `SUPABASE_TEST_SERVICE_KEY`, `SUPABASE_TEST_DB_URL`).
-- **PR #385 merged** (squash, branch deleted). `nightly-full-test.yml` now sets `SUPABASE_DB_URL` so the 6 DB-backed suites (rls, proxy, 4 cross-tenant inngest probes) run instead of silently `describe.skip`-ing. Added an idempotent Tier-2 seed step (`scripts/seed-tier2-test.ts`) + `--no-file-parallelism`. Fixed the `_inngest-invoke` harness to model `step.sleepUntil` suspend semantics (future wake → defers; bad wake → throws fail-loud) and added the missing past-`purge_at` branch test. All CI green; both audit subagents clean (one D-091 nit addressed inline).
-- **D-112 logged** (in this docs PR): the recreation + the pre-launch prod-as-test exception.
-- **Issue #386 opened**: pre-launch follow-up — migrate the nightly DB suites off the prod-serving DB before customer data lands (they invoke destructive global crons).
+- **PR #388 merged** (squash, branch deleted). Three fixes from the #384 per-file sweep:
+  - **github-closure → real import.** Extracted the route's HMAC verifier into `apps/main/src/lib/webhooks/github-signature.ts` (`verifyGitHubSignature`, mirroring `resend-signature.ts`); route + test now import the real function. The test previously reproduced it in-test and downgraded `timingSafeEqual` to `===`. 6/6 pass.
+  - **stripe-webhook activation.** Added `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` CI placeholders to `nightly-full-test.yml` so the dead suite runs. It self-signs events + imports the real handler (pure HMAC, no Stripe API), so placeholders suffice. 3/3 pass against the seeded DB locally.
+  - **rag scope-isolation deferred.** Documented in-file (gate var set nowhere; only RAG creds point at prod-serving DB; tests 2–5 reimplement auth gates inline). NOT wired.
+- **#384 catalog comment posted**: 7 Class A reimplementation files (with line refs) + the two dead suites + verified-legit exclusions (e.g. `money.test.ts`). This is the test-rewrite backlog.
+- **D-113 logged** (this docs PR).
+- Audits: d091-reviewer clean; pre-pr-reviewer 1 warning (`§32.10.7` citation — verified real) + 2 accepted nits. All 9 required CI checks green on #388. Vercel preview deploys failed on a 24h rate-limit — non-required, did not block.
 
-Verification: 6 DB-backed suites pass against the live seeded DB (44 tests); `pnpm verify` green with `SUPABASE_DB_URL` unset (1920 passed / 61 skipped, lint + slop clean).
+Verification: `pnpm verify` green (1920 passed / 61 skipped, lint + slop clean); github-closure 6/6 + stripe-webhook 3/3 against the seeded DB.
 
 ## In flight
 
-- **This docs PR** (`docs/session-2026-05-28-d112-nightly-db`): carries MEMORY.md D-112 + this SESSION.md. Being pushed + opened + merged now. If you're reading this and it is NOT merged, finish that first.
+- **This docs PR** (`docs/session-2026-05-29-d113-test-integrity`): carries MEMORY.md D-113 + this SESSION.md. Being pushed + opened + merged now. If you're reading this and it is NOT merged, finish that first.
 
 ## Next step
 
 1. Merge this docs PR once CI passes (then delete the branch).
 2. **Switch the model back to Sonnet** — this session ran on Opus. Run `/model claude-sonnet-4-6` (the agent cannot invoke `/model` itself).
-3. **Operator follow-ups for the new DB** (Claude cannot do these):
-   - Re-point the `supabase-main` MCP server — it still targets the **deleted** ref `ucypskudkmzjphixsshx`. Re-add with new ref `mfaknjyqiwcjojukcnea` (`claude mcp ...`).
-   - Production redeploy so the new DB takes effect in prod (Vercel env for `atc-main` must point at the new ref).
-   - Optional: `workflow_dispatch` `nightly-full-test` to confirm the DB suites run green end-to-end against the seeded DB (PR CI does not exercise the nightly — it runs only on schedule / manual dispatch).
+3. Optional: `workflow_dispatch` `nightly-full-test` to confirm the stripe-webhook suite now runs green end-to-end (placeholders + DB seed are in place; PR CI does not exercise the nightly).
 
 ## Blocked on user
 
-- **Operator follow-ups above** (MCP re-point, prod redeploy) — required for the new DB to be fully live in prod.
-- **Issue #386** — needs a dedicated test Supabase project stood up before customer data lands; user routes timing.
+- **Operator follow-ups from D-112 (unchanged, still open):** re-point the `supabase-main` MCP server (still on the deleted ref `ucypskudkmzjphixsshx` → new `mfaknjyqiwcjojukcnea`); production redeploy so the new DB takes effect in prod.
+- **Issue #386** — dedicated test Supabase project (main AND now RAG) before customer data lands; user routes timing. Now also blocks wiring the RAG scope-isolation suite (per D-113).
 - Counsel sign-off (P4 #37–#43) and operator decisions (P4 #48–#55) — unchanged.
 
 ## Open questions
 
-- **#366** docs(session) D-106/D-107 — still open, BEHIND. D-106 and D-107 are **not** yet in dev's MEMORY.md (stuck in that PR). Needs an `## Audit` section + update-branch + merge. It edits MEMORY.md near D-105, away from this PR's top-of-file D-112 prepend — likely no conflict, but watch for one.
-- **Dependabot #373/#374** — still open from the prior session (merge state UNKNOWN). Prior SESSION expected self-merge; they did not. Check for a `regression-suspected` label or failing required checks.
-- **#384** test-scaffolding backlog (`bug`) — tracking issue from this session's sweep; no action pending.
+- **#384** test-rewrite backlog — the 7 Class A reimplementations remain (largest: `crm/contacts.test.ts`). No action pending; tracked.
+- **#366** docs(session) D-106/D-107 — still open, likely BEHIND. D-106/D-107 may still be absent from dev's MEMORY.md (stuck in that PR). Needs an `## Audit` section + update-branch + merge.
+- **Dependabot PRs** — at session start, `dependabot/npm_and_yarn/dev-dependencies-*` and `production-minor-patch-*` branches were pushed to origin. Check open dependabot PR merge state / `regression-suspected` label (retry workflow handles CI; don't intervene unless flagged).
 - Phase 2 shift-left (Turbo remote cache), `ai_tool_calls` retention policy, Layer-2 cold-read reviewer — unchanged.
 
 ## Carried forward (unchanged)
