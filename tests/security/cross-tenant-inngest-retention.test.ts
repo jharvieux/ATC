@@ -170,4 +170,27 @@ describeIf("BP30 Tier 3 — userDataPurgeAfterGrace grace-window short-circuit",
     // Handler returns either `{ deferred: true, ... }` or `{ status: 'deferred', ... }`.
     expect(Boolean(result.deferred) || result.status === "deferred").toBe(true);
   });
+
+  it("does not defer (runs the purge path) when purge_at is in the past", async () => {
+    const pastPurgeAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { result } = await invokeInngestHandler<{ deferred?: boolean; skipped?: boolean }>(
+      userDataPurgeAfterGrace,
+      {
+        name: "user.data_purge_scheduled",
+        data: {
+          auth_user_id: "00000000-0000-4000-8000-00000000d001",
+          user_id:      "00000000-0000-4000-8000-00000000d002",
+          deleted_at:   new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+          purge_at:     pastPurgeAt,
+        },
+      },
+    );
+    // Past wake → sleepUntil no-ops → handler proceeds, finds no such user
+    // (d002 isn't seeded), returns { skipped: true }. No `status` check
+    // needed here: the no-defer path sets no `status`, so !deferred alone
+    // proves it (unlike the future test, which must also accept
+    // status === "deferred").
+    expect(Boolean(result.deferred)).toBe(false);
+    expect(result.skipped).toBe(true);
+  });
 });
