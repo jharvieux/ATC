@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-114 — 2026-05-29 — Retroactive D-091 anti-pattern sweep: 3 waves, 9 pattern issues + epic, hand-verified severity below agent first-pass (#392–#401)
+
+**Decision.** Ran the full retroactive D-091 sweep the user asked for ("Full sweep. Split into as many passes as necessary to ensure deep scans. Open issues in GitHub for anything found."). Method: parallel `d091-reviewer` passes partitioned by domain (route + lib together so isolation/mutation flows are visible to one reviewer), three waves, **every finding hand-verified against live code before filing.** Baseline `dev @ ae4c727`. Filed **9 pattern issues + 1 tracking epic**, grouped **by anti-pattern, not by file** (that's how a fix PR tackles them). **Nothing auto-fixed — the issues ARE the deliverable; the user routes them** (this is the human-review substitute since the user doesn't review code).
+- **Wave 1** (RAG svc/bridge, auth/abuse/crypto, webhooks/stripe): #392 [P1] void-async ×6, #393 [P2] fail-open/swallowed-read, #394 [P2] CAS missing row-count, #395 [P2] single-layer isolation on `rag_media_assets`, #396 [P2] GCV key in URL, #397 [P2] non-constant-time bearer compare.
+- **Wave 2** (commerce, admin/supervisor, tenant/CRM, AI/persona): NEW #399 [P1] supervisor kill-switch fails open on DB error (§10.6 global-pause bypass), #400 [P2] unchecked Supabase mutation, #401 [P2] stub-shaped code; rest appended to #392–#395.
+- **Wave 3** (help/imports/public, Inngest serve+client, all 78 Inngest job files): **no new pattern issues** — every finding mapped onto an existing issue via comment. Densest surface = crons that swallow a DB error and `return` a success-shaped value (`{swept:0}`), defeating Inngest's thrown-error retry.
+
+**Why.** Grouping by anti-pattern (P1s standalone, P2/P3 grouped, later-wave sites appended via `gh issue comment` under a "Wave N" subheading) keeps the index small and matches fix-PR structure; epic #398 is the master checklist. **Severity-honesty was the load-bearing discipline:** the agents systematically over-rated — Wave 3's two job agents flagged ~9 "P1/BLOCKER" and on hand-verification **none survived as clean P1** (Inngest retries thrown errors, sweeps self-heal next cycle, idempotent upserts cap impact) → all re-rated P2. Used my hand-verified severity, not the agent first-pass, so the user isn't chasing inflated P1s. **One genuine P1-candidate needs a product answer, not a code fix:** `apps/main/src/inngest/tenant-on-terminated.ts:51` — CAS `.eq("status","suspended")` has no row-count assert; on a zero-row match the irreversible `onTerminated()` (unbinds custom domain, deletes OAuth creds) **still runs**. OPEN QUESTION surfaced to user in #394: *does the un-suspend flow cancel the scheduled `tenant.termination_scheduled` event?* If yes → P2; if no → real P1 that can nuke an active paying tenant.
+
+**Rejected.**
+- *One issue per site.* Too noisy; a fix PR groups by pattern anyway.
+- *Trust agent-reported severities.* Inflated (the ~9 phantom P1s). Hand-verified every P1/P2 against live code; spot-checked clusters with explicit "agent-reported, not individually re-verified" honesty tags.
+- *Auto-fix findings.* User explicitly wanted them filed for routing, not fixed.
+- *A separate "Inngest cron error-swallow" issue for Wave 3.* Kept group-by-pattern consistent — folded into #393's cron sub-cluster instead.
+- *Re-file the two known/deferred Stripe items.* `webhook-handler.ts` idempotency-ordering is already tracked in `docs/runbooks/anti-patterns.md §10` (reconcile column exists); the outcome-update-not-surfaced is by-design P3 (surfacing as 500 would make Stripe retry an event whose business logic already succeeded — wants an operator alert, not a throw). Noted in the epic, not re-filed.
+
+**Related artifacts.** Issues #392–#401 (label `d091-audit`); epic/index #398. False positives caught + documented-rejected (honesty): `user/privacy/route.ts:32` (legit ternary), help `close`/`escalate` "single-layer" (`help_sessions` ∈ `TENANT_SCOPED_TABLES` → `tenantClient` auto-scopes), `admin-fetch.ts:43` "fail-open" (client wrapper; route's `assertPlatformAdmin` enforces). Excluded as no server-side D-091 surface: ~27 client React components + email templates. Documented stubs left as note-only (intentional, MEMORY D-066/D-068): `help-ai/confidence-scorer.ts`, `screenshot-pii-detector.ts`. **No code changed this session — audit only.**
+
+---
+
 ## D-113 — 2026-05-29 — Repair false-confidence + dead test suites; defer RAG scope-isolation; catalog the reimplementation anti-pattern (#384)
 
 **Decision.** A per-file read of the test suite (the deeper sweep #384's "Completeness caveat" said was still owed) found a dominant anti-pattern: tests that **define the domain logic inside the test file and assert against the copy** — they pass forever and cannot fail when real product code changes (false confidence, not absent coverage). PR #388 fixes the three lowest-risk cases and catalogs the rest:
