@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-121 — 2026-05-29 — Fix Google-login outage (Supabase `state` clobber + missing /auth/error); defer "return to original page" re-auth to #437
+
+**Decision.** Fixed the Google-login outage (users hit a 404 at `/auth/error?message=OAuth%20state%20parameter%20is%20invalid`). Two root causes, both fixed in **PR #438**: (1) `api/auth/oauth-initiate/route.ts` injected its own `state` queryParam derived from `redirect_to` — and because `redirect_to` defaulted to a **non-empty** string, the injection fired on *every* sign-in (including plain signup with no `redirect_to`), clobbering Supabase's reserved PKCE/CSRF `state` so Supabase rejected every provider callback. (2) The `/auth/error` route didn't exist, so the callback's failure redirect 404'd. Fix: pass only `{ redirectTo }` to `signInWithOAuth` (never set `options.queryParams.state`); add the `/auth/error` page rendering an escaped, 200-char-capped reflected `?message=`. Regression guards added for both (`oauth-initiate.test.ts` asserts `queryParams` stays undefined; `auth-error-page.test.tsx` locks XSS-escape + cap).
+
+**Deliberately did NOT implement "return to original page" re-auth.** `reauth/page.tsx` threads `redirect_to` and tells the user they'll return to where they were, but the callback (`callback/route.ts:71`) always redirects to `/` and never read `state`/`redirect_to` (grep: zero matches) — so the feature **never worked end-to-end**; the old `state` injection's only live effect was breaking login. Restoring it is a separate feature (short-lived cookie or nonce store + an open-redirect guard on the return path), out of scope for a login-outage hotfix. Tracked as **#437**.
+
+**Why.** Supabase owns `state` for PKCE/CSRF; any caller-set `state` is rejected. The minimal correct fix is to stop setting it and add the missing error route — that restores login for all four providers. Bundling a return-to-page reimplementation into a hotfix would add a new open-redirect surface for a feature that was already dead.
+
+**Rejected.**
+- *d091-reviewer's "behavioral regression — thread `redirect_to` through the callback URL" finding.* Investigated and rejected: the callback never consumed `state`/`redirect_to`, so no working behavior is lost by removing the clobber. The suggested cookie/callback-URL threading *is* the #437 feature, not part of the bug fix. Accepted-with-tracking rather than fixed in-PR.
+- *Skip the error-page test (it's "just a rendering component").* Added it anyway — `?message=` is URL-controllable, so the escape + length-cap are security contracts worth locking against a future `dangerouslySetInnerHTML` or dropped-`slice` edit.
+
+**Related artifacts.** PR #438 (`fix/oauth-state-clobber`); issue **#437** (return-to-page gap, with two fix options). Files: `api/auth/oauth-initiate/route.ts`, `auth/error/page.tsx`, `auth/reauth/page.tsx`, `api/auth/callback/route.ts`; tests `oauth-initiate.test.ts`, `auth-error-page.test.tsx`. Spec §17.1–17.3 (OAuth) / §17.7 (sensitive-ops re-auth). Prior related: D-119 (Apple deferred in `ALLOWED_PROVIDERS`; Microsoft = `azure`).
+
+---
+
 ## D-120 — 2026-05-29 — Formalize the §34.3.1 upload virus-scanning deferral as a logged risk acceptance
 
 **Decision.** Ratify and log the existing risk acceptance to **defer §34.3.1 document virus-scanning at launch** (written up 2026-05-27 in `docs/runbooks/upload-virus-scanning-risk-acceptance.md`; punch-list P1 #11; closed in #336). No ClamAV sidecar / scan gate ships now; the Gmail-attachment and manual-upload paths route straight into the parsing pipeline. Surfaced when the user asked whether AV scanning serves a purpose "if we're not storing the files."
