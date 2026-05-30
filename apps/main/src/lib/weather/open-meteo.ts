@@ -28,6 +28,7 @@
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { wmoCodeToText } from "./wmo-codes";
+import { parseDailyCap, FALLBACK_DAILY_CAP } from "./parse-cap";
 
 export interface WeatherForecast {
   high_f: number;
@@ -45,7 +46,6 @@ export interface GetForecastOpts {
 }
 
 const CACHE_TTL_HOURS = 6;
-const FALLBACK_DAILY_CAP = 8000;
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const FETCH_TIMEOUT_MS = 8000;
 
@@ -135,16 +135,7 @@ async function readDailyCap(
   // The migration seeds the row, so this is the "fresh DB before migration"
   // path, not a runtime degradation.
   if (!data) return FALLBACK_DAILY_CAP;
-
-  const raw = data.value;
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-    return Math.floor(raw);
-  }
-  if (typeof raw === "string") {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
-  }
-  return FALLBACK_DAILY_CAP;
+  return parseDailyCap(data.value) ?? FALLBACK_DAILY_CAP;
 }
 
 async function readTodayCount(

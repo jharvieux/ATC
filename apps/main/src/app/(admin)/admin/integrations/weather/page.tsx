@@ -23,7 +23,6 @@ interface UsageView {
   requests_this_month: number;
   daily_history: UsageRow[];
   avg_7d: number;
-  days_until_cap: number | null;
 }
 
 export default function WeatherUsagePage() {

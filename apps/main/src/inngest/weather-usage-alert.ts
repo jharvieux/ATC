@@ -19,10 +19,10 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { parseDailyCap, FALLBACK_DAILY_CAP } from "@/lib/weather/parse-cap";
 
 const SUSTAINED_THRESHOLD_PCT = 70;
 const LOOKBACK_DAYS = 3;
-const FALLBACK_CAP = 8000;
 
 interface UsageRow {
   metric_date: string;
@@ -41,24 +41,29 @@ export const weatherUsageAlert = inngest.createFunction(
   async () => {
     const db = createServiceRoleClient();
 
-    // Already alerted today? Bail.
+    // Already alerted today? Bail. We throw on DB error rather than
+    // silently treat as "not sent" — a flaky read here would otherwise
+    // re-send the alert on every Inngest retry until the row was
+    // readable again.
     const today = new Date().toISOString().slice(0, 10);
     const lastSentRes = await db
       .from("platform_settings")
       .select("value")
       .eq("key", "weather_usage_alert_last_sent_date")
       .maybeSingle<PlatformSettingRow>();
+    if (lastSentRes.error) {
+      throw new Error(`weather_usage_alert_last_sent_date read failed: ${lastSentRes.error.message}`);
+    }
     if (lastSentRes.data && lastSentRes.data.value === today) {
       return { skipped: "already_sent_today" };
     }
 
-    // Read cap.
     const capRes = await db
       .from("platform_settings")
       .select("value")
       .eq("key", "weather_daily_request_cap")
       .maybeSingle<PlatformSettingRow>();
-    const cap = parseCap(capRes.data?.value) ?? FALLBACK_CAP;
+    const cap = parseDailyCap(capRes.data?.value) ?? FALLBACK_DAILY_CAP;
     const threshold = Math.floor((cap * SUSTAINED_THRESHOLD_PCT) / 100);
 
     // Last LOOKBACK_DAYS *completed* days (excludes today, which is still
@@ -123,12 +128,3 @@ export const weatherUsageAlert = inngest.createFunction(
     return { sustained: true, alert_sent: true, threshold };
   },
 );
-
-function parseCap(raw: unknown): number | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
-  if (typeof raw === "string") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return null;
-}

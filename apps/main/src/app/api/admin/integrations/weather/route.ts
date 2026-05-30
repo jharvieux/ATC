@@ -1,18 +1,22 @@
 // §23.4 — Platform-admin weather usage + cap management.
 //
 // GET  → current cap, today's count, this month's count, 30-day series,
-//        and a linear projection of "days until cap" for an upgrade-decision
-//        hint.
+//        7-day average.
 // POST → update weather_daily_request_cap. Body: { cap: number }.
-//        Validates 1 ≤ cap ≤ 10000 (Open-Meteo free-tier ceiling).
+//        Validates 1 ≤ cap ≤ OPEN_METEO_FREE_TIER_CEILING.
 //
-// Both gated by assertPlatformAdmin. The POST write goes through
-// withPlatformAdminAudit for forensic record (cap changes are an operator
-// decision worth auditing).
+// Both gated by assertPlatformAdmin. Both wrapped in withPlatformAdminAudit
+// for forensic record — every cross-tenant admin op produces an audit_log
+// row per §26.3a (matches legal-docs / retrieval-weights / abuse-overrides
+// admin routes).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import {
+  parseDailyCap,
+  OPEN_METEO_FREE_TIER_CEILING,
+  FALLBACK_DAILY_CAP,
+} from "@/lib/weather/parse-cap";
 
 interface UsageRow {
   metric_date: string;
@@ -24,71 +28,87 @@ interface PlatformSettingRow {
   value: unknown;
 }
 
-const FALLBACK_CAP = 8000;
 const HISTORY_DAYS = 30;
-const OPEN_METEO_CEILING = 10000;
 
 export async function GET(req: Request): Promise<Response> {
+  let adminUserId: string;
   try {
-    await assertPlatformAdmin(req);
+    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
   }
 
-  const db = createServiceRoleClient();
+  try {
+    const result = await withPlatformAdminAudit(
+      {
+        admin_user_id: adminUserId,
+        reason: "platform_metrics_rollup",
+        operation: "weather_usage_read",
+        reason_detail: "admin viewed weather integration usage + cap",
+      },
+      async (db, recordQuery) => {
+        const capRes = await db
+          .from("platform_settings")
+          .select("value")
+          .eq("key", "weather_daily_request_cap")
+          .maybeSingle<PlatformSettingRow>();
+        recordQuery({ op: "select", table: "platform_settings", row_count: capRes.data ? 1 : 0 });
+        if (capRes.error) throw new Error(`cap_read_failed: ${capRes.error.message}`);
+        const cap = parseDailyCap(capRes.data?.value) ?? FALLBACK_DAILY_CAP;
 
-  const capRes = await db
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "weather_daily_request_cap")
-    .maybeSingle<PlatformSettingRow>();
+        const sinceDate = new Date();
+        sinceDate.setUTCDate(sinceDate.getUTCDate() - (HISTORY_DAYS - 1));
+        const sinceStr = sinceDate.toISOString().slice(0, 10);
 
-  if (capRes.error) {
-    return Response.json({ error: "cap_read_failed" }, { status: 500 });
+        const histRes = await db
+          .from("weather_usage_metrics")
+          .select("metric_date, requests_count, last_request_at")
+          .gte("metric_date", sinceStr)
+          .order("metric_date", { ascending: true });
+        if (histRes.error) throw new Error(`usage_read_failed: ${histRes.error.message}`);
+
+        const rows = (histRes.data ?? []) as UsageRow[];
+        recordQuery({ op: "select", table: "weather_usage_metrics", row_count: rows.length });
+
+        const today = new Date().toISOString().slice(0, 10);
+        const requestsToday = rows.find((r) => r.metric_date === today)?.requests_count ?? 0;
+        const requestsThisMonth = rows
+          .filter((r) => r.metric_date.startsWith(today.slice(0, 7)))
+          .reduce((sum, r) => sum + r.requests_count, 0);
+
+        // 7-day average over the seven most recent COMPLETED days
+        // (excluding today, which is still accumulating). Stable basis
+        // for the upgrade hint.
+        const recent7 = rows
+          .filter((r) => r.metric_date !== today)
+          .slice(-7)
+          .map((r) => r.requests_count);
+        const avg7 = recent7.length > 0
+          ? recent7.reduce((s, n) => s + n, 0) / recent7.length
+          : 0;
+
+        return {
+          cap,
+          cap_ceiling: OPEN_METEO_FREE_TIER_CEILING,
+          requests_today: requestsToday,
+          requests_this_month: requestsThisMonth,
+          daily_history: rows,
+          avg_7d: Math.round(avg7),
+        };
+      },
+    );
+    return Response.json(result);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("cap_read_failed")) {
+      return Response.json({ error: "cap_read_failed" }, { status: 500 });
+    }
+    if (msg.startsWith("usage_read_failed")) {
+      return Response.json({ error: "usage_read_failed" }, { status: 500 });
+    }
+    throw e;
   }
-  const cap = parseCap(capRes.data?.value) ?? FALLBACK_CAP;
-
-  const sinceDate = new Date();
-  sinceDate.setUTCDate(sinceDate.getUTCDate() - (HISTORY_DAYS - 1));
-  const sinceStr = sinceDate.toISOString().slice(0, 10);
-
-  const histRes = await db
-    .from("weather_usage_metrics")
-    .select("metric_date, requests_count, last_request_at")
-    .gte("metric_date", sinceStr)
-    .order("metric_date", { ascending: true });
-
-  if (histRes.error) {
-    return Response.json({ error: "usage_read_failed" }, { status: 500 });
-  }
-
-  const rows = (histRes.data ?? []) as UsageRow[];
-  const today = new Date().toISOString().slice(0, 10);
-  const requestsToday = rows.find((r) => r.metric_date === today)?.requests_count ?? 0;
-  const requestsThisMonth = rows
-    .filter((r) => r.metric_date.startsWith(today.slice(0, 7)))
-    .reduce((sum, r) => sum + r.requests_count, 0);
-
-  // 7-day average gives a more stable "days until cap" hint than today's
-  // partial count. Excludes today (still in progress).
-  const recent7 = rows
-    .filter((r) => r.metric_date !== today)
-    .slice(-7)
-    .map((r) => r.requests_count);
-  const avg7 = recent7.length > 0
-    ? recent7.reduce((s, n) => s + n, 0) / recent7.length
-    : 0;
-
-  return Response.json({
-    cap,
-    cap_ceiling: OPEN_METEO_CEILING,
-    requests_today: requestsToday,
-    requests_this_month: requestsThisMonth,
-    daily_history: rows,
-    avg_7d: Math.round(avg7),
-    days_until_cap: avg7 > cap ? 0 : null,
-  });
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -108,9 +128,14 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const cap = typeof body.cap === "number" ? body.cap : Number(body.cap);
-  if (!Number.isFinite(cap) || !Number.isInteger(cap) || cap < 1 || cap > OPEN_METEO_CEILING) {
+  if (
+    !Number.isFinite(cap) ||
+    !Number.isInteger(cap) ||
+    cap < 1 ||
+    cap > OPEN_METEO_FREE_TIER_CEILING
+  ) {
     return Response.json(
-      { error: "invalid_cap", hint: `cap must be an integer between 1 and ${OPEN_METEO_CEILING}` },
+      { error: "invalid_cap", hint: `cap must be an integer between 1 and ${OPEN_METEO_FREE_TIER_CEILING}` },
       { status: 400 },
     );
   }
@@ -136,13 +161,4 @@ export async function POST(req: Request): Promise<Response> {
   );
 
   return Response.json({ cap, ok: true });
-}
-
-function parseCap(raw: unknown): number | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
-  if (typeof raw === "string") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return null;
 }

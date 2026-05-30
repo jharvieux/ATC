@@ -1,8 +1,10 @@
 // §23.4 — GET/POST /api/admin/integrations/weather contract.
 //
 // Tests pin: auth gate (PlatformAdminError surfaces), GET aggregation
-// (today / month / avg / chart), POST input validation (cap bounds),
-// POST write goes through withPlatformAdminAudit (forensic record).
+// (today / month / avg / chart) wrapped in withPlatformAdminAudit, POST
+// input validation (cap bounds tied to Open-Meteo free-tier ceiling),
+// POST write failure surfaces as a thrown error, POST write goes through
+// withPlatformAdminAudit (forensic record).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -31,46 +33,39 @@ vi.mock("@/lib/auth/assert-platform-admin", async () => {
   };
 });
 
-vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({
-    from(table: string) {
-      if (table === "platform_settings") {
-        return {
-          select: () => ({
-            eq: () => ({
-              maybeSingle: async () => ({
-                data: mocks.capValue === undefined ? null : { value: mocks.capValue },
-                error: mocks.capError,
-              }),
-            }),
-          }),
-        };
-      }
-      if (table === "weather_usage_metrics") {
-        return {
-          select: () => ({
-            gte: () => ({
-              order: async () => ({ data: mocks.historyRows, error: mocks.historyError }),
-            }),
-          }),
-        };
-      }
-      throw new Error(`unexpected table ${table}`);
-    },
-  }),
-}));
-
 vi.mock("@/lib/db/platform-admin-client", () => ({
   withPlatformAdminAudit: vi.fn(async (opts: {
     admin_user_id: string; reason: string; operation: string; reason_detail: string;
   }, fn: (db: unknown, rec: () => void) => Promise<unknown>) => {
     mocks.auditCalls.push(opts);
     const db = {
-      from: () => ({
-        update: () => ({
-          eq: async () => ({ error: mocks.updateError }),
-        }),
-      }),
+      from(table: string) {
+        if (table === "platform_settings") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: mocks.capValue === undefined ? null : { value: mocks.capValue },
+                  error: mocks.capError,
+                }),
+              }),
+            }),
+            update: () => ({
+              eq: async () => ({ error: mocks.updateError }),
+            }),
+          };
+        }
+        if (table === "weather_usage_metrics") {
+          return {
+            select: () => ({
+              gte: () => ({
+                order: async () => ({ data: mocks.historyRows, error: mocks.historyError }),
+              }),
+            }),
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
     };
     return fn(db, () => {});
   }),
@@ -102,21 +97,30 @@ describe("GET /api/admin/integrations/weather", () => {
     expect(res.status).toBe(401);
   });
 
+  it("wraps the read in withPlatformAdminAudit (forensic record per §26.3a)", async () => {
+    const res = await GET(req("GET", undefined, { "x-admin-user-id": "u1" }));
+    expect(res.status).toBe(200);
+    expect(mocks.auditCalls).toHaveLength(1);
+    expect(mocks.auditCalls[0]).toMatchObject({
+      admin_user_id: "u1",
+      reason: "platform_metrics_rollup",
+      operation: "weather_usage_read",
+    });
+  });
+
   it("aggregates today / month / 7d-avg from historical rows", async () => {
     const today = new Date().toISOString().slice(0, 10);
     const month = today.slice(0, 7);
-    // Build 8 rows: 7 prior days + today. 7-day avg uses the 7 prior days.
     mocks.historyRows = Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
       d.setUTCDate(d.getUTCDate() - (7 - i));
       return {
         metric_date: d.toISOString().slice(0, 10),
-        requests_count: 100, // avg 100
+        requests_count: 100,
         last_request_at: null,
       };
     });
     mocks.historyRows.push({ metric_date: today, requests_count: 42, last_request_at: null });
-    // Ensure all rows are in this month so requests_this_month sums them all.
     mocks.historyRows = mocks.historyRows.filter((r) => r.metric_date.startsWith(month));
 
     const res = await GET(req("GET", undefined, { "x-admin-user-id": "u1" }));
@@ -134,6 +138,14 @@ describe("GET /api/admin/integrations/weather", () => {
     mocks.capError = { message: "connection refused" };
     const res = await GET(req("GET", undefined, { "x-admin-user-id": "u1" }));
     expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toBe("cap_read_failed");
+  });
+
+  it("returns 500 when usage read errors", async () => {
+    mocks.historyError = { message: "permission denied" };
+    const res = await GET(req("GET", undefined, { "x-admin-user-id": "u1" }));
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toBe("usage_read_failed");
   });
 });
 
@@ -158,7 +170,7 @@ describe("POST /api/admin/integrations/weather", () => {
     expect(res.status).toBe(400);
   });
 
-  it("rejects cap > 10000 (above Open-Meteo ceiling)", async () => {
+  it("rejects cap > 10000 (above Open-Meteo free-tier ceiling)", async () => {
     const res = await POST(req("POST", { cap: 12000 }, { "x-admin-user-id": "u1" }));
     expect(res.status).toBe(400);
   });
@@ -168,14 +180,22 @@ describe("POST /api/admin/integrations/weather", () => {
     expect(res.status).toBe(400);
   });
 
-  it("writes through withPlatformAdminAudit with the right reason metadata", async () => {
+  it("writes through withPlatformAdminAudit with platform_setting_update reason", async () => {
     const res = await POST(req("POST", { cap: 5500 }, { "x-admin-user-id": "admin-42" }));
     expect(res.status).toBe(200);
     expect(mocks.auditCalls).toHaveLength(1);
     expect(mocks.auditCalls[0]).toMatchObject({
       admin_user_id: "admin-42",
+      reason: "platform_setting_update",
       operation: "weather_daily_request_cap_update",
     });
     expect(mocks.auditCalls[0]?.reason_detail).toContain("5500");
+  });
+
+  it("surfaces DB write failure as a thrown error (fail-loud, not silent)", async () => {
+    mocks.updateError = { message: "row level security violation" };
+    await expect(
+      POST(req("POST", { cap: 5500 }, { "x-admin-user-id": "u1" })),
+    ).rejects.toThrow(/platform_settings.update failed/);
   });
 });
