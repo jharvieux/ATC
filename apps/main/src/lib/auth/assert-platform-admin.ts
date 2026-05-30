@@ -12,20 +12,20 @@
 //      special sentinel "service:bearer" so audit rows can distinguish
 //      service callers from human admins.
 //
-//   2) Supabase user session
-//      Authorization: Bearer <supabase-session-jwt>
-//      The handler verifies the JWT via supabase.auth.getUser() and looks
-//      up the resulting auth_user_id in `platform_admins`. Membership in
-//      that table is the authoritative platform-admin signal.
+//   2) Supabase user session via HttpOnly cookies (§17.x)
+//      createRequestScopedClient reads the session cookies set by
+//      /api/auth/callback; supabase.auth.getUser() verifies the JWT. We
+//      then look the resulting auth_user_id up in `platform_admins` —
+//      membership there is the authoritative platform-admin signal.
 //
 // Throws an instance of PlatformAdminError on any failure, so callers can
 // `try { ... } catch (e) { return e.toResponse(); }`. The error carries the
 // right HTTP status (401 for missing/invalid token, 403 for token-valid-but-
 // not-an-admin, 500 for misconfiguration).
 
-import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
+import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 
 export interface PlatformAdminContext {
   /** auth_user_id from Supabase (human admin), or "service:bearer" for the service-to-service bearer path. */
@@ -57,34 +57,33 @@ export class PlatformAdminError extends Error {
  * Call at the top of every /api/admin/* route handler.
  */
 export async function assertPlatformAdmin(req: Request): Promise<PlatformAdminContext> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    throw new PlatformAdminError(401, "missing_bearer", "Missing Authorization: Bearer header.");
-  }
-  const token = authHeader.slice("Bearer ".length).trim();
-  if (!token) {
-    throw new PlatformAdminError(401, "empty_bearer", "Bearer token is empty.");
-  }
-
   // Path 1 — service-to-service Bearer (RAG cron, etc.). Constant-time
   // compare prevents the recovery-via-timing primitive flagged in audit
   // pass 2, Finding 2.
-  const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-  if (serviceKey && constantTimeEqual(token, serviceKey)) {
-    return { admin_user_id: "service:bearer", role: "service", via: "bearer" };
+  const authHeader = req.headers.get("authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice("Bearer ".length).trim();
+    const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
+    if (token && serviceKey && constantTimeEqual(token, serviceKey)) {
+      return { admin_user_id: "service:bearer", role: "service", via: "bearer" };
+    }
+    // Bearer present but not the service key — fall through to the cookie
+    // session path (the human-admin Bearer-JWT path is gone; cookies are
+    // the authoritative session source).
   }
 
-  // Path 2 — Supabase user session.
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
-    throw new PlatformAdminError(500, "server_misconfigured", "Supabase env vars missing.");
+  // Path 2 — Supabase user session via cookies. Translate the helper's env
+  // error into PlatformAdminError(500) so callers keep the structured shape.
+  let supabase;
+  try {
+    supabase = createRequestScopedClient(req);
+  } catch (e) {
+    throw new PlatformAdminError(
+      500,
+      "server_misconfigured",
+      e instanceof Error ? e.message : "Supabase env vars missing.",
+    );
   }
-
-  const supabase = createClient(supabaseUrl, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
 
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData?.user) {

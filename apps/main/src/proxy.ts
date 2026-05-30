@@ -119,38 +119,35 @@ function applyPaymentGate(
 //
 // Front-door check on /api/admin/*. The request must present one of:
 //   (a) Authorization: Bearer ${MAIN_APP_ADMIN_API_KEY} — service-to-service.
-//   (b) Authorization: Bearer <three-segment JWT> — a Supabase user session,
-//       whose full verification (signature + platform_admins lookup) happens
-//       in the route handler via assertPlatformAdmin().
+//   (b) A Supabase auth cookie (sb-<ref>-auth-token[.N]) — a human admin's
+//       session, fully verified downstream by assertPlatformAdmin() (signature
+//       + platform_admins lookup). Pre-§17.x this was a Bearer JWT in
+//       Authorization; the cookie migration moved the session storage but
+//       not the authority model.
 //
-// Middleware deliberately shape-checks but doesn't verify the JWT — full
-// verification would mean a DB lookup on every admin request. The handler
-// does the authoritative check. Prior unauthenticated x-admin-user-id
-// pattern (2026-05-25 audit Finding 1, confidence 10) is closed by the
-// combination of this gate + assertPlatformAdmin.
+// Middleware deliberately shape-checks but doesn't verify — full verification
+// would mean a DB lookup on every admin request. The prior unauthenticated
+// x-admin-user-id pattern (2026-05-25 audit Finding 1, confidence 10) is
+// closed by the combination of this gate + assertPlatformAdmin.
 function isAdminApiPath(pathname: string): boolean {
   return pathname.startsWith("/api/admin/") || pathname === "/api/admin";
 }
 
-function bearerToken(req: NextRequest): string | null {
+function hasSupabaseAuthCookie(req: NextRequest): boolean {
+  for (const c of req.cookies.getAll()) {
+    if (/^sb-.+-auth-token(\.\d+)?$/.test(c.name)) return true;
+  }
+  return false;
+}
+
+function isAcceptableAdminCredential(req: NextRequest): boolean {
   const auth = req.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  const t = auth.slice("Bearer ".length).trim();
-  return t.length > 0 ? t : null;
-}
-
-function looksLikeJwt(token: string): boolean {
-  // Shape check only — three base64-url segments. Handler verifies signature.
-  const parts = token.split(".");
-  return parts.length === 3 && parts.every((p) => p.length > 0 && /^[A-Za-z0-9_-]+$/.test(p));
-}
-
-function isAcceptableAdminBearer(req: NextRequest): boolean {
-  const token = bearerToken(req);
-  if (!token) return false;
-  const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-  if (serviceKey && token === serviceKey) return true;
-  return looksLikeJwt(token);
+  if (auth?.startsWith("Bearer ")) {
+    const token = auth.slice("Bearer ".length).trim();
+    const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
+    if (token && serviceKey && token === serviceKey) return true;
+  }
+  return hasSupabaseAuthCookie(req);
 }
 
 function adminForbidden(): NextResponse {
@@ -171,7 +168,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
 
   // 0. Admin API gate — runs BEFORE everything else so no later code path
   //    can leak a tenant header or attribution side-effect into an admin call.
-  if (isAdminApiPath(pathname) && !isAcceptableAdminBearer(req)) {
+  if (isAdminApiPath(pathname) && !isAcceptableAdminCredential(req)) {
     return adminForbidden();
   }
 

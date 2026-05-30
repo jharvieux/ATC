@@ -106,7 +106,31 @@ describe("proxy()", () => {
       expect(res.status).toBe(403);
     });
 
-    it("accepts /api/admin/* with a shape-valid three-segment JWT → not 403", async () => {
+    it("accepts /api/admin/* when a Supabase auth cookie is present (§17.x posture)", async () => {
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { cookie: "sb-abcdef-auth-token=opaque-session-blob" },
+        }),
+      );
+      expect(res.status).not.toBe(403);
+    });
+
+    it("accepts /api/admin/* with chunked Supabase auth cookies (sb-<ref>-auth-token.0)", async () => {
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: {
+            cookie: "sb-abcdef-auth-token.0=chunkA; sb-abcdef-auth-token.1=chunkB",
+          },
+        }),
+      );
+      expect(res.status).not.toBe(403);
+    });
+
+    it("rejects /api/admin/* with a Bearer JWT but no auth cookie (legacy human-admin path is gone)", async () => {
       const fakeJwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signaturePart";
       const res = await proxy(
         makeReq({
@@ -115,8 +139,7 @@ describe("proxy()", () => {
           headers: { authorization: `Bearer ${fakeJwt}` },
         }),
       );
-      // Platform domain → next() with headers; not the 403 admin_gate.
-      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(403);
     });
 
     it("accepts /api/admin/* with the service-to-service MAIN_APP_ADMIN_API_KEY", async () => {
