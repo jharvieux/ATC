@@ -108,10 +108,12 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   "help.customer_bug_triggered":       { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "help.customer_bug_completed":       { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "help.issue_closed":                 { kind: "tenant_scoped", payload_shape: tenantScopedShape },
-};
 
-// Silence the unused-variable warning until a platform_admin event ships.
-void platformAdminShape;
+  // §23.6 — Open-Meteo rate-limit gate. Emitted when today's request
+  // counter is at-or-over the configured daily cap. Consumed by the
+  // operator-alert function (PR B).
+  "platform.weather_rate_limit_hit":   { kind: "platform_admin", payload_shape: platformAdminShape },
+};
 
 export class EventNotRegisteredError extends Error {
   constructor(name: string) {
