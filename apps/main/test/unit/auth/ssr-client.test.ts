@@ -10,8 +10,29 @@
 // already-tested parser); only the request-scoped read path uses this parser,
 // so this is the seam under test.
 
-import { describe, it, expect } from "vitest";
-import { parseCookieHeader } from "@/lib/auth/ssr-client";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest, NextResponse } from "next/server";
+
+let capturedCookieAdapter: {
+  getAll?: () => { name: string; value: string }[];
+  setAll?: (
+    cookies: { name: string; value: string; options: Record<string, unknown> }[],
+    headers: Record<string, string>,
+  ) => void;
+} = {};
+
+vi.mock("@supabase/ssr", () => ({
+  createServerClient: (
+    _url: string,
+    _key: string,
+    opts: { cookies: typeof capturedCookieAdapter },
+  ) => {
+    capturedCookieAdapter = opts.cookies;
+    return { __mock: true };
+  },
+}));
+
+import { parseCookieHeader, createMiddlewareClient } from "@/lib/auth/ssr-client";
 
 describe("parseCookieHeader", () => {
   it("returns [] for null / undefined / empty header", () => {
@@ -83,5 +104,71 @@ describe("parseCookieHeader", () => {
       { name: "a", value: "1" },
       { name: "b", value: "2" },
     ]);
+  });
+});
+
+// WHY: createMiddlewareClient sits under proxy.ts and is what keeps cookie
+// sessions alive. Two contract-shaped invariants matter — if either breaks,
+// users get logged out at the 1h access-token expiry mark:
+//   1. setAll must mutate req.cookies so the forwarded Cookie header carries
+//      the rotated access token to the handler on THIS pass (probe-verified
+//      that req.cookies.set propagates into new Headers(req.headers)).
+//   2. applyRefreshedSession must flush the captured cookies AND Supabase's
+//      mandatory no-cache headers onto whichever response proxy.ts returns.
+describe("createMiddlewareClient", () => {
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+    capturedCookieAdapter = {};
+  });
+
+  it("setAll writes rotated cookies onto req.cookies (so cloneAndScrubHeaders forwards the fresh token)", () => {
+    const req = new NextRequest("https://x.example.com/p", {
+      headers: { cookie: "existing=1" },
+    });
+    createMiddlewareClient(req);
+
+    capturedCookieAdapter.setAll!(
+      [{ name: "sb-x-auth-token", value: "rotated", options: {} }],
+      {},
+    );
+
+    // Verified via probe: req.cookies.set propagates into req.headers.
+    const forwarded = new Headers(req.headers).get("cookie") ?? "";
+    expect(forwarded).toContain("sb-x-auth-token=rotated");
+  });
+
+  it("applyRefreshedSession is a no-op when getUser did not refresh (steady state)", () => {
+    const req = new NextRequest("https://x.example.com/p");
+    const { applyRefreshedSession } = createMiddlewareClient(req);
+
+    const res = NextResponse.next();
+    const before = res.headers.get("set-cookie");
+    applyRefreshedSession(res);
+    expect(res.headers.get("set-cookie")).toBe(before);
+  });
+
+  it("applyRefreshedSession flushes captured cookies and the no-cache headers Supabase mandated", () => {
+    const req = new NextRequest("https://x.example.com/p");
+    const { applyRefreshedSession } = createMiddlewareClient(req);
+
+    capturedCookieAdapter.setAll!(
+      [
+        {
+          name: "sb-x-auth-token",
+          value: "rotated",
+          options: { path: "/", httpOnly: true, sameSite: "lax" },
+        },
+      ],
+      { "Cache-Control": "private, no-cache, no-store, must-revalidate, max-age=0" },
+    );
+
+    const res = NextResponse.next();
+    applyRefreshedSession(res);
+
+    expect(res.headers.get("set-cookie")).toContain("sb-x-auth-token=rotated");
+    expect(res.headers.get("cache-control")).toBe(
+      "private, no-cache, no-store, must-revalidate, max-age=0",
+    );
   });
 });

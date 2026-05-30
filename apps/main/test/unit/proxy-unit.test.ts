@@ -13,11 +13,22 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
   getTenantByCustomDomain: vi.fn(),
+  getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
 }));
 
 vi.mock("@/lib/tenancy/resolve-tenant", () => ({
   getTenantBySlug: mocks.getTenantBySlug,
   getTenantByCustomDomain: mocks.getTenantByCustomDomain,
+}));
+
+// Session refresh is exercised separately (proxy-session-refresh.test.ts);
+// here we just want createMiddlewareClient to be a no-op so the gate +
+// tenant-resolution logic this file owns runs untouched.
+vi.mock("@/lib/auth/ssr-client", () => ({
+  createMiddlewareClient: () => ({
+    supabase: { auth: { getUser: mocks.getUser } },
+    applyRefreshedSession: <T>(res: T): T => res,
+  }),
 }));
 
 import { proxy } from "@/proxy";

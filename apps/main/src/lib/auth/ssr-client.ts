@@ -14,11 +14,15 @@
 //     exchange). We capture those writes and flush them onto the route's
 //     NextResponse via applyAuthCookies(res).
 //
-//   createMiddlewareClient(req, res) — read + write, used by proxy.ts. A token
-//     refresh must write the rotated session to BOTH the request (so the
-//     downstream handler sees the fresh token on this pass) and the response
-//     (so the browser stores it). Supabase rotates the refresh token on every
-//     use, so this is the ONLY place that refreshes — without it, sessions die
+//   createMiddlewareClient(req)     — read + write, used by proxy.ts. getUser()
+//     triggers a refresh when the access token has expired; setAll then (a)
+//     writes the rotated cookies back onto req.cookies so the downstream
+//     handler sees the fresh token on THIS pass (NextRequest.cookies mutations
+//     propagate into the Cookie header proxy.ts forwards via NextResponse.next)
+//     and (b) captures them so applyRefreshedSession can flush Set-Cookie +
+//     the no-cache headers onto whichever response the resolution branch picks
+//     (next / redirect / 404). Supabase rotates the refresh token on every
+//     use, so this is the ONLY place that refreshes — without it sessions die
 //     the first time the 1h access token expires.
 //
 //   createRequestScopedClient(req)  — read only. tenantContextFromRequest and
@@ -135,25 +139,40 @@ export function createRouteHandlerClient(req: NextRequest): {
   return { supabase, applyAuthCookies };
 }
 
-export function createMiddlewareClient(
-  req: NextRequest,
-  res: NextResponse,
-): SupabaseClient {
+export function createMiddlewareClient(req: NextRequest): {
+  supabase: SupabaseClient;
+  applyRefreshedSession: <T extends NextResponse>(res: T) => T;
+} {
   const { url, anonKey } = supabaseAnonConfig();
-  return createServerClient(url, anonKey, {
+  const pending: { name: string; value: string; options: CookieOptions }[] = [];
+  const extraHeaders: Record<string, string> = {};
+
+  const supabase = createServerClient(url, anonKey, {
     cookies: {
       getAll: () => req.cookies.getAll(),
       setAll: (cookiesToSet, headers) => {
-        for (const { name, value, options } of cookiesToSet) {
-          // Write to the request so a refresh is visible to the handler this
-          // pass, and to the response so the browser stores the rotated tokens.
-          req.cookies.set(name, value);
-          res.cookies.set(toResponseCookie(name, value, options));
+        for (const cookie of cookiesToSet) {
+          // Forward the rotated token to the handler on this pass: NextRequest
+          // cookie mutations show up in the Cookie header proxy.ts forwards.
+          req.cookies.set(cookie.name, cookie.value);
+          pending.push(cookie);
         }
-        for (const [key, val] of Object.entries(headers)) {
-          res.headers.set(key, val);
-        }
+        Object.assign(extraHeaders, headers);
       },
     },
   });
+
+  // No-op unless getUser() actually refreshed (pending stays empty when the
+  // access token is still valid), so steady-state responses are untouched.
+  const applyRefreshedSession = <T extends NextResponse>(res: T): T => {
+    for (const { name, value, options } of pending) {
+      res.cookies.set(toResponseCookie(name, value, options));
+    }
+    for (const [key, val] of Object.entries(extraHeaders)) {
+      res.headers.set(key, val);
+    }
+    return res;
+  };
+
+  return { supabase, applyRefreshedSession };
 }
