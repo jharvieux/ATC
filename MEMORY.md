@@ -4,6 +4,28 @@ Newest entries on top.
 
 ---
 
+## D-123 — 2026-05-30 — contracts-canary recorder fully implemented; awaits two GitHub secrets (PR #472, issue #471)
+
+**Decision.** The nightly `contracts-canary` workflow now has a real recorder (was a `console.log("TODO")` stub) and a correct workflow harness (was `npm ci` on a pnpm repo, with `continue-on-error: true` swallowing any actual drift signal). Both the recorder script and the workflow file passed clean audits. Operationally green pending two repo secrets: `STRIPE_TEST_SECRET_KEY` and `ANTHROPIC_API_KEY_TEST`.
+
+**Why.** Investigation triggered by a `contracts-canary: all jobs failed` notification revealed three stacked bugs: broken install, fail-loud rule violated by two `continue-on-error: true` lines, and the recorder itself being a stub that would have produced a fake-green canary even if the install were fixed. The user explicitly chose the "full implementation" path knowing the secrets aren't provisioned yet, accepting that the workflow will fail loudly until they land — that's a feature, not a bug, given how long the silent failures persisted.
+
+**What was rejected.**
+- *Disable the workflow until secrets exist.* Considered; would have stopped the daily failure emails immediately. Rejected because shipping the recorder now means the only remaining work is secret provisioning (operator action, not engineering), and disabling would have hidden the remaining gap.
+- *Only fix npm→pnpm + drop continue-on-error.* Considered; was the original scope. Rejected after discovering the recorder was a stub — that path would have produced a green canary that didn't actually check anything.
+- *Anthropic recorder now + Stripe stub.* Considered as the middle path. Rejected by the user.
+- *Use the Stripe SDK in the recorder.* The recorder uses raw `fetch` instead. Reason: the recorder is verifying the wire format Stripe returns; using the SDK would mask drift if Stripe changed an HTTP response field but the SDK still parsed it.
+
+**Related artifacts.**
+- Issue #471 (tracking, closed by PR #472)
+- PR #472 (the fix)
+- Follow-up issue #473 — operator provisioning of `STRIPE_TEST_SECRET_KEY` + `ANTHROPIC_API_KEY_TEST` (instructions in issue body)
+- `scripts/record-contracts.ts` + `scripts/lib/stripe-form-encode.ts` + `scripts/lib/substitute-placeholders.ts`
+- `.github/workflows/contracts-canary.yml`
+- `docs/testing/contract-tests.md` (recorder design + secrets list)
+
+---
+
 ## D-122 — 2026-05-29 — Migrate the session boundary from `Authorization: Bearer` + localStorage to HttpOnly cookies via `@supabase/ssr` (PR #443)
 
 **Decision**: Replace the implicit-flow OAuth + Authorization-Bearer + localStorage session
