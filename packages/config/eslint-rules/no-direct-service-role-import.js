@@ -348,6 +348,11 @@ const ALLOWED_PATH_SUFFIXES = [
   // customer_memories using its own tenantClient via factory; the
   // service-role import here is scoped to enqueue + audit reads.
   "/inngest/extract-memory.ts",
+  // §23.6 — Open-Meteo embarkation forecast helper. Platform-scoped
+  // (no tenant context): reads platform_settings + weather tables and
+  // calls a public free-tier API. Service-role required because
+  // weather_forecast_cache + weather_usage_metrics are RLS deny-all.
+  "/lib/weather/open-meteo.ts",
 ];
 
 function endsWithAllowed(filename) {
