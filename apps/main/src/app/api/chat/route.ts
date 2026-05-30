@@ -28,7 +28,11 @@ import { redactPii } from "@/lib/pii/redact";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { PERSONA_TOOLS } from "@/lib/personas/tools";
 import { runToolUseLoop } from "@/lib/personas/tools/run-tool-use-loop";
-import type { AnthropicTool } from "@/lib/ai/call-wrapper";
+import type {
+  AnthropicTool,
+  AnthropicMessage,
+  AnthropicContentBlockParam,
+} from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
 import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
@@ -678,52 +682,140 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   let postStreamSupervisorFires = 0;
   let streamedAttempts = 0;
 
+  // §9.6 streaming tool-use — stream one model turn to the client with the
+  // per-sentence supervisor applied. Returns the assembled message so the
+  // caller can run the tool-use loop, or signals an early abort (per-sentence
+  // hit → regen) or vendor error (→ fall back). Shared by the initial turn
+  // and the post-tool follow-up so neither duplicates the stream plumbing.
+  type StreamedTurn =
+    | { kind: "ok"; text: string; raw: AnthropicMessage }
+    | { kind: "abort"; hashedTerm: string | undefined }
+    | { kind: "error" };
+
+  const streamTurn = async (
+    sys: string,
+    messages: Array<{ role: "user" | "assistant"; content: string | AnthropicContentBlockParam[] }>,
+  ): Promise<StreamedTurn> => {
+    const abortController = new AbortController();
+    const { textStream, done } = instrumentedClaudeStream({
+      tenant_id: tenantId,
+      conversation_id: conversationId,
+      user_id: userId,
+      model: generationModel,
+      purpose: "chat_main",
+      max_tokens: 1024,
+      system: sys,
+      messages,
+      tools: PERSONA_TOOLS as unknown as AnthropicTool[],
+      signal: abortController.signal,
+    });
+
+    try {
+      for await (const sentence of bufferToSentences(textStream)) {
+        const check = checkSentence(sentence, slurDenyList);
+        if (check.hit) {
+          abortController.abort();
+          // Drain the wrapper's logging path (it rejects `done` on abort).
+          try { await done; } catch { /* expected on abort */ }
+          return { kind: "abort", hashedTerm: check.hashedTerm };
+        }
+        // Append a trailing space — bufferToSentences strips inter-sentence
+        // whitespace, and the client concatenates deltas verbatim.
+        await send({ type: "delta", text: sentence + " " });
+      }
+    } catch {
+      // Vendor failure was already recorded inside the wrapper.
+      return { kind: "error" };
+    }
+
+    try {
+      const finalResult = await done;
+      return { kind: "ok", text: finalResult.text, raw: finalResult.raw };
+    } catch {
+      // Stream looked clean but final-message resolution failed (network blip
+      // after last chunk). Fall back rather than recover from partial state.
+      return { kind: "error" };
+    }
+  };
+
   for (let attempt = 0; attempt < REGEN_HARD_CEILING; attempt++) {
     const sys = extraInstruction ? `${systemPrompt}\n\n${extraInstruction}` : systemPrompt;
 
-    let candidateText: string;
+    let candidateText = "";
 
     if (streamingEnabled) {
       streamedAttempts++;
       // ── BP24 streaming branch — option B UX ──
-      // Stream sentences directly to the client. On per-sentence flag, abort,
-      // send `rewriting`, regen. The done promise still resolves with usage
-      // so cost accounting stays correct even on aborted streams.
-      await send({ type: "delta_start" });
+      // Stream sentences directly to the client. On a per-sentence flag, abort
+      // + regen. §9.6: if the streamed turn emits tool_use blocks, dispatch
+      // them and stream the follow-up reply (single pass, mirroring the non-
+      // streaming branch). The pre-tool preamble already shown is cleared via
+      // `rewriting` so only the post-tool reply is surfaced — matching the
+      // non-streaming branch, where candidate = the follow-up text.
+      const ctxForTools = ctx;
+      let turnMessages: Array<{
+        role: "user" | "assistant";
+        content: string | AnthropicContentBlockParam[];
+      }> = chatHistory;
+      let toolPass = 0;
+      let dispatched: Awaited<ReturnType<typeof runToolUseLoop>> = null;
+      let vendorDown = false;
+      let regen = false;
 
-      const abortController = new AbortController();
-      const { textStream, done } = instrumentedClaudeStream({
-        tenant_id: tenantId,
-        conversation_id: conversationId,
-        user_id: userId,
-        model: generationModel,
-        purpose: "chat_main",
-        max_tokens: 1024,
-        system: sys,
-        messages: chatHistory,
-        signal: abortController.signal,
-      });
-
-      let abortedByPerSentence = false;
-      let perSentenceHashedTerm: string | undefined;
-
-      try {
-        for await (const sentence of bufferToSentences(textStream)) {
-          const check = checkSentence(sentence, slurDenyList);
-          if (check.hit) {
-            abortController.abort();
-            abortedByPerSentence = true;
-            perSentenceFires++;
-            perSentenceHashedTerm = check.hashedTerm;
-            break;
-          }
-          // Append a trailing space — bufferToSentences strips inter-sentence
-          // whitespace, and the client concatenates deltas verbatim.
-          await send({ type: "delta", text: sentence + " " });
+      for (;;) {
+        if (toolPass === 0) {
+          await send({ type: "delta_start" });
+        } else {
+          // Clear the pre-tool preamble on screen, then open a fresh bubble
+          // for the post-tool reply (same sequence the regen path uses).
+          await send({ type: "rewriting" });
+          await send({ type: "delta_start" });
         }
-      } catch (streamErr) {
-        // Vendor failure was already recorded inside the wrapper.
-        void streamErr;
+
+        const turn = await streamTurn(sys, turnMessages);
+        if (turn.kind === "error") {
+          vendorDown = true;
+          break;
+        }
+        if (turn.kind === "abort") {
+          perSentenceFires++;
+          console.warn("[chat-stream] per-sentence supervisor hit", {
+            conversation_id: conversationId,
+            attempt,
+            tool_pass: toolPass,
+            hashed_term: turn.hashedTerm,
+          });
+          regen = true;
+          break;
+        }
+
+        // Clean turn. Single-pass tool-use: only the first turn may dispatch
+        // (a follow-up's own tool_use, if any, is left for a later turn — the
+        // same single-pass contract as the non-streaming branch).
+        if (ctxForTools && toolPass === 0) {
+          const loopOut = await runToolUseLoop({
+            result: { raw: turn.raw },
+            originalMessages: chatHistory,
+            dispatchCtx: {
+              ctx: ctxForTools,
+              db: svc,
+              conversation_id: conversationId,
+              contact_id: conversationContactId,
+            },
+          });
+          if (loopOut) {
+            dispatched = loopOut;
+            turnMessages = loopOut.followUpMessages;
+            toolPass++;
+            continue; // stream the post-tool reply
+          }
+        }
+
+        candidateText = turn.text;
+        break;
+      }
+
+      if (vendorDown) {
         await send({
           type: "delta",
           text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
@@ -733,49 +825,23 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         await close();
         return;
       }
-
-      if (abortedByPerSentence) {
-        // Let the wrapper finish its logging path (it catches the abort and
-        // surfaces it as a rejection on `done`). Cost may be partial.
-        try { await done; } catch { /* expected on abort */ }
-        console.warn("[chat-stream] per-sentence supervisor hit", {
-          conversation_id: conversationId,
-          attempt,
-          hashed_term: perSentenceHashedTerm,
-        });
+      if (regen) {
         await send({ type: "rewriting" });
         extraInstruction = HATE_SPEECH_REGEN_INSTRUCTION;
         continue;
       }
-
-      // Stream completed cleanly. The wrapper's done promise gives us the
-      // canonical text + final usage; trust it over our locally-assembled
-      // string (the wrapper strips non-text content blocks consistently).
-      try {
-        const finalResult = await done;
-        candidateText = finalResult.text;
-      } catch (doneErr) {
-        // Stream looked clean but final-message resolution failed (network
-        // blip after last chunk). Fall back to vendor-down message rather
-        // than trying to recover with partial state.
-        void doneErr;
-        await send({
-          type: "delta",
-          text: "Our AI is temporarily unavailable. Please leave a message and we'll be in touch.",
-        });
-        await send({ type: "supervisor", action: "allow", regens: attempt });
-        await send({ type: "done" });
-        await close();
-        return;
+      if (dispatched) {
+        console.info(
+          `[chat:tool-use:stream] dispatched=${dispatched.dispatchedTools.join(",")} mutated=${dispatched.mutated}`,
+        );
       }
     } else {
       // ── Non-streaming branch ──
       // §9.6 tool-use loop: pass PERSONA_TOOLS; if the response includes
       // tool_use blocks, dispatch them and make a follow-up call with
-      // tool_result blocks attached. Streaming mode does NOT yet support
-      // tools — that's a follow-up since tool_use + delta buffering is
-      // materially harder. Single-pass: if the follow-up itself triggers
-      // another tool_use, that's the supervisor / regen's problem.
+      // tool_result blocks attached. The streaming branch above runs the
+      // same single-pass loop (#421). Single-pass: if the follow-up itself
+      // triggers another tool_use, that's the supervisor / regen's problem.
       try {
         // instrumentedClaudeCall records vendor health + ai_call_log +
         // tenant_usage_metrics increment + state-transition check.
