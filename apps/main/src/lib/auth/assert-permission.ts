@@ -146,8 +146,13 @@ export async function assertPermission(
 
   // §26.3 sensitive-action re-auth check. The access_token now lives in the
   // session cookie; pull it out via getSession() (cheap — cookie parse only,
-  // no network) and decode auth_time. getUser above already verified the
-  // signature for this request, so reading the payload here is safe.
+  // no network) and decode auth_time.
+  //
+  // SAFETY DEPENDS ON CALL ORDER: getSession reads the cookie payload WITHOUT
+  // verifying the JWT signature. We trust the payload only because getUser
+  // above just verified the same token bytes against the auth server in the
+  // same request. Do NOT reorder this block above the getUser call, and do
+  // NOT use getSession in this file for any other purpose.
   if (isSensitiveRoute(pathname)) {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData?.session?.access_token ?? null;

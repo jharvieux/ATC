@@ -32,7 +32,11 @@ vi.mock("@supabase/ssr", () => ({
   },
 }));
 
-import { parseCookieHeader, createMiddlewareClient } from "@/lib/auth/ssr-client";
+import {
+  parseCookieHeader,
+  createMiddlewareClient,
+  createRouteHandlerClient,
+} from "@/lib/auth/ssr-client";
 
 describe("parseCookieHeader", () => {
   it("returns [] for null / undefined / empty header", () => {
@@ -146,6 +150,23 @@ describe("createMiddlewareClient", () => {
     const before = res.headers.get("set-cookie");
     applyRefreshedSession(res);
     expect(res.headers.get("set-cookie")).toBe(before);
+  });
+
+  it("createRouteHandlerClient.applyAuthCookies also flushes the no-cache headers (login responses must not be CDN-cached)", () => {
+    const req = new NextRequest("https://x.example.com/p");
+    const { applyAuthCookies } = createRouteHandlerClient(req);
+
+    capturedCookieAdapter.setAll!(
+      [{ name: "sb-x-auth-token", value: "v", options: { path: "/" } }],
+      { "Cache-Control": "private, no-cache, no-store, must-revalidate, max-age=0" },
+    );
+
+    const res = NextResponse.json({ ok: true });
+    applyAuthCookies(res);
+    expect(res.headers.get("set-cookie")).toContain("sb-x-auth-token=v");
+    expect(res.headers.get("cache-control")).toBe(
+      "private, no-cache, no-store, must-revalidate, max-age=0",
+    );
   });
 
   it("applyRefreshedSession flushes captured cookies and the no-cache headers Supabase mandated", () => {
