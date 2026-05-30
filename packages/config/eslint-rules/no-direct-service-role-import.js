@@ -314,6 +314,8 @@ const ALLOWED_PATH_SUFFIXES = [
   // the service-role bypass restores no broader access than RLS would
   // grant a member.
   "/app/api/user/pending-transfer/route.ts",
+  "/app/api/auth/transfer-session/route.ts",
+  "/app/api/auth/transfer-session/preview/route.ts",
   "/app/api/auth/transfer-session/undo/route.ts",
   // §7.9 — Idempotency-Key middleware: reads/writes the cross-tenant
   // request_idempotency cache (locked down to service_role only via RLS).
