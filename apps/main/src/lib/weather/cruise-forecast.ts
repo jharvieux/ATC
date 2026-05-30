@@ -32,7 +32,7 @@ export interface DailyForecast {
 export async function getCruiseForecast(
   stops: CruiseStop[],
 ): Promise<DailyForecast[]> {
-  const results = await Promise.all(
+  return Promise.all(
     stops.map(async (stop): Promise<DailyForecast> => {
       const f = await getEmbarkationForecast({
         port_id: stop.port_id,
@@ -60,5 +60,4 @@ export async function getCruiseForecast(
       };
     }),
   );
-  return results;
 }

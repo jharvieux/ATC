@@ -4,11 +4,10 @@
 // removed or AI-generated. It prevents the most common avoidable trip-ruining
 // mistakes (passport / medications in checked luggage).
 
-/* eslint-disable @next/next/no-img-element */
-
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 import { CruiseForecastChart } from "./CruiseForecastChart";
+import { DestinationHero } from "./DestinationHero";
 import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 import type { DailyForecast } from "@/lib/weather/cruise-forecast";
 
@@ -45,9 +44,7 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         Tomorrow is the day, {props.customer_name}! 🚢
       </h2>
 
-      {props.destination_image && (
-        <DestinationHero image={props.destination_image} />
-      )}
+      {props.destination_image && <DestinationHero image={props.destination_image} />}
 
       <p>
         Your voyage on the <strong>{props.ship_name}</strong> sets sail tomorrow. Here&rsquo;s
@@ -142,19 +139,6 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         Bon voyage! Smooth seas await. 🌊
       </p>
     </BrandedLayout>
-  );
-}
-
-function DestinationHero(props: { image: DestinationImage }): React.ReactElement {
-  return (
-    <div style={{ margin: "0 0 20px 0", overflow: "hidden", borderRadius: 8 }}>
-      <img
-        src={props.image.url}
-        alt={props.image.alt_text}
-        width="100%"
-        style={{ display: "block", width: "100%", maxHeight: 280, objectFit: "cover" }}
-      />
-    </div>
   );
 }
 

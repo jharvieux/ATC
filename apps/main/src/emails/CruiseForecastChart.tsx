@@ -19,13 +19,15 @@ export interface CruiseForecastChartProps {
   forecast: DailyForecast[];
 }
 
-const TEMP_BAR_MIN_F = 40;   // bar floor; below this the bar starts empty
-const TEMP_BAR_MAX_F = 100;  // bar ceiling
-const TEMP_BAR_PX = 60;
+const TEMP_BAR_MIN_F = 40;       // bar floor; values below clamp to empty
+const TEMP_BAR_MAX_F = 100;      // bar ceiling; values above clamp to full
+const TEMP_CELL_MIN_WIDTH_PX = 60;
 
+// Extracted (not inlined into JSX) because it carries a UTC-forcing
+// trick worth a comment: a date string like "2026-08-28" gets a noon-UTC
+// time appended so the rendered day matches the intent regardless of the
+// renderer's local timezone.
 function dayLabel(dateStr: string): string {
-  // Force UTC interpretation so a date string "2026-08-28" renders as the
-  // 28th regardless of the renderer's local timezone.
   const d = new Date(`${dateStr}T12:00:00Z`);
   return d.toLocaleDateString("en-US", {
     weekday: "short",
@@ -44,6 +46,10 @@ const TEMP_BAR_TRACK_STYLE: React.CSSProperties = {
   overflow: "hidden",
 };
 
+// Extracted (not inlined into JSX) because the clamp-and-position math
+// would obscure the cell layout if mixed in with style props. Always
+// returns a 2%-minimum width so a same-day high/low pair still renders
+// a visible bar.
 function tempBarFillStyle(low: number, high: number): React.CSSProperties {
   const lowPct = Math.max(0, Math.min(1, (low - TEMP_BAR_MIN_F) / (TEMP_BAR_MAX_F - TEMP_BAR_MIN_F)));
   const highPct = Math.max(0, Math.min(1, (high - TEMP_BAR_MIN_F) / (TEMP_BAR_MAX_F - TEMP_BAR_MIN_F)));
@@ -88,7 +94,7 @@ export function CruiseForecastChart(
                   verticalAlign: "top",
                   fontSize: 12,
                   color: "#374151",
-                  minWidth: TEMP_BAR_PX,
+                  minWidth: TEMP_CELL_MIN_WIDTH_PX,
                 }}
               >
                 <div style={{ fontWeight: 700, color: "#1f2937", fontSize: 12 }}>

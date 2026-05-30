@@ -20,7 +20,13 @@ const ALL_REGIONS = [
 ] as const;
 
 describe("destination-images catalog", () => {
-  it("every region in the type union has a catalog entry (null or populated)", () => {
+  // TypeScript already enforces that every DestinationRegion key exists
+  // in the CATALOG (the Record type). This test catches the related but
+  // distinct runtime regression: listRegionImageCoverage walks the
+  // CATALOG via Object.keys and must produce a coverage row for every
+  // region. A future change that filters the coverage list (e.g. "only
+  // return populated entries") would pass typecheck but fail here.
+  it("listRegionImageCoverage produces one row per region in the type union", () => {
     const coverage = listRegionImageCoverage();
     const seen = new Set(coverage.map((c) => c.region));
     for (const region of ALL_REGIONS) {

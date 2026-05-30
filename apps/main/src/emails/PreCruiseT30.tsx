@@ -1,12 +1,8 @@
 // §23.4 — T-30 day pre-cruise email template (Final prep window).
-//
-// The Next.js `<Image />` rule doesn't apply to email templates; clients
-// require raw <img> tags (no JS runtime to optimize).
-
-/* eslint-disable @next/next/no-img-element */
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
+import { DestinationHero } from "./DestinationHero";
 import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 
 export interface PreCruiseT30Props {
@@ -32,16 +28,7 @@ export function PreCruiseT30(props: PreCruiseT30Props): React.ReactElement {
         30 days until the {props.ship_name} sets sail!
       </h2>
 
-      {props.destination_image && (
-        <div style={{ margin: "0 0 20px 0", overflow: "hidden", borderRadius: 8 }}>
-          <img
-            src={props.destination_image.url}
-            alt={props.destination_image.alt_text}
-            width="100%"
-            style={{ display: "block", width: "100%", maxHeight: 280, objectFit: "cover" }}
-          />
-        </div>
-      )}
+      {props.destination_image && <DestinationHero image={props.destination_image} />}
 
       <p>Hi {props.customer_name}, it&rsquo;s crunch time — let&rsquo;s make sure everything is in order.</p>
 

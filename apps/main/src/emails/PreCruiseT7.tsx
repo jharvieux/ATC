@@ -1,13 +1,9 @@
 // §23.4 — T-7 day pre-cruise email template (Almost there!).
-//
-// The Next.js `<Image />` rule doesn't apply to email templates; clients
-// require raw <img> tags (no JS runtime to optimize).
-
-/* eslint-disable @next/next/no-img-element */
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 import { CruiseForecastChart } from "./CruiseForecastChart";
+import { DestinationHero } from "./DestinationHero";
 import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 import type { DailyForecast } from "@/lib/weather/cruise-forecast";
 
@@ -36,16 +32,7 @@ export function PreCruiseT7(props: PreCruiseT7Props): React.ReactElement {
         One week to go — almost there, {props.customer_name}!
       </h2>
 
-      {props.destination_image && (
-        <div style={{ margin: "0 0 20px 0", overflow: "hidden", borderRadius: 8 }}>
-          <img
-            src={props.destination_image.url}
-            alt={props.destination_image.alt_text}
-            width="100%"
-            style={{ display: "block", width: "100%", maxHeight: 280, objectFit: "cover" }}
-          />
-        </div>
-      )}
+      {props.destination_image && <DestinationHero image={props.destination_image} />}
 
       <p>
         Your voyage on the <strong>{props.ship_name}</strong> departs{" "}

@@ -38,6 +38,12 @@ ALTER TABLE public.rag_media_assets
 -- (rag_media_assets has no natural unique constraint on (entity_type,
 -- entity_id, kind); we use a partial unique index just for these
 -- destination_hero rows so the seed is idempotent.)
+--
+-- ON CONFLICT against a partial unique index requires the conflict
+-- predicate to exactly match the index definition (PostgreSQL 9.5+).
+-- Other migrations in this project use ON CONFLICT against regular
+-- unique constraints; this is the first partial-index conflict target,
+-- hence the explicit syntax note.
 
 CREATE UNIQUE INDEX IF NOT EXISTS rag_media_assets_destination_hero_one_per_region
   ON public.rag_media_assets (entity_id)
