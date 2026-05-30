@@ -63,6 +63,9 @@ export const weatherUsageAlert = inngest.createFunction(
       .select("value")
       .eq("key", "weather_daily_request_cap")
       .maybeSingle<PlatformSettingRow>();
+    if (capRes.error) {
+      throw new Error(`weather_daily_request_cap read failed: ${capRes.error.message}`);
+    }
     const cap = parseDailyCap(capRes.data?.value) ?? FALLBACK_DAILY_CAP;
     const threshold = Math.floor((cap * SUSTAINED_THRESHOLD_PCT) / 100);
 

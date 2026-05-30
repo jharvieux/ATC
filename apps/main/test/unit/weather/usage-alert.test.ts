@@ -14,7 +14,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   lastSent: null as string | null,
+  lastSentError: null as { message: string } | null,
   cap: 8000 as unknown,
+  capError: null as { message: string } | null,
   historyRows: [] as Array<{ metric_date: string; requests_count: number }>,
   historyError: null as { message: string } | null,
   upsertCalls: [] as Array<{ key: string; value: unknown }>,
@@ -40,11 +42,17 @@ vi.mock("@/lib/db/service-role-client", () => ({
             eq: (col: string, val: string) => ({
               maybeSingle: async () => {
                 if (val === "weather_usage_alert_last_sent_date") {
+                  if (mocks.lastSentError) {
+                    return { data: null, error: mocks.lastSentError };
+                  }
                   return mocks.lastSent === null
                     ? { data: null, error: null }
                     : { data: { value: mocks.lastSent }, error: null };
                 }
                 if (val === "weather_daily_request_cap") {
+                  if (mocks.capError) {
+                    return { data: null, error: mocks.capError };
+                  }
                   return { data: { value: mocks.cap }, error: null };
                 }
                 return { data: null, error: null };
@@ -93,7 +101,9 @@ function dateNDaysAgo(n: number): string {
 
 beforeEach(() => {
   mocks.lastSent = null;
+  mocks.lastSentError = null;
   mocks.cap = 8000;
+  mocks.capError = null;
   mocks.historyRows = [];
   mocks.historyError = null;
   mocks.upsertCalls = [];
@@ -149,6 +159,27 @@ describe("weather-usage-alert cron", () => {
     ];
     const result = (await (weatherUsageAlert as unknown as () => Promise<{ skipped?: string }>)());
     expect(result.skipped).toBe("already_sent_today");
+    expect(mocks.alertCalls).toHaveLength(0);
+  });
+
+  it("throws (lets Inngest retry) when cap read errors — symmetry with lastSent guard", async () => {
+    mocks.capError = { message: "connection refused" };
+    mocks.historyRows = [
+      { metric_date: dateNDaysAgo(3), requests_count: 9999 },
+      { metric_date: dateNDaysAgo(2), requests_count: 9999 },
+      { metric_date: dateNDaysAgo(1), requests_count: 9999 },
+    ];
+    await expect(
+      (weatherUsageAlert as unknown as () => Promise<unknown>)(),
+    ).rejects.toThrow(/weather_daily_request_cap read failed/);
+    expect(mocks.alertCalls).toHaveLength(0);
+  });
+
+  it("throws when lastSent read errors (don't silently re-alert on retry)", async () => {
+    mocks.lastSentError = { message: "permission denied" };
+    await expect(
+      (weatherUsageAlert as unknown as () => Promise<unknown>)(),
+    ).rejects.toThrow(/weather_usage_alert_last_sent_date read failed/);
     expect(mocks.alertCalls).toHaveLength(0);
   });
 
