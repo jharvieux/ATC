@@ -1,18 +1,25 @@
-# Enforce that every human-authored PR description includes an
-# `## Audit` section produced by the d091-reviewer + pre-pr-reviewer
-# subagents.
+# Enforce that every human-authored PR has been audited by both the
+# d091-reviewer and pre-pr-reviewer subagents — and that the audit
+# reflects the current head commit, not a stale earlier state.
 #
-# This is the Layer-2 forcing function for our local-subagent code review
-# (see CLAUDE.md "Pull requests"). Because only the project maintainer
-# submits PRs (Claude Code sessions), checking that THIS PR's author
-# actually ran the audit is a sufficient proxy for "this PR was audited."
+# Two layers of evidence:
 #
-# What it does:
-#   1. Fetches the PR body.
-#   2. Locates an `## Audit` heading.
-#   3. Confirms the section is non-empty and not a TBD placeholder.
-#   4. Confirms a `Status:` line exists (the subagent's verdict marker).
-#   5. Fails the check if any of the above is missing.
+#   Layer 1 — PR body: `## Audit` block with a Status line. This is the
+#   human-readable summary the maintainer reads when reviewing the PR.
+#
+#   Layer 2 — PR comments: both subagents post their full report as a
+#   PR comment with a stable marker (`<!-- d091-audit:v1 -->` and
+#   `<!-- prepr-audit:v1 -->`). Each comment's createdAt is compared
+#   against the head commit's committedDate, so an audit run BEFORE the
+#   most recent push doesn't pass.
+#
+# Layer 2 is the load-bearing part — Layer 1 alone could be fabricated
+# in the PR body without ever running the subagents. The marker-on-comment
+# scheme isn't unforgeable (any collaborator could post the marker
+# manually), but it does force the maintainer to either invoke the
+# subagent OR consciously type a fake comment — versus the current
+# Layer 1 where pasting text into the body is the path of least
+# resistance.
 #
 # Exemptions:
 #   - dependabot[bot] — version-only PRs, no code logic to review
@@ -120,3 +127,63 @@ jobs:
 
           echo "✓ Audit section present (chars=$CHAR_COUNT)"
           printf '%s' "$SECTION" | head -20
+
+      - name: Verify both subagent comments posted AFTER the latest commit
+        if: steps.bot-check.outputs.is_bot != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Head commit's authored time — what the audits must beat.
+          HEAD_DATE=$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.committer.date')
+          if [ -z "$HEAD_DATE" ]; then
+            echo "::error::Could not resolve committed date for head SHA $HEAD_SHA."
+            exit 1
+          fi
+          echo "Head commit $HEAD_SHA committed at $HEAD_DATE"
+
+          # ISO 8601 timestamps sort lexicographically, so plain string
+          # comparison is correct here (both APIs return UTC `Z` strings).
+          #
+          # `--paginate --slurp` returns one JSON array of pages (each page
+          # is itself an array of comments). `.[][]` flattens to all
+          # comments, then we filter by marker and pick the newest. Slurp
+          # avoids the "jq sees one page at a time" gotcha that would
+          # require an undocumented "comments are returned oldest-first"
+          # assumption.
+          check_marker() {
+            local marker="$1"
+            local name="$2"
+            local newest
+            newest=$(gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
+              | jq -r --arg M "<!-- $marker -->" '[.[][] | select(.body | contains($M))] | sort_by(.created_at) | last | .created_at // empty')
+            if [ -z "$newest" ]; then
+              echo "::error::Missing $name audit comment (marker <!-- $marker -->)."
+              echo ""
+              echo "Run the $name subagent on this PR; it posts the audit as a"
+              echo "comment with that marker. The marker is invisible in the"
+              echo "rendered Markdown but the workflow looks for it in the body."
+              return 1
+            fi
+            if [ "$newest" \< "$HEAD_DATE" ]; then
+              echo "::error::$name audit comment is stale."
+              echo ""
+              echo "Newest $name comment was posted at $newest, but the latest"
+              echo "commit ($HEAD_SHA) was made at $HEAD_DATE. Re-run the"
+              echo "$name subagent so it posts a fresh comment for the current"
+              echo "head."
+              return 1
+            fi
+            echo "✓ $name audit comment posted $newest (>= head $HEAD_DATE)"
+          }
+
+          # Collect both failures so the author sees them together rather
+          # than fix-one-push-fix-the-other.
+          FAILED=0
+          check_marker "d091-audit:v1"  "d091-reviewer"   || FAILED=1
+          check_marker "prepr-audit:v1" "pre-pr-reviewer" || FAILED=1
+          [ "$FAILED" -eq 0 ]
