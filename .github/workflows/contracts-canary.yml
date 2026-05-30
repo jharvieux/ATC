@@ -4,11 +4,15 @@ name: contracts-canary
 # Anthropic APIs, then diffs the new response schema against what's checked
 # in. Opens an issue on schema drift.
 #
-# Failure modes that should produce a noisy issue/notification:
-#   • Install fails (caught by the workflow run failing)
+# Failure modes:
+#   • Install fails → red CI run, GitHub notifies after N consecutive
+#     failures of the scheduled workflow. No drift issue is opened.
 #   • Recorder throws (missing secret, real API error, dependent-resource
-#     orchestration failure)
-#   • Diff finds schema changes (issue opened with the diff body)
+#     orchestration failure) → red CI run, no drift issue. The diff step
+#     is skipped, so the drift-issue conditional (failure() &&
+#     steps.diff.outcome == 'failure') stays false.
+#   • Diff finds schema changes → red CI run AND a `contract-drift` issue
+#     opened with the diff body.
 #
 # What this workflow does NOT do:
 #   • Catch value drift — only key shapes (per docs/testing/contract-tests.md)

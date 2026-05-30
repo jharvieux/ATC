@@ -250,7 +250,11 @@ async function recordStripeFixtures(): Promise<void> {
       try {
         await stripeFetch("DELETE", `/v1/subscriptions/${subId}`);
       } catch (err) {
-        console.warn(
+        // Stranded test-mode subscription. The original error already
+        // propagated; surfacing this as `error` (not `warn`) so log
+        // tailers / Vercel surfaces flag it as a real condition that
+        // accumulates if it recurs nightly.
+        console.error(
           `Stripe cleanup: failed to cancel ${subId}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
@@ -258,12 +262,25 @@ async function recordStripeFixtures(): Promise<void> {
   }
 }
 
+// Every Anthropic fixture under anthropic/chat/ must hit the same chat
+// endpoint. Asserting here makes a future divergence (someone adds a
+// fixture under anthropic/embeddings/ but reuses this recorder) fail
+// loudly with a clear message instead of silently mis-replaying.
+const ANTHROPIC_CHAT_ENDPOINT = "https://api.anthropic.com/v1/messages";
+
 async function recordAnthropicFixtures(): Promise<void> {
   const dir = path.join(FIXTURES_ROOT, "anthropic/chat");
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
   for (const file of files) {
     const relPath = `anthropic/chat/${file}`;
     const fixture = readFixture(relPath);
+    if (fixture.request.method !== "POST" || fixture.request.url !== ANTHROPIC_CHAT_ENDPOINT) {
+      throw new Error(
+        `${relPath}: expected POST ${ANTHROPIC_CHAT_ENDPOINT}, got ` +
+          `${fixture.request.method} ${fixture.request.url}. ` +
+          `Add a new recorder branch if this is intentional.`,
+      );
+    }
     const { status, body: respBody } = await anthropicFetch(fixture.request.body ?? {});
     writeFixture(relPath, {
       ...fixture,
