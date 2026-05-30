@@ -14,22 +14,23 @@ Walked every MEMORY entry from D-118 (first decision after the last sweep) throu
 
 ## Critical-path findings
 
-### §7.1 / §17.1–§17.7 / §26.3 — Auth session boundary rewritten: HttpOnly cookies + PKCE, not `Authorization: Bearer` + localStorage
+### §7.1 / §17.1–§17.4 / §17.7 / §26.3 — Auth session boundary is HttpOnly cookies + PKCE; spec is underspecified on transport
 
-- **Spec says:** §17 describes OAuth with the implicit flow; the client receives an access token and the session is carried as `Authorization: Bearer <token>` with the token persisted in `localStorage`. §7.1 / §26.3 prose assumes the Bearer-header session model when describing how `/api/auth/me`, `assertPermission`, and the platform-admin gate read identity.
-- **Reality (D-122, PR #443):** The entire session boundary migrated to the `@supabase/ssr` cookie-adapter **PKCE** flow. Session bytes live in **HttpOnly cookies** the browser cannot read. The server reads them through three named factory clients (request-scoped read-only, route-handler read+write-capture, middleware refresh). `proxy.ts` calls `supabase.auth.getUser()` on every request and flushes rotated cookies onto every post-refresh response branch. `tenantContextFromRequest` and `assertPermission` keep their `(req: Request)` signatures (so ~147 call sites are untouched) but internally swap createClient+Bearer for `createRequestScopedClient`. The old implicit-flow `#access_token=…` URL-fragment primitive is gone (it was the root cause of the "OAuth%20failed#access_token=…" Google-login bug).
-- **Risk if spec isn't updated:** §17 actively documents the wrong (less-secure, removed) scheme. A future engineer reading §17 would re-introduce the Bearer/localStorage pattern. Security posture in the spec understates the actual XSS-hardening (HttpOnly).
+- **Spec says:** §17 is **light on session transport** — it says only "Supabase Auth handles JWT issuance and refresh" and mentions "cookie" once, without specifying the flow (implicit vs PKCE) or where the session lives. It is underspecified rather than wrong; a reader can't tell from §17 what the session-carrying mechanism is.
+- **Reality (D-122, PR #443):** The session boundary is the `@supabase/ssr` cookie-adapter **PKCE** flow. Session bytes live in **HttpOnly cookies** the browser cannot read. The server reads them through three named factory clients (request-scoped read-only, route-handler read+write-capture, middleware refresh). `proxy.ts` calls `supabase.auth.getUser()` on every request and flushes rotated cookies onto every post-refresh response branch. `tenantContextFromRequest` and `assertPermission` keep their `(req: Request)` signatures (so ~147 call sites are untouched) but internally use `createRequestScopedClient`. (This **replaced** an earlier *implementation* — not a spec'd scheme — that used implicit-flow OAuth, `Authorization: Bearer`, and `localStorage`; the `#access_token=…` URL fragment was the root cause of the "OAuth%20failed#access_token=…" Google-login bug.)
+- **Risk if spec isn't updated:** §17 doesn't capture the actual session mechanism or its XSS-hardening rationale. A future engineer has no spec guidance and could re-introduce a token-in-JS pattern. Note: don't search §17 for "Bearer"/"localStorage" — those terms are NOT in the spec; they describe the pre-D-122 implementation.
 - **Action for spec update:**
-  - **§17.1–§17.3** — rewrite the OAuth/session prose to describe PKCE + HttpOnly cookie sessions via `@supabase/ssr`. Name the three factory clients and the middleware-refresh requirement (Supabase rotates the refresh token on every use, so middleware refresh is mandatory or sessions die at the 1h access-token mark).
-  - **§17.4 / §17.7** — consent renewal + sensitive-action re-auth read the session from cookies now, not a Bearer header.
+  - **§17.1–§17.3** — ADD explicit prose: PKCE + HttpOnly cookie sessions via `@supabase/ssr`. Name the three factory clients and the middleware-refresh requirement (Supabase rotates the refresh token on every use, so middleware refresh is mandatory or sessions die at the 1h access-token mark).
+  - **§17.4 / §17.7** — consent renewal + sensitive-action re-auth read the session from cookies.
   - **§7.1** — `/api/auth/me` returns identity from the cookie session.
   - **§26.3** — the platform-admin gate verifies the Supabase session JWT from cookies, then looks up `platform_admins`.
   - Add a threat-model note: HttpOnly defeats XSS token theft; cookies travel automatically on same-origin fetches.
+  - (§17.5 Document Version Change Flow and §17.6 AI Liability Disclaimer are unaffected — not session mechanics.)
 
-#### Sub-deltas folded into the §17 rewrite
+#### Sub-deltas in the §17 area
 
-- **`/auth/error` page added** (D-121, PR earlier in the same arc): §17 should document the OAuth-failure landing page. The Supabase `state` clobber that broke Google login was also fixed.
-- **Deferred — "return to original page" re-auth → #437.** §17.7 prose describing post-re-auth redirect-to-origin should carry `> **Status (2026-05-29):** Deferred to #437.`
+- **`/auth/error` page added** (D-121, PR #438): §17 should document the OAuth-failure landing page (renders an escaped, 200-char-capped reflected `?message=`). PR #438 also fixed the Supabase `state` clobber that broke Google login.
+- **"Return to original page" re-auth — IMPLEMENTED in #443 (closed #437), not deferred.** D-121 (2026-05-29) originally deferred it to #437 because the old callback never read `state`/`redirect_to`; the cookie migration (PR #443) wired `?next=` honoring through the callback, which closed #437 as completed. §17.7 prose should describe redirect-to-origin as working (via `?next=`), NOT carry a deferral callout.
 - **Deferred — signup / tenant provisioning under the new flow → #441.** Net-new tenant signup has no UI caller today; orthogonal to login.
 - **Deferred — anonymous-session cookie HMAC + HttpOnly hardening → #442.** The third sub-item of #64; needs HMAC infra + a migration plan for already-set unsigned cookies. §11.4 / §24.x anon-session prose should note the hardening is pending.
 
