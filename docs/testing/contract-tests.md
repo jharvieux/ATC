@@ -32,16 +32,38 @@ When the nightly canary opens a drift issue:
    - Commit the updated fixtures alongside the application code change in one PR.
 3. If the change is unexpected — escalate. An unexpected schema change from Stripe or Anthropic may indicate an SDK version change or a breaking API change that needs more investigation.
 
-## Making the canary a hard failure
+## Recorder design (per #471 fix)
 
-The `contracts-canary.yml` workflow runs with `continue-on-error: true` during the rollout period. Once contracts are fully wired up (all Stripe and Anthropic wrapper functions exist and are recorded), flip both `continue-on-error` lines to `false` in `.github/workflows/contracts-canary.yml`. Log this change in `MEMORY.md`.
+`scripts/record-contracts.ts` orchestrates a recording session against real
+APIs. Stripe is dependent-resource (subscription needs a customer + price;
+cancel needs that subscription's id; account_link needs that account's id),
+so the recorder substitutes placeholder ids captured from earlier calls in
+the same session. Anthropic fixtures are independent and recorded in
+parallel-safe sequence.
+
+A Stripe test-mode price is created or reused via
+`lookup_key=contracts_canary_test_price` so the recorder doesn't accumulate
+prices across runs. Customers and Connect accounts are left in test mode
+(no cost, no orchestration cost to clean them up). Subscriptions are
+cancelled at end-of-session to keep the test dashboard tidy.
 
 ## Local commands
 
 ```bash
 # Run contract tests (replay mode — no real API calls):
-npm run test:contracts
+pnpm test:contracts
 
 # Re-record all fixtures against real APIs:
-STRIPE_TEST_SECRET_KEY=sk_test_... ANTHROPIC_API_KEY_TEST=sk-ant-... npm run contracts:record
+STRIPE_TEST_SECRET_KEY=sk_test_... \
+ANTHROPIC_API_KEY_TEST=sk-ant-... \
+pnpm tsx scripts/record-contracts.ts
 ```
+
+## GitHub secrets required for the nightly canary
+
+- `STRIPE_TEST_SECRET_KEY` — Stripe test-mode secret key
+- `ANTHROPIC_API_KEY_TEST` — Anthropic API key, ideally a dedicated test key
+
+If either is missing, the recorder fails at startup and the canary workflow
+fails loudly. That's the desired behavior — silent fail was the bug fixed
+in #471.
