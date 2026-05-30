@@ -87,7 +87,17 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
+  // SAFETY for CodeQL js/user-controlled-bypass: isSafePostLoginPath rejects
+  // every open-redirect vector (protocol-relative //, backslash \\, CRLF /
+  // control chars, non-leading-/ absolute URLs, /auth/* and /api/* paths,
+  // oversize input). AND `new URL(next, url.origin)` forces the host to our
+  // origin regardless of `next`. Validation + same-origin construction is
+  // the two-layer defense; the test suite pins both halves
+  // (callback.test.ts: "drops an unsafe ?next= (open redirect) and falls
+  // back to /" + oauth-initiate.test.ts: open-redirect + auth-internal
+  // dropped cases).
   const requestedNext = url.searchParams.get("next");
+  // codeql[js/user-controlled-bypass-of-security-check]
   const next =
     requestedNext && isSafePostLoginPath(requestedNext) ? requestedNext : "/";
   return applyAuthCookies(

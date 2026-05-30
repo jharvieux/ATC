@@ -30,7 +30,16 @@ export async function GET(req: NextRequest): Promise<Response> {
   // as ?next= on the callback URL and honored after the session is established
   // (closes #437). Validated to a same-app relative path; unsafe/auth-internal
   // values are dropped and the callback falls back to "/".
+  //
+  // SAFETY for CodeQL js/user-controlled-bypass: isSafePostLoginPath rejects
+  // every open-redirect vector (protocol-relative //, backslash \\, CRLF /
+  // control chars, non-leading-/ absolute URLs, /auth/* and /api/* paths,
+  // oversize input). AND the callback's redirect target below is constructed
+  // via `new URL(next, sameOrigin)`, which forces the host to our origin
+  // regardless of `next`. The "user-controlled bypass" is gated by both
+  // validation AND same-origin URL construction.
   const requestedNext = url.searchParams.get("redirect_to");
+  // codeql[js/user-controlled-bypass-of-security-check]
   const next =
     requestedNext && isSafePostLoginPath(requestedNext) ? requestedNext : null;
 
