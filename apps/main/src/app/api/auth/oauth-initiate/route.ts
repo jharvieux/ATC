@@ -11,7 +11,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createRouteHandlerClient } from "@/lib/auth/ssr-client";
-import { isSafePostLoginPath } from "@/lib/auth/safe-redirect";
+import { safeNextFor } from "@/lib/auth/safe-redirect";
 
 const ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"]);
 
@@ -26,25 +26,14 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // Optional post-login destination (e.g. the reauth `return` path). Forwarded
-  // as ?next= on the callback URL and honored after the session is established
-  // (closes #437). Validated to a same-app relative path; unsafe/auth-internal
-  // values are dropped and the callback falls back to "/".
-  //
-  // SAFETY for CodeQL js/user-controlled-bypass: isSafePostLoginPath rejects
-  // every open-redirect vector (protocol-relative //, backslash \\, CRLF /
-  // control chars, non-leading-/ absolute URLs, /auth/* and /api/* paths,
-  // oversize input). AND the callback's redirect target below is constructed
-  // via `new URL(next, sameOrigin)`, which forces the host to our origin
-  // regardless of `next`. The "user-controlled bypass" is gated by both
-  // validation AND same-origin URL construction.
-  const requestedNext = url.searchParams.get("redirect_to");
-  // codeql[js/user-controlled-bypass-of-security-check]
-  const next =
-    requestedNext && isSafePostLoginPath(requestedNext) ? requestedNext : null;
+  // Optional post-login destination (e.g. the reauth `return` path).
+  // Validated by parsing the raw input against our origin and checking
+  // `parsed.origin === url.origin` — see lib/auth/safe-redirect.ts for
+  // why this beats the prior startsWith-shape predicate.
+  const safe = safeNextFor(url.searchParams.get("redirect_to"), url.origin);
 
   const callbackUrl = new URL("/api/auth/callback", url.origin);
-  if (next) callbackUrl.searchParams.set("next", next);
+  if (safe) callbackUrl.searchParams.set("next", safe.path);
 
   const { supabase, applyAuthCookies } = createRouteHandlerClient(req);
 

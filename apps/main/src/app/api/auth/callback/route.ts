@@ -20,7 +20,7 @@ import { createRouteHandlerClient } from "@/lib/auth/ssr-client";
 import { recoverMicrosoftEmail } from "@/lib/auth/microsoft-email-recovery";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import { isSafePostLoginPath } from "@/lib/auth/safe-redirect";
+import { safeNextFor } from "@/lib/auth/safe-redirect";
 
 const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 
@@ -87,22 +87,14 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // SAFETY for CodeQL js/user-controlled-bypass: isSafePostLoginPath rejects
-  // every open-redirect vector (protocol-relative //, backslash \\, CRLF /
-  // control chars, non-leading-/ absolute URLs, /auth/* and /api/* paths,
-  // oversize input). AND `new URL(next, url.origin)` forces the host to our
-  // origin regardless of `next`. Validation + same-origin construction is
-  // the two-layer defense; the test suite pins both halves
-  // (callback.test.ts: "drops an unsafe ?next= (open redirect) and falls
-  // back to /" + oauth-initiate.test.ts: open-redirect + auth-internal
-  // dropped cases).
-  const requestedNext = url.searchParams.get("next");
-  // codeql[js/user-controlled-bypass-of-security-check]
-  const next =
-    requestedNext && isSafePostLoginPath(requestedNext) ? requestedNext : "/";
-  return applyAuthCookies(
-    NextResponse.redirect(new URL(next, url.origin), 302),
-  );
+  // Parse-then-check-origin (see lib/auth/safe-redirect.ts). The parser
+  // — not a startsWith chain — decides the host, so userinfo / fullwidth /
+  // encoded-slash tricks all fail the parsed.origin equality.
+  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
+  const target = safe
+    ? new URL(safe.path, url.origin)
+    : new URL("/", url.origin);
+  return applyAuthCookies(NextResponse.redirect(target, 302));
 }
 
 function errorRedirect(url: URL, message: string): Response {
