@@ -1,27 +1,25 @@
-// §23.6 — Open-Meteo embarkation-port forecast helper.
-//
-// Three things this module does, in order, per call:
-//
-//   1. Read today's count from weather_usage_metrics + the daily cap from
-//      platform_settings. If at-or-over cap, emit a "platform.weather_rate_limit_hit"
-//      event and return null. Cap defaults to 8000 (2000-req headroom under
-//      Open-Meteo's 10000/day free tier).
-//
-//   2. Check weather_forecast_cache for a fresh row keyed on
-//      (port_id, forecast_date). A row counts as fresh if fetched_at is
-//      within CACHE_TTL_HOURS of now. Stale rows are ignored (the next
-//      successful fetch overwrites them via UPSERT).
-//
-//   3. Fetch Open-Meteo, parse, store in cache, increment the counter via
-//      the SECURITY DEFINER `increment_weather_usage()` RPC (atomic ON
-//      CONFLICT … RETURNING). Return the normalized forecast.
+// §23.4 — Open-Meteo embarkation-port forecast helper.
+// Implements the "weather for all stops" line item on the T-1 day pre-cruise
+// email. Spec doesn't dictate provider; operator chose Open-Meteo (free tier:
+// 10000 req/day, no API key, CC-BY 4.0 attribution).
 //
 // FAILURE MODES — all return null so the caller (email-generation) silently
 // omits the weather section rather than failing the email:
-//   - Rate-limit exhausted today
-//   - Open-Meteo HTTP error / timeout
-//   - Response shape unexpected
-//   - DB read/write error (logged, doesn't throw)
+//   - Rate-limit exhausted today (helper emits "platform.weather_rate_limit_hit"
+//     before returning null so operator-alerting can fire)
+//   - Open-Meteo HTTP error / timeout (logged at warn, no throw)
+//   - Response shape unexpected (parse returns null)
+//   - DB read of cap or count fails (treated as deny — see below)
+//   - Cache or counter WRITE fails (logged, swallowed — the forecast we have
+//     in-hand is still good for THIS email; the next call will re-fetch)
+//
+// SECURITY POSTURE
+//   The rate-limit gate fails CLOSED on DB-read error: an unreadable
+//   weather_usage_metrics row makes the helper return null rather than
+//   assume we're under quota. Same for platform_settings — if we can't
+//   read the cap, we deny. Open-Meteo's 10k/day free-tier ceiling is a
+//   real billing event for the operator; over-running it must not be a
+//   single-DB-error away.
 //
 // The cache lives in the main app's Supabase project; the helper uses
 // the service-role client (no tenant context — weather is platform-scoped).
@@ -79,9 +77,22 @@ export async function getEmbarkationForecast(
 ): Promise<WeatherForecast | null> {
   const db = createServiceRoleClient();
 
-  const cap = await readDailyCap(db);
-  const todayCount = await readTodayCount(db);
+  let cap: number;
+  let todayCount: number;
+  try {
+    cap = await readDailyCap(db);
+    todayCount = await readTodayCount(db);
+  } catch (err) {
+    console.warn(
+      `[weather] gate read failed (deny): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
 
+  // TOCTOU note: concurrent email-generation jobs can both pass the cap check
+  // before either increments. The 2000-req headroom under the 10k/day free
+  // tier absorbs small overruns by design. An atomic reserve-row pattern
+  // would close the race; not worth the complexity for a free-tier ceiling.
   if (todayCount >= cap) {
     await inngest.send({
       name: "platform.weather_rate_limit_hit",
@@ -117,7 +128,13 @@ async function readDailyCap(
     .eq("key", "weather_daily_request_cap")
     .maybeSingle<PlatformSettingRow>();
 
-  if (error || !data) return FALLBACK_DAILY_CAP;
+  if (error) {
+    throw new Error(`weather_daily_request_cap read failed: ${error.message}`);
+  }
+  // Row missing entirely is the only path that falls back to the default.
+  // The migration seeds the row, so this is the "fresh DB before migration"
+  // path, not a runtime degradation.
+  if (!data) return FALLBACK_DAILY_CAP;
 
   const raw = data.value;
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
@@ -140,8 +157,11 @@ async function readTodayCount(
     .eq("metric_date", today)
     .maybeSingle<UsageRow>();
 
-  if (error || !data) return 0;
-  return data.requests_count;
+  if (error) {
+    throw new Error(`weather_usage_metrics read failed: ${error.message}`);
+  }
+  // First request of the day: no row yet. Genuinely zero.
+  return data?.requests_count ?? 0;
 }
 
 async function readCache(

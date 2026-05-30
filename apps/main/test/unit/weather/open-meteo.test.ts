@@ -23,8 +23,12 @@ const {
   mockPlatformSettings: vi.fn(),
   mockUsage: vi.fn(),
   mockCacheSelect: vi.fn(),
-  mockCacheUpsert: vi.fn(async () => ({ error: null })),
-  mockRpc: vi.fn(async () => ({ data: 1, error: null })),
+  mockCacheUpsert: vi.fn<
+    () => Promise<{ error: { message: string } | null }>
+  >(async () => ({ error: null })),
+  mockRpc: vi.fn<
+    () => Promise<{ data: number | null; error: { message: string } | null }>
+  >(async () => ({ data: 1, error: null })),
 }));
 
 vi.mock("@/inngest/client", () => ({
@@ -109,6 +113,44 @@ const OPTS = {
   longitude: -80.1918,
   date: "2026-06-10",
 };
+
+describe("fail-closed on DB-read errors", () => {
+  it("returns null without fetching when platform_settings read errors (deny, not 8000 default)", async () => {
+    mockPlatformSettings.mockResolvedValue({
+      data: null,
+      error: { message: "connection refused", code: "PGRST" },
+    });
+    const fetchMock = openMeteoOk(VALID_OPEN_METEO_BODY);
+
+    const out = await getEmbarkationForecast(OPTS);
+
+    expect(out).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("returns null without fetching when weather_usage_metrics read errors", async () => {
+    mockUsage.mockResolvedValue({
+      data: null,
+      error: { message: "permission denied", code: "42501" },
+    });
+    const fetchMock = openMeteoOk(VALID_OPEN_METEO_BODY);
+
+    const out = await getEmbarkationForecast(OPTS);
+
+    expect(out).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("treats missing usage row as zero (first request of the day, NOT a DB error)", async () => {
+    mockUsage.mockResolvedValue({ data: null, error: null });
+    openMeteoOk(VALID_OPEN_METEO_BODY);
+
+    const out = await getEmbarkationForecast(OPTS);
+
+    expect(out).not.toBeNull();
+  });
+});
 
 describe("rate-limit gate", () => {
   it("returns null and emits event when today's count >= cap", async () => {
@@ -211,6 +253,24 @@ describe("Open-Meteo fetch + parse", () => {
 
     expect(out).toBeNull();
     expect(mockCacheUpsert).not.toHaveBeenCalled();
+  });
+
+  it("returns the forecast even when cache upsert fails (best-effort write)", async () => {
+    mockCacheUpsert.mockImplementationOnce(async () => ({ error: { message: "tx aborted" } }));
+    openMeteoOk(VALID_OPEN_METEO_BODY);
+
+    const out = await getEmbarkationForecast(OPTS);
+
+    expect(out?.conditions).toBe("Partly cloudy");
+  });
+
+  it("returns the forecast even when usage increment fails (best-effort write)", async () => {
+    mockRpc.mockImplementationOnce(async () => ({ data: null, error: { message: "rpc unavailable" } }));
+    openMeteoOk(VALID_OPEN_METEO_BODY);
+
+    const out = await getEmbarkationForecast(OPTS);
+
+    expect(out?.conditions).toBe("Partly cloudy");
   });
 
   it("passes lat/lon/date in the URL with imperial units", async () => {

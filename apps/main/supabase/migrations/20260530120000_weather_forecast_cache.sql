@@ -1,4 +1,4 @@
--- §23.6 — weather integration tables (Open-Meteo).
+-- §23.4 — weather integration tables (Open-Meteo).
 --
 -- Two tables + one platform_settings seed:
 --
@@ -44,13 +44,16 @@ CREATE TABLE public.weather_usage_metrics (
 );
 
 -- §6.10 — seed the daily cap. JSONB-encoded number to match the
--- platform_settings.value column type.
+-- platform_settings.value column type. ON CONFLICT lets the migration
+-- re-apply cleanly on a DB that already has the row (e.g., reset to
+-- previous staging snapshot).
 INSERT INTO public.platform_settings (key, value, description)
 VALUES (
   'weather_daily_request_cap',
   '8000'::JSONB,
   'Open-Meteo daily request cap. Free tier is 10000/day; default leaves 2000 headroom.'
-);
+)
+ON CONFLICT (key) DO NOTHING;
 
 -- ── Atomic increment RPC ────────────────────────────────────────────────────
 --

@@ -1,4 +1,4 @@
-// §23.6 — Open-Meteo WMO weather-code → human-readable text.
+// §23.4 — Open-Meteo WMO weather-code → human-readable text.
 //
 // Open-Meteo emits WMO 4677 weather codes (integer) for each forecast day.
 // We surface them in PreCruiseT1 as short phrases. Mapping table is
