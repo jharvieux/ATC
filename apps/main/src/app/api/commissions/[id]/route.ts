@@ -1,13 +1,38 @@
-/** Spec ref: §7.6 — Get commission */
+// §7.6 / §14 — Single commission detail. 404 same shape whether missing
+// or RLS-hidden so cross-tenant existence isn't leaked.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { COMMISSIONS_READ_COLUMNS } from "@/lib/commissions/columns";
 
-export async function GET(req: Request): Promise<Response> {
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
   try {
-    const { ctx } = await assertPermission(req, { resource: "Get commission", action: "get" });
-    void ctx;
-    return Response.json({ todo: "Get commission", spec_section: "§7.6" }, { status: 501 });
+    const { ctx } = await assertPermission(req, {
+      resource: "commissions",
+      action: "read",
+    });
+
+    const { id } = await params;
+    const db = tenantClient(ctx);
+    const { data, error } = await db
+      .from("commissions")
+      .select(COMMISSIONS_READ_COLUMNS)
+      .eq("id", id)
+      .maybeSingle();
+    if (error) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+    if (!data) {
+      // Either doesn't exist or RLS hid a cross-tenant row — same shape
+      // either way; don't leak existence.
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+
+    return Response.json({ commission: data });
   } catch (err) {
     return respondToAuthError(err);
   }

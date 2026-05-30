@@ -59,6 +59,9 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("UserProfile", "read"),
   key("PendingTransfer", "read"),
   key("SessionTransfer", "preview"),
+  // §7.6 — commissions + payouts read endpoints (tenant-scoped via RLS).
+  key("commissions", "read"),
+  key("payouts", "read"),
   // §7.1 — /api/auth/me returns the caller's own identity + consent state.
   key("me", "get"),
 ]);
@@ -110,6 +113,8 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("help_docs", "export"),
   key("help_session", "create"),
   key("help_session", "update"),
+  // §7.6 — manual payout request (tenant-owner / agent op).
+  key("payouts", "request"),
   // Notifications
   key("notifications", "write"),
   // RAG submissions (operational — submit content; approve/reject is owner)
