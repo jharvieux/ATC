@@ -26,11 +26,13 @@ interface Message {
   content: string;
 }
 
+// §17.x — session is in HttpOnly cookies that ride along same-origin fetches;
+// no Bearer to attach. Helper kept so call sites don't churn.
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("sb-access-token") : null;
   const headers = new Headers(init?.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (init?.body) headers.set("Content-Type", "application/json");
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   return fetch(path, { ...init, headers });
 }
 

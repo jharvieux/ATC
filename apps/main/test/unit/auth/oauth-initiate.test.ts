@@ -1,38 +1,53 @@
-// §17.3 — OAuth initiation route.
+// §17.3 — OAuth initiation route (PKCE rewrite, #69).
 //
-// Regression guard for the Google-login failure: the route used to inject its
-// own `state` queryParam (from redirect_to), which clobbered Supabase's
-// PKCE/CSRF state. Supabase then rejected the provider callback with
-// "OAuth state parameter is invalid" and the user 404'd at /auth/error.
-// `state` must be owned by Supabase — the route must never set it.
+// Two contracts pinned here:
+//   1. Regression guard (#438): the route must NEVER set options.queryParams.state
+//      — `state` is Supabase's PKCE/CSRF parameter. Clobbering it made Supabase
+//      reject the provider callback and 404 the user at /auth/error.
+//   2. Post-login redirect (#437): a SAFE same-app `redirect_to` rides the
+//      callback URL as ?next=; unsafe (open-redirect) and auth-internal values
+//      are dropped so login can't be turned into an open redirect or bounced
+//      into the non-existent /auth/callback page.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
 
 const mockSignInWithOAuth = vi.fn();
 
-vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ auth: { signInWithOAuth: mockSignInWithOAuth } }),
+// The route now builds its client via @supabase/ssr through this helper; mock
+// it so we assert the route's logic (provider gate, redirectTo, next) without a
+// real Supabase client. applyAuthCookies is a passthrough — cookie wiring is
+// covered by ssr-client.test.ts.
+vi.mock("@/lib/auth/ssr-client", () => ({
+  createRouteHandlerClient: () => ({
+    supabase: { auth: { signInWithOAuth: mockSignInWithOAuth } },
+    applyAuthCookies: <T>(res: T): T => res,
+  }),
 }));
 
 import { GET } from "@/app/api/auth/oauth-initiate/route";
 
-const ORIGINAL_ENV = { ...process.env };
-
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env = {
-    ...ORIGINAL_ENV,
-    NEXT_PUBLIC_SUPABASE_URL: "https://test.supabase.co",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon",
-  };
   mockSignInWithOAuth.mockResolvedValue({
-    data: { url: "https://test.supabase.co/auth/v1/authorize?provider=google&state=server-issued" },
+    data: {
+      url: "https://test.supabase.co/auth/v1/authorize?provider=google&state=server-issued",
+    },
     error: null,
   });
 });
 
 function get(qs: string): Promise<Response> {
-  return GET(new Request(`https://ai-travelconcierge.com/api/auth/oauth-initiate${qs}`));
+  return GET(
+    new NextRequest(`https://ai-travelconcierge.com/api/auth/oauth-initiate${qs}`),
+  );
+}
+
+function oauthArg(): {
+  provider: string;
+  options?: { redirectTo?: string; queryParams?: Record<string, string> };
+} {
+  return mockSignInWithOAuth.mock.calls[0]?.[0];
 }
 
 describe("GET /api/auth/oauth-initiate", () => {
@@ -51,19 +66,34 @@ describe("GET /api/auth/oauth-initiate", () => {
   it("never overrides Supabase's reserved `state` parameter, even when redirect_to is present", async () => {
     await get("?provider=google&redirect_to=%2Fcrm%2Fbookings");
     expect(mockSignInWithOAuth).toHaveBeenCalledTimes(1);
-    const arg = mockSignInWithOAuth.mock.calls[0]?.[0] as
-      | { provider: string; options?: { queryParams?: Record<string, string> } }
-      | undefined;
-    expect(arg?.provider).toBe("google");
-    expect(arg?.options?.queryParams).toBeUndefined();
+    expect(oauthArg().provider).toBe("google");
+    expect(oauthArg().options?.queryParams).toBeUndefined();
   });
 
   it("points redirectTo at /api/auth/callback on the request origin", async () => {
     await get("?provider=azure");
-    const arg = mockSignInWithOAuth.mock.calls[0]?.[0] as
-      | { options?: { redirectTo?: string } }
-      | undefined;
-    expect(arg?.options?.redirectTo).toBe("https://ai-travelconcierge.com/api/auth/callback");
+    expect(oauthArg().options?.redirectTo).toBe(
+      "https://ai-travelconcierge.com/api/auth/callback",
+    );
+  });
+
+  it("forwards a safe relative redirect_to as ?next= on the callback URL (#437)", async () => {
+    await get("?provider=google&redirect_to=%2Fcrm%2Fbookings");
+    const redirectTo = new URL(oauthArg().options!.redirectTo!);
+    expect(redirectTo.pathname).toBe("/api/auth/callback");
+    expect(redirectTo.searchParams.get("next")).toBe("/crm/bookings");
+  });
+
+  it("drops an open-redirect redirect_to (//evil.com) — no next param", async () => {
+    await get("?provider=google&redirect_to=%2F%2Fevil.com");
+    const redirectTo = new URL(oauthArg().options!.redirectTo!);
+    expect(redirectTo.searchParams.has("next")).toBe(false);
+  });
+
+  it("drops an auth-internal redirect_to (the signup page's legacy /auth/callback value)", async () => {
+    await get("?provider=google&redirect_to=%2Fauth%2Fcallback%3Fflow%3Dcustomer");
+    const redirectTo = new URL(oauthArg().options!.redirectTo!);
+    expect(redirectTo.searchParams.has("next")).toBe(false);
   });
 
   it("302-redirects to the Supabase-issued authorize URL", async () => {
