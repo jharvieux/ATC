@@ -13,9 +13,10 @@
  * Run:
  *   pnpm tsx scripts/render-email-samples.tsx
  *
- * Output:
- *   /tmp/sample-precruise-t{90,30,7,1}.html  (4 files)
- *   /tmp/sample-group-{invitation,broadcast}.html  (2 files)
+ * Output: a unique directory under the OS temp dir (e.g.
+ *   /var/folders/.../email-samples-XXXXXX/sample-{precruise,group}-*.html)
+ * The script prints the directory it wrote to on its last log line —
+ * grab that path to open the files in a browser.
  *
  * Iterating on a single email: comment out the writeFileSync calls you
  * don't need, edit the props, re-run. Or just clone the script and edit
@@ -31,6 +32,8 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { PreCruiseT90 } from "../apps/main/src/emails/PreCruiseT90";
 import { PreCruiseT30 } from "../apps/main/src/emails/PreCruiseT30";
@@ -316,15 +319,20 @@ async function main(): Promise<void> {
     }),
   );
 
-  fs.writeFileSync("/tmp/sample-precruise-t90.html", wrap("Pre-cruise T-90 sample", t90Html));
-  fs.writeFileSync("/tmp/sample-precruise-t30.html", wrap("Pre-cruise T-30 sample", t30Html));
-  fs.writeFileSync("/tmp/sample-precruise-t7.html",  wrap("Pre-cruise T-7 sample",  t7Html));
-  fs.writeFileSync("/tmp/sample-precruise-t1.html",  wrap("Pre-cruise T-1 sample",  t1Html));
-  fs.writeFileSync("/tmp/sample-group-invitation.html", wrap("Group invitation sample", groupInvitationHtml));
-  fs.writeFileSync("/tmp/sample-group-broadcast.html",  wrap("Group broadcast sample",  groupBroadcastHtml));
+  // mkdtempSync creates a unique world-readable directory per run, which
+  // sidesteps the symlink-overwrite class of attack on shared systems
+  // that hardcoded paths under /tmp invite (CodeQL js/file-in-os-temp-dir).
+  // The directory name is logged so the operator can find it.
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "email-samples-"));
 
-  console.log("[samples] wrote /tmp/sample-precruise-t{90,30,7,1}.html");
-  console.log("[samples] wrote /tmp/sample-group-{invitation,broadcast}.html");
+  fs.writeFileSync(path.join(outDir, "sample-precruise-t90.html"), wrap("Pre-cruise T-90 sample", t90Html));
+  fs.writeFileSync(path.join(outDir, "sample-precruise-t30.html"), wrap("Pre-cruise T-30 sample", t30Html));
+  fs.writeFileSync(path.join(outDir, "sample-precruise-t7.html"),  wrap("Pre-cruise T-7 sample",  t7Html));
+  fs.writeFileSync(path.join(outDir, "sample-precruise-t1.html"),  wrap("Pre-cruise T-1 sample",  t1Html));
+  fs.writeFileSync(path.join(outDir, "sample-group-invitation.html"), wrap("Group invitation sample", groupInvitationHtml));
+  fs.writeFileSync(path.join(outDir, "sample-group-broadcast.html"),  wrap("Group broadcast sample",  groupBroadcastHtml));
+
+  console.log(`[samples] wrote 6 HTML files to ${outDir}`);
 }
 
 main().catch((err: unknown) => {

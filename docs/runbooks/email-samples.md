@@ -23,14 +23,16 @@ The T-1 email calls Open-Meteo directly for live Miami weather — no API key re
 pnpm tsx scripts/render-email-samples.tsx
 ```
 
-Output lands in `/tmp/`:
+Output lands in a unique directory under the OS temp dir — the script prints the path on its last log line (e.g. `[samples] wrote 6 HTML files to /var/folders/.../email-samples-aBc123`). Inside that directory:
 
-- `/tmp/sample-precruise-t90.html`
-- `/tmp/sample-precruise-t30.html`
-- `/tmp/sample-precruise-t7.html`
-- `/tmp/sample-precruise-t1.html`
-- `/tmp/sample-group-invitation.html`
-- `/tmp/sample-group-broadcast.html`
+- `sample-precruise-t90.html`
+- `sample-precruise-t30.html`
+- `sample-precruise-t7.html`
+- `sample-precruise-t1.html`
+- `sample-group-invitation.html`
+- `sample-group-broadcast.html`
+
+The unique-per-run directory avoids the symlink-overwrite class of attack that hardcoded `/tmp/foo.html` paths invite on shared systems (CodeQL `js/file-in-os-temp-dir`).
 
 Open any of them in a browser. Each file is self-contained — no external CSS, no external images. The container is centered at 680px with a card-style drop shadow to roughly approximate a Gmail render.
 
