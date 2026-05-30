@@ -2,9 +2,9 @@
 //
 // Spec contract (Build Prompt part-4 §17.4): "the global middleware redirects
 // ANY authenticated request other than /consent, /logout, /legal/* to
-// /consent if pending rows exist". This codebase's auth posture keeps the
-// access token in localStorage rather than cookies, so the gate enforces in
-// assertPermission instead of middleware. These tests verify:
+// /consent if pending rows exist". The session lives in HttpOnly cookies but
+// the consent check needs the authenticated user id (only available after
+// getUser), so the gate enforces in assertPermission. These tests verify:
 //   1. respondToAuthError maps ConsentPendingError to a 403 with the
 //      structured `consent_pending` body.
 //   2. assertPermission throws ConsentPendingError when getConsentPending
@@ -34,8 +34,8 @@ vi.mock("@/lib/db/factories", () => ({
   tenantContextFromRequest: mocks.tenantContextFromRequest,
 }));
 
-vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({
+vi.mock("@/lib/auth/ssr-client", () => ({
+  createRequestScopedClient: () => ({
     auth: { getUser: mocks.getUser },
     from: () => ({
       select: () => ({
@@ -98,10 +98,7 @@ describe("assertPermission — consent gate", () => {
 
   function makeReq(): Request {
     return new Request("https://atc.example/api/contacts", {
-      headers: {
-        authorization: "Bearer fake-token",
-        "x-resolved-tenant-id": "t-1",
-      },
+      headers: { "x-resolved-tenant-id": "t-1" },
     });
   }
 

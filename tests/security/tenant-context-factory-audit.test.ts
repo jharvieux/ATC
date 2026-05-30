@@ -57,7 +57,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
     );
   });
 
-  it("throws when Authorization header is missing entirely", async () => {
+  it("throws when env vars are unset (defensive — verifyEnvAtBoot is the primary gate)", async () => {
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
     const { tenantContextFromRequest } = await import(
       "../../apps/main/src/lib/db/factories"
     );
@@ -65,44 +66,13 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       headers: { "x-resolved-tenant-id": "tenant-uuid-here" },
     });
     await expect(tenantContextFromRequest(req)).rejects.toThrow(
-      /missing or malformed Authorization Bearer/i,
-    );
-  });
-
-  it("throws when Authorization is not a Bearer token", async () => {
-    const { tenantContextFromRequest } = await import(
-      "../../apps/main/src/lib/db/factories"
-    );
-    const req = new Request("https://atc.example/api/x", {
-      headers: {
-        "x-resolved-tenant-id": "tenant-uuid-here",
-        authorization: "Basic abc123",
-      },
-    });
-    await expect(tenantContextFromRequest(req)).rejects.toThrow(
-      /missing or malformed Authorization Bearer/i,
-    );
-  });
-
-  it("throws when env vars are unset (defensive — verifyEnvAtBoot is the primary gate)", async () => {
-    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const { tenantContextFromRequest } = await import(
-      "../../apps/main/src/lib/db/factories"
-    );
-    const req = new Request("https://atc.example/api/x", {
-      headers: {
-        "x-resolved-tenant-id": "tenant-uuid-here",
-        authorization: "Bearer abc",
-      },
-    });
-    await expect(tenantContextFromRequest(req)).rejects.toThrow(
       /Supabase env not configured/i,
     );
   });
 
-  it("throws when the access token does not resolve to an auth user", async () => {
-    vi.doMock("@supabase/supabase-js", () => ({
-      createClient: () => ({
+  it("throws when the cookie session does not resolve to an auth user", async () => {
+    vi.doMock("@/lib/auth/ssr-client", () => ({
+      createRequestScopedClient: () => ({
         auth: { getUser: async () => ({ data: null, error: { message: "invalid jwt" } }) },
         from: () => ({
           select: () => ({
@@ -115,10 +85,7 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       "../../apps/main/src/lib/db/factories"
     );
     const req = new Request("https://atc.example/api/x", {
-      headers: {
-        "x-resolved-tenant-id": "tenant-uuid-here",
-        authorization: "Bearer bogus-token",
-      },
+      headers: { "x-resolved-tenant-id": "tenant-uuid-here" },
     });
     await expect(tenantContextFromRequest(req)).rejects.toThrow(
       /invalid or expired access token/i,
@@ -126,8 +93,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
   });
 
   it("throws when authenticated user has no active membership in the resolved tenant", async () => {
-    vi.doMock("@supabase/supabase-js", () => ({
-      createClient: () => ({
+    vi.doMock("@/lib/auth/ssr-client", () => ({
+      createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
             data: { user: { id: "auth-user-1" } },
@@ -153,10 +120,7 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       "../../apps/main/src/lib/db/factories"
     );
     const req = new Request("https://atc.example/api/x", {
-      headers: {
-        "x-resolved-tenant-id": "tenant-uuid-here",
-        authorization: "Bearer valid-jwt",
-      },
+      headers: { "x-resolved-tenant-id": "tenant-uuid-here" },
     });
     await expect(tenantContextFromRequest(req)).rejects.toThrow(
       /not an active member of the resolved tenant/i,
@@ -164,8 +128,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
   });
 
   it("throws when the user-row lookup itself errors", async () => {
-    vi.doMock("@supabase/supabase-js", () => ({
-      createClient: () => ({
+    vi.doMock("@/lib/auth/ssr-client", () => ({
+      createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
             data: { user: { id: "auth-user-1" } },
@@ -190,14 +154,45 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
       "../../apps/main/src/lib/db/factories"
     );
     const req = new Request("https://atc.example/api/x", {
-      headers: {
-        "x-resolved-tenant-id": "tenant-uuid-here",
-        authorization: "Bearer valid-jwt",
-      },
+      headers: { "x-resolved-tenant-id": "tenant-uuid-here" },
     });
     await expect(tenantContextFromRequest(req)).rejects.toThrow(
       /failed to verify user-tenant membership/i,
     );
+  });
+
+  it("returns the resolved context when the cookie session names an active member (no Bearer required)", async () => {
+    vi.doMock("@/lib/auth/ssr-client", () => ({
+      createRequestScopedClient: () => ({
+        auth: {
+          getUser: async () => ({
+            data: { user: { id: "auth-user-1" } },
+            error: null,
+          }),
+        },
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "u1", status: "active" },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+    const { tenantContextFromRequest } = await import(
+      "../../apps/main/src/lib/db/factories"
+    );
+    const req = new Request("https://atc.example/api/x", {
+      headers: { "x-resolved-tenant-id": "tenant-uuid-here" },
+    });
+    const ctx = await tenantContextFromRequest(req);
+    expect(ctx.tenant_id).toBe("tenant-uuid-here");
+    expect(ctx.source).toEqual({ kind: "http_request", user_id: "auth-user-1" });
   });
 });
 
