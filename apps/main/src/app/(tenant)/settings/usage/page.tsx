@@ -181,11 +181,8 @@ function stateColor(s: string): string {
   return "#dc2626";
 }
 
+// §17.x — session is in HttpOnly cookies that ride along same-origin fetches;
+// no Bearer to attach. Helper kept so call sites don't churn.
 async function authFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
-  const token = typeof window !== "undefined"
-    ? (localStorage.getItem("sb-access-token") ?? "")
-    : "";
-  const headers = new Headers(init?.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  return fetch(input, init);
 }

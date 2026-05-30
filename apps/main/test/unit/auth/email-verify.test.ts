@@ -1,0 +1,171 @@
+// §17.2 — no-email recovery: OTP verify + users-row finalize (#62, #74).
+//
+// Contracts pinned here:
+//   1. Brute-force cap: an attacker with their own valid OAuth session must
+//      not be able to bind their auth identity to a victim's email by
+//      guessing the 6-digit code in a loop. Wrong codes increment attempts;
+//      MAX_OTP_ATTEMPTS triggers immediate lockout.
+//   2. The pending-email cookie is authoritative for which email row to
+//      create — never reads email from the form (the form only carries the
+//      code), so a forged form can't redirect the binding to a different
+//      address.
+//   3. Tenant-domain only: net-new tenant provisioning is deferred to #441,
+//      so on the "platform" sentinel the route skips the upsert but still
+//      completes (session is already established).
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
+
+const mockGetUser = vi.fn();
+const mockUpsert = vi.fn();
+const mockFrom = vi.fn(() => ({ upsert: mockUpsert }));
+
+vi.mock("@/lib/auth/ssr-client", () => ({
+  createRequestScopedClient: () => ({ auth: { getUser: mockGetUser } }),
+}));
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({ from: mockFrom }),
+}));
+
+import { POST } from "@/app/api/auth/microsoft-email-verify/route";
+import { OTP_STORE, MAX_OTP_ATTEMPTS } from "@/lib/auth/otp-store";
+
+const TENANT_ID = "11111111-2222-3333-4444-555555555555";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  OTP_STORE.clear();
+  mockGetUser.mockResolvedValue({
+    data: { user: { id: "auth-user-1" } },
+    error: null,
+  });
+  mockUpsert.mockResolvedValue({ data: null, error: null });
+});
+
+function postReq(
+  code: string,
+  opts: { email?: string; tenant?: string } = {},
+): NextRequest {
+  const form = new URLSearchParams();
+  form.set("code", code);
+  const cookieParts: string[] = [];
+  if (opts.email !== undefined) {
+    cookieParts.push(`_ms_pending_email=${encodeURIComponent(opts.email)}`);
+  }
+  const headers: Record<string, string> = {
+    "content-type": "application/x-www-form-urlencoded",
+    "x-resolved-tenant-id": opts.tenant ?? TENANT_ID,
+  };
+  if (cookieParts.length > 0) headers["cookie"] = cookieParts.join("; ");
+  return new NextRequest("https://tenant.example.com/api/auth/microsoft-email-verify", {
+    method: "POST",
+    body: form.toString(),
+    headers,
+  });
+}
+
+describe("POST /api/auth/microsoft-email-verify", () => {
+  it("on a valid code: upserts the users row with the cookie-pending email and lands on /", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    const res = await POST(postReq("123456", { email: "alice@example.com" }));
+    expect(mockFrom).toHaveBeenCalledWith("users");
+    expect(mockUpsert.mock.calls[0]?.[0]).toEqual({
+      auth_user_id: "auth-user-1",
+      tenant_id: TENANT_ID,
+      email: "alice@example.com",
+      status: "active",
+    });
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+    // The pending-email cookie should be cleared.
+    expect(res.headers.get("set-cookie")).toMatch(/_ms_pending_email=;.*Max-Age=0/);
+    // OTP is consumed.
+    expect(OTP_STORE.has("alice@example.com")).toBe(false);
+  });
+
+  it("on a wrong code: does NOT upsert, increments attempts, lands on /auth/error", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    const res = await POST(postReq("999999", { email: "alice@example.com" }));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+    expect(OTP_STORE.get("alice@example.com")?.attempts).toBe(1);
+  });
+
+  it("after MAX_OTP_ATTEMPTS wrong codes: locks out and deletes the entry (no further upserts even with the right code)", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: MAX_OTP_ATTEMPTS,
+    });
+    const res = await POST(postReq("123456", { email: "alice@example.com" }));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+    expect(OTP_STORE.has("alice@example.com")).toBe(false);
+  });
+
+  it("on an expired code: deletes the entry, no upsert", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() - 1000,
+      attempts: 0,
+    });
+    const res = await POST(postReq("123456", { email: "alice@example.com" }));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+    expect(OTP_STORE.has("alice@example.com")).toBe(false);
+  });
+
+  it("when the pending-email cookie is absent: refuses (cookie is the binding authority, not the form)", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    const res = await POST(postReq("123456"));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+  });
+
+  it("when the form code is not 6 digits: refuses without consulting OTP_STORE or session", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    const res = await POST(postReq("abc", { email: "alice@example.com" }));
+    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+  });
+
+  it("when the cookie session is missing/expired: refuses (auth_user_id must come from a verified session)", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    mockGetUser.mockResolvedValue({ data: null, error: { message: "no session" } });
+    const res = await POST(postReq("123456", { email: "alice@example.com" }));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+  });
+
+  it("on the platform domain: does NOT upsert (provisioning deferred #441), still lands on /", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    const res = await POST(
+      postReq("123456", { email: "alice@example.com", tenant: "platform" }),
+    );
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+});
