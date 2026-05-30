@@ -58,6 +58,9 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("CustomerMemory", "read"),
   key("UserProfile", "read"),
   key("PendingTransfer", "read"),
+  // §7.6 — commissions + payouts read endpoints (tenant-scoped via RLS).
+  key("commissions", "read"),
+  key("payouts", "read"),
 ]);
 
 // AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
@@ -104,6 +107,8 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("help_docs", "export"),
   key("help_session", "create"),
   key("help_session", "update"),
+  // §7.6 — manual payout request (tenant-owner / agent op).
+  key("payouts", "request"),
   // Notifications
   key("notifications", "write"),
   // RAG submissions (operational — submit content; approve/reject is owner)
