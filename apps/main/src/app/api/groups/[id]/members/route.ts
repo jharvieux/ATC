@@ -7,7 +7,6 @@
 
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
@@ -92,7 +91,7 @@ export async function POST(
       return Response.json({ error: insertErr.message }, { status: 500 });
     }
 
-    return NextResponse.json(
+    return Response.json(
       { added: rows.length, invitation_ids: rows.map((r) => r.id) },
       { status: 201 },
     );

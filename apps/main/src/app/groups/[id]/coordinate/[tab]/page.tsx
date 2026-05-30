@@ -157,10 +157,10 @@ function PreviewEmailTab({ groupId: _groupId }: { groupId: string }): React.Reac
         This is how the invitation email will appear to invitees.
       </p>
 
-      {/* The actual broadcast send (POST /api/groups/[id]/broadcast)
-          renders GroupBroadcast through BrandedLayout via renderToStaticMarkup.
-          Mounting the same template here means the coordinator's preview
-          matches the email recipients will receive byte-for-byte. */}
+      {/* Mounts the same GroupBroadcast template the broadcast send uses,
+          so the structural layout matches what recipients will see. The
+          live send fills in real branding + subject/message; here we
+          show placeholder strings. */}
       <div
         style={{
           border: "1px solid #e5e7eb",

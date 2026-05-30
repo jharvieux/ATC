@@ -106,19 +106,27 @@ export async function POST(
       return Response.json({ sent: 0, suppressed: 0, failed: 0, reason: "no_recipients" });
     }
 
-    // Tenant + branding context for BrandedLayout render. sendTenantNotification
-    // loads its own copy for from-address resolution; we pre-load here for the
-    // body render so the visual matches the in-app preview.
-    const { data: tenantRow } = await db
+    // Tenant + branding for BrandedLayout render. sendTenantNotification
+    // loads its own copy for from-address resolution; we pre-load here for
+    // the body render so the visual matches the in-app preview. Fail loud
+    // on either error — sending with default-string identity would mislead
+    // recipients about who they're hearing from.
+    const { data: tenantRow, error: tenantErr } = await db
       .from("tenants")
       .select("legal_name, mailing_address")
       .eq("id", ctx.tenant_id)
       .maybeSingle();
-    const { data: brandingRow } = await db
+    if (tenantErr) {
+      return Response.json({ error: tenantErr.message }, { status: 500 });
+    }
+    const { data: brandingRow, error: brandingErr } = await db
       .from("tenant_branding")
       .select("logo_url, primary_color, secondary_color, accent_color, slogan")
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
+    if (brandingErr) {
+      return Response.json({ error: brandingErr.message }, { status: 500 });
+    }
     const tenant = (tenantRow ?? null) as TenantRow | null;
     const branding = (brandingRow ?? null) as BrandingRow | null;
 
@@ -127,9 +135,12 @@ export async function POST(
     const groupName = [group.cruise_line, group.ship_name].filter(Boolean).join(" — ") ||
       "Your cruise";
 
-    // Render once per recipient because unsubscribe_url is recipient-specific.
-    // Token-style unsubscribe is part of a separate effort — for now use a
-    // placeholder that resolves to the recipient's settings page.
+    // Token-style unsubscribe is a separate effort — for now use an
+    // absolute URL to the recipient's settings page. Convention with
+    // every other outbound email in this codebase: absolute href so
+    // email-client base resolution doesn't break the link.
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+    const unsubscribeUrl = `${baseUrl}/settings/notifications`;
     const { renderToStaticMarkup } = await import("react-dom/server");
 
     let sent = 0;
@@ -141,7 +152,7 @@ export async function POST(
           branding: branding ?? {},
           tenant_legal_name,
           tenant_business_address,
-          unsubscribe_url: "/settings/notifications",
+          unsubscribe_url: unsubscribeUrl,
           subject,
           message,
           group_name: groupName,

@@ -52,52 +52,10 @@ vi.mock("@/lib/groups/invitation-token", () => ({
   generateToken: (id: string) => `tok-${id.slice(0, 8)}`,
 }));
 
-vi.mock("@/lib/db/tenant-client", () => ({
-  tenantClient: () => ({
-    from: (table: string) => {
-      if (table === "groups") {
-        return {
-          select: () => ({
-            eq: () => ({ maybeSingle: mocks.groupMaybeSingle }),
-          }),
-        };
-      }
-      if (table === "invitations") {
-        return {
-          select: () => ({
-            eq: () => ({
-              // members route's POST does .eq(group_id) only
-              then: (resolve: (v: unknown) => unknown) =>
-                mocks.membersBranch().then(resolve),
-              // broadcast route's chain is .eq(group_id).eq(status='accepted')
-              eq: () => ({
-                then: (resolve: (v: unknown) => unknown) =>
-                  mocks.membersBranch().then(resolve),
-              }),
-            }),
-          }),
-          insert: (rows: unknown) => mocks.invitationsInsert(rows),
-        };
-      }
-      if (table === "tenants") {
-        return {
-          select: () => ({
-            eq: () => ({ maybeSingle: mocks.tenantsMaybeSingle }),
-          }),
-        };
-      }
-      // tenant_branding
-      return {
-        select: () => ({
-          eq: () => ({ maybeSingle: mocks.brandingMaybeSingle }),
-        }),
-      };
-    },
-  }),
-}));
-
-// Detail route reads invitations differently — for that we need a separate
-// mock factory. The branch above's invitationsBranch is used by detail.
+// One tenantClient mock. The invitations branch terminal handles both:
+//   - detail's `.select("status").eq("group_id", id)` → invitationsBranch
+//   - broadcast/members `.select(...).eq("group_id", id).eq("status", ...)` →
+//     membersBranch (one extra .eq() in the chain).
 vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
     from: (table: string) => {
@@ -390,5 +348,14 @@ describe("POST /api/groups/[id]/broadcast", () => {
   it("rejects empty/oversize body fields via zod", async () => {
     const res = await BROADCAST_POST(postReq({ subject: "", message: "" }), PARAMS);
     expect(res.status).toBe(400);
+  });
+
+  it("propagates AuthForbidden (403) when assertPermission denies the broadcast action", async () => {
+    const { AuthForbidden } = await import("@/lib/auth/assert-permission");
+    mocks.assertPermission.mockRejectedValue(
+      new AuthForbidden("groups", "broadcast", "viewer"),
+    );
+    const res = await BROADCAST_POST(postReq({ subject: "x", message: "y" }), PARAMS);
+    expect(res.status).toBe(403);
   });
 });
