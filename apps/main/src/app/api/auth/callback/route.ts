@@ -1,38 +1,45 @@
-// §17.1 / §17.2 / §17.3 — OAuth callback handler.
+// §17.1 / §17.2 / §17.3 — OAuth callback handler (PKCE).
 //
-// Handles PKCE code exchange for Google, Microsoft (azure), and Facebook.
-// Apple is explicitly deferred (§17.1).
+// Completes the PKCE code exchange via @supabase/ssr: reads the code_verifier
+// cookie that oauth-initiate set, then writes the HttpOnly session cookies
+// onto the redirect (applyAuthCookies) so the browser carries a real
+// server-side session. The prior implicit-flow client returned tokens in the
+// URL fragment and never established a session (the #access_token=... bug).
 //
-// After exchange: resolves the Microsoft no-email chain (§17.2),
-// upserts the public.users row, then redirects to:
-//   - /signup/email-prompt  when Microsoft yields no email
-//   - /                     otherwise (consent check is client-side)
+// After a successful exchange:
+//   - Microsoft no-email chain (§17.2): if azure yields no usable email, stash
+//     the provider token in a short cookie and send to /signup/email-prompt.
+//   - On a TENANT domain (x-resolved-tenant-id is a UUID) upsert the
+//     public.users membership row so the user can transact. On the PLATFORM
+//     domain the resolved id is the "platform" sentinel — net-new tenant
+//     provisioning is deferred (#441), so we only establish the session.
+//   - Redirect to the validated ?next= (forwarded by oauth-initiate) or "/".
 
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse, type NextRequest } from "next/server";
+import { createRouteHandlerClient } from "@/lib/auth/ssr-client";
 import { recoverMicrosoftEmail } from "@/lib/auth/microsoft-email-recovery";
-import { tenantContextFromRequest } from "@/lib/db/factories";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { isSafePostLoginPath } from "@/lib/auth/safe-redirect";
 
-export async function GET(req: Request): Promise<Response> {
+const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
+
+export async function GET(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  const error = url.searchParams.get("error");
+  const oauthError = url.searchParams.get("error");
 
-  if (error || !code) {
+  if (oauthError || !code) {
     const desc = url.searchParams.get("error_description") ?? "OAuth failed";
-    return redirectTo(req, `/auth/error?message=${encodeURIComponent(desc)}`);
+    return errorRedirect(url, desc);
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const supabase = createClient(supabaseUrl, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const { supabase, applyAuthCookies } = createRouteHandlerClient(req);
 
-  const { data, error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error: exchangeErr } =
+    await supabase.auth.exchangeCodeForSession(code);
   if (exchangeErr || !data.session) {
-    return redirectTo(req, `/auth/error?message=${encodeURIComponent(exchangeErr?.message ?? "Session exchange failed")}`);
+    return errorRedirect(url, exchangeErr?.message ?? "Session exchange failed");
   }
 
   const session = data.session;
@@ -40,38 +47,62 @@ export async function GET(req: Request): Promise<Response> {
   const provider = authUser.app_metadata?.provider as string | undefined;
   let email: string | null = authUser.email ?? null;
 
-  // §17.2 — Microsoft no-email recovery chain.
+  // §17.2 — Microsoft no-email recovery chain. The Graph calls need the
+  // provider token (Microsoft's), not the Supabase JWT; fall back defensively.
   if (provider === "azure") {
-    const accessToken = (session.provider_token as string | undefined) ?? session.access_token;
-    email = await recoverMicrosoftEmail(email, accessToken);
+    const graphToken =
+      (session.provider_token as string | undefined) ?? session.access_token;
+    email = await recoverMicrosoftEmail(email, graphToken);
     if (!email) {
-      // Send user to email-prompt page; carry the access token in a short cookie.
-      const headers = new Headers({ Location: "/signup/email-prompt" });
-      headers.set(
-        "Set-Cookie",
-        `_ms_session=${session.access_token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900`,
+      // Auth succeeded; we just lack an email. Establish the session AND carry
+      // a short marker so /signup/email-prompt can finalize the users row.
+      const res = NextResponse.redirect(
+        new URL("/signup/email-prompt", url.origin),
+        302,
       );
-      return new Response(null, { status: 302, headers });
+      res.cookies.set({
+        name: "_ms_session",
+        value: session.access_token,
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        maxAge: 900,
+      });
+      return applyAuthCookies(res);
     }
   }
 
-  // Upsert public.users row for the resolved tenant context.
-  try {
-    const ctx = await tenantContextFromRequest(req);
+  // Membership upsert — tenant domains only. On the platform domain the
+  // resolved id is the "platform" sentinel; provisioning a net-new tenant is
+  // deferred (#441) and the session is still established below.
+  const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
+  if (tenantId && tenantId !== "platform") {
     const svc = createServiceRoleClient();
-    await safeAwait(svc.from("users").upsert(
-      { auth_user_id: authUser.id, tenant_id: ctx.tenant_id, email: email ?? "", status: "active" },
-      { onConflict: "auth_user_id,tenant_id", ignoreDuplicates: false },
-    ), "users.upsert");
-  } catch {
-    // Non-fatal: tenant context may not resolve from this request's origin;
-    // user row creation falls back to the signup flow client-side.
+    await safeAwait(
+      svc.from("users").upsert(
+        {
+          auth_user_id: authUser.id,
+          tenant_id: tenantId,
+          email: email ?? "",
+          status: "active",
+        },
+        { onConflict: "auth_user_id,tenant_id", ignoreDuplicates: false },
+      ),
+      "auth.callback.users.upsert",
+    );
   }
 
-  return redirectTo(req, "/");
+  const requestedNext = url.searchParams.get("next");
+  const next =
+    requestedNext && isSafePostLoginPath(requestedNext) ? requestedNext : "/";
+  return applyAuthCookies(
+    NextResponse.redirect(new URL(next, url.origin), 302),
+  );
 }
 
-function redirectTo(req: Request, path: string): Response {
-  const base = new URL(req.url);
-  return Response.redirect(`${base.protocol}//${base.host}${path}`, 302);
+function errorRedirect(url: URL, message: string): Response {
+  const target = new URL("/auth/error", url.origin);
+  target.searchParams.set("message", message);
+  return NextResponse.redirect(target, 302);
 }
