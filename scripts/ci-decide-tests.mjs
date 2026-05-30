@@ -123,4 +123,10 @@ if (candidates.length === 0) {
 
 // Vitest's `related` subcommand accepts source files; it computes the
 // affected test files from its dependency graph.
-emit("affected", `affected by ${candidates.length} source file(s)`, candidates.join(" "));
+// Single-quote each path so paths with shell-special chars like
+// `(tenant)` (Next.js route groups) survive bash splat in the workflow.
+emit(
+  "affected",
+  `affected by ${candidates.length} source file(s)`,
+  candidates.map((p) => `'${p.replace(/'/g, "'\\''")}'`).join(" "),
+);
