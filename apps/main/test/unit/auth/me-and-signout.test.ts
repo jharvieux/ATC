@@ -145,6 +145,33 @@ describe("GET /api/auth/me", () => {
     const res = await ME_GET(meReq());
     expect(res.status).toBe(401);
   });
+
+  it("propagates AuthForbidden to respondToAuthError as 403 (RBAC denial visible)", async () => {
+    const { AuthForbidden } = await import("@/lib/auth/assert-permission");
+    mocks.assertPermission.mockRejectedValue(new AuthForbidden("me", "get", "viewer"));
+    const res = await ME_GET(meReq());
+    expect(res.status).toBe(403);
+  });
+
+  it("fails loud (500) when the users profile lookup returns a DB error — does NOT mask as null profile", async () => {
+    mocks.assertPermission.mockResolvedValue({
+      ctx: { tenant_id: TENANT_ID, source: { kind: "http_request", user_id: "auth-3" } },
+      user: {
+        id: "user-row-3",
+        auth_user_id: "auth-3",
+        tenant_id: TENANT_ID,
+        status: "active",
+        role: "tenant_owner",
+      },
+    });
+    mocks.usersMaybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: "connection refused", code: "08006", hint: null, details: null },
+    });
+    const res = await ME_GET(meReq());
+    // respondToAuthError catches the rethrown generic error and surfaces 500.
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("POST /api/auth/signout", () => {
