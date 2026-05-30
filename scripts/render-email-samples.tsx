@@ -42,6 +42,8 @@ import { PreCruiseT1, type PortInfo } from "../apps/main/src/emails/PreCruiseT1"
 import { GroupInvitation } from "../apps/main/src/emails/GroupInvitation";
 import { GroupBroadcast } from "../apps/main/src/emails/GroupBroadcast";
 import { wmoCodeToText } from "../apps/main/src/lib/weather/wmo-codes";
+import { getDestinationImage } from "../apps/main/src/lib/cruise-regions/destination-images";
+import type { DailyForecast } from "../apps/main/src/lib/weather/cruise-forecast";
 
 // ── Sample tenant + customer + cruise ────────────────────────────────────────
 
@@ -61,11 +63,27 @@ const SHIP = "Norwegian Bliss";
 const CRUISE_LINE = "Norwegian Cruise Line";
 const CUSTOMER = "Jordan";
 
-// Miami is the embarkation port for the sample NCL Bliss itinerary
-// (PortMiami, Terminal B). These coords feed the live Open-Meteo call
-// that produces the T-1 weather summary.
-const MIAMI_LAT = 25.7617;
-const MIAMI_LON = -80.1918;
+// Full sample itinerary: 7-night NCL Bliss Western Caribbean from Miami.
+// Each stop is one cruise day. The coords are real (used live by
+// Open-Meteo for the T-7 / T-1 multi-day forecast chart). At-sea days
+// use lat/lon roughly midway between the bracketing ports so the
+// open-water forecast is plausible rather than off-coast wrong.
+interface SampleStop {
+  port_id: string;
+  port_name: string;
+  latitude: number;
+  longitude: number;
+  day_offset: number; // days from "today" — drives the live Open-Meteo call
+}
+const CRUISE_STOPS: SampleStop[] = [
+  { port_id: "miami",        port_name: "Miami, FL",       latitude: 25.7617, longitude: -80.1918, day_offset: 0 },
+  { port_id: "at-sea-day-2", port_name: "At sea",          latitude: 22.5,    longitude: -82.0,    day_offset: 1 },
+  { port_id: "roatan",       port_name: "Roatán",          latitude: 16.3,    longitude: -86.6,    day_offset: 2 },
+  { port_id: "harvest-caye", port_name: "Harvest Caye",    latitude: 16.1,    longitude: -88.3,    day_offset: 3 },
+  { port_id: "costa-maya",   port_name: "Costa Maya",      latitude: 18.7,    longitude: -87.7,    day_offset: 4 },
+  { port_id: "cozumel",      port_name: "Cozumel",         latitude: 20.5,    longitude: -86.9,    day_offset: 5 },
+  { port_id: "at-sea-day-7", port_name: "At sea",          latitude: 23.0,    longitude: -83.5,    day_offset: 6 },
+];
 
 const COMPANION_PAGE = "https://anchorcompass.example.com/c/sample-token";
 
@@ -78,18 +96,14 @@ interface WeatherSummary {
   conditions: string;
 }
 
-async function fetchMiamiWeather(): Promise<WeatherSummary | null> {
-  // SAILING_DATE is ~90 days out for the sample story, but Open-Meteo
-  // only forecasts 16 days ahead. We pull +7 days from "now" so the
-  // T-1 sample exercises a real forecast response with realistic values
-  // (high/low/precip/code) — the prose around it frames the date.
-  const target = new Date();
-  target.setUTCDate(target.getUTCDate() + 7);
-  const dateStr = target.toISOString().slice(0, 10);
-
+async function fetchPortWeather(
+  latitude: number,
+  longitude: number,
+  dateStr: string,
+): Promise<WeatherSummary | null> {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
-  url.searchParams.set("latitude", String(MIAMI_LAT));
-  url.searchParams.set("longitude", String(MIAMI_LON));
+  url.searchParams.set("latitude", String(latitude));
+  url.searchParams.set("longitude", String(longitude));
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode");
   url.searchParams.set("temperature_unit", "fahrenheit");
   url.searchParams.set("precipitation_unit", "inch");
@@ -124,29 +138,49 @@ async function fetchMiamiWeather(): Promise<WeatherSummary | null> {
   }
 }
 
-function renderWeatherSummary(w: WeatherSummary | null): string | null {
-  if (!w) return null;
-  const precipNote =
-    w.precipitation_in > 0.05
-      ? ` Pack a light rain layer — about ${w.precipitation_in.toFixed(2)}" of rain expected.`
-      : " Skies look dry — sunscreen and a hat are your friends.";
-  return (
-    `Miami forecast for embarkation: ${w.conditions.toLowerCase()}, ` +
-    `high ${w.high_f}°F / low ${w.low_f}°F.${precipNote}`
+// Multi-stop cruise forecast for the T-7 / T-1 chart. Each stop's date is
+// "now + day_offset" so the chart shows real forecasts within Open-Meteo's
+// 16-day horizon, regardless of when the sample is regenerated.
+async function fetchCruiseForecast(): Promise<DailyForecast[]> {
+  const today = new Date();
+  const result = await Promise.all(
+    CRUISE_STOPS.map(async (stop): Promise<DailyForecast> => {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() + stop.day_offset);
+      const dateStr = d.toISOString().slice(0, 10);
+      const w = await fetchPortWeather(stop.latitude, stop.longitude, dateStr);
+      return w
+        ? {
+            date: dateStr,
+            port_name: stop.port_name,
+            high_f: w.high_f,
+            low_f: w.low_f,
+            precipitation_in: w.precipitation_in,
+            conditions: w.conditions,
+          }
+        : {
+            date: dateStr,
+            port_name: stop.port_name,
+            high_f: null,
+            low_f: null,
+            precipitation_in: null,
+            conditions: null,
+          };
+    }),
   );
+  return result;
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const weather = await fetchMiamiWeather();
-  if (!weather) {
-    console.warn("[samples] Open-Meteo fetch failed; T-1 sample will omit weather section.");
-  } else {
-    console.log(
-      `[samples] Miami forecast: ${weather.conditions}, ${weather.low_f}°F / ${weather.high_f}°F, ${weather.precipitation_in}" precip`,
-    );
-  }
+  const cruiseForecast = await fetchCruiseForecast();
+  const populated = cruiseForecast.filter((d) => d.high_f !== null).length;
+  console.log(
+    `[samples] live Open-Meteo forecast: ${populated}/${cruiseForecast.length} stops populated`,
+  );
+
+  const caribbeanImage = getDestinationImage("caribbean");
 
   const t90Html = renderToStaticMarkup(
     React.createElement(PreCruiseT90, {
@@ -155,6 +189,7 @@ async function main(): Promise<void> {
       ship_name: SHIP,
       cruise_line: CRUISE_LINE,
       sailing_date: SAILING_DATE,
+      destination_image: caribbeanImage,
       ports: ["Miami, FL", "Roatán, Honduras", "Harvest Caye, Belize", "Costa Maya, Mexico", "Cozumel, Mexico"],
       documentation_reminder:
         "Quick check — is your passport valid through February 2027? Most cruise lines require six months of validity past your return date. If you're renewing, allow 10–13 weeks for routine processing.",
@@ -181,6 +216,7 @@ async function main(): Promise<void> {
       customer_name: CUSTOMER,
       ship_name: SHIP,
       sailing_date: SAILING_DATE,
+      destination_image: caribbeanImage,
       reservation_reminders: [
         "Book Cagney's Steakhouse for embarkation night — they sell out 2 weeks before sailing.",
         "Reserve the Mandara Spa Thermal Suite pass for at-sea days (about $40/day vs $60 onboard).",
@@ -210,6 +246,8 @@ async function main(): Promise<void> {
       customer_name: CUSTOMER,
       ship_name: SHIP,
       sailing_date: SAILING_DATE,
+      destination_image: caribbeanImage,
+      cruise_forecast: cruiseForecast,
       packing_checklist: [
         "Passport (valid through Feb 2027) + 2 photocopies in separate bags",
         "Boarding pass printed AND on your phone",
@@ -245,9 +283,15 @@ async function main(): Promise<void> {
       layout: SAMPLE_LAYOUT,
       customer_name: CUSTOMER,
       ship_name: SHIP,
+      destination_image: caribbeanImage,
       departure_port: {
         port_name: "PortMiami, FL",
         official_url: "https://www.miamidade.gov/portmiami/",
+        terminal_addresses: [
+          { terminal: "Terminal B (NCL)", address: "1015 N Cruise Blvd, Miami, FL 33132" },
+        ],
+        parking_info:
+          "Cruise Parking Garage on-site: $22/day. Pre-payment available via the PortMiami app.",
         transit_dropoff_info:
           "Uber/Lyft drop-off zone is on the east side of Terminal B. Allow 20 min from the airport in mid-morning, 35+ in afternoon.",
         arrival_advice:
@@ -257,7 +301,7 @@ async function main(): Promise<void> {
         "Tomorrow night you're at sea heading south. First port is Roatán on Day 3. Once you're aboard, the Cruise Director's daily program lands in your cabin — that has the disembarkation time and shuttle details for the Mahogany Bay excursion you booked.",
       day_of_expectations:
         "Check-in at Terminal B → security → onboard photo → drop your carry-on at your cabin (or with the porter if cabins aren't ready) → muster drill notification arrives in your cabin TV or app, complete it before sail-away → top deck for the sail-away party.",
-      weather_summary: renderWeatherSummary(weather),
+      cruise_forecast: cruiseForecast,
       companion_page_url: COMPANION_PAGE,
     }),
   );

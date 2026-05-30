@@ -1,14 +1,25 @@
 // §23.4 — T-7 day pre-cruise email template (Almost there!).
- 
+//
+// The Next.js `<Image />` rule doesn't apply to email templates; clients
+// require raw <img> tags (no JS runtime to optimize).
+
+/* eslint-disable @next/next/no-img-element */
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
+import { CruiseForecastChart } from "./CruiseForecastChart";
+import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
+import type { DailyForecast } from "@/lib/weather/cruise-forecast";
 
 export interface PreCruiseT7Props {
   layout: Omit<BrandedLayoutProps, "children">;
   customer_name: string;
   ship_name: string;
   sailing_date: string;
+  destination_image?: DestinationImage | null;
+  // Multi-day forecast for the cruise. Open-Meteo's 16-day horizon means
+  // T-7 captures the whole sailing for typical 7-night itineraries.
+  cruise_forecast?: DailyForecast[] | null;
   // AI-generated sections
   packing_checklist: string[];
   ship_highlights: string[];
@@ -24,10 +35,29 @@ export function PreCruiseT7(props: PreCruiseT7Props): React.ReactElement {
       <h2 style={{ color: "#1f2937", marginTop: 0 }}>
         One week to go — almost there, {props.customer_name}!
       </h2>
+
+      {props.destination_image && (
+        <div style={{ margin: "0 0 20px 0", overflow: "hidden", borderRadius: 8 }}>
+          <img
+            src={props.destination_image.url}
+            alt={props.destination_image.alt_text}
+            width="100%"
+            style={{ display: "block", width: "100%", maxHeight: 280, objectFit: "cover" }}
+          />
+        </div>
+      )}
+
       <p>
         Your voyage on the <strong>{props.ship_name}</strong> departs{" "}
         <strong>{props.sailing_date}</strong>. Here&rsquo;s what to focus on this week.
       </p>
+
+      {props.cruise_forecast && props.cruise_forecast.length > 0 && (
+        <>
+          <h3 style={{ color: "#374151" }}>Weather Along the Way</h3>
+          <CruiseForecastChart forecast={props.cruise_forecast} />
+        </>
+      )}
 
       {props.packing_checklist.length > 0 && (
         <>
@@ -70,6 +100,12 @@ export function PreCruiseT7(props: PreCruiseT7Props): React.ReactElement {
           >
             Full Voyage Guide →
           </a>
+        </p>
+      )}
+
+      {props.destination_image && (
+        <p style={{ fontSize: 11, color: "#9ca3af", margin: "16px 0 0 0", textAlign: "center" }}>
+          Cover image: {props.destination_image.attribution}
         </p>
       )}
     </BrandedLayout>

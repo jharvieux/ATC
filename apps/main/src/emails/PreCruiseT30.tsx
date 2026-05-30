@@ -1,14 +1,20 @@
 // §23.4 — T-30 day pre-cruise email template (Final prep window).
- 
+//
+// The Next.js `<Image />` rule doesn't apply to email templates; clients
+// require raw <img> tags (no JS runtime to optimize).
+
+/* eslint-disable @next/next/no-img-element */
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
+import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 
 export interface PreCruiseT30Props {
   layout: Omit<BrandedLayoutProps, "children">;
   customer_name: string;
   ship_name: string;
   sailing_date: string;
+  destination_image?: DestinationImage | null;
   // AI-generated sections
   reservation_reminders: string[];
   checkin_window: string;
@@ -25,6 +31,18 @@ export function PreCruiseT30(props: PreCruiseT30Props): React.ReactElement {
       <h2 style={{ color: "#1f2937", marginTop: 0 }}>
         30 days until the {props.ship_name} sets sail!
       </h2>
+
+      {props.destination_image && (
+        <div style={{ margin: "0 0 20px 0", overflow: "hidden", borderRadius: 8 }}>
+          <img
+            src={props.destination_image.url}
+            alt={props.destination_image.alt_text}
+            width="100%"
+            style={{ display: "block", width: "100%", maxHeight: 280, objectFit: "cover" }}
+          />
+        </div>
+      )}
+
       <p>Hi {props.customer_name}, it&rsquo;s crunch time — let&rsquo;s make sure everything is in order.</p>
 
       {props.reservation_reminders.length > 0 && (
@@ -66,6 +84,12 @@ export function PreCruiseT30(props: PreCruiseT30Props): React.ReactElement {
           >
             View Your Full Itinerary →
           </a>
+        </p>
+      )}
+
+      {props.destination_image && (
+        <p style={{ fontSize: 11, color: "#9ca3af", margin: "16px 0 0 0", textAlign: "center" }}>
+          Cover image: {props.destination_image.attribution}
         </p>
       )}
     </BrandedLayout>
