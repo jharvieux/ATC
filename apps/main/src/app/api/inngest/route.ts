@@ -99,6 +99,7 @@ import { billingPeriodRollover } from "@/inngest/billing-period-rollover";
 import { thresholdRecomputeOnSubscriptionChange } from "@/inngest/threshold-recompute-on-subscription-change";
 import { abuseStateTransitionNotify } from "@/inngest/abuse-state-transition-notify";
 import { abuseOverrideExpirySweep } from "@/inngest/abuse-override-expiry-sweep";
+import { weatherUsageAlert } from "@/inngest/weather-usage-alert";
 import { githubIssueRetry } from "@/inngest/github-issue-retry";
 import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
 import { helpDocsDocxGenerate } from "@/inngest/help-docs-docx-generate";
@@ -221,6 +222,7 @@ export const { GET, POST, PUT } = serve({
     thresholdRecomputeOnSubscriptionChange,
     abuseStateTransitionNotify,
     abuseOverrideExpirySweep,
+    weatherUsageAlert,
     // BP31: Self-Service Help — GitHub issue creation resilience (§32.7.5)
     githubIssueRetry,
     // BP31 Phase C: Help docs export pipeline (§32.3.3)
