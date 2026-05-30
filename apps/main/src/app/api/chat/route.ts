@@ -839,10 +839,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       // ── Non-streaming branch ──
       // §9.6 tool-use loop: pass PERSONA_TOOLS; if the response includes
       // tool_use blocks, dispatch them and make a follow-up call with
-      // tool_result blocks attached. Streaming mode does NOT yet support
-      // tools — that's a follow-up since tool_use + delta buffering is
-      // materially harder. Single-pass: if the follow-up itself triggers
-      // another tool_use, that's the supervisor / regen's problem.
+      // tool_result blocks attached. The streaming branch above runs the
+      // same single-pass loop (#421). Single-pass: if the follow-up itself
+      // triggers another tool_use, that's the supervisor / regen's problem.
       try {
         // instrumentedClaudeCall records vendor health + ai_call_log +
         // tenant_usage_metrics increment + state-transition check.
