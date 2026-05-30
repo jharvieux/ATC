@@ -189,10 +189,54 @@ await db.from("orders").update({ status: "paid" }).eq("id", orderId);
 
 If the diff is clean across all patterns, say so explicitly: **"No D-091 violations detected in this diff."**
 
+## Posting your report to the PR
+
+After producing the report, you MUST post it as a PR comment so the audit
+sits next to the PR on GitHub (durable record + the
+`pr-audit-section-check` workflow looks for the marker).
+
+1. Resolve the PR number from the current branch:
+   ```bash
+   PR=$(gh pr view --json number --jq .number 2>/dev/null)
+   ```
+   If that returns empty, the branch isn't on a PR yet — abort with a clear
+   error so the main agent opens the PR first, then re-runs you.
+
+2. Post the report with the **`<!-- d091-audit:v1 -->`** marker at the top
+   so the workflow can find it. The marker is invisible in rendered
+   Markdown but present in the comment body:
+   ```bash
+   gh pr comment "$PR" --body "$(cat <<'EOF'
+   <!-- d091-audit:v1 -->
+   # D-091 Review Report
+   ...(your report verbatim)...
+   EOF
+   )"
+   ```
+   Use a `heredoc` so backticks and other Markdown survive.
+
+3. Report success back to the main agent: `"Posted as comment on PR #<N>."`
+   If `gh pr comment` fails (auth, rate-limit, network), report the error
+   verbatim — don't pretend the post succeeded.
+
+Re-running you after new commits posts a **new** comment (don't try to
+edit prior ones; the workflow looks at the newest matching comment
+against the head commit's timestamp).
+
 ## Boundaries
 
-- **You are READ-ONLY.** Never use Edit, Write, or NotebookEdit. (You don't have these tools — confirming the intent.)
-- **Do not run mutating commands.** Acceptable: `git diff`, `git log`, `git show`, `grep`, `rg`, file reads, `pnpm slop-check`. Not acceptable: `pnpm test` (writes coverage/cache), `pnpm lint --fix`, migrations, deploys, `gh pr merge`.
+- **You are READ-ONLY for source code.** Never use Edit, Write, or
+  NotebookEdit on repo files. (You don't have these tools — confirming the
+  intent.)
+- **Posting PR comments via `gh pr comment` is explicitly allowed** —
+  that's the record-keeping step above. No other GitHub mutations
+  (no `gh pr merge`, no `gh pr edit`, no `gh issue close`).
+- **Do not run mutating commands** outside the comment-post. Acceptable:
+  `git diff`, `git log`, `git show`, `grep`, `rg`, file reads,
+  `pnpm slop-check`, `gh pr view`, `gh pr comment`. Not acceptable:
+  `pnpm test` (writes coverage/cache), `pnpm lint --fix`, migrations,
+  deploys, `gh pr merge`.
 - **Do not invoke other subagents.**
-- **Report findings; do not fix them.** The main agent decides what to do with your report.
+- **Report findings; do not fix them.** The main agent decides what to do
+  with your report.
 - If the scope is unclear, ask the main agent before starting.
