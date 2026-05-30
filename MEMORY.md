@@ -4,6 +4,54 @@ Newest entries on top.
 
 ---
 
+## D-122 — 2026-05-29 — Migrate the session boundary from `Authorization: Bearer` + localStorage to HttpOnly cookies via `@supabase/ssr` (PR #443)
+
+**Decision**: Replace the implicit-flow OAuth + Authorization-Bearer + localStorage session
+posture with the @supabase/ssr cookie-adapter PKCE flow. The session bytes
+live in HttpOnly cookies the browser cannot read; the server reads them
+through three named factory clients (request-scoped read-only, route-handler
+read+write-capture, middleware refresh). `proxy.ts` refreshes via
+`supabase.auth.getUser()` on every request and flushes rotated cookies onto
+every post-refresh response branch. `tenantContextFromRequest` and
+`assertPermission` keep their `(req: Request)` signatures so the ~147 routes
+that call them are untouched; the helpers internally swap the createClient +
+Bearer for `createRequestScopedClient`.
+
+**Why**: The implicit-flow client returned `#access_token=…` in the URL
+fragment and never wrote a server session, which presented as the
+"OAuth%20failed#access_token=…" redirect bug Google logins hit. PKCE
+cookies are also the right long-term posture — HttpOnly defeats XSS token
+theft, the cookies travel automatically on same-origin fetches, and
+@supabase/ssr handles the rotation discipline (Supabase rotates the
+refresh token on every use, so middleware refresh is mandatory or sessions
+die at the 1h access-token mark).
+
+**Rejected**:
+- Stay on implicit flow + fix the symptom — would leave the token-in-URL
+  primitive in place and only mask the visible redirect symptom.
+- Roll our own cookie/HMAC code instead of adopting @supabase/ssr — would
+  duplicate logic the library already gets right (chunked-cookie
+  reassembly, rotation, no-cache headers); user granted permission for the
+  one new dependency specifically because of this trade.
+- Land everything-but-the-helpers first in a smaller PR — would leave 147
+  routes reading the OLD pattern and a middleware refresh that doesn't
+  match what handlers expect; mixed posture is worse than either single
+  posture. User chose "Whole auth surface at once."
+
+**Deferred (with rationale in PR body and follow-up issues)**:
+- signup/complete tenant provisioning → #441 (net-new tenant signup, no
+  UI caller today; orthogonal to login).
+- anon-session cookie HMAC + HttpOnly hardening → #442 (the third
+  sub-item of #64; not on the "login is broken" critical path; needs
+  HMAC infra + migration plan for already-set unsigned cookies).
+
+**Related artifacts**: PR #443 (the migration), commit 080ece0 (slop
+fix), commit a5b1a7f (D-091 audit fixes — Resend fail-open + getSession
+call-order anchor + applyAuthCookies no-cache test). Spec sections
+§7.1, §17.1, §17.2, §17.3, §17.4, §17.7, §26.3.
+
+---
+
 ## D-121 — 2026-05-29 — Fix Google-login outage (Supabase `state` clobber + missing /auth/error); defer "return to original page" re-auth to #437
 
 **Decision.** Fixed the Google-login outage (users hit a 404 at `/auth/error?message=OAuth%20state%20parameter%20is%20invalid`). Two root causes, both fixed in **PR #438**: (1) `api/auth/oauth-initiate/route.ts` injected its own `state` queryParam derived from `redirect_to` — and because `redirect_to` defaulted to a **non-empty** string, the injection fired on *every* sign-in (including plain signup with no `redirect_to`), clobbering Supabase's reserved PKCE/CSRF `state` so Supabase rejected every provider callback. (2) The `/auth/error` route didn't exist, so the callback's failure redirect 404'd. Fix: pass only `{ redirectTo }` to `signInWithOAuth` (never set `options.queryParams.state`); add the `/auth/error` page rendering an escaped, 200-char-capped reflected `?message=`. Regression guards added for both (`oauth-initiate.test.ts` asserts `queryParams` stays undefined; `auth-error-page.test.tsx` locks XSS-escape + cap).
