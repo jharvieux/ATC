@@ -1,11 +1,11 @@
-// §12.4 / §21.10.1 / §38.5 — Shared loader for QuoteRenderInput.
+// §12.4 / §21.10.1 / §38.5 — Shared QuoteRow loader + render-input builder.
 //
-// Centralizes the column projection, tenant + host_agency_legal_name
-// lookups, kind selection (estimate vs confirmed), and env defaults so
-// the agent-facing PDF download (/api/quotes/[id]/pdf) and the customer
-// email attachment (/api/quotes/[id]/send) feed the renderer with the
-// exact same input — keeping the bytes equivalent and the disclosure
-// language in lockstep with render-pdf.ts's HTML serialization.
+// Why split: /send needs to short-circuit non-draft sends with a 409 BEFORE
+// running the tenant + host lookups (otherwise a non-draft send pays two
+// extra round-trips to return the same error). /pdf needs the full input
+// regardless of status. So the loader stays cheap (one quotes SELECT) and
+// the enrich pass (which fetches tenant + platform_settings) is a second
+// call that both routes make when they actually need to render.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/db/tenant-context";
@@ -33,34 +33,49 @@ export interface QuoteRow {
   priced_at: string | null;
 }
 
-export type LoadResult =
-  | { ok: true; input: QuoteRenderInput; quote: QuoteRow }
+export type LoadQuoteResult =
+  | { ok: true; quote: QuoteRow }
   | { ok: false; status: 404 | 500; message: string };
 
-interface Args {
-  ctx: TenantContext;
+export type BuildInputResult =
+  | { ok: true; input: QuoteRenderInput }
+  | { ok: false; status: 500; message: string };
+
+interface LoadArgs {
   db: SupabaseClient;
-  adminDb: SupabaseClient;
   quoteId: string;
 }
 
-export async function loadQuoteRenderInput(args: Args): Promise<LoadResult> {
-  // Tenant-scoped read: the user-JWT client + RLS guarantees this user can
-  // only see their tenant's quotes.
-  const { data: quoteRow, error: fetchErr } = await args.db
+interface BuildArgs {
+  ctx: TenantContext;
+  adminDb: SupabaseClient;
+  quote: QuoteRow;
+}
+
+// One tenant-scoped SELECT; cheap. Routes call this first so they can
+// branch on quote.status (or 404) before paying the enrich cost.
+export async function loadQuoteRow(args: LoadArgs): Promise<LoadQuoteResult> {
+  const { data: row, error } = await args.db
     .from("quotes")
     .select(QUOTE_COLUMNS)
     .eq("id", args.quoteId)
     .maybeSingle();
-  if (fetchErr) {
-    return { ok: false, status: 500, message: fetchErr.message };
+  if (error) {
+    return { ok: false, status: 500, message: error.message };
   }
-  if (!quoteRow) {
+  if (!row) {
     return { ok: false, status: 404, message: "not_found" };
   }
-  const quote = quoteRow as unknown as QuoteRow;
+  return { ok: true, quote: row as unknown as QuoteRow };
+}
 
-  // Tenant display name. Service-role read (tenants is platform-managed).
+// Enriches with tenant + host name and produces the render input. Two
+// service-role lookups (tenants by id, platform_settings by key). Fails
+// loud on either lookup error — the renderer shouldn't run with default
+// "Sub-host" / "Host Agency" strings on the customer-visible PDF.
+export async function buildRenderInputFromQuote(
+  args: BuildArgs,
+): Promise<BuildInputResult> {
   const { data: tenantData, error: tenantErr } = await args.adminDb
     .from("tenants")
     .select("name")
@@ -71,7 +86,9 @@ export async function loadQuoteRenderInput(args: Args): Promise<LoadResult> {
   }
   const tenantName = (tenantData as { name?: string } | null)?.name ?? "Sub-host";
 
-  // Host agency legal name — cross-tenant platform_settings; service-role.
+  // platform_settings.value historically ships as either a bare string or
+  // a JSON object with .value — both forms are in the wild on dev, so the
+  // helper tolerates both rather than picking one and breaking the other.
   const { data: hostNameRow, error: hostErr } = await args.adminDb
     .from("platform_settings")
     .select("value")
@@ -90,36 +107,34 @@ export async function loadQuoteRenderInput(args: Args): Promise<LoadResult> {
 
   const now = new Date().toISOString();
   const totalCents =
-    quote.locked_price_cents ??
-    quote.estimate_price_cents ??
-    Math.round((quote.total_amount ?? 0) * 100);
+    args.quote.locked_price_cents ??
+    args.quote.estimate_price_cents ??
+    Math.round((args.quote.total_amount ?? 0) * 100);
   const kind: "confirmed" | "estimate" =
-    quote.locked_price_cents != null ? "confirmed" : "estimate";
+    args.quote.locked_price_cents != null ? "confirmed" : "estimate";
 
   const input: QuoteRenderInput = {
-    quote_id: quote.id,
+    quote_id: args.quote.id,
     kind,
     tenant_name: tenantName,
     host_agency_legal_name: hostName,
-    // Customer display name is hardcoded here, matching the prior /send
-    // behavior. The quotes table doesn't carry a denormalized contact
-    // display field today; a contact-lookup pass is a follow-up that
-    // would touch both this route and /send identically.
+    // No denormalized contact field on `quotes` today; contact-lookup is
+    // a follow-up that would touch /send and /pdf identically.
     customer_name: "Customer",
-    cruise_line: quote.cruise_line,
-    ship_name: quote.ship_name,
-    sailing_date: quote.sailing_date,
-    duration_nights: quote.duration_nights,
-    cabin_category: quote.cabin_category,
-    passenger_count: quote.passenger_count,
+    cruise_line: args.quote.cruise_line,
+    ship_name: args.quote.ship_name,
+    sailing_date: args.quote.sailing_date,
+    duration_nights: args.quote.duration_nights,
+    cabin_category: args.quote.cabin_category,
+    passenger_count: args.quote.passenger_count,
     line_items: [{ label: "Total", amount_cents: totalCents }],
     total_cents: totalCents,
     currency: "USD",
     variance_cents: Number(process.env.QUOTE_DEFAULT_VARIANCE_CENTS ?? 5000),
-    priced_at: quote.priced_at ?? now,
-    price_lock_expires_at: quote.price_lock_expires_at,
+    priced_at: args.quote.priced_at ?? now,
+    price_lock_expires_at: args.quote.price_lock_expires_at,
     validity_days: Number(process.env.QUOTE_ESTIMATE_VALIDITY_DAYS ?? 7),
   };
 
-  return { ok: true, input, quote };
+  return { ok: true, input };
 }

@@ -6,8 +6,9 @@
 //      which is wrong for "Download PDF" UX).
 //   2. No status gate: the agent can download at any quote stage; /send's
 //      "draft only" guard is /send-specific and must not bleed in.
-//   3. Loader failure modes (404 / 500) propagate via the shared
-//      loadQuoteRenderInput shape — no silent fallback to a stub PDF.
+//   3. Loader failure modes (404 / 500) and enrich failure modes (500
+//      from tenant/host lookups) propagate as structured errors — no
+//      silent fallback to a stub PDF.
 //   4. Cache-Control private,no-store so a freshly-edited quote doesn't
 //      serve a stale buffer to the agent.
 
@@ -15,7 +16,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
-  loadQuoteRenderInput: vi.fn(),
+  loadQuoteRow: vi.fn(),
+  buildRenderInputFromQuote: vi.fn(),
   renderQuotePdf: vi.fn(),
 }));
 
@@ -28,7 +30,8 @@ vi.mock("@/lib/auth/assert-permission", async () => {
 });
 
 vi.mock("@/lib/quotes/build-render-input", () => ({
-  loadQuoteRenderInput: mocks.loadQuoteRenderInput,
+  loadQuoteRow: mocks.loadQuoteRow,
+  buildRenderInputFromQuote: mocks.buildRenderInputFromQuote,
 }));
 
 vi.mock("@/lib/quotes/render-quote-pdf", () => ({
@@ -62,12 +65,14 @@ function req(): Request {
 
 const PARAMS = { params: Promise.resolve({ id: "quote-1" }) };
 
+const HAPPY_QUOTE = { id: "quote-1", status: "draft" };
+
 describe("GET /api/quotes/[id]/pdf", () => {
   it("streams application/pdf with attachment Content-Disposition + no-store cache", async () => {
-    mocks.loadQuoteRenderInput.mockResolvedValue({
+    mocks.loadQuoteRow.mockResolvedValue({ ok: true, quote: HAPPY_QUOTE });
+    mocks.buildRenderInputFromQuote.mockResolvedValue({
       ok: true,
       input: { quote_id: "quote-1" },
-      quote: { id: "quote-1", status: "draft" },
     });
     const res = await GET(req(), PARAMS);
     expect(res.status).toBe(200);
@@ -79,28 +84,44 @@ describe("GET /api/quotes/[id]/pdf", () => {
   });
 
   it("does NOT gate on status — agent can download at any stage (sent, accepted, etc.)", async () => {
-    mocks.loadQuoteRenderInput.mockResolvedValue({
+    mocks.loadQuoteRow.mockResolvedValue({
+      ok: true,
+      quote: { id: "quote-1", status: "accepted" },
+    });
+    mocks.buildRenderInputFromQuote.mockResolvedValue({
       ok: true,
       input: { quote_id: "quote-1" },
-      quote: { id: "quote-1", status: "accepted" },
     });
     const res = await GET(req(), PARAMS);
     expect(res.status).toBe(200);
   });
 
-  it("propagates loader 404 (quote not found in this tenant)", async () => {
-    mocks.loadQuoteRenderInput.mockResolvedValue({
+  it("propagates loader 404 without calling buildRenderInputFromQuote or renderQuotePdf", async () => {
+    mocks.loadQuoteRow.mockResolvedValue({
       ok: false,
       status: 404,
       message: "not_found",
     });
     const res = await GET(req(), PARAMS);
     expect(res.status).toBe(404);
+    expect(mocks.buildRenderInputFromQuote).not.toHaveBeenCalled();
     expect(mocks.renderQuotePdf).not.toHaveBeenCalled();
   });
 
-  it("propagates loader 500 (DB error) — does NOT silently render a default-input PDF", async () => {
-    mocks.loadQuoteRenderInput.mockResolvedValue({
+  it("propagates loader 500 (quote SELECT DB error) without rendering a stub PDF", async () => {
+    mocks.loadQuoteRow.mockResolvedValue({
+      ok: false,
+      status: 500,
+      message: "connection refused",
+    });
+    const res = await GET(req(), PARAMS);
+    expect(res.status).toBe(500);
+    expect(mocks.renderQuotePdf).not.toHaveBeenCalled();
+  });
+
+  it("propagates enrich 500 (tenant/host lookup error) without rendering", async () => {
+    mocks.loadQuoteRow.mockResolvedValue({ ok: true, quote: HAPPY_QUOTE });
+    mocks.buildRenderInputFromQuote.mockResolvedValue({
       ok: false,
       status: 500,
       message: "tenant lookup: rls",

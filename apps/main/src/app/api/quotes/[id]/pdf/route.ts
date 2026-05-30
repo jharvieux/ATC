@@ -14,7 +14,10 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { renderQuotePdf } from "@/lib/quotes/render-quote-pdf";
-import { loadQuoteRenderInput } from "@/lib/quotes/build-render-input";
+import {
+  loadQuoteRow,
+  buildRenderInputFromQuote,
+} from "@/lib/quotes/build-render-input";
 
 export const runtime = "nodejs";
 
@@ -31,23 +34,26 @@ export async function GET(
     const adminDb = createServiceRoleClient();
     const { id } = await params;
 
-    const result = await loadQuoteRenderInput({
+    const loaded = await loadQuoteRow({ db, quoteId: id });
+    if (!loaded.ok) {
+      return Response.json({ error: loaded.message }, { status: loaded.status });
+    }
+    const enriched = await buildRenderInputFromQuote({
       ctx,
-      db,
       adminDb,
-      quoteId: id,
+      quote: loaded.quote,
     });
-    if (!result.ok) {
-      return Response.json({ error: result.message }, { status: result.status });
+    if (!enriched.ok) {
+      return Response.json({ error: enriched.message }, { status: enriched.status });
     }
 
-    const buf = await renderQuotePdf(result.input);
+    const buf = await renderQuotePdf(enriched.input);
 
     return new Response(buf as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="quote-${result.quote.id}.pdf"`,
+        "Content-Disposition": `attachment; filename="quote-${loaded.quote.id}.pdf"`,
         // Force fresh — quote contents can change between downloads.
         "Cache-Control": "private, no-store",
       },

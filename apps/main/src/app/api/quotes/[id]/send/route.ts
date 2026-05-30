@@ -14,7 +14,10 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { renderQuotePdf } from "@/lib/quotes/render-quote-pdf";
-import { loadQuoteRenderInput } from "@/lib/quotes/build-render-input";
+import {
+  loadQuoteRow,
+  buildRenderInputFromQuote,
+} from "@/lib/quotes/build-render-input";
 import { triggerMatchingSequences } from "@/lib/tasks/sequence-engine";
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -30,14 +33,13 @@ export async function POST(
     const adminDb = createServiceRoleClient();
     const { id } = await params;
 
-    // Load + build the render input via the shared helper so the agent
-    // download (/api/quotes/[id]/pdf) and this customer-attachment path
-    // feed renderQuotePdf with byte-equivalent input.
-    const loaded = await loadQuoteRenderInput({ ctx, db, adminDb, quoteId: id });
+    // Cheap quote load first so non-draft sends 409 without paying the
+    // tenant + platform_settings lookups.
+    const loaded = await loadQuoteRow({ db, quoteId: id });
     if (!loaded.ok) {
       return Response.json({ error: loaded.message }, { status: loaded.status });
     }
-    const { input: renderInput, quote } = loaded;
+    const { quote } = loaded;
 
     if (quote.status !== "draft") {
       return Response.json({ error: "quote_not_in_draft_status" }, { status: 409 });
@@ -60,6 +62,15 @@ export async function POST(
       .single();
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
+    // Now enrich with tenant + host for the render. Shared with /pdf so
+    // the agent download and the customer-attachment PDF stay
+    // byte-equivalent.
+    const enriched = await buildRenderInputFromQuote({ ctx, adminDb, quote });
+    if (!enriched.ok) {
+      return Response.json({ error: enriched.message }, { status: enriched.status });
+    }
+    const renderInput = enriched.input;
+
     let pdfUrl: string | null = null;
     try {
       const buf = await renderQuotePdf(renderInput);
@@ -71,9 +82,15 @@ export async function POST(
       if (upErr) {
         console.warn("[quotes/send] PDF upload failed: %s", upErr.message);
       } else {
-        const { data: signed } = await adminDb.storage
+        const { data: signed, error: signedErr } = await adminDb.storage
           .from(QUOTE_PDF_BUCKET)
           .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+        if (signedErr) {
+          console.warn(
+            "[quotes/send] signed URL failed: %s",
+            signedErr.message,
+          );
+        }
         pdfUrl = signed?.signedUrl ?? null;
       }
     } catch (renderErr) {
