@@ -48,6 +48,11 @@ export const PLATFORM_ADMIN_REASONS = [
   "cross_tenant_health_aggregation",
   "platform_metrics_rollup",
 
+  // Platform-wide knob changes (e.g. integration rate-limits, vendor caps).
+  // Kept distinct from feedback_settings_change which scopes to §6.10's
+  // retrieval-feedback knobs.
+  "platform_setting_update",
+
   // Forensics access
   "forensics_log_review",
 
