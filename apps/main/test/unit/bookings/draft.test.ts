@@ -34,6 +34,10 @@ vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
     from: (table: string) => {
       if (table === "contacts") {
+        // tenantClient proxy auto-injects .eq("tenant_id", ...) on
+        // select(), but vi.mock replaces the whole tenantClient — the
+        // mock only needs to model what the *route* calls directly:
+        // .select(...).eq("id", ...).maybeSingle().
         return {
           select: () => ({
             eq: () => ({ maybeSingle: mocks.contactMaybeSingle }),

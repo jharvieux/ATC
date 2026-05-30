@@ -18,7 +18,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwaitRequired } from "@/lib/db/safe-mutation";
 
 const BodySchema = z
   .object({
@@ -34,7 +34,7 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     const body: unknown = await req.json().catch(() => ({}));
-    const parsed = BodySchema.safeParse(body ?? {});
+    const parsed = BodySchema.safeParse(body);
     if (!parsed.success) {
       return Response.json({ error: "invalid_body" }, { status: 400 });
     }
@@ -42,7 +42,6 @@ export async function POST(req: Request): Promise<Response> {
 
     const db = tenantClient(ctx);
 
-    // App-layer second-defense ownership check on the contact id.
     if (primary_contact_id) {
       const { data: contact, error: contactErr } = await db
         .from("contacts")
@@ -63,22 +62,18 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    const now = new Date().toISOString();
-    const insertRow: Record<string, unknown> = {
-      tenant_id: ctx.tenant_id,
-      status: "draft",
-      created_at: now,
-      updated_at: now,
-    };
+    // status='draft' and the created/updated timestamps default at the DB.
+    // tenantClient injects tenant_id on insert; we don't double-write it
+    // here so a future tenant_id rename only has to change one place.
+    const insertRow: Record<string, unknown> = {};
     if (primary_contact_id) {
       insertRow.primary_contact_id = primary_contact_id;
     }
 
-    const created = await safeAwait(
+    const row = await safeAwaitRequired<{ id: string }>(
       db.from("bookings").insert(insertRow).select("id").single(),
       "bookings.draft.insert",
     );
-    const row = created as unknown as { id: string };
 
     return Response.json({ id: row.id }, { status: 201 });
   } catch (err) {
