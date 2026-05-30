@@ -1,5 +1,20 @@
 name: contracts-canary
 
+# Re-records every contract fixture against real Stripe (test mode) and
+# Anthropic APIs, then diffs the new response schema against what's checked
+# in. Opens an issue on schema drift.
+#
+# Failure modes that should produce a noisy issue/notification:
+#   • Install fails (caught by the workflow run failing)
+#   • Recorder throws (missing secret, real API error, dependent-resource
+#     orchestration failure)
+#   • Diff finds schema changes (issue opened with the diff body)
+#
+# What this workflow does NOT do:
+#   • Catch value drift — only key shapes (per docs/testing/contract-tests.md)
+#   • Validate the application's wrapper-layer logic — that's the PR-track
+#     MSW-replay tests, not this nightly
+
 on:
   schedule:
     - cron: "0 9 * * *" # 9am UTC, before working hours
@@ -20,23 +35,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ".nvmrc"
-          cache: "npm"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Save current fixtures as baseline
         run: cp -r tests/contracts/fixtures tests/contracts/fixtures-baseline
 
       - name: Re-record fixtures against real APIs
-        # TODO: Remove continue-on-error after rollout period — see MEMORY.md
-        continue-on-error: true
-        run: npm run contracts:record
+        run: pnpm tsx scripts/record-contracts.ts
 
       - name: Diff new recordings against baseline (schema-level)
         id: diff
-        # TODO: Remove continue-on-error after rollout period — see MEMORY.md
-        continue-on-error: true
         run: |
           node -e "
             const fs = require('fs');
@@ -84,7 +97,7 @@ jobs:
           "
 
       - name: Open GitHub issue on schema drift
-        if: steps.diff.outcome == 'failure'
+        if: failure() && steps.diff.outcome == 'failure'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -92,7 +105,7 @@ jobs:
           gh issue create \
             --title "Contract schema drift detected $(date -u +%Y-%m-%d)" \
             --label "contract-drift" \
-            --body "$(cat <<'BODY'
+            --body "$(cat <<BODY
           ## Contract schema drift detected
 
           The nightly canary re-recorded Stripe and Anthropic fixtures and found schema changes.
