@@ -1,8 +1,9 @@
 // §23.4 — T-90 day pre-cruise email template (Anticipation begins).
- 
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
+import { DestinationHero } from "./DestinationHero";
+import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 
 export interface PreCruiseT90Props {
   layout: Omit<BrandedLayoutProps, "children">;
@@ -11,6 +12,7 @@ export interface PreCruiseT90Props {
   cruise_line: string;
   sailing_date: string;
   ports: string[];
+  destination_image?: DestinationImage | null;
   // AI-generated content sections (cached per §23.4)
   documentation_reminder: string;
   destination_teaser: string;
@@ -25,6 +27,9 @@ export function PreCruiseT90(props: PreCruiseT90Props): React.ReactElement {
       <h2 style={{ color: "#1f2937", marginTop: 0 }}>
         Your {props.cruise_line} cruise is 90 days away! 🌊
       </h2>
+
+      {props.destination_image && <DestinationHero image={props.destination_image} />}
+
       <p>
         Hi {props.customer_name}, we&rsquo;re so excited for your upcoming voyage on the{" "}
         <strong>{props.ship_name}</strong>, departing <strong>{props.sailing_date}</strong>.
@@ -68,6 +73,12 @@ export function PreCruiseT90(props: PreCruiseT90Props): React.ReactElement {
             ))}
           </ul>
         </>
+      )}
+
+      {props.destination_image && (
+        <p style={{ fontSize: 11, color: "#9ca3af", margin: "16px 0 0 0", textAlign: "center" }}>
+          Cover image: {props.destination_image.attribution}
+        </p>
       )}
 
       <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "24px 0" }} />

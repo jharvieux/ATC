@@ -53,6 +53,49 @@ describe("PreCruiseT1 — §23.4 carry-on essentials callout", () => {
     expect(html).toContain("Official port website");
     expect(html).toContain("Arrive 2 hours before departure.");
   });
+
+  // The PortInfo interface has carried terminal_addresses + parking_info
+  // since 2026-05-30 but the template body didn't read them until this
+  // PR. These two cases pin the wiring so a future revert is loud.
+  it("renders terminal_addresses table when provided", () => {
+    const jsx = React.createElement(PreCruiseT1, {
+      layout: baseLayout,
+      customer_name: "Cara",
+      ship_name: "Ship",
+      departure_port: {
+        port_name: "PortMiami",
+        terminal_addresses: [
+          { terminal: "Terminal B (NCL)", address: "1015 N Cruise Blvd, Miami, FL 33132" },
+          { terminal: "Terminal A (Carnival)", address: "2001 N America Way, Miami, FL 33132" },
+        ],
+      },
+      first_port_preview: "Preview",
+      day_of_expectations: "Expectations",
+    });
+    const html = ReactDOMServer.renderToStaticMarkup(jsx);
+    expect(html).toContain("Terminal B (NCL)");
+    expect(html).toContain("1015 N Cruise Blvd, Miami, FL 33132");
+    expect(html).toContain("Terminal A (Carnival)");
+    expect(html).toContain("2001 N America Way, Miami, FL 33132");
+  });
+
+  it("renders parking_info paragraph when provided", () => {
+    const jsx = React.createElement(PreCruiseT1, {
+      layout: baseLayout,
+      customer_name: "Dana",
+      ship_name: "Ship",
+      departure_port: {
+        port_name: "PortMiami",
+        parking_info: "Cruise Parking Garage on-site: $22/day. Pre-payment via the PortMiami app.",
+      },
+      first_port_preview: "Preview",
+      day_of_expectations: "Expectations",
+    });
+    const html = ReactDOMServer.renderToStaticMarkup(jsx);
+    expect(html).toContain("Parking:");
+    expect(html).toContain("$22/day");
+    expect(html).toContain("Pre-payment via the PortMiami app");
+  });
 });
 
 describe("PreCruiseT90 — §23.4", () => {
