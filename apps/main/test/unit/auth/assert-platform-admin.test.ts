@@ -5,8 +5,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockAuthGetUser = vi.fn();
 const mockFromMaybeSingle = vi.fn();
 
-vi.mock("@supabase/supabase-js", () => ({
-  createClient: () => ({ auth: { getUser: mockAuthGetUser } }),
+vi.mock("@/lib/auth/ssr-client", () => ({
+  createRequestScopedClient: () => ({ auth: { getUser: mockAuthGetUser } }),
 }));
 
 vi.mock("@/lib/db/service-role-client", () => ({
@@ -33,63 +33,60 @@ beforeEach(() => {
   };
 });
 
-function req(headers: Record<string, string>): Request {
+function req(headers: Record<string, string> = {}): Request {
   return new Request("http://test/api/admin/x", { headers });
 }
 
 describe("assertPlatformAdmin", () => {
-  it("throws 401 when Authorization header is missing", async () => {
-    await expect(assertPlatformAdmin(req({}))).rejects.toMatchObject({
-      status: 401,
-      code: "missing_bearer",
-    });
-  });
-
-  it("throws 401 when Bearer token is empty", async () => {
-    await expect(
-      assertPlatformAdmin(req({ Authorization: "Bearer " })),
-    ).rejects.toMatchObject({ status: 401, code: "missing_bearer" });
-  });
-
-  it("accepts the service-to-service Bearer key as a valid admin", async () => {
+  it("accepts the service-to-service Bearer key without touching the cookie session", async () => {
     const ctx = await assertPlatformAdmin(req({ Authorization: "Bearer service-secret-key" }));
     expect(ctx).toEqual({ admin_user_id: "service:bearer", role: "service", via: "bearer" });
-    // Should NOT have consulted Supabase or platform_admins.
     expect(mockAuthGetUser).not.toHaveBeenCalled();
     expect(mockFromMaybeSingle).not.toHaveBeenCalled();
   });
 
-  it("rejects an opaque non-JWT, non-matching Bearer with 401", async () => {
-    mockAuthGetUser.mockResolvedValue({ data: null, error: { message: "invalid jwt" } });
-    await expect(
-      assertPlatformAdmin(req({ Authorization: "Bearer not-the-service-key" })),
-    ).rejects.toMatchObject({ status: 401, code: "invalid_session" });
-  });
-
-  it("accepts a verified Supabase session that exists in platform_admins", async () => {
+  it("falls through to the cookie session when no Authorization header is present (§17.x posture)", async () => {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uuid-1" } }, error: null });
     mockFromMaybeSingle.mockResolvedValue({
       data: { auth_user_id: "uuid-1", role: "superadmin" },
       error: null,
     });
-    const ctx = await assertPlatformAdmin(req({ Authorization: "Bearer eyJ.fake.jwt" }));
+    const ctx = await assertPlatformAdmin(req());
     expect(ctx).toEqual({ admin_user_id: "uuid-1", role: "superadmin", via: "session" });
+    expect(mockAuthGetUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects when neither a valid service Bearer nor a verifiable cookie session is present (401)", async () => {
+    mockAuthGetUser.mockResolvedValue({ data: null, error: { message: "no session" } });
+    await expect(
+      assertPlatformAdmin(req({ Authorization: "Bearer not-the-service-key" })),
+    ).rejects.toMatchObject({ status: 401, code: "invalid_session" });
+  });
+
+  it("rejects when no credential at all is present (401)", async () => {
+    mockAuthGetUser.mockResolvedValue({ data: null, error: { message: "no session" } });
+    await expect(assertPlatformAdmin(req())).rejects.toMatchObject({
+      status: 401,
+      code: "invalid_session",
+    });
   });
 
   it("rejects a verified Supabase session that is NOT in platform_admins with 403", async () => {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uuid-2" } }, error: null });
     mockFromMaybeSingle.mockResolvedValue({ data: null, error: null });
-    await expect(
-      assertPlatformAdmin(req({ Authorization: "Bearer eyJ.fake.jwt" })),
-    ).rejects.toMatchObject({ status: 403, code: "not_a_platform_admin" });
+    await expect(assertPlatformAdmin(req())).rejects.toMatchObject({
+      status: 403,
+      code: "not_a_platform_admin",
+    });
   });
 
   it("surfaces a platform_admins lookup error as 500", async () => {
     mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uuid-3" } }, error: null });
     mockFromMaybeSingle.mockResolvedValue({ data: null, error: { message: "db down" } });
-    await expect(
-      assertPlatformAdmin(req({ Authorization: "Bearer eyJ.fake.jwt" })),
-    ).rejects.toMatchObject({ status: 500, code: "platform_admins_lookup_failed" });
+    await expect(assertPlatformAdmin(req())).rejects.toMatchObject({
+      status: 500,
+      code: "platform_admins_lookup_failed",
+    });
   });
 
   it("PlatformAdminError.toResponse() produces a JSON Response with the right status", async () => {
