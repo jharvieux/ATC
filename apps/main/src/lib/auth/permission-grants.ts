@@ -62,6 +62,8 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   // §7.6 — commissions + payouts read endpoints (tenant-scoped via RLS).
   key("commissions", "read"),
   key("payouts", "read"),
+  // §7.1 — /api/auth/me returns the caller's own identity + consent state.
+  key("me", "get"),
 ]);
 
 // AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
