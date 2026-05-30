@@ -1,4 +1,4 @@
-// §23.6 — getEmbarkationForecast contract.
+// §23.4 — getEmbarkationForecast contract.
 //
 // The cases below pin the WHY for each behavior:
 //   - rate-limit gate must FIRE the inngest event AND return null (the

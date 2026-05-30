@@ -1,4 +1,4 @@
-// §23.6 — wmoCodeToText covers the codes Open-Meteo actually emits.
+// §23.4 — wmoCodeToText covers the codes Open-Meteo actually emits.
 // Each test pins a representative code per WMO band so a future edit
 // that re-orders or drops a row trips a failure here.
 
