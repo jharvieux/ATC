@@ -70,6 +70,7 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   ...READ_GRANTS,
   // Bookings
   key("bookings", "cancel"),
+  key("bookings", "create"),
   key("bookings", "modify"),
   key("bookings", "submit"),
   key("bookings", "update"),
