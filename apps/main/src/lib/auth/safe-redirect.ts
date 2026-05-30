@@ -6,8 +6,7 @@
 // turn login into an open redirect (//evil.com, https://evil.com, /\evil.com)
 // or inject headers via CRLF. We also refuse auth/api internals so a stale
 // value (the signup page's legacy /auth/callback?flow=) can't bounce the user
-// into a 404 or a redirect loop. Anything rejected falls back to "/" at the
-// call site.
+// into a 404 or a redirect loop. Callers fall back to "/" on rejection.
 
 export function isSafePostLoginPath(path: string): boolean {
   if (path.length === 0 || path.length > 512) return false;
