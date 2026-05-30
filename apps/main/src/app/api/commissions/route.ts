@@ -1,23 +1,12 @@
-// §7.6 / §14 — List commissions visible to the caller's tenant.
-//
-// GET /api/commissions?status=&limit=&offset=
-//
-// RLS on `commissions` scopes by tenant_id. Status filter is optional;
-// supported values mirror the commission state machine: expected,
-// received, paid, clawed_back.
+// §7.6 / §14 — Tenant-scoped commissions list. Status filter mirrors the
+// commission state machine; limit is capped at 100 to prevent accidental
+// full-table scans.
 
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-
-const COLUMNS =
-  "id, tenant_id, booking_id, status, commissionable_fare_cents, " +
-  "gross_commission_cents, net_commission_cents, " +
-  "subhost_payable_cents, platform_retained_cents, " +
-  "commission_rate, platform_split_rate, currency, " +
-  "host_booking_fee_cents, host_booking_fee_rule_ref, " +
-  "created_at, updated_at";
+import { COMMISSIONS_READ_COLUMNS } from "@/lib/commissions/columns";
 
 const QuerySchema = z.object({
   status: z.enum(["expected", "received", "paid", "clawed_back"]).optional(),
@@ -46,7 +35,7 @@ export async function GET(req: Request): Promise<Response> {
     const db = tenantClient(ctx);
     let q = db
       .from("commissions")
-      .select(COLUMNS, { count: "exact" })
+      .select(COMMISSIONS_READ_COLUMNS, { count: "exact" })
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
     if (status) q = q.eq("status", status);

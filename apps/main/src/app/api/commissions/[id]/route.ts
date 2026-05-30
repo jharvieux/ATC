@@ -1,16 +1,10 @@
-// §7.6 / §14 — Get one commission row.
+// §7.6 / §14 — Single commission detail. 404 same shape whether missing
+// or RLS-hidden so cross-tenant existence isn't leaked.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-
-const COLUMNS =
-  "id, tenant_id, booking_id, status, commissionable_fare_cents, " +
-  "gross_commission_cents, net_commission_cents, " +
-  "subhost_payable_cents, platform_retained_cents, " +
-  "commission_rate, platform_split_rate, currency, " +
-  "host_booking_fee_cents, host_booking_fee_rule_ref, " +
-  "created_at, updated_at";
+import { COMMISSIONS_READ_COLUMNS } from "@/lib/commissions/columns";
 
 export async function GET(
   req: Request,
@@ -26,7 +20,7 @@ export async function GET(
     const db = tenantClient(ctx);
     const { data, error } = await db
       .from("commissions")
-      .select(COLUMNS)
+      .select(COMMISSIONS_READ_COLUMNS)
       .eq("id", id)
       .maybeSingle();
     if (error) {

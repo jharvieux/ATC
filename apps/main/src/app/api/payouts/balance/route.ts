@@ -1,16 +1,9 @@
 // §7.6 / §14.6 — Outstanding payout balance for the caller's tenant.
 //
-// GET /api/payouts/balance
-//
-// Returns:
-//   available_cents: sum of payout_records with status='available' (eligible
-//     for the next payout cron run)
-//   pending_cents: sum of payout_records with status='pending' (still in the
-//     hold window — releases when hold_release_at passes)
-//   currency: pulled from the first payout_record row; tenant_id is the
-//     scope and a tenant should only ever have one operating currency,
-//     so consolidating to one value is correct (and matches how
-//     payouts-execute-transfer aggregates).
+// amount_cents is stored as text (bigint serialized) so JS BigInt is the
+// right accumulator — JSON.stringify on summed floats would silently lose
+// precision once balances cross ~9 quadrillion cents and drift well below
+// that on imprecise float arithmetic.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
@@ -29,10 +22,6 @@ export async function GET(req: Request): Promise<Response> {
     });
 
     const db = tenantClient(ctx);
-    // Read raw rows and sum app-side — Postgres SUM on a text column
-    // returns numeric strings that JSON cannot encode at full precision
-    // when amounts get large. amount_cents is stored as text (bigint
-    // serialized) so JS BigInt is the right accumulator.
     const { data, error } = await db
       .from("payout_records")
       .select("amount_cents, status")
@@ -41,6 +30,7 @@ export async function GET(req: Request): Promise<Response> {
       return Response.json({ error: error.message }, { status: 500 });
     }
 
+    // Read raw rows and sum app-side; see file header.
     const rows = (data ?? []) as PayoutSumRow[];
     let availableCents = 0n;
     let pendingCents = 0n;

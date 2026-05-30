@@ -1,10 +1,5 @@
-// §7.6 / §14.6 — Past payouts for the caller's tenant.
-//
-// GET /api/payouts/history?status=&limit=&offset=
-//
-// Defaults to status=paid (the most useful default — "show me what
-// landed"); other statuses are explicit. Pagination matches the
-// commissions list.
+// §7.6 / §14.6 — Tenant-scoped payouts list. Defaults to status=paid
+// because the most common ask is "show me what landed."
 
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";

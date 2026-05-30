@@ -132,6 +132,16 @@ describe("GET /api/commissions (list)", () => {
     const res = await COMMISSIONS_LIST(getReq("/api/commissions?limit=500"));
     expect(res.status).toBe(400);
   });
+
+  it("fails loud (500) when the SELECT errors — does NOT return an empty list", async () => {
+    mocks.commissionsList.mockResolvedValue({
+      data: null,
+      error: { message: "rls" },
+      count: null,
+    });
+    const res = await COMMISSIONS_LIST(getReq("/api/commissions"));
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("GET /api/commissions/[id] (detail)", () => {
@@ -148,6 +158,15 @@ describe("GET /api/commissions/[id] (detail)", () => {
     mocks.commissionDetail.mockResolvedValue({ data: null, error: null });
     const res = await COMMISSIONS_DETAIL(getReq("/api/commissions/commission-1"), PARAMS);
     expect(res.status).toBe(404);
+  });
+
+  it("fails loud (500) when the SELECT errors — does NOT mask as 404", async () => {
+    mocks.commissionDetail.mockResolvedValue({
+      data: null,
+      error: { message: "rls" },
+    });
+    const res = await COMMISSIONS_DETAIL(getReq("/api/commissions/commission-1"), PARAMS);
+    expect(res.status).toBe(500);
   });
 });
 
@@ -201,6 +220,16 @@ describe("GET /api/payouts/history", () => {
   it("rejects an unsupported status with 400", async () => {
     const res = await PAYOUTS_HISTORY(getReq("/api/payouts/history?status=nonsense"));
     expect(res.status).toBe(400);
+  });
+
+  it("fails loud (500) when the SELECT errors — does NOT silently return empty", async () => {
+    mocks.payoutsHistory.mockResolvedValue({
+      data: null,
+      error: { message: "rls" },
+      count: null,
+    });
+    const res = await PAYOUTS_HISTORY(getReq("/api/payouts/history"));
+    expect(res.status).toBe(500);
   });
 });
 
@@ -259,6 +288,21 @@ describe("POST /api/payouts/manual", () => {
     mocks.tenantsMaybeSingle.mockResolvedValue({
       data: null,
       error: { message: "rls fail" },
+    });
+    const res = await PAYOUTS_MANUAL(
+      new Request("https://tenant.example.com/api/payouts/manual", { method: "POST" }),
+    );
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 500 when the balance prefetch errors after Connect passes — does NOT silent 202", async () => {
+    mocks.tenantsMaybeSingle.mockResolvedValue({
+      data: { stripe_connect_account_id: "acct_test" },
+      error: null,
+    });
+    mocks.payoutsManualBalance.mockResolvedValue({
+      data: null,
+      error: { message: "rls" },
     });
     const res = await PAYOUTS_MANUAL(
       new Request("https://tenant.example.com/api/payouts/manual", { method: "POST" }),
