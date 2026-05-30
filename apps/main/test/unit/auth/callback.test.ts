@@ -127,7 +127,7 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
 
-  it("Microsoft with no resolvable email: lands on /signup/email-prompt with _ms_session, session still set", async () => {
+  it("Microsoft with no resolvable email: lands on /signup/email-prompt, session still set, NO upsert", async () => {
     mockExchange.mockResolvedValue({
       data: {
         session: {
@@ -150,7 +150,29 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe(
       "/signup/email-prompt",
     );
-    expect(res.headers.get("set-cookie")).toContain("_ms_session=supabase-jwt");
+    expect(mockApplyAuthCookies).toHaveBeenCalledTimes(1);
+  });
+
+  it("Facebook (or any non-azure provider) with null email: same OTP recovery — /signup/email-prompt, NO Graph call, NO upsert", async () => {
+    mockExchange.mockResolvedValue({
+      data: {
+        session: {
+          access_token: "supabase-jwt",
+          user: {
+            id: "auth-user-fb",
+            email: null,
+            app_metadata: { provider: "facebook" },
+          },
+        },
+      },
+      error: null,
+    });
+    const res = await get("?code=abc");
+    expect(mockRecover).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe(
+      "/signup/email-prompt",
+    );
     expect(mockApplyAuthCookies).toHaveBeenCalledTimes(1);
   });
 

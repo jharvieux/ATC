@@ -53,24 +53,18 @@ export async function GET(req: NextRequest): Promise<Response> {
     const graphToken =
       (session.provider_token as string | undefined) ?? session.access_token;
     email = await recoverMicrosoftEmail(email, graphToken);
-    if (!email) {
-      // Auth succeeded; we just lack an email. Establish the session AND carry
-      // a short marker so /signup/email-prompt can finalize the users row.
-      const res = NextResponse.redirect(
-        new URL("/signup/email-prompt", url.origin),
-        302,
-      );
-      res.cookies.set({
-        name: "_ms_session",
-        value: session.access_token,
-        path: "/",
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: 900,
-      });
-      return applyAuthCookies(res);
-    }
+  }
+
+  // §17.2 generalized — Facebook (and any provider without a Graph-equivalent)
+  // also yields null email when the user denies the email scope. Same OTP
+  // recovery: establish the session and bounce to /signup/email-prompt where
+  // the user types an email and confirms it via Resend OTP. The session is
+  // already on the response (applyAuthCookies); the verify route reads it
+  // back to identify the auth user.
+  if (!email) {
+    return applyAuthCookies(
+      NextResponse.redirect(new URL("/signup/email-prompt", url.origin), 302),
+    );
   }
 
   // Membership upsert — tenant domains only. On the platform domain the

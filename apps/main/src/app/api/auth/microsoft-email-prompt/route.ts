@@ -24,7 +24,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const code = generateOtp();
-  OTP_STORE.set(email, { code, expires: Date.now() + 10 * 60 * 1000 }); // 10 min
+  OTP_STORE.set(email, {
+    code,
+    expires: Date.now() + 10 * 60 * 1000, // 10 min
+    attempts: 0,
+  });
 
   const apiKey = process.env.RESEND_API_KEY;
   if (apiKey) {
