@@ -58,7 +58,9 @@ const SHIP = "Norwegian Bliss";
 const CRUISE_LINE = "Norwegian Cruise Line";
 const CUSTOMER = "Jordan";
 
-// Embarkation port + lat/lon for the live Open-Meteo call.
+// Miami is the embarkation port for the sample NCL Bliss itinerary
+// (PortMiami, Terminal B). These coords feed the live Open-Meteo call
+// that produces the T-1 weather summary.
 const MIAMI_LAT = 25.7617;
 const MIAMI_LON = -80.1918;
 
@@ -74,7 +76,10 @@ interface WeatherSummary {
 }
 
 async function fetchMiamiWeather(): Promise<WeatherSummary | null> {
-  // For the sample, pull a forecast within Open-Meteo's 16-day window.
+  // SAILING_DATE is ~90 days out for the sample story, but Open-Meteo
+  // only forecasts 16 days ahead. We pull +7 days from "now" so the
+  // T-1 sample exercises a real forecast response with realistic values
+  // (high/low/precip/code) — the prose around it frames the date.
   const target = new Date();
   target.setUTCDate(target.getUTCDate() + 7);
   const dateStr = target.toISOString().slice(0, 10);
@@ -240,10 +245,6 @@ async function main(): Promise<void> {
       departure_port: {
         port_name: "PortMiami, FL",
         official_url: "https://www.miamidade.gov/portmiami/",
-        terminal_addresses: [
-          { terminal: "Terminal B (NCL)", address: "1015 N Cruise Blvd, Miami, FL 33132" },
-        ],
-        parking_info: "Cruise Parking Garage on-site: $22/day. Pre-payment available via the PortMiami app.",
         transit_dropoff_info:
           "Uber/Lyft drop-off zone is on the east side of Terminal B. Allow 20 min from the airport in mid-morning, 35+ in afternoon.",
         arrival_advice:
@@ -276,9 +277,8 @@ async function main(): Promise<void> {
   //   2. GroupBroadcast — sent later by the coordinator to all booked guests
   //      with a logistics update (final payment reminder + group-photo time).
 
-  const GROUP_BRANDING = SAMPLE_LAYOUT.branding;
   const GROUP_TENANT_BRANDING = {
-    branding: GROUP_BRANDING,
+    branding: SAMPLE_LAYOUT.branding,
     tenant_legal_name: SAMPLE_LAYOUT.tenant_legal_name,
     tenant_business_address: SAMPLE_LAYOUT.tenant_business_address,
     unsubscribe_url: "https://anchorcompass.example.com/u/group-abc456",
@@ -327,4 +327,7 @@ async function main(): Promise<void> {
   console.log("[samples] wrote /tmp/sample-group-{invitation,broadcast}.html");
 }
 
-void main();
+main().catch((err: unknown) => {
+  console.error(err);
+  process.exit(1);
+});
