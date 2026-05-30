@@ -256,6 +256,11 @@ const ALLOWED_PATH_SUFFIXES = [
   // operation is filtered by ctx.tenant_id at the call site) but pre-date
   // the tenantClient proxy. Migrating to tenantClient is a follow-on.
   "/app/api/auth/callback/route.ts",
+  // §17.2 — no-email recovery finalize. Same shape as the callback: the
+  // user has just authenticated via OAuth but doesn't have a public.users
+  // row yet, so RLS can't grant the upsert. Service-role with an explicit
+  // (auth_user_id, tenant_id) upsert is the only path.
+  "/app/api/auth/microsoft-email-verify/route.ts",
   "/app/api/groups/route.ts",
   "/app/api/groups/[id]/invitations/route.ts",
   "/app/api/groups/invite/[token]/route.ts",
@@ -309,6 +314,8 @@ const ALLOWED_PATH_SUFFIXES = [
   // the service-role bypass restores no broader access than RLS would
   // grant a member.
   "/app/api/user/pending-transfer/route.ts",
+  "/app/api/auth/transfer-session/route.ts",
+  "/app/api/auth/transfer-session/preview/route.ts",
   "/app/api/auth/transfer-session/undo/route.ts",
   // §7.9 — Idempotency-Key middleware: reads/writes the cross-tenant
   // request_idempotency cache (locked down to service_role only via RLS).

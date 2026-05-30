@@ -58,6 +58,7 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("CustomerMemory", "read"),
   key("UserProfile", "read"),
   key("PendingTransfer", "read"),
+  key("SessionTransfer", "preview"),
 ]);
 
 // AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
@@ -93,6 +94,8 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("CustomerMemory", "delete"),
   key("CustomerMemory", "opt_out"),
   key("UserProfile", "update"),
+  key("SessionTransfer", "commit"),
+  key("SessionTransfer", "discard"),
   key("SessionTransfer", "undo"),
   // Forums — operational, not moderation
   key("forums", "edit_message"),
