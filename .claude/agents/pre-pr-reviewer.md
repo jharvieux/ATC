@@ -197,6 +197,3 @@ sits next to the PR on GitHub (durable record + the
 Re-running you after new commits posts a **new** comment (don't try to
 edit prior ones; the workflow looks at the newest matching comment
 against the head commit's timestamp).
-
-**Posting PR comments via `gh pr comment` is explicitly allowed** — that's
-the record-keeping step. No other GitHub mutations.

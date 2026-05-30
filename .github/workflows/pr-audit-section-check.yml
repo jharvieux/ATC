@@ -15,8 +15,11 @@
 #
 # Layer 2 is the load-bearing part — Layer 1 alone could be fabricated
 # in the PR body without ever running the subagents. The marker-on-comment
-# scheme means the bot identity (`github-actions` for the gh CLI calls
-# the agent makes) is the audit trail.
+# scheme isn't unforgeable (any collaborator could post the marker
+# manually), but it does force the maintainer to either invoke the
+# subagent OR consciously type a fake comment — versus the current
+# Layer 1 where pasting text into the body is the path of least
+# resistance.
 #
 # Exemptions:
 #   - dependabot[bot] — version-only PRs, no code logic to review
@@ -144,13 +147,20 @@ jobs:
           echo "Head commit $HEAD_SHA committed at $HEAD_DATE"
 
           # ISO 8601 timestamps sort lexicographically, so plain string
-          # comparison is correct here.
+          # comparison is correct here (both APIs return UTC `Z` strings).
+          #
+          # `--paginate --slurp` returns one JSON array of pages (each page
+          # is itself an array of comments). `.[][]` flattens to all
+          # comments, then we filter by marker and pick the newest. Slurp
+          # avoids the "jq sees one page at a time" gotcha that would
+          # require an undocumented "comments are returned oldest-first"
+          # assumption.
           check_marker() {
             local marker="$1"
             local name="$2"
             local newest
-            newest=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
-              --jq "[.[] | select(.body | contains(\"<!-- $marker -->\"))] | sort_by(.created_at) | last | .created_at // empty")
+            newest=$(gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
+              | jq -r --arg M "<!-- $marker -->" '[.[][] | select(.body | contains($M))] | sort_by(.created_at) | last | .created_at // empty')
             if [ -z "$newest" ]; then
               echo "::error::Missing $name audit comment (marker <!-- $marker -->)."
               echo ""
@@ -171,5 +181,9 @@ jobs:
             echo "✓ $name audit comment posted $newest (>= head $HEAD_DATE)"
           }
 
-          check_marker "d091-audit:v1" "d091-reviewer"
-          check_marker "prepr-audit:v1" "pre-pr-reviewer"
+          # Collect both failures so the author sees them together rather
+          # than fix-one-push-fix-the-other.
+          FAILED=0
+          check_marker "d091-audit:v1"  "d091-reviewer"   || FAILED=1
+          check_marker "prepr-audit:v1" "pre-pr-reviewer" || FAILED=1
+          [ "$FAILED" -eq 0 ]
