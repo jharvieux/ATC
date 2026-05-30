@@ -82,7 +82,10 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("tasks", "delete"),
   key("tasks", "update"),
   // Groups
+  key("groups", "broadcast"),
   key("groups", "create"),
+  key("groups", "invite"),
+  key("groups", "read"),
   // Price watches
   key("price_watches", "create"),
   key("price_watches", "rearm"),

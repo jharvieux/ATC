@@ -8,7 +8,7 @@
 //   forum      — embedded forum view with coordinator privileges enabled
 
 import * as React from "react";
-import { TenantOfRecordDisclosure } from "@/components/booking/TenantOfRecordDisclosure";
+import { GroupBroadcast } from "@/emails/GroupBroadcast";
 
 const VALID_TABS = ["overview", "invitees", "edit", "preview-email", "forum"] as const;
 type Tab = (typeof VALID_TABS)[number];
@@ -157,38 +157,31 @@ function PreviewEmailTab({ groupId: _groupId }: { groupId: string }): React.Reac
         This is how the invitation email will appear to invitees.
       </p>
 
-      {/* Renders the GroupInvitation email template with live group data */}
-      {/* TODO(prompt-23): replace with live BrandedLayout email template render */}
+      {/* The actual broadcast send (POST /api/groups/[id]/broadcast)
+          renders GroupBroadcast through BrandedLayout via renderToStaticMarkup.
+          Mounting the same template here means the coordinator's preview
+          matches the email recipients will receive byte-for-byte. */}
       <div
         style={{
           border: "1px solid #e5e7eb",
           borderRadius: 8,
-          padding: 24,
+          padding: 0,
           background: "#fafafa",
-          fontFamily: "Georgia, serif",
-          lineHeight: 1.7,
+          overflow: "hidden",
         }}
       >
-        <div style={{ maxWidth: 600, margin: "0 auto", background: "#fff", padding: "32px 40px", borderRadius: 8, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#111827", marginBottom: 8 }}>
-            You&apos;re invited to a group cruise!
-          </h1>
-          <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 24 }}>
-            [Cruise Line] · [Ship Name] · [Sailing Date]
-          </p>
-          <p style={{ color: "#374151", marginBottom: 24 }}>
-            [Coordinator message will appear here]
-          </p>
-          <div style={{ textAlign: "center", marginBottom: 24 }}>
-            <span style={{ display: "inline-block", padding: "12px 28px", background: "#6366f1", color: "#fff", borderRadius: 6, fontWeight: 600, fontSize: 15 }}>
-              View Invitation &amp; RSVP
-            </span>
-          </div>
-          <TenantOfRecordDisclosure
-            tenant={{ name: "[Your Agency]", support_email: "support@youragency.com" }}
-            hostAgency={{ legal_name: "[Host Agency Name]" }}
-          />
-        </div>
+        <GroupBroadcast
+          branding={{}}
+          tenant_legal_name="[Your Agency]"
+          tenant_business_address="[Your mailing address]"
+          unsubscribe_url="/settings/notifications"
+          subject="You're invited to a group cruise!"
+          message={
+            "[Coordinator message will appear here]\n\nReply to this email or " +
+            "use the link in your invitation to RSVP."
+          }
+          group_name="[Cruise Line] — [Ship Name]"
+        />
       </div>
     </section>
   );
