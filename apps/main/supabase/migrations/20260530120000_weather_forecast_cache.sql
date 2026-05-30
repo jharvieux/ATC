@@ -66,7 +66,7 @@ CREATE OR REPLACE FUNCTION public.increment_weather_usage()
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = ''
 AS $$
 DECLARE
   new_count INTEGER;
@@ -82,7 +82,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.increment_weather_usage() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.increment_weather_usage() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.increment_weather_usage() TO service_role;
 
 -- ── RLS ─────────────────────────────────────────────────────────────────────
