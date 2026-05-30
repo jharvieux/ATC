@@ -309,6 +309,11 @@ const ALLOWED_PATH_SUFFIXES = [
   // bucket. Both require service-role; the route still gates on
   // assertPermission('quotes', 'send') for the tenant-user auth side.
   "/app/api/quotes/[id]/send/route.ts",
+  // §12.4 / §38.5 — agent-facing PDF download. Same loader as /send
+  // (loadQuoteRenderInput), which reads tenants and platform_settings
+  // cross-tenant for tenant name + host_agency_legal_name. The quote
+  // SELECT itself runs through tenantClient(ctx).
+  "/app/api/quotes/[id]/pdf/route.ts",
   // §11.6 — pending-transfer + undo routes query anonymous_sessions which
   // is RLS-tenant-scoped. Both routes filter by tenant_id explicitly so
   // the service-role bypass restores no broader access than RLS would

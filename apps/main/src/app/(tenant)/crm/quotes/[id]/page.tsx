@@ -1,7 +1,10 @@
 "use client";
 
 // §12.4 — Quote detail with line-item editor.
-// PDF rendering deferred per build prompt — TODO(bp21-pdf): wire @react-pdf/renderer.
+//
+// PDF download is served by GET /api/quotes/[id]/pdf, which streams the
+// same binary that /send attaches to the customer email (renderQuotePdf
+// fed by the shared loadQuoteRenderInput helper).
 
 import { useState, useEffect, use } from "react";
 import { COMMISSIONABLE_LINE_ITEMS } from "@/lib/commissions/commissionable-line-items";
@@ -66,15 +69,23 @@ export default function QuoteDetailPage({ params }: { params: Promise<{ id: stri
           </h1>
           <span className="text-sm text-gray-500 capitalize">{quote.status}</span>
         </div>
-        {quote.status === "draft" && (
-          <button
-            onClick={handleSend}
-            disabled={submitting}
-            className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        <div className="flex items-center gap-2">
+          <a
+            href={`/api/quotes/${id}/pdf`}
+            className="bg-white text-gray-700 px-4 py-2 rounded-md text-sm font-medium border border-gray-300 hover:bg-gray-50"
           >
-            Send to client
-          </button>
-        )}
+            Download PDF
+          </a>
+          {quote.status === "draft" && (
+            <button
+              onClick={handleSend}
+              disabled={submitting}
+              className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+            >
+              Send to client
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-gray-50 rounded-lg p-4 mb-6 grid grid-cols-2 gap-4 text-sm">
