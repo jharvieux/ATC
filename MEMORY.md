@@ -4,6 +4,33 @@ Newest entries on top.
 
 ---
 
+## D-124 — 2026-05-30 — Pre-cruise emails gain destination hero images + full-cruise weather chart; images in rag_media_assets region scope; prod wire-up tracked in #483-#489 (PRs #469/#470/#481/#482)
+
+**Decision**: Enrich the §23.4 pre-cruise email series with (a) a destination hero image per cruise region and (b) a multi-day weather forecast chart on T-7 and T-1 covering every stop including sea days. The long-standing §23.4 "weather for all stops" TODO is now implemented via Open-Meteo.
+
+Architecture choices:
+- **Destination images live in `rag_media_assets`** (RAG service), extended with `entity_type='region'` + `kind='destination_hero'` (RAG migration 0019). A static catalog mirror at `apps/main/src/lib/cruise-regions/destination-images.ts` is what the email-render path actually reads (no network call per render); the RAG rows are the canonical store + future per-tenant override surface. 4 of 12 regions sourced (caribbean, mediterranean, northern_europe, alaska); 8 are typed `null` placeholders.
+- **Weather chart is an HTML table, not SVG** — Outlook desktop strips SVG. One column per cruise day; Open-Meteo CC-BY 4.0 attribution beneath.
+- **Open-Meteo helper fails closed** on DB read error (rate-limit gate denies rather than assuming under-quota); daily cap (default 8000) is operator-tunable at `/admin/integrations/weather`.
+
+Production wire-up decisions (baked into issues #483-#489):
+- **Itinerary source = `pricing_cache`** (CruiseMapper-fed), queried at send time. NOT materialized onto bookings/groups — one source of truth.
+- **Region classification = first port of call** (NOT embarkation port), with CruiseMapper's title-embedded region string as the primary signal and a static first-stop lookup as backup.
+- **Sea-day weather = straight-line linear interpolation** between the bracketing ports' coordinates.
+- **CruiseMapper does NOT capture per-day itinerary today** — the DIY scraper does ships/ports/decks/prices but has no sailing parser (#485 adds one).
+
+**Why**: User asked for richer, more attractive emails with destination-appropriate graphics now that the weather API shipped. `rag_media_assets` was the natural home for hot-linked attributed images (it already does this for deck plans / ship photos). Email-client compatibility forced HTML-table over SVG. The fail-closed weather gate prevents a single DB blip from silently over-running Open-Meteo's free tier.
+
+**Rejected**:
+- Self-host images in Supabase Storage — hot-linking with attribution matches the existing `rag_media_assets` convention and costs nothing.
+- SVG chart — Outlook incompatibility.
+- Materialize itinerary onto `groups` rows — two-sources-of-truth drift; query `pricing_cache` instead.
+- Classify region by embarkation port — first stop is more accurate (Seattle→Alaska, Miami→Caribbean both handled correctly).
+
+**Related artifacts**: PRs #469 (helper+cache), #470 (admin page+alert), #481 (sample renderer + runbook `docs/runbooks/email-samples.md`), #482 (templates + images + chart). Follow-up issues #483-#489. Spec sections §23.4, §33.6.1. See `docs/specs/reality-delta-supplement-3.md`.
+
+---
+
 ## D-123 — 2026-05-30 — contracts-canary recorder fully implemented; awaits two GitHub secrets (PR #472, issue #471)
 
 **Decision.** The nightly `contracts-canary` workflow now has a real recorder (was a `console.log("TODO")` stub) and a correct workflow harness (was `npm ci` on a pnpm repo, with `continue-on-error: true` swallowing any actual drift signal). Both the recorder script and the workflow file passed clean audits. Operationally green pending two repo secrets: `STRIPE_TEST_SECRET_KEY` and `ANTHROPIC_API_KEY_TEST`.
