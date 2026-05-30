@@ -34,13 +34,19 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest, NextResponse } from "next/server";
 
-// NEXT_PUBLIC_* are validated at boot (lib/env.ts) and inlined at build; the
-// non-null assertions match the convention in the existing auth routes.
+// verifyEnvAtBoot (lib/env.ts) is the primary gate; this is defense-in-depth
+// so a missing var surfaces a named error instead of @supabase/ssr's generic
+// "URL and Key are required" message buried in a route stack.
 function supabaseAnonConfig(): { url: string; anonKey: string } {
-  return {
-    url: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  };
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) {
+    throw new Error(
+      "ssr-client: Supabase env not configured " +
+        "(NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY).",
+    );
+  }
+  return { url, anonKey };
 }
 
 // Read-only parse of a request's Cookie header into the { name, value }[] shape

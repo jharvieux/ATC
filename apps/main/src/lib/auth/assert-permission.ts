@@ -14,7 +14,6 @@
 // mutating route was therefore open to any active tenant member, regardless
 // of role.
 
-import { createClient } from "@supabase/supabase-js";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import {
@@ -24,6 +23,7 @@ import {
 import { tryTestBypass } from "./test-bypass";
 import { isPermitted, type UserRole } from "./permission-grants";
 import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
+import { createRequestScopedClient } from "./ssr-client";
 
 export type User = {
   id: string;
@@ -65,11 +65,10 @@ export class AuthReauthRequired extends Error {
  * §17.4 — Pending consent gate. Thrown when the caller has rows in
  * user_consent_pending (a new legal document version was published since
  * their last acceptance). Spec says ANY authenticated request other than
- * /consent + /logout + /legal/* must be redirected to /consent. In this
- * codebase the auth token isn't in cookies (it's in localStorage and
- * passed via Authorization headers), so middleware can't see who's
- * authenticated — the gate enforces here instead, where we already
- * verified the bearer and know the auth_user_id.
+ * /consent + /logout + /legal/* must be redirected to /consent. The session
+ * lives in HttpOnly cookies (§17.x) but the consent check needs the
+ * authenticated user id, which only exists after getUser — so the gate
+ * enforces here in assertPermission, where verification has already run.
  *
  * The consent acceptance endpoints (/api/user/consent and
  * /api/user/consent/pending) use Supabase auth directly without going
@@ -124,19 +123,7 @@ export async function assertPermission(
 
   const ctx = await tenantContextFromRequest(req);
 
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    throw new Error("assertPermission: missing Authorization Bearer token.");
-  }
-  const accessToken = authHeader.slice("Bearer ".length);
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  const supabase = createClient(url, anonKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-  });
+  const supabase = createRequestScopedClient(req);
 
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData?.user) {
@@ -157,11 +144,14 @@ export async function assertPermission(
     throw new ConsentPendingError(pathname, pending);
   }
 
-  // §26.3 sensitive-action re-auth check. Decode auth_time from the JWT
-  // payload (no signature verification needed — Supabase already validated
-  // the token in getUser()). If stale, throw the structured error.
+  // §26.3 sensitive-action re-auth check. The access_token now lives in the
+  // session cookie; pull it out via getSession() (cheap — cookie parse only,
+  // no network) and decode auth_time. getUser above already verified the
+  // signature for this request, so reading the payload here is safe.
   if (isSensitiveRoute(pathname)) {
-    const authTime = readAuthTime(accessToken);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token ?? null;
+    const authTime = accessToken ? readAuthTime(accessToken) : null;
     if (authTime === null) {
       throw new AuthReauthRequired(pathname);
     }
