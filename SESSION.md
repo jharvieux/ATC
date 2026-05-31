@@ -1,27 +1,31 @@
-# Session state — last updated 2026-05-31 09:40 UTC
+# Session state — last updated 2026-05-31 12:00 UTC
 
 ## Just completed
-- Merged PR #513 (§24.x anon session HMAC hardening, closes #442)
-- Merged PR #515 (§20.2 booking flow Stages 2+3 — passengers, options, UI; closes #424)
-  - 26 unit tests, 5 audit rounds across 3 fix commits
-- Merged PR #516 (MEMORY.md D-128 entry for §20.2 replace-all pattern decision)
+- Cleaned up stale tasks (#37, #38, #66, #94, #95, #97, #98 all marked complete — issues already closed)
+- Deleted duplicate port_info migration written by research agent (issue #488 was already closed in PR #508)
+- Implemented signup/complete tenant provisioning route (issue #441, PR #523 open, audits in progress)
+- Added D-131 MEMORY.md entry for the assertPermission-can't-gate-pre-tenant-routes pattern
 
 ## In flight
-- Nothing in flight — clean checkpoint
+- PR #523 (feature/signup-complete-441): audit agents running; waiting for CI + audit results before merging
+- MEMORY.md D-131 entry: committed on feature/signup-complete-441 branch (staged on dev branch), needs to land with PR #523
 
 ## Next step
-- Resume auto-triage: enumerate open issues + PRs to find next unblocked work
-- Candidates: #423 (group coordinate page — TODO(prompt-24) markers, was blocked on #424 which is now done)
+- When PR #523 audits complete: review findings, fix if needed, update PR body Audit section, merge when CI green
+- Then: check remaining open issues for anything actionable — consider #514 (remove unsigned-cookie legacy path) once ANON_COOKIE_SECRET (#518) is deployed
 
 ## Blocked on user
-- ANON_COOKIE_SECRET provisioning in Vercel + Supabase Edge (needed after PR #513 deploy)
-- RAG migrations 0020+0021 manual apply
+- #518: ANON_COOKIE_SECRET provisioning in Vercel + Supabase Edge (blocks §24.x full deploy)
+- #519: RAG migrations 0020+0021 manual apply
 - #473: GitHub secrets (STRIPE_TEST_SECRET_KEY, ANTHROPIC_API_KEY_TEST)
-- #386: DB harness
+- #386: DB harness (blocks Cross-Tenant Probe real implementation)
 - #500: CruiseMapper ingest (operator-blocked)
-- #441: blocked on signup UI
+- #430: All ops checklist items (Vercel env, Stripe, Apify, PLATFORM_PEPPER)
+- #441: signup UI (no frontend caller for the now-implemented route)
 
 ## Open questions
-- Issue #514: migration window removal for unsigned anon cookie legacy path — deferred
-- feature/auth-secure-cookies branch is obsolete — can be deleted
-- docs/runbooks/auth-session-architecture-findings.md is untracked — decide whether to commit or discard
+- Issue #514: remove unsigned-cookie legacy path — deferred until ANON_COOKIE_SECRET deployed + 1-2 week rollover
+- Issue #455 (personas FK): stays open; actual FK migration needed once personas table exists
+- Issue #423: search_host_inventory + generate_quote still stubs (search_host_inventory needs BP14; generate_quote blocked by §38)
+- Issue #384 item 1: Cross-Tenant Probe — blocked on #386 (DB harness)
+- Task #96: #475 contract test wrappers (Stripe + Anthropic MSW) — pending; depends on #473 GitHub secrets
