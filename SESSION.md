@@ -1,22 +1,30 @@
-# Session state — last updated 2026-05-30 23:05 UTC
+# Session state — last updated 2026-05-30 23:50 UTC
 
 ## Just completed
-- §33.4 sailing ingest pipeline: all audit blockers fixed, all tests passing, PR #501 opened
-- GitHub issue #500 created with step-by-step instructions for manually triggering both CruiseMapper ingest crons (prerequisite: apply RAG migration 0020_itineraries_day_by_day.sql first)
-- Fixed: mapItinerary source regression ("diy_cruisemapper" → "apify"); processKind + processShipKind unchecked SELECTs; RAG route maybeSingle unchecked
-- Added tests: mapSailing (5), mapSailingListItem (6), mapItinerary source pin, authority_auto branching (5 incl. UPDATE path)
-- MEMORY.md D-126 entry written
+- PR #501 (§33.4 sailing ingest pipeline, task #99) — all CI green, merged + branch deleted
+- Issue #486 (region classifier + sea-day interpolation, task #92):
+  - `apps/main/src/lib/cruise-regions/classify.ts` — normalizeCruiseMapperRegion, classifyByFirstStop, resolveDestinationRegion
+  - `apps/main/src/lib/weather/sea-day-interpolation.ts` — interpolateSeaDays (linear interpolation, leading/trailing edge cases)
+  - 33 unit tests — all passing
+  - D-091 + pre-pr-reviewer ran; 2 findings fixed; both audits clean
+  - PR #502 opened, CI passed, merging in progress
 
 ## In flight
-- PR #501 (feature/485-sailing-ingest → dev): awaiting CI
+- PR #502 (feature/486-region-classifier → dev) — resolving SESSION.md merge conflict, then merging
 
 ## Next step
-- Merge PR #501 when CI passes, mark task #99 complete
-- Follow issue #500: apply RAG migration 0020_itineraries_day_by_day.sql, then trigger both Inngest crons manually
-- Next queue item: task #92 (#486 region classifier + sea-day interpolation)
+- Complete merge of PR #502, mark task #92 complete
+- Start task #93: #487 — wire destination images + forecast into precruise-generate-and-send + 8 more region images
+  - Source 8 images already researched (see notes in conversation)
+  - Create branch feature/487-destination-images-forecast
+- Also pending: apply RAG migration 0020_itineraries_day_by_day.sql to RAG project (blocked on user)
+- Also pending: trigger one-time CruiseMapper ingest per issue #500 (blocked on user)
 
 ## Blocked on user
-- Issue #500: operator must apply migration 0020_itineraries_day_by_day.sql to RAG project + trigger both Inngest crons manually (refresh-cruisemapper-static then refresh-cruisemapper-sailings)
+- Apply RAG migration `0020_itineraries_day_by_day.sql` to RAG Supabase project
+- Trigger one-time CruiseMapper ingest per issue #500 ops instructions (before July 1)
+- `STRIPE_TEST_SECRET_KEY` + `ANTHROPIC_API_KEY_TEST` GitHub secrets needed for contracts canary (#473)
 
 ## Open questions
-- Nothing
+- `docs/runbooks/auth-session-architecture-findings.md` is untracked in the repo — not part of any current PR; decide whether to commit or discard
+- vite-8 ignore (#330) may now be removable — dependency-ignore-watch will surface it
