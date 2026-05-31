@@ -19,7 +19,7 @@ test("POST /api/bookings/draft with bypass → past the auth gate", async ({ req
   expect([200, 201, 501]).toContain(res.status());
 });
 
-// TODO when the booking create handler graduates from 501:
-test.skip("create a new booking succeeds", async () => {});
-test.skip("booking list shows at least one booking after creation", async () => {});
-test.skip("booking detail page loads for a valid booking", async () => {});
+// TODO(#424): booking create and detail routes still 501; wire E2E when Stage 2/3 ships.
+test.fixme("create a new booking succeeds", async () => {});
+test.fixme("booking list shows at least one booking after creation", async () => {});
+test.fixme("booking detail page loads for a valid booking", async () => {});

@@ -22,7 +22,7 @@ test("GET /api/auth/me with bogus Bearer → 401", async ({ request }) => {
   expect(res.status()).toBe(401);
 });
 
-// TODO when GoTrue / OAuth flows are wired locally:
-test.skip("sign in with valid credentials", async () => {});
-test.skip("sign out clears session", async () => {});
-test.skip("unauthenticated access redirects to sign-in", async () => {});
+// TODO(#459): GoTrue / OAuth E2E flows not yet wired for local test runner.
+test.fixme("sign in with valid credentials", async () => {});
+test.fixme("sign out clears session", async () => {});
+test.fixme("unauthenticated access redirects to sign-in", async () => {});
