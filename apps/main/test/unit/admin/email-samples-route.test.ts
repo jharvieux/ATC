@@ -155,4 +155,16 @@ describe("GET /api/admin/email-samples (preview)", () => {
     const html = await res.text();
     expect(html).toContain("AI Travel Concierge");
   });
+
+  it("uses audit reason admin_email_sample_preview (not send)", async () => {
+    const { withPlatformAdminAudit } = await import("@/lib/db/platform-admin-client");
+    vi.mocked(withPlatformAdminAudit).mockClear();
+
+    const { GET } = await import("@/app/api/admin/email-samples/route");
+    await GET(makeRequest("GET", adminHeaders()));
+
+    expect(withPlatformAdminAudit).toHaveBeenCalledOnce();
+    const opts = vi.mocked(withPlatformAdminAudit).mock.calls[0]![0] as { reason: string };
+    expect(opts.reason).toBe("admin_email_sample_preview");
+  });
 });
