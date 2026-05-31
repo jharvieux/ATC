@@ -34,12 +34,15 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const db = tenantClient(ctx);
-    const { data: tenant } = await db
+    const { data: tenant, error: tenantErr } = await db
       .from("tenants")
       .select("legal_name")
       .eq("id", ctx.tenant_id)
       .single();
 
+    if (tenantErr) {
+      return Response.json({ error: tenantErr.message }, { status: 500 });
+    }
     if (!tenant?.legal_name) {
       return Response.json({ error: "complete_profile_first" }, { status: 409 });
     }
@@ -69,7 +72,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const icaDoc = icaDocs[0] as { id: string; version: number };
-    const ipAddress = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
+    const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? "unknown";
 
     // service_role required: authenticated users cannot INSERT legal_consents per RLS.
     const serviceDb = createServiceRoleClient();

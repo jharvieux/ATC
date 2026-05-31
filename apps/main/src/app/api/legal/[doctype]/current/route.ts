@@ -1,5 +1,4 @@
 // §7.1 (route table) / §17.4 — Get current legal document.
-// Returns the non-superseded version of the requested document type.
 // Any authenticated user may read legal documents (RLS: auth.uid() IS NOT NULL).
 
 import { assertPermission } from "@/lib/auth/assert-permission";

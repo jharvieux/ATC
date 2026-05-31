@@ -1,7 +1,5 @@
 // §15.4 / §17.4 — Onboarding Stage 3: Legal document acceptance.
-// Records consent for ToU, Privacy Policy, AI Disclaimer, Cookie Policy.
-// Fetches current document versions from legal_documents; writes legal_consents
-// rows via service_role (authenticated users cannot insert per RLS).
+// Writes legal_consents rows via service_role — authenticated users cannot INSERT per RLS.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
@@ -56,7 +54,7 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "legal_documents_not_found", missing: missingDocs }, { status: 500 });
     }
 
-    const ipAddress = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
+    const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? "unknown";
     const userAgent = req.headers.get("user-agent") ?? "";
 
     // Write consent rows via service_role — authenticated users cannot INSERT per RLS.

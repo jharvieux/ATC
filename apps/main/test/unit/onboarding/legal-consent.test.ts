@@ -258,6 +258,31 @@ describe("POST /api/onboarding/ica — §15.5 / §17.4", () => {
     const body = await res.json() as { error: string };
     expect(body.error).toBe("document_state_inconsistent");
   });
+
+  it("returns 500 when tenants.ica_accepted_at update fails — stage does not advance without timestamp write", async () => {
+    mockTenantFrom.mockImplementation((table: string) => {
+      if (table === "tenants") return makeChain({ legal_name: LEGAL_NAME });
+      if (table === "legal_documents") return makeChain([ICA_DOC]);
+      return makeChain(null);
+    });
+    mockServiceFrom.mockImplementation((table: string) => {
+      if (table === "legal_consents") {
+        return { insert: () => Promise.resolve({ data: null, error: null }) };
+      }
+      if (table === "tenants") {
+        return { update: () => ({ eq: () => Promise.resolve({ data: null, error: { message: "update failed" } }) }) };
+      }
+      return {};
+    });
+    const { POST } = await import("@/app/api/onboarding/ica/route");
+    const res = await POST(postRequest("/api/onboarding/ica", {
+      typed_legal_name: LEGAL_NAME,
+      scrolled_to_bottom: true,
+    }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("update failed");
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
