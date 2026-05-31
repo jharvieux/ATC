@@ -95,9 +95,17 @@ export const POST = withServiceAuth(async (req, ctx) => {
   const fetchedAtIso = body.fetched_at ?? new Date().toISOString();
   const sourceUrl = body.source_url ?? null;
 
+  // DIY sailing data (has day_by_day) gets authority by content type:
+  //   price-containing → 0.40, reference-only → 0.55.
+  // Legacy Apify path (day_by_day absent) keeps the original 0.45.
+  const containsPricing = typeof body.starting_price_usd === "number";
+  const authorityAuto = body.day_by_day != null
+    ? (containsPricing ? 0.40 : 0.55)
+    : 0.45;
+
   // 4. Upsert knowledge_chunks row.
-  //    On UPDATE we replace content, embedding, and content_hash for the
-  //    matching chunk. On INSERT we link from itineraries.related_chunk_id.
+  //    On UPDATE we replace content, embedding, content_hash, and authority
+  //    for the matching chunk. On INSERT we link from itineraries.related_chunk_id.
   let chunkId: string;
   if (existingRow?.related_chunk_id) {
     const { data: updated, error: updErr } = await db
@@ -111,6 +119,8 @@ export const POST = withServiceAuth(async (req, ctx) => {
         ship_or_property: body.ship,
         destination: body.region ?? null,
         source_url: sourceUrl,
+        authority_auto: authorityAuto,
+        contains_pricing: containsPricing,
         ingested_at: fetchedAtIso,
         status: "approved",
       })
@@ -138,8 +148,8 @@ export const POST = withServiceAuth(async (req, ctx) => {
         source_type: "cruisemapper_itinerary",
         source_url: sourceUrl,
         source_domain: "cruisemapper.com",
-        authority_auto: 0.45,
-        contains_pricing: typeof body.starting_price_usd === "number",
+        authority_auto: authorityAuto,
+        contains_pricing: containsPricing,
         status: "approved",
         ingested_at: fetchedAtIso,
         approved_at: fetchedAtIso,
@@ -166,6 +176,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
         ports_of_call: body.ports_of_call,
         region: body.region ?? null,
         starting_price_usd: body.starting_price_usd ?? null,
+        day_by_day: body.day_by_day ?? null,
         source_url: sourceUrl,
         content_hash: contentHash,
         related_chunk_id: chunkId,

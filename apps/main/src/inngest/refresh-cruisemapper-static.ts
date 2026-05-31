@@ -28,6 +28,8 @@ import { upsertGeneralPriceRange } from "@/lib/pricing/general-pricing-ranges";
 import { screenForPromptInjection } from "@/lib/external/cruisemapper/prompt-injection-screen";
 import { ingestReferenceToRag } from "@/lib/external/cruisemapper/rag-reference-ingest";
 import { recordDeckPlanImage } from "@/lib/external/cruisemapper/image-asset-recorder";
+// #485 follow-up — sailing + list parsers share the ship-page fetch.
+import { processSailingHtml, emptySailingResult, type SailingRunResult } from "@/lib/external/cruisemapper/sailing-ingest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -76,7 +78,7 @@ export const refreshCruisemapperStatic = inngest.createFunction(
 
         // BP37: deck plan discovery must happen AFTER ships are in the
         // inventory so deck links can be enumerated per ship.
-        const ship = await processKind(db, shipUrls, "ship");
+        const { ship, sailing } = await processShipKind(db, shipUrls);
         const port = await processKind(db, portUrls, "port");
         const deckUrls = await discoverDeckPlanUrls(db);
         const deck = await processKind(db, deckUrls, "deck_plan");
@@ -84,6 +86,7 @@ export const refreshCruisemapperStatic = inngest.createFunction(
         return {
           discovered: { ship: shipUrls.length, port: portUrls.length, deck_plan: deckUrls.length },
           ship,
+          sailing,
           port,
           deck,
         };
@@ -300,4 +303,172 @@ async function processKind(
   }
 
   return result;
+}
+
+/**
+ * Ship-specific loop: processes ship intel (same as processKind("ship")) and,
+ * best-effort, also runs the sailing + sailing-list parsers on the same fetch
+ * so ship pages are only fetched once per quarterly run.
+ *
+ * Sailing failures never increment the ship parse-failure counter and never
+ * trigger the halt. Ship intel always lands if the ship parser succeeds.
+ */
+async function processShipKind(
+  db: SupabaseClient,
+  urls: string[],
+): Promise<{ ship: KindRunResult; sailing: SailingRunResult }> {
+  const ship: KindRunResult = {
+    attempted: 0, fetched: 0, unchanged_fetch: 0, parse_failed: 0,
+    injection_quarantined: 0, ingested: 0, updated: 0, unchanged_rag: 0,
+    errors: 0, halted: false,
+  };
+  const sailing = emptySailingResult();
+
+  const { data: prior } = await db
+    .from("cruisemapper_url_inventory")
+    .select("url, content_hash")
+    .eq("kind", "ship")
+    .in("url", urls.slice(0, 5000));
+  const priorHashByUrl = new Map<string, string>();
+  for (const row of (prior ?? []) as Array<{ url: string; content_hash: string | null }>) {
+    if (row.content_hash) priorHashByUrl.set(row.url, row.content_hash);
+  }
+
+  for (const url of urls) {
+    ship.attempted += 1;
+
+    if (ship.attempted >= MIN_SAMPLES_BEFORE_HALT) {
+      const ratio = ship.parse_failed / ship.attempted;
+      if (ratio > PARSE_FAILURE_HALT_RATIO) {
+        ship.halted = true;
+        ship.halt_reason = `parse_failure_rate ${(ratio * 100).toFixed(1)}% > ${(PARSE_FAILURE_HALT_RATIO * 100).toFixed(0)}% after ${ship.attempted} ships`;
+        await sendOperatorAlert({
+          severity: "high",
+          signal: "cruisemapper_parser_failure_rate",
+          detail: ship.halt_reason,
+          payload: { kind: "ship", attempted: ship.attempted, failures: ship.parse_failed },
+        });
+        break;
+      }
+    }
+
+    const previousBodyHash = priorHashByUrl.get(url);
+    const fetched = await fetchCruiseMapperPage(
+      url,
+      previousBodyHash ? { previousBodyHash } : {},
+    );
+
+    if (fetched.status === "unchanged") {
+      ship.unchanged_fetch += 1;
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
+        last_seen_at: new Date().toISOString(),
+        last_ingest_status: "unchanged",
+        last_error: null,
+      }).eq("url", url), "cruisemapper_url_inventory.update");
+      continue;
+    }
+
+    if (fetched.status !== "ok") {
+      ship.errors += 1;
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
+        last_seen_at: new Date().toISOString(),
+        last_ingest_status: fetched.status === "robots_disallowed" ? "robots_disallowed"
+          : fetched.status === "client_error" ? "client_error"
+          : "server_error",
+        last_error: fetched.status,
+      }).eq("url", url), "cruisemapper_url_inventory.update");
+      continue;
+    }
+
+    ship.fetched += 1;
+
+    const parsed = parseShipPage(fetched.body, url);
+    if (!parsed) {
+      ship.parse_failed += 1;
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
+        last_seen_at: new Date().toISOString(),
+        last_ingest_status: "parse_failed",
+        last_error: "parser_returned_null",
+      }).eq("url", url), "cruisemapper_url_inventory.update");
+      continue;
+    }
+
+    const injection = screenForPromptInjection(parsed.text);
+    if (!injection.ok) {
+      ship.injection_quarantined += 1;
+      await safeAwait(db.from("cruisemapper_url_inventory").update({
+        last_seen_at: new Date().toISOString(),
+        last_ingest_status: "quarantined",
+        last_error: `injection_pattern: ${injection.matchedPattern}`,
+      }).eq("url", url), "cruisemapper_url_inventory.update");
+      continue;
+    }
+
+    // D-088 — price ranges from the same HTML (best-effort, doesn't block ship intel).
+    if (parsed.cruiseLine) {
+      const ranges = parsePriceRanges(fetched.body, url);
+      for (const r of ranges) {
+        const upsertRes = await upsertGeneralPriceRange(db, {
+          cruise_line: parsed.cruiseLine,
+          ship: parsed.shipName,
+          cabin_class: r.cabin_class,
+          duration_nights: r.duration_nights,
+          low_amount: r.low_amount,
+          high_amount: r.high_amount,
+          source_url: url,
+        });
+        if (!upsertRes.ok) {
+          console.warn("[refresh-cruisemapper-static] price-range upsert failed",
+            { url, cabin_class: r.cabin_class, error: upsertRes.error });
+        }
+      }
+    }
+
+    // #485 follow-up — sailing + list parsers, best-effort alongside ship intel.
+    if (process.env.CRUISEMAPPER_SAILING_INGEST_ENABLED === "true") {
+      await processSailingHtml(db, fetched.body, url, sailing);
+    }
+
+    const payload = {
+      source_identifier: `cruisemapper:ship:${parsed.shipSlug}`,
+      category: "ship_intel" as const,
+      text: parsed.text,
+      source_url: url,
+      source_domain: "cruisemapper.com",
+      ship: parsed.shipName,
+      ...(parsed.cruiseLine ? { cruise_line: parsed.cruiseLine } : {}),
+    };
+
+    const outcome = await ingestReferenceToRag(payload);
+    const nowIso = new Date().toISOString();
+    const updateRow: Record<string, unknown> = { last_seen_at: nowIso, content_hash: fetched.bodyHash };
+    switch (outcome.status) {
+      case "ingested":
+        ship.ingested += 1;
+        updateRow.last_ingest_status = "ingested";
+        if (outcome.chunk_id) updateRow.related_chunk_id = outcome.chunk_id;
+        break;
+      case "updated":
+        ship.updated += 1;
+        updateRow.last_ingest_status = "updated";
+        if (outcome.chunk_id) updateRow.related_chunk_id = outcome.chunk_id;
+        break;
+      case "unchanged":
+        ship.unchanged_rag += 1;
+        updateRow.last_ingest_status = "unchanged";
+        break;
+      case "quarantined":
+        ship.injection_quarantined += 1;
+        updateRow.last_ingest_status = "quarantined";
+        updateRow.last_error = outcome.reason ?? "quarantined_by_rag";
+        break;
+      default:
+        ship.errors += 1;
+        updateRow.last_ingest_status = "server_error";
+        updateRow.last_error = outcome.reason ?? `HTTP ${outcome.httpStatus ?? "?"}`;
+    }
+    await safeAwait(db.from("cruisemapper_url_inventory").update(updateRow).eq("url", url), "cruisemapper_url_inventory.update");
+  }
+
+  return { ship, sailing };
 }
