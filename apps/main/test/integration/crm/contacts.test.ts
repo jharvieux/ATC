@@ -4,8 +4,9 @@
 // Cross-tenant isolation and FK constraints live in test/integration/rls.test.ts
 // (describeIf(haveSupabase)) where they can exercise real RLS policies.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { dobDisplayLabel, shouldSuppressDobInPdf } from "@/lib/contacts/dob-display";
+import { assertValidQuoteTransition, InvalidQuoteTransitionError } from "@/lib/quotes/state-machine";
 import { workedExamples } from "../../fixtures/commission-worked-examples";
 
 // ── DOB display unit tests ────────────────────────────────────────────────────
@@ -46,42 +47,25 @@ describe.skip("commission worked examples (§12.7) — awaiting Part 4", () => {
 });
 
 // ── Quote lifecycle ────────────────────────────────────────────────────────────
-// TODO(#37): replace transitionTo stub with real progressTo() once state-machine lib is implemented
 
 describe("quote lifecycle (§12.4)", () => {
-  type QuoteStatus = "draft" | "sent" | "viewed" | "accepted" | "declined" | "expired" | "converted";
-  let quoteStatus: QuoteStatus;
-
-  beforeEach(() => {
-    quoteStatus = "draft";
-  });
-
-  function transitionTo(next: QuoteStatus): { ok: boolean; error?: string } {
-    const allowed: Partial<Record<QuoteStatus, QuoteStatus[]>> = {
-      draft:    ["sent"],
-      sent:     ["viewed", "accepted", "declined", "expired"],
-      viewed:   ["accepted", "declined", "expired"],
-      accepted: ["converted"],
-    };
-    if ((allowed[quoteStatus] ?? []).includes(next)) {
-      quoteStatus = next;
-      return { ok: true };
-    }
-    return { ok: false, error: `Cannot transition from ${quoteStatus} to ${next}` };
-  }
-
   it("draft → sent → accepted → converted is valid", () => {
-    expect(transitionTo("sent").ok).toBe(true);
-    expect(transitionTo("accepted").ok).toBe(true);
-    expect(transitionTo("converted").ok).toBe(true);
+    expect(() => assertValidQuoteTransition("draft", "sent")).not.toThrow();
+    expect(() => assertValidQuoteTransition("sent", "accepted")).not.toThrow();
+    expect(() => assertValidQuoteTransition("accepted", "converted")).not.toThrow();
   });
 
   it("cannot send an already-sent quote", () => {
-    transitionTo("sent");
-    expect(transitionTo("sent").ok).toBe(false);
+    expect(() => assertValidQuoteTransition("sent", "sent")).toThrow(InvalidQuoteTransitionError);
   });
 
   it("cannot accept a draft quote", () => {
-    expect(transitionTo("accepted").ok).toBe(false);
+    expect(() => assertValidQuoteTransition("draft", "accepted")).toThrow(InvalidQuoteTransitionError);
+  });
+
+  it("terminal states have no valid transitions", () => {
+    for (const terminal of ["declined", "expired", "converted"] as const) {
+      expect(() => assertValidQuoteTransition(terminal, "sent")).toThrow(InvalidQuoteTransitionError);
+    }
   });
 });
