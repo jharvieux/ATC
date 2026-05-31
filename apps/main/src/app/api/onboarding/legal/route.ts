@@ -1,24 +1,21 @@
 // §15.4 / §17.4 — Onboarding Stage 3: Legal document acceptance.
-// Records consent for ToU, Privacy Policy, AI Disclaimer, Cookie Policy.
-// legal_documents / legal_consents tables ship in Build Prompt 17.
-// TODO(prompt-17): replace stubs with real legal_consents writes when §17 lands.
+// Writes legal_consents rows via service_role — authenticated users cannot INSERT per RLS.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { tenantClient } from "@/lib/db/tenant-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 interface LegalAcceptBody {
-  // List of document IDs (or types for stub) the user is accepting.
   accepted_types: string[];
-  ip_address?: string;
-  user_agent?: string;
 }
 
 const REQUIRED_DOCUMENT_TYPES = ["tou", "privacy_policy", "ai_disclaimer", "cookie_policy"];
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { ctx } = await assertPermission(req, { resource: "onboarding", action: "legal:accept" });
+    const { ctx, user } = await assertPermission(req, { resource: "onboarding", action: "legal:accept" });
 
     let body: LegalAcceptBody;
     try {
@@ -33,12 +30,59 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "missing_consents", missing }, { status: 422 });
     }
 
-    // TODO(prompt-17): write legal_consents rows per accepted document_type.
-    // When §17 lands, replace this stub with:
-    //   for each type in accepted_types:
-    //     const doc = await fetchCurrentLegalDocument(type);
-    //     await db.from('legal_consents').insert({ auth_user_id, tenant_id, document_id, ... })
-    console.info("[onboarding/legal] Stub consent recorded for tenant=%s types=%s", ctx.tenant_id, JSON.stringify(body.accepted_types).replace(/[\r\n]/g, " "));
+    const readDb = tenantClient(ctx);
+    const { data: docs, error: docsErr } = await readDb
+      .from("legal_documents")
+      .select("id, document_type, version")
+      .in("document_type", REQUIRED_DOCUMENT_TYPES)
+      .is("superseded_at", null);
+
+    if (docsErr) {
+      return Response.json({ error: docsErr.message }, { status: 500 });
+    }
+    if (!docs || docs.length === 0) {
+      return Response.json({ error: "legal_documents_not_found" }, { status: 500 });
+    }
+
+    const docMap = new Map<string, { id: string; version: number }>(
+      (docs as { id: string; document_type: string; version: number }[])
+        .map((d) => [d.document_type, { id: d.id, version: d.version }]),
+    );
+
+    const missingDocs = REQUIRED_DOCUMENT_TYPES.filter((t) => !docMap.has(t));
+    if (missingDocs.length > 0) {
+      return Response.json({ error: "legal_documents_not_found", missing: missingDocs }, { status: 500 });
+    }
+
+    const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip") ?? "unknown";
+    const userAgent = req.headers.get("user-agent") ?? "";
+
+    // Write consent rows via service_role — authenticated users cannot INSERT per RLS.
+    const serviceDb = createServiceRoleClient();
+    const consentRows = REQUIRED_DOCUMENT_TYPES.map((docType) => {
+      const doc = docMap.get(docType)!;
+      return {
+        auth_user_id: user.auth_user_id,
+        tenant_id: ctx.tenant_id,
+        document_id: doc.id,
+        document_type: docType,
+        document_version: doc.version,
+        action: "accepted" as const,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+      };
+    });
+
+    const { error: insertErr } = await serviceDb
+      .from("legal_consents")
+      .insert(consentRows);
+
+    if (insertErr) {
+      // 23505 = unique violation: user already accepted this version — idempotent.
+      if (!insertErr.code?.includes("23505")) {
+        return Response.json({ error: insertErr.message }, { status: 500 });
+      }
+    }
 
     await progressTo(ctx.tenant_id, "ica");
 
