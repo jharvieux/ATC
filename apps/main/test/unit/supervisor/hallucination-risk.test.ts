@@ -26,13 +26,16 @@ import { checkHallucinationRisk } from "@/lib/supervisor/checks/hallucination-ri
 
 const ORIG_KEY = process.env.ANTHROPIC_API_KEY;
 
+// Per-test isolation comes from resetting mocks.callReturnText / the env key
+// in each beforeEach; the module mock is installed once and never restored.
+afterEach(() => {
+  if (ORIG_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
+  else process.env.ANTHROPIC_API_KEY = ORIG_KEY;
+});
+
 describe("checkHallucinationRisk — bypass branches", () => {
   beforeEach(() => {
     delete process.env.ANTHROPIC_API_KEY;
-  });
-  afterEach(() => {
-    if (ORIG_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = ORIG_KEY;
   });
 
   it("returns info when no chunks retrieved (no-result instructions own this)", async () => {
@@ -58,11 +61,6 @@ describe("checkHallucinationRisk — grounding rule", () => {
   beforeEach(() => {
     process.env.ANTHROPIC_API_KEY = "sk-test-fake";
     mocks.callReturnText = "";
-  });
-  afterEach(() => {
-    if (ORIG_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = ORIG_KEY;
-    vi.restoreAllMocks();
   });
 
   it("info when the extracted claim IS grounded by a chunk", async () => {
@@ -115,6 +113,7 @@ describe("checkHallucinationRisk — grounding rule", () => {
       candidate_response: "The suite includes a private balcony.",
       retrieved_chunks: [{ content: "Some chunk content." }],
     });
+    expect(out.check).toBe("hallucination_risk");
     expect(out.severity).toBe("info");
     expect(out.details).toMatch(/claim extraction failed/);
   });
