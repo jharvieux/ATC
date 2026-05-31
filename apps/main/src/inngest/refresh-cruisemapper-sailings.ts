@@ -63,10 +63,11 @@ export const refreshCruisemapperSailings = inngest.createFunction(
 );
 
 async function loadShipUrls(db: SupabaseClient): Promise<string[]> {
-  const { data } = await db
+  const { data, error } = await db
     .from("cruisemapper_url_inventory")
     .select("url")
     .eq("kind", "ship");
+  if (error) throw new Error(`cruisemapper_url_inventory.select failed: ${error.message}`);
   return ((data ?? []) as Array<{ url: string }>).map((r) => r.url);
 }
 
@@ -81,11 +82,12 @@ async function processSailingUrls(
   let haltReason: string | undefined;
 
   // Load content hashes from the inventory for conditional GETs.
-  const { data: prior } = await db
+  const { data: prior, error: priorErr } = await db
     .from("cruisemapper_url_inventory")
     .select("url, content_hash")
     .eq("kind", "ship")
     .in("url", urls.slice(0, 5000));
+  if (priorErr) throw new Error(`cruisemapper_url_inventory.select failed: ${priorErr.message}`);
   const priorHashByUrl = new Map<string, string>();
   for (const row of (prior ?? []) as Array<{ url: string; content_hash: string | null }>) {
     if (row.content_hash) priorHashByUrl.set(row.url, row.content_hash);
@@ -133,14 +135,34 @@ async function processSailingUrls(
 
     if (fetched.status !== "ok") {
       fetchErrors += 1;
+      await safeAwait(
+        db.from("cruisemapper_url_inventory")
+          .update({ last_seen_at: new Date().toISOString(), last_ingest_status: fetched.status, last_error: fetched.status })
+          .eq("url", url)
+          .eq("kind", "ship"),
+        "cruisemapper_url_inventory.update.sailing_error",
+      );
       continue;
     }
 
     const beforeParsed = sailing.current_parsed;
     await processSailingHtml(db, fetched.body, url, sailing);
-    if (sailing.current_parsed === beforeParsed) {
-      parseFailures += 1;
-    }
+    const parseSucceeded = sailing.current_parsed > beforeParsed;
+    if (!parseSucceeded) parseFailures += 1;
+
+    // Stamp the body hash so next month's conditional GET skips unchanged pages.
+    await safeAwait(
+      db.from("cruisemapper_url_inventory")
+        .update({
+          last_seen_at: new Date().toISOString(),
+          content_hash: fetched.bodyHash,
+          last_ingest_status: parseSucceeded ? "ingested" : "parse_failed",
+          last_error: parseSucceeded ? null : "sailing_parser_returned_null",
+        })
+        .eq("url", url)
+        .eq("kind", "ship"),
+      "cruisemapper_url_inventory.update.sailing",
+    );
   }
 
   return {

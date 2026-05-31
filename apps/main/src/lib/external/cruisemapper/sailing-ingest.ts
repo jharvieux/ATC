@@ -18,7 +18,9 @@ export interface SailingRunResult {
   current_errors: number;
   list_items: number;
   list_price_cache_written: number;
+  list_price_cache_errors: number;
   list_ingested: number;
+  list_errors: number;
 }
 
 export function emptySailingResult(): SailingRunResult {
@@ -28,7 +30,9 @@ export function emptySailingResult(): SailingRunResult {
     current_errors: 0,
     list_items: 0,
     list_price_cache_written: 0,
+    list_price_cache_errors: 0,
     list_ingested: 0,
+    list_errors: 0,
   };
 }
 
@@ -78,14 +82,19 @@ export async function processSailingHtml(
       try {
         await upsertPriceQuote(db, listMapped.cacheQuote);
         result.list_price_cache_written += 1;
-      } catch {
-        // Price cache failures don't block RAG ingest.
+      } catch (err) {
+        // Best-effort — price cache is a convenience mirror; RAG ingest proceeds.
+        console.warn("[sailing-ingest] price-cache upsert failed (non-fatal)",
+          { shipUrl, data_row_id: item.data_row_id, err });
+        result.list_price_cache_errors += 1;
       }
     }
 
     const outcome = await ingestItineraryToRag(listMapped);
     if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {
       result.list_ingested += 1;
+    } else {
+      result.list_errors += 1;
     }
   }
 }

@@ -1,7 +1,9 @@
 // BP35 §33.4 — itinerary mapper unit tests.
 
 import { describe, expect, it } from "vitest";
-import { mapItinerary, chunkSourceIdentifier, type CruiseMapperItineraryItem } from "../../../src/lib/external/cruisemapper/itinerary-mapper";
+import { mapItinerary, mapSailing, mapSailingListItem, chunkSourceIdentifier, type CruiseMapperItineraryItem } from "../../../src/lib/external/cruisemapper/itinerary-mapper";
+import type { ParsedSailing } from "../../../src/lib/external/cruisemapper/parsers/sailing-parser";
+import type { SailingListItem } from "../../../src/lib/external/cruisemapper/parsers/sailing-list-parser";
 
 const BASE: CruiseMapperItineraryItem = {
   cruiseLine: "Royal Caribbean",
@@ -71,6 +73,117 @@ describe("mapItinerary", () => {
     expect(mapItinerary({ ...BASE, cruiseLine: "Carnival" })!.key.line).toBe("CCL");
     expect(mapItinerary({ ...BASE, cruiseLine: "Princess Cruises" })!.key.line).toBe("PCL");
     expect(mapItinerary({ ...BASE, cruiseLine: "MSC" })!.key.line).toBe("MSC");
+  });
+});
+
+const BASE_PARSED_SAILING: ParsedSailing = {
+  cruise_line: "Norwegian Cruise Line",
+  ship_name: "Norwegian Bliss",
+  ship_slug: "norwegian-bliss",
+  departure_date: "2026-04-25",
+  return_date: "2026-05-02",
+  duration_nights: 7,
+  departure_port: "Seattle",
+  ports_of_call: ["Juneau", "Ketchikan", "Victoria"],
+  itinerary: [
+    { day_number: 1, date: "2026-04-25", port_name: "Seattle", arrival_time: null, departure_time: "17:00" },
+    { day_number: 2, date: "2026-04-26", port_name: null, arrival_time: null, departure_time: null },
+    { day_number: 7, date: "2026-05-01", port_name: "Victoria", arrival_time: "07:00", departure_time: "14:00" },
+  ],
+  region: "Alaska",
+  starting_price_usd: 789,
+  sailing_slug: "norwegian-bliss-2026-04-25",
+  source_url: "https://www.cruisemapper.com/ships/NorwegianBliss-1234",
+  text: "Norwegian Cruise Line's Norwegian Bliss departs Seattle on 2026-04-25 for a 7-night cruise (Alaska) visiting Juneau, Ketchikan, Victoria. Starting price $789.",
+};
+
+describe("mapSailing", () => {
+  it("maps a ParsedSailing with price to MappedItinerary with diy_cruisemapper source", () => {
+    const out = mapSailing(BASE_PARSED_SAILING);
+    expect(out).not.toBeNull();
+    expect(out!.key.line).toBe("NCL");
+    expect(out!.key.ship).toBe("Norwegian Bliss");
+    expect(out!.key.sailDate).toBe("2026-04-25");
+    expect(out!.key.departurePort).toBe("Seattle");
+    expect(out!.cacheQuote).not.toBeNull();
+    expect(out!.cacheQuote!.source).toBe("diy_cruisemapper");
+    expect(out!.cacheQuote!.cabinPrices.interior?.amount).toBe(789);
+    expect(out!.dayByDay).toHaveLength(3);
+    expect(out!.region).toBe("Alaska");
+    expect(out!.portsOfCall).toEqual(["Juneau", "Ketchikan", "Victoria"]);
+  });
+
+  it("returns null when cruise line cannot be normalized", () => {
+    expect(mapSailing({ ...BASE_PARSED_SAILING, cruise_line: "Unknown Cruises" })).toBeNull();
+  });
+
+  it("omits cache quote when no starting price", () => {
+    const out = mapSailing({ ...BASE_PARSED_SAILING, starting_price_usd: null });
+    expect(out).not.toBeNull();
+    expect(out!.cacheQuote).toBeNull();
+  });
+
+  it("propagates the full day-by-day array (not null) for DIY parsed sailings", () => {
+    const out = mapSailing(BASE_PARSED_SAILING);
+    expect(out!.dayByDay).not.toBeNull();
+    expect(out!.dayByDay!.find((d) => d.port_name === null)).toBeDefined(); // sea day exists
+  });
+
+  it("uses the ParsedSailing.text verbatim for RAG determinism", () => {
+    const out = mapSailing(BASE_PARSED_SAILING);
+    expect(out!.text).toBe(BASE_PARSED_SAILING.text);
+  });
+});
+
+const BASE_LIST_ITEM: SailingListItem = {
+  data_row_id: "4869927",
+  title: "7 days, round-trip Alaska Round-trip Seattle Juneau, Ketchikan Victoria",
+  departure_date: "2026-04-25",
+  departure_port: "Seattle",
+  duration_nights: 7,
+  starting_price_usd: 789,
+  region: "Alaska",
+};
+
+describe("mapSailingListItem", () => {
+  it("maps a list item with price to MappedItinerary with diy_cruisemapper source", () => {
+    const out = mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Norwegian Cruise Line");
+    expect(out).not.toBeNull();
+    expect(out!.key.line).toBe("NCL");
+    expect(out!.key.ship).toBe("Norwegian Bliss");
+    expect(out!.key.sailDate).toBe("2026-04-25");
+    expect(out!.cacheQuote).not.toBeNull();
+    expect(out!.cacheQuote!.source).toBe("diy_cruisemapper");
+    expect(out!.cacheQuote!.cabinPrices.interior?.amount).toBe(789);
+  });
+
+  it("returns null when cruise line can't be normalized", () => {
+    expect(mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Unknown Cruises")).toBeNull();
+  });
+
+  it("omits cache quote when no starting price", () => {
+    const out = mapSailingListItem({ ...BASE_LIST_ITEM, starting_price_usd: null }, "Norwegian Bliss", "Norwegian Cruise Line");
+    expect(out).not.toBeNull();
+    expect(out!.cacheQuote).toBeNull();
+  });
+
+  it("dayByDay is always null (list items have no per-day detail)", () => {
+    const out = mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Norwegian Cruise Line");
+    expect(out!.dayByDay).toBeNull();
+  });
+
+  it("renders deterministic RAG text with the line code", () => {
+    const out = mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Norwegian Cruise Line");
+    expect(out!.text).toContain("NCL");
+    expect(out!.text).toContain("Norwegian Bliss");
+    expect(out!.text).toContain("2026-04-25");
+    expect(out!.text).toContain("$789");
+  });
+
+  it("text is deterministic for the same input", () => {
+    const a = mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Norwegian Cruise Line")!.text;
+    const b = mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Norwegian Cruise Line")!.text;
+    expect(a).toBe(b);
   });
 });
 

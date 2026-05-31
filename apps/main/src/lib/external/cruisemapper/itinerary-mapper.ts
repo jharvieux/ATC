@@ -132,7 +132,7 @@ export function mapItinerary(item: CruiseMapperItineraryItem): MappedItinerary |
         key,
         cabinPrices: { interior: { amount: startingPrice, currency: "USD" as const } },
         fetchedAt: new Date(),
-        source: "apify" as const,
+        source: "diy_cruisemapper" as const,
       }
     : null;
 
@@ -169,7 +169,7 @@ export function mapSailing(s: ParsedSailing): MappedItinerary | null {
         key,
         cabinPrices: { interior: { amount: s.starting_price_usd, currency: "USD" as const } },
         fetchedAt: new Date(),
-        source: "apify" as const,
+        source: "diy_cruisemapper" as const,
       }
     : null;
 
@@ -217,7 +217,7 @@ export function mapSailingListItem(
         key,
         cabinPrices: { interior: { amount: item.starting_price_usd, currency: "USD" as const } },
         fetchedAt: new Date(),
-        source: "apify" as const,
+        source: "diy_cruisemapper" as const,
       }
     : null;
 

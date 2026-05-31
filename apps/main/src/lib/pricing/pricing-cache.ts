@@ -26,7 +26,7 @@ interface PricingCacheRow {
   price_amount: number;
   price_currency: "USD";
   fetched_at: string;
-  source: "apify" | "manual" | "host_adapter";
+  source: "apify" | "manual" | "host_adapter" | "diy_cruisemapper";
 }
 
 /**
