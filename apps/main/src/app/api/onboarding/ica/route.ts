@@ -1,11 +1,12 @@
 // §15.5 — Onboarding Stage 4: ICA acceptance.
 // Requires scroll-to-bottom confirmation + typed legal name.
-// legal_documents / legal_consents from §17.4 are TODO(prompt-17).
-// ICA chunk-license-survival clause text is TODO(legal-attorney) per §15.14.6.
+// Writes a legal_consents row for the ica_subhost document via service_role
+// (authenticated users cannot INSERT per RLS).
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 
 interface IcaAcceptBody {
@@ -49,9 +50,48 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "name_mismatch" }, { status: 422 });
     }
 
-    // TODO(prompt-17): write legal_consents row for 'ica_subhost' document with
-    //   notes = typed_legal_name, ip captured server-side.
-    const { error } = await db
+    // Fetch current ICA document version.
+    const { data: icaDocs, error: icaDocsErr } = await db
+      .from("legal_documents")
+      .select("id, version")
+      .eq("document_type", "ica_subhost")
+      .is("superseded_at", null)
+      .limit(2);
+
+    if (icaDocsErr) {
+      return Response.json({ error: icaDocsErr.message }, { status: 500 });
+    }
+    if (!icaDocs || icaDocs.length === 0) {
+      return Response.json({ error: "ica_document_not_found" }, { status: 500 });
+    }
+    if (icaDocs.length > 1) {
+      console.error("[onboarding/ica] multiple current ica_subhost versions for tenant=%s", ctx.tenant_id);
+      return Response.json({ error: "document_state_inconsistent" }, { status: 500 });
+    }
+
+    const icaDoc = icaDocs[0] as { id: string; version: number };
+    const ipAddress = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
+
+    // Write ICA consent and tenants update via service_role.
+    const serviceDb = createServiceRoleClient();
+
+    const { error: consentErr } = await serviceDb.from("legal_consents").insert({
+      auth_user_id: user.auth_user_id,
+      tenant_id: ctx.tenant_id,
+      document_id: icaDoc.id,
+      document_type: "ica_subhost",
+      document_version: icaDoc.version,
+      action: "accepted",
+      ip_address: ipAddress,
+      user_agent: req.headers.get("user-agent") ?? "",
+      notes: body.typed_legal_name.trim(),
+    });
+
+    if (consentErr && !consentErr.code?.includes("23505")) {
+      return Response.json({ error: consentErr.message }, { status: 500 });
+    }
+
+    const { error } = await serviceDb
       .from("tenants")
       .update({ ica_accepted_at: new Date().toISOString() })
       .eq("id", ctx.tenant_id);

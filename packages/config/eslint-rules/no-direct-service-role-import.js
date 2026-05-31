@@ -94,6 +94,9 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/onboarding/tier/route.ts",
   // BP16: ICA acceptance — reads tenant row to compare legal_name. §15.5.
   "/app/api/onboarding/ica/route.ts",
+  // BP17: Legal acceptance (onboarding stage 3) — writes legal_consents rows.
+  // legal_consents INSERT RLS is WITH CHECK(FALSE); service_role required. §15.4 / §17.4.
+  "/app/api/onboarding/legal/route.ts",
   // BP16: Profile submission — cross-tenant slug uniqueness check. §15.3.
   "/app/api/onboarding/profile/route.ts",
   // BP16: Sandbox toggle — reads tenant stripe subscription ID. §15.12.
