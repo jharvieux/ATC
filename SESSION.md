@@ -1,4 +1,4 @@
-# Session state — last updated 2026-05-30 23:40 UTC
+# Session state — last updated 2026-05-30 23:50 UTC
 
 ## Just completed
 - PR #501 (§33.4 sailing ingest pipeline, task #99) — all CI green, merged + branch deleted
@@ -6,19 +6,19 @@
   - `apps/main/src/lib/cruise-regions/classify.ts` — normalizeCruiseMapperRegion, classifyByFirstStop, resolveDestinationRegion
   - `apps/main/src/lib/weather/sea-day-interpolation.ts` — interpolateSeaDays (linear interpolation, leading/trailing edge cases)
   - 33 unit tests — all passing
-  - D-091 + pre-pr-reviewer ran; 2 findings fixed (inlined helpers, misleading comment); both audits clean
-  - PR #502 opened, CI running
+  - D-091 + pre-pr-reviewer ran; 2 findings fixed; both audits clean
+  - PR #502 opened, CI passed, merging in progress
 
 ## In flight
-- PR #502 (feature/486-region-classifier → dev) — CI running, not yet mergeable
-  - Audit marker comments posted (d091-audit:v1 and prepr-audit:v1)
-  - Status line is standalone in ## Audit section
+- PR #502 (feature/486-region-classifier → dev) — resolving SESSION.md merge conflict, then merging
 
 ## Next step
-- Wait for PR #502 CI to complete; merge (squash) when all checks green + delete branch; mark task #92 complete
-- Then move to task #93: #487 — wire destination images + forecast into precruise-generate-and-send + 8 more region images
+- Complete merge of PR #502, mark task #92 complete
+- Start task #93: #487 — wire destination images + forecast into precruise-generate-and-send + 8 more region images
+  - Source 8 images already researched (see notes in conversation)
+  - Create branch feature/487-destination-images-forecast
 - Also pending: apply RAG migration 0020_itineraries_day_by_day.sql to RAG project (blocked on user)
-- Also pending: trigger one-time CruiseMapper ingest per issue #500 ops instructions (blocked on user)
+- Also pending: trigger one-time CruiseMapper ingest per issue #500 (blocked on user)
 
 ## Blocked on user
 - Apply RAG migration `0020_itineraries_day_by_day.sql` to RAG Supabase project

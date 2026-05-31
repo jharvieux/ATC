@@ -7,6 +7,14 @@
 
 import { z } from "zod";
 
+const SailingDaySchema = z.object({
+  day_number: z.number().int().positive(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  port_name: z.string().nullable(),
+  arrival_time: z.string().nullable(),
+  departure_time: z.string().nullable(),
+});
+
 export const ItineraryIngestRequestSchema = z.object({
   cruise_line: z.string().min(1),
   ship: z.string().min(1),
@@ -19,6 +27,7 @@ export const ItineraryIngestRequestSchema = z.object({
   source_url: z.string().url().optional(),
   text: z.string().min(20), // chunk body — §B.5 sized prose
   fetched_at: z.string().datetime().optional(),
+  day_by_day: z.array(SailingDaySchema).optional(),
 });
 
 export type ItineraryIngestRequest = z.infer<typeof ItineraryIngestRequestSchema>;

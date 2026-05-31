@@ -8,6 +8,8 @@
 //      content-hash idempotency, so the prose shape must be deterministic.
 
 import type { CachedPriceQuote, SailingKey } from "@/lib/pricing/types";
+import type { ParsedSailing, ParsedSailingDay } from "./parsers/sailing-parser";
+import type { SailingListItem } from "./parsers/sailing-list-parser";
 
 export interface CruiseMapperItineraryItem {
   cruiseLine?: unknown;
@@ -33,6 +35,8 @@ export interface MappedItinerary {
   portsOfCall: string[];
   startingPriceUsd: number | null;
   sourceUrl: string | null;
+  /** Full day-by-day itinerary from the DIY sailing parser; null for Apify-sourced records. */
+  dayByDay: ParsedSailingDay[] | null;
 }
 
 function asString(v: unknown): string | null {
@@ -140,6 +144,92 @@ export function mapItinerary(item: CruiseMapperItineraryItem): MappedItinerary |
     portsOfCall: ports,
     startingPriceUsd: startingPrice,
     sourceUrl,
+    dayByDay: null,
+  };
+}
+
+/**
+ * Map a DIY-parsed current sailing to MappedItinerary. Returns null when the
+ * cruise line cannot be normalized to a known SailingKey.line code.
+ */
+export function mapSailing(s: ParsedSailing): MappedItinerary | null {
+  const line = normalizeLineCode(s.cruise_line ?? "");
+  if (!line) return null;
+
+  const key: SailingKey = {
+    line,
+    ship: s.ship_name,
+    sailDate: s.departure_date,
+    departurePort: s.departure_port,
+    durationNights: s.duration_nights,
+  };
+
+  const cacheQuote = s.starting_price_usd != null && s.starting_price_usd > 0
+    ? {
+        key,
+        cabinPrices: { interior: { amount: s.starting_price_usd, currency: "USD" as const } },
+        fetchedAt: new Date(),
+        source: "diy_cruisemapper" as const,
+      }
+    : null;
+
+  return {
+    key,
+    cacheQuote,
+    text: s.text,
+    region: s.region,
+    portsOfCall: s.ports_of_call,
+    startingPriceUsd: s.starting_price_usd,
+    sourceUrl: s.source_url,
+    dayByDay: s.itinerary,
+  };
+}
+
+/**
+ * Map one upcoming-sailing list item (from parseSailingList) to MappedItinerary.
+ * List items have no per-day detail, so dayByDay is null. Useful for pricing
+ * cache updates and RAG text ingest for future sailings.
+ */
+export function mapSailingListItem(
+  item: SailingListItem,
+  shipName: string,
+  cruiseLine: string,
+): MappedItinerary | null {
+  const line = normalizeLineCode(cruiseLine);
+  if (!line) return null;
+
+  const key: SailingKey = {
+    line,
+    ship: shipName,
+    sailDate: item.departure_date,
+    departurePort: item.departure_port,
+    durationNights: item.duration_nights,
+  };
+
+  const text = renderText(
+    line, cruiseLine, shipName,
+    item.departure_date, item.departure_port,
+    item.duration_nights, [], item.region, item.starting_price_usd,
+  );
+
+  const cacheQuote = item.starting_price_usd != null && item.starting_price_usd > 0
+    ? {
+        key,
+        cabinPrices: { interior: { amount: item.starting_price_usd, currency: "USD" as const } },
+        fetchedAt: new Date(),
+        source: "diy_cruisemapper" as const,
+      }
+    : null;
+
+  return {
+    key,
+    cacheQuote,
+    text,
+    region: item.region,
+    portsOfCall: [],
+    startingPriceUsd: item.starting_price_usd,
+    sourceUrl: null,
+    dayByDay: null,
   };
 }
 
