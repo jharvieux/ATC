@@ -41,10 +41,14 @@ describe("checkContrast WCAG AA thresholds", () => {
     expect(c!.passes_aa_normal).toBe(false);
   });
 
-  it("blue accent on white passes large but may fail normal", () => {
+  it("blue accent on white passes AA-large but fails AA-normal", () => {
+    // #3b82f6 on white is ~3.68:1 — over the 3.0 AA-large threshold,
+    // under the 4.5 AA-normal threshold. Pin both flags, not just the
+    // ratio, so a regression in either threshold is caught.
     const c = checkContrast("#3b82f6", "#ffffff");
     expect(c).not.toBeNull();
-    expect(c!.ratio).toBeGreaterThan(3.0);
+    expect(c!.passes_aa_large).toBe(true);
+    expect(c!.passes_aa_normal).toBe(false);
   });
 
   it("returns null on malformed hex", () => {

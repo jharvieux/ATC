@@ -8,30 +8,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { capsFromEnv, checkAnonLimit } from "@/lib/chat/anonymous-limit";
 
-type CountMap = Record<string, number>;
-
-function makeDb(counts: CountMap): SupabaseClient {
-  return {
-    from() {
-      return {
-        select() {
-          return {
-            eq(_col: string, _val: unknown) {
-              return this;
-            },
-            gte() {
-              return this;
-            },
-            maybeSingle: () =>
-              Promise.resolve({ data: null, error: null }),
-          };
-        },
-      };
-    },
-  } as unknown as SupabaseClient;
-  void counts;
-}
-
 function makeDbReturning(
   resolver: (args: { type: string; value: string }) => number,
 ): SupabaseClient {
@@ -139,7 +115,7 @@ describe("checkAnonLimit", () => {
   });
 
   it("no IP and no fingerprint → only session can block", async () => {
-    const db = makeDb({});
+    const db = makeDbReturning(() => 0);
     const r = await checkAnonLimit(db, {
       tenant_id: "t1",
       session_id: "s",
