@@ -1,15 +1,20 @@
 "use client";
 
 // §17.3 — Company info collection step (platform domain, post-OAuth).
-// Reached after a tenant operator completes OAuth on the platform domain.
-// Collects display_name, legal_name, slug, and tenant_type, then calls
-// POST /api/auth/signup/complete to provision the tenant + users rows.
-// On success, shows a link to the tenant subdomain's onboarding flow.
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 type TenantType = "byo_host" | "sub_host";
+
+// Exported for unit testing. After provisioning, the operator lands on the
+// tenant subdomain's first onboarding step — NOT the platform domain.
+export function buildWorkspaceUrl(
+  slug: string,
+  location: { protocol: string; hostname: string },
+): string {
+  return `${location.protocol}//${slug}.${location.hostname}/onboarding/profile`;
+}
 
 export default function SignupCompletePage(): React.ReactElement {
   const router = useRouter();
@@ -44,12 +49,17 @@ export default function SignupCompletePage(): React.ReactElement {
     }
     setSlugChecking(true);
     const timer = setTimeout(async () => {
-      const res = await fetch(
-        `/api/tenants/slug-check?candidate=${encodeURIComponent(form.slug)}`,
-      );
-      const data: { available?: boolean } = await res.json();
-      setSlugAvailable(data.available ?? false);
-      setSlugChecking(false);
+      try {
+        const res = await fetch(
+          `/api/tenants/slug-check?candidate=${encodeURIComponent(form.slug)}`,
+        );
+        const data: { available?: boolean } = await res.json();
+        setSlugAvailable(data.available ?? false);
+      } catch {
+        setSlugAvailable(false);
+      } finally {
+        setSlugChecking(false);
+      }
     }, 400);
     return () => clearTimeout(timer);
   }, [form.slug]);
@@ -78,8 +88,7 @@ export default function SignupCompletePage(): React.ReactElement {
     } = await res.json();
 
     if (res.status === 201 && data.slug) {
-      const { protocol, hostname } = window.location;
-      setWorkspaceUrl(`${protocol}//${data.slug}.${hostname}/onboarding/profile`);
+      setWorkspaceUrl(buildWorkspaceUrl(data.slug, window.location));
       setSubmitting(false);
       return;
     }
@@ -100,6 +109,7 @@ export default function SignupCompletePage(): React.ReactElement {
     }
 
     if (res.status === 401) {
+      setSubmitting(false);
       router.push("/signup");
       return;
     }
