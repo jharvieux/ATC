@@ -30,6 +30,12 @@ import { PreCruiseT7,  type PreCruiseT7Props  } from "@/emails/PreCruiseT7";
 import { PreCruiseT1,  type PreCruiseT1Props, type PortInfo } from "@/emails/PreCruiseT1";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { getSailingItinerary } from "@/lib/sailings/sailing-itinerary";
+import { resolveDestinationRegion } from "@/lib/cruise-regions/classify";
+import { getDestinationImage, type DestinationImage } from "@/lib/cruise-regions/destination-images";
+import { getCruiseForecast, type DailyForecast } from "@/lib/weather/cruise-forecast";
+import { interpolateSeaDays, type ItineraryDay } from "@/lib/weather/sea-day-interpolation";
+import { lookupPortByName } from "@/lib/ports/lookup-by-name";
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
@@ -410,6 +416,36 @@ async function buildAndSend(args: {
     }
   }
 
+  // §23.4 / #487 — fetch itinerary from RAG for destination image + weather forecast.
+  // Null-safe: getSailingItinerary returns null when RAG_SERVICE_URL is unset or the
+  // sailing isn't indexed yet. All downstream consumers handle null gracefully.
+  const itin = await getSailingItinerary({
+    cruise_line: emailCtx.cruiseLine,
+    ship_name: emailCtx.shipName,
+    sailing_date: emailCtx.sailingDate,
+  });
+
+  const region = resolveDestinationRegion({
+    cruisemapper_region: itin?.cruisemapper_region ?? null,
+    ports_of_call: itin?.ports_of_call ?? [],
+  });
+  const destinationImage = getDestinationImage(region);
+
+  let cruiseForecast: DailyForecast[] | null = null;
+  if ((phase === "t_7" || phase === "t_1") && itin?.days && itin.days.length > 0) {
+    const itinDays: ItineraryDay[] = await Promise.all(
+      itin.days.map(async (d) => {
+        if (!d.port_name) return { ...d, latitude: null, longitude: null };
+        const port = await lookupPortByName(svc, d.port_name);
+        return { ...d, latitude: port?.latitude ?? null, longitude: port?.longitude ?? null };
+      }),
+    );
+    const stops = interpolateSeaDays(itinDays);
+    if (stops.length > 0) {
+      cruiseForecast = await getCruiseForecast(stops);
+    }
+  }
+
   const { html, subject } = await buildEmail(phase, {
     layoutProps: emailCtx.layoutProps,
     customerName: emailCtx.customerName,
@@ -420,6 +456,8 @@ async function buildAndSend(args: {
     generatedContent,
     companionPageUrl: emailCtx.companionPageUrl,
     portInfo,
+    destinationImage,
+    cruiseForecast,
   });
 
   const tenantInput: SendEmailInput["tenant"] = {
@@ -627,10 +665,12 @@ async function buildEmail(
     generatedContent: Record<string, unknown>;
     companionPageUrl: string;
     portInfo: PortInfo | null;
+    destinationImage: DestinationImage | null;
+    cruiseForecast: DailyForecast[] | null;
   },
 ): Promise<{ html: string; subject: string }> {
   const { renderToStaticMarkup } = await import("react-dom/server");
-  const { layoutProps, customerName, shipName, cruiseLine, sailingDate, ports, generatedContent: c, companionPageUrl, portInfo } = ctx;
+  const { layoutProps, customerName, shipName, cruiseLine, sailingDate, ports, generatedContent: c, companionPageUrl, portInfo, destinationImage, cruiseForecast } = ctx;
 
   switch (phase) {
     case "t_90": {
@@ -646,6 +686,7 @@ async function buildEmail(
         must_do_experiences: (c.must_do_experiences as string[]) ?? [],
         did_you_know: (c.did_you_know as string) ?? "",
         suggested_reads: (c.suggested_reads as string[]) ?? [],
+        destination_image: destinationImage,
       };
       return {
         html: renderToStaticMarkup(React.createElement(PreCruiseT90, props)),
@@ -665,6 +706,7 @@ async function buildEmail(
         specialty_experiences: [],
         pack_inspiration: (c.pack_inspiration as string) ?? "",
         companion_page_url: companionPageUrl,
+        destination_image: destinationImage,
       };
       return {
         html: renderToStaticMarkup(React.createElement(PreCruiseT30, props)),
@@ -683,6 +725,8 @@ async function buildEmail(
         embarkation_advice: (c.embarkation_advice as string) ?? "",
         first_day_inspiration: (c.first_day_inspiration as string) ?? "",
         companion_page_url: companionPageUrl,
+        destination_image: destinationImage,
+        cruise_forecast: cruiseForecast,
       };
       return {
         html: renderToStaticMarkup(React.createElement(PreCruiseT7, props)),
@@ -699,6 +743,8 @@ async function buildEmail(
         day_of_expectations: (c.day_of_expectations as string) ?? "",
         weather_summary: (c.weather_summary as string | null | undefined) ?? null,
         companion_page_url: companionPageUrl,
+        destination_image: destinationImage,
+        cruise_forecast: cruiseForecast,
       };
       return {
         html: renderToStaticMarkup(React.createElement(PreCruiseT1, props)),
@@ -708,5 +754,5 @@ async function buildEmail(
   }
 }
 
-// Re-export parseStructuredJson for tests.
-export { parseStructuredJson };
+// Re-export parseStructuredJson and buildEmail for tests.
+export { parseStructuredJson, buildEmail };

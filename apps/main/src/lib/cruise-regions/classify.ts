@@ -9,9 +9,7 @@
 
 import type { DestinationRegion } from "./destination-images";
 
-// Ordered pairs of [match strings, enum value]. We check lowercased + suffix-
-// stripped input against these in order; first match wins. The startsWith
-// check handles "Western Caribbean", "Eastern Caribbean", etc. without
+// startsWith handles "Western Caribbean", "Eastern Caribbean", etc. without
 // requiring every combination to be listed explicitly.
 const CM_MAP: Array<[string[], DestinationRegion]> = [
   [["western caribbean", "eastern caribbean", "southern caribbean", "caribbean"], "caribbean"],
@@ -45,7 +43,6 @@ export function normalizeCruiseMapperRegion(
 
 // ~60 first-stop → region entries covering major NA departure/call ports.
 const FIRST_STOP_REGION: Record<string, DestinationRegion> = {
-  // caribbean
   "Roatán": "caribbean", "Roatan": "caribbean",
   "Cozumel": "caribbean", "Costa Maya": "caribbean",
   "Grand Cayman": "caribbean", "St. Thomas": "caribbean",
@@ -57,18 +54,15 @@ const FIRST_STOP_REGION: Record<string, DestinationRegion> = {
   "Amber Cove": "caribbean", "La Romana": "caribbean",
   "Bridgetown": "caribbean", "Castries": "caribbean",
   "San Juan": "caribbean", "Puerto Plata": "caribbean",
-  // bahamas
   "Nassau": "bahamas", "Freeport": "bahamas",
   "CocoCay": "bahamas", "Princess Cays": "bahamas",
   "Half Moon Cay": "bahamas", "Ocean Cay": "bahamas",
   "Bimini": "bahamas",
-  // alaska
   "Juneau": "alaska", "Skagway": "alaska",
   "Ketchikan": "alaska", "Sitka": "alaska",
   "Icy Strait Point": "alaska", "Glacier Bay": "alaska",
   "Hubbard Glacier": "alaska", "Whittier": "alaska",
   "Seward": "alaska", "Haines": "alaska",
-  // mediterranean
   "Barcelona": "mediterranean", "Civitavecchia": "mediterranean",
   "Naples": "mediterranean", "Livorno": "mediterranean",
   "Venice": "mediterranean", "Santorini": "mediterranean",
@@ -77,30 +71,24 @@ const FIRST_STOP_REGION: Record<string, DestinationRegion> = {
   "Marseille": "mediterranean", "Valletta": "mediterranean",
   "Kotor": "mediterranean", "Palermo": "mediterranean",
   "Messina": "mediterranean", "Split": "mediterranean",
-  // northern_europe
   "Copenhagen": "northern_europe", "Stockholm": "northern_europe",
   "Oslo": "northern_europe", "Bergen": "northern_europe",
   "Geiranger": "northern_europe", "Tallinn": "northern_europe",
   "Helsinki": "northern_europe", "Reykjavik": "northern_europe",
   "Amsterdam": "northern_europe", "Hamburg": "northern_europe",
   "Alesund": "northern_europe", "Ålesund": "northern_europe",
-  // mexican_riviera
   "Cabo San Lucas": "mexican_riviera", "Mazatlán": "mexican_riviera",
   "Mazatlan": "mexican_riviera", "Puerto Vallarta": "mexican_riviera",
   "Ensenada": "mexican_riviera", "Manzanillo": "mexican_riviera",
-  // hawaii
   "Honolulu": "hawaii", "Hilo": "hawaii",
   "Kona": "hawaii", "Kahului": "hawaii",
   "Nawiliwili": "hawaii",
-  // bermuda
   "Bermuda": "bermuda", "Hamilton": "bermuda",
   "King's Wharf": "bermuda", "St. George's": "bermuda",
-  // asia
   "Singapore": "asia", "Hong Kong": "asia",
   "Shanghai": "asia", "Yokohama": "asia",
   "Laem Chabang": "asia", "Ho Chi Minh City": "asia",
   "Bali": "asia", "Osaka": "asia", "Tokyo": "asia",
-  // south_pacific
   "Bora Bora": "south_pacific", "Papeete": "south_pacific",
   "Moorea": "south_pacific", "Fiji": "south_pacific",
   "Lautoka": "south_pacific", "Sydney": "south_pacific",

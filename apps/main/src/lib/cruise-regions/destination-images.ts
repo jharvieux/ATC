@@ -46,9 +46,8 @@ export interface DestinationImage {
   height_px: number;
 }
 
-// 4 regions sourced via web research; remaining regions return null
-// until populated. Templates handle a null lookup by omitting the
-// hero image block (graceful degradation, not a failure).
+// All 12 regions sourced via web research. Templates handle a null lookup
+// by omitting the hero image block (graceful degradation, not a failure).
 const CATALOG: Record<DestinationRegion, DestinationImage | null> = {
   caribbean: {
     url: "https://images.unsplash.com/photo-1655299417498-52f3a304c2a4?w=1200&q=80&auto=format&fit=crop",
@@ -86,14 +85,70 @@ const CATALOG: Record<DestinationRegion, DestinationImage | null> = {
     width_px: 1200,
     height_px: 800,
   },
-  mexican_riviera: null,
-  hawaii: null,
-  bermuda: null,
-  bahamas: null,
-  asia: null,
-  south_pacific: null,
-  transatlantic: null,
-  other: null,
+  mexican_riviera: {
+    url: "https://images.unsplash.com/photo-1527734055665-8def83921139?w=1200&q=80&auto=format&fit=crop",
+    source_page_url: "https://unsplash.com/photos/QsP5UmrFPlw",
+    attribution: "Photo by Victor Hughes on Unsplash",
+    alt_text: "Aerial view of Cabo San Lucas, Mexico with the rocky arch and harbor",
+    width_px: 1200,
+    height_px: 800,
+  },
+  hawaii: {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/NaPali_Coast_from_Pride_of_America.JPG/1200px-NaPali_Coast_from_Pride_of_America.JPG",
+    source_page_url: "https://commons.wikimedia.org/wiki/File:NaPali_Coast_from_Pride_of_America.JPG",
+    attribution: "Photo by Rwminix / Wikimedia Commons (CC BY-SA 3.0)",
+    alt_text: "Na Pali Coast, Kauai, Hawaii — rugged green sea cliffs viewed from the ocean",
+    width_px: 1200,
+    height_px: 800,
+  },
+  bermuda: {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Horseshoebay.Bermuda.JPG/1200px-Horseshoebay.Bermuda.JPG",
+    source_page_url: "https://commons.wikimedia.org/wiki/File:Horseshoebay.Bermuda.JPG",
+    attribution: "Photo by Ekem / Wikimedia Commons (CC BY-SA 3.0)",
+    alt_text: "Horseshoe Bay beach in Bermuda with pink sand and turquoise water",
+    width_px: 1200,
+    height_px: 800,
+  },
+  bahamas: {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Goat_Cay%2C_Exuma%2C_The_Bahamas.jpg/1200px-Goat_Cay%2C_Exuma%2C_The_Bahamas.jpg",
+    source_page_url: "https://commons.wikimedia.org/wiki/File:Goat_Cay,_Exuma,_The_Bahamas.jpg",
+    attribution: "Photo by DrGvago / Wikimedia Commons (CC BY-SA 4.0)",
+    alt_text: "Turquoise waters of Goat Cay, Exuma, The Bahamas",
+    width_px: 1200,
+    height_px: 800,
+  },
+  asia: {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Merlion_and_the_Singapore_Skyline_at_Night.JPG/1200px-Merlion_and_the_Singapore_Skyline_at_Night.JPG",
+    source_page_url: "https://commons.wikimedia.org/wiki/File:Merlion_and_the_Singapore_Skyline_at_Night.JPG",
+    attribution: "Photo by Merlion444 / Wikimedia Commons (CC0)",
+    alt_text: "Singapore skyline at night with the iconic Merlion fountain",
+    width_px: 1200,
+    height_px: 800,
+  },
+  south_pacific: {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/78/Bora_Bora_%2816542797633%29.jpg/1200px-Bora_Bora_%2816542797633%29.jpg",
+    source_page_url: "https://commons.wikimedia.org/wiki/File:Bora_Bora_(16542797633).jpg",
+    attribution: "Photo by The TerraMar Project / Wikimedia Commons (CC BY 2.0)",
+    alt_text: "Bora Bora's turquoise lagoon and volcanic peak, French Polynesia",
+    width_px: 1200,
+    height_px: 800,
+  },
+  transatlantic: {
+    url: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/P%26O_Cruises_Oceana_01.JPG/1200px-P%26O_Cruises_Oceana_01.JPG",
+    source_page_url: "https://commons.wikimedia.org/wiki/File:P%26O_Cruises_Oceana_01.JPG",
+    attribution: "Photo by Piergiuliano Chesi / Wikimedia Commons (CC BY 3.0)",
+    alt_text: "P&O Cruises ocean liner underway at sea",
+    width_px: 1200,
+    height_px: 800,
+  },
+  other: {
+    url: "https://images.unsplash.com/photo-1691315755851-7307bcb5e892?w=1200&q=80&auto=format&fit=crop",
+    source_page_url: "https://unsplash.com/photos/a-view-of-a-harbor-with-boats-in-the-water-948iKHyc3UI",
+    attribution: "Photo by Philip Myrtorp on Unsplash",
+    alt_text: "Scenic harbor view with boats in Monaco",
+    width_px: 1200,
+    height_px: 800,
+  },
 };
 
 export function getDestinationImage(

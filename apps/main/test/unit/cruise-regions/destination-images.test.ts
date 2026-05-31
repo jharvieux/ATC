@@ -49,20 +49,18 @@ describe("destination-images catalog", () => {
     }
   });
 
-  it("the four seeded regions have populated entries (pinned baseline)", () => {
-    // If anyone removes a sourced image, this test forces a conversation
-    // about whether the catalog is regressing.
-    expect(getDestinationImage("caribbean")).not.toBeNull();
-    expect(getDestinationImage("mediterranean")).not.toBeNull();
-    expect(getDestinationImage("northern_europe")).not.toBeNull();
-    expect(getDestinationImage("alaska")).not.toBeNull();
+  it("all 12 regions have populated entries (#487 completes full catalog)", () => {
+    // #487 sourced the remaining 8 regions. Every region now has an image.
+    // If anyone removes a sourced image, this test forces a conversation.
+    for (const region of ALL_REGIONS) {
+      expect(getDestinationImage(region)).not.toBeNull();
+    }
   });
 
   it("listRegionImageCoverage reports has_image accurately", () => {
     const coverage = listRegionImageCoverage();
-    const caribbean = coverage.find((c) => c.region === "caribbean");
-    const hawaii = coverage.find((c) => c.region === "hawaii");
-    expect(caribbean?.has_image).toBe(true);
-    expect(hawaii?.has_image).toBe(false); // not yet sourced
+    for (const row of coverage) {
+      expect(row.has_image).toBe(true);
+    }
   });
 });
