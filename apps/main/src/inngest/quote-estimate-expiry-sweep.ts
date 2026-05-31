@@ -222,6 +222,12 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         console.error(
           `[quote-estimate-expiry-sweep] send failed: quote=${r.id} reason=${result.reason ?? "unknown"}`,
         );
+      } else if (result.status === "rate_limited") {
+        // rate_limited means the contact was silently not emailed; log at warn
+        // so operators see quota pressure before it affects more contacts.
+        console.warn(
+          `[quote-estimate-expiry-sweep] rate_limited: quote=${r.id} — contact not emailed`,
+        );
       } else {
         console.info(
           `[quote-estimate-expiry-sweep] quote=${r.id} email_status=${result.status}`,

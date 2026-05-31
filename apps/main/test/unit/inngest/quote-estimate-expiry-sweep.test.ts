@@ -241,6 +241,25 @@ describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
     expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 
+  it("sendEmail returning 'rate_limited' does not expire the quote — re-processable on next cron", async () => {
+    mockSendEmail.mockResolvedValue({ status: "rate_limited" });
+    let quotesCallCount = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "quotes") {
+        quotesCallCount++;
+        if (quotesCallCount === 1) return makeSelectChain([QUOTE_ROW]);
+      }
+      if (table === "contacts") return makeSelectChain([CONTACT]);
+      if (table === "tenants") return makeSelectChain([TENANT]);
+      return makeSelectChain([]);
+    });
+
+    const result = await runSweep();
+    // rate_limited means the send was skipped; quote stays sent for next run.
+    expect(result).toEqual({ expired: 0, emailed: 0 });
+    expect(mockSendEmail).toHaveBeenCalledOnce();
+  });
+
   it("sendEmail returning 'suppressed' does not expire or email the quote", async () => {
     mockSendEmail.mockResolvedValue({ status: "suppressed" });
     let quotesCallCount = 0;
