@@ -1,4 +1,4 @@
-// §21.10.1 — Quote estimate expiry sweep.
+// §21.10.1 / §23.10.1 — Quote estimate expiry sweep.
 //
 // Tests verify WHY the behavior matters:
 //   - Contacts without an email are silently skipped so the cron doesn't fail
@@ -7,6 +7,8 @@
 //     correct category and template_id so rate-limit + audit-log work correctly.
 //   - DB errors on the initial query abort immediately rather than updating
 //     status first, which would leave quotes in expired-but-never-emailed limbo.
+//   - sendEmail returning 'failed' does not increment the emailed count but the
+//     quote is still expired — the expiry is non-retryable on next run.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -129,6 +131,29 @@ describe("quoteEstimateExpirySweep — §21.10.1", () => {
     const result = await runSweep();
     expect(result).toEqual({ expired: 1, emailed: 0 });
     expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("sendEmail returning 'failed' does not increment emailed count — quote is still expired", async () => {
+    mockSendEmail.mockResolvedValue({ status: "failed", reason: "resend_500" });
+
+    const expiredRows = [
+      { id: "q4", tenant_id: "t1", contact_id: "c1", user_id: null, customer_access_token: "tok", cruise_line: null, ship_name: null },
+    ];
+
+    let callIdx = 0;
+    mockFrom.mockImplementation((table: string) => {
+      callIdx++;
+      if (table === "quotes" && callIdx === 1) return makeSelectChain(expiredRows);
+      if (table === "quotes" && callIdx === 2) return { update: () => ({ in: () => Promise.resolve({ error: null }) }) };
+      if (table === "contacts") return makeSelectChain([{ id: "c1", first_name: "Jane", last_name: "Doe", email: "jane@example.com" }]);
+      if (table === "tenants") return makeSelectChain([{ id: "t1", legal_name: "Agency", mailing_address: null, email_send_pattern: "platform_resend", tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null }]);
+      return makeSelectChain([]);
+    });
+
+    const result = await runSweep();
+    // expired=1 (status update applied) but emailed=0 (send failed)
+    expect(result).toEqual({ expired: 1, emailed: 0 });
+    expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 
   it("returns early with error when initial quotes query fails — no status update", async () => {

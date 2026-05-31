@@ -15,6 +15,7 @@
 // quotes_estimate_expiry_sweep_idx (migration 20260531000000) covers it.
 
 import * as React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
@@ -60,10 +61,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       return { expired: 0, emailed: 0 };
     }
 
-    const now = new Date().toISOString();
     const { error: updateErr } = await db
       .from("quotes")
-      .update({ status: "expired", updated_at: now })
+      .update({ status: "expired", updated_at: new Date().toISOString() })
       .in("id", rows.map((r) => r.id));
 
     if (updateErr) {
@@ -75,20 +75,35 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     const contactIds = [...new Set(rows.map((r) => r.contact_id).filter((id): id is string => id !== null))];
     const tenantIds = [...new Set(rows.map((r) => r.tenant_id))];
 
-    const { data: contactsRaw } = await db
+    const { data: contactsRaw, error: contactsErr } = await db
       .from("contacts")
       .select("id, first_name, last_name, email")
       .in("id", contactIds.length > 0 ? contactIds : ["00000000-0000-0000-0000-000000000000"]);
 
-    const { data: tenantsRaw } = await db
+    if (contactsErr) {
+      console.error("[quote-estimate-expiry-sweep] contacts fetch failed:", contactsErr.message);
+      return { expired: rows.length, emailed: 0, error: contactsErr.message };
+    }
+
+    const { data: tenantsRaw, error: tenantsErr } = await db
       .from("tenants")
       .select("id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
       .in("id", tenantIds);
 
-    const { data: brandingsRaw } = await db
+    if (tenantsErr) {
+      console.error("[quote-estimate-expiry-sweep] tenants fetch failed:", tenantsErr.message);
+      return { expired: rows.length, emailed: 0, error: tenantsErr.message };
+    }
+
+    const { data: brandingsRaw, error: brandingsErr } = await db
       .from("tenant_branding")
       .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan")
       .in("tenant_id", tenantIds);
+
+    if (brandingsErr) {
+      console.error("[quote-estimate-expiry-sweep] branding fetch failed:", brandingsErr.message);
+      return { expired: rows.length, emailed: 0, error: brandingsErr.message };
+    }
 
     type ContactRow = { id: string; first_name: string | null; last_name: string | null; email: string | null };
     type TenantRow = { id: string; legal_name: string | null; mailing_address: unknown; email_send_pattern: string | null; tenant_resend_api_key_encrypted: string | null; email_from_address: string | null; email_from_name: string | null };
@@ -118,8 +133,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
       const tenant = tenantMap.get(r.tenant_id);
       if (!tenant) {
-        console.warn(
-          `[quote-estimate-expiry-sweep] skip email: quote=${r.id} — tenant not found`,
+        // FK anomaly — tenant_id on quotes must always resolve; surface loudly.
+        console.error(
+          `[quote-estimate-expiry-sweep] skip email: quote=${r.id} — tenant ${r.tenant_id} not found`,
         );
         continue;
       }
@@ -159,7 +175,6 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         validity_days: validityDays,
       });
 
-      const { renderToStaticMarkup } = await import("react-dom/server");
       const html = renderToStaticMarkup(jsx);
 
       const tenantInput: SendEmailInput["tenant"] = {
@@ -192,11 +207,15 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
       if (result.status === "sent") {
         emailed++;
+      } else if (result.status === "failed") {
+        console.error(
+          `[quote-estimate-expiry-sweep] send failed: quote=${r.id} reason=${result.reason ?? "unknown"}`,
+        );
+      } else {
+        console.info(
+          `[quote-estimate-expiry-sweep] quote=${r.id} email_status=${result.status}`,
+        );
       }
-
-      console.info(
-        `[quote-estimate-expiry-sweep] quote=${r.id} tenant=${r.tenant_id} contact=${r.contact_id ?? "—"} email_status=${result.status}`,
-      );
     }
 
     return { expired: rows.length, emailed };
