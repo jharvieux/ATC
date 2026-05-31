@@ -128,19 +128,11 @@ async function main() {
   }
 
   if (!anyChecked) {
-    // GitHub does not pass repo secrets to Dependabot-triggered workflow
-    // runs, so SUPABASE_DB_URL / SUPABASE_RAG_DB_URL are absent there and
-    // no target can be checked. That's expected — dependency bumps never
-    // touch migrations or RLS policies — so the workflow sets
-    // RLS_ALLOW_NO_TARGETS=true for Dependabot and we pass instead of
-    // failing. On every other PR the secrets ARE present, so an absent
-    // target is a real misconfiguration and still fails loud.
+    // Safe to pass here only because dependency bumps never touch
+    // migrations or RLS. The workflow sets this flag exclusively for
+    // Dependabot (which can't receive the DB-URL secrets); see deploy.yml.
     if (process.env.RLS_ALLOW_NO_TARGETS === "true") {
-      console.log(
-        "No targets checked, but RLS_ALLOW_NO_TARGETS=true — passing. " +
-          "(Expected on Dependabot PRs: repo secrets aren't available to " +
-          "bot-triggered runs; dependency bumps don't change RLS.)",
-      );
+      console.log("No targets checked, but RLS_ALLOW_NO_TARGETS=true — passing (Dependabot run).");
       process.exit(0);
     }
     console.error(

@@ -194,6 +194,8 @@ jobs:
           # no-targets case to pass ONLY for Dependabot (dependency bumps
           # never touch RLS). Human/same-repo PRs do get the secrets, so an
           # absent target there is still a real failure.
+          # `dependabot[bot]` is a reserved GitHub App identity on
+          # pull_request events — it can't be spoofed by a contributor.
           RLS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
         run: pnpm rls:check
 
