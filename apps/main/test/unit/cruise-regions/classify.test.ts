@@ -88,7 +88,7 @@ describe("classifyByFirstStop", () => {
   });
 
   it("embarkation-port-irrelevant: ['Miami', 'Bermuda'] → bermuda because Bermuda is first in list", () => {
-    // If Miami were in the lookup as caribbean, this still returns bermuda
+    // Miami is not in FIRST_STOP_REGION, so the loop skips it and returns the first recognized stop, Bermuda.
     expect(classifyByFirstStop(["Miami", "Bermuda"])).toBe("bermuda");
   });
 });

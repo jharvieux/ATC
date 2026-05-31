@@ -65,8 +65,16 @@ export function interpolateSeaDays(days: ItineraryDay[]): CruiseStop[] {
     }
 
     // Sea segment — find the nearest bounding port coords.
-    const prev = findPrevPort(segments, si);
-    const next = findNextPort(segments, si);
+    let prev: BoundPort | null = null;
+    for (let i = si - 1; i >= 0; i--) {
+      const s = segments[i]!;
+      if (s.kind === "port") { prev = { lat: s.day.latitude!, lon: s.day.longitude! }; break; }
+    }
+    let next: BoundPort | null = null;
+    for (let i = si + 1; i < segments.length; i++) {
+      const s = segments[i]!;
+      if (s.kind === "port") { next = { lat: s.day.latitude!, lon: s.day.longitude! }; break; }
+    }
     const n = seg.days.length;
 
     for (let k = 0; k < n; k++) {
@@ -97,20 +105,4 @@ export function interpolateSeaDays(days: ItineraryDay[]): CruiseStop[] {
   }
 
   return result;
-}
-
-function findPrevPort(segments: Segment[], si: number): BoundPort | null {
-  for (let i = si - 1; i >= 0; i--) {
-    const s = segments[i]!;
-    if (s.kind === "port") return { lat: s.day.latitude!, lon: s.day.longitude! };
-  }
-  return null;
-}
-
-function findNextPort(segments: Segment[], si: number): BoundPort | null {
-  for (let i = si + 1; i < segments.length; i++) {
-    const s = segments[i]!;
-    if (s.kind === "port") return { lat: s.day.latitude!, lon: s.day.longitude! };
-  }
-  return null;
 }
