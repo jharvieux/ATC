@@ -6,9 +6,10 @@
 // to the platform domain itself.
 //
 // Interactive paths (201 → success screen, 401 → router.push) require a
-// browser-like environment (jsdom + RTL). They are covered by the E2E spec
-// stubs at tests/e2e/onboarding.spec.ts; unit coverage here is deferred
-// until @testing-library/react + jsdom are added to the test stack.
+// browser-like environment (jsdom + RTL). They are not yet covered at any
+// layer — E2E stubs in tests/e2e/onboarding.spec.ts are all test.fixme()
+// with no body. Unit coverage deferred until @testing-library/react +
+// jsdom are added to the test stack.
 
 import { describe, it, expect } from "vitest";
 import { buildWorkspaceUrl } from "@/app/signup/complete/page";
