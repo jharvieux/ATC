@@ -11,7 +11,7 @@ import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 
 export const GET = withServiceAuth(async (req, ctx) => {
-  if (ctx.scope !== "read" && ctx.scope !== "write") {
+  if (ctx.scope !== "read") {
     return Response.json({ error: "insufficient_scope" }, { status: 403 });
   }
 

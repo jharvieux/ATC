@@ -54,7 +54,7 @@ export async function getSailingItinerary(args: {
     return null;
   }
 
-  if (!res.ok || res.status === 404) return null;
+  if (!res.ok) return null;
 
   type ItineraryJson = { ports_of_call?: string[]; day_by_day?: SailingDay[] | null; region?: string | null };
   let json: ItineraryJson | null = null;
