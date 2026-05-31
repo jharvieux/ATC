@@ -8,6 +8,7 @@
 // idempotency works for unchanged pages).
 
 import * as cheerio from "cheerio";
+import { shipSlugFromUrl } from "./url-slug";
 
 export interface ParsedShip {
   shipName: string;
@@ -53,14 +54,6 @@ function pickSpecValue($: cheerio.CheerioAPI, labels: string[]): string | null {
     if (c && c.toLowerCase() !== label.toLowerCase()) return c;
   }
   return null;
-}
-
-function shipSlugFromUrl(url: string): string {
-  const u = new URL(url);
-  // Last non-empty path segment, sans .html
-  const segs = u.pathname.split("/").filter(Boolean);
-  const last = segs[segs.length - 1] ?? "";
-  return last.replace(/\.html?$/i, "");
 }
 
 export function parseShipPage(html: string, sourceUrl: string): ParsedShip | null {
