@@ -21,13 +21,14 @@
 // caller can mark parse_failed and the run halts above the 5% failure floor.
 
 import * as cheerio from "cheerio";
+import { shipSlugFromUrl } from "./url-slug";
 
 export interface ParsedSailingDay {
   day_number: number; // 1-indexed calendar day from embark
-  date: string; // YYYY-MM-DD
+  date: string;
   port_name: string | null; // null = at sea
-  arrival_time: string | null; // HH:MM
-  departure_time: string | null; // HH:MM
+  arrival_time: string | null;
+  departure_time: string | null;
 }
 
 export interface ParsedSailing {
@@ -44,7 +45,7 @@ export interface ParsedSailing {
   starting_price_usd: number | null;
   sailing_slug: string;
   source_url: string;
-  text: string; // RAG-ready prose, deterministic
+  text: string;
 }
 
 const MONTHS: Record<string, number> = {
@@ -81,15 +82,6 @@ function daysBetween(startIso: string, endIso: string): number {
 function addDays(iso: string, n: number): string {
   const t = Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000;
   return new Date(t).toISOString().slice(0, 10);
-}
-
-function shipSlugFromUrl(url: string): string {
-  try {
-    const segs = new URL(url).pathname.split("/").filter(Boolean);
-    return (segs[segs.length - 1] ?? "").replace(/\.html?$/i, "");
-  } catch {
-    return "";
-  }
 }
 
 interface RawRow {
@@ -163,7 +155,6 @@ export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing
   const region = title ? regionFromTitle(title) : null;
   const starting_price_usd = parsePriceUsd(prose);
 
-  // Walk the day rows.
   const rows: RawRow[] = [];
   table.find("tr").each((_, tr) => {
     const dateText = collapse($(tr).find("td.date").first().text());
@@ -206,7 +197,14 @@ export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing
       arrival = r.times[0] ?? null;
       departure = r.times[1] ?? null;
     }
-    return { ...r, date, arrival, departure };
+    return {
+      date,
+      arrival,
+      departure,
+      portName: r.portName,
+      isEmbark: r.isEmbark,
+      isDisembark: r.isDisembark,
+    };
   });
 
   const departure_date = isoDate(begin.year, begin.monthIdx, begin.day);
@@ -276,13 +274,11 @@ function renderSailingText(s: {
   return_date: string; duration_nights: number; departure_port: string;
   ports_of_call: string[]; region: string | null; starting_price_usd: number | null;
 }): string {
-  const parts: string[] = [];
   const reg = s.region ? `${s.region} ` : "";
-  parts.push(
-    `${s.ship_name}${s.cruise_line ? ` (${s.cruise_line})` : ""} sails a ${s.duration_nights}-night ${reg}cruise`,
-  );
-  parts.push(`departing ${s.departure_port} on ${s.departure_date} and returning ${s.return_date}.`);
-  const line1 = parts.join(" ");
+  const line1 =
+    `${s.ship_name}${s.cruise_line ? ` (${s.cruise_line})` : ""} sails a ` +
+    `${s.duration_nights}-night ${reg}cruise departing ${s.departure_port} ` +
+    `on ${s.departure_date} and returning ${s.return_date}.`;
   const line2 = s.ports_of_call.length
     ? `Ports of call: ${s.ports_of_call.join(", ")}.`
     : "No scheduled ports (full sea-day itinerary).";

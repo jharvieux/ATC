@@ -9,6 +9,14 @@
 import { describe, expect, it } from "vitest";
 import { parseSailingPage } from "../../../src/lib/external/cruisemapper/parsers/sailing-parser";
 
+// Assert the parse succeeded first, so a fixture regression surfaces as a
+// named "expected null" failure rather than an opaque null-deref later.
+function parse(html: string, url = "https://x.test/ships/y-1") {
+  const s = parseSailingPage(html, url);
+  expect(s).not.toBeNull();
+  return s!;
+}
+
 // Round-trip Alaska from Seattle. Exercises: implicit sea day (no 31 May
 // row), a same-date double stop (02 Jun: Tracy Arm + Juneau), a scenic stop
 // with no times (Tracy Arm), the excluded hotels link, and a Canada flag.
@@ -76,7 +84,7 @@ describe("parseSailingPage", () => {
   });
 
   it("reconstructs the implicit sea day from the calendar gap", () => {
-    const s = parseSailingPage(FIXTURE_ALASKA, "https://x.test/ships/y-1")!;
+    const s = parse(FIXTURE_ALASKA, "https://x.test/ships/y-1");
     // 31 May has NO row — it must appear as an at-sea day, not be dropped.
     const may31 = s.itinerary.filter((d) => d.date === "2026-05-31");
     expect(may31).toHaveLength(1);
@@ -85,7 +93,7 @@ describe("parseSailingPage", () => {
   });
 
   it("keeps both stops that share a calendar date under one day number", () => {
-    const s = parseSailingPage(FIXTURE_ALASKA, "https://x.test/ships/y-1")!;
+    const s = parse(FIXTURE_ALASKA, "https://x.test/ships/y-1");
     const jun2 = s.itinerary.filter((d) => d.date === "2026-06-02");
     expect(jun2.map((d) => d.port_name)).toEqual(["Tracy Arm Fjord, Alaska", "Juneau, Alaska"]);
     expect(jun2.every((d) => d.day_number === 4)).toBe(true);
@@ -96,7 +104,7 @@ describe("parseSailingPage", () => {
   });
 
   it("excludes the embark/disembark turnaround port and sea days from ports_of_call", () => {
-    const s = parseSailingPage(FIXTURE_ALASKA, "https://x.test/ships/y-1")!;
+    const s = parse(FIXTURE_ALASKA, "https://x.test/ships/y-1");
     expect(s.ports_of_call).toEqual([
       "Sitka, Baranof Island Alaska",
       "Tracy Arm Fjord, Alaska",
@@ -109,7 +117,7 @@ describe("parseSailingPage", () => {
   });
 
   it("records embark departure time and disembark arrival time", () => {
-    const s = parseSailingPage(FIXTURE_ALASKA, "https://x.test/ships/y-1")!;
+    const s = parse(FIXTURE_ALASKA, "https://x.test/ships/y-1");
     const first = s.itinerary[0]!;
     expect(first.day_number).toBe(1);
     expect(first.departure_time).toBe("16:00");
@@ -121,7 +129,7 @@ describe("parseSailingPage", () => {
   });
 
   it("rolls the year forward across a Dec → Jan boundary and fills multiple sea days", () => {
-    const s = parseSailingPage(FIXTURE_CARIBBEAN_ROLLOVER, "https://x.test/ships/symphony-2")!;
+    const s = parse(FIXTURE_CARIBBEAN_ROLLOVER, "https://x.test/ships/symphony-2");
     expect(s.departure_date).toBe("2026-12-28");
     expect(s.return_date).toBe("2027-01-04");
     expect(s.region).toBe("Caribbean");
@@ -149,8 +157,8 @@ describe("parseSailingPage", () => {
   });
 
   it("produces byte-deterministic text for the same input (content-hash idempotency)", () => {
-    const a = parseSailingPage(FIXTURE_ALASKA, "https://x.test/y")!.text;
-    const b = parseSailingPage(FIXTURE_ALASKA, "https://x.test/y")!.text;
+    const a = parse(FIXTURE_ALASKA, "https://x.test/y").text;
+    const b = parse(FIXTURE_ALASKA, "https://x.test/y").text;
     expect(a).toBe(b);
   });
 });
