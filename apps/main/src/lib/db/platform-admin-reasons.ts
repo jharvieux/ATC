@@ -104,6 +104,9 @@ export const PLATFORM_ADMIN_REASONS = [
   // §33.12 — Authority-override curation (platform admin sets or clears
   // authority_manual_override on knowledge_chunks).
   "rag_authority_curation",
+
+  // #489 — Platform admin test-delivery for email design review.
+  "admin_email_sample_send",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

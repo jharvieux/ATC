@@ -14,7 +14,8 @@ export type EmailCategory =
   | "pre_cruise"
   | "group_invitation"
   | "marketing"
-  | "travel_news";
+  | "travel_news"
+  | "admin_sample";
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -34,6 +35,23 @@ export async function checkRateLimit(opts: {
   }
 
   const now = new Date();
+
+  if (category === "admin_sample") {
+    // 50 total admin sample sends per 24h (counted across all destinations under the platform tenant).
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await db
+      .from("email_log")
+      .select("id")
+      .eq("tenant_id", tenant_id)
+      .eq("email_category", "admin_sample")
+      .gte("sent_at", dayAgo)
+      .not("status", "eq", "suppressed");
+    if (error) return { allowed: false, reason: "rate_limit_query_failed" };
+    if ((data?.length ?? 0) >= 50) {
+      return { allowed: false, reason: "admin_sample_daily_limit_reached" };
+    }
+    return { allowed: true };
+  }
 
   if (category === "marketing") {
     // 4 per calendar month
