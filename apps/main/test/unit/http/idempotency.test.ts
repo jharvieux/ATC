@@ -29,6 +29,12 @@ const fakeTable = {
   rows: new Map<string, FakeRow>(),
   forceInsertError: null as null | { code: string; message: string },
   forceLookupError: null as null | { message: string },
+  // Models the real 23505 race: a concurrent winner commits its row
+  // DURING our handler execution. When set, the insert path writes this
+  // row to `rows` and returns 23505 — so the first lookup (before the
+  // insert) misses, the handler runs, the insert race-loses, and the
+  // post-conflict lookup finds the winner.
+  concurrentWinnerOnInsert: null as null | FakeRow,
 };
 
 function tableKey(key: string, route: string, user: string | null): string {
@@ -75,6 +81,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
       });
       const insert = (payload: Record<string, unknown>) => ({
         async then(this: unknown, cb: (r: { error: unknown }) => unknown) {
+          if (fakeTable.concurrentWinnerOnInsert) {
+            // The winner committed during our handler: seed its row so
+            // the post-conflict lookup finds it, then return 23505.
+            const w = fakeTable.concurrentWinnerOnInsert;
+            fakeTable.rows.set(tableKey(w.idempotency_key, w.route, w.auth_user_id), w);
+            return cb({ error: { code: "23505", message: "duplicate key" } });
+          }
           if (fakeTable.forceInsertError) {
             return cb({ error: fakeTable.forceInsertError });
           }
@@ -112,6 +125,7 @@ describe("withIdempotencyKey", () => {
     fakeTable.rows.clear();
     fakeTable.forceInsertError = null;
     fakeTable.forceLookupError = null;
+    fakeTable.concurrentWinnerOnInsert = null;
   });
 
   it("no header → runs handler, no cache write", async () => {
@@ -225,9 +239,13 @@ describe("withIdempotencyKey", () => {
     expect(handlerCalls).toBe(2);
   });
 
-  it("23505 concurrent insert → returns the racing winner's row", async () => {
-    // Pre-seed the row to simulate the concurrent caller already having cached.
-    fakeTable.rows.set(tableKey("race-key", "x.test", "user-A"), {
+  it("23505 race (lookup miss → handler runs → insert race-loses → returns winner's row)", async () => {
+    // The actual §7.9 race: no cached row when WE look up, so our handler
+    // runs; but a concurrent winner commits the same key before our
+    // insert, so the insert hits 23505 and the post-conflict lookup must
+    // return THEIR row, not ours. concurrentWinnerOnInsert models the
+    // winner committing during our handler.
+    fakeTable.concurrentWinnerOnInsert = {
       idempotency_key: "race-key",
       route: "x.test",
       auth_user_id: "user-A",
@@ -236,13 +254,8 @@ describe("withIdempotencyKey", () => {
       response_content_type: "application/json",
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    });
+    };
 
-    // First lookup will HIT (the seeded row is there), so the handler is
-    // NOT called. To test the 23505 path specifically would require the
-    // lookup to miss but the insert to fail — a real race. We've already
-    // validated cache HIT in the previous test. This case just confirms
-    // pre-existing rows are honored.
     let handlerCalls = 0;
     const res = await withIdempotencyKey(
       makeReq({ "Idempotency-Key": "race-key" }),
@@ -252,7 +265,7 @@ describe("withIdempotencyKey", () => {
         return Response.json({ from: "loser" });
       },
     );
+    expect(handlerCalls).toBe(1);
     expect(await res.json()).toEqual({ from: "racing-winner" });
-    expect(handlerCalls).toBe(0);
   });
 });

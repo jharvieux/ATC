@@ -35,20 +35,22 @@ function makeDb(opts: {
         select: () => chain,
         insert: (payload: Record<string, unknown>) => {
           opts.inserts.push({ table, payload });
-          if (table === "ai_tool_calls") {
-            const error = auditOk ? null : { message: "audit synthetic failure" };
-            // Behave like a Supabase builder: directly thenable to {data, error}.
-            return Promise.resolve({ data: null, error });
-          }
-          // Other tables (escalation_topics, etc.) — chain to .select().single()
-          return {
-            select: () => ({
-              single: async () => ({
-                data: escalationOk ? { id: "row-1" } : null,
-                error: escalationOk ? null : { message: "escalation synthetic failure" },
-              }),
-            }),
-          };
+          const result =
+            table === "ai_tool_calls"
+              ? { data: null, error: auditOk ? null : { message: "audit synthetic failure" } }
+              : {
+                  data: escalationOk ? { id: "row-1" } : null,
+                  error: escalationOk ? null : { message: "escalation synthetic failure" },
+                };
+          // Must be directly awaitable: escalate_to_human passes
+          // `db...insert(...)` straight to safeAwait. The previous mock
+          // only chained .select().single(), so safeAwait awaited a
+          // non-thenable, never saw the error, and the handler never threw
+          // — the error_text path went untested. .select().single() is
+          // kept for handlers that read the row back.
+          return Object.assign(Promise.resolve(result), {
+            select: () => ({ single: async () => result }),
+          });
         },
         eq: () => chain,
         order: () => chain,
@@ -117,18 +119,18 @@ describe("ai_tool_calls audit write", () => {
       { reason: "complex_booking", summary: "x" },
       { ctx, db, conversation_id: CONVERSATION },
     );
-    // The handler may or may not throw on a soft DB error depending on
-    // its internal handling — but EITHER way an audit row should land.
-    // (escalate_to_human's actual behavior: it surfaces the DB error
-    // back to the LLM; we just verify the audit fired.)
+    // escalate_to_human wraps its escalation_topics insert in safeAwait,
+    // which THROWS on a DB error (D-094). dispatchTool catches that and
+    // records the audit row with error_text set to the failure detail.
+    // (Not "may or may not throw" — safeAwait always throws on error.)
     const audit = inserts.find((i) => i.table === "ai_tool_calls");
     expect(audit).toBeDefined();
     expect(audit?.payload.tool_name).toBe("escalate_to_human");
-    // The result body should have landed in result_json (either as a
-    // parsed object or string).
-    expect(audit?.payload.result_json).toBeDefined();
-    // r.content is whatever the handler returned — just confirm dispatch
-    // returned something parseable.
+    // The point of THIS test (vs. the unknown-tool case above): the
+    // handler-threw path populates error_text with the failure detail.
+    expect(audit?.payload.error_text).toBeTruthy();
+    expect(String(audit?.payload.error_text)).toContain("escalation_topics.insert");
+    // Dispatch still returns a tool_result the LLM can reason about.
     expect(typeof r.content).toBe("string");
   });
 
