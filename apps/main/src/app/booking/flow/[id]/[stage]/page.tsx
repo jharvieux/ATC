@@ -741,32 +741,22 @@ function FormField({
   name: string;
   type?: string;
   required?: boolean;
-  value?: string;
-  onChange?: (v: string) => void;
+  value: string;
+  onChange: (v: string) => void;
 }): React.ReactElement {
-  const isControlled = value !== undefined && onChange !== undefined;
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
         {label} {required && <span style={{ color: "#dc2626" }}>*</span>}
       </span>
-      {isControlled ? (
-        <input
-          type={type}
-          name={name}
-          required={required}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
-        />
-      ) : (
-        <input
-          type={type}
-          name={name}
-          required={required}
-          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
-        />
-      )}
+      <input
+        type={type}
+        name={name}
+        required={required}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
+      />
     </label>
   );
 }
