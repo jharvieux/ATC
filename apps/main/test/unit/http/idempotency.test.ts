@@ -265,10 +265,7 @@ describe("withIdempotencyKey", () => {
         return Response.json({ from: "loser" });
       },
     );
-    // Handler RAN (the first lookup missed) — this is what distinguishes
-    // the 23505 race from the plain cache-hit path.
     expect(handlerCalls).toBe(1);
-    // But the WINNER's cached body is returned, not our handler's.
     expect(await res.json()).toEqual({ from: "racing-winner" });
   });
 });

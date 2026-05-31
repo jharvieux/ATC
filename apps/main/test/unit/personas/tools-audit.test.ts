@@ -42,12 +42,12 @@ function makeDb(opts: {
                   data: escalationOk ? { id: "row-1" } : null,
                   error: escalationOk ? null : { message: "escalation synthetic failure" },
                 };
-          // Support BOTH call shapes Supabase builders allow: a direct
-          // `await db...insert(...)` (what escalate_to_human does via
-          // safeAwait) AND `db...insert(...).select().single()`. The mock
-          // previously only chained .select().single(), so safeAwait
-          // awaited a non-thenable and never saw the error → the handler
-          // never threw and error_text was never exercised.
+          // Must be directly awaitable: escalate_to_human passes
+          // `db...insert(...)` straight to safeAwait. The previous mock
+          // only chained .select().single(), so safeAwait awaited a
+          // non-thenable, never saw the error, and the handler never threw
+          // — the error_text path went untested. .select().single() is
+          // kept for handlers that read the row back.
           return Object.assign(Promise.resolve(result), {
             select: () => ({ single: async () => result }),
           });
