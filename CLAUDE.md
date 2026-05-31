@@ -412,25 +412,26 @@ If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-ex
 
 **Mandatory `## Audit` section in every PR description.**
 
-Before opening a PR, you MUST run both audit subagents and paste their combined output into the PR body under an `## Audit` heading:
+The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the PR body AND marker-stamped PR comments (`<!-- d091-audit:v1 -->`, `<!-- prepr-audit:v1 -->`) posted after the head commit. The agents post those comments themselves — do not post them manually.
 
-1. Invoke `d091-reviewer` for D-091 anti-pattern coverage.
-2. Invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
-3. Combine both outputs into a single `## Audit` block in the PR description. Keep the format `pre-pr-reviewer` emits (Scope / Findings / Tests / Status lines).
-4. If `Status` is anything other than `clean — no findings`, fix the findings or explain why each is acceptable in the same block, BEFORE pushing.
+**Workflow (order matters):**
 
-The `pr-audit-section-check` workflow enforces this — it reads the PR body, fails if the `## Audit` section is missing or empty or marked `TBD`. The check is required to merge. **You cannot bypass it.** Dependabot PRs are exempt (they're version bumps with no code logic).
+1. `pnpm verify` passes — clean typecheck, lint, tests, slop-check.
+2. Push the branch.
+3. **Open the PR first** (`gh pr create`) with a `## Audit` placeholder block in the body.
+4. **Then run both audit agents** (they resolve the PR number from the branch and self-post their marker comments):
+   - Invoke `d091-reviewer` for D-091 anti-pattern coverage.
+   - Invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
+5. If either agent reports findings, fix them, push, and re-run that agent (it will post a fresh comment superseding the stale one).
+6. Update the `## Audit` block in the PR body with the combined findings summary and a standalone `Status:` line.
+7. Wait for CI to complete. If all checks pass, merge (squash merge by default). Delete the feature branch after merge.
 
-**Workflow:**
-
-- Open PR from feature branch into `dev` with a clear title and body summarizing the change. Include the `## Audit` block.
-- Wait for CI to complete.
-- If all checks pass, merge (squash merge by default unless the PR has logically separate commits worth preserving).
-- Delete the feature branch after merge.
-- If checks fail, do not merge. Either fix the failure in the same PR or stop and surface the failure to the user.
+The check is required to merge. **You cannot bypass it.** Dependabot PRs are exempt (they're version bumps with no code logic).
 
 **You may NOT:**
 
+- Run the audit agents before the PR exists — they abort with an error when `gh pr view` returns empty, which is correct.
+- Manually post the `<!-- d091-audit:v1 -->` or `<!-- prepr-audit:v1 -->` marker comments — let the agents do it.
 - Merge a PR with failing or pending checks.
 - Bypass branch protection rules.
 - Force-push to `dev`, `main`, or `release/*`.
