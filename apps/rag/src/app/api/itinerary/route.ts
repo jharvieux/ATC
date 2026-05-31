@@ -27,7 +27,7 @@ export const GET = withServiceAuth(async (req, ctx) => {
   const db = getRagDb();
   const { data, error } = await db
     .from("itineraries")
-    .select("ports_of_call, day_by_day")
+    .select("ports_of_call, day_by_day, region")
     .eq("cruise_line", cruise_line)
     .eq("ship", ship)
     .eq("departure_date", departure_date)

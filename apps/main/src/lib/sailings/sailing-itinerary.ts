@@ -17,6 +17,7 @@ export interface SailingDay {
 export interface SailingItinerary {
   ports_of_call: string[];
   days: SailingDay[];
+  cruisemapper_region: string | null;
 }
 
 export async function getSailingItinerary(args: {
@@ -55,7 +56,7 @@ export async function getSailingItinerary(args: {
 
   if (!res.ok || res.status === 404) return null;
 
-  type ItineraryJson = { ports_of_call?: string[]; day_by_day?: SailingDay[] | null };
+  type ItineraryJson = { ports_of_call?: string[]; day_by_day?: SailingDay[] | null; region?: string | null };
   let json: ItineraryJson | null = null;
   try { json = (await res.json()) as ItineraryJson; } catch { return null; }
   if (!json) return null;
@@ -63,5 +64,6 @@ export async function getSailingItinerary(args: {
   return {
     ports_of_call: json.ports_of_call ?? [],
     days: json.day_by_day ?? [],
+    cruisemapper_region: json.region ?? null,
   };
 }

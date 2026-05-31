@@ -426,6 +426,7 @@ async function buildAndSend(args: {
   });
 
   const region = resolveDestinationRegion({
+    cruisemapper_region: itin?.cruisemapper_region ?? null,
     ports_of_call: itin?.ports_of_call ?? [],
   });
   const destinationImage = getDestinationImage(region);
@@ -753,5 +754,5 @@ async function buildEmail(
   }
 }
 
-// Re-export for tests.
+// Re-export parseStructuredJson and buildEmail for tests.
 export { parseStructuredJson, buildEmail };
