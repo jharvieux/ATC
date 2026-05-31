@@ -1,7 +1,8 @@
 import { test } from "@playwright/test";
 
-// TODO: implement per ATC_CICD_Pipeline_v4_REVISED.docx §7.2
-// Covers: new tenant sign-up, initial setup wizard, first agent activation
-test.skip("new tenant can complete sign-up flow", async () => {});
-test.skip("onboarding wizard reaches completion", async () => {});
-test.skip("first agent is activated after onboarding", async () => {});
+// Tenant signup / onboarding wizard (§7.1 / §15).
+// TODO(#441): complete tenant provisioning flow; TODO(#459): E2E coverage.
+
+test.fixme("new tenant can complete sign-up flow", async () => {});
+test.fixme("onboarding wizard reaches completion", async () => {});
+test.fixme("first agent is activated after onboarding", async () => {});

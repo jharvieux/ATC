@@ -72,6 +72,6 @@ test("POST /api/quotes creates a draft quote with tenant_id auto-injected", asyn
   expect(options[0]!.ship_name).toBe("Symphony of the Seas");
 });
 
-// TODO when the quote-detail / accept routes are wired:
-test.skip("quote detail page loads with correct information", async () => {});
-test.skip("customer can accept a quote", async () => {});
+// TODO(#459): quote-detail and customer-accept routes not yet wired.
+test.fixme("quote detail page loads with correct information", async () => {});
+test.fixme("customer can accept a quote", async () => {});
