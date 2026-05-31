@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-129 — 2026-05-31 — §9.6 collect_booking_details: draft creation is NOT submission; supersedes D-105 placeholder stance for this tool
+
+**Decision.** `collect_booking_details` is implemented as draft-booking creation + optional lead-passenger pre-fill (PR #520, issue #423). D-105 marked it a placeholder because it "conflicts with §20.4's agent-confirmation flow." That framing was correct about submission (flipping booking status to 'confirmed') but too broad. The handler creates a `status='draft'` booking, optionally inserts a lead passenger, and returns a `booking_url` that takes the customer to the on-page flow to confirm and submit. The distinction is deliberate: the AI collects intent; the form closes the contract. §20.3's entry-point table explicitly lists "From AI chat: AI's collect_booking_details tool → flow with conversation context" as a supported path. §20.4 still governs submission — no change there. `search_host_inventory` (needs real host-adapter, BP14) and `generate_quote` (§38's agent-owns-pricing rule) remain intentional placeholders per D-105.
+
+**Why.** The spec §20.3 table is the spec's own answer to whether the AI can initiate a booking: yes, as a pre-fill / handoff, not as a direct submission. Keeping it as a `not_implemented` stub after the booking flow shipped (PR #515) would leave a visible spec gap without benefit. The RLS + status='draft' means no money moves until the customer submits through the form.
+
+**Rejected.** Keeping the placeholder: leaves a spec gap and forces the AI to redirect the customer to find the booking flow manually even when it has the guest details in context. Implementing submission from the AI side: blocked by §20.4 agent-confirmation requirement; the on-page form holds the CAS lock and commission math.
+
+**Related artifacts.** `apps/main/src/lib/personas/tools/handlers/collect-booking-details.ts`, `apps/main/supabase/migrations/20260531000001_conversations_active_persona_fk.sql`, PR #520.
+
+---
+
 ## D-128 — 2026-05-31 — §20.2 booking flow Stages 2+3 (PR #515): replace-all passenger/options pattern; non-atomic delete+insert acceptable for drafts
 
 API routes POST /api/bookings/[id]/passengers and PUT /api/bookings/[id]/options use a delete-then-insert replace-all pattern. Not wrapped in a transaction — if insert fails after delete, the table is empty until the caller retries. Chosen over an RPC transaction because: (a) booking is in draft status so data loss is recoverable (form re-renders empty, user re-submits), (b) adding a stored-procedure just for this would add schema surface area with no safety net beyond what a retry gives. All mutations wrapped with `safeAwait`; outer try/catch surfaces DB errors as 500. `FormField` value/onChange made required after audit found dead uncontrolled branch.

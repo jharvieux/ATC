@@ -198,7 +198,7 @@ describe("update_memory", () => {
 });
 
 describe("placeholder handlers return not_implemented", () => {
-  for (const tool of ["search_host_inventory", "generate_quote", "collect_booking_details"]) {
+  for (const tool of ["search_host_inventory", "generate_quote"]) {
     it(`${tool} returns not_implemented + escalate fallback`, async () => {
       const r = await dispatchTool(
         tool,
