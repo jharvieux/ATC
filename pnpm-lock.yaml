@@ -137,7 +137,7 @@ importers:
         version: 11.1.2
       stripe:
         specifier: ^22.2.0
-        version: 22.2.0(@types/node@24.12.4)
+        version: 22.2.0(@types/node@25.9.1)
       tesseract.js:
         specifier: ^7.0.0
         version: 7.0.0
@@ -158,8 +158,8 @@ importers:
         specifier: ^7.0.0
         version: 7.0.0
       '@types/node':
-        specifier: ^24.12.4
-        version: 24.12.4
+        specifier: ^25.9.1
+        version: 25.9.1
       '@types/react':
         specifier: ^18.3.18
         version: 18.3.29
@@ -225,8 +225,8 @@ importers:
         specifier: ^4.3.0
         version: 4.3.0
       '@types/node':
-        specifier: ^24.12.4
-        version: 24.12.4
+        specifier: ^25.9.1
+        version: 25.9.1
       '@types/react':
         specifier: ^18.3.18
         version: 18.3.29
@@ -3242,9 +3242,6 @@ packages:
 
   '@types/node@22.19.19':
     resolution: {integrity: sha512-dyh/xO2Fh5bYrfWaaqGrRQQGkNdmYw6AmaAUvYeUMNTWQtvb796ikLdmTchRmOlOiIJ1TDXfWgVx1QkUlQ6Hew==}
-
-  '@types/node@24.12.4':
-    resolution: {integrity: sha512-GUUEShf+PBCGW2KaXwcIt3Yk+e3pkKwWKb9GSyM9WQVE+ep2jzmHdGsHzu4wgcZy5fN9FBdVzjpBQsYlpfpgLA==}
 
   '@types/node@25.9.1':
     resolution: {integrity: sha512-xfrlY7UD5rMJk3ZVJP8BNzS28J36YJg+xp+LPXV1TdWxr8uMH5A860QNxYDGQe/ylDSgjxE52Q9VnO7p75tJxg==}
@@ -6904,9 +6901,6 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici-types@7.16.0:
-    resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
-
   undici-types@7.24.6:
     resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
 
@@ -10385,7 +10379,7 @@ snapshots:
 
   '@types/bunyan@1.8.11':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/chai@5.2.3':
     dependencies:
@@ -10394,7 +10388,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/debug@4.1.13':
     dependencies:
@@ -10420,25 +10414,21 @@ snapshots:
 
   '@types/memcached@2.2.10':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/ms@2.1.0': {}
 
   '@types/mysql@2.15.26':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/mysql@2.15.27':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/node@22.19.19':
     dependencies:
       undici-types: 6.21.0
-
-  '@types/node@24.12.4':
-    dependencies:
-      undici-types: 7.16.0
 
   '@types/node@25.9.1':
     dependencies:
@@ -10446,7 +10436,7 @@ snapshots:
 
   '@types/oracledb@6.5.2':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/pg-pool@2.0.6':
     dependencies:
@@ -10458,13 +10448,13 @@ snapshots:
 
   '@types/pg@8.15.6':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
       pg-protocol: 1.14.0
       pg-types: 2.2.0
 
   '@types/pg@8.6.1':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
       pg-protocol: 1.14.0
       pg-types: 2.2.0
 
@@ -10483,7 +10473,7 @@ snapshots:
 
   '@types/set-cookie-parser@2.4.10':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/shimmer@1.2.0': {}
 
@@ -10491,13 +10481,13 @@ snapshots:
 
   '@types/tedious@4.0.14':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   '@types/unist@3.0.3': {}
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
     optional: true
 
   '@typescript-eslint/eslint-plugin@8.60.0(@typescript-eslint/parser@8.60.0(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3))(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)':
@@ -12872,7 +12862,7 @@ snapshots:
 
   jest-worker@27.5.1:
     dependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
       merge-stream: 2.0.0
       supports-color: 8.1.1
 
@@ -13964,7 +13954,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.1
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -14579,9 +14569,9 @@ snapshots:
 
   strip-json-comments@5.0.3: {}
 
-  stripe@22.2.0(@types/node@24.12.4):
+  stripe@22.2.0(@types/node@25.9.1):
     optionalDependencies:
-      '@types/node': 24.12.4
+      '@types/node': 25.9.1
 
   strtok3@10.3.5:
     dependencies:
@@ -14899,8 +14889,6 @@ snapshots:
   underscore@1.13.8: {}
 
   undici-types@6.21.0: {}
-
-  undici-types@7.16.0: {}
 
   undici-types@7.24.6: {}
 
