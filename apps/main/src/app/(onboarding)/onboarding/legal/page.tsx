@@ -1,17 +1,15 @@
 "use client";
 
 // §15.4 / §17.4 — Onboarding Stage 3: Legal acceptance.
-// Fetches current document content from legal_documents and displays it inline.
-// User must check all four documents before submitting.
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const DOCUMENT_TYPES = [
-  { type: "tou",            label: "Terms of Use" },
-  { type: "privacy_policy", label: "Privacy Policy" },
-  { type: "ai_disclaimer",  label: "AI Liability Disclaimer" },
-  { type: "cookie_policy",  label: "Cookie Policy (US)" },
+  { type: "tou",             label: "Terms of Use" },
+  { type: "privacy_policy",  label: "Privacy Policy" },
+  { type: "ai_disclaimer",   label: "AI Liability Disclaimer" },
+  { type: "cookie_policy",   label: "Cookie Policy (US)" },
 ];
 
 interface DocContent {

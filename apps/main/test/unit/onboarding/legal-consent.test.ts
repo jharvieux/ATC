@@ -226,6 +226,38 @@ describe("POST /api/onboarding/ica — §15.5 / §17.4", () => {
     }));
     expect(res.status).toBe(200);
   });
+
+  it("returns 500 when ICA document is absent — stage is permanently uncompletable without operator fix", async () => {
+    mockTenantFrom.mockImplementation((table: string) => {
+      if (table === "tenants") return makeChain({ legal_name: LEGAL_NAME });
+      if (table === "legal_documents") return makeChain([]);
+      return makeChain(null);
+    });
+    const { POST } = await import("@/app/api/onboarding/ica/route");
+    const res = await POST(postRequest("/api/onboarding/ica", {
+      typed_legal_name: LEGAL_NAME,
+      scrolled_to_bottom: true,
+    }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("ica_document_not_found");
+  });
+
+  it("returns 500 with document_state_inconsistent when multiple current ICA versions exist — invariant violation makes ICA stage uncompletable", async () => {
+    mockTenantFrom.mockImplementation((table: string) => {
+      if (table === "tenants") return makeChain({ legal_name: LEGAL_NAME });
+      if (table === "legal_documents") return makeChain([{ id: "ica-1", version: 1 }, { id: "ica-2", version: 2 }]);
+      return makeChain(null);
+    });
+    const { POST } = await import("@/app/api/onboarding/ica/route");
+    const res = await POST(postRequest("/api/onboarding/ica", {
+      typed_legal_name: LEGAL_NAME,
+      scrolled_to_bottom: true,
+    }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("document_state_inconsistent");
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -269,5 +301,19 @@ describe("GET /api/legal/[doctype]/current — §17.4", () => {
     const body = await res.json() as typeof doc;
     expect(body.document_type).toBe("tou");
     expect(body.version).toBe(1);
+  });
+
+  it("returns 500 with document_state_inconsistent when multiple current versions exist — invariant violation blocks all users", async () => {
+    const doc1 = { id: "doc-1", document_type: "tou", version: 1, content_markdown: "v1", content_html: null, effective_at: "2026-01-01T00:00:00Z" };
+    const doc2 = { id: "doc-2", document_type: "tou", version: 2, content_markdown: "v2", content_html: null, effective_at: "2026-02-01T00:00:00Z" };
+    mockTenantFrom.mockImplementation(() => makeChain([doc1, doc2]));
+    const { GET } = await import("@/app/api/legal/[doctype]/current/route");
+    const res = await GET(
+      new Request("http://test/api/legal/tou/current"),
+      { params: Promise.resolve({ doctype: "tou" }) },
+    );
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("document_state_inconsistent");
   });
 });

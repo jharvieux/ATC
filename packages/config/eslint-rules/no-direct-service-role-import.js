@@ -94,9 +94,6 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/onboarding/tier/route.ts",
   // BP16: ICA acceptance — reads tenant row to compare legal_name. §15.5.
   "/app/api/onboarding/ica/route.ts",
-  // BP17: Legal acceptance (onboarding stage 3) — writes legal_consents rows.
-  // legal_consents INSERT RLS is WITH CHECK(FALSE); service_role required. §15.4 / §17.4.
-  "/app/api/onboarding/legal/route.ts",
   // BP16: Profile submission — cross-tenant slug uniqueness check. §15.3.
   "/app/api/onboarding/profile/route.ts",
   // BP16: Sandbox toggle — reads tenant stripe subscription ID. §15.12.
@@ -117,6 +114,9 @@ const ALLOWED_PATH_SUFFIXES = [
   "/app/api/platform/settings/host-agency-name/route.ts",
   // BP16: Admin review queue — paginated cross-tenant read. §15.11.
   "/app/api/admin/tenants/review-queue/route.ts",
+  // BP17: Legal acceptance (onboarding stage 3) — writes legal_consents rows.
+  // legal_consents INSERT RLS is WITH CHECK(FALSE); service_role required. §15.4 / §17.4.
+  "/app/api/onboarding/legal/route.ts",
   // BP17: Consent renewal — verifies auth then writes legal_consents. §17.4.
   "/app/api/user/consent/route.ts",
   // BP17: Termination handler — reads tenant for Stripe, updates status. §15.14.1.
