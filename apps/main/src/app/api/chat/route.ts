@@ -193,8 +193,9 @@ export async function POST(req: Request): Promise<Response> {
     if (verifiedId) {
       resolvedAnonSessionId = verifiedId;
       // Re-issue if it was an unsigned legacy cookie (upgrade to signed).
-      if (rawCookie !== signAnonSession(verifiedId)) {
-        anonCookieHeader = buildAnonCookieHeader(signAnonSession(verifiedId));
+      const signedValue = signAnonSession(verifiedId);
+      if (rawCookie !== signedValue) {
+        anonCookieHeader = buildAnonCookieHeader(signedValue);
       }
     } else {
       const fresh = freshAnonSession();

@@ -5,14 +5,15 @@
 //
 // Migration window: plain UUID cookies (no ".") are accepted and re-issued as
 // signed so in-flight sessions survive the deploy without losing history.
-// After one full release cycle, the unsigned fallback can be removed.
+// TODO(#514): remove unsigned-legacy path after §24.x migration window closes.
 
 import { createHmac, randomUUID } from "crypto";
 
 export const ANON_SESSION_COOKIE = "atc-anon-session";
 
 function sign(uuid: string): string {
-  const secret = process.env.ANON_COOKIE_SECRET ?? "";
+  const secret = process.env.ANON_COOKIE_SECRET;
+  if (!secret) throw new Error("ANON_COOKIE_SECRET is not set");
   return createHmac("sha256", secret).update(uuid).digest("hex");
 }
 
