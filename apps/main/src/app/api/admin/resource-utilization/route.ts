@@ -13,6 +13,7 @@ import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platf
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { parseBigIntCol, buildDailyArray, aggregateByModel, sortTenantsByProximity, type DailyRow, type ModelRow, type TenantRow } from "./aggregations";
 
 const RESEND_PRICE_KEY = "resend_cost_per_email_cents";
 // Resend Hobby tier: $1.90/1k emails = 0.19¢ each. Stored as 19 = 0.19¢
@@ -24,39 +25,6 @@ function currentBillingPeriod(): string {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
   return `[${start},${end})`;
-}
-
-// Parse a Supabase BIGINT column (returned as string) to a JS number.
-// Safe for dashboard aggregations — values stay well within MAX_SAFE_INTEGER.
-function parseBigIntCol(v: unknown): number {
-  if (typeof v === "number") return v;
-  return parseInt(String(v), 10) || 0;
-}
-
-interface DailyRow {
-  date: string;
-  ai_cost_cents: number;
-  email_count: number;
-  weather_requests: number;
-}
-
-interface ModelRow {
-  vendor: string;
-  model: string;
-  call_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  cost_cents: number;
-}
-
-interface TenantRow {
-  tenant_id: string;
-  slug: string;
-  display_name: string;
-  ai_cost_cents: number;
-  ai_cost_limit_state: string;
-  email_sent_count: number;
-  email_volume_limit_state: string;
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -122,80 +90,32 @@ export async function GET(req: Request): Promise<Response> {
         recordQuery({ op: "select", table: "tenant_usage_metrics", row_count: tenantMetricsResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "tenants", row_count: tenantsResult.data?.length ?? 0 });
 
-        // Aggregate AI costs per day.
-        const aiByDay = new Map<string, number>();
-        for (const row of aiDailyResult.data as Array<{ created_at: string; cost_estimate_cents: unknown }>) {
-          const day = row.created_at.slice(0, 10);
-          aiByDay.set(day, (aiByDay.get(day) ?? 0) + parseBigIntCol(row.cost_estimate_cents));
-        }
-
-        // Aggregate email counts per day.
-        const emailByDay = new Map<string, number>();
-        for (const row of emailDailyResult.data as Array<{ sent_at: string | null }>) {
-          if (!row.sent_at) continue;
-          const day = row.sent_at.slice(0, 10);
-          emailByDay.set(day, (emailByDay.get(day) ?? 0) + 1);
-        }
-
-        // Weather per day.
-        const weatherByDay = new Map<string, number>();
-        for (const row of weatherHistoryResult.data as Array<{ metric_date: string; requests_count: number }>) {
-          weatherByDay.set(row.metric_date, row.requests_count);
-        }
-
         const resendRate = parseBigIntCol((resendPriceResult.data as { value?: unknown } | null)?.value ?? RESEND_DEFAULT);
 
-        // Build sorted 30-day array, filling zeros for days with no activity.
-        const today = new Date();
-        const daily: DailyRow[] = [];
-        for (let i = 29; i >= 0; i--) {
-          const d = new Date(today);
-          d.setUTCDate(today.getUTCDate() - i);
-          const dateStr = d.toISOString().slice(0, 10);
-          daily.push({
-            date: dateStr,
-            ai_cost_cents: aiByDay.get(dateStr) ?? 0,
-            email_count: emailByDay.get(dateStr) ?? 0,
-            weather_requests: weatherByDay.get(dateStr) ?? 0,
-          });
-        }
+        const daily: DailyRow[] = buildDailyArray(
+          aiDailyResult.data as Array<{ created_at: string; cost_estimate_cents: unknown }>,
+          emailDailyResult.data as Array<{ sent_at: string | null }>,
+          weatherHistoryResult.data as Array<{ metric_date: string; requests_count: number }>,
+          new Date(),
+        );
 
-        // Per-model breakdown — aggregate raw rows.
-        const modelMap = new Map<string, ModelRow>();
-        for (const row of modelBreakdownResult.data as Array<{
-          vendor: string;
-          model: string;
-          input_tokens: number;
-          output_tokens: number;
-          cost_estimate_cents: unknown;
-        }>) {
-          const key = `${row.vendor}:${row.model}`;
-          const existing = modelMap.get(key) ?? { vendor: row.vendor, model: row.model, call_count: 0, input_tokens: 0, output_tokens: 0, cost_cents: 0 };
-          existing.call_count++;
-          existing.input_tokens += row.input_tokens;
-          existing.output_tokens += row.output_tokens;
-          existing.cost_cents += parseBigIntCol(row.cost_estimate_cents);
-          modelMap.set(key, existing);
-        }
-        const modelBreakdown = Array.from(modelMap.values()).sort((a, b) => b.cost_cents - a.cost_cents);
+        const modelBreakdown: ModelRow[] = aggregateByModel(
+          modelBreakdownResult.data as Array<{ vendor: string; model: string; input_tokens: number; output_tokens: number; cost_estimate_cents: unknown }>,
+        );
 
-        // Tenant proximity — join metrics with tenant display info.
         const tenantInfoMap = new Map<string, { slug: string; display_name: string }>();
         for (const t of tenantsResult.data as Array<{ id: string; slug: string; display_name: string }>) {
           tenantInfoMap.set(t.id, { slug: t.slug, display_name: t.display_name });
         }
 
-        const stateSeverity: Record<string, number> = { hard: 3, soft2: 2, soft1: 1, ok: 0 };
-        const tenantProximity: TenantRow[] = (
-          tenantMetricsResult.data as Array<{
+        const tenantProximity: TenantRow[] = sortTenantsByProximity(
+          (tenantMetricsResult.data as Array<{
             tenant_id: string;
             ai_cost_cents: unknown;
             ai_cost_limit_state: string;
             email_sent_count: number;
             email_volume_limit_state: string;
-          }>
-        )
-          .map((m) => {
+          }>).map((m) => {
             const info = tenantInfoMap.get(m.tenant_id) ?? { slug: m.tenant_id, display_name: "—" };
             return {
               tenant_id: m.tenant_id,
@@ -206,14 +126,9 @@ export async function GET(req: Request): Promise<Response> {
               email_sent_count: m.email_sent_count,
               email_volume_limit_state: m.email_volume_limit_state,
             };
-          })
-          .sort((a, b) => {
-            const sev = (stateSeverity[b.ai_cost_limit_state] ?? 0) - (stateSeverity[a.ai_cost_limit_state] ?? 0);
-            if (sev !== 0) return sev;
-            return b.ai_cost_cents - a.ai_cost_cents;
-          });
+          }),
+        );
 
-        // Platform-wide current-period summary.
         const totalAiCost = tenantProximity.reduce((s, t) => s + t.ai_cost_cents, 0);
         const totalEmailCount = tenantProximity.reduce((s, t) => s + t.email_sent_count, 0);
         const weatherCap = parseBigIntCol((weatherCapResult.data as { value?: unknown } | null)?.value ?? 8000);

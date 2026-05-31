@@ -105,7 +105,6 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
   const aiPath = `M ${xOf(0).toFixed(1)},${(PAD.top + chartH).toFixed(1)} L ${aiPoints.join(" L ")} L ${xOf(data.length - 1).toFixed(1)},${(PAD.top + chartH).toFixed(1)} Z`;
   const emailPath = `M ${aiPoints.join(" L ")} L ${totalPoints.slice().reverse().join(" L ")} Z`;
 
-  // Y-axis labels (4 ticks)
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
     val: maxVal * f,
     y: yOf(maxVal * f),
