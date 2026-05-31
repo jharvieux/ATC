@@ -1,0 +1,41 @@
+name: dependency-ignore-watch
+
+# A dependabot `ignore` is permanent + silent — nothing re-proposes a
+# held-back major once the upstream incompatibility clears. This monthly
+# job polls npm for each gating package's peerDependencies range and
+# opens an issue when the blocked major is admitted (a re-test signal,
+# not an auto-upgrade). Config: .github/dependency-ignore-watch.json.
+# Runbook: docs/runbooks/dependency-ignore-watch.md.
+
+on:
+  schedule:
+    - cron: "0 8 1 * *" # 08:00 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Check ignored-dependency unblock status
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Poll upstream peer-dep ranges + open re-test issues
+        run: pnpm tsx scripts/check-dependency-ignores.ts
