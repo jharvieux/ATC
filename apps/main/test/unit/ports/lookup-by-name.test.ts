@@ -31,9 +31,13 @@ function parseContainsLiteral(literal: string): string {
 // Models the two query shapes lookupPortByName issues:
 //   exact: .eq("port_name", v).maybeSingle()
 //   alias: .filter("name_aliases", "cs", literal).limit(1).maybeSingle()
-// `forceError` makes maybeSingle return a PostgrestError so the fail-loud
-// path can be exercised.
-function makeDb(rows: SeedRow[], forceError = false): Pick<SupabaseClient, "from"> {
+// `errorOn` injects a PostgrestError on the named query only, so each
+// fail-loud branch can be exercised independently (the exact query always
+// runs first, so a blanket error would never reach the alias branch).
+function makeDb(
+  rows: SeedRow[],
+  errorOn?: "exact" | "alias",
+): Pick<SupabaseClient, "from"> {
   return {
     from() {
       const state: { mode?: "exact" | "alias"; value?: string } = {};
@@ -59,7 +63,7 @@ function makeDb(rows: SeedRow[], forceError = false): Pick<SupabaseClient, "from
           return builder;
         },
         async maybeSingle() {
-          if (forceError) {
+          if (errorOn === state.mode) {
             return { data: null, error: { message: "connection reset" } };
           }
           const project = (r: SeedRow) => ({
@@ -134,9 +138,17 @@ describe("lookupPortByName", () => {
     expect(out?.latitude).toBeCloseTo(16.3, 4);
   });
 
-  it("throws (fail-loud) when the query errors rather than masking it as not-found", async () => {
-    await expect(lookupPortByName(makeDb(SEED, true), "Miami, FL")).rejects.toThrow(
+  it("throws (fail-loud) when the EXACT query errors rather than masking it as not-found", async () => {
+    await expect(lookupPortByName(makeDb(SEED, "exact"), "Miami, FL")).rejects.toThrow(
       /port_info_chunks\.lookup\.exact failed/,
+    );
+  });
+
+  it("throws (fail-loud) when the ALIAS query errors (exact missed first)", async () => {
+    // "Mahogany Bay" is not a port_name, so the exact query returns null
+    // cleanly and execution reaches the alias query — which then errors.
+    await expect(lookupPortByName(makeDb(SEED, "alias"), "Mahogany Bay")).rejects.toThrow(
+      /port_info_chunks\.lookup\.alias failed/,
     );
   });
 });
