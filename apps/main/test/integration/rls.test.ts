@@ -523,12 +523,22 @@ describeIf("RLS integration", () => {
       expect(data?.length).toBe(1);
     });
 
-    it("§12.1: userB cannot SELECT tenantA contacts", async () => {
+    it("§12.1: userB cannot SELECT tenantA contact (contactAId)", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
       const { data, error } = await clientB
         .from("contacts")
         .select("id")
-        .eq("tenant_id", fx.tenantA.id);
+        .eq("id", contactAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("§12.1: userA cannot SELECT tenantB contact (contactBId)", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("contacts")
+        .select("id")
+        .eq("id", contactBId);
       expect(error).toBeNull();
       expect(data).toEqual([]);
     });
