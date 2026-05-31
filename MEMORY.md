@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-127 — 2026-05-31 — §24.x anon session HMAC hardening (PR #513); ANON_COOKIE_SECRET required at boot; migration window open
+
+Cookie signing pattern: `<uuid>.<hmac-sha256-hex>` keyed on `ANON_COOKIE_SECRET`. Plain UUID cookies (no dot) accepted during migration window and re-issued as signed. `ANON_COOKIE_SECRET ?? ""` explicitly rejected — `sign()` throws if absent, `envSchema` validates at boot. Migration window tracked by issue #514 (remove after first full release cycle). `Set-Cookie` must be written by the SSE route synchronously before the void `handleChat` call so headers land in the HTTP response.
+
+**Why:** Unsigned cookies could be forged by any attacker who knows the UUID format — rate-limit bypass and session ID swap attacks. HMAC adds an unforgeable MAC.
+
+**How to apply:** When adding any new HMAC-keyed secret, follow the same pattern: throw at use-time if env var absent, `z.string().min(1)` in envSchema, `.env.example` entry with generation instructions, CI placeholder in `e2e.yml` env block.
+
+---
+
 ## D-126 — 2026-05-30 — §33.4 sailing ingest pipeline wired (PR #501); authority model 0.40/0.45/0.55; one-fetch quarterly design; issue #500 for one-time manual load
 
 Monthly sailing cron (`refresh-cruisemapper-sailings`) covers Feb/Mar/May/Jun/Aug/Sep/Nov/Dec. Quarterly `refresh-cruisemapper-static` runs all three parsers (ship + sailing + sailing-list) on the same ship-page fetch for Jan/Apr/Jul/Oct. Authority by content type: DIY+price=0.40, DIY no-price=0.55, Apify (no day_by_day)=0.45. `mapItinerary` (Apify path) keeps `source: "apify"`; new `mapSailing` / `mapSailingListItem` emit `source: "diy_cruisemapper"`. RAG migration `0020_itineraries_day_by_day.sql` adds `day_by_day JSONB NULL` column. Issue #500 has step-by-step ops instructions for manually triggering both crons before July 1.
