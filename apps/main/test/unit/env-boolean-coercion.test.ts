@@ -37,6 +37,7 @@ function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     APP_ENCRYPTION_KEY_CURRENT: APP_KEY_B64,
     APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
     INVITATION_TOKEN_HMAC_KEY: HMAC_KEY_B64,
+    ANON_COOKIE_SECRET: "test-anon-cookie-secret-32-chars-xx",
     PLATFORM_PEPPER: "test-pepper",
     FORENSICS_ENCRYPTION_KEY_CURRENT: FORENSICS_KEY_B64,
     ANTHROPIC_API_KEY: "sk-ant-test-placeholder",

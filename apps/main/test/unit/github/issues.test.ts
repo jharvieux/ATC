@@ -35,6 +35,7 @@ beforeEach(() => {
     APP_ENCRYPTION_KEY_CURRENT: Buffer.from("a".repeat(32)).toString("base64"),
     APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
     INVITATION_TOKEN_HMAC_KEY: Buffer.from("c".repeat(32)).toString("base64"),
+    ANON_COOKIE_SECRET: "test-anon-cookie-secret-32-chars-xx",
     PLATFORM_PEPPER: "test-pepper-for-hashing",
     FORENSICS_ENCRYPTION_KEY_CURRENT: Buffer.from("b".repeat(32)).toString("base64"),
     ANTHROPIC_API_KEY: "sk-ant-test-placeholder",

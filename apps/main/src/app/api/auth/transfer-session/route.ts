@@ -28,8 +28,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { softCommitTransfer } from "@/lib/transfer/anon-to-auth";
-
-const ANON_SESSION_COOKIE = "atc-anon-session";
+import { ANON_SESSION_COOKIE } from "@/lib/chat/anon-session-cookie";
 
 const BodySchema = z
   .object({

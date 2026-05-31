@@ -50,6 +50,7 @@ jobs:
       APP_ENCRYPTION_KEY_CURRENT: YoOSb0MA3sHr9bR5Li7pLTkMNLfF01LbENEGOrYN99Y=
       APP_ENCRYPTION_KEY_ID_CURRENT: app-v1
       INVITATION_TOKEN_HMAC_KEY: ci-placeholder-invitation-hmac
+      ANON_COOKIE_SECRET: ci-placeholder-anon-cookie-secret-32chars
       ANTHROPIC_API_KEY: sk-ant-ci-placeholder
       PLATFORM_PEPPER: ci-placeholder-pepper
       FORENSICS_ENCRYPTION_KEY_CURRENT: p4zfG+1D1S1KXF33Z9wqwfybOnOVGWe4L1dmRDmVk7s=

@@ -24,6 +24,13 @@
 //      mode: SSE-stream the approved text word-by-word back to the client.
 
 import { randomUUID } from "node:crypto";
+import {
+  ANON_SESSION_COOKIE,
+  buildAnonCookieHeader,
+  freshAnonSession,
+  signAnonSession,
+  verifyAnonSession,
+} from "@/lib/chat/anon-session-cookie";
 import { redactPii } from "@/lib/pii/redact";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { PERSONA_TOOLS } from "@/lib/personas/tools";
@@ -84,7 +91,6 @@ const SSE_HEADERS: HeadersInit = {
   Connection: "keep-alive",
 };
 
-const ANON_SESSION_COOKIE = "atc-anon-session";
 const REGEN_HARD_CEILING = 6; // safety net; budget is also enforced inside supervisor
 
 // SSE event shape — mirrors what the client consumer expects.
@@ -177,6 +183,27 @@ export async function POST(req: Request): Promise<Response> {
 
   const isAuthenticated = req.headers.get("authorization")?.startsWith("Bearer ");
 
+  // ── Resolve anonymous session before returning the response so we can
+  //    include Set-Cookie in the response headers.
+  let resolvedAnonSessionId: string | null = null;
+  let anonCookieHeader: string | null = null;
+  if (!isAuthenticated) {
+    const rawCookie = parseCookies(req.headers.get("cookie"))[ANON_SESSION_COOKIE] ?? null;
+    const verifiedId = rawCookie ? verifyAnonSession(rawCookie) : null;
+    if (verifiedId) {
+      resolvedAnonSessionId = verifiedId;
+      // Re-issue if it was an unsigned legacy cookie (upgrade to signed).
+      const signedValue = signAnonSession(verifiedId);
+      if (rawCookie !== signedValue) {
+        anonCookieHeader = buildAnonCookieHeader(signedValue);
+      }
+    } else {
+      const fresh = freshAnonSession();
+      resolvedAnonSessionId = fresh.id;
+      anonCookieHeader = buildAnonCookieHeader(fresh.cookieValue);
+    }
+  }
+
   // ── Build the SSE stream and start the heavy work inline. The TransformStream
   //    lets the route return immediately while we keep writing events.
   const encoder = new TextEncoder();
@@ -197,6 +224,7 @@ export async function POST(req: Request): Promise<Response> {
     req,
     tenantId,
     isAuthenticated: Boolean(isAuthenticated),
+    resolvedAnonSessionId,
     userMessage,
     conversationIdInput: body.conversation_id ?? null,
     personaSlugInput: body.persona_slug ?? null,
@@ -212,7 +240,10 @@ export async function POST(req: Request): Promise<Response> {
     }
   });
 
-  return new Response(readable, { status: 200, headers: SSE_HEADERS });
+  const responseHeaders: HeadersInit = anonCookieHeader
+    ? { ...SSE_HEADERS, "Set-Cookie": anonCookieHeader }
+    : SSE_HEADERS;
+  return new Response(readable, { status: 200, headers: responseHeaders });
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -223,6 +254,7 @@ type HandleChatArgs = {
   req: Request;
   tenantId: string;
   isAuthenticated: boolean;
+  resolvedAnonSessionId: string | null;
   userMessage: string;
   conversationIdInput: string | null;
   personaSlugInput: string | null;
@@ -244,7 +276,7 @@ function parseCustomerContextRef(raw: unknown): CustomerContextRef | null {
 
 async function handleChat(args: HandleChatArgs): Promise<void> {
   const svc = createServiceRoleClient();
-  const { tenantId, isAuthenticated, userMessage, customerContextRef, send, close } = args;
+  const { tenantId, isAuthenticated, resolvedAnonSessionId, userMessage, customerContextRef, send, close } = args;
 
   // ── 1. Identify caller (anonymous OR authenticated)
   let ctx: TenantContext | null = null;
@@ -261,13 +293,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       return;
     }
   } else {
-    const cookies = parseCookies(args.req.headers.get("cookie"));
-    anonSessionId = cookies[ANON_SESSION_COOKIE] ?? null;
-    if (!anonSessionId) {
-      anonSessionId = randomUUID();
-    }
+    anonSessionId = args.resolvedAnonSessionId;
     // Forge a minimal ctx for downstream helpers that only need tenant_id.
-    ctx = { tenant_id: tenantId, source: { kind: "http_request", user_id: anonSessionId } };
+    ctx = { tenant_id: tenantId, source: { kind: "http_request", user_id: anonSessionId! } };
   }
 
   // ── 2. Rate limit

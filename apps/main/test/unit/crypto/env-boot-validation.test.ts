@@ -31,6 +31,7 @@ function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     APP_ENCRYPTION_KEY_CURRENT: APP_KEY_B64,
     APP_ENCRYPTION_KEY_ID_CURRENT: "v1",
     INVITATION_TOKEN_HMAC_KEY: HMAC_KEY_B64,
+    ANON_COOKIE_SECRET: "test-anon-cookie-secret-32-chars-xx",
     PLATFORM_PEPPER: "test-pepper",
     FORENSICS_ENCRYPTION_KEY_CURRENT: FORENSICS_KEY_B64,
     // BP29 §28.5 — ANTHROPIC_API_KEY is required at boot with sk-ant- prefix.

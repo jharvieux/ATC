@@ -156,6 +156,9 @@ const envSchema = z.object({
   // Group bookings — §18.5 / §18.2
   // 256-bit key, base64-encoded. Required. Generate: openssl rand -base64 32
   INVITATION_TOKEN_HMAC_KEY: z.string().min(1),
+  // §24.x — HMAC key for anonymous session cookies. Required.
+  // Generate: openssl rand -hex 32
+  ANON_COOKIE_SECRET: z.string().min(1),
   // Microsoft Graph tenant ID for no-email fallback (§17.2). Default 'common'
   // handles personal + work accounts; override with your tenant GUID to restrict.
   MICROSOFT_GRAPH_TENANT_ID: z.string().optional().default("common"),
