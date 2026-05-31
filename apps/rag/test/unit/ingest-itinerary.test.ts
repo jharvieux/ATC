@@ -196,4 +196,57 @@ describe("POST /api/ingest/itinerary", () => {
     expect(dbCalls.some((c) => c.table === "knowledge_chunks" && c.op === "update")).toBe(true);
     expect(dbCalls.some((c) => c.table === "itineraries" && c.op === "upsert")).toBe(true);
   });
+
+  describe("authority_auto branching", () => {
+    const DAY_BY_DAY = [
+      { day_number: 1, date: "2026-08-15", port_name: "Miami", arrival_time: null, departure_time: "17:00" },
+    ];
+
+    it("assigns authority 0.45 when day_by_day is absent (legacy Apify path)", async () => {
+      // VALID_BODY has no day_by_day field.
+      const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
+      expect(res.status).toBe(200);
+      const insert = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "insert");
+      expect((insert!.payload as Record<string, unknown>)["authority_auto"]).toBe(0.45);
+    });
+
+    it("assigns authority 0.40 when day_by_day is present AND price is provided (DIY sailing with price)", async () => {
+      const body = { ...VALID_BODY, day_by_day: DAY_BY_DAY, starting_price_usd: 649 };
+      const res = await POST(makeReq(body), { params: Promise.resolve({}) });
+      expect(res.status).toBe(200);
+      const insert = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "insert");
+      expect((insert!.payload as Record<string, unknown>)["authority_auto"]).toBe(0.40);
+    });
+
+    it("assigns authority 0.55 when day_by_day is present but no price (DIY reference-only)", async () => {
+      const body = { ...VALID_BODY, day_by_day: DAY_BY_DAY, starting_price_usd: undefined };
+      const res = await POST(makeReq(body), { params: Promise.resolve({}) });
+      expect(res.status).toBe(200);
+      const insert = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "insert");
+      expect((insert!.payload as Record<string, unknown>)["authority_auto"]).toBe(0.55);
+    });
+
+    it("contains_pricing flag tracks whether a price is present", async () => {
+      const withPrice = { ...VALID_BODY, day_by_day: DAY_BY_DAY, starting_price_usd: 649 };
+      await POST(makeReq(withPrice), { params: Promise.resolve({}) });
+      const insertWith = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "insert");
+      expect((insertWith!.payload as Record<string, unknown>)["contains_pricing"]).toBe(true);
+
+      dbCalls.length = 0;
+      const withoutPrice = { ...VALID_BODY, day_by_day: DAY_BY_DAY, starting_price_usd: undefined };
+      await POST(makeReq(withoutPrice), { params: Promise.resolve({}) });
+      const insertWithout = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "insert");
+      expect((insertWithout!.payload as Record<string, unknown>)["contains_pricing"]).toBe(false);
+    });
+
+    it("UPDATE path also carries correct authority_auto (re-ingest of changed content)", async () => {
+      existingItinerary = { id: "existing-id", content_hash: "OLDHASH", related_chunk_id: "existing-chunk-id" };
+      const body = { ...VALID_BODY, day_by_day: DAY_BY_DAY, starting_price_usd: 649 };
+      const res = await POST(makeReq(body), { params: Promise.resolve({}) });
+      expect(res.status).toBe(200);
+      const update = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "update");
+      expect((update!.payload as Record<string, unknown>)["authority_auto"]).toBe(0.40);
+      expect((update!.payload as Record<string, unknown>)["contains_pricing"]).toBe(true);
+    });
+  });
 });

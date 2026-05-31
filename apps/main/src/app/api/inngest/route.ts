@@ -109,6 +109,8 @@ import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset"
 import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-itineraries";
 // BP36 §33.5 — CruiseMapper DIY static quarterly refresh
 import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
+// #485 follow-up §33.4 — CruiseMapper sailing monthly refresh (non-quarterly months)
+import { refreshCruisemapperSailings } from "@/inngest/refresh-cruisemapper-sailings";
 // BP40 §33.8 — Price-watch daily evaluator
 import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
 // BP37 §37 — Tasks: sequence step firing + reminder cron
@@ -235,6 +237,8 @@ export const { GET, POST, PUT } = serve({
     refreshCruisemapperItineraries,
     // BP36: CruiseMapper DIY static quarterly refresh (§33.5)
     refreshCruisemapperStatic,
+    // #485 follow-up: CruiseMapper sailing monthly refresh (non-quarterly months)
+    refreshCruisemapperSailings,
     // BP40: Price-watch daily evaluator (§33.8)
     evaluatePriceWatches,
     // BP37: Tasks & follow-up (§37)

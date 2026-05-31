@@ -37,7 +37,7 @@ export interface CachedPriceQuote {
   key: SailingKey;
   cabinPrices: Partial<Record<CabinClass, { amount: number; currency: "USD" }>>;
   fetchedAt: Date;
-  source: "apify" | "manual" | "host_adapter";
+  source: "apify" | "manual" | "host_adapter" | "diy_cruisemapper";
   stalenessHours: number;
   freshnessFlag: FreshnessFlag;
 }

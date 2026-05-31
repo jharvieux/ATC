@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-126 — 2026-05-30 — §33.4 sailing ingest pipeline wired (PR #501); authority model 0.40/0.45/0.55; one-fetch quarterly design; issue #500 for one-time manual load
+
+Monthly sailing cron (`refresh-cruisemapper-sailings`) covers Feb/Mar/May/Jun/Aug/Sep/Nov/Dec. Quarterly `refresh-cruisemapper-static` runs all three parsers (ship + sailing + sailing-list) on the same ship-page fetch for Jan/Apr/Jul/Oct. Authority by content type: DIY+price=0.40, DIY no-price=0.55, Apify (no day_by_day)=0.45. `mapItinerary` (Apify path) keeps `source: "apify"`; new `mapSailing` / `mapSailingListItem` emit `source: "diy_cruisemapper"`. RAG migration `0020_itineraries_day_by_day.sql` adds `day_by_day JSONB NULL` column. Issue #500 has step-by-step ops instructions for manually triggering both crons before July 1.
+
+**Why:** Conditional GET (body-hash skip) chosen over batch processing as the main cost control — embeddings are too cheap to batch optimize. One-fetch quarterly design avoids fetching ship pages twice (4 months/year). Manual load issue created because first quarterly cron doesn't run until July 1.
+
+**What was rejected:** Separate auth-per-cabin batching, separate /cruises/ URL scraping (wrong: itineraries are on ship pages).
+
+---
+
 ## D-125 — 2026-05-30 — CruiseMapper itineraries live on the SHIP page (not /cruises/ URLs); sailing parser shipped (PR #498), wiring deferred
 
 **Decision.** Implemented #485's sailing/itinerary parser (`parseSailingPage`, PR #498) after verifying CruiseMapper's real page structure with a live fetch (user authorized live-fetching to record fixtures). The issue's assumption of separate `/cruises/<slug>` pages crawled by a new `discoverSailingUrls` is WRONG: per-day itineraries live on the ship page (`div.cruiseItinerariesCurrent > table`); the "All Itineraries" list (`table.shipTableCruise`) is metadata-only (date / title / departure port / price + a `data-row` id, no per-day breakdown).

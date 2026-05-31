@@ -123,7 +123,7 @@ function parseLongDate(s: string): { year: number; monthIdx: number; day: number
   return { year, monthIdx, day };
 }
 
-function regionFromTitle(title: string): string | null {
+export function regionFromTitle(title: string): string | null {
   for (const token of REGION_TOKENS) {
     if (new RegExp(`\\b${token}\\b`, "i").test(title)) return token;
   }

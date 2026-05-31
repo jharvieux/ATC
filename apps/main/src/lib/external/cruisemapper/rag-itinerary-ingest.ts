@@ -49,6 +49,7 @@ export async function ingestItineraryToRag(m: MappedItinerary): Promise<IngestOu
     source_url: m.sourceUrl ?? undefined,
     text: m.text,
     fetched_at: new Date().toISOString(),
+    day_by_day: m.dayByDay ?? undefined,
   };
 
   let res: Response;
