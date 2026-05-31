@@ -478,4 +478,72 @@ describeIf("RLS integration", () => {
       expect(data).toEqual([]);
     });
   });
+
+  // ── §12.1 contacts isolation + §12.2 FK unique constraint ─────────────────
+
+  describe("contacts + contact_relationships", () => {
+    let contactAId: string;
+    let contactBId: string;
+
+    beforeAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, tenantB } = fx;
+
+      const [cA] = await sql<{ id: string }[]>`
+        INSERT INTO public.contacts (tenant_id, first_name, last_name)
+        VALUES (${tenantA.id}, 'RLS', 'ContactA')
+        RETURNING id
+      `;
+      if (!cA) throw new Error("contactA insert failed");
+      contactAId = cA.id;
+
+      const [cB] = await sql<{ id: string }[]>`
+        INSERT INTO public.contacts (tenant_id, first_name, last_name)
+        VALUES (${tenantB.id}, 'RLS', 'ContactB')
+        RETURNING id
+      `;
+      if (!cB) throw new Error("contactB insert failed");
+      contactBId = cB.id;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      const { sql } = fx;
+      await sql`DELETE FROM public.contact_relationships WHERE from_contact_id = ${contactAId} OR to_contact_id = ${contactAId}`;
+      await sql`DELETE FROM public.contacts WHERE id IN (${contactAId}, ${contactBId})`;
+    }, 30000);
+
+    it("§12.1: userB cannot SELECT tenantA contacts", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("contacts")
+        .select("id")
+        .eq("tenant_id", fx.tenantA.id);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("§12.2: duplicate contact_relationship edge is rejected (UNIQUE 23505)", async () => {
+      const { sql, tenantA } = fx;
+      // Insert the first edge — must succeed.
+      await sql`
+        INSERT INTO public.contact_relationships
+          (tenant_id, from_contact_id, to_contact_id, relationship_type)
+        VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
+      `;
+      // Second insert of the same (tenant_id, from, to, type) triplet must violate the unique constraint.
+      let threw = false;
+      try {
+        await sql`
+          INSERT INTO public.contact_relationships
+            (tenant_id, from_contact_id, to_contact_id, relationship_type)
+          VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
+        `;
+      } catch (err) {
+        threw = true;
+        expect(String(err)).toMatch(/23505/);
+      }
+      expect(threw).toBe(true);
+    });
+  });
 });
