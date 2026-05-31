@@ -395,7 +395,6 @@ function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.Rea
       setError(`Please confirm the exact date of birth for: ${estimatedNames.join(", ")}.`);
       return;
     }
-    // Validate required fields.
     for (const [i, p] of passengers.entries()) {
       if (!p.legal_first_name || !p.legal_last_name || !p.date_of_birth) {
         setError(`Passenger ${i + 1}: first name, last name, and date of birth are required.`);

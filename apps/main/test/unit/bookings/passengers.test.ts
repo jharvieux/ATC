@@ -185,4 +185,24 @@ describe("POST /api/bookings/[id]/passengers", () => {
     const res = await POST(postReq({ passengers: [basePassenger] }), makeParams());
     expect(res.status).toBe(403);
   });
+
+  it("returns 500 when booking lookup DB errors — fail-loud, not silent 404", async () => {
+    mocks.bookingMaybeSingle.mockResolvedValue({ data: null, error: { message: "rls failure" } });
+    const res = await POST(postReq({ passengers: [basePassenger] }), makeParams());
+    expect(res.status).toBe(500);
+    expect(mocks.passengerInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when delete fails — safeAwait surfaces DB error via respondToAuthError", async () => {
+    mocks.passengerDeleteEq.mockResolvedValue({ error: { message: "permission denied", code: "42501" } });
+    const res = await POST(postReq({ passengers: [basePassenger] }), makeParams());
+    expect(res.status).toBe(500);
+    expect(mocks.passengerInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when insert fails — safeAwait surfaces DB error via respondToAuthError", async () => {
+    mocks.passengerInsert.mockResolvedValue({ error: { message: "constraint violation", code: "23502" } });
+    const res = await POST(postReq({ passengers: [basePassenger] }), makeParams());
+    expect(res.status).toBe(500);
+  });
 });

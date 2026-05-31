@@ -50,7 +50,6 @@ export async function GET(
   const { id } = await params;
   const db = tenantClient(auth.ctx);
 
-  // Verify the booking exists in this tenant before returning passengers.
   const { data: booking, error: bErr } = await db
     .from("bookings")
     .select("id")
@@ -77,59 +76,59 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  let auth;
   try {
-    auth = await assertPermission(req, { resource: "bookings.passengers", action: "write" });
+    const auth = await assertPermission(req, { resource: "bookings.passengers", action: "write" });
+    const { id } = await params;
+
+    const body: unknown = await req.json().catch(() => null);
+    const parsed = PostBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json({ error: "invalid_body", details: parsed.error.flatten() }, { status: 400 });
+    }
+    const { passengers } = parsed.data;
+
+    const leadCount = passengers.filter((p) => p.is_lead_passenger).length;
+    if (leadCount === 0) passengers[0]!.is_lead_passenger = true;
+    if (leadCount > 1) {
+      return Response.json({ error: "multiple_lead_passengers" }, { status: 400 });
+    }
+
+    const db = tenantClient(auth.ctx);
+
+    // RLS enforces this; explicit check gives callers a clear 404.
+    const { data: booking, error: bErr } = await db
+      .from("bookings")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+    if (bErr) return Response.json({ error: "booking_lookup_failed" }, { status: 500 });
+    if (!booking) return Response.json({ error: "not_found" }, { status: 404 });
+
+    // Non-atomic: if insert fails after delete, booking_passengers is empty until
+    // the caller retries Stage 2. Acceptable for draft bookings — the form
+    // re-loads empty and the user re-submits.
+    await safeAwait(
+      db.from("booking_passengers").delete().eq("booking_id", id),
+      "booking_passengers.delete",
+    );
+
+    const rows = passengers.map((p) => ({
+      booking_id: id,
+      tenant_id: auth.ctx.tenant_id,
+      legal_first_name: p.legal_first_name,
+      legal_last_name: p.legal_last_name,
+      date_of_birth: p.date_of_birth,
+      date_of_birth_is_estimated: p.date_of_birth_is_estimated ?? false,
+      passport_number_encrypted: p.passport_number || null,
+      passport_expiry: p.passport_expiry ?? null,
+      passport_country: p.passport_country ?? null,
+      is_lead_passenger: p.is_lead_passenger ?? false,
+    }));
+
+    await safeAwait(db.from("booking_passengers").insert(rows), "booking_passengers.insert");
+
+    return Response.json({ ok: true, count: rows.length });
   } catch (err) {
     return respondToAuthError(err);
   }
-  const { id } = await params;
-
-  const body: unknown = await req.json().catch(() => null);
-  const parsed = PostBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: "invalid_body", details: parsed.error.flatten() }, { status: 400 });
-  }
-  const { passengers } = parsed.data;
-
-  // Ensure exactly one lead passenger.
-  const leadCount = passengers.filter((p) => p.is_lead_passenger).length;
-  if (leadCount === 0) passengers[0]!.is_lead_passenger = true;
-  if (leadCount > 1) {
-    return Response.json({ error: "multiple_lead_passengers" }, { status: 400 });
-  }
-
-  const db = tenantClient(auth.ctx);
-
-  // Verify booking belongs to this tenant (RLS enforces this, explicit check for a clear 404).
-  const { data: booking, error: bErr } = await db
-    .from("bookings")
-    .select("id")
-    .eq("id", id)
-    .maybeSingle();
-  if (bErr) return Response.json({ error: "booking_lookup_failed" }, { status: 500 });
-  if (!booking) return Response.json({ error: "not_found" }, { status: 404 });
-
-  // Replace all passengers: delete existing, then insert new set.
-  await safeAwait(
-    db.from("booking_passengers").delete().eq("booking_id", id),
-    "booking_passengers.delete",
-  );
-
-  const rows = passengers.map((p) => ({
-    booking_id: id,
-    tenant_id: auth.ctx.tenant_id,
-    legal_first_name: p.legal_first_name,
-    legal_last_name: p.legal_last_name,
-    date_of_birth: p.date_of_birth,
-    date_of_birth_is_estimated: p.date_of_birth_is_estimated ?? false,
-    passport_number_encrypted: p.passport_number ?? null,
-    passport_expiry: p.passport_expiry ?? null,
-    passport_country: p.passport_country ?? null,
-    is_lead_passenger: p.is_lead_passenger ?? false,
-  }));
-
-  await safeAwait(db.from("booking_passengers").insert(rows), "booking_passengers.insert");
-
-  return Response.json({ ok: true, count: rows.length });
 }

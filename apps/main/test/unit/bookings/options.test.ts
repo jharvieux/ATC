@@ -173,4 +173,24 @@ describe("PUT /api/bookings/[id]/options", () => {
     const res = await PUT(putReq({ options: [baseOption] }), makeParams());
     expect(res.status).toBe(403);
   });
+
+  it("returns 500 when booking lookup DB errors — fail-loud, not silent 404", async () => {
+    mocks.bookingMaybeSingle.mockResolvedValue({ data: null, error: { message: "rls failure" } });
+    const res = await PUT(putReq({ options: [baseOption] }), makeParams());
+    expect(res.status).toBe(500);
+    expect(mocks.optionInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when delete fails — safeAwait surfaces DB error via respondToAuthError", async () => {
+    mocks.optionDeleteEq.mockResolvedValue({ error: { message: "permission denied", code: "42501" } });
+    const res = await PUT(putReq({ options: [baseOption] }), makeParams());
+    expect(res.status).toBe(500);
+    expect(mocks.optionInsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when insert fails — safeAwait surfaces DB error via respondToAuthError", async () => {
+    mocks.optionInsert.mockResolvedValue({ error: { message: "constraint violation", code: "23502" } });
+    const res = await PUT(putReq({ options: [baseOption] }), makeParams());
+    expect(res.status).toBe(500);
+  });
 });
