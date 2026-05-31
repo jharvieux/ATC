@@ -478,4 +478,87 @@ describeIf("RLS integration", () => {
       expect(data).toEqual([]);
     });
   });
+
+  // ── §12.1 contacts isolation + §12.2 FK unique constraint ─────────────────
+
+  describe("contacts + contact_relationships", () => {
+    let contactAId: string;
+    let contactBId: string;
+
+    beforeAll(async () => {
+      if (!fx) return;
+      const { sql, tenantA, tenantB } = fx;
+
+      const [cA] = await sql<{ id: string }[]>`
+        INSERT INTO public.contacts (tenant_id, first_name, last_name)
+        VALUES (${tenantA.id}, 'RLS', 'ContactA')
+        RETURNING id
+      `;
+      if (!cA) throw new Error("contactA insert failed");
+      contactAId = cA.id;
+
+      const [cB] = await sql<{ id: string }[]>`
+        INSERT INTO public.contacts (tenant_id, first_name, last_name)
+        VALUES (${tenantB.id}, 'RLS', 'ContactB')
+        RETURNING id
+      `;
+      if (!cB) throw new Error("contactB insert failed");
+      contactBId = cB.id;
+    }, 30000);
+
+    afterAll(async () => {
+      if (!fx) return;
+      const { sql } = fx;
+      await sql`DELETE FROM public.contact_relationships WHERE from_contact_id = ${contactAId} OR to_contact_id = ${contactAId}`;
+      await sql`DELETE FROM public.contacts WHERE id IN (${contactAId}, ${contactBId})`;
+    }, 30000);
+
+    it("§12.1: userA CAN SELECT own tenantA contacts", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("contacts")
+        .select("id")
+        .eq("id", contactAId);
+      expect(error).toBeNull();
+      expect(data?.length).toBe(1);
+    });
+
+    it("§12.1: userB cannot SELECT tenantA contact (contactAId)", async () => {
+      const clientB = await authedClient(fx.userB.email, fx.userB.password);
+      const { data, error } = await clientB
+        .from("contacts")
+        .select("id")
+        .eq("id", contactAId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("§12.1: userA cannot SELECT tenantB contact (contactBId)", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("contacts")
+        .select("id")
+        .eq("id", contactBId);
+      expect(error).toBeNull();
+      expect(data).toEqual([]);
+    });
+
+    it("§12.2: duplicate contact_relationship edge is rejected (UNIQUE 23505)", async () => {
+      const { sql, tenantA } = fx;
+      // Establish the edge so the second insert can collide against it.
+      await sql`
+        INSERT INTO public.contact_relationships
+          (tenant_id, from_contact_id, to_contact_id, relationship_type)
+        VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
+      `;
+      // The schema's UNIQUE constraint must be enforced at the DB layer, not just app logic.
+      await expect(
+        sql`
+          INSERT INTO public.contact_relationships
+            (tenant_id, from_contact_id, to_contact_id, relationship_type)
+          VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
+        `
+      ).rejects.toSatisfy((err: unknown) => /23505/.test(String(err)));
+    });
+  });
 });
