@@ -161,9 +161,9 @@ function StageContent({ bookingId, stage }: { bookingId: string; stage: StageNum
     case 1:
       return <Stage1TripDetails bookingId={bookingId} />;
     case 2:
-      return <Stage2PassengerDetails />;
+      return <Stage2PassengerDetails bookingId={bookingId} />;
     case 3:
-      return <Stage3Options />;
+      return <Stage3Options bookingId={bookingId} />;
     case 4:
       return <Stage4Review bookingId={bookingId} />;
   }
@@ -313,22 +313,136 @@ function Stage1TripDetails({ bookingId }: { bookingId: string }): React.ReactEle
   );
 }
 
-// Stage 2: Passenger details with DOB inputs and estimated-DOB warning.
-function Stage2PassengerDetails(): React.ReactElement {
-  const [passengers, setPassengers] = useState([{ id: 1, isEstimated: false }]);
+type PassengerForm = {
+  legal_first_name: string;
+  legal_last_name: string;
+  date_of_birth: string;
+  date_of_birth_is_estimated: boolean;
+  passport_number: string;
+  passport_expiry: string;
+  passport_country: string;
+  is_lead_passenger: boolean;
+};
+
+function emptyPassenger(isLead = false): PassengerForm {
+  return {
+    legal_first_name: "",
+    legal_last_name: "",
+    date_of_birth: "",
+    date_of_birth_is_estimated: false,
+    passport_number: "",
+    passport_expiry: "",
+    passport_country: "",
+    is_lead_passenger: isLead,
+  };
+}
+
+// Stage 2: Passenger details — loaded from and saved to /api/bookings/[id]/passengers.
+// §20.5: Cannot advance if any passenger has date_of_birth_is_estimated = true.
+function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.ReactElement {
+  const [passengers, setPassengers] = useState<PassengerForm[]>([emptyPassenger(true)]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/bookings/${bookingId}/passengers`);
+        if (res.ok) {
+          const data = (await res.json()) as { passengers: Array<{
+            legal_first_name: string;
+            legal_last_name: string;
+            date_of_birth: string;
+            date_of_birth_is_estimated: boolean;
+            passport_expiry: string | null;
+            passport_country: string | null;
+            is_lead_passenger: boolean;
+          }> };
+          if (!cancelled && data.passengers.length > 0) {
+            setPassengers(data.passengers.map((p) => ({
+              legal_first_name: p.legal_first_name,
+              legal_last_name: p.legal_last_name,
+              date_of_birth: p.date_of_birth,
+              date_of_birth_is_estimated: p.date_of_birth_is_estimated,
+              passport_number: "",
+              passport_expiry: p.passport_expiry ?? "",
+              passport_country: p.passport_country ?? "",
+              is_lead_passenger: p.is_lead_passenger,
+            })));
+          }
+        }
+      } catch {
+        // Soft-fail prefetch — user can fill the form from scratch.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bookingId]);
+
+  function updatePassenger(idx: number, field: keyof PassengerForm, value: string | boolean): void {
+    setPassengers((prev) => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
+  }
+
+  async function handleAdvance(): Promise<void> {
+    // §20.5 — Block advance if any DOB is estimated.
+    const estimatedNames = passengers
+      .filter((p) => p.date_of_birth_is_estimated)
+      .map((p) => `${p.legal_first_name} ${p.legal_last_name}`.trim() || "passenger");
+    if (estimatedNames.length > 0) {
+      setError(`Please confirm the exact date of birth for: ${estimatedNames.join(", ")}.`);
+      return;
+    }
+    for (const [i, p] of passengers.entries()) {
+      if (!p.legal_first_name || !p.legal_last_name || !p.date_of_birth) {
+        setError(`Passenger ${i + 1}: first name, last name, and date of birth are required.`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/bookings/${bookingId}/passengers`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passengers }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setError(body.error ?? `Save failed (${res.status}).`);
+        return;
+      }
+      window.location.href = `/booking/flow/${bookingId}/3`;
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <section><p style={{ color: "#6b7280" }}>Loading passengers…</p></section>;
 
   return (
     <section>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Passenger Details</h2>
 
+      {error && (
+        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
       {passengers.map((p, idx) => (
-        <div key={p.id} style={{ marginBottom: 24, padding: 20, border: "1px solid #e5e7eb", borderRadius: 8 }}>
+        <div key={idx} style={{ marginBottom: 24, padding: 20, border: "1px solid #e5e7eb", borderRadius: 8 }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
-            Passenger {idx + 1} {idx === 0 ? "(Lead)" : ""}
+            Passenger {idx + 1} {p.is_lead_passenger ? "(Lead)" : ""}
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <FormField label="Legal First Name" name={`passengers[${idx}].legal_first_name`} required />
-            <FormField label="Legal Last Name" name={`passengers[${idx}].legal_last_name`} required />
+            <FormField label="Legal First Name" name={`p${idx}_first`} required value={p.legal_first_name} onChange={(v) => updatePassenger(idx, "legal_first_name", v)} />
+            <FormField label="Legal Last Name" name={`p${idx}_last`} required value={p.legal_last_name} onChange={(v) => updatePassenger(idx, "legal_last_name", v)} />
 
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
@@ -336,8 +450,9 @@ function Stage2PassengerDetails(): React.ReactElement {
               </span>
               <input
                 type="date"
-                name={`passengers[${idx}].date_of_birth`}
                 required
+                value={p.date_of_birth}
+                onChange={(e) => updatePassenger(idx, "date_of_birth", e.target.value)}
                 style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
               />
             </label>
@@ -346,70 +461,160 @@ function Stage2PassengerDetails(): React.ReactElement {
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151" }}>
               <input
                 type="checkbox"
-                name={`passengers[${idx}].date_of_birth_is_estimated`}
-                checked={p.isEstimated}
-                onChange={(e) => {
-                  const next = [...passengers];
-                  next[idx] = { ...p, isEstimated: e.target.checked };
-                  setPassengers(next);
-                }}
+                checked={p.date_of_birth_is_estimated}
+                onChange={(e) => updatePassenger(idx, "date_of_birth_is_estimated", e.target.checked)}
               />
               Date of birth is approximate (I don&apos;t have the exact date)
             </label>
 
-            {p.isEstimated && (
+            {p.date_of_birth_is_estimated && (
               <div style={{ padding: "10px 14px", background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
-                ⚠ We have an approximate DOB for this passenger. You will need to confirm the exact date before submitting.
+                ⚠ Approximate DOB flagged. You must confirm the exact date before submitting the booking.
               </div>
             )}
 
-            <FormField label="Passport Number" name={`passengers[${idx}].passport_number`} />
-            <FormField label="Passport Expiry" name={`passengers[${idx}].passport_expiry`} type="date" />
-            <FormField label="Passport Country" name={`passengers[${idx}].passport_country`} />
+            <FormField label="Passport Number" name={`p${idx}_passport`} value={p.passport_number} onChange={(v) => updatePassenger(idx, "passport_number", v)} />
+            <FormField label="Passport Expiry" name={`p${idx}_expiry`} type="date" value={p.passport_expiry} onChange={(v) => updatePassenger(idx, "passport_expiry", v)} />
+            <FormField label="Passport Country" name={`p${idx}_country`} value={p.passport_country} onChange={(v) => updatePassenger(idx, "passport_country", v)} />
+
+            {idx > 0 && (
+              <button
+                type="button"
+                onClick={() => setPassengers((prev) => prev.filter((_, i) => i !== idx))}
+                style={{ alignSelf: "flex-start", padding: "4px 12px", border: "1px solid #fca5a5", borderRadius: 6, background: "transparent", color: "#dc2626", cursor: "pointer", fontSize: 13 }}
+              >
+                Remove passenger
+              </button>
+            )}
           </div>
         </div>
       ))}
 
       <button
         type="button"
-        onClick={() => setPassengers((prev) => [...prev, { id: prev.length + 1, isEstimated: false }])}
+        onClick={() => setPassengers((prev) => [...prev, emptyPassenger(false)])}
         style={{ marginBottom: 20, padding: "8px 16px", border: "1px dashed #6366f1", borderRadius: 6, background: "transparent", color: "#6366f1", cursor: "pointer", fontSize: 13 }}
       >
         + Add another passenger
       </button>
 
-      {/* Placeholder for bookingId in form — Stage2 doesn't receive it but navigation does */}
-      <StageNavButtons bookingId="__current__" stage={2} />
+      <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+        <a href={`/booking/flow/${bookingId}/1`} style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 14, color: "#374151", textDecoration: "none" }}>
+          ← Back
+        </a>
+        <button
+          type="button"
+          onClick={() => void handleAdvance()}
+          disabled={saving}
+          style={{ padding: "10px 24px", background: saving ? "#9ca3af" : "#6366f1", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", fontSize: 14 }}
+        >
+          {saving ? "Saving…" : "Save & continue →"}
+        </button>
+      </div>
     </section>
   );
 }
 
-// Stage 3: Booking options — insurance, addons.
-function Stage3Options(): React.ReactElement {
+// Catalog of available add-ons for the §20.2 fallback booking flow.
+// In a live integration these would be fetched from the host adapter;
+// the platform-native fallback uses a fixed set.
+const AVAILABLE_OPTIONS = [
+  { kind: "travel_insurance", label: "Travel Insurance", description: "Comprehensive travel protection including trip cancellation, medical, and baggage.", price_cents: 14900, price_display: "$149" },
+  { kind: "beverage_package", label: "Premium Beverage Package", description: "Unlimited beverages including premium spirits, wines, and specialty coffees.", price_cents: 8900, price_display: "$89/day" },
+  { kind: "specialty_dining", label: "Specialty Dining Package", description: "3 specialty restaurant reservations at a discounted bundle price.", price_cents: 9900, price_display: "$99" },
+] as const;
+
+// Stage 3: Booking options — loaded from and saved to /api/bookings/[id]/options.
+function Stage3Options({ bookingId }: { bookingId: string }): React.ReactElement {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/bookings/${bookingId}/options`);
+        if (res.ok) {
+          const data = (await res.json()) as { options: Array<{ option_kind: string }> };
+          if (!cancelled) {
+            setSelected(new Set(data.options.map((o) => o.option_kind)));
+          }
+        }
+      } catch {
+        // Soft-fail — user can re-select from scratch.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bookingId]);
+
+  async function handleAdvance(): Promise<void> {
+    setSaving(true);
+    setError(null);
+    try {
+      const options = AVAILABLE_OPTIONS
+        .filter((o) => selected.has(o.kind))
+        .map((o) => ({ option_kind: o.kind, option_value: { label: o.label }, price_cents: o.price_cents }));
+      const res = await fetch(`/api/bookings/${bookingId}/options`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ options }),
+      });
+      const body = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setError(body.error ?? `Save failed (${res.status}).`);
+        return;
+      }
+      window.location.href = `/booking/flow/${bookingId}/4`;
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <section><p style={{ color: "#6b7280" }}>Loading options…</p></section>;
+
   return (
     <section>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Booking Options</h2>
+
+      {error && (
+        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <OptionCard
-          name="travel_insurance"
-          label="Travel Insurance"
-          description="Comprehensive travel protection including trip cancellation, medical, and baggage."
-          price="$149"
-        />
-        <OptionCard
-          name="beverage_package"
-          label="Premium Beverage Package"
-          description="Unlimited beverages including premium spirits, wines, and specialty coffees."
-          price="$89/day"
-        />
-        <OptionCard
-          name="specialty_dining"
-          label="Specialty Dining Package"
-          description="3 specialty restaurant reservations at a discounted bundle price."
-          price="$99"
-        />
+        {AVAILABLE_OPTIONS.map((opt) => (
+          <OptionCard
+            key={opt.kind}
+            name={opt.kind}
+            label={opt.label}
+            description={opt.description}
+            price={opt.price_display}
+            checked={selected.has(opt.kind)}
+            onChange={(checked) => setSelected((prev) => { const next = new Set(prev); if (checked) next.add(opt.kind); else next.delete(opt.kind); return next; })}
+          />
+        ))}
       </div>
-      <StageNavButtons bookingId="__current__" stage={3} />
+
+      <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
+        <a href={`/booking/flow/${bookingId}/2`} style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 14, color: "#374151", textDecoration: "none" }}>
+          ← Back
+        </a>
+        <button
+          type="button"
+          onClick={() => void handleAdvance()}
+          disabled={saving}
+          style={{ padding: "10px 24px", background: saving ? "#9ca3af" : "#6366f1", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", fontSize: 14 }}
+        >
+          {saving ? "Saving…" : "Continue →"}
+        </button>
+      </div>
     </section>
   );
 }
@@ -495,36 +700,7 @@ function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement 
   );
 }
 
-function StageNavButtons({ bookingId, stage }: { bookingId: string; stage: StageNum }): React.ReactElement {
-  const nextStage = (stage + 1) as StageNum;
-  const prevStage = (stage - 1) as StageNum;
-
-  return (
-    <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-      {stage > 1 && (
-        <a
-          href={`/booking/flow/${bookingId}/${prevStage}`}
-          style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 14, color: "#374151", textDecoration: "none" }}
-        >
-          ← Back
-        </a>
-      )}
-      {stage < 4 && (
-        <button
-          type="button"
-          onClick={() => { window.location.href = `/booking/flow/${bookingId}/${nextStage}`; }}
-          style={{ padding: "10px 20px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 14 }}
-        >
-          Continue →
-        </button>
-      )}
-    </div>
-  );
-}
-
-function OptionCard({ name, label, description, price }: { name: string; label: string; description: string; price: string }): React.ReactElement {
-  const [selected, setSelected] = useState(false);
-
+function OptionCard({ name, label, description, price, checked, onChange }: { name: string; label: string; description: string; price: string; checked: boolean; onChange: (checked: boolean) => void }): React.ReactElement {
   return (
     <label
       style={{
@@ -532,17 +708,17 @@ function OptionCard({ name, label, description, price }: { name: string; label: 
         alignItems: "flex-start",
         gap: 14,
         padding: "16px 20px",
-        border: selected ? "2px solid #6366f1" : "1px solid #e5e7eb",
+        border: checked ? "2px solid #6366f1" : "1px solid #e5e7eb",
         borderRadius: 8,
         cursor: "pointer",
-        background: selected ? "#eef2ff" : "#fff",
+        background: checked ? "#eef2ff" : "#fff",
       }}
     >
       <input
         type="checkbox"
         name={name}
-        checked={selected}
-        onChange={(e) => setSelected(e.target.checked)}
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
         style={{ marginTop: 2 }}
       />
       <div>
@@ -565,32 +741,22 @@ function FormField({
   name: string;
   type?: string;
   required?: boolean;
-  value?: string;
-  onChange?: (v: string) => void;
+  value: string;
+  onChange: (v: string) => void;
 }): React.ReactElement {
-  const isControlled = value !== undefined && onChange !== undefined;
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
         {label} {required && <span style={{ color: "#dc2626" }}>*</span>}
       </span>
-      {isControlled ? (
-        <input
-          type={type}
-          name={name}
-          required={required}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
-        />
-      ) : (
-        <input
-          type={type}
-          name={name}
-          required={required}
-          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
-        />
-      )}
+      <input
+        type={type}
+        name={name}
+        required={required}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
+      />
     </label>
   );
 }

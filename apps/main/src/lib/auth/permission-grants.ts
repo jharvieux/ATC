@@ -39,6 +39,8 @@ function key(resource: string, action: string): GrantKey {
 // users' data.
 const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("bookings", "read"),
+  key("bookings.passengers", "read"),
+  key("bookings.options", "read"),
   key("bug_submission", "read"),
   key("contacts", "list"),
   key("contacts", "read"),
@@ -78,6 +80,8 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("bookings", "modify"),
   key("bookings", "submit"),
   key("bookings", "update"),
+  key("bookings.passengers", "write"),
+  key("bookings.options", "write"),
   // Quotes
   key("quotes", "accept"),
   key("quotes", "create"),
