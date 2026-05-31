@@ -1503,3 +1503,14 @@ CREATE POLICY "users_update_policy" ON public.users
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.weather_usage_metrics
+CREATE POLICY "weather_usage_metrics_no_user_insert" ON public.weather_usage_metrics
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "weather_usage_metrics_no_user_select" ON public.weather_usage_metrics
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "weather_usage_metrics_no_user_update" ON public.weather_usage_metrics
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
