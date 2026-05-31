@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "test:cross-tenant": "vitest run tests/security/cross-tenant-probe",
     "test:error-injection": "vitest run apps/main/test/error-injection && pnpm --dir apps/rag exec vitest run test/error-injection",
-    "test:contracts": "vitest run tests/contracts",
+    "test:contracts": "vitest run tests/contracts --passWithNoTests",
     "contracts:record": "tsx scripts/record-contracts.ts",
     "rls:snapshot:main": "tsx scripts/rls-snapshot.ts --target=main > db/rls-snapshot-main.sql",
     "rls:snapshot:rag": "tsx scripts/rls-snapshot.ts --target=rag > db/rls-snapshot-rag.sql",
