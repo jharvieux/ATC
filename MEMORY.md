@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-128 — 2026-05-31 — §20.2 booking flow Stages 2+3 (PR #515): replace-all passenger/options pattern; non-atomic delete+insert acceptable for drafts
+
+API routes POST /api/bookings/[id]/passengers and PUT /api/bookings/[id]/options use a delete-then-insert replace-all pattern. Not wrapped in a transaction — if insert fails after delete, the table is empty until the caller retries. Chosen over an RPC transaction because: (a) booking is in draft status so data loss is recoverable (form re-renders empty, user re-submits), (b) adding a stored-procedure just for this would add schema surface area with no safety net beyond what a retry gives. All mutations wrapped with `safeAwait`; outer try/catch surfaces DB errors as 500. `FormField` value/onChange made required after audit found dead uncontrolled branch.
+
+**Why:** Stage 2/3 stubs were open (any call advanced without saving). §20.5 DOB gate must block advance if any passenger has `date_of_birth_is_estimated = true`.
+
+**How to apply:** If atomicity becomes important (e.g., non-draft bookings), replace delete+insert with a Supabase RPC that wraps both in a Postgres transaction.
+
+---
+
 ## D-127 — 2026-05-31 — §24.x anon session HMAC hardening (PR #513); ANON_COOKIE_SECRET required at boot; migration window open
 
 Cookie signing pattern: `<uuid>.<hmac-sha256-hex>` keyed on `ANON_COOKIE_SECRET`. Plain UUID cookies (no dot) accepted during migration window and re-issued as signed. `ANON_COOKIE_SECRET ?? ""` explicitly rejected — `sign()` throws if absent, `envSchema` validates at boot. Migration window tracked by issue #514 (remove after first full release cycle). `Set-Cookie` must be written by the SSE route synchronously before the void `handleChat` call so headers land in the HTTP response.
