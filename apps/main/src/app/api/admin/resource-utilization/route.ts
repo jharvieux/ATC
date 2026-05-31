@@ -11,7 +11,6 @@
 
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -109,9 +108,13 @@ export async function GET(req: Request): Promise<Response> {
         if (aiDailyResult.error) throw new Error(`ai_call_log read failed: ${aiDailyResult.error.message}`);
         if (emailDailyResult.error) throw new Error(`email_log read failed: ${emailDailyResult.error.message}`);
         if (weatherHistoryResult.error) throw new Error(`weather_usage_metrics read failed: ${weatherHistoryResult.error.message}`);
+        if (weatherTodayResult.error) throw new Error(`weather_usage_metrics today read failed: ${weatherTodayResult.error.message}`);
         if (modelBreakdownResult.error) throw new Error(`ai_call_log model breakdown failed: ${modelBreakdownResult.error.message}`);
         if (tenantMetricsResult.error) throw new Error(`tenant_usage_metrics read failed: ${tenantMetricsResult.error.message}`);
         if (tenantsResult.error) throw new Error(`tenants read failed: ${tenantsResult.error.message}`);
+        if (weatherCapResult.error) throw new Error(`weather cap read failed: ${weatherCapResult.error.message}`);
+        if (aiPricingResult.error) throw new Error(`ai_pricing_catalog read failed: ${aiPricingResult.error.message}`);
+        if (resendPriceResult.error) throw new Error(`resend_price read failed: ${resendPriceResult.error.message}`);
 
         recordQuery({ op: "select", table: "ai_call_log", row_count: (aiDailyResult.data?.length ?? 0) + (modelBreakdownResult.data?.length ?? 0) });
         recordQuery({ op: "select", table: "email_log", row_count: emailDailyResult.data?.length ?? 0 });

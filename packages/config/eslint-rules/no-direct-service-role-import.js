@@ -370,11 +370,6 @@ const ALLOWED_PATH_SUFFIXES = [
   // §23.4 — Weather usage sustained-high operator alert cron. Background
   // job, no user session; reads platform-internal tables (RLS deny-all).
   "/inngest/weather-usage-alert.ts",
-  // Resource utilization dashboard: platform admin cross-tenant query —
-  // reads ai_call_log + email_log + tenant_usage_metrics + weather_usage_metrics
-  // across all tenants. Gated by assertPlatformAdmin; service-role required
-  // because ai_call_log and weather_usage_metrics are RLS deny-all.
-  "/app/api/admin/resource-utilization/route.ts",
 ];
 
 function endsWithAllowed(filename) {
