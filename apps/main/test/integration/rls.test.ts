@@ -513,6 +513,16 @@ describeIf("RLS integration", () => {
       await sql`DELETE FROM public.contacts WHERE id IN (${contactAId}, ${contactBId})`;
     }, 30000);
 
+    it("§12.1: userA CAN SELECT own tenantA contacts", async () => {
+      const clientA = await authedClient(fx.userA.email, fx.userA.password);
+      const { data, error } = await clientA
+        .from("contacts")
+        .select("id")
+        .eq("id", contactAId);
+      expect(error).toBeNull();
+      expect(data?.length).toBe(1);
+    });
+
     it("§12.1: userB cannot SELECT tenantA contacts", async () => {
       const clientB = await authedClient(fx.userB.email, fx.userB.password);
       const { data, error } = await clientB
@@ -525,25 +535,20 @@ describeIf("RLS integration", () => {
 
     it("§12.2: duplicate contact_relationship edge is rejected (UNIQUE 23505)", async () => {
       const { sql, tenantA } = fx;
-      // Insert the first edge — must succeed.
+      // Establish the edge so the second insert can collide against it.
       await sql`
         INSERT INTO public.contact_relationships
           (tenant_id, from_contact_id, to_contact_id, relationship_type)
         VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
       `;
-      // Second insert of the same (tenant_id, from, to, type) triplet must violate the unique constraint.
-      let threw = false;
-      try {
-        await sql`
+      // The schema's UNIQUE constraint must be enforced at the DB layer, not just app logic.
+      await expect(
+        sql`
           INSERT INTO public.contact_relationships
             (tenant_id, from_contact_id, to_contact_id, relationship_type)
           VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
-        `;
-      } catch (err) {
-        threw = true;
-        expect(String(err)).toMatch(/23505/);
-      }
-      expect(threw).toBe(true);
+        `
+      ).rejects.toSatisfy((err: unknown) => /23505/.test(String(err)));
     });
   });
 });
