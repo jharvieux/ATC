@@ -30,7 +30,6 @@ export default function SignupCompletePage(): React.ReactElement {
   const [submitting, setSubmitting] = useState(false);
   const [workspaceUrl, setWorkspaceUrl] = useState<string | null>(null);
 
-  // Auto-suggest slug from display name.
   useEffect(() => {
     if (!form.display_name) return;
     const suggested = form.display_name
@@ -41,7 +40,6 @@ export default function SignupCompletePage(): React.ReactElement {
     setForm((f) => ({ ...f, slug: suggested }));
   }, [form.display_name]);
 
-  // Debounced slug availability check.
   useEffect(() => {
     if (!form.slug || form.slug.length < 3) {
       setSlugAvailable(null);
@@ -76,46 +74,44 @@ export default function SignupCompletePage(): React.ReactElement {
     setSubmitting(true);
     setError(null);
 
-    const res = await fetch("/api/auth/signup/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
+    try {
+      const res = await fetch("/api/auth/signup/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
 
-    const data: {
-      slug?: string;
-      error?: string;
-    } = await res.json();
+      const data: { slug?: string; error?: string } = await res.json();
 
-    if (res.status === 201 && data.slug) {
-      setWorkspaceUrl(buildWorkspaceUrl(data.slug, window.location));
+      if (res.status === 201 && data.slug) {
+        setWorkspaceUrl(buildWorkspaceUrl(data.slug, window.location));
+        return;
+      }
+
+      if (res.status === 409 && data.error === "already_provisioned") {
+        setError(
+          "Your agency workspace is already set up. Visit your agency subdomain to continue onboarding.",
+        );
+        return;
+      }
+
+      if (res.status === 409 && data.error === "slug_taken") {
+        setSlugAvailable(false);
+        setError("That URL slug is already taken. Please choose a different one.");
+        return;
+      }
+
+      if (res.status === 401) {
+        router.push("/signup");
+        return;
+      }
+
+      setError(data.error ?? "Something went wrong. Please try again.");
+    } catch {
+      setError("Network error. Please check your connection and try again.");
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    if (res.status === 409 && data.error === "already_provisioned") {
-      setError(
-        "Your agency workspace is already set up. Visit your agency subdomain to continue onboarding.",
-      );
-      setSubmitting(false);
-      return;
-    }
-
-    if (res.status === 409 && data.error === "slug_taken") {
-      setSlugAvailable(false);
-      setError("That URL slug is already taken. Please choose a different one.");
-      setSubmitting(false);
-      return;
-    }
-
-    if (res.status === 401) {
-      setSubmitting(false);
-      router.push("/signup");
-      return;
-    }
-
-    setError(data.error ?? "Something went wrong. Please try again.");
-    setSubmitting(false);
   }
 
   if (workspaceUrl) {
