@@ -1,7 +1,8 @@
 import { test } from "@playwright/test";
 
-// TODO: implement per ATC_CICD_Pipeline_v4_REVISED.docx §7.2
-// Covers: connect Gmail account, view connection status, disconnect
-test.skip("Gmail connection flow initiates OAuth redirect", async () => {});
-test.skip("connected account shows status as active", async () => {});
-test.skip("disconnect removes the connection", async () => {});
+// Gmail OAuth integration (§23.9).
+// TODO(#429): Gmail GCP/OAuth not yet provisioned; TODO(#459): E2E coverage.
+
+test.fixme("Gmail connection flow initiates OAuth redirect", async () => {});
+test.fixme("connected account shows status as active", async () => {});
+test.fixme("disconnect removes the connection", async () => {});
