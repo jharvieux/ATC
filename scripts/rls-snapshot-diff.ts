@@ -128,6 +128,13 @@ async function main() {
   }
 
   if (!anyChecked) {
+    // Safe to pass here only because dependency bumps never touch
+    // migrations or RLS. The workflow sets this flag exclusively for
+    // Dependabot (which can't receive the DB-URL secrets); see deploy.yml.
+    if (process.env.RLS_ALLOW_NO_TARGETS === "true") {
+      console.log("No targets checked, but RLS_ALLOW_NO_TARGETS=true — passing (Dependabot run).");
+      process.exit(0);
+    }
     console.error(
       "No targets checked — set SUPABASE_DB_URL and/or SUPABASE_RAG_DB_URL.",
     );
