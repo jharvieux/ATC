@@ -169,67 +169,21 @@ describe("collect_booking_details", () => {
   });
 
   it("throws when bookings.insert returns a DB error", async () => {
-    const ctx: TenantContext = {
-      tenant_id: TENANT_ID,
-      source: { kind: "http_request", user_id: "u1" },
-    };
-    mocks.bookingInsertSingle.mockResolvedValue({
+    // makeCtx() must come first — makeDb() call order determines which mock value wins
+    const baseCtx = makeCtx();
+    const db = makeDb({
       data: null,
       error: { message: "permission denied", code: "42501", hint: null, details: null, name: "PostgrestError" },
     });
-    mocks.passengerInsert.mockResolvedValue({ error: null });
-    const db = {
-      from: (table: string) => {
-        if (table === "bookings") return { insert: makeThenableInsert(mocks.bookingInsertSingle) };
-        return {
-          insert: (_payload: unknown) => {
-            const p = mocks.passengerInsert(_payload);
-            return {
-              then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
-                Promise.resolve(p).then(resolve, reject),
-            };
-          },
-        };
-      },
-    } as unknown as ToolDispatchContext["db"];
-    const dispatchCtx: ToolDispatchContext = {
-      ctx,
-      db,
-      conversation_id: "cccccccc-dddd-eeee-ffff-000000000000",
-      contact_id: CONTACT_ID,
-    };
-    await expect(handler(baseInput, dispatchCtx)).rejects.toThrow("bookings.insert failed");
+    await expect(handler(baseInput, { ...baseCtx, db })).rejects.toThrow("bookings.insert failed");
   });
 
   it("throws (via safeAwait) when booking_passengers.insert returns a DB error", async () => {
-    mocks.bookingInsertSingle.mockResolvedValue({ data: { id: BOOKING_ID }, error: null });
-    mocks.passengerInsert.mockResolvedValue({
-      error: { message: "constraint violation", code: "23502", hint: null, details: null, name: "PostgrestError" },
-    });
-    const ctx: TenantContext = {
-      tenant_id: TENANT_ID,
-      source: { kind: "http_request", user_id: "u1" },
-    };
-    const db = {
-      from: (table: string) => {
-        if (table === "bookings") return { insert: makeThenableInsert(mocks.bookingInsertSingle) };
-        return {
-          insert: (_payload: unknown) => {
-            const p = mocks.passengerInsert(_payload);
-            return {
-              then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
-                Promise.resolve(p).then(resolve, reject),
-            };
-          },
-        };
-      },
-    } as unknown as ToolDispatchContext["db"];
-    const dispatchCtx: ToolDispatchContext = {
-      ctx,
-      db,
-      conversation_id: "cccccccc-dddd-eeee-ffff-000000000000",
-      contact_id: CONTACT_ID,
-    };
-    await expect(handler(baseInput, dispatchCtx)).rejects.toThrow("booking_passengers.insert");
+    const baseCtx = makeCtx();
+    const db = makeDb(
+      { data: { id: BOOKING_ID }, error: null },
+      { error: { message: "constraint violation", code: "23502", hint: null, details: null, name: "PostgrestError" } },
+    );
+    await expect(handler(baseInput, { ...baseCtx, db })).rejects.toThrow("booking_passengers.insert");
   });
 });
