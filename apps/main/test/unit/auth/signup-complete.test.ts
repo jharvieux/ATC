@@ -46,14 +46,6 @@ vi.mock("@/lib/db/service-role-client", () => ({
           select: () => ({
             eq: () => ({
               limit: () => ({ maybeSingle: mocks.usersIdempotencyQuery }),
-              // For users INSERT
-              insert: () => ({
-                select: () => ({ single: mocks.usersInsertSingle }),
-              }),
-            }),
-            // Catch insert().select().single() path
-            insert: () => ({ // fallback
-              select: () => ({ single: mocks.usersInsertSingle }),
             }),
           }),
           insert: () => ({
@@ -291,6 +283,20 @@ describe("POST /api/auth/signup/complete", () => {
     it("accepts sub_host tenant_type", async () => {
       const res = await POST(platformReq({ ...VALID_BODY, tenant_type: "sub_host" }));
       expect(res.status).toBe(201);
+    });
+  });
+
+  describe("attribution binding failure", () => {
+    it("returns 201 and logs a warning when bindContactOnIdentification fails", async () => {
+      mocks.bindContactOnIdentification.mockResolvedValue({ ok: false, error: "crm_unavailable" });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const res = await POST(platformReq(VALID_BODY));
+      expect(res.status).toBe(201);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[signup/complete] attribution binding failed:"),
+        "crm_unavailable",
+      );
+      warnSpy.mockRestore();
     });
   });
 });

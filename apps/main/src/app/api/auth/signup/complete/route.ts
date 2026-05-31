@@ -140,13 +140,16 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // §35.2.2 attribution binding — awaited; no void in serverless (D-091).
   const pending = readPendingAttributionFromHeader(req.headers.get("cookie"));
-  await bindContactOnIdentification({
+  const bindResult = await bindContactOnIdentification({
     svc,
     tenant_id:       tenantId,
     user_id:         userId,
     source_origin:   pending ? "utm_parsed" : "agent_set",
     pending_payload: pending ?? null,
   });
+  if (!bindResult.ok) {
+    console.warn("[signup/complete] attribution binding failed:", bindResult.error);
+  }
 
   const res = NextResponse.json(
     { tenant_id: tenantId, slug, status: "onboarding", onboarding_stage: "signup" },
