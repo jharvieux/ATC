@@ -188,6 +188,13 @@ jobs:
 
       - name: Check RLS drift (fail on PR and release/*)
         if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+        env:
+          # Dependabot-triggered runs don't receive repo secrets, so the
+          # DB URLs above are empty and no target can be checked. Allow the
+          # no-targets case to pass ONLY for Dependabot (dependency bumps
+          # never touch RLS). Human/same-repo PRs do get the secrets, so an
+          # absent target there is still a real failure.
+          RLS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
         run: pnpm rls:check
 
       - name: Check RLS drift (warn on dev push)
