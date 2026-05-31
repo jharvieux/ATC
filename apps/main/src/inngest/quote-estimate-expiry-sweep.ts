@@ -4,18 +4,19 @@
 //   - have price_kind = 'estimate'
 //   - were priced more than QUOTE_ESTIMATE_VALIDITY_DAYS ago
 //   - are still in status='sent' and unaccepted
-// and transitions them to status='expired', then sends each contact a
-// "request fresh quote" transactional email via the Resend pipeline (§23).
+// and sends each contact a "request fresh quote" transactional email via the
+// Resend pipeline (§23), then transitions the quote to status='expired'.
 //
-// Idempotency: quotes are marked expired BEFORE the email loop. Because
-// the sweep only selects status='sent', the same quote is never processed
-// on a subsequent run, so no double-send is possible.
+// Idempotency: each quote is marked expired AFTER its email sends. A process
+// crash after email dispatch but before the status update results in a re-send
+// on the next cron run — the double-send risk is accepted because preventing
+// permanently stranded quotes (expired but never emailed) is higher priority
+// for a daily low-stakes notification sweep.
 //
 // Cron: daily at 02:00 UTC. Cheap query; the partial index
 // quotes_estimate_expiry_sweep_idx (migration 20260531000000) covers it.
 
 import * as React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
@@ -61,16 +62,6 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       return { expired: 0, emailed: 0 };
     }
 
-    const { error: updateErr } = await db
-      .from("quotes")
-      .update({ status: "expired", updated_at: new Date().toISOString() })
-      .in("id", rows.map((r) => r.id));
-
-    if (updateErr) {
-      console.error("[quote-estimate-expiry-sweep] update failed:", updateErr.message);
-      return { expired: 0, emailed: 0, error: updateErr.message };
-    }
-
     // ── Batch-fetch contacts and tenants needed for email sends ─────────────
     const contactIds = [...new Set(rows.map((r) => r.contact_id).filter((id): id is string => id !== null))];
     const tenantIds = [...new Set(rows.map((r) => r.tenant_id))];
@@ -78,11 +69,12 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     const { data: contactsRaw, error: contactsErr } = await db
       .from("contacts")
       .select("id, first_name, last_name, email")
-      .in("id", contactIds.length > 0 ? contactIds : ["00000000-0000-0000-0000-000000000000"]);
+      .in("id", contactIds.length > 0 ? contactIds : ["00000000-0000-0000-0000-000000000000"])
+      .in("tenant_id", tenantIds);
 
     if (contactsErr) {
       console.error("[quote-estimate-expiry-sweep] contacts fetch failed:", contactsErr.message);
-      return { expired: rows.length, emailed: 0, error: contactsErr.message };
+      return { expired: 0, emailed: 0, error: contactsErr.message };
     }
 
     const { data: tenantsRaw, error: tenantsErr } = await db
@@ -92,7 +84,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
     if (tenantsErr) {
       console.error("[quote-estimate-expiry-sweep] tenants fetch failed:", tenantsErr.message);
-      return { expired: rows.length, emailed: 0, error: tenantsErr.message };
+      return { expired: 0, emailed: 0, error: tenantsErr.message };
     }
 
     const { data: brandingsRaw, error: brandingsErr } = await db
@@ -102,7 +94,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
     if (brandingsErr) {
       console.error("[quote-estimate-expiry-sweep] branding fetch failed:", brandingsErr.message);
-      return { expired: rows.length, emailed: 0, error: brandingsErr.message };
+      return { expired: 0, emailed: 0, error: brandingsErr.message };
     }
 
     type ContactRow = { id: string; first_name: string | null; last_name: string | null; email: string | null };
@@ -120,8 +112,10 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     );
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
+    const { renderToStaticMarkup } = await import("react-dom/server");
 
     let emailed = 0;
+    let expired = 0;
     for (const r of rows) {
       const contact = r.contact_id ? contactMap.get(r.contact_id) : null;
       if (!contact?.email) {
@@ -207,6 +201,23 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
       if (result.status === "sent") {
         emailed++;
+        const { data: updatedRows, error: updateErr } = await db
+          .from("quotes")
+          .update({ status: "expired", updated_at: new Date().toISOString() })
+          .eq("id", r.id)
+          .eq("status", "sent")
+          .select("id");
+        if (updateErr) {
+          console.error(
+            `[quote-estimate-expiry-sweep] update failed: quote=${r.id} reason=${updateErr.message}`,
+          );
+        } else if ((updatedRows?.length ?? 0) === 0) {
+          console.warn(
+            `[quote-estimate-expiry-sweep] quote=${r.id} already expired by concurrent process`,
+          );
+        } else {
+          expired++;
+        }
       } else if (result.status === "failed") {
         console.error(
           `[quote-estimate-expiry-sweep] send failed: quote=${r.id} reason=${result.reason ?? "unknown"}`,
@@ -218,6 +229,6 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       }
     }
 
-    return { expired: rows.length, emailed };
+    return { expired, emailed };
   },
 );

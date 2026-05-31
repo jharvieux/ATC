@@ -5,10 +5,11 @@
 //     mid-batch. Operators need accurate emailed counts to trust the pipeline.
 //   - Quotes with a valid contact email get an email through sendEmail with the
 //     correct category and template_id so rate-limit + audit-log work correctly.
-//   - DB errors on the initial query abort immediately rather than updating
-//     status first, which would leave quotes in expired-but-never-emailed limbo.
-//   - sendEmail returning 'failed' does not increment the emailed count but the
-//     quote is still expired — the expiry is non-retryable on next run.
+//   - Each quote is marked expired AFTER its email sends — a DB error on the
+//     status update leaves the quote re-processable on the next run (no stranding).
+//   - sendEmail returning 'failed' does not expire or count the quote.
+//   - Batch-fetch errors (contacts, tenants, branding) abort before the loop
+//     so no emails are sent and no quotes are marked expired.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -44,6 +45,19 @@ function makeSelectChain(data: unknown, error: null | { message: string } = null
   return deepChain();
 }
 
+// Per-quote update chain: .update().eq("id").eq("status").select("id")
+function makeUpdateChain(result: { data: { id: string }[] | null; error: null | { message: string } }) {
+  return {
+    update: () => ({
+      eq: () => ({
+        eq: () => ({
+          select: () => Promise.resolve(result),
+        }),
+      }),
+    }),
+  };
+}
+
 async function runSweep(): Promise<unknown> {
   vi.resetModules();
   const { quoteEstimateExpirySweep } = await import(
@@ -53,7 +67,26 @@ async function runSweep(): Promise<unknown> {
   return fn.__handler();
 }
 
-describe("quoteEstimateExpirySweep — §21.10.1", () => {
+const TENANT = { id: "t1", legal_name: "Test Agency", mailing_address: null, email_send_pattern: "platform_resend", tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null };
+const CONTACT = { id: "c1", first_name: "Jane", last_name: "Doe", email: "jane@example.com" };
+const QUOTE_ROW = { id: "q1", tenant_id: "t1", contact_id: "c1", user_id: null, customer_access_token: "tok-abc", cruise_line: "NCL", ship_name: "Bliss" };
+
+function setupHappyPathMocks(overrides: { updateResult?: { data: { id: string }[] | null; error: null | { message: string } } } = {}) {
+  const updateResult = overrides.updateResult ?? { data: [{ id: QUOTE_ROW.id }], error: null };
+  let quotesCallCount = 0;
+  mockFrom.mockImplementation((table: string) => {
+    if (table === "quotes") {
+      quotesCallCount++;
+      if (quotesCallCount === 1) return makeSelectChain([QUOTE_ROW]);
+      return makeUpdateChain(updateResult);
+    }
+    if (table === "contacts") return makeSelectChain([CONTACT]);
+    if (table === "tenants") return makeSelectChain([TENANT]);
+    return makeSelectChain([]);
+  });
+}
+
+describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
@@ -61,30 +94,7 @@ describe("quoteEstimateExpirySweep — §21.10.1", () => {
 
   it("sends emails for expired quotes with valid contact emails", async () => {
     mockSendEmail.mockResolvedValue({ status: "sent" });
-
-    const expiredRows = [
-      { id: "q1", tenant_id: "t1", contact_id: "c1", user_id: null, customer_access_token: "tok-abc", cruise_line: "NCL", ship_name: "Bliss" },
-    ];
-
-    let callIdx = 0;
-    mockFrom.mockImplementation((table: string) => {
-      callIdx++;
-      // 1st call: quotes select
-      if (table === "quotes" && callIdx === 1) {
-        return makeSelectChain(expiredRows);
-      }
-      // 2nd call: quotes update
-      if (table === "quotes" && callIdx === 2) {
-        return { update: () => ({ in: () => Promise.resolve({ error: null }) }) };
-      }
-      if (table === "contacts") {
-        return makeSelectChain([{ id: "c1", first_name: "Jane", last_name: "Doe", email: "jane@example.com" }]);
-      }
-      if (table === "tenants") {
-        return makeSelectChain([{ id: "t1", legal_name: "Test Agency", mailing_address: null, email_send_pattern: "platform_resend", tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null }]);
-      }
-      return makeSelectChain([]);
-    });
+    setupHappyPathMocks();
 
     const result = await runSweep();
     expect(result).toEqual({ expired: 1, emailed: 1 });
@@ -96,67 +106,62 @@ describe("quoteEstimateExpirySweep — §21.10.1", () => {
     expect(call.template_id).toBe("quote_estimate_expired");
   });
 
-  it("skips quotes where contact has no email and returns correct counts", async () => {
-    const expiredRows = [
-      { id: "q2", tenant_id: "t1", contact_id: "c2", user_id: null, customer_access_token: null, cruise_line: null, ship_name: null },
-    ];
-
-    let callIdx = 0;
+  it("skips quotes where contact has no email — not expired, not emailed", async () => {
+    let quotesCallCount = 0;
     mockFrom.mockImplementation((table: string) => {
-      callIdx++;
-      if (table === "quotes" && callIdx === 1) return makeSelectChain(expiredRows);
-      if (table === "quotes" && callIdx === 2) return { update: () => ({ in: () => Promise.resolve({ error: null }) }) };
+      if (table === "quotes") {
+        quotesCallCount++;
+        if (quotesCallCount === 1) {
+          return makeSelectChain([{ ...QUOTE_ROW, id: "q2", contact_id: "c2", customer_access_token: null }]);
+        }
+      }
       if (table === "contacts") return makeSelectChain([{ id: "c2", first_name: null, last_name: null, email: null }]);
+      if (table === "tenants") return makeSelectChain([TENANT]);
       return makeSelectChain([]);
     });
 
     const result = await runSweep();
-    expect(result).toEqual({ expired: 1, emailed: 0 });
+    expect(result).toEqual({ expired: 0, emailed: 0 });
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
-  it("skips quotes where contact_id is null", async () => {
-    const expiredRows = [
-      { id: "q3", tenant_id: "t1", contact_id: null, user_id: null, customer_access_token: null, cruise_line: null, ship_name: null },
-    ];
-
-    let callIdx = 0;
+  it("skips quotes where contact_id is null — not expired, not emailed", async () => {
+    let quotesCallCount = 0;
     mockFrom.mockImplementation((table: string) => {
-      callIdx++;
-      if (table === "quotes" && callIdx === 1) return makeSelectChain(expiredRows);
-      if (table === "quotes" && callIdx === 2) return { update: () => ({ in: () => Promise.resolve({ error: null }) }) };
+      if (table === "quotes") {
+        quotesCallCount++;
+        if (quotesCallCount === 1) {
+          return makeSelectChain([{ ...QUOTE_ROW, id: "q3", contact_id: null }]);
+        }
+      }
+      if (table === "tenants") return makeSelectChain([TENANT]);
       return makeSelectChain([]);
     });
 
     const result = await runSweep();
-    expect(result).toEqual({ expired: 1, emailed: 0 });
+    expect(result).toEqual({ expired: 0, emailed: 0 });
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
-  it("sendEmail returning 'failed' does not increment emailed count — quote is still expired", async () => {
+  it("sendEmail returning 'failed' does not expire or count the quote", async () => {
     mockSendEmail.mockResolvedValue({ status: "failed", reason: "resend_500" });
-
-    const expiredRows = [
-      { id: "q4", tenant_id: "t1", contact_id: "c1", user_id: null, customer_access_token: "tok", cruise_line: null, ship_name: null },
-    ];
-
-    let callIdx = 0;
+    let quotesCallCount = 0;
     mockFrom.mockImplementation((table: string) => {
-      callIdx++;
-      if (table === "quotes" && callIdx === 1) return makeSelectChain(expiredRows);
-      if (table === "quotes" && callIdx === 2) return { update: () => ({ in: () => Promise.resolve({ error: null }) }) };
-      if (table === "contacts") return makeSelectChain([{ id: "c1", first_name: "Jane", last_name: "Doe", email: "jane@example.com" }]);
-      if (table === "tenants") return makeSelectChain([{ id: "t1", legal_name: "Agency", mailing_address: null, email_send_pattern: "platform_resend", tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null }]);
+      if (table === "quotes") {
+        quotesCallCount++;
+        if (quotesCallCount === 1) return makeSelectChain([QUOTE_ROW]);
+      }
+      if (table === "contacts") return makeSelectChain([CONTACT]);
+      if (table === "tenants") return makeSelectChain([TENANT]);
       return makeSelectChain([]);
     });
 
     const result = await runSweep();
-    // expired=1 (status update applied) but emailed=0 (send failed)
-    expect(result).toEqual({ expired: 1, emailed: 0 });
+    expect(result).toEqual({ expired: 0, emailed: 0 });
     expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 
-  it("returns early with error when initial quotes query fails — no status update", async () => {
+  it("returns early with error when initial quotes query fails — no emails sent", async () => {
     mockFrom.mockImplementation(() =>
       makeSelectChain(null, { message: "connection reset" }),
     );
@@ -167,15 +172,61 @@ describe("quoteEstimateExpirySweep — §21.10.1", () => {
   });
 
   it("returns { expired: 0, emailed: 0 } when no stale quotes exist", async () => {
-    let callIdx = 0;
     mockFrom.mockImplementation((table: string) => {
-      callIdx++;
-      if (table === "quotes" && callIdx === 1) return makeSelectChain([]);
+      if (table === "quotes") return makeSelectChain([]);
       return makeSelectChain([]);
     });
 
     const result = await runSweep();
     expect(result).toEqual({ expired: 0, emailed: 0 });
     expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("contactsErr aborts before loop — expired: 0, emailed: 0", async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "quotes") return makeSelectChain([QUOTE_ROW]);
+      if (table === "contacts") return makeSelectChain(null, { message: "contacts unavailable" });
+      return makeSelectChain([]);
+    });
+
+    const result = await runSweep();
+    expect(result).toEqual({ expired: 0, emailed: 0, error: "contacts unavailable" });
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("tenantsErr aborts before loop — expired: 0, emailed: 0", async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "quotes") return makeSelectChain([QUOTE_ROW]);
+      if (table === "contacts") return makeSelectChain([CONTACT]);
+      if (table === "tenants") return makeSelectChain(null, { message: "tenants unavailable" });
+      return makeSelectChain([]);
+    });
+
+    const result = await runSweep();
+    expect(result).toEqual({ expired: 0, emailed: 0, error: "tenants unavailable" });
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("brandingsErr aborts before loop — expired: 0, emailed: 0", async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "quotes") return makeSelectChain([QUOTE_ROW]);
+      if (table === "contacts") return makeSelectChain([CONTACT]);
+      if (table === "tenants") return makeSelectChain([TENANT]);
+      if (table === "tenant_branding") return makeSelectChain(null, { message: "branding unavailable" });
+      return makeSelectChain([]);
+    });
+
+    const result = await runSweep();
+    expect(result).toEqual({ expired: 0, emailed: 0, error: "branding unavailable" });
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("updateErr after successful email — emailed increments, expired does not", async () => {
+    mockSendEmail.mockResolvedValue({ status: "sent" });
+    setupHappyPathMocks({ updateResult: { data: null, error: { message: "update failed" } } });
+
+    const result = await runSweep();
+    expect(result).toEqual({ expired: 0, emailed: 1 });
+    expect(mockSendEmail).toHaveBeenCalledOnce();
   });
 });
