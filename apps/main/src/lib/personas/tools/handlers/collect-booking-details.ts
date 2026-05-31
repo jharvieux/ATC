@@ -19,13 +19,16 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 const DOB_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 const InputSchema = z.object({
-  quote_id: z.string().min(1),
+  // quote_id is optional here — the column doesn't exist in bookings yet
+  // (TODO(prompt-13) in tools.ts). Required in the LLM tool schema so the AI
+  // always sends it, but we don't store it until the column lands.
+  quote_id: z.string().min(1).optional(),
   primary_guest: z.object({
     first_name: z.string().min(1),
     last_name: z.string().min(1),
     date_of_birth: z.string().regex(DOB_REGEX, "Must be YYYY-MM-DD").optional(),
-    email: z.string().optional(),
-    phone: z.string().optional(),
+    // email + phone not stored (no booking/passenger column yet); omitted from
+  // schema so Zod strips them rather than accepting and silently discarding.
   }),
   special_requests: z.string().optional(),
 });
@@ -60,7 +63,7 @@ export async function collectBookingDetails(
 
   const bookingId = booking.id as string;
 
-  const canPreFill = !!(primary_guest.date_of_birth);
+  const canPreFill = !!primary_guest.date_of_birth;
 
   if (canPreFill) {
     await safeAwait(

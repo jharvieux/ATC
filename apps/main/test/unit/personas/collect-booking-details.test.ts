@@ -158,14 +158,14 @@ describe("collect_booking_details", () => {
     expect(JSON.parse(result.content).error).toBe("invalid_input");
   });
 
-  it("returns invalid_input when quote_id is missing", async () => {
+  it("succeeds when quote_id is omitted — column not yet in DB", async () => {
     const dispatchCtx = makeCtx();
     const result = await handler(
       { primary_guest: { first_name: "Jane", last_name: "Doe" } },
       dispatchCtx,
     );
-    expect(result.was_mutating).toBe(false);
-    expect(JSON.parse(result.content).error).toBe("invalid_input");
+    expect(result.was_mutating).toBe(true);
+    expect(JSON.parse(result.content).ok).toBe(true);
   });
 
   it("throws when bookings.insert returns a DB error", async () => {
