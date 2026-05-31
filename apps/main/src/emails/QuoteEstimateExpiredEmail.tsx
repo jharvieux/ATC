@@ -10,7 +10,6 @@ import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 export interface QuoteEstimateExpiredEmailProps {
   layout: Omit<BrandedLayoutProps, "children">;
   customer_name: string;
-  // Displayed in the subject line / heading if present.
   cruise_label?: string | null;
   // Full URL to /q/[token]; null if the quote has no customer_access_token.
   refresh_url: string | null;

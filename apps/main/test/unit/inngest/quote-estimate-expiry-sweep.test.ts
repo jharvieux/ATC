@@ -229,4 +229,33 @@ describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
     expect(result).toEqual({ expired: 0, emailed: 1 });
     expect(mockSendEmail).toHaveBeenCalledOnce();
   });
+
+  it("zero-row CAS update (concurrent expiry) — emailed increments but expired does not", async () => {
+    mockSendEmail.mockResolvedValue({ status: "sent" });
+    setupHappyPathMocks({ updateResult: { data: [], error: null } });
+
+    const result = await runSweep();
+    // emailed++ because the email was dispatched; expired stays 0 because another
+    // process already marked this quote expired between our select and update.
+    expect(result).toEqual({ expired: 0, emailed: 1 });
+    expect(mockSendEmail).toHaveBeenCalledOnce();
+  });
+
+  it("sendEmail returning 'suppressed' does not expire or email the quote", async () => {
+    mockSendEmail.mockResolvedValue({ status: "suppressed" });
+    let quotesCallCount = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "quotes") {
+        quotesCallCount++;
+        if (quotesCallCount === 1) return makeSelectChain([QUOTE_ROW]);
+      }
+      if (table === "contacts") return makeSelectChain([CONTACT]);
+      if (table === "tenants") return makeSelectChain([TENANT]);
+      return makeSelectChain([]);
+    });
+
+    const result = await runSweep();
+    expect(result).toEqual({ expired: 0, emailed: 0 });
+    expect(mockSendEmail).toHaveBeenCalledOnce();
+  });
 });
