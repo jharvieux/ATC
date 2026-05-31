@@ -253,8 +253,7 @@ interface EmailCtx {
       cruise_line?: string;
       ship_name?: string;
       sailing_date?: string;
-      departure_port_code?: string;
-      itinerary_ports?: string[];
+      departure_port?: string;
     } | null;
   };
   toEmail: string;
@@ -279,13 +278,15 @@ interface EmailCtx {
   cruiseLine: string;
   sailingDate: string;
   ports: string[];
-  departurePortCode?: string;
+  departurePort?: string;
   companionPageUrl: string;
   unsubscribeUrl: string;
   layoutProps: Omit<BrandedLayoutProps, "children">;
 }
 
-async function loadEmailContext(args: {
+// Exported for unit testing the data-access shape (the bookings→groups
+// SELECT must not reference columns that don't exist on `groups`).
+export async function loadEmailContext(args: {
   svc: ReturnType<typeof createServiceRoleClient>;
   booking_id: string;
   tenant_id: string;
@@ -296,7 +297,7 @@ async function loadEmailContext(args: {
   const { data: bookingRaw } = await svc
     .from("bookings")
     .select(
-      "id, tenant_id, group_id, user_id, customer_name, passenger_contact_email, groups(cruise_line, ship_name, sailing_date, departure_port_code, itinerary_ports)",
+      "id, tenant_id, group_id, user_id, customer_name, passenger_contact_email, groups(cruise_line, ship_name, sailing_date, departure_port)",
     )
     .eq("id", booking_id)
     .maybeSingle();
@@ -335,8 +336,12 @@ async function loadEmailContext(args: {
   const shipName = booking.groups?.ship_name ?? "your ship";
   const cruiseLine = booking.groups?.cruise_line ?? "";
   const sailingDate = booking.groups?.sailing_date ?? "";
-  const ports = booking.groups?.itinerary_ports ?? [];
-  const departurePortCode = booking.groups?.departure_port_code;
+  // Per-stop itinerary (ports of call) isn't captured yet — the DIY
+  // CruiseMapper scraper has no sailing parser (#485). Until that lands,
+  // the ports list is empty and the destination-image / multi-day-forecast
+  // wiring (#487) stays inert. The departure port DOES exist on groups.
+  const ports: string[] = [];
+  const departurePort = booking.groups?.departure_port;
 
   const companionToken = signCompanionToken({ booking_id, phase });
   const baseUrl = process.env.PLATFORM_PRIMARY_DOMAIN
@@ -370,7 +375,7 @@ async function loadEmailContext(args: {
     cruiseLine,
     sailingDate,
     ports,
-    ...(departurePortCode ? { departurePortCode } : {}),
+    ...(departurePort ? { departurePort } : {}),
     companionPageUrl,
     unsubscribeUrl,
     layoutProps,
@@ -387,15 +392,22 @@ async function buildAndSend(args: {
   const { svc, phase, emailCtx, generatedContent, contentId } = args;
 
   let portInfo: PortInfo | null = null;
-  if (phase === "t_1" && emailCtx.departurePortCode) {
-    const { data: portRaw } = await svc
-      .from("port_info_chunks")
-      .select(
-        "port_name, official_url, terminal_addresses, parking_info, transit_dropoff_info, arrival_advice",
-      )
-      .eq("port_code", emailCtx.departurePortCode)
-      .maybeSingle();
-    portInfo = portRaw as PortInfo | null;
+  if (phase === "t_1" && emailCtx.departurePort) {
+    const PORT_COLS =
+      "port_name, official_url, terminal_addresses, parking_info, transit_dropoff_info, arrival_advice";
+    const dp = emailCtx.departurePort;
+    // groups.departure_port is free TEXT — could be an IATA-style code
+    // ('MIA') or a name ('Miami, FL'). Match on port_code first, then
+    // port_name. Two exact .eq() queries rather than one .or(), because
+    // a port name like "Miami, FL" contains a comma that would break
+    // PostgREST's comma-delimited .or() filter. (#484 replaces this with
+    // an alias-aware lookupPortByName.)
+    const byCode = await svc.from("port_info_chunks").select(PORT_COLS).eq("port_code", dp).maybeSingle();
+    portInfo = (byCode.data as PortInfo | null) ?? null;
+    if (!portInfo) {
+      const byName = await svc.from("port_info_chunks").select(PORT_COLS).eq("port_name", dp).maybeSingle();
+      portInfo = (byName.data as PortInfo | null) ?? null;
+    }
   }
 
   const { html, subject } = await buildEmail(phase, {
