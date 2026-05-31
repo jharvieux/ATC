@@ -123,6 +123,14 @@ describe("POST /api/admin/email-samples", () => {
     expect(opts.reason).toBe("admin_email_sample_send");
   });
 
+  it("returns 429 when rate limit is reached", async () => {
+    mockSendEmail.mockResolvedValue({ status: "rate_limited" as const, reason: "admin_sample_daily_limit_reached" });
+    const { POST } = await import("@/app/api/admin/email-samples/route");
+    const res = await POST(makeRequest("POST", adminHeaders(), VALID_POST_BODY));
+    expect(res.status).toBe(429);
+    expect((await res.json() as { error: string }).error).toMatch(/rate limit/i);
+  });
+
   it("returns 500 when Resend fails", async () => {
     mockSendEmail.mockResolvedValue({ status: "failed" as const, reason: "resend_503" });
     const { POST } = await import("@/app/api/admin/email-samples/route");

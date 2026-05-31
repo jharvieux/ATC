@@ -113,6 +113,7 @@ export default function EmailSamplesPage() {
         Renders any pre-cruise or group email template and optionally sends it via Resend. Uses AI Travel Concierge branding. Rate-limited to 50 sends/day.
       </p>
 
+      {/* allow-void-async: React onSubmit requires a void handler; errors are surfaced in component state */}
       <form onSubmit={(e) => void handleSend(e)}>
         <div style={fieldStyle}>
           <label style={labelStyle}>Template</label>

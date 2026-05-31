@@ -226,7 +226,7 @@ export async function GET(req: Request): Promise<Response> {
   let html: string;
   try {
     html = await withPlatformAdminAudit(
-      { admin_user_id: adminUserId, reason: "admin_email_sample_send", operation: `email_sample.preview.${parsed.template}` },
+      { admin_user_id: adminUserId, reason: "admin_email_sample_preview", operation: `email_sample.preview.${parsed.template}` },
       async () => buildHtml(parsed),
     );
   } catch (err) {

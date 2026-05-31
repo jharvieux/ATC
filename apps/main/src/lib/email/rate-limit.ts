@@ -37,7 +37,9 @@ export async function checkRateLimit(opts: {
   const now = new Date();
 
   if (category === "admin_sample") {
-    // 50 total admin sample sends per 24h (counted across all destinations under the platform tenant).
+    // 50 total admin sample sends per 24h (platform-wide, not per-recipient).
+    // to_email is intentionally unused here — the cap is a global send budget,
+    // not a per-address throttle, so counting across all destinations is correct.
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await db
       .from("email_log")
@@ -89,5 +91,6 @@ export async function checkRateLimit(opts: {
     return { allowed: true };
   }
 
-  return { allowed: true };
+  // unreachable — all EmailCategory variants are handled above
+  return { allowed: false, reason: "unknown_category" };
 }

@@ -106,6 +106,7 @@ export const PLATFORM_ADMIN_REASONS = [
   "rag_authority_curation",
 
   // #489 — Platform admin test-delivery for email design review.
+  "admin_email_sample_preview",
   "admin_email_sample_send",
 ] as const;
 
