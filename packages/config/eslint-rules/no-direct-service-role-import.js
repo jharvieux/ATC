@@ -268,6 +268,8 @@ const ALLOWED_PATH_SUFFIXES = [
   // platform domain before any public.users or public.tenants row exists.
   // No tenant context → assertPermission can't run → service-role required
   // to INSERT the tenant and the first users row.
+  // Two-layer isolation exception: tenant_id is the INSERT payload here,
+  // not a filter target — no prior row exists to filter against.
   "/app/api/auth/signup/complete/route.ts",
   "/app/api/groups/route.ts",
   "/app/api/groups/[id]/invitations/route.ts",
