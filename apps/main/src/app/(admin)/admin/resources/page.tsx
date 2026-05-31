@@ -97,13 +97,12 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
   const xOf = (i: number) => PAD.left + (i / (data.length - 1)) * chartW;
   const yOf = (val: number) => PAD.top + chartH - (val / maxVal) * chartH;
 
-  // Build SVG path strings for top and bottom of each stacked layer.
   const aiPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(d.ai_cost_cents).toFixed(1)}`);
   const totalPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(totals[i] ?? 0).toFixed(1)}`);
 
-  // AI layer: bottom of chart → ai points → back along bottom
+  // SVG stacking: each layer is a closed polygon. The email layer reuses
+  // aiPoints as its base so both layers share the same boundary and don't overlap.
   const aiPath = `M ${xOf(0).toFixed(1)},${(PAD.top + chartH).toFixed(1)} L ${aiPoints.join(" L ")} L ${xOf(data.length - 1).toFixed(1)},${(PAD.top + chartH).toFixed(1)} Z`;
-  // Email layer: ai points (forward) → total points (reverse) → close
   const emailPath = `M ${aiPoints.join(" L ")} L ${totalPoints.slice().reverse().join(" L ")} Z`;
 
   // Y-axis labels (4 ticks)
@@ -234,14 +233,11 @@ export default function ResourceUtilizationPage(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Pricing editor state
   const [editingPricing, setEditingPricing] = useState(false);
   const [pricingDraft, setPricingDraft] = useState<Record<string, { input: string; output: string }>>({});
   const [resendDraft, setResendDraft] = useState("");
   const [savingPricing, setSavingPricing] = useState(false);
   const [pricingMsg, setPricingMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  // Weather cap editor
   const [capDraft, setCapDraft] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capMsg, setCapMsg] = useState<{ ok: boolean; text: string } | null>(null);
