@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-125 — 2026-05-30 — CruiseMapper itineraries live on the SHIP page (not /cruises/ URLs); sailing parser shipped (PR #498), wiring deferred
+
+**Decision.** Implemented #485's sailing/itinerary parser (`parseSailingPage`, PR #498) after verifying CruiseMapper's real page structure with a live fetch (user authorized live-fetching to record fixtures). The issue's assumption of separate `/cruises/<slug>` pages crawled by a new `discoverSailingUrls` is WRONG: per-day itineraries live on the ship page (`div.cruiseItinerariesCurrent > table`); the "All Itineraries" list (`table.shipTableCruise`) is metadata-only (date / title / departure port / price + a `data-row` id, no per-day breakdown).
+
+**Why these specifics matter for the follow-up.** The live fetch (Norwegian Bliss; robots.txt allows all but `/admin/`) revealed three load-bearing facts now encoded in the parser: (1) **sea days are implicit calendar gaps, not rows** — the parser reconstructs them; (2) **row dates carry no year** — anchored from the prose ("begins on May 30, 2026") with a Dec→Jan rollover; (3) `ParsedSailing` uses **snake_case** field names (matches the issue-specified interface + the snake_case RAG/DB columns it ingests into + the `price-range-parser` precedent), unlike the older camelCase `ship/port/deck` parsers.
+
+**Deferred (follow-up on #485, still OPEN).** `discoverSailingUrls` is moot — instead parse the current itinerary + a new `parseSailingList` off **already-discovered ship pages**; add RAG `itineraries.day_by_day` column + ingest; refresh `MappedItinerary`; add `CRUISEMAPPER_SAILING_INGEST_ENABLED` kill switch + monthly cadence. Open question: is the current sailing's day pattern a good-enough template for same-title future sailings (cheap) vs. fetching each sailing's `data-row` AJAX detail (expensive)? Recommend the template approach. Full scope in the issue #485 comment.
+
+**Rejected.** Live-fetching every sailing's detail page (the issue's original `discoverSailingUrls` model) — no such per-sailing URLs exist; detail is ship-page-bound.
+
+**Artifacts.** PR #498 (parser + tests + shared `parsers/url-slug.ts`); issue #485 (open, follow-up scope documented in a comment).
+
+---
+
 ## D-124 — 2026-05-30 — Pre-cruise emails gain destination hero images + full-cruise weather chart; images in rag_media_assets region scope; prod wire-up tracked in #483-#489 (PRs #469/#470/#481/#482)
 
 **Decision**: Enrich the §23.4 pre-cruise email series with (a) a destination hero image per cruise region and (b) a multi-day weather forecast chart on T-7 and T-1 covering every stop including sea days. The long-standing §23.4 "weather for all stops" TODO is now implemented via Open-Meteo.
