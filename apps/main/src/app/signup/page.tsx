@@ -22,7 +22,7 @@ export default function SignupPage(): React.ReactElement {
         <SignupCard
           title="I'm setting up my agency"
           description="Sign up to deploy AI Travel Concierge for your clients."
-          redirectTo="/auth/callback?flow=tenant"
+          redirectTo="/signup/complete"
         />
       </div>
     </main>
