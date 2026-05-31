@@ -55,6 +55,14 @@ describe("quote lifecycle (§12.4)", () => {
     expect(() => assertValidQuoteTransition("accepted", "converted")).not.toThrow();
   });
 
+  it("sent → viewed is valid (customer opens quote link)", () => {
+    expect(() => assertValidQuoteTransition("sent", "viewed")).not.toThrow();
+  });
+
+  it("viewed → accepted is valid (customer selects an option)", () => {
+    expect(() => assertValidQuoteTransition("viewed", "accepted")).not.toThrow();
+  });
+
   it("cannot send an already-sent quote", () => {
     expect(() => assertValidQuoteTransition("sent", "sent")).toThrow(InvalidQuoteTransitionError);
   });
