@@ -120,6 +120,18 @@ describe("GET /api/bookings/[id]/options", () => {
     const res = await GET(new Request(`https://t.example.com/api/bookings/${BOOKING_ID}/options`), makeParams());
     expect(res.status).toBe(401);
   });
+
+  it("returns 500 when booking lookup DB errors", async () => {
+    mocks.bookingMaybeSingle.mockResolvedValue({ data: null, error: { message: "rls failure" } });
+    const res = await GET(new Request(`https://t.example.com/api/bookings/${BOOKING_ID}/options`), makeParams());
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 500 when options list query DB errors", async () => {
+    mocks.optionSelectOrder.mockResolvedValue({ data: null, error: { message: "db failure" } });
+    const res = await GET(new Request(`https://t.example.com/api/bookings/${BOOKING_ID}/options`), makeParams());
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("PUT /api/bookings/[id]/options", () => {
