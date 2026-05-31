@@ -75,7 +75,6 @@ function formatTokens(n: number): string {
 }
 
 function shortDate(iso: string): string {
-  // "2026-05-31" → "5/31"
   const [, m = "1", d = "1"] = iso.split("-");
   return `${parseInt(m, 10)}/${parseInt(d, 10)}`;
 }
@@ -101,7 +100,6 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
   // Build SVG path strings for top and bottom of each stacked layer.
   const aiPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(d.ai_cost_cents).toFixed(1)}`);
   const totalPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(totals[i] ?? 0).toFixed(1)}`);
-  const bottomLine = `${xOf(0).toFixed(1)},${(PAD.top + chartH).toFixed(1)} ${xOf(data.length - 1).toFixed(1)},${(PAD.top + chartH).toFixed(1)}`;
 
   // AI layer: bottom of chart → ai points → back along bottom
   const aiPath = `M ${xOf(0).toFixed(1)},${(PAD.top + chartH).toFixed(1)} L ${aiPoints.join(" L ")} L ${xOf(data.length - 1).toFixed(1)},${(PAD.top + chartH).toFixed(1)} Z`;
@@ -171,8 +169,6 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
           </text>
         )}
       </svg>
-      {/* Invisible bottom padding line for the SVG layout */}
-      <div style={{ height: bottomLine.length > 0 ? 0 : 0 }} />
     </div>
   );
 }
@@ -245,6 +241,11 @@ export default function ResourceUtilizationPage(): JSX.Element {
   const [savingPricing, setSavingPricing] = useState(false);
   const [pricingMsg, setPricingMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Weather cap editor
+  const [capDraft, setCapDraft] = useState("");
+  const [savingCap, setSavingCap] = useState(false);
+  const [capMsg, setCapMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -253,6 +254,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
       if (!res.ok) throw new Error(`Load failed (${res.status})`);
       const d = (await res.json()) as DashboardData;
       setData(d);
+      setCapDraft(String(d.summary.weather_cap));
       // Prime pricing editor drafts from loaded data.
       const draft: Record<string, { input: string; output: string }> = {};
       for (const [model, p] of Object.entries(d.pricing.ai)) {
@@ -314,6 +316,34 @@ export default function ResourceUtilizationPage(): JSX.Element {
       setPricingMsg({ ok: false, text: e instanceof Error ? e.message : "Unknown error" });
     } finally {
       setSavingPricing(false);
+    }
+  }
+
+  async function saveCap(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingCap(true);
+    setCapMsg(null);
+    const cap = parseInt(capDraft, 10);
+    if (!Number.isInteger(cap) || cap < 1 || cap > 10000) {
+      setCapMsg({ ok: false, text: "Cap must be a whole number between 1 and 10000." });
+      setSavingCap(false);
+      return;
+    }
+    try {
+      const res = await adminFetch("/api/admin/integrations/weather", {
+        method: "POST",
+        body: JSON.stringify({ cap }),
+      });
+      if (!res.ok) {
+        const d = (await res.json()) as { error?: string; hint?: string };
+        throw new Error(d.hint ?? d.error ?? "Save failed.");
+      }
+      setCapMsg({ ok: true, text: `Daily cap saved at ${cap.toLocaleString()}.` });
+      await load();
+    } catch (e) {
+      setCapMsg({ ok: false, text: e instanceof Error ? e.message : "Unknown error" });
+    } finally {
+      setSavingCap(false);
     }
   }
 
@@ -383,18 +413,33 @@ export default function ResourceUtilizationPage(): JSX.Element {
       <section style={card}>
         <h2 style={{ marginTop: 0 }}>Open-Meteo weather requests</h2>
         <p style={{ color: "#6b7280", marginTop: 0 }}>
-          Free tier: {summary.weather_cap.toLocaleString()} req/day.
+          Free tier cap: {summary.weather_cap.toLocaleString()} req/day.
           Today: <strong>{summary.weather_requests_today.toLocaleString()}</strong>.
           This month: {summary.weather_requests_month.toLocaleString()}.
         </p>
         <WeatherChart data={daily} cap={summary.weather_cap} />
-        <p style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
-          Adjust the daily cap and see detailed history at{" "}
-          <a href="/admin/integrations/weather" style={{ color: "#2563eb" }}>
-            /admin/integrations/weather
-          </a>
-          .
-        </p>
+        <div style={{ marginTop: 16 }}>
+          <form onSubmit={saveCap} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: 13, color: "#374151" }}>
+              Adjust daily cap:
+              <input
+                type="number"
+                value={capDraft}
+                onChange={(e) => setCapDraft(e.target.value)}
+                min={1}
+                max={10000}
+                style={{ ...numInput, marginLeft: 10, width: 90 }}
+                disabled={savingCap}
+              />
+            </label>
+            <button type="submit" disabled={savingCap} style={btnSecondary}>
+              {savingCap ? "Saving…" : "Save cap"}
+            </button>
+          </form>
+          {capMsg && (
+            <p style={{ color: capMsg.ok ? "#15803d" : "#b91c1c", marginTop: 8, fontSize: 13 }}>{capMsg.text}</p>
+          )}
+        </div>
       </section>
 
       {/* ── Tenant proximity ── */}
