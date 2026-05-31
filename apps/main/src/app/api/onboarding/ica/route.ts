@@ -50,7 +50,6 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "name_mismatch" }, { status: 422 });
     }
 
-    // Fetch current ICA document version.
     const { data: icaDocs, error: icaDocsErr } = await db
       .from("legal_documents")
       .select("id, version")
@@ -72,7 +71,7 @@ export async function POST(req: Request): Promise<Response> {
     const icaDoc = icaDocs[0] as { id: string; version: number };
     const ipAddress = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
 
-    // Write ICA consent and tenants update via service_role.
+    // service_role required: authenticated users cannot INSERT legal_consents per RLS.
     const serviceDb = createServiceRoleClient();
 
     const { error: consentErr } = await serviceDb.from("legal_consents").insert({

@@ -11,8 +11,6 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 interface LegalAcceptBody {
   accepted_types: string[];
-  ip_address?: string;
-  user_agent?: string;
 }
 
 const REQUIRED_DOCUMENT_TYPES = ["tou", "privacy_policy", "ai_disclaimer", "cookie_policy"];
@@ -34,7 +32,6 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "missing_consents", missing }, { status: 422 });
     }
 
-    // Fetch current version of each accepted document type.
     const readDb = tenantClient(ctx);
     const { data: docs, error: docsErr } = await readDb
       .from("legal_documents")
