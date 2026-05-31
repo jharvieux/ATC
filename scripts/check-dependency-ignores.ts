@@ -64,18 +64,21 @@ function existingOpenIssue(title: string): boolean {
     ).trim();
     return Number(out) > 0;
   } catch {
-    // If the search fails, err toward NOT creating a duplicate is wrong
-    // here (we'd silently never notify). Err toward attempting creation;
-    // a duplicate issue is a minor annoyance vs a missed signal.
+    // Search failed. Report "no existing issue" so the caller proceeds to
+    // create one: a duplicate issue is a minor annoyance, a missed signal
+    // is the failure this whole tool exists to prevent.
     return false;
   }
 }
 
-function openIssue(w: IgnoreWatch, gatingVersion: string, gatingRange: string): void {
+/** Returns true if an issue is open (newly created or already existed),
+ *  false only if creation was attempted and failed — so the caller can
+ *  fail the run loud rather than silently dropping a cleared signal. */
+function openIssue(w: IgnoreWatch, gatingVersion: string, gatingRange: string): boolean {
   const title = issueTitle(w);
   if (existingOpenIssue(title)) {
     console.log(`[watch] issue already open for ${w.ignored} ${w.blocked_major} — skipping`);
-    return;
+    return true;
   }
   const body = [
     `\`${w.gated_by}@${gatingVersion}\` now declares \`peerDependencies.${w.peer_key} = "${gatingRange}"\`, which admits **${w.ignored} ${w.blocked_major}.x**.`,
@@ -101,8 +104,10 @@ function openIssue(w: IgnoreWatch, gatingVersion: string, gatingRange: string): 
       stdio: "inherit",
     });
     console.log(`[watch] opened issue: ${title}`);
+    return true;
   } catch (err) {
     console.error(`[watch] failed to open issue for ${w.ignored}: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 
@@ -112,6 +117,7 @@ async function main(): Promise<void> {
 
   let reachable = 0;
   let cleared = 0;
+  let issueFailures = 0;
 
   for (const w of config.watches) {
     let peer: { version: string; range: string | undefined };
@@ -131,7 +137,7 @@ async function main(): Promise<void> {
     if (isCleared) {
       cleared++;
       if (ghAvailable()) {
-        openIssue(w, peer.version, peer.range ?? "");
+        if (!openIssue(w, peer.version, peer.range ?? "")) issueFailures++;
       } else {
         console.log(`[watch] (no GH_TOKEN — skipping issue creation for ${w.ignored})`);
       }
@@ -142,6 +148,12 @@ async function main(): Promise<void> {
     throw new Error("could not reach the npm registry for any watch — network failure, not a clear/no-clear result");
   }
   console.log(`[watch] done: ${reachable}/${config.watches.length} checked, ${cleared} cleared.`);
+
+  // Fail loud: a cleared signal we couldn't turn into an issue is silent
+  // signal loss — the exact failure mode this tool exists to prevent.
+  if (issueFailures > 0) {
+    throw new Error(`${issueFailures} cleared watch(es) detected but their re-test issue(s) could not be opened`);
+  }
 }
 
 main().catch((err: unknown) => {

@@ -13,12 +13,15 @@
 import semver from "semver";
 
 export interface IgnoreWatch {
-  ignored: string;        // the dep we hold back (e.g. "eslint")
-  blocked_major: number;  // the major we're holding away from (e.g. 10)
-  gated_by: string;       // the package whose peer range gates the upgrade
-  peer_key: string;       // which peerDependencies key to read
-  reason: string;         // why the ignore exists
-  ref: string;            // tracking issue/PR (e.g. "#373")
+  ignored: string;
+  blocked_major: number;
+  // The package whose peerDependencies range gates the upgrade, and which
+  // key within it to read (these two are the non-obvious fields; the rest
+  // are self-describing — full schema in docs/runbooks/dependency-ignore-watch.md).
+  gated_by: string;
+  peer_key: string;
+  reason: string;
+  ref: string;
 }
 
 export interface WatchConfig {
@@ -67,9 +70,11 @@ export function isBlockerCleared(
   try {
     return semver.intersects(peerRange, `${blockedMajor}.x`, { includePrerelease: false });
   } catch {
-    // An unparseable range (e.g. a git URL or "*") is not a clear signal;
-    // treat as not-cleared rather than throwing — the monthly poll should
-    // never fail loud on an upstream's weird peer-dep string.
+    // semver.intersects throws on ranges it can't parse — e.g. a git URL
+    // (`git+https://…`) or a workspace protocol (`workspace:*`). Those
+    // aren't a clear signal, so treat as not-cleared rather than letting
+    // the monthly poll fail loud on an upstream's non-semver peer string.
+    // (Note `"*"` is NOT in this bucket — it parses and intersects true.)
     return false;
   }
 }
