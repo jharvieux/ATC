@@ -21,8 +21,19 @@ updates:
       - "dependencies"
       - "automerge-candidate"
     ignore:
+      # Each semver-major ignore here is watched by the monthly
+      # dependency-ignore-watch workflow (.github/dependency-ignore-watch.json):
+      # it polls the gating package's peerDependencies and opens a re-test
+      # issue when the blocked major is admitted, so these don't rot silently.
+      #
       # vite 8.x breaks vitest 4's JSX/TSX transform — three test files fail
       # to load at module-resolution time (#330, 2026-05-28). Hold the major
-      # bump until vitest publishes a confirmed-compatible release.
+      # bump until vitest is confirmed-compatible (gated_by: vitest).
       - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      # eslint 10 removed context.getFilename(); eslint-plugin-react 7.37.5
+      # still calls it, crashing the react/display-name rule (#373,
+      # 2026-05-30). Hold the major until eslint-plugin-react's
+      # peerDependencies.eslint admits ^10 (gated_by: eslint-plugin-react).
+      - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]

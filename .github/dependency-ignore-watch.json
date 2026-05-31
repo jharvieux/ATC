@@ -1,0 +1,21 @@
+{
+  "$comment": "Watched dependabot ignores. A dependabot `ignore` is permanent and silent — nothing re-nudges us when upstream catches up. For each entry, the dependency-ignore-watch workflow polls npm for the gating package's peerDependencies range; when that range admits the blocked major, it opens an issue to RE-TEST and remove the ignore. A peerDep claim means 'upstream now declares support' (re-test trigger), NOT 'the upgrade definitely works' — confirm on a test branch. To add an entry: mirror the shape below and add the matching ignore in .github/dependabot.yml. See docs/runbooks/dependency-ignore-watch.md.",
+  "watches": [
+    {
+      "ignored": "eslint",
+      "blocked_major": 10,
+      "gated_by": "eslint-plugin-react",
+      "peer_key": "eslint",
+      "reason": "eslint 10 removed context.getFilename(); eslint-plugin-react 7.37.5 still calls it, crashing the react/display-name rule.",
+      "ref": "#373"
+    },
+    {
+      "ignored": "vite",
+      "blocked_major": 8,
+      "gated_by": "vitest",
+      "peer_key": "vite",
+      "reason": "vite 8 broke vitest 4's JSX/TSX transform (3 test files failed to load at module-resolution time).",
+      "ref": "#330"
+    }
+  ]
+}
