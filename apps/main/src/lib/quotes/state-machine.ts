@@ -26,6 +26,8 @@ export class InvalidQuoteTransitionError extends Error {
   }
 }
 
+const VALID_STATUSES = new Set<QuoteStatus>(["draft", "sent", "viewed", "accepted", "declined", "expired", "converted"]);
+
 const ALLOWED_TRANSITIONS: Record<QuoteStatus, ReadonlySet<QuoteStatus>> = {
   draft:     new Set<QuoteStatus>(["sent"]),
   sent:      new Set<QuoteStatus>(["viewed", "accepted", "declined", "expired"]),
@@ -37,7 +39,10 @@ const ALLOWED_TRANSITIONS: Record<QuoteStatus, ReadonlySet<QuoteStatus>> = {
 };
 
 export function assertValidQuoteTransition(from: QuoteStatus, to: QuoteStatus): void {
-  if (!ALLOWED_TRANSITIONS[from]?.has(to)) {
+  if (!VALID_STATUSES.has(from) || !VALID_STATUSES.has(to)) {
+    throw new InvalidQuoteTransitionError(from, to);
+  }
+  if (!ALLOWED_TRANSITIONS[from].has(to)) {
     throw new InvalidQuoteTransitionError(from, to);
   }
 }
