@@ -62,7 +62,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
   const db = getRagDb();
 
   // 1. Look up existing itinerary by composite key.
-  const { data: existing } = await db
+  const { data: existing, error: existingErr } = await db
     .from("itineraries")
     .select("id, content_hash, related_chunk_id")
     .eq("cruise_line", body.cruise_line)
@@ -70,6 +70,10 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .eq("departure_date", body.departure_date)
     .eq("departure_port", body.departure_port)
     .maybeSingle();
+  if (existingErr) {
+    console.error("[ingest/itinerary] itineraries lookup failed:", existingErr);
+    return Response.json({ error: "db_lookup_failed" }, { status: 500 });
+  }
 
   const existingRow = existing as { id: string; content_hash: string; related_chunk_id: string | null } | null;
 

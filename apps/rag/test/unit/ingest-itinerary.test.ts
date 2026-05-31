@@ -238,5 +238,15 @@ describe("POST /api/ingest/itinerary", () => {
       const insertWithout = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "insert");
       expect((insertWithout!.payload as Record<string, unknown>)["contains_pricing"]).toBe(false);
     });
+
+    it("UPDATE path also carries correct authority_auto (re-ingest of changed content)", async () => {
+      existingItinerary = { id: "existing-id", content_hash: "OLDHASH", related_chunk_id: "existing-chunk-id" };
+      const body = { ...VALID_BODY, day_by_day: DAY_BY_DAY, starting_price_usd: 649 };
+      const res = await POST(makeReq(body), { params: Promise.resolve({}) });
+      expect(res.status).toBe(200);
+      const update = dbCalls.find((c) => c.table === "knowledge_chunks" && c.op === "update");
+      expect((update!.payload as Record<string, unknown>)["authority_auto"]).toBe(0.40);
+      expect((update!.payload as Record<string, unknown>)["contains_pricing"]).toBe(true);
+    });
   });
 });

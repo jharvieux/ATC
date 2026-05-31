@@ -74,6 +74,11 @@ describe("mapItinerary", () => {
     expect(mapItinerary({ ...BASE, cruiseLine: "Princess Cruises" })!.key.line).toBe("PCL");
     expect(mapItinerary({ ...BASE, cruiseLine: "MSC" })!.key.line).toBe("MSC");
   });
+
+  it("labels cache quote source as 'apify' (Apify actor path, not DIY)", () => {
+    const out = mapItinerary(BASE);
+    expect(out!.cacheQuote!.source).toBe("apify");
+  });
 });
 
 const BASE_PARSED_SAILING: ParsedSailing = {

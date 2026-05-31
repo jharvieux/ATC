@@ -107,11 +107,12 @@ async function processKind(
   };
 
   // Pre-load previous content hashes so we can pass them to the fetcher.
-  const { data: prior } = await db
+  const { data: prior, error: priorErr } = await db
     .from("cruisemapper_url_inventory")
     .select("url, content_hash")
     .eq("kind", kind)
     .in("url", urls.slice(0, 5000)); // safety cap
+  if (priorErr) throw new Error(`cruisemapper_url_inventory.select failed: ${priorErr.message}`);
   const priorHashByUrl = new Map<string, string>();
   for (const row of (prior ?? []) as Array<{ url: string; content_hash: string | null }>) {
     if (row.content_hash) priorHashByUrl.set(row.url, row.content_hash);
@@ -324,11 +325,12 @@ async function processShipKind(
   };
   const sailing = emptySailingResult();
 
-  const { data: prior } = await db
+  const { data: prior, error: priorErr } = await db
     .from("cruisemapper_url_inventory")
     .select("url, content_hash")
     .eq("kind", "ship")
     .in("url", urls.slice(0, 5000));
+  if (priorErr) throw new Error(`cruisemapper_url_inventory.select failed: ${priorErr.message}`);
   const priorHashByUrl = new Map<string, string>();
   for (const row of (prior ?? []) as Array<{ url: string; content_hash: string | null }>) {
     if (row.content_hash) priorHashByUrl.set(row.url, row.content_hash);

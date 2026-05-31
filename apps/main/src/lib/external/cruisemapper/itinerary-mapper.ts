@@ -132,7 +132,7 @@ export function mapItinerary(item: CruiseMapperItineraryItem): MappedItinerary |
         key,
         cabinPrices: { interior: { amount: startingPrice, currency: "USD" as const } },
         fetchedAt: new Date(),
-        source: "diy_cruisemapper" as const,
+        source: "apify" as const,
       }
     : null;
 
