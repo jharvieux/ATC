@@ -264,6 +264,13 @@ const ALLOWED_PATH_SUFFIXES = [
   // row yet, so RLS can't grant the upsert. Service-role with an explicit
   // (auth_user_id, tenant_id) upsert is the only path.
   "/app/api/auth/microsoft-email-verify/route.ts",
+  // §7.1 / §17.3 — Tenant provisioning (signup/complete). Called on the
+  // platform domain before any public.users or public.tenants row exists.
+  // No tenant context → assertPermission can't run → service-role required
+  // to INSERT the tenant and the first users row.
+  // Two-layer isolation exception: tenant_id is the INSERT payload here,
+  // not a filter target — no prior row exists to filter against.
+  "/app/api/auth/signup/complete/route.ts",
   "/app/api/groups/route.ts",
   "/app/api/groups/[id]/invitations/route.ts",
   "/app/api/groups/invite/[token]/route.ts",

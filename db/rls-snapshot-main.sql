@@ -105,6 +105,8 @@
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
+-- public.weather_forecast_cache (rls_enabled)
+-- public.weather_usage_metrics (rls_enabled)
 --
 -- Tables with RLS disabled:
 -- public.apify_spend_ledger (rls_disabled)
@@ -1502,4 +1504,32 @@ CREATE POLICY "users_update_policy" ON public.users
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.weather_forecast_cache
+CREATE POLICY "weather_forecast_cache_no_user_delete" ON public.weather_forecast_cache
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "weather_forecast_cache_no_user_insert" ON public.weather_forecast_cache
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "weather_forecast_cache_no_user_select" ON public.weather_forecast_cache
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "weather_forecast_cache_no_user_update" ON public.weather_forecast_cache
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.weather_usage_metrics
+CREATE POLICY "weather_usage_metrics_no_user_delete" ON public.weather_usage_metrics
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "weather_usage_metrics_no_user_insert" ON public.weather_usage_metrics
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "weather_usage_metrics_no_user_select" ON public.weather_usage_metrics
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "weather_usage_metrics_no_user_update" ON public.weather_usage_metrics
+  FOR UPDATE TO PUBLIC
+  USING (false);
 

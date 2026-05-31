@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-131 — 2026-05-31 — §7.1/§17.3 signup/complete tenant provisioning: assertPermission cannot gate this route
+
+`POST /api/auth/signup/complete` (PR #523, issue #441) provisions a net-new tenant for platform-domain operator signups. At call time, no `public.tenants` or `public.users` row exists for the caller — the OAuth callback deliberately skips the users upsert when `x-resolved-tenant-id === "platform"`. `assertPermission` requires an existing users row (it queries `users.eq("auth_user_id").eq("tenant_id")`), so it cannot gate this route.
+
+**Why.** This is a bootstrap operation. Auth is verified directly via `supabase.auth.getUser()`. The platform-domain guard (`x-resolved-tenant-id !== "platform"` → 403) is the first layer; authenticated session check is the second. Service-role is used for the INSERT because the user has no tenant membership to satisfy RLS.
+
+**How to apply.** Any future pre-tenant route (e.g., slug-check, pricing preview) should follow the same pattern: direct `getUser()` + platform-domain guard + service-role for DB writes. Do NOT use `assertPermission` until after the tenant row and users row exist.
+
+---
+
+## D-130 — 2026-05-31 — §12.4 quote state-machine extracted to lib; routes still use inline status checks (follow-up tracked in #384)
+
+`@/lib/quotes/state-machine.ts` was created to hold the allowed-transition map and `assertValidQuoteTransition()` function (PR #522, issue #477). The existing API routes (`send/route.ts`, `accept/route.ts`, public select, etc.) still use inline `status !== "draft"` style checks — they were NOT refactored in this PR.
+
+**Why.** The goal was to fix the in-test reimplementation anti-pattern (CRM contacts test defined its own `transitionTo` function), not to refactor all route handlers. The lib exists and is correct; wiring it to the routes is a follow-up tracked under #384 (Cross-Tenant Probe is the remaining test-scaffolding item, but wiring the state machine to routes would also land here).
+
+**How to apply.** When wiring routes: `assertValidQuoteTransition(currentStatus, targetStatus)` throws `InvalidQuoteTransitionError` on invalid transitions. Routes that currently do `if (quote.status !== "draft")` should switch to `assertValidQuoteTransition(quote.status as QuoteStatus, "sent")` inside a try/catch that maps `InvalidQuoteTransitionError` to a 409.
+
+---
+
 ## D-129 — 2026-05-31 — §9.6 collect_booking_details: draft creation is NOT submission; supersedes D-105 placeholder stance for this tool
 
 **Decision.** `collect_booking_details` is implemented as draft-booking creation + optional lead-passenger pre-fill (PR #520, issue #423). D-105 marked it a placeholder because it "conflicts with §20.4's agent-confirmation flow." That framing was correct about submission (flipping booking status to 'confirmed') but too broad. The handler creates a `status='draft'` booking, optionally inserts a lead passenger, and returns a `booking_url` that takes the customer to the on-page flow to confirm and submit. The distinction is deliberate: the AI collects intent; the form closes the contract. §20.3's entry-point table explicitly lists "From AI chat: AI's collect_booking_details tool → flow with conversation context" as a supported path. §20.4 still governs submission — no change there. `search_host_inventory` (needs real host-adapter, BP14) and `generate_quote` (§38's agent-owns-pricing rule) remain intentional placeholders per D-105.
