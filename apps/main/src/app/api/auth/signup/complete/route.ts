@@ -9,10 +9,11 @@
 // Not gated by assertPermission — no tenant context exists pre-provisioning.
 // Auth is verified directly via getUser() on the session cookie.
 
-import type { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import {
+  safeAwait,
   safeAwaitRequired,
   SupabaseMutationError,
 } from "@/lib/db/safe-mutation";
@@ -20,7 +21,7 @@ import { publishTenantEvent } from "@/lib/rag-sync/publish-tenant-event";
 import { bindContactOnIdentification } from "@/lib/attribution/bind-contact-on-identification";
 import {
   readPendingAttributionFromHeader,
-  ATTRIBUTION_PENDING_COOKIE,
+  clearPendingAttributionCookie,
 } from "@/lib/attribution/read-pending-cookie";
 
 const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
@@ -33,7 +34,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
 
-  // Verify session — the cookie was set by the OAuth callback.
   const supabase = createRequestScopedClient(req);
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData?.user) {
@@ -45,7 +45,6 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "email_required" }, { status: 400 });
   }
 
-  // Parse body
   let body: unknown;
   try {
     body = await req.json();
@@ -67,13 +66,18 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   const svc = createServiceRoleClient();
 
-  // Idempotency guard — user must not already have a tenant row.
-  const { data: existingUser } = await svc
-    .from("users")
-    .select("tenant_id")
-    .eq("auth_user_id", authUserId)
-    .limit(1)
-    .maybeSingle();
+  // Idempotency guard — fail-closed: safeAwait throws on DB error so a DB
+  // hiccup returns 500 rather than silently passing the guard.
+  let existingUser: unknown;
+  try {
+    existingUser = await safeAwait(
+      svc.from("users").select("tenant_id").eq("auth_user_id", authUserId).limit(1).maybeSingle(),
+      "users.select.idempotency_check",
+    );
+  } catch (err) {
+    console.error("[signup/complete] idempotency guard query failed:", err);
+    return Response.json({ error: "internal_error" }, { status: 500 });
+  }
   if (existingUser) {
     return Response.json({ error: "already_provisioned" }, { status: 409 });
   }
@@ -107,20 +111,24 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   // INSERT users row — role defaults to "tenant_owner" per migration 20260625000001.
-  const userRow = await safeAwaitRequired(
-    svc
-      .from("users")
-      .insert({
-        auth_user_id: authUserId,
-        tenant_id:    tenantId,
-        email,
-        status: "active",
-      })
-      .select("id")
-      .single(),
-    "users.insert.signup_complete",
-  );
-  const userId = (userRow as unknown as { id: string }).id;
+  // Wrapped in try/catch: if this fails the tenant row above is already committed.
+  // The hard-delete trigger (prevent_tenant_hard_delete) blocks programmatic
+  // rollback, so we log the orphaned tenant_id for ops to manually clean up.
+  let userId: string;
+  try {
+    const userRow = await safeAwaitRequired(
+      svc
+        .from("users")
+        .insert({ auth_user_id: authUserId, tenant_id: tenantId, email, status: "active" })
+        .select("id")
+        .single(),
+      "users.insert.signup_complete",
+    );
+    userId = (userRow as unknown as { id: string }).id;
+  } catch (err) {
+    console.error("[signup/complete] users.insert failed after tenant committed; orphaned tenant_id:", tenantId, err);
+    return Response.json({ error: "internal_error" }, { status: 500 });
+  }
 
   // Publish tenant.created — awaited; no void in serverless (D-091).
   await publishTenantEvent({
@@ -140,15 +148,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     pending_payload: pending ?? null,
   });
 
-  // Clear attribution pending cookie so a stale UTM doesn't attach to future sessions.
-  const jsonRes = Response.json(
+  const res = NextResponse.json(
     { tenant_id: tenantId, slug, status: "onboarding", onboarding_stage: "signup" },
     { status: 201 },
   );
-  const res = new Response(jsonRes.body, { status: jsonRes.status, headers: jsonRes.headers });
-  res.headers.append(
-    "Set-Cookie",
-    `${ATTRIBUTION_PENDING_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`,
-  );
+  clearPendingAttributionCookie(res);
   return res;
 }
