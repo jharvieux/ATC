@@ -417,10 +417,7 @@ jobs:
         run: npm install -g vercel
 
       - name: Vercel deploy (production)
-        run: |
-          vercel pull --environment=production --yes --token=$VERCEL_TOKEN
-          vercel build --prod --token=$VERCEL_TOKEN
-          vercel deploy --prebuilt --target=production --token=$VERCEL_TOKEN
+        run: vercel deploy --target=production --yes --token=$VERCEL_TOKEN
 
       - name: Smoke test production
         run: |
