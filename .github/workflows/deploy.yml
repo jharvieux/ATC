@@ -409,6 +409,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Apply Supabase migrations to production
+        if: ${{ false }}
         run: |
           npx supabase db push --db-url "$DB_URL"
 
