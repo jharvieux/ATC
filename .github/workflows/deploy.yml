@@ -258,7 +258,9 @@ jobs:
   db-copy:
     name: Copy Prod DB to Staging
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    # Skipped until staging DB is provisioned. Set STAGING_PIPELINE_ENABLED=true
+    # repo variable to activate. See issue #533.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
     needs:
       [
         typecheck,
@@ -314,7 +316,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
     needs: [db-copy]
     environment:
       name: staging
@@ -379,8 +381,17 @@ jobs:
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    # always() lets this run even when staging jobs were skipped (not yet provisioned).
+    # !failure() + !cancelled() still block production if staging ran and failed.
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/heads/release/') &&
+      !failure() && !cancelled()
     needs: [deploy-staging]
+    permissions:
+      contents: write
+      pull-requests: write
     environment:
       name: production
       url: https://ai-travelconcierge.com
@@ -406,15 +417,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # TODO(#534): restore when DB_URL secret is configured in the production GitHub environment.
       - name: Apply Supabase migrations to production
+        if: ${{ false }}
         run: |
           npx supabase db push --db-url "$DB_URL"
 
+      - name: Install Vercel CLI
+        run: npm install -g vercel@54
+
       - name: Vercel deploy (production)
-        run: |
-          vercel pull --environment=production --yes --token=$VERCEL_TOKEN
-          vercel build --prod --token=$VERCEL_TOKEN
-          vercel deploy --prebuilt --target=production --token=$VERCEL_TOKEN
+        run: vercel deploy --target=production --yes --token=$VERCEL_TOKEN
 
       - name: Smoke test production
         run: |
