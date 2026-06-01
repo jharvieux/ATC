@@ -258,6 +258,7 @@ jobs:
   db-copy:
     name: Copy Prod DB to Staging
     runs-on: ubuntu-latest
+    continue-on-error: true
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     needs:
       [
@@ -314,6 +315,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
+    continue-on-error: true
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     needs: [db-copy]
     environment:
