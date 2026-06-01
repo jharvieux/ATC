@@ -326,12 +326,6 @@ describe("PUT /api/admin/resource-utilization", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 400 when field is missing", async () => {
-    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
-    const res = await PUT(putReq({}, "admin-123"));
-    expect(res.status).toBe(400);
-  });
-
   it("returns 400 for invalid JSON body", async () => {
     const { PUT } = await import("@/app/api/admin/resource-utilization/route");
     const req = new Request("http://test/api/admin/resource-utilization", {

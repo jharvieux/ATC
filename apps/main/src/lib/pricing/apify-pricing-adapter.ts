@@ -131,11 +131,15 @@ export class ApifyPricingAdapter implements PricingDataSource {
   }
 
   private async readBudgetCapFromDb(): Promise<number | undefined> {
-    const { data } = await this.db
+    const { data, error } = await this.db
       .from("platform_settings")
       .select("value")
       .eq("key", "apify_monthly_budget_usd")
       .maybeSingle();
+    if (error) {
+      console.error(`[ApifyPricingAdapter] readBudgetCapFromDb failed — using env var cap: ${error.message}`);
+      return undefined;
+    }
     if (!data) return undefined;
     const v = parseFloat(String((data as { value?: unknown }).value));
     return Number.isFinite(v) && v > 0 ? v : undefined;
