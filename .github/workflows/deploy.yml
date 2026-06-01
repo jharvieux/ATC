@@ -383,6 +383,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     needs: [deploy-staging]
+    permissions:
+      contents: write
+      pull-requests: write
     environment:
       name: production
       url: https://ai-travelconcierge.com
