@@ -100,8 +100,13 @@ export async function POST(req: Request): Promise<Response> {
 
     // Advance to "legal". If still at "signup", go through "profile" first —
     // direct signup→legal skips a stage and the state machine rejects it.
-    await progressTo(ctx.tenant_id, "profile");
-    await progressTo(ctx.tenant_id, "legal");
+    try {
+      await progressTo(ctx.tenant_id, "profile");
+      await progressTo(ctx.tenant_id, "legal");
+    } catch (err) {
+      console.error("[onboarding/profile] stage advance failed after update committed; tenant_id:", ctx.tenant_id, err);
+      return Response.json({ error: "stage_advance_failed" }, { status: 500 });
+    }
 
     return Response.json({ ok: true, next_stage: "legal" });
   } catch (err) {
