@@ -101,8 +101,9 @@ export const PLATFORM_ADMIN_REASONS = [
   "ai_pricing_read",
   "ai_pricing_update",
 
-  // Resource utilization dashboard — Resend per-email cost rate.
+  // Resource utilization dashboard — Resend per-email cost rate + Apify budget cap.
   "resend_pricing_update",
+  "apify_budget_update",
 
   // §33.12 — Authority-override curation (platform admin sets or clears
   // authority_manual_override on knowledge_chunks).

@@ -7,6 +7,13 @@ export interface DailyRow {
   ai_cost_cents: number;
   email_count: number;
   weather_requests: number;
+  apify_spend_cents: number;
+}
+
+export interface ApifyCruiseLineRow {
+  cruise_line: string | null;
+  run_count: number;
+  spend_usd: number;
 }
 
 export interface ModelRow {
@@ -42,6 +49,7 @@ export function buildDailyArray(
   emailRows: Array<{ sent_at: string | null }>,
   weatherRows: Array<{ metric_date: string; requests_count: number }>,
   today: Date,
+  apifyRows: Array<{ invoked_at: string; spend_usd: number }> = [],
 ): DailyRow[] {
   const aiByDay = new Map<string, number>();
   for (const row of aiRows) {
@@ -61,6 +69,12 @@ export function buildDailyArray(
     weatherByDay.set(row.metric_date, row.requests_count);
   }
 
+  const apifyByDay = new Map<string, number>();
+  for (const row of apifyRows) {
+    const day = row.invoked_at.slice(0, 10);
+    apifyByDay.set(day, (apifyByDay.get(day) ?? 0) + Math.round(Number(row.spend_usd) * 100));
+  }
+
   const daily: DailyRow[] = [];
   for (let i = 29; i >= 0; i--) {
     const d = new Date(today);
@@ -71,6 +85,7 @@ export function buildDailyArray(
       ai_cost_cents: aiByDay.get(dateStr) ?? 0,
       email_count: emailByDay.get(dateStr) ?? 0,
       weather_requests: weatherByDay.get(dateStr) ?? 0,
+      apify_spend_cents: apifyByDay.get(dateStr) ?? 0,
     });
   }
   return daily;
@@ -99,6 +114,20 @@ export function aggregateByModel(
 }
 
 const STATE_SEVERITY: Record<string, number> = { hard: 3, soft2: 2, soft1: 1, ok: 0 };
+
+export function aggregateApifyByCruiseLine(
+  rows: Array<{ cruise_line: string | null; spend_usd: number }>,
+): ApifyCruiseLineRow[] {
+  const map = new Map<string, ApifyCruiseLineRow>();
+  for (const row of rows) {
+    const key = row.cruise_line ?? "\0null";
+    const existing = map.get(key) ?? { cruise_line: row.cruise_line, run_count: 0, spend_usd: 0 };
+    existing.run_count++;
+    existing.spend_usd += Number(row.spend_usd);
+    map.set(key, existing);
+  }
+  return Array.from(map.values()).sort((a, b) => b.spend_usd - a.spend_usd);
+}
 
 // Sorts tenants: most-severe limit state first; within same state, highest AI
 // cost first. The sort order drives the tenant proximity table in the dashboard.

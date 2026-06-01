@@ -110,11 +110,14 @@ export class ApifyPricingAdapter implements PricingDataSource {
     }
     // §33.9.3 D-088 — tracked-sailings refresh is the SOLE Apify consumer
     // now. General-pricing was removed (DIY scraper replaces it). When
-    // month-to-date spend hits APIFY_MONTHLY_BUDGET_USD_CEILING, tracked-
-    // sailings pauses for the rest of the month — subscriber watches go
-    // un-refreshed but stay armed.
-    const monthly = await this.monthlySpendUsd();
-    const gate = checkMonthlyBudget(monthly);
+    // month-to-date spend hits the budget cap (DB override > env var),
+    // tracked-sailings pauses for the rest of the month — subscriber watches
+    // go un-refreshed but stay armed.
+    const [monthly, capOverride] = await Promise.all([
+      this.monthlySpendUsd(),
+      this.readBudgetCapFromDb(),
+    ]);
+    const gate = checkMonthlyBudget(monthly, capOverride);
     if (gate.paused) {
       await sendOperatorAlert({
         severity: "high",
@@ -125,6 +128,21 @@ export class ApifyPricingAdapter implements PricingDataSource {
       return refuse("monthly_budget_exhausted", `monthly cap $${gate.cap_usd.toFixed(2)} reached`);
     }
     return null;
+  }
+
+  private async readBudgetCapFromDb(): Promise<number | undefined> {
+    const { data, error } = await this.db
+      .from("platform_settings")
+      .select("value")
+      .eq("key", "apify_monthly_budget_usd")
+      .maybeSingle();
+    if (error) {
+      console.error(`[ApifyPricingAdapter] readBudgetCapFromDb failed — using env var cap: ${error.message}`);
+      return undefined;
+    }
+    if (!data) return undefined;
+    const v = parseFloat(String((data as { value?: unknown }).value));
+    return Number.isFinite(v) && v > 0 ? v : undefined;
   }
 
   private async monthlySpendUsd(): Promise<number> {

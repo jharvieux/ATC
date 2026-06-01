@@ -26,9 +26,15 @@ export interface BudgetCheck {
 
 /** Returns { paused: true } when current month-to-date spend has reached
  *  or exceeded the monthly cap. Tracked-sailings is the only consumer
- *  today (D-088). */
-export function checkMonthlyBudget(currentMonthlySpendUsd: number): BudgetCheck {
-  const cap = monthlyBudgetCapUsd();
+ *  today (D-088).
+ *
+ *  capUsdOverride: when provided (e.g. from platform_settings DB row),
+ *  takes precedence over the APIFY_MONTHLY_BUDGET_USD_CEILING env var. */
+export function checkMonthlyBudget(currentMonthlySpendUsd: number, capUsdOverride?: number): BudgetCheck {
+  const cap =
+    capUsdOverride !== undefined && Number.isFinite(capUsdOverride) && capUsdOverride > 0
+      ? capUsdOverride
+      : monthlyBudgetCapUsd();
   if (currentMonthlySpendUsd >= cap) {
     return {
       paused: true,

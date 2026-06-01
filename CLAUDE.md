@@ -207,6 +207,13 @@ Touch only what you must. Clean up only your own mess.
 Don't "improve" adjacent code, comments, or formatting.
 Don't refactor what isn't broken. Match existing style.
 
+— Never ignore a bug you find
+If you encounter a bug while doing other work, you must act on it — never leave it noted and unfixed.
+- **Trivial** (one-liner fix, obvious cause, no scope risk): fix it inline in your current PR. Note it in the commit message.
+- **Non-trivial** (requires investigation, touches multiple files, or has unclear blast radius): open a GitHub issue before the end of the session. Include: what the bug is, where it lives, what the symptom is, and what the likely fix looks like. Reference the issue in SESSION.md under "Open questions" or "Blocked on user" as appropriate.
+
+"I'll track it as a follow-up" is only acceptable if the GitHub issue exists by the end of the session. Leaving a known bug untracked is not acceptable.
+
  — Goal-Driven Execution
 Define success criteria. Loop until verified.
 Don't follow steps. Define success and iterate.

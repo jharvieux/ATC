@@ -121,7 +121,10 @@ describe("GET /api/admin/integrations/weather", () => {
       };
     });
     mocks.historyRows.push({ metric_date: today, requests_count: 42, last_request_at: null });
-    mocks.historyRows = mocks.historyRows.filter((r) => r.metric_date.startsWith(month));
+    // Do NOT filter mock rows by month — the mock represents the raw DB result
+    // (last 30 days). The 7 prior-day rows may span a month boundary (e.g. when
+    // running on the 1st); filtering them out here broke avg_7d on month start.
+    // The route handles month filtering internally for requests_this_month.
 
     const res = await GET(req("GET", undefined, { "x-admin-user-id": "u1" }));
     expect(res.status).toBe(200);
@@ -131,7 +134,10 @@ describe("GET /api/admin/integrations/weather", () => {
     expect(json.cap).toBe(8000);
     expect(json.requests_today).toBe(42);
     expect(json.avg_7d).toBe(100);
-    expect(json.requests_this_month).toBe(100 * mocks.historyRows.filter((r) => r.metric_date !== today).length + 42);
+    const expectedMonthTotal = mocks.historyRows
+      .filter((r) => r.metric_date.startsWith(month))
+      .reduce((s, r) => s + r.requests_count, 0);
+    expect(json.requests_this_month).toBe(expectedMonthTotal);
   });
 
   it("returns 500 when cap read errors", async () => {

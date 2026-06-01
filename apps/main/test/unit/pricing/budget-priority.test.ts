@@ -63,4 +63,25 @@ describe("checkMonthlyBudget", () => {
     process.env.APIFY_MONTHLY_BUDGET_USD_CEILING = "100";
     expect(checkMonthlyBudget(100).paused).toBe(true);
   });
+
+  it("capUsdOverride takes precedence over env var", () => {
+    process.env.APIFY_MONTHLY_BUDGET_USD_CEILING = "100";
+    const gate = checkMonthlyBudget(150, 200);
+    expect(gate.paused).toBe(false);
+    expect(gate.cap_usd).toBe(200);
+  });
+
+  it("capUsdOverride triggers pause at the override threshold", () => {
+    process.env.APIFY_MONTHLY_BUDGET_USD_CEILING = "1000";
+    const gate = checkMonthlyBudget(50, 40);
+    expect(gate.paused).toBe(true);
+    expect(gate.cap_usd).toBe(40);
+  });
+
+  it("invalid capUsdOverride (zero, negative, NaN) falls back to env var", () => {
+    process.env.APIFY_MONTHLY_BUDGET_USD_CEILING = "200";
+    expect(checkMonthlyBudget(100, 0).cap_usd).toBe(200);
+    expect(checkMonthlyBudget(100, -5).cap_usd).toBe(200);
+    expect(checkMonthlyBudget(100, NaN).cap_usd).toBe(200);
+  });
 });

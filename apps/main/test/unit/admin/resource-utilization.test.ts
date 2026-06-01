@@ -197,6 +197,79 @@ describe("sortTenantsByProximity", () => {
   });
 });
 
+describe("aggregateApifyByCruiseLine", () => {
+  it("returns empty array for empty input", async () => {
+    const { aggregateApifyByCruiseLine } = await import("@/app/api/admin/resource-utilization/aggregations");
+    expect(aggregateApifyByCruiseLine([])).toEqual([]);
+  });
+
+  it("groups rows by cruise_line and sums spend_usd", async () => {
+    const { aggregateApifyByCruiseLine } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const rows = [
+      { cruise_line: "RCL", spend_usd: 1.5 },
+      { cruise_line: "RCL", spend_usd: 2.0 },
+      { cruise_line: "CCL", spend_usd: 0.5 },
+    ];
+    const result = aggregateApifyByCruiseLine(rows);
+    const rcl = result.find((r) => r.cruise_line === "RCL")!;
+    expect(rcl.run_count).toBe(2);
+    expect(rcl.spend_usd).toBeCloseTo(3.5);
+    expect(result.find((r) => r.cruise_line === "CCL")!.run_count).toBe(1);
+  });
+
+  it("treats null cruise_line as its own bucket", async () => {
+    const { aggregateApifyByCruiseLine } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const rows = [
+      { cruise_line: null, spend_usd: 1.0 },
+      { cruise_line: null, spend_usd: 2.0 },
+    ];
+    const result = aggregateApifyByCruiseLine(rows);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.cruise_line).toBeNull();
+    expect(result[0]!.run_count).toBe(2);
+  });
+
+  it("sorts by spend_usd descending", async () => {
+    const { aggregateApifyByCruiseLine } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const rows = [
+      { cruise_line: "NCL", spend_usd: 0.5 },
+      { cruise_line: "RCL", spend_usd: 5.0 },
+      { cruise_line: "CCL", spend_usd: 2.0 },
+    ];
+    const result = aggregateApifyByCruiseLine(rows);
+    expect(result[0]!.spend_usd).toBeGreaterThanOrEqual(result[1]!.spend_usd);
+    expect(result[1]!.spend_usd).toBeGreaterThanOrEqual(result[2]!.spend_usd);
+  });
+});
+
+describe("buildDailyArray with apify rows", () => {
+  it("buckets apify spend by invoked_at day, converting USD to cents", async () => {
+    const { buildDailyArray } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const today = new Date("2024-03-15");
+    const daily = buildDailyArray(
+      [],
+      [],
+      [],
+      today,
+      [
+        { invoked_at: "2024-03-15T10:00:00Z", spend_usd: 1.5 },
+        { invoked_at: "2024-03-15T14:00:00Z", spend_usd: 0.5 },
+        { invoked_at: "2024-03-14T08:00:00Z", spend_usd: 2.0 },
+      ],
+    );
+    expect(daily.find((d) => d.date === "2024-03-15")!.apify_spend_cents).toBe(200);
+    expect(daily.find((d) => d.date === "2024-03-14")!.apify_spend_cents).toBe(200);
+  });
+
+  it("zero-fills apify_spend_cents when no apify rows provided", async () => {
+    const { buildDailyArray } = await import("@/app/api/admin/resource-utilization/aggregations");
+    const daily = buildDailyArray([], [], [], new Date("2024-03-15"));
+    for (const row of daily) {
+      expect(row.apify_spend_cents).toBe(0);
+    }
+  });
+});
+
 // ── Part 2: PUT handler ───────────────────────────────────────────────────────
 
 vi.mock("@/lib/auth/assert-platform-admin", async () => {
@@ -253,12 +326,6 @@ describe("PUT /api/admin/resource-utilization", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 400 when field is missing", async () => {
-    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
-    const res = await PUT(putReq({}, "admin-123"));
-    expect(res.status).toBe(400);
-  });
-
   it("returns 400 for invalid JSON body", async () => {
     const { PUT } = await import("@/app/api/admin/resource-utilization/route");
     const req = new Request("http://test/api/admin/resource-utilization", {
@@ -282,5 +349,41 @@ describe("PUT /api/admin/resource-utilization", () => {
     const { PUT } = await import("@/app/api/admin/resource-utilization/route");
     const res = await PUT(putReq({ resend_cost_per_email_cents: 0 }, "admin-123"));
     expect(res.status).toBe(200);
+  });
+
+  it("returns 400 for empty body (no recognized fields)", async () => {
+    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
+    const res = await PUT(putReq({}, "admin-123"));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "no_recognized_fields" });
+  });
+});
+
+describe("PUT /api/admin/resource-utilization — apify budget", () => {
+  it("returns 200 with ok:true for a valid positive budget", async () => {
+    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
+    const res = await PUT(putReq({ apify_monthly_budget_usd: 500 }, "admin-123"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, apify_monthly_budget_usd: 500 });
+  });
+
+  it("returns 400 for zero budget", async () => {
+    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
+    const res = await PUT(putReq({ apify_monthly_budget_usd: 0 }, "admin-123"));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining("positive") });
+  });
+
+  it("returns 400 for negative budget", async () => {
+    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
+    const res = await PUT(putReq({ apify_monthly_budget_usd: -100 }, "admin-123"));
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts both fields in one request", async () => {
+    const { PUT } = await import("@/app/api/admin/resource-utilization/route");
+    const res = await PUT(putReq({ resend_cost_per_email_cents: 19, apify_monthly_budget_usd: 250 }, "admin-123"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, resend_rate: 19, apify_monthly_budget_usd: 250 });
   });
 });

@@ -46,6 +46,9 @@ function makeMockDb(): unknown {
           const chain = {
             eq() { return chain; },
             gte() { return chain; },
+            maybeSingle() {
+              return Promise.resolve({ data: null, error: null });
+            },
             then(resolve: (v: { data: unknown[] }) => unknown) {
               return resolve({ data: [] });
             },
