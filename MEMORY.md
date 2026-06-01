@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-133 — 2026-06-01 — Doc-only PRs exempt from pr-audit-section-check (and from running the audit agents)
+
+`.github/workflows/pr-audit-section-check.yml` gained a `doc-only-check` step that auto-passes the workflow when every changed file matches one of three patterns: anything ending in `*.md`, anything under `docs/**`, or anything under `specs/**`. A single non-doc file in the diff disqualifies the PR. CLAUDE.md's "Pull requests" section was updated to tell future Claude sessions to skip steps 4–6 of the PR workflow (audit subagents + body update) on those PRs.
+
+**Why.** The audit subagents (d091-reviewer + pre-pr-reviewer) review *application* behavior — D-091 anti-patterns, Supabase mutation safety, tenant isolation, etc. Running them on a markdown edit or a spec change just burns Sonnet tokens to learn there's nothing to review. The exemption mirrors the existing dependabot/bot-author auto-pass already in the workflow.
+
+**Rejected.** Broader exemptions (workflow YAML, anything non-application-code) — too risky. Workflow changes affect CI/CD security and were the subject of PR #535. `*.md` + `docs/**` + `specs/**` is the conservative line.
+
+**How to apply.** When opening a PR whose entire diff is markdown or `docs/**` or `specs/**` files: skip the audit agents, skip the `## Audit` body block. The workflow's doc-only-check will detect this and pass. Any single non-doc file in the diff puts you back on the full audit path.
+
+Related artifacts: PR #540 (workflow + CLAUDE.md change), CLAUDE.md "Pull requests" section.
+
+---
+
 ## D-132 — 2026-05-31 — RLS snapshot must be regenerated when migrations add new tables/policies
 
 The `db/rls-snapshot-main.sql` file is a positional line-by-line snapshot. Manual edits must match the exact output of `generateSnapshot` (scripts/rls-snapshot.ts): alphabetical order by table name then policy name, `TO PUBLIC` when roles array is empty, blank line after each table section. Both the `-- Tables with RLS enabled:` header and the `-- TABLE: public.*` policy sections must be updated together. When new migrations add tables or policies, run `pnpm rls:snapshot` (requires a direct Postgres URL in `SUPABASE_DB_URL`) or use the Supabase MCP to query `pg_policy` + `pg_class` and construct the entries manually.
