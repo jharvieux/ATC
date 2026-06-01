@@ -1,5 +1,3 @@
-// Tenant settings hub — links to all workspace settings sections.
-
 import Link from "next/link";
 
 const SECTIONS = [
