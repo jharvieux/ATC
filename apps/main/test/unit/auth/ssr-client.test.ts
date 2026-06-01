@@ -10,7 +10,7 @@
 // already-tested parser); only the request-scoped read path uses this parser,
 // so this is the seam under test.
 
-import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
 let capturedCookieAdapter: {
@@ -207,7 +207,10 @@ describe("getAuthCookieDomain", () => {
     process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
   });
 
-  afterAll(() => {
+  // Per-test restore (one case mutates PLATFORM_PRIMARY_DOMAIN to "localhost"
+  // mid-suite). afterAll would let that bleed into siblings if test order
+  // changes.
+  afterEach(() => {
     if (originalPrimary === undefined) delete process.env.PLATFORM_PRIMARY_DOMAIN;
     else process.env.PLATFORM_PRIMARY_DOMAIN = originalPrimary;
   });

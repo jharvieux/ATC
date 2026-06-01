@@ -120,9 +120,14 @@ function toResponseCookie(
 //   - custom-domain tenants (their own apex; auth flow stays on that apex,
 //     no cross-subdomain redirect to repair)
 export function getAuthCookieDomain(req: Request | NextRequest): string | undefined {
+  // Env unset or non-DNS (e.g. "localhost") → host-only cookies are the
+  // safe fallback. Failing closed here would brick auth on preview deploys
+  // and local dev. Do NOT change this to throw.
   const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
   if (!primaryDomain || !primaryDomain.includes(".")) return undefined;
 
+  // req.url is always a valid URL on NextRequest, but the helper accepts the
+  // wider Request type so callers don't have to narrow. Keep the cast safe.
   let hostname: string;
   try {
     hostname = new URL(req.url).hostname;
