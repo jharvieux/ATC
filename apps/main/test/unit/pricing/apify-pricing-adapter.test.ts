@@ -50,6 +50,10 @@ function makeMockDb(opts: { monthlySpend?: number } = {}): MockDb {
           const chain = {
             eq() { return chain; },
             gte() { return chain; },
+            maybeSingle() {
+              // readBudgetCapFromDb path — no DB override, falls back to env var.
+              return Promise.resolve({ data: null, error: null });
+            },
             then(resolve: (v: { data: unknown[] }) => unknown) {
               if (table === "apify_spend_ledger") {
                 return resolve({ data: monthlySpend > 0 ? [{ spend_usd: monthlySpend }] : [] });

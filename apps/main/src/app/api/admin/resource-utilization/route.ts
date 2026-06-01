@@ -13,12 +13,14 @@ import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platf
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import { parseBigIntCol, buildDailyArray, aggregateByModel, sortTenantsByProximity, type DailyRow, type ModelRow, type TenantRow } from "./aggregations";
+import { parseBigIntCol, buildDailyArray, aggregateByModel, aggregateApifyByCruiseLine, sortTenantsByProximity, type DailyRow, type ModelRow, type TenantRow, type ApifyCruiseLineRow } from "./aggregations";
 
 const RESEND_PRICE_KEY = "resend_cost_per_email_cents";
 // Resend Hobby tier: $1.90/1k emails = 0.19¢ each. Stored as 19 = 0.19¢
 // (fractional-cent precision: stored value ÷ 100 = ¢/email).
 const RESEND_DEFAULT = 19;
+
+const APIFY_BUDGET_KEY = "apify_monthly_budget_usd";
 
 function currentBillingPeriod(): string {
   const now = new Date();
@@ -59,6 +61,8 @@ export async function GET(req: Request): Promise<Response> {
           weatherCapResult,
           aiPricingResult,
           resendPriceResult,
+          apifyLedgerResult,
+          apifyBudgetResult,
         ] = await Promise.all([
           db.from("ai_call_log").select("created_at, cost_estimate_cents").gte("created_at", thirtyDaysAgo),
           db.from("email_log").select("sent_at").gte("sent_at", thirtyDaysAgo).in("status", ["sent", "delivered"]),
@@ -70,6 +74,8 @@ export async function GET(req: Request): Promise<Response> {
           db.from("platform_settings").select("value").eq("key", "weather_daily_request_cap").maybeSingle(),
           db.from("platform_settings").select("value").eq("key", "ai_pricing_catalog").maybeSingle(),
           db.from("platform_settings").select("value").eq("key", RESEND_PRICE_KEY).maybeSingle(),
+          db.from("apify_spend_ledger").select("invoked_at, spend_usd, cruise_line").gte("invoked_at", thirtyDaysAgo),
+          db.from("platform_settings").select("value").eq("key", APIFY_BUDGET_KEY).maybeSingle(),
         ]);
 
         // Fail-closed: surface any DB error rather than silently returning zeros.
@@ -83,20 +89,40 @@ export async function GET(req: Request): Promise<Response> {
         if (weatherCapResult.error) throw new Error(`weather cap read failed: ${weatherCapResult.error.message}`);
         if (aiPricingResult.error) throw new Error(`ai_pricing_catalog read failed: ${aiPricingResult.error.message}`);
         if (resendPriceResult.error) throw new Error(`resend_price read failed: ${resendPriceResult.error.message}`);
+        if (apifyLedgerResult.error) throw new Error(`apify_spend_ledger read failed: ${apifyLedgerResult.error.message}`);
+        if (apifyBudgetResult.error) throw new Error(`apify_budget read failed: ${apifyBudgetResult.error.message}`);
 
         recordQuery({ op: "select", table: "ai_call_log", row_count: (aiDailyResult.data?.length ?? 0) + (modelBreakdownResult.data?.length ?? 0) });
         recordQuery({ op: "select", table: "email_log", row_count: emailDailyResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "weather_usage_metrics", row_count: weatherHistoryResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "tenant_usage_metrics", row_count: tenantMetricsResult.data?.length ?? 0 });
         recordQuery({ op: "select", table: "tenants", row_count: tenantsResult.data?.length ?? 0 });
+        recordQuery({ op: "select", table: "apify_spend_ledger", row_count: apifyLedgerResult.data?.length ?? 0 });
 
         const resendRate = parseBigIntCol((resendPriceResult.data as { value?: unknown } | null)?.value ?? RESEND_DEFAULT);
+
+        const apifyLedgerRows = apifyLedgerResult.data as Array<{ invoked_at: string; spend_usd: number; cruise_line: string | null }>;
+
+        const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+        const apifySpendUsdPeriod = apifyLedgerRows
+          .filter((r) => r.invoked_at >= monthStart)
+          .reduce((s, r) => s + Number(r.spend_usd), 0);
+
+        const rawApifyBudget = (apifyBudgetResult.data as { value?: unknown } | null)?.value;
+        const parsedApifyBudget = rawApifyBudget != null ? parseFloat(String(rawApifyBudget)) : NaN;
+        const apifyMonthlyBudgetUsd =
+          Number.isFinite(parsedApifyBudget) && parsedApifyBudget > 0
+            ? parsedApifyBudget
+            : (parseFloat(process.env.APIFY_MONTHLY_BUDGET_USD_CEILING ?? "500") || 500);
+
+        const apifyByCruiseLine: ApifyCruiseLineRow[] = aggregateApifyByCruiseLine(apifyLedgerRows);
 
         const daily: DailyRow[] = buildDailyArray(
           aiDailyResult.data as Array<{ created_at: string; cost_estimate_cents: unknown }>,
           emailDailyResult.data as Array<{ sent_at: string | null }>,
           weatherHistoryResult.data as Array<{ metric_date: string; requests_count: number }>,
           new Date(),
+          apifyLedgerRows,
         );
 
         const modelBreakdown: ModelRow[] = aggregateByModel(
@@ -152,10 +178,13 @@ export async function GET(req: Request): Promise<Response> {
             weather_requests_today: weatherToday,
             weather_requests_month: weatherMonth,
             weather_cap: weatherCap,
+            apify_spend_usd_period: apifySpendUsdPeriod,
+            apify_monthly_budget_usd: apifyMonthlyBudgetUsd,
           },
           daily,
           model_breakdown: modelBreakdown,
           tenant_proximity: tenantProximity,
+          apify_by_line: apifyByCruiseLine,
           pricing: {
             ai: effectivePricing,
             resend_rate: resendRate,
@@ -178,43 +207,86 @@ export async function PUT(req: Request): Promise<Response> {
     throw e;
   }
 
-  let body: { resend_cost_per_email_cents?: unknown };
+  let body: { resend_cost_per_email_cents?: unknown; apify_monthly_budget_usd?: unknown };
   try {
-    body = (await req.json()) as { resend_cost_per_email_cents?: unknown };
+    body = (await req.json()) as typeof body;
   } catch {
     return Response.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const value = body.resend_cost_per_email_cents;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return Response.json({ error: "resend_cost_per_email_cents must be a non-negative number" }, { status: 400 });
+  const result: Record<string, number> = {};
+
+  if ("resend_cost_per_email_cents" in body) {
+    const value = body.resend_cost_per_email_cents;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return Response.json({ error: "resend_cost_per_email_cents must be a non-negative number" }, { status: 400 });
+    }
+    try {
+      await withPlatformAdminAudit(
+        {
+          admin_user_id: adminUserId,
+          reason: "resend_pricing_update",
+          operation: "resend_pricing_update",
+          reason_detail: `resend_rate=${value}`,
+        },
+        async (db) => {
+          await safeAwait(
+            db.from("platform_settings").upsert(
+              {
+                key: RESEND_PRICE_KEY,
+                value: value as unknown as Record<string, unknown>,
+                description: "Resend cost per sent email in fractional cents × 100. Used for cost dashboard estimates only.",
+              },
+              { onConflict: "key" },
+            ),
+            "platform_settings.upsert.resend_price",
+          );
+          return null;
+        },
+      );
+      result.resend_rate = value;
+    } catch (err) {
+      return Response.json({ error: String(err) }, { status: 500 });
+    }
   }
 
-  try {
-    await withPlatformAdminAudit(
-      {
-        admin_user_id: adminUserId,
-        reason: "resend_pricing_update",
-        operation: "resend_pricing_update",
-        reason_detail: `resend_rate=${value}`,
-      },
-      async (db) => {
-        await safeAwait(
-          db.from("platform_settings").upsert(
-            {
-              key: RESEND_PRICE_KEY,
-              value: value as unknown as Record<string, unknown>,
-              description: "Resend cost per sent email in fractional cents × 100. Used for cost dashboard estimates only.",
-            },
-            { onConflict: "key" },
-          ),
-          "platform_settings.upsert.resend_price",
-        );
-        return null;
-      },
-    );
-    return Response.json({ ok: true, resend_rate: value });
-  } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+  if ("apify_monthly_budget_usd" in body) {
+    const value = body.apify_monthly_budget_usd;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      return Response.json({ error: "apify_monthly_budget_usd must be a positive number" }, { status: 400 });
+    }
+    try {
+      await withPlatformAdminAudit(
+        {
+          admin_user_id: adminUserId,
+          reason: "apify_budget_update",
+          operation: "apify_budget_update",
+          reason_detail: `apify_budget_usd=${value}`,
+        },
+        async (db) => {
+          await safeAwait(
+            db.from("platform_settings").upsert(
+              {
+                key: APIFY_BUDGET_KEY,
+                value: value as unknown as Record<string, unknown>,
+                description: "Apify monthly spend budget cap in USD. Overrides APIFY_MONTHLY_BUDGET_USD_CEILING env var when set.",
+              },
+              { onConflict: "key" },
+            ),
+            "platform_settings.upsert.apify_budget",
+          );
+          return null;
+        },
+      );
+      result.apify_monthly_budget_usd = value;
+    } catch (err) {
+      return Response.json({ error: String(err) }, { status: 500 });
+    }
   }
+
+  if (Object.keys(result).length === 0) {
+    return Response.json({ error: "no_recognized_fields" }, { status: 400 });
+  }
+
+  return Response.json({ ok: true, ...result });
 }

@@ -20,6 +20,13 @@ interface DailyRow {
   ai_cost_cents: number;
   email_count: number;
   weather_requests: number;
+  apify_spend_cents: number;
+}
+
+interface ApifyLineRow {
+  cruise_line: string | null;
+  run_count: number;
+  spend_usd: number;
 }
 
 interface ModelRow {
@@ -50,10 +57,13 @@ interface DashboardData {
     weather_requests_today: number;
     weather_requests_month: number;
     weather_cap: number;
+    apify_spend_usd_period: number;
+    apify_monthly_budget_usd: number;
   };
   daily: DailyRow[];
   model_breakdown: ModelRow[];
   tenant_proximity: TenantRow[];
+  apify_by_line: ApifyLineRow[];
   pricing: {
     ai: Record<string, ModelPricing>;
     resend_rate: number;
@@ -91,19 +101,22 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
   const chartH = H - PAD.top - PAD.bottom;
 
   const emailCosts = data.map((d) => Math.round(d.email_count * resendRate));
-  const totals = data.map((d, i) => d.ai_cost_cents + (emailCosts[i] ?? 0));
-  const maxVal = Math.max(...totals, 1);
+  const emailTotals = data.map((d, i) => d.ai_cost_cents + (emailCosts[i] ?? 0));
+  const grandTotals = data.map((d, i) => (emailTotals[i] ?? 0) + d.apify_spend_cents);
+  const maxVal = Math.max(...grandTotals, 1);
 
   const xOf = (i: number) => PAD.left + (i / (data.length - 1)) * chartW;
   const yOf = (val: number) => PAD.top + chartH - (val / maxVal) * chartH;
 
   const aiPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(d.ai_cost_cents).toFixed(1)}`);
-  const totalPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(totals[i] ?? 0).toFixed(1)}`);
+  const emailTotalPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(emailTotals[i] ?? 0).toFixed(1)}`);
+  const grandTotalPoints = data.map((d, i) => `${xOf(i).toFixed(1)},${yOf(grandTotals[i] ?? 0).toFixed(1)}`);
 
-  // SVG stacking: each layer is a closed polygon. The email layer reuses
-  // aiPoints as its base so both layers share the same boundary and don't overlap.
+  // SVG stacking: each layer is a closed polygon. Each layer uses the previous
+  // layer's top edge as its base so layers don't overlap.
   const aiPath = `M ${xOf(0).toFixed(1)},${(PAD.top + chartH).toFixed(1)} L ${aiPoints.join(" L ")} L ${xOf(data.length - 1).toFixed(1)},${(PAD.top + chartH).toFixed(1)} Z`;
-  const emailPath = `M ${aiPoints.join(" L ")} L ${totalPoints.slice().reverse().join(" L ")} Z`;
+  const emailPath = `M ${aiPoints.join(" L ")} L ${emailTotalPoints.slice().reverse().join(" L ")} Z`;
+  const apifyPath = `M ${emailTotalPoints.join(" L ")} L ${grandTotalPoints.slice().reverse().join(" L ")} Z`;
 
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
     val: maxVal * f,
@@ -118,6 +131,7 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
       <div style={{ display: "flex", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
         <Legend color="#3b82f6" label="AI cost (Anthropic + OpenAI)" />
         <Legend color="#10b981" label="Email cost (Resend estimate)" />
+        <Legend color="#f97316" label="Apify spend" />
       </div>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} aria-label="30-day cost chart">
         {/* Grid lines */}
@@ -134,6 +148,8 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
         <path d={aiPath} fill="#3b82f6" fillOpacity={0.7} />
         {/* Email area (green, stacked on top of AI) */}
         <path d={emailPath} fill="#10b981" fillOpacity={0.7} />
+        {/* Apify area (orange, stacked on top of email) */}
+        <path d={apifyPath} fill="#f97316" fillOpacity={0.7} />
         {/* Bottom axis */}
         <line x1={PAD.left} x2={W - PAD.right} y1={PAD.top + chartH} y2={PAD.top + chartH} stroke="#e5e7eb" />
         {/* X axis labels */}
@@ -157,11 +173,11 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
             height={chartH}
             fill="transparent"
           >
-            <title>{`${d.date}: AI ${formatDollars(d.ai_cost_cents)}, Email ${formatDollars(Math.round(d.email_count * resendRate))}`}</title>
+            <title>{`${d.date}: AI ${formatDollars(d.ai_cost_cents)}, Email ${formatDollars(Math.round(d.email_count * resendRate))}, Apify ${formatDollars(d.apify_spend_cents)}`}</title>
           </rect>
         ))}
         {/* Empty state hint */}
-        {totals.every((v) => v === 0) && (
+        {grandTotals.every((v) => v === 0) && (
           <text x={W / 2} y={H / 2} fontSize={13} fill="#9ca3af" textAnchor="middle">
             No cost data in this window
           </text>
@@ -240,6 +256,9 @@ export default function ResourceUtilizationPage(): JSX.Element {
   const [capDraft, setCapDraft] = useState("");
   const [savingCap, setSavingCap] = useState(false);
   const [capMsg, setCapMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [apifyBudgetDraft, setApifyBudgetDraft] = useState("");
+  const [savingApifyBudget, setSavingApifyBudget] = useState(false);
+  const [apifyBudgetMsg, setApifyBudgetMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -250,6 +269,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
       const d = (await res.json()) as DashboardData;
       setData(d);
       setCapDraft(String(d.summary.weather_cap));
+      setApifyBudgetDraft(String(d.summary.apify_monthly_budget_usd));
       // Prime pricing editor drafts from loaded data.
       const draft: Record<string, { input: string; output: string }> = {};
       for (const [model, p] of Object.entries(d.pricing.ai)) {
@@ -314,6 +334,34 @@ export default function ResourceUtilizationPage(): JSX.Element {
     }
   }
 
+  async function saveApifyBudget(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingApifyBudget(true);
+    setApifyBudgetMsg(null);
+    const v = parseFloat(apifyBudgetDraft);
+    if (!Number.isFinite(v) || v <= 0) {
+      setApifyBudgetMsg({ ok: false, text: "Budget must be a positive number." });
+      setSavingApifyBudget(false);
+      return;
+    }
+    try {
+      const res = await adminFetch("/api/admin/resource-utilization", {
+        method: "PUT",
+        body: JSON.stringify({ apify_monthly_budget_usd: v }),
+      });
+      if (!res.ok) {
+        const d = (await res.json()) as { error?: string };
+        throw new Error(d.error ?? "Save failed.");
+      }
+      setApifyBudgetMsg({ ok: true, text: `Budget saved at $${v.toFixed(2)}/month.` });
+      await load();
+    } catch (e) {
+      setApifyBudgetMsg({ ok: false, text: e instanceof Error ? e.message : "Unknown error" });
+    } finally {
+      setSavingApifyBudget(false);
+    }
+  }
+
   async function saveCap(e: React.FormEvent) {
     e.preventDefault();
     setSavingCap(true);
@@ -345,7 +393,7 @@ export default function ResourceUtilizationPage(): JSX.Element {
   if (loading) return <main style={{ padding: 24 }}>Loading…</main>;
   if (!data) return <main style={{ padding: 24, color: "#b91c1c" }}>{error ?? "No data."}</main>;
 
-  const { summary, daily, model_breakdown, tenant_proximity, pricing } = data;
+  const { summary, daily, model_breakdown, tenant_proximity, apify_by_line, pricing } = data;
   const totalCostCents = summary.total_ai_cost_cents + summary.total_email_cost_cents;
 
   return (
@@ -365,6 +413,12 @@ export default function ResourceUtilizationPage(): JSX.Element {
           value={`${summary.weather_requests_today.toLocaleString()} / ${summary.weather_cap.toLocaleString()}`}
           sub={`${summary.weather_requests_month.toLocaleString()} this month`}
           alert={summary.weather_requests_today >= summary.weather_cap}
+        />
+        <SummaryCard
+          label="Apify spend (period)"
+          value={`$${summary.apify_spend_usd_period.toFixed(2)}`}
+          sub={`Budget: $${summary.apify_monthly_budget_usd.toFixed(0)}/month`}
+          alert={summary.apify_spend_usd_period >= summary.apify_monthly_budget_usd * 0.9}
         />
       </div>
 
@@ -433,6 +487,59 @@ export default function ResourceUtilizationPage(): JSX.Element {
           </form>
           {capMsg && (
             <p style={{ color: capMsg.ok ? "#15803d" : "#b91c1c", marginTop: 8, fontSize: 13 }}>{capMsg.text}</p>
+          )}
+        </div>
+      </section>
+
+      {/* ── Apify pricing data ── */}
+      <section style={card}>
+        <h2 style={{ marginTop: 0 }}>Apify pricing data (last 30 days)</h2>
+        <p style={{ color: "#6b7280", marginTop: 0 }}>
+          Month-to-date: <strong>${summary.apify_spend_usd_period.toFixed(2)}</strong>.{" "}
+          Budget cap: <strong>${summary.apify_monthly_budget_usd.toFixed(0)}/month</strong>.
+        </p>
+        {apify_by_line.length === 0 ? (
+          <p style={{ color: "#6b7280" }}>No Apify runs in this window.</p>
+        ) : (
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                {["Cruise line", "Runs", "Spend (USD)"].map((h) => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {apify_by_line.map((r) => (
+                <tr key={r.cruise_line ?? "(none)"}>
+                  <td style={tdStyle}>{r.cruise_line ?? <em>none</em>}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.run_count.toLocaleString()}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>${r.spend_usd.toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div style={{ marginTop: 16 }}>
+          <form onSubmit={saveApifyBudget} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <label style={{ fontSize: 13, color: "#374151" }}>
+              Monthly budget cap (USD):
+              <input
+                type="number"
+                value={apifyBudgetDraft}
+                onChange={(e) => setApifyBudgetDraft(e.target.value)}
+                min={1}
+                step={1}
+                style={{ ...numInput, marginLeft: 10, width: 90 }}
+                disabled={savingApifyBudget}
+              />
+            </label>
+            <button type="submit" disabled={savingApifyBudget} style={btnSecondary}>
+              {savingApifyBudget ? "Saving…" : "Save budget"}
+            </button>
+          </form>
+          {apifyBudgetMsg && (
+            <p style={{ color: apifyBudgetMsg.ok ? "#15803d" : "#b91c1c", marginTop: 8, fontSize: 13 }}>{apifyBudgetMsg.text}</p>
           )}
         </div>
       </section>
