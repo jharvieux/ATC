@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   usersInsertSingle:            vi.fn(),
   publishTenantEvent:           vi.fn(),
   bindContactOnIdentification:  vi.fn(),
+  progressTo:                   vi.fn(),
 }));
 
 vi.mock("@/lib/auth/ssr-client", () => ({
@@ -73,6 +74,10 @@ vi.mock("@/lib/attribution/bind-contact-on-identification", () => ({
   bindContactOnIdentification: mocks.bindContactOnIdentification,
 }));
 
+vi.mock("@/lib/onboarding/state-machine", () => ({
+  progressTo: mocks.progressTo,
+}));
+
 import { POST } from "@/app/api/auth/signup/complete/route";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -90,10 +95,13 @@ function platformReq(body: unknown, extra: Record<string, string> = {}) {
 }
 
 const VALID_BODY = {
-  display_name: "Acme Travel",
-  legal_name:   "Acme Travel LLC",
-  slug:         "acme-travel",
-  tenant_type:  "byo_host",
+  display_name:  "Acme Travel",
+  legal_name:    "Acme Travel LLC",
+  slug:          "acme-travel",
+  tenant_type:   "byo_host",
+  support_email: "support@acmetravel.com",
+  timezone:      "America/New_York",
+  mailing_address: { line1: "123 Main St", city: "Miami", state: "FL", zip: "33101", country: "US" },
 };
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -107,6 +115,7 @@ beforeEach(() => {
   mocks.usersInsertSingle.mockResolvedValue({ data: { id: USER_ID }, error: null });
   mocks.publishTenantEvent.mockResolvedValue(undefined);
   mocks.bindContactOnIdentification.mockResolvedValue({ ok: true, contact_id: "c1", was_new_contact: true });
+  mocks.progressTo.mockResolvedValue(undefined);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -155,11 +164,15 @@ describe("POST /api/auth/signup/complete", () => {
 
   describe("body validation", () => {
     it.each([
-      [{ ...VALID_BODY, display_name: undefined }, "display_name_required"],
-      [{ ...VALID_BODY, legal_name: undefined },   "legal_name_required"],
-      [{ ...VALID_BODY, slug: undefined },          "slug_required"],
-      [{ ...VALID_BODY, tenant_type: "platform" },  "tenant_type_invalid"],
-      [{ ...VALID_BODY, tenant_type: "bad_type" },  "tenant_type_invalid"],
+      [{ ...VALID_BODY, display_name: undefined },                          "display_name_required"],
+      [{ ...VALID_BODY, legal_name: undefined },                            "legal_name_required"],
+      [{ ...VALID_BODY, slug: undefined },                                  "slug_required"],
+      [{ ...VALID_BODY, support_email: undefined },                         "support_email_required"],
+      [{ ...VALID_BODY, timezone: undefined },                              "timezone_required"],
+      [{ ...VALID_BODY, mailing_address: undefined },                       "mailing_address_required"],
+      [{ ...VALID_BODY, mailing_address: { city: "Miami", state: "FL", zip: "33101" } }, "mailing_address_required"],
+      [{ ...VALID_BODY, tenant_type: "platform" },                          "tenant_type_invalid"],
+      [{ ...VALID_BODY, tenant_type: "bad_type" },                          "tenant_type_invalid"],
     ])("returns 400 with %s error for body %j", async (body, expectedError) => {
       const res = await POST(platformReq(body));
       expect(res.status).toBe(400);
@@ -208,7 +221,7 @@ describe("POST /api/auth/signup/complete", () => {
   });
 
   describe("happy path", () => {
-    it("returns 201 with tenant_id, slug, status, onboarding_stage", async () => {
+    it("returns 201 with tenant_id, slug, status, onboarding_stage=legal", async () => {
       const res = await POST(platformReq(VALID_BODY));
       expect(res.status).toBe(201);
       const body = await res.json();
@@ -216,8 +229,14 @@ describe("POST /api/auth/signup/complete", () => {
         tenant_id:        TENANT_ID,
         slug:             "acme-travel",
         status:           "onboarding",
-        onboarding_stage: "signup",
+        onboarding_stage: "legal",
       });
+    });
+
+    it("advances stage through profile then legal", async () => {
+      await POST(platformReq(VALID_BODY));
+      expect(mocks.progressTo).toHaveBeenNthCalledWith(1, TENANT_ID, "profile");
+      expect(mocks.progressTo).toHaveBeenNthCalledWith(2, TENANT_ID, "legal");
     });
 
     it("normalises slug to lowercase", async () => {

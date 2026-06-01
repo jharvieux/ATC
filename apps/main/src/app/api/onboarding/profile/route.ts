@@ -1,5 +1,7 @@
-// §15.3 — Onboarding Stage 2: Profile submission.
-// Creates or updates the tenant row with profile data and advances stage.
+// §15.3 — Onboarding profile endpoint.
+// GET  — returns current tenant profile (used by the Edit Profile settings page).
+// POST — updates profile fields; advances stage to "legal" if still at "profile"
+//        (idempotent: progressTo no-ops when stage is already at or past "legal").
 // USPS address validation: TODO(usps-validator) — stubbed for Phase 1 launch.
 // See MEMORY D-049 for validator deferral rationale.
 
@@ -24,6 +26,22 @@ interface ProfileBody {
   support_email: string;
   support_phone?: string;
   timezone: string;
+}
+
+export async function GET(req: Request): Promise<Response> {
+  try {
+    const { ctx } = await assertPermission(req, { resource: "onboarding", action: "profile:submit" });
+    const db = tenantClient(ctx);
+    const { data, error } = await db
+      .from("tenants")
+      .select("legal_name, display_name, slug, mailing_address, support_email, support_phone, timezone")
+      .eq("id", ctx.tenant_id)
+      .single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(data);
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -79,6 +97,9 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: error.message }, { status: 500 });
     }
 
+    // Advance to "legal". If still at "signup", go through "profile" first —
+    // direct signup→legal skips a stage and the state machine rejects it.
+    await progressTo(ctx.tenant_id, "profile");
     await progressTo(ctx.tenant_id, "legal");
 
     return Response.json({ ok: true, next_stage: "legal" });
