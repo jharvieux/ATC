@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-132 — 2026-05-31 — RLS snapshot must be regenerated when migrations add new tables/policies
+
+The `db/rls-snapshot-main.sql` file is a positional line-by-line snapshot. Manual edits must match the exact output of `generateSnapshot` (scripts/rls-snapshot.ts): alphabetical order by table name then policy name, `TO PUBLIC` when roles array is empty, blank line after each table section. Both the `-- Tables with RLS enabled:` header and the `-- TABLE: public.*` policy sections must be updated together. When new migrations add tables or policies, run `pnpm rls:snapshot` (requires a direct Postgres URL in `SUPABASE_DB_URL`) or use the Supabase MCP to query `pg_policy` + `pg_class` and construct the entries manually.
+
+**Why:** The CI `RLS Snapshot Diff` check is a required merge gate. First attempt on this was blocked because weather_forecast_cache and weather_usage_metrics were missing from both the header list and policy sections; partial fixes caused positional mismatches. Fixed by querying the live DB via MCP.
+
+**How to apply:** After any migration that adds a table with RLS enabled, update both sections of the snapshot. Prefer running the script over manual edits.
+
+---
+
 ## D-131 — 2026-05-31 — §7.1/§17.3 signup/complete tenant provisioning: assertPermission cannot gate this route
 
 `POST /api/auth/signup/complete` (PR #523, issue #441) provisions a net-new tenant for platform-domain operator signups. At call time, no `public.tenants` or `public.users` row exists for the caller — the OAuth callback deliberately skips the users upsert when `x-resolved-tenant-id === "platform"`. `assertPermission` requires an existing users row (it queries `users.eq("auth_user_id").eq("tenant_id")`), so it cannot gate this route.
