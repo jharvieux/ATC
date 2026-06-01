@@ -67,6 +67,8 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("payouts", "read"),
   // §7.1 — /api/auth/me returns the caller's own identity + consent state.
   key("me", "get"),
+  // §15.3 / §17.3 — onboarding profile read (pre-fills Edit Profile page).
+  key("onboarding", "profile:read"),
 ]);
 
 // AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
@@ -131,6 +133,8 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
 // TENANT_OWNER grants — full set. AGENT_GRANTS plus owner-only.
 const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   ...AGENT_GRANTS,
+  // §15.3 — onboarding profile update (owner-only: affects legal name, slug, address).
+  key("onboarding", "profile:submit"),
   // Tenant settings (owner-only)
   key("host_config", "write"),
   key("tenant_branding", "write"),
