@@ -10,7 +10,7 @@
 // already-tested parser); only the request-scoped read path uses this parser,
 // so this is the seam under test.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
 let capturedCookieAdapter: {
@@ -36,6 +36,7 @@ import {
   parseCookieHeader,
   createMiddlewareClient,
   createRouteHandlerClient,
+  getAuthCookieDomain,
 } from "@/lib/auth/ssr-client";
 
 describe("parseCookieHeader", () => {
@@ -191,5 +192,121 @@ describe("createMiddlewareClient", () => {
     expect(res.headers.get("cache-control")).toBe(
       "private, no-cache, no-store, must-revalidate, max-age=0",
     );
+  });
+});
+
+// WHY: auth happens on the platform primary domain, but the operator's
+// workspace lives on a tenant subdomain. Without an explicit cookie domain
+// the session does NOT carry across the post-signup redirect, every API
+// call comes back 401, and the user cannot accept legal docs to finish
+// onboarding. This test pins the rule that resolves the gap.
+describe("getAuthCookieDomain", () => {
+  const originalPrimary = process.env.PLATFORM_PRIMARY_DOMAIN;
+
+  beforeEach(() => {
+    process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
+  });
+
+  afterAll(() => {
+    if (originalPrimary === undefined) delete process.env.PLATFORM_PRIMARY_DOMAIN;
+    else process.env.PLATFORM_PRIMARY_DOMAIN = originalPrimary;
+  });
+
+  it("returns .<primary> when the request is on the platform primary domain itself", () => {
+    const req = new NextRequest("https://ai-travelconcierge.com/api/auth/callback");
+    expect(getAuthCookieDomain(req)).toBe(".ai-travelconcierge.com");
+  });
+
+  it("returns .<primary> when the request is on a subdomain of the platform primary", () => {
+    const req = new NextRequest("https://booking.ai-travelconcierge.com/onboarding/legal");
+    expect(getAuthCookieDomain(req)).toBe(".ai-travelconcierge.com");
+  });
+
+  it("returns undefined for an unrelated apex domain (custom-domain tenants stay host-only)", () => {
+    const req = new NextRequest("https://booking.example.com/onboarding/legal");
+    expect(getAuthCookieDomain(req)).toBeUndefined();
+  });
+
+  it("returns undefined for *.vercel.app preview deploys", () => {
+    const req = new NextRequest("https://atc-main-abc.vercel.app/api/auth/callback");
+    expect(getAuthCookieDomain(req)).toBeUndefined();
+  });
+
+  it("returns undefined for localhost (browsers reject explicit domain on localhost)", () => {
+    process.env.PLATFORM_PRIMARY_DOMAIN = "localhost";
+    const req = new NextRequest("http://localhost:3000/api/auth/callback");
+    expect(getAuthCookieDomain(req)).toBeUndefined();
+  });
+
+  it("returns undefined when PLATFORM_PRIMARY_DOMAIN is unset (no decision possible)", () => {
+    delete process.env.PLATFORM_PRIMARY_DOMAIN;
+    const req = new NextRequest("https://ai-travelconcierge.com/api/auth/callback");
+    expect(getAuthCookieDomain(req)).toBeUndefined();
+  });
+
+  it("does not match a domain that merely ENDS WITH the primary (subdomain check is strict)", () => {
+    // "evil-ai-travelconcierge.com" ends with "ai-travelconcierge.com" but
+    // is not a subdomain. The check must require either equality or a
+    // leading "." segment boundary.
+    const req = new NextRequest("https://evil-ai-travelconcierge.com/x");
+    expect(getAuthCookieDomain(req)).toBeUndefined();
+  });
+});
+
+// WHY: the route-handler + middleware clients are the two places where
+// cookies actually get WRITTEN. The cookie-domain helper must reach
+// pending cookies via setAll so the post-signup redirect carries the
+// session across to the tenant subdomain.
+describe("auth cookie domain is injected on write", () => {
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+    process.env.PLATFORM_PRIMARY_DOMAIN = "ai-travelconcierge.com";
+    capturedCookieAdapter = {};
+  });
+
+  it("createRouteHandlerClient on the platform domain stamps domain=.<primary> onto every cookie it writes", () => {
+    const req = new NextRequest("https://ai-travelconcierge.com/api/auth/callback");
+    const { applyAuthCookies } = createRouteHandlerClient(req);
+
+    capturedCookieAdapter.setAll!(
+      [{ name: "sb-x-auth-token", value: "v", options: { path: "/", httpOnly: true } }],
+      {},
+    );
+
+    const res = NextResponse.json({ ok: true });
+    applyAuthCookies(res);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("Domain=.ai-travelconcierge.com");
+  });
+
+  it("createMiddlewareClient on a tenant subdomain still stamps domain=.<primary> (refresh on subdomain re-issues a parent-scoped cookie)", () => {
+    const req = new NextRequest("https://booking.ai-travelconcierge.com/dashboard");
+    const { applyRefreshedSession } = createMiddlewareClient(req);
+
+    capturedCookieAdapter.setAll!(
+      [{ name: "sb-x-auth-token", value: "rotated", options: { path: "/" } }],
+      {},
+    );
+
+    const res = NextResponse.next();
+    applyRefreshedSession(res);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("Domain=.ai-travelconcierge.com");
+  });
+
+  it("on a non-platform host (preview / custom domain) cookies stay host-only", () => {
+    const req = new NextRequest("https://atc-main-abc.vercel.app/api/auth/callback");
+    const { applyAuthCookies } = createRouteHandlerClient(req);
+
+    capturedCookieAdapter.setAll!(
+      [{ name: "sb-x-auth-token", value: "v", options: { path: "/" } }],
+      {},
+    );
+
+    const res = NextResponse.json({ ok: true });
+    applyAuthCookies(res);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).not.toMatch(/Domain=/i);
   });
 });
