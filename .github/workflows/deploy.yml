@@ -413,6 +413,9 @@ jobs:
         run: |
           npx supabase db push --db-url "$DB_URL"
 
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
       - name: Vercel deploy (production)
         run: |
           vercel pull --environment=production --yes --token=$VERCEL_TOKEN
