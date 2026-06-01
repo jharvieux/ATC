@@ -101,6 +101,50 @@ function toResponseCookie(
   return { name, value, ...options } as ResponseCookieInput;
 }
 
+// §17.x — Cross-subdomain cookie scope.
+//
+// Auth happens on the platform primary domain (e.g. ai-travelconcierge.com)
+// but the operator's workspace lives on a tenant subdomain
+// (e.g. booking.ai-travelconcierge.com). Without an explicit cookie domain,
+// browsers scope cookies to the exact host that set them, so the auth
+// session does NOT carry across the post-signup redirect — every API call
+// from the subdomain page comes back 401.
+//
+// Returns the value to assign to cookie.domain so a single sign-in covers
+// the platform + all *.platform-primary-domain subdomains. Returns
+// undefined for hostnames the rule does not apply to:
+//   - localhost (no dot, browsers treat dotted-domain on localhost
+//     inconsistently — leave host-only)
+//   - preview deploys (*.vercel.app etc., hostname not under the platform
+//     primary)
+//   - custom-domain tenants (their own apex; auth flow stays on that apex,
+//     no cross-subdomain redirect to repair)
+export function getAuthCookieDomain(req: Request | NextRequest): string | undefined {
+  // Env unset or non-DNS (e.g. "localhost") → host-only cookies are the
+  // safe fallback. Failing closed here would brick auth on preview deploys
+  // and local dev. Do NOT change this to throw.
+  const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
+  if (!primaryDomain || !primaryDomain.includes(".")) return undefined;
+
+  // req.url is always a valid URL on NextRequest, but the helper accepts the
+  // wider Request type so callers don't have to narrow. Keep the cast safe.
+  let hostname: string;
+  try {
+    hostname = new URL(req.url).hostname;
+  } catch {
+    return undefined;
+  }
+  if (hostname === primaryDomain || hostname.endsWith(`.${primaryDomain}`)) {
+    return `.${primaryDomain}`;
+  }
+  return undefined;
+}
+
+function withCookieDomain(options: CookieOptions, domain: string | undefined): CookieOptions {
+  if (!domain) return options;
+  return { ...options, domain };
+}
+
 export function createRequestScopedClient(req: Request): SupabaseClient {
   const { url, anonKey } = supabaseAnonConfig();
   const cookies = parseCookieHeader(req.headers.get("cookie"));
@@ -119,6 +163,7 @@ export function createRouteHandlerClient(req: NextRequest): {
   applyAuthCookies: <T extends NextResponse>(res: T) => T;
 } {
   const { url, anonKey } = supabaseAnonConfig();
+  const cookieDomain = getAuthCookieDomain(req);
   const pending: { name: string; value: string; options: CookieOptions }[] = [];
   const extraHeaders: Record<string, string> = {};
 
@@ -126,7 +171,12 @@ export function createRouteHandlerClient(req: NextRequest): {
     cookies: {
       getAll: () => req.cookies.getAll(),
       setAll: (cookiesToSet, headers) => {
-        pending.push(...cookiesToSet);
+        for (const cookie of cookiesToSet) {
+          pending.push({
+            ...cookie,
+            options: withCookieDomain(cookie.options, cookieDomain),
+          });
+        }
         Object.assign(extraHeaders, headers);
       },
     },
@@ -150,6 +200,7 @@ export function createMiddlewareClient(req: NextRequest): {
   applyRefreshedSession: <T extends NextResponse>(res: T) => T;
 } {
   const { url, anonKey } = supabaseAnonConfig();
+  const cookieDomain = getAuthCookieDomain(req);
   const pending: { name: string; value: string; options: CookieOptions }[] = [];
   const extraHeaders: Record<string, string> = {};
 
@@ -161,7 +212,10 @@ export function createMiddlewareClient(req: NextRequest): {
           // Forward the rotated token to the handler on this pass: NextRequest
           // cookie mutations show up in the Cookie header proxy.ts forwards.
           req.cookies.set(cookie.name, cookie.value);
-          pending.push(cookie);
+          pending.push({
+            ...cookie,
+            options: withCookieDomain(cookie.options, cookieDomain),
+          });
         }
         Object.assign(extraHeaders, headers);
       },
