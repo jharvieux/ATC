@@ -2,7 +2,7 @@
 //
 // buildWorkspaceUrl is the only pure-logic export from the page. It encodes
 // the routing contract: after provisioning, the operator is sent to a
-// SUBDOMAIN of the current platform hostname at /onboarding/profile, not
+// SUBDOMAIN of the current platform hostname at /onboarding/legal, not
 // to the platform domain itself.
 //
 // Interactive paths (201 → success screen, 401 → router.push) require a
@@ -15,13 +15,13 @@ import { describe, it, expect } from "vitest";
 import { buildWorkspaceUrl } from "@/app/signup/complete/page";
 
 describe("buildWorkspaceUrl", () => {
-  it("returns the tenant subdomain at /onboarding/profile", () => {
+  it("returns the tenant subdomain at /onboarding/legal", () => {
     const url = buildWorkspaceUrl("acme-travel", {
       protocol: "https:",
       hostname: "ai-travelconcierge.com",
     });
     expect(url).toBe(
-      "https://acme-travel.ai-travelconcierge.com/onboarding/profile",
+      "https://acme-travel.ai-travelconcierge.com/onboarding/legal",
     );
   });
 
@@ -30,7 +30,7 @@ describe("buildWorkspaceUrl", () => {
       protocol: "http:",
       hostname: "localhost",
     });
-    expect(url).toBe("http://my-agency.localhost/onboarding/profile");
+    expect(url).toBe("http://my-agency.localhost/onboarding/legal");
   });
 
   it("preserves slug exactly — no case normalisation applied here", () => {
@@ -39,6 +39,6 @@ describe("buildWorkspaceUrl", () => {
       hostname: "example.com",
     });
     expect(new URL(url).hostname).toBe("beta-agency-2.example.com");
-    expect(new URL(url).pathname).toBe("/onboarding/profile");
+    expect(new URL(url).pathname).toBe("/onboarding/legal");
   });
 });

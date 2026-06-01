@@ -4,7 +4,9 @@
 // this point the caller has a valid Supabase session but NO public.users or
 // public.tenants row yet — the callback deliberately skips the users upsert on
 // the platform domain (x-resolved-tenant-id === "platform"). This route creates
-// both rows and runs attribution binding.
+// both rows, stores the full business profile (collects it up-front so the operator
+// lands on /onboarding/legal rather than a redundant profile step), and runs
+// attribution binding.
 //
 // Not gated by assertPermission — no tenant context exists pre-provisioning.
 // Auth is verified directly via getUser() on the session cookie.
@@ -23,9 +25,19 @@ import {
   readPendingAttributionFromHeader,
   clearPendingAttributionCookie,
 } from "@/lib/attribution/read-pending-cookie";
+import { progressTo } from "@/lib/onboarding/state-machine";
 
 const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const VALID_TENANT_TYPES = new Set(["byo_host", "sub_host"]);
+
+interface MailingAddress {
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+}
 
 export async function POST(req: NextRequest): Promise<Response> {
   // Platform domain guard — this route only exists on the platform primary domain.
@@ -52,14 +64,25 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "invalid_json" }, { status: 400 });
   }
   const b = body as Record<string, unknown>;
-  const displayName = typeof b.display_name === "string" ? b.display_name.trim() : null;
-  const legalName   = typeof b.legal_name   === "string" ? b.legal_name.trim()   : null;
-  const slug        = typeof b.slug         === "string" ? b.slug.toLowerCase().trim() : null;
-  const tenantType  = typeof b.tenant_type  === "string" ? b.tenant_type         : null;
+  const displayName    = typeof b.display_name   === "string" ? b.display_name.trim()            : null;
+  const legalName      = typeof b.legal_name     === "string" ? b.legal_name.trim()              : null;
+  const slug           = typeof b.slug           === "string" ? b.slug.toLowerCase().trim()      : null;
+  const tenantType     = typeof b.tenant_type    === "string" ? b.tenant_type                    : null;
+  const supportEmail   = typeof b.support_email  === "string" ? b.support_email.trim()           : null;
+  const supportPhone   = typeof b.support_phone  === "string" ? b.support_phone.trim() || null   : null;
+  const timezone       = typeof b.timezone       === "string" ? b.timezone                       : null;
+  const mailingAddress = (b.mailing_address && typeof b.mailing_address === "object")
+    ? b.mailing_address as MailingAddress
+    : null;
 
-  if (!displayName) return Response.json({ error: "display_name_required" }, { status: 400 });
-  if (!legalName)   return Response.json({ error: "legal_name_required" },   { status: 400 });
-  if (!slug)        return Response.json({ error: "slug_required" },          { status: 400 });
+  if (!displayName)  return Response.json({ error: "display_name_required" },  { status: 400 });
+  if (!legalName)    return Response.json({ error: "legal_name_required" },    { status: 400 });
+  if (!slug)         return Response.json({ error: "slug_required" },           { status: 400 });
+  if (!supportEmail) return Response.json({ error: "support_email_required" }, { status: 400 });
+  if (!timezone)     return Response.json({ error: "timezone_required" },      { status: 400 });
+  if (!mailingAddress?.line1 || !mailingAddress?.city || !mailingAddress?.state || !mailingAddress?.zip) {
+    return Response.json({ error: "mailing_address_required" }, { status: 400 });
+  }
   if (!tenantType || !VALID_TENANT_TYPES.has(tenantType)) {
     return Response.json({ error: "tenant_type_invalid" }, { status: 400 });
   }
@@ -82,8 +105,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "already_provisioned" }, { status: 409 });
   }
 
-  // INSERT tenant — §17.3: status defaults to "onboarding"; onboarding_stage
-  // is nullable with no default so set it to the first stage explicitly.
+  // INSERT tenant with full profile — §17.3: status defaults to "onboarding".
+  // Profile data collected up-front so we can advance straight to "legal" stage.
   let tenantId: string;
   try {
     const tenantRow = await safeAwaitRequired(
@@ -94,6 +117,10 @@ export async function POST(req: NextRequest): Promise<Response> {
           display_name:     displayName,
           legal_name:       legalName,
           tenant_type:      tenantType,
+          support_email:    supportEmail,
+          support_phone:    supportPhone,
+          timezone,
+          mailing_address:  mailingAddress,
           status:           "onboarding",
           onboarding_stage: "signup",
         })
@@ -130,6 +157,19 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "internal_error" }, { status: 500 });
   }
 
+  // Advance onboarding stage: signup → profile → legal.
+  // Two calls required — state machine allows only one step forward at a time.
+  // If either throws (StaleStageError, DB error) the tenant and user rows are
+  // already committed. Log the tenantId for ops recovery and return a retriable
+  // error code distinct from already_provisioned.
+  try {
+    await progressTo(tenantId, "profile");
+    await progressTo(tenantId, "legal");
+  } catch (err) {
+    console.error("[signup/complete] stage advance failed; tenant committed, needs ops recovery:", tenantId, err);
+    return Response.json({ error: "stage_advance_failed" }, { status: 500 });
+  }
+
   // Publish tenant.created — awaited; no void in serverless (D-091).
   await publishTenantEvent({
     event_type:      "tenant.created",
@@ -152,7 +192,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   const res = NextResponse.json(
-    { tenant_id: tenantId, slug, status: "onboarding", onboarding_stage: "signup" },
+    { tenant_id: tenantId, slug, status: "onboarding", onboarding_stage: "legal" },
     { status: 201 },
   );
   clearPendingAttributionCookie(res);
