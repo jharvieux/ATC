@@ -113,6 +113,10 @@ export default function SignupCompletePage(): React.ReactElement {
         setError("Your workspace is already set up. Use the link on your workspace subdomain to continue.");
         return;
       }
+      if (res.status === 409 && data.error === "slug_taken") {
+        setError("That workspace name is already taken. Please change your agency display name and try again.");
+        return;
+      }
       if (res.status === 401) {
         window.location.href = "/signup";
         return;

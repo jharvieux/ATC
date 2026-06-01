@@ -159,8 +159,16 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // Advance onboarding stage: signup → profile → legal.
   // Two calls required — state machine allows only one step forward at a time.
-  await progressTo(tenantId, "profile");
-  await progressTo(tenantId, "legal");
+  // If either throws (StaleStageError, DB error) the tenant and user rows are
+  // already committed. Log the tenantId for ops recovery and return a retriable
+  // error code distinct from already_provisioned.
+  try {
+    await progressTo(tenantId, "profile");
+    await progressTo(tenantId, "legal");
+  } catch (err) {
+    console.error("[signup/complete] stage advance failed; tenant committed, needs ops recovery:", tenantId, err);
+    return Response.json({ error: "stage_advance_failed" }, { status: 500 });
+  }
 
   // Publish tenant.created — awaited; no void in serverless (D-091).
   await publishTenantEvent({

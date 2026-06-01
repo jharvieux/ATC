@@ -305,6 +305,15 @@ describe("POST /api/auth/signup/complete", () => {
     });
   });
 
+  describe("stage advance failure", () => {
+    it("returns 500 stage_advance_failed when progressTo throws after tenant committed", async () => {
+      mocks.progressTo.mockRejectedValueOnce(new Error("StaleStageError"));
+      const res = await POST(platformReq(VALID_BODY));
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ error: "stage_advance_failed" });
+    });
+  });
+
   describe("attribution binding failure", () => {
     it("returns 201 and logs a warning when bindContactOnIdentification fails", async () => {
       mocks.bindContactOnIdentification.mockResolvedValue({ ok: false, error: "crm_unavailable" });

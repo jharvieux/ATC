@@ -30,7 +30,7 @@ interface ProfileBody {
 
 export async function GET(req: Request): Promise<Response> {
   try {
-    const { ctx } = await assertPermission(req, { resource: "onboarding", action: "profile:submit" });
+    const { ctx } = await assertPermission(req, { resource: "onboarding", action: "profile:read" });
     const db = tenantClient(ctx);
     const { data, error } = await db
       .from("tenants")
@@ -68,13 +68,14 @@ export async function POST(req: Request): Promise<Response> {
 
     // Check slug uniqueness (service-role for cross-tenant query).
     const srDb = createServiceRoleClient();
-    const { data: existing } = await srDb
+    const { data: existing, error: slugCheckErr } = await srDb
       .from("tenants")
       .select("id")
       .eq("slug", body.slug)
       .neq("id", ctx.tenant_id)
       .maybeSingle();
 
+    if (slugCheckErr) return Response.json({ error: "internal_error" }, { status: 500 });
     if (existing) {
       return Response.json({ error: "slug_taken" }, { status: 409 });
     }
