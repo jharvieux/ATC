@@ -433,7 +433,10 @@ The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the 
 6. Update the `## Audit` block in the PR body with the combined findings summary and a standalone `Status:` line.
 7. Wait for CI to complete. If all checks pass, merge (squash merge by default). Delete the feature branch after merge.
 
-The check is required to merge. **You cannot bypass it.** Dependabot PRs are exempt (they're version bumps with no code logic).
+The check is required to merge. **You cannot bypass it.** Two exemptions:
+
+- **Dependabot PRs** — version bumps with no code logic.
+- **Doc-only PRs** — every changed file matches `*.md`, `docs/**`, or `specs/**`. The workflow detects this automatically and short-circuits to success. Don't run the audit agents on these PRs — skip steps 4–6 of the workflow above and merge once non-audit checks pass. A single non-doc file in the diff disqualifies the PR from the exemption.
 
 **You may NOT:**
 

@@ -25,6 +25,9 @@
 #   - dependabot[bot] — version-only PRs, no code logic to review
 #   - claude-code-action[bot] / claude[bot] / github-actions[bot] — bots
 #     don't review themselves; the human who triggered the bot owns the PR
+#   - Doc-only PRs — every changed file matches *.md, docs/**, or specs/**.
+#     The audit agents review application behavior; running them on a doc
+#     edit just burns Sonnet tokens to learn there's nothing to review.
 #
 # Listener events include `edited` so that updating the PR body re-runs
 # the check (without `edited`, you can't fix a failed run by editing
@@ -69,8 +72,43 @@ jobs:
               ;;
           esac
 
-      - name: Verify ## Audit section is present and non-trivial
+      # Doc-only short-circuit. The PR is exempt iff EVERY changed file
+      # matches one of the doc patterns: anything ending in .md, anything
+      # under docs/ (any depth), or anything under specs/ (any depth). Any
+      # single non-doc file disqualifies the PR and the normal audit gates
+      # apply. The list is fetched via the GraphQL `files` field rather
+      # than parsing diff URLs, so renames/deletes are handled correctly.
+      - name: Detect doc-only PR (auto-pass)
+        id: doc-only-check
         if: steps.bot-check.outputs.is_bot != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # `gh pr view --json files` returns up to 100 files; paginate
+          # via the REST endpoint to be safe on large doc PRs.
+          NON_DOC=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
+            --jq '.[].filename' \
+            | awk '
+                /\.md$/        { next }
+                /^docs\//      { next }
+                /^specs\//     { next }
+                { print; exit }
+              ')
+
+          if [ -z "$NON_DOC" ]; then
+            echo "::notice::Doc-only PR — skipping audit-section check"
+            echo "is_doc_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Non-doc file present: $NON_DOC — audit required"
+            echo "is_doc_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify ## Audit section is present and non-trivial
+        if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:
           BODY: ${{ github.event.pull_request.body }}
         run: |
@@ -129,7 +167,7 @@ jobs:
           printf '%s' "$SECTION" | head -20
 
       - name: Verify both subagent comments posted AFTER the latest commit
-        if: steps.bot-check.outputs.is_bot != 'true'
+        if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
