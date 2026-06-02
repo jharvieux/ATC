@@ -91,7 +91,12 @@ export async function decryptForensicsSnapshot(snapshot_id: string): Promise<{
   const tag = bundle.subarray(IV_BYTES, IV_BYTES + TAG_BYTES);
   const ciphertext = bundle.subarray(IV_BYTES + TAG_BYTES);
 
-  const decipher = createDecipheriv(ALGORITHM, Buffer.from(keyBase64, "base64"), iv);
+  // Reject a short/truncated auth tag — Node accepts 4–16 byte GCM tags when
+  // authTagLength is unset, weakening forgery resistance (#551).
+  if (tag.length !== TAG_BYTES) {
+    throw new Error(`forensics_decrypt_invalid_tag_length: expected ${TAG_BYTES} bytes, got ${tag.length}`);
+  }
+  const decipher = createDecipheriv(ALGORITHM, Buffer.from(keyBase64, "base64"), iv, { authTagLength: TAG_BYTES });
   decipher.setAuthTag(tag);
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
   const payload = JSON.parse(plaintext);
