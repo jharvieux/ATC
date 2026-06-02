@@ -19,7 +19,9 @@ vi.mock("@/lib/auth/assert-permission", async () => {
 });
 
 // Model only what the route calls on the contacts lookup. Returning [] matches
-// makes the route early-return, so the bookings chain is never reached.
+// makes the route early-return, so the bookings chain is never reached. The
+// fallback throws (rather than returning {}) so that if the early-return is ever
+// removed, this fails with a legible message instead of a cryptic TypeError.
 vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
     from: (table: string) => {
@@ -33,7 +35,9 @@ vi.mock("@/lib/db/tenant-client", () => ({
           }),
         };
       }
-      return {};
+      throw new Error(
+        `unexpected tenantClient.from("${table}") — test expects the empty-match early return`,
+      );
     },
   }),
 }));
