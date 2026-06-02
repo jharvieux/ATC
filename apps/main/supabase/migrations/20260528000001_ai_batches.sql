@@ -122,11 +122,13 @@ ALTER TABLE public.ai_batch_requests ENABLE ROW LEVEL SECURITY;
 -- All four CRUD ops gated to service_role. The Supabase JS v2 service-
 -- role client bypasses RLS but the table-level policy makes that
 -- explicit for any future maintainer reading the schema.
+DROP POLICY IF EXISTS ai_batch_jobs_service_role_all ON public.ai_batch_jobs;
 CREATE POLICY ai_batch_jobs_service_role_all ON public.ai_batch_jobs
   FOR ALL
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');
 
+DROP POLICY IF EXISTS ai_batch_requests_service_role_all ON public.ai_batch_requests;
 CREATE POLICY ai_batch_requests_service_role_all ON public.ai_batch_requests
   FOR ALL
   USING (auth.role() = 'service_role')

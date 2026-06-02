@@ -726,7 +726,7 @@ Covers PRs #354–#363. Bigger updates that move spec text; small deviations lan
 ## §27.12 — Anthropic Message Batches pipeline shipped
 
 - **Spec said:** §27.12 covers AI cost attribution but does not describe a batch-API pathway. Real-time `instrumentedClaudeCall` is the only documented surface.
-- **Reality (since #363):** New batch pipeline. Two tables (migration `20260528000000_ai_batches.sql`):
+- **Reality (since #363):** New batch pipeline. Two tables (migration `20260528000001_ai_batches.sql`):
   - **`ai_batch_requests`** — 1 row per unit of work. `tenant_id`, `purpose` (one of `precruise_generation` / `memory_extraction` / `persona_addendum_screen` / `rag_pii_redaction` / `rag_normalization`), `status` (pending → submitted → completed|failed), `request_params` (JSONB — Anthropic message-create payload), `caller_metadata` (JSONB — producer's downstream context), `result_text` / `result_metadata` / `cost_cents` on completion.
   - **`ai_batch_jobs`** — 1 row per submitted Anthropic batch. `anthropic_batch_id`, `request_count`, `status`, totals.
 
