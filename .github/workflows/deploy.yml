@@ -91,7 +91,7 @@ jobs:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          git fetch --no-tags origin "${{ github.base_ref }}"
+          git fetch --no-tags origin "$GITHUB_BASE_REF"
           node scripts/ci-decide-tests.mjs | tee -a "$GITHUB_OUTPUT"
 
       - name: Run full vitest suite (with coverage)

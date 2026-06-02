@@ -16,7 +16,7 @@
 // surfaces *new* slop in the diff context regardless of whether the rules
 // are switched on at warn/error level in the affected file.
 
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 
 const BASE_REF = process.env.SLOP_CHECK_BASE_REF ?? "origin/dev";
@@ -50,9 +50,11 @@ const WRAPPER_FN_RE =
   /^export\s+(?:async\s+)?function\s+\w+\s*\([^)]*\)\s*(?::\s*[^{]+)?\{\s*return\s+[^;]+;\s*\}/m;
 
 function getChangedFiles(): string[] {
-  const out = execSync(`git diff --name-only --diff-filter=AM ${BASE_REF}...HEAD`, {
-    encoding: "utf8",
-  });
+  const out = execFileSync(
+    "git",
+    ["diff", "--name-only", "--diff-filter=AM", `${BASE_REF}...HEAD`],
+    { encoding: "utf8" },
+  );
   return out
     .split("\n")
     .map((line) => line.trim())
