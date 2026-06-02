@@ -96,16 +96,22 @@ jobs:
 
       - name: Run full vitest suite (with coverage)
         if: steps.scope.outputs.mode == 'full'
+        env:
+          REASON: ${{ steps.scope.outputs.reason }}
         run: |
-          echo "::notice::Running FULL test suite — ${{ steps.scope.outputs.reason }}"
+          echo "::notice::Running FULL test suite — $REASON"
           pnpm test
 
       - name: Run affected vitest tests
         if: steps.scope.outputs.mode == 'affected'
+        env:
+          REASON: ${{ steps.scope.outputs.reason }}
         run: |
-          echo "::notice::Running affected tests — ${{ steps.scope.outputs.reason }}"
+          echo "::notice::Running affected tests — $REASON"
           # `vitest related <files>` resolves test files transitively via vitest's
           # own import graph. Run from repo root; vitest discovers config.
+          # Each path in `files` is single-quoted by ci-decide-tests.mjs and the
+          # script rejects shell metacharacters (#571), so the splat is injection-safe.
           pnpm --silent vitest related ${{ steps.scope.outputs.files }}
 
   secret-scan:

@@ -26,6 +26,7 @@
 //   files=path1 path2 ...     # space-separated, ready to splat into `vitest related`
 
 import { execSync } from "node:child_process";
+import { isCiPathSafe } from "./lib/ci-path-safe.mjs";
 
 const BASE_REF = process.env.GITHUB_BASE_REF || "dev";
 const LABELS = (process.env.LABELS || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -94,6 +95,15 @@ try {
 
 if (changed.length === 0) {
   fail("empty diff");
+}
+
+// CI shell-injection guard (#571): changed paths flow into the workflow's
+// echoed `reason` and the `vitest related` args, so a crafted filename outside
+// the safe charset forces the full suite (fail-closed) rather than reaching the
+// shell. Allowlist + rationale live in scripts/lib/ci-path-safe.mjs; the
+// fallback reason deliberately omits the offending path.
+if (changed.some((f) => !isCiPathSafe(f))) {
+  fail("changed path contains unexpected characters");
 }
 
 const configHits = changed.filter((f) => CONFIG_PATTERNS.some((re) => re.test(f)));
