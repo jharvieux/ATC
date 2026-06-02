@@ -25,7 +25,10 @@ interface DriftWindow {
   delta_pct: number | null;
 }
 
-async function getKillSwitchState(): Promise<KillSwitchState | null> {
+// Helpers are exported for isolated unit testing (each must surface read
+// errors, not degrade to zeroes — #561). Mirrors the page-helper export
+// convention used by signup/complete/page.tsx.
+export async function getKillSwitchState(): Promise<KillSwitchState | null> {
   const db = createServiceRoleClient();
   const data = await safeAwait(
     db
@@ -38,7 +41,7 @@ async function getKillSwitchState(): Promise<KillSwitchState | null> {
   return (data as KillSwitchState | null) ?? null;
 }
 
-async function getRegenBudgetExhausted(): Promise<number> {
+export async function getRegenBudgetExhausted(): Promise<number> {
   const db = createServiceRoleClient();
   // Convention from run-supervisor: max regen = 2. A finding with
   // regen_count >= 2 means budget exhausted.
@@ -53,7 +56,7 @@ async function getRegenBudgetExhausted(): Promise<number> {
   return count ?? 0;
 }
 
-async function getDriftTrend(): Promise<DriftWindow> {
+export async function getDriftTrend(): Promise<DriftWindow> {
   const db = createServiceRoleClient();
   const now = Date.now();
   const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -114,7 +117,7 @@ type PersonaMetric = {
   thumbs_down_count: number;
 };
 
-async function getOpenEscalations(): Promise<EscalationTopic[]> {
+export async function getOpenEscalations(): Promise<EscalationTopic[]> {
   const db = createServiceRoleClient();
   const data = await safeAwait(
     db
@@ -130,7 +133,7 @@ async function getOpenEscalations(): Promise<EscalationTopic[]> {
   return (data ?? []) as EscalationTopic[];
 }
 
-async function getRecentFlaggedMessages(): Promise<FlaggedMessage[]> {
+export async function getRecentFlaggedMessages(): Promise<FlaggedMessage[]> {
   const db = createServiceRoleClient();
   const sevenDaysAgo = new Date(
     Date.now() - 7 * 24 * 60 * 60 * 1000,
@@ -148,7 +151,7 @@ async function getRecentFlaggedMessages(): Promise<FlaggedMessage[]> {
   return (data ?? []) as FlaggedMessage[];
 }
 
-async function getPersonaMetrics(): Promise<PersonaMetric[]> {
+export async function getPersonaMetrics(): Promise<PersonaMetric[]> {
   const db = createServiceRoleClient();
   const data = await safeAwait(
     db

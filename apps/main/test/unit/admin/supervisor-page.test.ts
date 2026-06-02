@@ -3,8 +3,9 @@
 // than throwing, so a dropped `error` renders misleading zeroes / empty lists on
 // the platform-admin observability surface — an operator could read "0 open
 // escalations / no drift / budget fine" when the truth is "the query failed."
-// These tests encode the intent of the D-094 fix: a read error must PROPAGATE
-// (the page throws), never be silently rendered as zeroes.
+// These tests encode the intent of the D-094 fix: every read helper must
+// PROPAGATE a read error (throw), and the page must not swallow it — never a
+// silent zero render.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -20,7 +21,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
 // safe-mutation is intentionally NOT mocked — we want the real safeAwait /
 // SupabaseMutationError to throw on the injected error.
 
-import SupervisorDashboardPage from "../../../src/app/(admin)/supervisor/page";
+import SupervisorDashboardPage, {
+  getKillSwitchState,
+  getRegenBudgetExhausted,
+  getDriftTrend,
+  getOpenEscalations,
+  getRecentFlaggedMessages,
+  getPersonaMetrics,
+} from "../../../src/app/(admin)/supervisor/page";
 
 type QueryResult = { data: unknown; error: unknown; count: number | null };
 
@@ -54,13 +62,13 @@ function makeClient(resultFor: (table: string) => QueryResult) {
   return { from: (table: string) => makeQuery(resultFor(table)) };
 }
 
-const pgError = (table: string) => ({
-  message: `boom:${table}`,
-  code: "XX000",
-  hint: null,
-  details: null,
-  name: "PostgrestError",
-});
+const ERROR_RESULT: QueryResult = {
+  data: null,
+  error: { message: "boom", code: "XX000", hint: null, details: null, name: "PostgrestError" },
+  count: null,
+};
+
+const errorClient = () => makeClient(() => ERROR_RESULT);
 
 function successResult(table: string): QueryResult {
   if (table === "ai_kill_switch_state") {
@@ -116,7 +124,32 @@ describe("/supervisor dashboard — service-role read error handling (#561)", ()
     vi.clearAllMocks();
   });
 
-  it("renders real values when every read succeeds (non-vacuous baseline)", async () => {
+  // Each helper, in isolation, must throw on a read error — never return a
+  // zero/empty value. Testing per-helper (not just through the page) means a
+  // future regression that drops `error` from any single helper fails here,
+  // even though four of the six query the same `messages` table.
+  const helpers: Array<[string, () => Promise<unknown>]> = [
+    ["getKillSwitchState", getKillSwitchState],
+    ["getRegenBudgetExhausted", getRegenBudgetExhausted],
+    ["getDriftTrend", getDriftTrend],
+    ["getOpenEscalations", getOpenEscalations],
+    ["getRecentFlaggedMessages", getRecentFlaggedMessages],
+    ["getPersonaMetrics", getPersonaMetrics],
+  ];
+
+  for (const [name, fn] of helpers) {
+    it(`${name} throws on a read error (never degrades to zeroes)`, async () => {
+      mocks.createServiceRoleClient.mockReturnValue(errorClient());
+      await expect(fn()).rejects.toThrow("boom");
+    });
+  }
+
+  it("page propagates a read error instead of rendering zeroes (no swallow)", async () => {
+    mocks.createServiceRoleClient.mockReturnValue(errorClient());
+    await expect(SupervisorDashboardPage()).rejects.toThrow("boom");
+  });
+
+  it("page renders real values when every read succeeds (non-vacuous baseline)", async () => {
     mocks.createServiceRoleClient.mockReturnValue(makeClient(successResult));
     const html = renderToStaticMarkup(await SupervisorDashboardPage());
     expect(html).toContain("AI Supervisor Dashboard");
@@ -124,18 +157,4 @@ describe("/supervisor dashboard — service-role read error handling (#561)", ()
     expect(html).toContain("tone"); // flagged-by-check-type rendered
     expect(html).toContain("p-1"); // per-persona row rendered
   });
-
-  // Each data source, erroring in isolation, must make the whole page throw —
-  // never fall through to a zero/empty render. (messages is read by four
-  // helpers; an error on it trips whichever resolves first — still a throw.)
-  for (const table of ["ai_kill_switch_state", "escalation_topics", "messages"]) {
-    it(`throws — not zeroes — when the ${table} read errors`, async () => {
-      mocks.createServiceRoleClient.mockReturnValue(
-        makeClient((t) =>
-          t === table ? { data: null, error: pgError(table), count: null } : successResult(t),
-        ),
-      );
-      await expect(SupervisorDashboardPage()).rejects.toThrow(`boom:${table}`);
-    });
-  }
 });
