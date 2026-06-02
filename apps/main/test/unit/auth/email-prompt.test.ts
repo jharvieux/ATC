@@ -84,4 +84,23 @@ describe("POST /api/auth/microsoft-email-prompt", () => {
     expect(OTP_STORE.get("alice@example.com")?.attempts).toBe(0);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("always stashes a 6-digit OTP in range (CSPRNG bounds contract)", async () => {
+    // Pins the format of the crypto.randomInt OTP. A bounds regression (5- or
+    // 7-digit codes) or a revert to a predictable generator widens the #74
+    // guess-the-OTP window this route exists to close. randomInt(100000,
+    // 1000000) ⇒ [100000, 999999]: 6 digits, no leading zero, never 1_000_000.
+    process.env.RESEND_API_KEY = "re_test";
+    fetchSpy.mockResolvedValue(new Response("{}", { status: 200 }));
+    for (let i = 0; i < 100; i++) {
+      OTP_STORE.clear();
+      const email = `user${i}@example.com`;
+      await POST(postReq(email));
+      const code = OTP_STORE.get(email)?.code;
+      expect(code).toMatch(/^\d{6}$/);
+      const n = Number(code);
+      expect(n).toBeGreaterThanOrEqual(100000);
+      expect(n).toBeLessThanOrEqual(999999);
+    }
+  });
 });
