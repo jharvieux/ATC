@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { escapeIlikeOrTerm } from "@/lib/db/postgrest-filter";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { fromCents, type Cents } from "@/lib/money";
 
@@ -71,12 +72,18 @@ export async function GET(req: Request): Promise<Response> {
   // If contact_query is set, first find matching contact IDs (fuzzy name / email).
   let contactIds: string[] | null = null;
   if (contact_query && contact_query.trim().length >= 2) {
-    const q = `%${contact_query.trim()}%`;
-    const { data: matches } = await db
+    const q = escapeIlikeOrTerm(contact_query);
+    const { data: matches, error: matchErr } = await db
       .from("contacts")
       .select("id")
       .or(`first_name.ilike.${q},last_name.ilike.${q},email.ilike.${q}`)
       .limit(200);
+    if (matchErr) {
+      return Response.json(
+        { error: "lookup_failed", detail: matchErr.message },
+        { status: 500 },
+      );
+    }
     contactIds = ((matches ?? []) as Array<{ id: string }>).map((m) => m.id);
     if (contactIds.length === 0) {
       return Response.json({ bookings: [], total: 0, page, page_size });
@@ -110,10 +117,16 @@ export async function GET(req: Request): Promise<Response> {
   );
   let contactsById = new Map<string, ContactRow>();
   if (uniqueContactIds.length > 0) {
-    const { data: contactRows } = await db
+    const { data: contactRows, error: contactErr } = await db
       .from("contacts")
       .select("id, first_name, last_name, email")
       .in("id", uniqueContactIds);
+    if (contactErr) {
+      return Response.json(
+        { error: "lookup_failed", detail: contactErr.message },
+        { status: 500 },
+      );
+    }
     contactsById = new Map(
       ((contactRows ?? []) as ContactRow[]).map((c) => [c.id, c]),
     );
