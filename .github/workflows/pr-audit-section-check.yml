@@ -90,13 +90,20 @@ jobs:
 
           # `gh pr view --json files` returns up to 100 files; paginate
           # via the REST endpoint to be safe on large doc PRs.
+          #
+          # awk must read gh's output to EOF — do NOT `exit` on the first
+          # match. Exiting early closes the pipe while `gh --paginate` is
+          # still streaming, so gh dies with SIGPIPE (exit 141); under
+          # `set -o pipefail` that fails the whole step intermittently
+          # (the race depends on how fast gh flushes). The `!seen` guard
+          # keeps only the first non-doc filename while still draining stdin.
           NON_DOC=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
             --jq '.[].filename' \
             | awk '
                 /\.md$/        { next }
                 /^docs\//      { next }
                 /^specs\//     { next }
-                { print; exit }
+                !seen          { print; seen = 1 }
               ')
 
           if [ -z "$NON_DOC" ]; then
