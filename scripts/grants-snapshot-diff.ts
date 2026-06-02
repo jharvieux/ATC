@@ -116,8 +116,10 @@ async function main() {
   }
 
   const targets: Target[] = selection === "all" ? [...ALL_TARGETS] : [selection];
+  const allowNoTargets = process.env.GRANTS_ALLOW_NO_TARGETS === "true";
   let anyDrift = false;
   let anyChecked = false;
+  let anySkipped = false;
 
   for (const target of targets) {
     const result = await checkTarget(target);
@@ -130,6 +132,7 @@ async function main() {
       anyChecked = true;
     } else {
       console.warn(result.message);
+      anySkipped = true;
     }
   }
 
@@ -137,12 +140,26 @@ async function main() {
     // Safe to pass here only because dependency bumps never touch migrations or
     // grants. The workflow sets this flag exclusively for Dependabot (which
     // can't receive the DB-URL secrets); see deploy.yml.
-    if (process.env.GRANTS_ALLOW_NO_TARGETS === "true") {
+    if (allowNoTargets) {
       console.log("No targets checked, but GRANTS_ALLOW_NO_TARGETS=true — passing (Dependabot run).");
       process.exit(0);
     }
     console.error(
       "No targets checked — set SUPABASE_DB_URL and/or SUPABASE_RAG_DB_URL.",
+    );
+    process.exit(1);
+  }
+
+  // Fail-closed (D-091): a target skipped for an unset connection string means a
+  // prod secret is half-configured. Checking only main while rag silently passes
+  // would let a rag regression through the blocking gate. (rls-snapshot-diff can
+  // tolerate a skip because its TEST URLs are set together at the job level and
+  // are always present; the grants secrets are provisioned separately, so a
+  // partial config is a real failure mode here.) Dependabot is exempt via the flag.
+  if (anySkipped && !allowNoTargets) {
+    console.error(
+      "A selected target was skipped (its connection string is unset), but GRANTS_ALLOW_NO_TARGETS is not true.\n" +
+        "Set the missing SUPABASE_DB_URL / SUPABASE_RAG_DB_URL, or scope the run with --target=main|rag.",
     );
     process.exit(1);
   }
