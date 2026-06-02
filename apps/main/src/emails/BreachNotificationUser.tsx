@@ -17,7 +17,9 @@ export interface BreachNotificationUserProps {
     remediation_summary: string;    // 1-2 sentences plain language
     customer_action_needed?: string | null;
   };
-  // Required for state-law compliance (CA AG link, etc.). Counsel approves.
+  // Platform-generated, counsel-approved legal HTML (CA AG link, etc.) — rendered
+  // as raw HTML below, so it MUST NOT carry tenant- or user-supplied input.
+  // Currently unset by the only caller (send-breach-notifications.ts).
   state_law_disclosures_html?: string;
 }
 
@@ -57,6 +59,7 @@ export function BreachNotificationUser(props: BreachNotificationUserProps): Reac
       {props.state_law_disclosures_html && (
         <>
           <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "24px 0" }} />
+          {/* Raw HTML by contract: platform/counsel-approved legal text only, never user input (see prop docs). */}
           <div
             style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}
             dangerouslySetInnerHTML={{ __html: props.state_law_disclosures_html }}
