@@ -9,7 +9,9 @@
 // - Per-persona metrics: response count, regen rate, thumbs-down count
 // - Link to /admin/supervisor/review-queue
 
+import React from "react";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 interface KillSwitchState {
   global_paused: boolean;
@@ -25,11 +27,14 @@ interface DriftWindow {
 
 async function getKillSwitchState(): Promise<KillSwitchState | null> {
   const db = createServiceRoleClient();
-  const { data } = await db
-    .from("ai_kill_switch_state")
-    .select("global_paused, global_paused_at, global_paused_reason")
-    .eq("id", 1)
-    .maybeSingle();
+  const data = await safeAwait(
+    db
+      .from("ai_kill_switch_state")
+      .select("global_paused, global_paused_at, global_paused_reason")
+      .eq("id", 1)
+      .maybeSingle(),
+    "ai_kill_switch_state.select.global",
+  );
   return (data as KillSwitchState | null) ?? null;
 }
 
@@ -38,12 +43,13 @@ async function getRegenBudgetExhausted(): Promise<number> {
   // Convention from run-supervisor: max regen = 2. A finding with
   // regen_count >= 2 means budget exhausted.
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { count } = await db
+  const { count, error } = await db
     .from("messages")
     .select("id", { count: "exact", head: true })
     .not("supervisor_findings", "is", null)
     .gte("created_at", sevenDaysAgo)
     .filter("supervisor_findings->regen_count", "gte", "2");
+  if (error) throw new SupabaseMutationError("messages.count.regen_exhausted", error);
   return count ?? 0;
 }
 
@@ -66,6 +72,11 @@ async function getDriftTrend(): Promise<DriftWindow> {
       .gte("created_at", fourteenDaysAgo)
       .lt("created_at", sevenDaysAgo),
   ]);
+
+  if (current.error)
+    throw new SupabaseMutationError("messages.count.drift_current", current.error);
+  if (prior.error)
+    throw new SupabaseMutationError("messages.count.drift_prior", prior.error);
 
   const c = current.count ?? 0;
   const p = prior.count ?? 0;
@@ -105,14 +116,17 @@ type PersonaMetric = {
 
 async function getOpenEscalations(): Promise<EscalationTopic[]> {
   const db = createServiceRoleClient();
-  const { data } = await db
-    .from("escalation_topics")
-    .select(
-      "id, tenant_id, conversation_id, topic_summary, topic_tags, status, initiated_by, assigned_agent_id, opened_at",
-    )
-    .in("status", ["open", "in_progress"])
-    .order("opened_at", { ascending: false })
-    .limit(50);
+  const data = await safeAwait(
+    db
+      .from("escalation_topics")
+      .select(
+        "id, tenant_id, conversation_id, topic_summary, topic_tags, status, initiated_by, assigned_agent_id, opened_at",
+      )
+      .in("status", ["open", "in_progress"])
+      .order("opened_at", { ascending: false })
+      .limit(50),
+    "escalation_topics.select.open",
+  );
   return (data ?? []) as EscalationTopic[];
 }
 
@@ -121,23 +135,29 @@ async function getRecentFlaggedMessages(): Promise<FlaggedMessage[]> {
   const sevenDaysAgo = new Date(
     Date.now() - 7 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const { data } = await db
-    .from("messages")
-    .select("id, tenant_id, supervisor_findings, created_at")
-    .not("supervisor_findings", "is", null)
-    .gte("created_at", sevenDaysAgo)
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const data = await safeAwait(
+    db
+      .from("messages")
+      .select("id, tenant_id, supervisor_findings, created_at")
+      .not("supervisor_findings", "is", null)
+      .gte("created_at", sevenDaysAgo)
+      .order("created_at", { ascending: false })
+      .limit(100),
+    "messages.select.recent_flagged",
+  );
   return (data ?? []) as FlaggedMessage[];
 }
 
 async function getPersonaMetrics(): Promise<PersonaMetric[]> {
   const db = createServiceRoleClient();
-  const { data } = await db
-    .from("messages")
-    .select("persona_id, supervisor_findings, feedback_score")
-    .eq("role", "assistant")
-    .limit(1000);
+  const data = await safeAwait(
+    db
+      .from("messages")
+      .select("persona_id, supervisor_findings, feedback_score")
+      .eq("role", "assistant")
+      .limit(1000),
+    "messages.select.persona_metrics",
+  );
 
   if (!data) return [];
 
@@ -183,7 +203,7 @@ function groupByCheckType(
   return counts;
 }
 
-export default async function SupervisorDashboardPage() {
+export default async function SupervisorDashboardPage(): Promise<React.ReactElement> {
   const [escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift] =
     await Promise.all([
       getOpenEscalations(),
