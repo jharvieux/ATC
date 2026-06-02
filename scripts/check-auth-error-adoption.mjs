@@ -7,7 +7,7 @@
 // main app's API tree; flag any that call assertPermission( but never
 // respondToAuthError(. Wired into `pnpm verify` and CI.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,11 +23,13 @@ const offenders = [];
 let scanned = 0;
 
 function walk(dir) {
-  for (const entry of readdirSync(dir)) {
-    const p = join(dir, entry);
-    if (statSync(p).isDirectory()) {
+  // withFileTypes gives the entry kind from the single readdir syscall, so we
+  // never stat-then-read the same path (no TOCTOU race — js/file-system-race).
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
       walk(p);
-    } else if (entry === "route.ts") {
+    } else if (entry.name === "route.ts") {
       scanned++;
       const src = readFileSync(p, "utf8");
       if (CALLS_ASSERT.test(src) && !CALLS_RESPOND.test(src)) {
