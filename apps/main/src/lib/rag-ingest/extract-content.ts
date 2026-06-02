@@ -8,7 +8,9 @@
 //   - DOCX: mammoth.
 //   - DOC: NOT auto-converted (requires libreoffice binary on the function
 //     host); returns 'unavailable' with a clear "convert to .docx" message.
-//   - XLSX / XLS: SheetJS, one logical block per sheet (header row + rows).
+//   - XLSX: exceljs, one logical block per sheet (CSV rows).
+//   - XLS: NOT parsed (legacy binary format, no maintained JS reader); returns
+//     'unavailable' with a "re-save as .xlsx" message.
 //   - PPTX / PPT: officeparser (handles both).
 //   - image/jpeg, image/png: OCR provider chain (GCV → tesseract fallback).
 //
@@ -61,8 +63,15 @@ export async function extractContent(opts: {
       };
 
     case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-    case "application/vnd.ms-excel":
       return extractXlsx(await blob.arrayBuffer());
+
+    case "application/vnd.ms-excel":
+      return {
+        status: "unavailable",
+        error:
+          "legacy_xls_format: .xls (Excel 97–2003 binary) is no longer parsed. " +
+          "Re-save as .xlsx and resubmit.",
+      };
 
     case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
     case "application/vnd.ms-powerpoint":
@@ -146,30 +155,32 @@ async function extractDocx(bytes: ArrayBuffer): Promise<ExtractionResult> {
   }
 }
 
-// ── XLSX / XLS — SheetJS, one labeled block per sheet ───────────────────────
-
-interface XlsxModule {
-  read: (data: ArrayBuffer | Uint8Array, opts?: { type?: string }) => {
-    SheetNames: string[];
-    Sheets: Record<string, unknown>;
-  };
-  utils: {
-    sheet_to_csv: (ws: unknown) => string;
-  };
-}
+// ── XLSX — exceljs, one labeled block per sheet (CSV rows) ───────────────────
 
 async function extractXlsx(bytes: ArrayBuffer): Promise<ExtractionResult> {
   try {
-    const xlsx = (await import("xlsx")) as unknown as XlsxModule;
-    const workbook = xlsx.read(new Uint8Array(bytes), { type: "array" });
+    const { Workbook } = await import("exceljs");
+    const workbook = new Workbook();
+    // exceljs pins @types/node@14, whose Buffer brand differs from the workspace's
+    // @types/node@25 — the runtime value is a valid Buffer, only the type tag clashes.
+    await workbook.xlsx.load(Buffer.from(bytes) as unknown as Parameters<typeof workbook.xlsx.load>[0]);
     const blocks: string[] = [];
-    for (const name of workbook.SheetNames) {
-      const ws = workbook.Sheets[name];
-      if (!ws) continue;
-      const csv = xlsx.utils.sheet_to_csv(ws).trim();
-      if (csv.length === 0) continue;
-      blocks.push(`# Sheet: ${name}\n${csv}`);
-    }
+    workbook.eachSheet((ws) => {
+      const lines: string[] = [];
+      ws.eachRow({ includeEmpty: false }, (row) => {
+        const cells: string[] = [];
+        // CSV-escape: quote a field only if it holds the delimiter, a quote, or a
+        // newline, doubling embedded quotes — matches SheetJS sheet_to_csv output.
+        row.eachCell({ includeEmpty: true }, (cell) => {
+          const v = cell.text;
+          cells.push(/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+        });
+        lines.push(cells.join(","));
+      });
+      const csv = lines.join("\n").trim();
+      if (csv.length === 0) return;
+      blocks.push(`# Sheet: ${ws.name}\n${csv}`);
+    });
     if (blocks.length === 0) return { status: "failed", error: "xlsx_no_sheets_with_data" };
     return { status: "extracted", content: blocks.join("\n\n") };
   } catch (err) {
