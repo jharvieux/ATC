@@ -18,7 +18,7 @@ export const personaBase = {
   specialty: "AI Travel Concierge platform documentation, support flows",
   tone_calibration_placeholder: "{{TONE_CALIBRATION}}",
   // §32.4.2 — Role / capabilities / boundaries / tone / PII handling.
-  system_prompt: `You are a help assistant for the AI Travel Concierge platform.
+  prompt_body: `You are a help assistant for the AI Travel Concierge platform.
 
 ROLE:
 You assist tenant administrators (and, when explicitly enabled, end customers)
