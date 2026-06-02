@@ -1,6 +1,6 @@
 // §22.3 — File extraction dispatch tests.
 // Verifies text-based formats extract directly, HTML stripping behavior, and
-// failure paths (storage download error, unsupported MIME, legacy .doc).
+// failure paths (storage download error, unsupported MIME, legacy .doc/.xls).
 //
 // Binary format tests (PDF, DOCX, XLSX, PPTX, OCR) are integration-only —
 // they require either real binary fixtures or library mocks. The dispatch
@@ -80,6 +80,16 @@ describe("extractContent — §22.3", () => {
     });
     expect(out.status).toBe("unavailable");
     expect(out.error).toMatch(/legacy_doc_format/);
+  });
+
+  it("returns 'unavailable' for legacy .xls (binary BIFF, no maintained reader)", async () => {
+    const out = await extractContent({
+      db: mockDb({ text: "ignored" }),
+      storage_path: "p",
+      mime_type: "application/vnd.ms-excel",
+    });
+    expect(out.status).toBe("unavailable");
+    expect(out.error).toMatch(/legacy_xls_format/);
   });
 
   it("returns 'failed' for unsupported MIME", async () => {
