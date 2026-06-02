@@ -23,10 +23,6 @@ import type { GroupBroadcastProps } from "@/emails/GroupBroadcast";
 const VALID_TEMPLATES = ["T90", "T30", "T7", "T1", "GroupInvitation", "GroupBroadcast"] as const;
 type TemplateId = (typeof VALID_TEMPLATES)[number];
 
-// Never copy these keys from attacker-controlled request params into a plain
-// object — they are the prototype-pollution vectors (CodeQL js/remote-property-injection).
-const UNSAFE_PARAM_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-
 const PLATFORM_LAYOUT = {
   branding: PLATFORM_BRANDING,
   tenant_legal_name: PLATFORM_TENANT_SHIM.legal_name,
@@ -51,30 +47,33 @@ interface SampleParams {
   broadcast_message: string | undefined;
 }
 
-function parseSampleParams(source: Record<string, string>): SampleParams | { error: string } {
-  const template = source.template as TemplateId;
-  if (!VALID_TEMPLATES.includes(template)) {
+// Reads params through a getter rather than copying request entries into an
+// object: nothing ever writes an attacker-controlled key to a property, so the
+// prototype-pollution sink (CodeQL js/remote-property-injection) doesn't exist.
+function parseSampleParams(get: (key: string) => string | undefined): SampleParams | { error: string } {
+  const template = get("template") as TemplateId | undefined;
+  if (!template || !VALID_TEMPLATES.includes(template)) {
     return { error: `Invalid template. Must be one of: ${VALID_TEMPLATES.join(", ")}` };
   }
 
-  const portsRaw = source.ports ?? "Miami\nAt sea\nRoatán\nHarvest Caye\nCosta Maya\nCozumel\nAt sea";
+  const portsRaw = get("ports") ?? "Miami\nAt sea\nRoatán\nHarvest Caye\nCosta Maya\nCozumel\nAt sea";
   const ports = portsRaw.split(/\n|,/).map((p) => p.trim()).filter(Boolean);
 
   return {
     template,
-    customer_name: source.customer_name || "Jordan",
-    ship_name: source.ship_name || "Norwegian Bliss",
-    cruise_line: source.cruise_line || "Norwegian Cruise Line",
-    sailing_date: source.sailing_date || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+    customer_name: get("customer_name") || "Jordan",
+    ship_name: get("ship_name") || "Norwegian Bliss",
+    cruise_line: get("cruise_line") || "Norwegian Cruise Line",
+    sailing_date: get("sailing_date") || new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
     ports,
-    destination_region: (source.destination_region as DestinationRegion) ?? "caribbean",
-    companion_page_url: source.companion_page_url || "https://example.com/companion",
-    group_name: source.group_name,
-    invitee_name: source.invitee_name,
-    coordinator_message: source.coordinator_message,
-    invite_url: source.invite_url,
-    broadcast_subject: source.broadcast_subject,
-    broadcast_message: source.broadcast_message,
+    destination_region: (get("destination_region") as DestinationRegion | undefined) ?? "caribbean",
+    companion_page_url: get("companion_page_url") || "https://example.com/companion",
+    group_name: get("group_name"),
+    invitee_name: get("invitee_name"),
+    coordinator_message: get("coordinator_message"),
+    invite_url: get("invite_url"),
+    broadcast_subject: get("broadcast_subject"),
+    broadcast_message: get("broadcast_message"),
   };
 }
 
@@ -219,12 +218,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const url = new URL(req.url);
-  const queryParams: Record<string, string> = {};
-  url.searchParams.forEach((v, k) => {
-    if (!UNSAFE_PARAM_KEYS.has(k)) queryParams[k] = v;
-  });
-
-  const parsed = parseSampleParams(queryParams);
+  const parsed = parseSampleParams((k) => url.searchParams.get(k) ?? undefined);
   if ("error" in parsed) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
@@ -267,12 +261,10 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "Invalid or missing to_email" }, { status: 400 });
   }
 
-  const strParams: Record<string, string> = {};
-  for (const [k, v] of Object.entries(rawBody)) {
-    if (k !== "to_email" && typeof v === "string" && !UNSAFE_PARAM_KEYS.has(k)) strParams[k] = v;
-  }
-
-  const parsed = parseSampleParams(strParams);
+  const parsed = parseSampleParams((k) => {
+    const v = rawBody[k];
+    return typeof v === "string" ? v : undefined;
+  });
   if ("error" in parsed) {
     return Response.json({ error: parsed.error }, { status: 400 });
   }
