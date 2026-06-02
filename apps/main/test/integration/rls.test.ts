@@ -552,13 +552,15 @@ describeIf("RLS integration", () => {
         VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
       `;
       // The schema's UNIQUE constraint must be enforced at the DB layer, not just app logic.
+      // postgres.js puts the SQLSTATE on err.code; String(err) is the message text only (no code),
+      // so a /23505/ regex over the stringified error never matches a real unique violation.
       await expect(
         sql`
           INSERT INTO public.contact_relationships
             (tenant_id, from_contact_id, to_contact_id, relationship_type)
           VALUES (${tenantA.id}, ${contactAId}, ${contactAId}, 'self_reference_test')
         `
-      ).rejects.toSatisfy((err: unknown) => /23505/.test(String(err)));
+      ).rejects.toSatisfy((err: unknown) => (err as { code?: string }).code === "23505");
     });
   });
 });
