@@ -16,6 +16,7 @@ const SECTIONS = [
   {
     heading: "Content & Knowledge",
     items: [
+      { href: "/admin/personas",             label: "Personas",                 desc: "Edit DB-backed persona definitions and the shared safety block (legal kernel stays read-only)." },
       { href: "/admin/rag/authority",        label: "RAG Authority Overrides",  desc: "Curate knowledge chunk authority — set or clear manual overrides with required reason." },
       { href: "/admin/retrieval-weights",    label: "Retrieval Weights",        desc: "Tune platform-wide composite retrieval knobs (match / authority / recency / feedback)." },
       { href: "/admin/chunks/post-termination", label: "Post-termination Chunks", desc: "Review globally-promoted chunks from terminated tenants: retain, demote, or hard-delete." },

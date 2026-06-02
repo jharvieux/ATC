@@ -9,20 +9,54 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
+import { getPersonaDefault } from "@/lib/personas/persona-defaults";
+import { SAFETY_EDITABLE_DEFAULT } from "@/lib/personas/platform-constraints";
 
+// Table-aware mock: buildSystemPrompt now reads personas (Layer 1) and
+// persona_safety_config (Layer 2) from the DB (D-138) in addition to the
+// persona_addendums (Layer 3) read this test exercises. The personas rows are
+// derived from the code defaults so the seeded content matches what an admin
+// would see/edit, exercising the real DB path rather than the fallback.
 function mockDb(addendumRow?: { content: string; updated_at: string; status: string }) {
   return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
+    from: (table: string) => {
+      if (table === "personas") {
+        return {
+          select: () => ({
+            eq: (_col: string, slug: string) => ({
+              maybeSingle: async () => {
+                const def = getPersonaDefault(slug);
+                return { data: def ? { ...def, version: 1 } : null, error: null };
+              },
+            }),
+          }),
+        };
+      }
+      if (table === "persona_safety_config") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: { editable_block: SAFETY_EDITABLE_DEFAULT, version: 1 },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      // persona_addendums (Layer 3): three eq() filters then maybeSingle.
+      return {
+        select: () => ({
           eq: () => ({
             eq: () => ({
-              maybeSingle: async () => ({ data: addendumRow ?? null }),
+              eq: () => ({
+                maybeSingle: async () => ({ data: addendumRow ?? null, error: null }),
+              }),
             }),
           }),
         }),
-      }),
-    }),
+      };
+    },
   } as unknown as SupabaseClient;
 }
 

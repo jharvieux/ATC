@@ -4,30 +4,12 @@
 // Layer 3: tenant addendum (agency tier only) + tone calibration + customer context
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { PLATFORM_CONSTRAINTS } from "./platform-constraints";
-import { personaBase as marcus } from "./base-blocks/marcus";
-import { personaBase as marco } from "./base-blocks/marco";
-import { personaBase as priya } from "./base-blocks/priya";
-import { personaBase as dave } from "./base-blocks/dave";
-import { personaBase as maya } from "./base-blocks/maya";
-import { personaBase as jenny } from "./base-blocks/jenny";
-import { personaBase as helpAi } from "./base-blocks/help-ai";
-
-// BP31 §32.4 — Help AI is registered alongside the travel concierge personas
-// but the prompt builder treats it specially via the `kind: 'platform_help'`
-// discriminator below.
-const BASE_BLOCKS = new Map<string, { slug: string; system_prompt: string; tone_calibration_placeholder: string; kind?: string }>([
-  [marcus.slug, marcus],
-  [marco.slug, marco],
-  [priya.slug, priya],
-  [dave.slug, dave],
-  [maya.slug, maya],
-  [jenny.slug, jenny],
-  [helpAi.slug, helpAi],
-]);
-
-/** §32.4.1 — Help AI bypasses tenant addendums + display-name overrides. */
-const KIND_PLATFORM_HELP = "platform_help";
+import { assemblePlatformConstraints } from "./platform-constraints";
+import {
+  assemblePersonaPrompt,
+  PERSONA_KIND_PLATFORM_HELP,
+} from "./assemble-persona-prompt";
+import { getPersonaForPrompt, getSafetyConfig } from "./persona-repository";
 
 // Default fallback persona slug per §9.1
 export const DEFAULT_PERSONA_SLUG = "marcus-cole";
@@ -112,24 +94,24 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     pricing_anchors_block,
   } = opts;
 
-  const base = BASE_BLOCKS.get(persona_slug);
-  if (!base) {
-    throw new Error(
-      `Unknown persona slug: '${persona_slug}'. Valid slugs: ${[...BASE_BLOCKS.keys()].join(", ")}`,
-    );
-  }
+  // Layer 1: persona base block — DB-backed with code-default fallback (D-138).
+  // getPersonaForPrompt throws only for a genuinely unknown slug (no DB row AND
+  // no code default); a transient DB miss/error falls back to the vetted default.
+  const { persona, version: personaVersion } = await getPersonaForPrompt(persona_slug, db);
 
   const layers: string[] = [];
 
-  // Layer 1: persona base block
-  const personaLayer = base.system_prompt.replace(
-    base.tone_calibration_placeholder,
+  const personaLayer = assemblePersonaPrompt(persona).replace(
+    persona.tone_calibration_placeholder,
     buildToneBlock(tone_level),
   );
   layers.push(personaLayer);
 
-  // Layer 2: platform constraints (always appended)
-  layers.push(`\n\n${PLATFORM_CONSTRAINTS}`);
+  // Layer 2: platform constraints — code-side LEGAL_KERNEL + DB-backed editable
+  // safety block (D-138). assemblePlatformConstraints prepends the kernel, so the
+  // legal floor holds even when the editable block falls back to its default.
+  const { editable_block, version: safetyVersion } = await getSafetyConfig(db);
+  layers.push(`\n\n${assemblePlatformConstraints(editable_block)}`);
 
   // Layer 3: tenant addendum — agency tier only per §16.5 / §16.6 (BP18).
   // Reads from persona_addendums (the BP18 table); only status='approved' rows
@@ -142,7 +124,7 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // NOT be applied. Falsy / missing `kind` means a regular travel-concierge
   // persona and addendum lookup runs as before.
   let addendumVersion = 0;
-  if (base.kind !== KIND_PLATFORM_HELP && AGENCY_TIERS.has(tenant_tier)) {
+  if (persona.kind !== PERSONA_KIND_PLATFORM_HELP && AGENCY_TIERS.has(tenant_tier)) {
     const { data } = await db
       .from("persona_addendums")
       .select("content, updated_at, status")
@@ -188,8 +170,10 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
 
   const prompt = layers.join("");
 
-  // Cache key for Anthropic prompt caching — changes when any input changes
-  const cacheKey = `persona:${persona_slug}:${tenant_id}:${tone_level}:${addendumVersion}`;
+  // Cache key for Anthropic prompt caching — changes when any input changes.
+  // The persona/safety version suffixes fold admin edits into the cache key: an
+  // edit bumps the row version, which flips the key and invalidates the cache.
+  const cacheKey = `persona:${persona_slug}:${tenant_id}:${tone_level}:${addendumVersion}:p${personaVersion}:s${safetyVersion}`;
 
   return { prompt, cacheKey };
 }

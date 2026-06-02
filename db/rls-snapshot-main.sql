@@ -63,6 +63,8 @@
 -- public.payout_records (rls_enabled)
 -- public.pending_rag_sync (rls_enabled)
 -- public.persona_addendums (rls_enabled)
+-- public.persona_safety_config (rls_enabled)
+-- public.personas (rls_enabled)
 -- public.pipeline_stages (rls_enabled)
 -- public.platform_admins (rls_enabled)
 -- public.platform_revenue (rls_enabled)
@@ -99,6 +101,7 @@
 -- public.tenant_usage_metrics (rls_enabled)
 -- public.tenant_usage_overrides (rls_enabled)
 -- public.tenants (rls_enabled)
+-- public.tier_definitions (rls_enabled)
 -- public.trip_itineraries (rls_enabled)
 -- public.trip_resources (rls_enabled)
 -- public.usage_limit_events (rls_enabled)
@@ -116,7 +119,6 @@
 -- public.pricing_cache (rls_disabled)
 -- public.reconciliation_review_queue (rls_disabled)
 -- public.schema_migrations (rls_disabled)
--- public.tier_definitions (rls_disabled)
 
 -- Policies:
 -- TABLE: public.abuse_recompute_drift_log
@@ -937,6 +939,36 @@ CREATE POLICY "persona_addendums_update" ON public.persona_addendums
   USING ((tenant_id IN ( SELECT users.tenant_id
    FROM users
   WHERE users.auth_user_id = auth.uid())));
+
+-- TABLE: public.persona_safety_config
+CREATE POLICY "persona_safety_config_delete_deny" ON public.persona_safety_config
+  FOR DELETE TO authenticated
+  USING (false);
+CREATE POLICY "persona_safety_config_insert_deny" ON public.persona_safety_config
+  FOR INSERT TO authenticated
+  WITH CHECK (false);
+CREATE POLICY "persona_safety_config_select_policy" ON public.persona_safety_config
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "persona_safety_config_update_deny" ON public.persona_safety_config
+  FOR UPDATE TO authenticated
+  USING (false)
+  WITH CHECK (false);
+
+-- TABLE: public.personas
+CREATE POLICY "personas_delete_deny" ON public.personas
+  FOR DELETE TO authenticated
+  USING (false);
+CREATE POLICY "personas_insert_deny" ON public.personas
+  FOR INSERT TO authenticated
+  WITH CHECK (false);
+CREATE POLICY "personas_select_policy" ON public.personas
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "personas_update_deny" ON public.personas
+  FOR UPDATE TO authenticated
+  USING (false)
+  WITH CHECK (false);
 
 -- TABLE: public.pipeline_stages
 CREATE POLICY "pipeline_stages_delete_policy" ON public.pipeline_stages
