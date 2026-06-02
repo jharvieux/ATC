@@ -121,6 +121,19 @@ describe("tenantClient proxy", () => {
     expect(qb.filterBuilder.eqCalls).toEqual([]);
   });
 
+  it("passes through .from('personas') — the global persona catalog (#589 switch route depends on this)", () => {
+    // personas has no tenant_id (global catalog). De-registering it would make
+    // tenantClient.from('personas') throw, 500-ing the persona-switch route.
+    const qb = makeQueryBuilder();
+    mockFrom.mockReturnValue(qb);
+
+    const db = tenantClient(ctx);
+    db.from("personas").select("id");
+
+    expect(mockFrom).toHaveBeenCalledWith("personas");
+    expect(qb.filterBuilder.eqCalls).toEqual([]);
+  });
+
   it("THROWS on tables in neither TENANT_SCOPED_TABLES nor PLATFORM_READABLE_TABLES", () => {
     // Fail-closed contract — see UnregisteredTenantTableError.
     mockFrom.mockReturnValue(makeQueryBuilder());

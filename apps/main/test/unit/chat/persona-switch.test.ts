@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   personaMaybeSingle: vi.fn(),
   personaEqCalls: [] as Array<[string, unknown]>,
   messagesInsert: vi.fn(),
+  conversationsUpdate: vi.fn(),
   conversationsUpdateEq: vi.fn(),
 }));
 
@@ -37,7 +38,6 @@ vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
     from: (table: string) => {
       if (table === "personas") {
-        // Chainable builder: .select(...).eq(...).eq(...).eq(...).maybeSingle().
         // Each .eq is captured so a test can assert the kind/is_active scope.
         const builder = {
           select: () => builder,
@@ -53,8 +53,9 @@ vi.mock("@/lib/db/tenant-client", () => ({
         // Awaited by safeAwait — resolve to a { data, error } shape.
         return { insert: mocks.messagesInsert };
       }
-      // conversations: .update(...).eq("id", ...) resolves to { error }.
-      return { update: () => ({ eq: mocks.conversationsUpdateEq }) };
+      // conversations: .update(payload).eq("id", ...) resolves to { error }.
+      // update() is captured so a test can assert the active_persona_id payload.
+      return { update: mocks.conversationsUpdate };
     },
   }),
 }));
@@ -85,6 +86,7 @@ beforeEach(() => {
     error: null,
   });
   mocks.messagesInsert.mockResolvedValue({ data: null, error: null });
+  mocks.conversationsUpdate.mockReturnValue({ eq: mocks.conversationsUpdateEq });
   mocks.conversationsUpdateEq.mockResolvedValue({ error: null });
 });
 
@@ -105,9 +107,14 @@ describe("POST /api/chat/conversations/[id]/persona", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; active_persona_slug: string };
     expect(body).toEqual({ ok: true, active_persona_slug: "marcus-cole" });
-    // System transcript line written AND active_persona_id persisted.
+    // System transcript line written AND the resolved persona id persisted —
+    // assert the payload, not just that update was called, so a dropped or
+    // hardcoded active_persona_id can't pass silently.
     expect(mocks.messagesInsert).toHaveBeenCalledTimes(1);
-    expect(mocks.conversationsUpdateEq).toHaveBeenCalledTimes(1);
+    expect(mocks.conversationsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ active_persona_id: PERSONA_ID }),
+    );
+    expect(mocks.conversationsUpdateEq).toHaveBeenCalledWith("id", CONV_ID);
   });
 
   it("scopes the lookup to kind='travel_concierge' AND is_active=true (help_ai stays unswitchable, #589)", async () => {
