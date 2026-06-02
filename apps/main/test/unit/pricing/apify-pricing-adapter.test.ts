@@ -30,10 +30,11 @@ interface MockDb {
   _upserts: InsertRecord[];
 }
 
-function makeMockDb(opts: { monthlySpend?: number } = {}): MockDb {
+function makeMockDb(opts: { monthlySpend?: number; ledgerError?: boolean } = {}): MockDb {
   const inserts: InsertRecord[] = [];
   const upserts: InsertRecord[] = [];
   const monthlySpend = opts.monthlySpend ?? 0;
+  const ledgerError = opts.ledgerError ?? false;
 
   const db = {
     from(table: string) {
@@ -54,8 +55,11 @@ function makeMockDb(opts: { monthlySpend?: number } = {}): MockDb {
               // readBudgetCapFromDb path — no DB override, falls back to env var.
               return Promise.resolve({ data: null, error: null });
             },
-            then(resolve: (v: { data: unknown[] }) => unknown) {
+            then(resolve: (v: { data: unknown[] | null; error?: unknown }) => unknown) {
               if (table === "apify_spend_ledger") {
+                if (ledgerError) {
+                  return resolve({ data: null, error: { message: "ledger read boom" } });
+                }
                 return resolve({ data: monthlySpend > 0 ? [{ spend_usd: monthlySpend }] : [] });
               }
               return resolve({ data: [] });
@@ -125,6 +129,23 @@ describe("ApifyPricingAdapter — guards", () => {
     const adapter = new ApifyPricingAdapter(db as never);
     const r = await adapter.refreshTrackedSailings([SAILING]);
     expect(r.reason).toMatch(/monthly_budget_exhausted/);
+    expect(alertCalls).toHaveLength(1);
+  });
+
+  it("fails closed (pauses) when the spend-ledger read errors — never dispatches unmetered (#529)", async () => {
+    // A dropped { error } previously let monthlySpendUsd() coerce a failed read
+    // to $0 spend, sailing past the budget gate and dispatching an unmetered
+    // run. Fail-closed means a read error pauses the adapter — same outcome as a
+    // genuinely over-budget month — instead of a silent green light. Distinct
+    // from the cap-exhausted test above: here spend is UNKNOWN, not known-high.
+    process.env.APIFY_ADAPTER_ENABLED = "true";
+    process.env.APIFY_API_TOKEN = "test-token";
+    const db = makeMockDb({ ledgerError: true });
+    const adapter = new ApifyPricingAdapter(db as never);
+    const r = await adapter.refreshTrackedSailings([SAILING]);
+    expect(r.reason).toMatch(/monthly_budget_exhausted/);
+    expect(r.actor_run_id).toBeNull();
+    expect(r.spend_usd).toBe(0);
     expect(alertCalls).toHaveLength(1);
   });
 });

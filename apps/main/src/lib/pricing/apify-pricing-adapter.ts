@@ -147,10 +147,16 @@ export class ApifyPricingAdapter implements PricingDataSource {
 
   private async monthlySpendUsd(): Promise<number> {
     const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
-    const { data } = await this.db
+    const { data, error } = await this.db
       .from("apify_spend_ledger")
       .select("spend_usd")
       .gte("invoked_at", monthStart.toISOString());
+    if (error) {
+      // Fail closed: if we can't read spend, assume the cap is blown so the
+      // budget gate pauses rather than dispatching an unmetered run (D-091).
+      console.error(`[ApifyPricingAdapter] monthlySpendUsd read failed — pausing budget: ${error.message}`);
+      return Infinity;
+    }
     const rows = (data ?? []) as Array<{ spend_usd: number }>;
     return rows.reduce((s, r) => s + Number(r.spend_usd), 0);
   }
@@ -179,7 +185,6 @@ export class ApifyPricingAdapter implements PricingDataSource {
       runId = response.data?.id ?? null;
       actualSpend = response.data?.usage?.totalUsd ?? estimatedSpend;
     } catch (err) {
-      runStatus = err instanceof DOMException && err.name === "TimeoutError" ? "failed" : "failed";
       const reasonStr = err instanceof Error ? err.message : String(err);
       await this.writeLedger(route.actorId, null, 0, route.cruiseLine, "failed", { error: reasonStr });
       // D-090 Apify-5 — distinguish allowlist violations so the operator can
