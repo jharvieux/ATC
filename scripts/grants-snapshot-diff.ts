@@ -106,6 +106,46 @@ async function checkTarget(target: Target): Promise<{ status: "ok" | "drift" | "
   };
 }
 
+export type DiffReason =
+  | "no-targets-pass"
+  | "no-targets-fail"
+  | "skip-fail"
+  | "drift"
+  | "clean";
+
+export interface DiffDecision {
+  pass: boolean;
+  reason: DiffReason;
+}
+
+// Pure exit decision for a diff run, extracted so the fail-closed behavior is
+// unit-testable without a live DB (tests/unit/scripts/grants-snapshot-diff.test.ts).
+//
+// Fail-closed (D-091): a target skipped because its connection string is unset
+// means a prod secret is half-configured — checking only main while rag silently
+// passes would let a rag regression through the blocking gate. So a skip blocks
+// unless allowNoTargets is set (Dependabot, which can't receive the secrets).
+// rls-snapshot-diff can tolerate a skip because its TEST URLs are set together at
+// the job level and always present; the grants secrets are provisioned separately.
+export function decideOutcome(state: {
+  anyChecked: boolean;
+  anyDrift: boolean;
+  anySkipped: boolean;
+  allowNoTargets: boolean;
+}): DiffDecision {
+  if (!state.anyChecked) {
+    return state.allowNoTargets
+      ? { pass: true, reason: "no-targets-pass" }
+      : { pass: false, reason: "no-targets-fail" };
+  }
+  if (state.anySkipped && !state.allowNoTargets) {
+    return { pass: false, reason: "skip-fail" };
+  }
+  return state.anyDrift
+    ? { pass: false, reason: "drift" }
+    : { pass: true, reason: "clean" };
+}
+
 async function main() {
   let selection: Target | "all";
   try {
@@ -136,35 +176,28 @@ async function main() {
     }
   }
 
-  if (!anyChecked) {
-    // Safe to pass here only because dependency bumps never touch migrations or
-    // grants. The workflow sets this flag exclusively for Dependabot (which
-    // can't receive the DB-URL secrets); see deploy.yml.
-    if (allowNoTargets) {
+  const decision = decideOutcome({ anyChecked, anyDrift, anySkipped, allowNoTargets });
+  switch (decision.reason) {
+    case "no-targets-pass":
       console.log("No targets checked, but GRANTS_ALLOW_NO_TARGETS=true — passing (Dependabot run).");
-      process.exit(0);
-    }
-    console.error(
-      "No targets checked — set SUPABASE_DB_URL and/or SUPABASE_RAG_DB_URL.",
-    );
-    process.exit(1);
+      break;
+    case "no-targets-fail":
+      console.error("No targets checked — set SUPABASE_DB_URL and/or SUPABASE_RAG_DB_URL.");
+      break;
+    case "skip-fail":
+      console.error(
+        "A selected target was skipped (its connection string is unset), but GRANTS_ALLOW_NO_TARGETS is not true.\n" +
+          "Set the missing SUPABASE_DB_URL / SUPABASE_RAG_DB_URL, or scope the run with --target=main|rag.",
+      );
+      break;
+    // "drift" / "clean" were already logged per-target inside the loop above.
   }
 
-  // Fail-closed (D-091): a target skipped for an unset connection string means a
-  // prod secret is half-configured. Checking only main while rag silently passes
-  // would let a rag regression through the blocking gate. (rls-snapshot-diff can
-  // tolerate a skip because its TEST URLs are set together at the job level and
-  // are always present; the grants secrets are provisioned separately, so a
-  // partial config is a real failure mode here.) Dependabot is exempt via the flag.
-  if (anySkipped && !allowNoTargets) {
-    console.error(
-      "A selected target was skipped (its connection string is unset), but GRANTS_ALLOW_NO_TARGETS is not true.\n" +
-        "Set the missing SUPABASE_DB_URL / SUPABASE_RAG_DB_URL, or scope the run with --target=main|rag.",
-    );
-    process.exit(1);
-  }
-
-  process.exit(anyDrift ? 1 : 0);
+  process.exit(decision.pass ? 0 : 1);
 }
 
-main();
+// Module-as-script: only run when invoked directly, so decideOutcome can be
+// imported by the unit test without triggering a DB connection / process.exit.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
