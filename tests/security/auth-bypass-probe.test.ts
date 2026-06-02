@@ -101,6 +101,12 @@ const PUBLIC_ROUTE_ALLOWLIST: Array<{ pattern: RegExp; reason: string }> = [
     pattern: /\/api\/webhooks\/gmailpubsub\/route\.ts$/,
     reason: "§23.9 Gmail Pub/Sub handler — currently a 501 stub; revisit when implementation lands",
   },
+  {
+    pattern: /\/api\/security\/csp-report\/route\.ts$/,
+    reason:
+      "#572 CSP violation collector; intentionally unauthenticated (browsers POST reports directly with no credentials). " +
+      "Makes no allow/deny decision and no DB write — abuse-resistant via content-type + body-size gates and log de-dup.",
+  },
 ];
 
 function findAuthTokensInSource(filePath: string): string[] {
