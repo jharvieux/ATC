@@ -37,7 +37,10 @@ permissions:
 
 jobs:
   enable-automerge:
-    if: github.actor == 'dependabot[bot]'
+    # pull_request_target runs with base-repo perms, so gate on the PR author
+    # (pull_request.user.login), NOT github.actor — the triggering actor is
+    # forgeable on re-runs/reopens, the PR author is not (SonarCloud S8232).
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Read Dependabot metadata
