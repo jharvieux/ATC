@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-138 — 2026-06-02 — Personas + Layer-2 safety floor moved to DB with a platform-admin editor (§9.3); builds the table that D-136 found missing
+
+**Decision.** Built the DB-backed persona system the user asked for ("Personas should be in the db so they can be easily modified by the platform admin and that functionality added to the platform admin menu"). PR #588 on `feature/personas-db-admin`. Creates a `personas` table (UUID PK, `slug` UNIQUE) seeded from the existing code base-blocks, a `persona_safety_config` singleton for the editable Layer-2 safety block, and the `conversations.active_persona_id → personas(id)` FK #455 wanted. Adds `/admin/personas` (structured editor + safety editor) + admin API + hub nav link.
+
+**Five locked product decisions (the user's calls).** (1) Full structured editor — each editable field its own input. (2) Editable safety block — shared Layer-2 safety/compliance text is admin-editable, versioned, restore-to-default. (3) Locked legal kernel, shown read-only — the small legal kernel (AI-disclosure + no-licensed-professional-advice) stays CODE-enforced, surfaced read-only so the admin sees what always applies. (4) Fields + editable prose body — Layer-1 prompt assembled deterministically from structured fields + freeform prose so EVERY field affects output (D-091 no-stub); per-persona snapshot tests pin the assembly; a small prompt-wording change was accepted. (5) One PR (squash).
+
+**Resolves D-136's blocker.** D-136 (earlier today) found #455's `active_persona_id` FK unbuildable because no `personas` table existed (spec models personas by slug). This feature creates that table (UUID PK + slug), so the FK is now real; the persona-switch route resolves slug→row id and writes the FK (was: wrote only `updated_at`, left FK null). Used "Refs #455", not "Closes".
+
+**Architecture.** 3-layer prompt: L1 persona (DB, `assemble-persona-prompt.ts`), L2 = code `LEGAL_KERNEL` + DB editable safety block, L3 tenant addendum (unchanged). `persona-repository.ts` reads L1/L2 with a 60s per-instance cache + code-default fallback on DB miss/error (prompt-build is NOT an enforcement gate → falls back rather than hard-fails; throws only on a truly-unknown slug). Version rides in the Anthropic prompt cacheKey → an admin edit bumps version → cache invalidates. Admin writes are version-CAS (`safeAwaitRowCount(...,1)` raises on zero-row) + audited via `withPlatformAdminAudit`; `updated_by` set only on the session path (bearer sentinel isn't a UUID).
+
+**Two audit findings, both handled.** (1) `disclosure_pattern` was an editable+persisted+loaded field the assembler never rendered — a D-091 stub breaking decision #4. Fixed (cb6b383) by rendering it under a "HOW YOU INTRODUCE YOURSELF" header (travel personas only) + field-presence/mutation tests. (2) The persona-switch route's hardcoded `KNOWN_SLUGS` allowlist (400-on-miss) sits beside the new DB lookup (500-on-miss) — inconsistent semantics + drift risk now that personas are DB-backed. Not a current bug (7 fixed slugs, no create-persona path); tracked as **#589** rather than changing error semantics mid-PR under autonomy.
+
+**BLOCKED on merge — and it's NOT this branch.** The required `RLS Snapshot Diff` check is RED because migration `20260627000016_enable_rls_tier_definitions.sql` (security-advisor-driven, already on dev + applied to live atc-main) enabled RLS on `public.tier_definitions`, but committed `db/rls-snapshot.sql` was last regenerated at `c6f49ab` (pre-dating the 20260627 security migrations). Live(enabled) vs snapshot(disabled) = drift → the check fails on EVERY PR until the snapshot is regenerated (`pnpm rls:snapshot:main`, needs live-DB access). NOT auto-fixed: regen needs the prod DB credential (secret-handling rule) and is cross-cutting infra gating the whole queue — surfaced for a user decision.
+
+**Rejected.** (a) Removing `disclosure_pattern` from editable columns instead of rendering it — silently shrinks admin control + contradicts decision #4. (b) Hand-editing `db/rls-snapshot.sql` to flip tier_definitions green — defeats the drift check (the snapshot is a generated artifact; hand-tweaking to pass could mask other policy drift the table-level diff doesn't surface).
+
+**Artifacts.** PR #588 (open; both audits clean, audit-section-check green; blocked on RLS drift). Issue #589 (KNOWN_SLUGS follow-up). Migrations `20260627000020_personas` / `…021_persona_safety_config` / `…022_conversations_messages_persona_fk`. Follow-up commits cb6b383 (disclosure render) + 4f20827 (comment slop-trim).
+
+---
+
 ## D-137 — 2026-06-02 — Nightly-only RLS integration suite hid a §12.2 matcher bug for 2 nights (#576/#532); postgres.js SQLSTATE lives on err.code
 
 **Decision/fix.** `rls.test.ts` §12.2 duplicate-edge test matched `/23505/.test(String(err))`. `postgres.js` (v3.4.9) puts the Postgres SQLSTATE on `err.code`, while `String(err)` is the message text only (`"duplicate key value violates unique constraint …"`) — so the matcher never matched a real unique violation and the test failed **every** nightly since #510 added it (2026-05-31). Fixed to assert `err.code === "23505"` (PR #586, merged f9b0448).
