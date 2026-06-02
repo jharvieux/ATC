@@ -8,7 +8,7 @@
 // blocking, or being floodable by, the unauthenticated caller.
 
 import { describe, it, expect, vi } from "vitest";
-import { parseCspReports } from "@/lib/security/csp-report";
+import { parseCspReports, signatureOf, createViolationDeduper } from "@/lib/security/csp-report";
 import { POST } from "@/app/api/security/csp-report/route";
 
 function post(body: string, contentType: string | null): Request {
@@ -83,6 +83,55 @@ describe("parseCspReports — §572", () => {
     expect(parseCspReports(null, "application/reports+json")).toEqual([]);
     expect(parseCspReports({ "csp-report": {} }, "application/csp-report")).toEqual([]);
     expect(parseCspReports([{ type: "csp-violation", body: "nope" }], "application/reports+json")).toEqual([]);
+  });
+});
+
+describe("signatureOf / createViolationDeduper — §572", () => {
+  it("collapses a violation to (effective-directive, blocked-origin)", () => {
+    // Two reports differing only by path share a signature — same finding.
+    const a = signatureOf({
+      documentUri: "",
+      violatedDirective: "",
+      effectiveDirective: "script-src",
+      blockedUri: "https://evil.cdn.com/a/one.js",
+      disposition: "report",
+    });
+    const b = signatureOf({
+      documentUri: "",
+      violatedDirective: "",
+      effectiveDirective: "script-src",
+      blockedUri: "https://evil.cdn.com/b/two.js",
+      disposition: "report",
+    });
+    expect(a).toBe("script-src|https://evil.cdn.com");
+    expect(b).toBe(a);
+  });
+
+  it("keeps a non-URL blocked-uri keyword as-is and falls back to violated-directive", () => {
+    const sig = signatureOf({
+      documentUri: "",
+      violatedDirective: "style-src 'self'",
+      effectiveDirective: "",
+      blockedUri: "inline",
+      disposition: "report",
+    });
+    expect(sig).toBe("style-src 'self'|inline");
+  });
+
+  it("logs a signature once per window, then suppresses repeats (anti-flood)", () => {
+    const d = createViolationDeduper({ windowMs: 60_000, maxSignatures: 100 });
+    expect(d.shouldLog("script-src|https://evil.com")).toBe(true);
+    expect(d.shouldLog("script-src|https://evil.com")).toBe(false);
+    expect(d.shouldLog("connect-src|https://other.com")).toBe(true);
+  });
+
+  it("clears tracking at the cap so memory stays bounded under a flood of unique signatures", () => {
+    const d = createViolationDeduper({ windowMs: 60_000, maxSignatures: 2 });
+    expect(d.shouldLog("a")).toBe(true);
+    expect(d.shouldLog("b")).toBe(true); // size now at cap (2)
+    expect(d.shouldLog("c")).toBe(true); // cap hit → clear, then track c
+    // "a" was forgotten by the clear, so it logs again — proves the bound fired.
+    expect(d.shouldLog("a")).toBe(true);
   });
 });
 

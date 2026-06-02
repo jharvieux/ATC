@@ -80,3 +80,40 @@ function isRecord(x: unknown): x is Record<string, unknown> {
 function str(x: unknown): string {
   return typeof x === "string" ? x : "";
 }
+
+// ── Log de-dup ───────────────────────────────────────────────────────────────
+// A violation's log signature is (effective-directive, blocked-origin): two reports
+// that differ only by path are the same finding for allowlist-building purposes, so we
+// collapse them.
+
+export function signatureOf(v: CspViolation): string {
+  let origin = v.blockedUri;
+  try {
+    origin = new URL(v.blockedUri).origin;
+  } catch {
+    // blocked-uri is often a keyword ("inline", "eval", "data") rather than a URL.
+  }
+  return `${v.effectiveDirective || v.violatedDirective}|${origin}`;
+}
+
+export interface ViolationDeduper {
+  shouldLog(signature: string): boolean;
+}
+
+// Logs a given signature at most once per window; bounded so a flood of UNIQUE
+// signatures can't grow memory without limit (at the cap it clears and starts over).
+// This is telemetry hygiene, NOT a security gate — clearing just re-logs a signature,
+// which is harmless. Window/cap are injected so the behavior is unit-testable.
+export function createViolationDeduper(opts: { windowMs: number; maxSignatures: number }): ViolationDeduper {
+  const seen = new Map<string, number>();
+  return {
+    shouldLog(signature: string): boolean {
+      const now = Date.now();
+      const last = seen.get(signature);
+      if (last !== undefined && now - last < opts.windowMs) return false;
+      if (seen.size >= opts.maxSignatures) seen.clear();
+      seen.set(signature, now);
+      return true;
+    },
+  };
+}
