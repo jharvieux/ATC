@@ -67,9 +67,9 @@ function personaToDraft(p: PersonaDetail): Record<string, string> {
   return d;
 }
 
-// Builds the full PUT patch. Empty nullable fields → null; background stays a
-// plain string (may be ""); required fields pass through (server re-validates
-// non-empty); anti_instructions splits to a trimmed, non-empty string[].
+// background is the one optional field typed as a plain string (help_ai seeds
+// it ""), so a blank value must round-trip as "" — not null like the other
+// optional fields, which would violate the column type.
 function draftToPatch(draft: Record<string, string>): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   for (const f of FIELD_DEFS) {
