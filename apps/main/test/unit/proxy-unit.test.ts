@@ -181,6 +181,79 @@ describe("proxy()", () => {
     });
   });
 
+  // -- Admin PAGE gate (§26, defense-in-depth) ----------------------------
+
+  describe("admin page gate", () => {
+    const COOKIE = "sb-abcdef-auth-token=opaque-session-blob";
+
+    it("404s /supervisor on the platform host with no session cookie", async () => {
+      const res = await proxy(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/supervisor" }),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("404s /admin/* on the platform host with no session cookie", async () => {
+      const res = await proxy(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/admin/denylist" }),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("lets /supervisor through on the platform host WITH a session cookie", async () => {
+      // Locks the !hasSupabaseAuthCookie half: a present cookie must not 404.
+      // Authoritative platform_admins membership is checked in the layout, not here.
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/supervisor",
+          headers: { cookie: COOKIE },
+        }),
+      );
+      expect(res.status).not.toBe(404);
+      expect(res.headers.get("x-middleware-next")).toBe("1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
+    it("404s /admin on a tenant host even WITH a session cookie (platform-only)", async () => {
+      // Locks the hostname !== primaryDomain half: admin pages must never be
+      // served on tenant subdomains, regardless of session.
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      const res = await proxy(
+        makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          pathname: "/admin",
+          headers: { cookie: COOKIE },
+        }),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("404s /supervisor on a custom domain host", async () => {
+      mocks.getTenantByCustomDomain.mockResolvedValue(
+        payingTenant({ id: "tenant-2", tenant_type: "byo_agency" }),
+      );
+      const res = await proxy(
+        makeReq({
+          host: "agency.example.com",
+          pathname: "/supervisor",
+          headers: { cookie: COOKIE },
+        }),
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it("does NOT gate non-admin pages on the platform host", async () => {
+      // A page request with no cookie on the platform host that ISN'T an admin
+      // page must still pass through (proves the gate is scoped to admin paths).
+      const res = await proxy(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/some-public-page" }),
+      );
+      expect(res.status).not.toBe(404);
+      expect(res.headers.get("x-middleware-next")).toBe("1");
+    });
+  });
+
   // -- Platform domain → "platform" sentinel ------------------------------
 
   describe("platform domain", () => {
