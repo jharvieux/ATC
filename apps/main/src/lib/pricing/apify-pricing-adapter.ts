@@ -119,13 +119,27 @@ export class ApifyPricingAdapter implements PricingDataSource {
     ]);
     const gate = checkMonthlyBudget(monthly, capOverride);
     if (gate.paused) {
+      // monthly is Infinity when the spend-ledger read failed (fail-closed). A
+      // DB-read incident needs different operator action than a real overrun, so
+      // keep the two distinguishable — Infinity would otherwise serialize to a
+      // null/$Infinity audit row that loses that signal.
+      const spendKnown = Number.isFinite(monthly);
       await sendOperatorAlert({
         severity: "high",
         signal: "apify_monthly_budget_exhausted",
-        detail: `Apify monthly budget cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). Tracked-sailings refresh paused — subscriber price-watch notifications will be skipped this run.`,
-        payload: { monthly_spend_usd: monthly, cap_kind: "tracked_sailings" },
+        detail: spendKnown
+          ? `Apify monthly budget cap of $${gate.cap_usd.toFixed(2)} reached ($${monthly.toFixed(2)}). Tracked-sailings refresh paused — subscriber price-watch notifications will be skipped this run.`
+          : `Apify spend-ledger read failed; pausing tracked-sailings refresh as a fail-closed precaution (cap $${gate.cap_usd.toFixed(2)}). Subscriber price-watch notifications will be skipped this run.`,
+        payload: {
+          monthly_spend_usd: spendKnown ? monthly : null,
+          spend_read_failed: !spendKnown,
+          cap_kind: "tracked_sailings",
+        },
       });
-      return refuse("monthly_budget_exhausted", `monthly cap $${gate.cap_usd.toFixed(2)} reached`);
+      return refuse(
+        "monthly_budget_exhausted",
+        spendKnown ? `monthly cap $${gate.cap_usd.toFixed(2)} reached` : "spend-ledger read failed (fail-closed)",
+      );
     }
     return null;
   }

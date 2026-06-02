@@ -147,6 +147,11 @@ describe("ApifyPricingAdapter — guards", () => {
     expect(r.actor_run_id).toBeNull();
     expect(r.spend_usd).toBe(0);
     expect(alertCalls).toHaveLength(1);
+    // Forensic signal must distinguish a read failure from a real overrun: the
+    // audit payload flags the read failure rather than recording a null spend.
+    const alert = alertCalls[0] as { signal: string; payload: { spend_read_failed?: boolean } };
+    expect(alert.signal).toBe("apify_monthly_budget_exhausted");
+    expect(alert.payload.spend_read_failed).toBe(true);
   });
 });
 
