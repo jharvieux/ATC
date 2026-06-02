@@ -12,10 +12,14 @@
 // 10-minute window could bind an attacker's auth identity to a victim's
 // email — D-091 fail-open + Pattern 3 (silent enforcement skip).
 
+import { randomInt } from "node:crypto";
 import { OTP_STORE } from "@/lib/auth/otp-store";
 
+// CSPRNG, not Math.random(): this OTP gates auth-identity binding, so a
+// predictable value would let an attacker brute-force the 10-min window.
+// randomInt's upper bound is exclusive → [100000, 999999], always 6 digits.
 function generateOtp(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(randomInt(100000, 1000000));
 }
 
 export async function POST(req: Request): Promise<Response> {
