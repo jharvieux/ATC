@@ -20,7 +20,10 @@ describe("enumeratePageRoutes — (admin) subtree", () => {
     const urls = routes.map((r) => r.urlPath);
     expect(urls).toContain("/admin");
     expect(urls).toContain("/supervisor");
-    expect(routes.length).toBeGreaterThanOrEqual(10);
+    // Floor just under the live count (19) so a partial-walk regression trips
+    // it; lower deliberately if an admin page is removed. Kept in sync with the
+    // e2e probe's self-test.
+    expect(routes.length).toBeGreaterThanOrEqual(17);
   });
 
   it("strips route groups — no '(group)' leaks into any URL", () => {

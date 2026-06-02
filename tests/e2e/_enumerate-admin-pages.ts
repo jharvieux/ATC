@@ -14,9 +14,7 @@ import { join, relative } from "path";
 const PARAM_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
 export interface PageRoute {
-  // URL with route groups stripped and dynamic segments left as [param].
   urlPath: string;
-  // Concrete URL safe to request: [param] / [...rest] replaced with the sentinel.
   probePath: string;
   hasParam: boolean;
   filePath: string;
@@ -36,8 +34,7 @@ function findPageFiles(dir: string): string[] {
   return files;
 }
 
-// Route groups — folders named "(group)" — organize files without adding a URL
-// segment. They must be dropped so the probe URL matches what Next.js serves.
+// Route-group folders "(group)" don't add a URL segment, so drop them.
 function isRouteGroup(segment: string): boolean {
   return segment.startsWith("(") && segment.endsWith(")");
 }
@@ -52,14 +49,10 @@ function filePathToUrl(filePath: string, appDir: string): string {
 }
 
 function toProbePath(urlPath: string): string {
+  // [param] and [...catch-all] both start with "[" and end with "]".
   return urlPath
     .split("/")
-    .map((s) =>
-      (s.startsWith("[...") && s.endsWith("]")) ||
-      (s.startsWith("[") && s.endsWith("]"))
-        ? PARAM_SENTINEL
-        : s,
-    )
+    .map((s) => (s.startsWith("[") && s.endsWith("]") ? PARAM_SENTINEL : s))
     .join("/");
 }
 

@@ -20,20 +20,25 @@ const APP_DIR = join(process.cwd(), "apps", "main", "src", "app");
 const adminRoutes = enumeratePageRoutes(APP_DIR, "(admin)");
 
 // Guard the false-empty trap: if enumeration silently returns nothing (app dir
-// moved, group renamed), the loop below would generate zero tests and the file
-// would "pass" while probing nothing. Make that loud instead.
+// moved, group renamed) or a partial set (a walk bug), the loop below would
+// generate too few tests and the file would "pass" while probing little. Make
+// that loud. The floor sits just under the live count (19) so a partial-walk
+// regression trips it; lower it deliberately if an admin page is ever removed.
 test("enumerator finds the admin page surface", () => {
   const urls = adminRoutes.map((r) => r.urlPath);
   expect(urls).toContain("/supervisor");
   expect(urls).toContain("/admin");
-  expect(adminRoutes.length).toBeGreaterThanOrEqual(10);
+  expect(adminRoutes.length).toBeGreaterThanOrEqual(17);
 });
 
 for (const route of adminRoutes) {
   test(`unauthenticated GET ${route.urlPath} → 404`, async ({ request }) => {
-    // No headers at all: a true anonymous request. maxRedirects:0 so a redirect
-    // (e.g. to a sign-in page) fails the 404 assertion instead of being followed
-    // and masked.
+    // No headers at all: a true anonymous request. maxRedirects:0 returns the
+    // raw 3xx instead of following it, so a redirect (e.g. to sign-in) fails the
+    // 404 check rather than being masked by the redirect target's status. The
+    // required signal is specifically 404 (notFound), not merely "not 200": this
+    // probe stays meaningful only while the gate in (admin)/layout.tsx denies
+    // with notFound() — if it ever switched to redirect(), this would fail.
     const res = await request.get(route.probePath, { maxRedirects: 0 });
     expect(res.status()).toBe(404);
   });
