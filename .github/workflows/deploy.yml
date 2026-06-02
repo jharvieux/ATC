@@ -233,6 +233,9 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
           SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
+          # Warn-only step: if the prod secrets aren't set yet, skip quietly
+          # rather than mislabel "no targets" as drift in the warning below.
+          GRANTS_ALLOW_NO_TARGETS: "true"
         run: pnpm grants:check || echo "::warning::Grants drift detected on dev — run pnpm grants:snapshot and commit db/grants-snapshot-{main,rag}.sql"
 
   contract-tests:
