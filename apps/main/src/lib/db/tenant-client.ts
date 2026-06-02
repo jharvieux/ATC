@@ -30,9 +30,14 @@
 // behind `withPlatformAdminAudit`. The unit tests catch the five known
 // operations; new surface area requires a deliberate code review.
 //
-// Defense in depth: this proxy enforces scoping at the application layer.
-// RLS enforces it at the database layer. Either alone is insufficient;
-// both together are the design.
+// Defense in depth — but note WHICH layer applies on THIS path. The proxy wraps
+// the SERVICE-ROLE client (createServiceRoleClient below), and service_role
+// bypasses RLS, so RLS does NOT backstop queries made through this proxy. The
+// tenant boundary here is the proxy's injected `.eq("tenant_id", ctx.tenant_id)`
+// (and tenant_id in insert/upsert payloads) — which is exactly the explicit
+// service-role tenant filter D-091 accepts as the DB-layer constraint. RLS is
+// the genuine second layer for the SEPARATE authenticated-client / SSR path,
+// where the caller's JWT (not service_role) drives the query.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "./service-role-client";

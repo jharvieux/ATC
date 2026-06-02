@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { escapeIlikeOrTerm } from "@/lib/db/postgrest-filter";
 import { recordIdentificationTouch } from "@/lib/attribution/record-touch";
 import { readPendingAttributionFromHeader, ATTRIBUTION_PENDING_COOKIE } from "@/lib/attribution/read-pending-cookie";
 import { channelFromManualCategory } from "@/lib/attribution/channel-map";
@@ -53,8 +54,9 @@ export async function GET(req: Request): Promise<Response> {
 
     if (pipeline_stage_key) query = query.eq("pipeline_stage_key", pipeline_stage_key);
     if (search) {
+      const q = escapeIlikeOrTerm(search);
       query = query.or(
-        `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`,
+        `first_name.ilike.${q},last_name.ilike.${q},email.ilike.${q}`,
       );
     }
 
