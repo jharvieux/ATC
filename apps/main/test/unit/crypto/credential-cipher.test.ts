@@ -116,12 +116,14 @@ describe("credential-cipher (§13.5)", () => {
   });
 
   it("rejects a credential sealed with a short (8-byte) GCM auth tag (#551)", () => {
-    // Node accepts 4–16 byte GCM tags when authTagLength is unset, so an
-    // attacker controlling the stored bundle could supply a shorter, more
-    // forgeable tag. This builds a bundle whose tag is a REAL 8-byte GCM tag
-    // over empty ciphertext — without the authTagLength pin + length assertion
-    // it authenticates and decryptCredential returns ok:true (the weakening).
-    // With the fix it must fail closed as auth_tag_mismatch.
+    // Node accepts 4–16 byte GCM tags when authTagLength is unset, so a caller
+    // controlling the stored bundle could supply a shorter, more forgeable tag.
+    // This builds a bundle whose tag is a REAL 8-byte GCM tag over empty
+    // ciphertext; the explicit tag.length gate rejects it as auth_tag_mismatch
+    // BEFORE setAuthTag. Non-vacuous: without the gate, setAuthTag itself throws
+    // "Invalid authentication tag length", which the catch maps to the generic
+    // "decryption_failed" (the message lacks its "auth tag" substring) — a
+    // different code than this test asserts, so a revert fails here.
     const key = Buffer.from("a".repeat(32)); // matches CURRENT_KEY_B64 decoded
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: 8 });

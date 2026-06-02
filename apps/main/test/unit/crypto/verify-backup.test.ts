@@ -41,7 +41,8 @@ describe("verify-backup (§13.5.3)", () => {
     const key = randomBytes(32);
     const result = verifyBackup({
       test_ciphertext_b64: seal(key, "", 8),
-      expected_plaintext: "",
+      expected_plaintext: "", // not reached — tag-length guard returns before decrypt
+
       backup_keys: { current: key.toString("base64") },
       backup_key_ids: { current: "backup-v1" },
     });
