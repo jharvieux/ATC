@@ -87,6 +87,18 @@ describe("POST /api/admin/email-samples", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects an over-long but format-valid to_email before the regex (#554 ReDoS cap)", async () => {
+    // 312 chars: this string MATCHES the validation regex, so without the length
+    // cap it would pass and reach sendEmail (200). The cap rejects it at 400 and
+    // sendEmail is never called — that's the non-vacuous signal (a revert flips it).
+    mockSendEmail.mockClear();
+    const overLong = `${"a".repeat(300)}@example.com`;
+    const { POST } = await import("@/app/api/admin/email-samples/route");
+    const res = await POST(makeRequest("POST", adminHeaders(), { template: "T90", to_email: overLong }));
+    expect(res.status).toBe(400);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when template is unknown", async () => {
     const { POST } = await import("@/app/api/admin/email-samples/route");
     const res = await POST(makeRequest("POST", adminHeaders(), { template: "TUnknown", to_email: "x@y.com" }));

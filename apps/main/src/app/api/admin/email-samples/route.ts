@@ -23,6 +23,10 @@ import type { GroupBroadcastProps } from "@/emails/GroupBroadcast";
 const VALID_TEMPLATES = ["T90", "T30", "T7", "T1", "GroupInvitation", "GroupBroadcast"] as const;
 type TemplateId = (typeof VALID_TEMPLATES)[number];
 
+// Never copy these keys from attacker-controlled request params into a plain
+// object — they are the prototype-pollution vectors (CodeQL js/remote-property-injection).
+const UNSAFE_PARAM_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 const PLATFORM_LAYOUT = {
   branding: PLATFORM_BRANDING,
   tenant_legal_name: PLATFORM_TENANT_SHIM.legal_name,
@@ -216,7 +220,9 @@ export async function GET(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
   const queryParams: Record<string, string> = {};
-  url.searchParams.forEach((v, k) => { queryParams[k] = v; });
+  url.searchParams.forEach((v, k) => {
+    if (!UNSAFE_PARAM_KEYS.has(k)) queryParams[k] = v;
+  });
 
   const parsed = parseSampleParams(queryParams);
   if ("error" in parsed) {
@@ -255,13 +261,15 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const to_email = String(rawBody.to_email ?? "");
-  if (!to_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to_email)) {
+  // Cap length before the regex: 254 is the RFC 5321 maximum, and bounding the
+  // input neutralizes polynomial backtracking in the validation regex (ReDoS).
+  if (!to_email || to_email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to_email)) {
     return Response.json({ error: "Invalid or missing to_email" }, { status: 400 });
   }
 
   const strParams: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawBody)) {
-    if (k !== "to_email" && typeof v === "string") strParams[k] = v;
+    if (k !== "to_email" && typeof v === "string" && !UNSAFE_PARAM_KEYS.has(k)) strParams[k] = v;
   }
 
   const parsed = parseSampleParams(strParams);
