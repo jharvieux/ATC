@@ -157,12 +157,6 @@ async function extractDocx(bytes: ArrayBuffer): Promise<ExtractionResult> {
 
 // ── XLSX — exceljs, one labeled block per sheet (CSV rows) ───────────────────
 
-// Quote a field only when it contains the delimiter, a quote, or a newline, and
-// double any embedded quotes — matches the CSV shape SheetJS sheet_to_csv emitted.
-function csvEscape(s: string): string {
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 async function extractXlsx(bytes: ArrayBuffer): Promise<ExtractionResult> {
   try {
     const { Workbook } = await import("exceljs");
@@ -175,8 +169,11 @@ async function extractXlsx(bytes: ArrayBuffer): Promise<ExtractionResult> {
       const lines: string[] = [];
       ws.eachRow({ includeEmpty: false }, (row) => {
         const cells: string[] = [];
+        // CSV-escape: quote a field only if it holds the delimiter, a quote, or a
+        // newline, doubling embedded quotes — matches SheetJS sheet_to_csv output.
         row.eachCell({ includeEmpty: true }, (cell) => {
-          cells.push(csvEscape(cell.text));
+          const v = cell.text;
+          cells.push(/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
         });
         lines.push(cells.join(","));
       });
