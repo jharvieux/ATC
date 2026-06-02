@@ -11,15 +11,6 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-const KNOWN_SLUGS = new Set([
-  "marcus-cole",
-  "marco-bellini",
-  "priya-sharma",
-  "captain-dave",
-  "maya-patel",
-  "jenny-hartwell",
-]);
-
 export async function POST(
   req: Request,
   ctxParams: { params: Promise<{ id: string }> },
@@ -32,26 +23,28 @@ export async function POST(
     const { id } = await ctxParams.params;
     const body = (await req.json()) as { persona_slug?: string };
     const slug = String(body.persona_slug ?? "");
-    if (!KNOWN_SLUGS.has(slug)) {
+    if (!slug) {
       return Response.json({ error: "unknown_persona_slug" }, { status: 400 });
     }
 
     const db = tenantClient(ctx);
 
-    // Resolve the persona row id for the FK. personas.slug is UNIQUE and the
-    // slug was already validated against KNOWN_SLUGS; personas is a global,
-    // authenticated-readable table so the tenant client can read it.
+    // The DB personas table is the single source of truth for switchable slugs
+    // (#589). Scope to active travel_concierge rows so the platform help_ai
+    // assistant (kind='platform_help') and any deactivated persona are not
+    // valid switch targets. A missing row is therefore a client error
+    // (unknown or non-switchable slug) → 400, not a seed-invariant 500.
+    // personas is global + authenticated-readable, so the tenant client reads it.
     const { data: personaRow, error: lookupError } = await db
       .from("personas")
       .select("id")
       .eq("slug", slug)
+      .eq("kind", "travel_concierge")
+      .eq("is_active", true)
       .maybeSingle();
     if (lookupError) return Response.json({ error: lookupError.message }, { status: 500 });
     if (!personaRow) {
-      // slug passed KNOWN_SLUGS but no seed row exists — a seed/migration
-      // invariant break, not a client error. Surface loudly rather than
-      // writing a switch with a dangling null FK.
-      return Response.json({ error: "persona_row_missing" }, { status: 500 });
+      return Response.json({ error: "unknown_persona_slug" }, { status: 400 });
     }
 
     // Persist the switch as a system transcript line so the chat handler's
