@@ -112,6 +112,13 @@ export const PLATFORM_ADMIN_REASONS = [
   // #489 — Platform admin test-delivery for email design review.
   "admin_email_sample_preview",
   "admin_email_sample_send",
+
+  // D-138 §9.3 — DB-backed persona config + editable safety block editing.
+  "persona_config_read",
+  "persona_config_update",
+  "persona_config_restore",
+  "persona_safety_update",
+  "persona_safety_restore",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];
