@@ -4,6 +4,46 @@ Newest entries on top.
 
 ---
 
+## D-137 — 2026-06-02 — Nightly-only RLS integration suite hid a §12.2 matcher bug for 2 nights (#576/#532); postgres.js SQLSTATE lives on err.code
+
+**Decision/fix.** `rls.test.ts` §12.2 duplicate-edge test matched `/23505/.test(String(err))`. `postgres.js` (v3.4.9) puts the Postgres SQLSTATE on `err.code`, while `String(err)` is the message text only (`"duplicate key value violates unique constraint …"`) — so the matcher never matched a real unique violation and the test failed **every** nightly since #510 added it (2026-05-31). Fixed to assert `err.code === "23505"` (PR #586, merged f9b0448).
+
+**Verified NOT a schema regression** before touching the matcher: the `UNIQUE (tenant_id, from_contact_id, to_contact_id, relationship_type)` constraint exists (`contact_relationships.sql:20`), and the installed `postgres` source confirms the code-vs-message split (`src/connection.js:34` maps wire field `C`→`code`; `src/errors.js:3` does `super(x.message)`). So the fix repairs a false-failure, it does not hide a missing constraint.
+
+**Recurring-failure-mode insight worth keeping.** The RLS integration suite is `describeIf = haveSupabase ? describe : describe.skip` (`rls.test.ts:30`) — it runs ONLY in the nightly full-test lane (needs `SUPABASE_DB_URL` + service key). **PR CI cannot catch matcher/fixture bugs in this suite**; they merge green and surface only in nightly. When editing these tests, the fix can't be locally executed — confirmation is the next nightly. (This is the class of problem #386 — move nightly DB suites off prod — and #384 — false-confidence tests — are about.)
+
+**Rejected.** Broadening the regex to also match the message text (`duplicate key`) — less precise than the SQLSTATE the test title names; `err.code` is the canonical, language-independent signal.
+
+**Artifacts.** PR #586, issues #576/#532 (OPEN — should auto-resolve on next green nightly; closing needs user permission). Opened during session-start auto-triage; carries the `auto-triaged` label (created this session).
+
+---
+
+## D-136 — 2026-06-02 — #455 active_persona_id FK is UNBUILDABLE as written; spec models personas by slug, not a table
+
+**Finding (surfaced, not built).** #455 asks to add FK `conversations.active_persona_id UUID → personas(id) ON DELETE SET NULL`. But §9.1/§9.5 model personas as **globally-defined, SLUG-keyed** entities: the only persona table is `tenant_persona_overrides`, keyed by `persona_slug TEXT`. There is **no `personas` table**, and the spec design implies none with a UUID PK will exist.
+
+**Confirmed three ways.** (1) No `CREATE TABLE …personas` anywhere; (2) three migrations comment "the personas table does not exist" (incl. the white-label migration and `conversations_messages.sql:14`); (3) the persona-switch route hardcodes `KNOWN_SLUGS` and writes the slug to a `[persona_switch]` system message — it never populates `active_persona_id` (`route.ts:54` sets only `updated_at`). Migration `20260531000001_conversations_active_persona_fk.sql` already exists as an **intentional empty stub** deferring exactly this.
+
+**Did NOT author an FK against a nonexistent table** (would be broken/unverifiable — violates no-stub + honesty rules). **Needs a USER DECISION**: (A) close #455 won't-fix (no personas table by design); (B) spec-coherent `active_persona_id UUID → active_persona_slug TEXT` (multi-file: column + conversations routes + chat handler + data-export — NOT a one-file migration); (C) drop the unused column. Task #52 set back to pending/blocked.
+
+**Why this matters for the log.** The task list framed #52 as "migration file only, one PR" — that premise is wrong. Logging so a future session doesn't re-attempt the FK.
+
+---
+
+## D-135 — 2026-06-02 — #572 CSP shipped as no-nonce STATIC report-only; enforce mechanism (nonce vs SRI) deferred + user-gated
+
+**Decision.** Shipped `Content-Security-Policy-Report-Only` as a STATIC header in `next.config.js` + an UNAUTHENTICATED collector route `/api/security/csp-report` (PR #585, merged 077bb15). **No nonce.**
+
+**Why no nonce.** Per Next.js 16 official docs (verified this session), a nonce-based CSP forces ALL pages into **dynamic rendering** (no static generation, no CDN caching) → higher hosting cost + slower loads — and that penalty bites even in report-only if a nonce is applied during SSR. The observation layer must be zero-cost and path-independent, so it ships static. The **ENFORCING** CSP and the **nonce-vs-experimental-SRI** mechanism choice (SRI keeps static gen but is build-time only, can't cover dynamic inline scripts) are **DEFERRED** pending (a) live observation data and (b) explicit user cost sign-off. The user said "do 572" before the dynamic-rendering cost was known.
+
+**Collector design.** Content-type gate (415) + byte-accurate body cap (413, `Buffer.byteLength`) + signature log-dedup (telemetry hygiene, NOT a security gate, fail-open is harmless here). Logs structured JSON tagged `csp-violation` via `JSON.stringify` (escapes attacker-controlled fields — no log injection). **No DB write** — a table would need a prod migration + RLS + grants; a follow-up if durable storage is wanted. Route registered on the §30.8 auth-bypass PUBLIC_ROUTE_ALLOWLIST (intentionally unauthenticated; browsers POST with no credentials).
+
+**Rejected.** Nonce now (unauthorized cost); DB persistence (premature for a temporary observation window).
+
+**Artifacts.** PR #585, issue #572 (still OPEN — closing needs user permission), `next.config.js`, `src/lib/security/csp-report.ts`, `src/app/api/security/csp-report/route.ts`, `tests/security/auth-bypass-probe.test.ts`.
+
+---
+
 ## D-134 — 2026-06-02 — #571 CI shell-injection fix targeted `reason` (not `files`); allowlist extracted to scripts/lib/*.mjs
 
 **Decision.** Hardened `ci-decide-tests.mjs` + `deploy.yml` against crafted git-tracked filenames reaching the CI shell (issue #571, PR #581, merged d8e7f2e). Two parts: (1) moved the test-scope `reason` value into a step-level `env:` var at both `echo` steps in `deploy.yml` so an embedded `$(…)` is bash variable-expanded, not command-substituted (same pattern as #552/PR #570); (2) added a fail-closed allowlist guard `isCiPathSafe(path)` (`/^[\w./()[\]-]+$/`) in the script after the empty-diff check — any path outside the charset forces `mode=full`. The predicate was extracted to **`scripts/lib/ci-path-safe.mjs`** with a unit test.
