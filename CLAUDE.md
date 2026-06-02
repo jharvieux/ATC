@@ -56,12 +56,11 @@ For each PR, classify:
 - **DIRTY (merge conflict)** — if the conflict is one we know how to resolve (event-registry additions, ai-batch-flush additions, route registrations — additive lists), attempt a rebase + push. Otherwise surface as "needs your call."
 - **BLOCKED on missing audit section** — if Claude-authored, run the audit subagents + edit the PR body + re-request the audit-check. If human-authored, surface.
 - **Failing CI on dependabot PRs** — let the `dependabot-retry-ci` workflow handle. Don't intervene.
-- **Failing CI with the `regression-suspected` label** — DON'T touch. Surface to user.
+- **Failing CI with the `regression-suspected` label** — triage.
 - **Open > 7 days with no progress AND no `regression-suspected` label** — surface for triage; ask whether to close or push forward.
 
 ### What auto-triage MUST NOT do
 
-- Don't close issues without explicit user permission.
 - Don't merge PRs whose only blocker is a real test/typecheck failure on the application surface (those need investigation).
 - Don't override branch protection or skip required checks.
 - Don't run `gh pr update-branch` on a PR more than once per session — repeated update-branches with no other changes are wasted CI cycles.
@@ -203,8 +202,7 @@ No features beyond what was asked. No abstractions for single-use code.
 Test: would a senior engineer say this is overcomplicated? If yes, simplify.
 
  — Surgical Changes
-Touch only what you must. Clean up only your own mess.
-Don't "improve" adjacent code, comments, or formatting.
+
 Don't refactor what isn't broken. Match existing style.
 
 — Never ignore a bug you find
@@ -360,29 +358,6 @@ Exceptions where you can proceed without asking:
 
 When in doubt, ask. The user prefers an extra question over an unwanted change.
 
------
-
-
-
------
-
-
-
------
-
-## Model selection conventions
-
-Default model is **Sonnet 4.6** (`claude-sonnet-4-6`). Most work — TypeScript, SQL, YAML, Vitest, config, scripted runbooks, contract tests, Dependabot config, RLS work, doc writing — runs on Sonnet.
-
-Use **Opus 4.7** (`claude-opus-4-7`) only when a build prompt explicitly calls for it. 
-
-### Switching rules
-
-- Every build prompt indicates which model to use at the top.
-- If a section uses Opus or Haiku, **switch back to Sonnet at the end** with `/model claude-sonnet-4-6`. Standing rule — apply it even if the build prompt forgets to say so.
-
-
------
 
 ## Git, commits, pushes, and PRs
 
@@ -454,13 +429,7 @@ The check is required to merge. **You cannot bypass it.** Two exemptions:
 
 The CI/CD implementation prompts are in `ATC_CICD_Implementation___Build_Prompts_for_Claude_Code.md`. Each section is self-contained: manual prerequisites → invocation → prompt → verification → manual follow-ups.
 
-**Sections run in order.** Don’t skip ahead. Each section’s manual prerequisites usually depend on prior sections.
 
-**Manual prerequisites are the user’s job.** They happen outside Claude Code (GitHub UI, Vercel dashboard, local shell). When a build prompt is invoked, assume prerequisites are done unless the user says otherwise.
-
-**Verification is shared.** You run the automated checks; the user inspects external systems (GitHub Actions UI, Vercel deployments, Supabase dashboard).
-
-When resuming a build prompt mid-execution after a session break, read SESSION.md to find out where you left off, then continue from there. Don’t restart the section.
 
 -----
 
@@ -483,7 +452,7 @@ When creating a doc the user will refer to later (design proposals, runbooks, po
 
 ## Working with the specs
 
-The v6 spec, the CI/CD pipeline spec, and the Self-Service Help addendum together are the source of truth.
+The v6 spec and the CI/CD pipeline spec together are the source of truth.
 
 - **Read relevant sections before writing code or docs.** Don’t paraphrase from memory.
 - Cross-references in specs use `§N.M` notation. Follow them.
@@ -497,15 +466,13 @@ The v6 spec, the CI/CD pipeline spec, and the Self-Service Help addendum togethe
 - Delete files or branches (except your own feature branches after merging the PR they were for)
 - Rename files
 - Restructure directories
-- Modify spec `.docx` files
+- Modify spec `.html` files
 - Modify build prompt `.md` files
 - Edit prior MEMORY.md entries (additions only)
 - Merge into `main` or `release/*`
 - Force-push anywhere
 - Install new runtime dependencies (dev-dependencies are OK if obviously needed for a task)
-- Run anything against `atc-prod` other than reads
-- Run production deploy commands (`vercel --prod`, etc.)
-- Create migrations against production databases
+
 - Disable or bypass branch protection
 - Disable CI checks
 
@@ -533,7 +500,7 @@ The v6 spec, the CI/CD pipeline spec, and the Self-Service Help addendum togethe
 - Note any verification the user should run (UI checks, dashboards, deploys).
 - Note any follow-ups flagged in the build prompt’s “Manual follow-ups” section.
 - If a decision was made worth logging — write the MEMORY.md entry.
-- If you switched to Opus or Haiku, switch back to Sonnet: `/model claude-sonnet-4-6`.
+
 - Update SESSION.md.
 
 Don’t pad the wrap-up. A few lines is enough.
