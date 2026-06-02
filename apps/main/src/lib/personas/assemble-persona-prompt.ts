@@ -71,7 +71,15 @@ export function assemblePersonaPrompt(p: PersonaRecord): string {
     sections.push(`YOUR BOUNDARIES (these always apply):\n${bullets}`);
   }
 
+  if (p.disclosure_pattern) {
+    sections.push(
+      `HOW YOU INTRODUCE YOURSELF (AI-disclosure greeting — use when first greeting a customer or when asked who or what you are):\n${p.disclosure_pattern.trim()}`,
+    );
+  }
+
   // Placeholder substituted by build-system-prompt's tone-calibration step.
+  // Kept last so the assembled prompt always ends with the {{TONE_CALIBRATION}}
+  // marker (build-system-prompt + tests rely on this).
   sections.push(p.tone_calibration_placeholder);
 
   return sections.join("\n\n");

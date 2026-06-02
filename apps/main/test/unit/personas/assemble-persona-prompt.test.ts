@@ -70,6 +70,13 @@ describe("travel personas — every structured field feeds the output (D-091 no-
       }
     });
 
+    it("includes the disclosure_pattern under HOW YOU INTRODUCE YOURSELF", () => {
+      const prompt = assemblePersonaPrompt(persona);
+      expect(persona.disclosure_pattern).toBeTruthy();
+      expect(prompt).toContain("HOW YOU INTRODUCE YOURSELF");
+      expect(prompt).toContain((persona.disclosure_pattern as string).trim());
+    });
+
     it("ends with the tone-calibration placeholder for downstream substitution", () => {
       expect(assemblePersonaPrompt(persona).endsWith(persona.tone_calibration_placeholder)).toBe(
         true,
@@ -110,6 +117,18 @@ describe("mutating a field changes the assembled prompt (D-091 no-stub)", () => 
     const after = assemblePersonaPrompt({ ...base, anti_instructions: [] });
     expect(after).not.toContain("YOUR BOUNDARIES (these always apply):");
   });
+
+  it("editing disclosure_pattern changes output and surfaces the new text", () => {
+    const before = assemblePersonaPrompt(base);
+    const after = assemblePersonaPrompt({ ...base, disclosure_pattern: "ENTIRELY NEW GREETING" });
+    expect(after).not.toEqual(before);
+    expect(after).toContain("ENTIRELY NEW GREETING");
+  });
+
+  it("clearing disclosure_pattern drops the HOW YOU INTRODUCE YOURSELF section", () => {
+    const after = assemblePersonaPrompt({ ...base, disclosure_pattern: null });
+    expect(after).not.toContain("HOW YOU INTRODUCE YOURSELF");
+  });
 });
 
 describe("help_ai (platform_help) is self-contained", () => {
@@ -124,6 +143,7 @@ describe("help_ai (platform_help) is self-contained", () => {
     expect(prompt).not.toContain("VOICE & TONE:");
     expect(prompt).not.toContain("YOUR AREAS OF FOCUS:");
     expect(prompt).not.toContain("YOUR BOUNDARIES (these always apply):");
+    expect(prompt).not.toContain("HOW YOU INTRODUCE YOURSELF");
   });
 
   it("retains the inline {{TONE_CALIBRATION}} marker for downstream substitution", () => {
