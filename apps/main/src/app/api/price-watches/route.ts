@@ -12,6 +12,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { CreateWatchSchema } from "@/lib/price-watches/schemas";
 import { routeFor } from "@/lib/pricing/line-routing";
 import type { CruiseLineCode } from "@/lib/pricing/types";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +79,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     return Response.json({ watch_id: (created as { watch_id: string }).watch_id, status: "active", baseline_price: baselineDollars, baseline_currency: row.price_currency });
   } catch (err) {
-    return Response.json({ error: "unauthorized", detail: String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -98,6 +99,6 @@ export async function GET(req: Request): Promise<Response> {
     }
     return Response.json({ watches: data ?? [] });
   } catch (err) {
-    return Response.json({ error: "unauthorized", detail: String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

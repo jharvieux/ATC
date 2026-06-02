@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface AddendumBody {
   content: string;
@@ -22,7 +23,7 @@ export async function POST(
   try {
     auth = await assertPermission(req, { resource: "persona_addendum", action: "write" });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
   const { ctx } = auth;
 
@@ -89,7 +90,7 @@ export async function GET(
   try {
     auth = await assertPermission(req, { resource: "persona_addendum", action: "read" });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
   const { ctx } = auth;
 

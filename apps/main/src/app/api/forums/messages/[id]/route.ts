@@ -10,6 +10,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function PATCH(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
   const params = await props.params;
@@ -127,7 +128,6 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
 
     return Response.json({ error: "no_action" }, { status: 400 });
   } catch (err) {
-    console.error("[forum-messages PATCH]", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

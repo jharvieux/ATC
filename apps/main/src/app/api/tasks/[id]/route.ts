@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const TaskPatchSchema = z.object({
   title: z.string().optional(),
@@ -18,34 +19,42 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { ctx } = await assertPermission(req, { resource: "tasks", action: "update" });
-  const { id } = await params;
-  const db = tenantClient(ctx);
+  try {
+    const { ctx } = await assertPermission(req, { resource: "tasks", action: "update" });
+    const { id } = await params;
+    const db = tenantClient(ctx);
 
-  const body = await req.json();
-  const parsed = TaskPatchSchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
+    const body = await req.json();
+    const parsed = TaskPatchSchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
+    }
+
+    const update: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };
+    if (parsed.data.status === "completed") {
+      update.completed_at = new Date().toISOString();
+    }
+
+    const { data, error } = await db.from("tasks").update(update).eq("id", id).select().single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(data);
+  } catch (err) {
+    return respondToAuthError(err);
   }
-
-  const update: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };
-  if (parsed.data.status === "completed") {
-    update.completed_at = new Date().toISOString();
-  }
-
-  const { data, error } = await db.from("tasks").update(update).eq("id", id).select().single();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json(data);
 }
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { ctx } = await assertPermission(req, { resource: "tasks", action: "delete" });
-  const { id } = await params;
-  const db = tenantClient(ctx);
-  const { error } = await db.from("tasks").delete().eq("id", id);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ deleted: true });
+  try {
+    const { ctx } = await assertPermission(req, { resource: "tasks", action: "delete" });
+    const { id } = await params;
+    const db = tenantClient(ctx);
+    const { error } = await db.from("tasks").delete().eq("id", id);
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ deleted: true });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }

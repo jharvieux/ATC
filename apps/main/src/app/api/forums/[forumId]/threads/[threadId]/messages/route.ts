@@ -20,6 +20,7 @@ import { verifyEnvAtBoot } from "@/lib/env";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { decideModerationStatus } from "@/lib/forums/moderation-status";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface ModerationScores {
   spam: number;
@@ -303,7 +304,6 @@ export async function POST(
 
     return Response.json({ ...msg, status, moderation_scores: moderationResult.scores }, { status: 201 });
   } catch (err) {
-    console.error("[forum-messages] error:", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

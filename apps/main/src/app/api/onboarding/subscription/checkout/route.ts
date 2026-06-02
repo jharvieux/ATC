@@ -9,6 +9,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { priceIdFor } from "@/lib/stripe/price-ids";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const FAR_FUTURE_TRIAL_END = 4102444800; // 2099-12-31 UTC
 
@@ -73,7 +74,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ url: session.url });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

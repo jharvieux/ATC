@@ -13,6 +13,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { transitionCommissionState } from "@/lib/commissions/state-machine";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 type CommissionRow = {
   id: string;
@@ -256,7 +257,6 @@ export async function POST(
 
     return Response.json({ ok: true, clawback: "no_action" });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error";
-    return Response.json({ error: message }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

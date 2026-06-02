@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { inngest } from "@/inngest/client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const OUTCOMES = new Set(["resolved", "submitted", "escalated", "abandoned"]);
 
@@ -44,6 +45,6 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
 
     return Response.json({ ok: true });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

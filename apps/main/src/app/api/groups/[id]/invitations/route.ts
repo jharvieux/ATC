@@ -9,6 +9,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 type RouteProps = { params: Promise<{ id: string }> };
 
@@ -41,7 +42,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
     if (invErr) return Response.json({ error: invErr.message }, { status: 500 });
     return Response.json({ invitations });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -144,6 +145,6 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
 
     return Response.json({ error: "Unknown action" }, { status: 400 });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

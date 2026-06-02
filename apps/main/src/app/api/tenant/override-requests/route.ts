@@ -9,6 +9,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const DIMENSIONS = new Set(["ai_cost", "rag_cap", "chat_volume", "email_volume", "group_invite"]);
 const THRESHOLD_KINDS = new Set(["soft1", "soft2", "hard", "base_cap"]);
@@ -51,7 +52,7 @@ export async function POST(req: Request): Promise<Response> {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true, request: data });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -69,6 +70,6 @@ export async function GET(req: Request): Promise<Response> {
       .limit(100);
     return Response.json({ ok: true, items: data ?? [] });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

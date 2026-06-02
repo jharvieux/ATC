@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { canModerate } from "@/lib/forums/permissions";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function PATCH(req: Request, props: { params: Promise<{ forumId: string }> }): Promise<Response> {
   const params = await props.params;
@@ -37,7 +38,6 @@ export async function PATCH(req: Request, props: { params: Promise<{ forumId: st
     await safeAwait(svc.from("forums").update({ is_locked: action === "lock" }).eq("id", params.forumId).eq("tenant_id", ctx.tenant_id), "forums.update");
     return Response.json({ ok: true });
   } catch (err) {
-    console.error("[forum PATCH]", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

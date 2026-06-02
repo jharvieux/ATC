@@ -4,6 +4,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { PatchWatchSchema } from "@/lib/price-watches/schemas";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,6 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     }
     return Response.json({ ok: true });
   } catch (err) {
-    return Response.json({ error: "unauthorized", detail: String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

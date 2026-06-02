@@ -10,6 +10,7 @@
 // §32.5.5 customer-self policy and the redacted projection per §32.6.3).
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
@@ -221,7 +222,7 @@ export async function POST(req: Request): Promise<Response> {
       throw err;
     }
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -239,6 +240,6 @@ export async function GET(req: Request): Promise<Response> {
     if (error) return Response.json({ error: "db_error", message: error.message }, { status: 500 });
     return Response.json({ items: data ?? [] });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

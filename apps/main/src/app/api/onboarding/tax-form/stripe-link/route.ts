@@ -11,6 +11,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -54,7 +55,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ url: link.url });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

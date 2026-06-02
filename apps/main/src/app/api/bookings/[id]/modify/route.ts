@@ -11,6 +11,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import type { ModificationRequest } from "@atc/shared-types";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function POST(
   req: Request,
@@ -105,7 +106,6 @@ export async function POST(
 
     return Response.json({ ok: true, adapter_response: result.value });
   } catch (err) {
-    console.error("[booking-modify]", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

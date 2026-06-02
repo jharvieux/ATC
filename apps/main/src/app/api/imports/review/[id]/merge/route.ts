@@ -14,6 +14,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 type Body = { target_contact_id: string };
 
@@ -47,120 +48,124 @@ function isBlank(v: unknown): boolean {
 }
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
-  const params = await props.params;
-  const { ctx, user } = await assertPermission(req, { resource: "imports.review", action: "accept" });
-  const svc = createServiceRoleClient();
-  const queueRowId = params.id;
-
-  let body: Body;
   try {
-    const raw = (await req.json()) as Body;
-    if (!raw.target_contact_id || typeof raw.target_contact_id !== "string") {
-      throw new Error("missing target_contact_id");
+    const params = await props.params;
+    const { ctx, user } = await assertPermission(req, { resource: "imports.review", action: "accept" });
+    const svc = createServiceRoleClient();
+    const queueRowId = params.id;
+
+    let body: Body;
+    try {
+      const raw = (await req.json()) as Body;
+      if (!raw.target_contact_id || typeof raw.target_contact_id !== "string") {
+        throw new Error("missing target_contact_id");
+      }
+      body = raw;
+    } catch {
+      return Response.json({ error: "invalid_request" }, { status: 400 });
     }
-    body = raw;
-  } catch {
-    return Response.json({ error: "invalid_request" }, { status: 400 });
-  }
 
-  // Load the queue row.
-  const { data: rowData, error: loadErr } = await svc
-    .from("import_queue")
-    .select("id, tenant_id, status, raw_extracted_fields, document_type")
-    .eq("id", queueRowId)
-    .maybeSingle();
-  if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
-  if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
-  const row = rowData as {
-    id: string;
-    tenant_id: string;
-    status: string;
-    raw_extracted_fields: Record<string, unknown> | null;
-    document_type: string | null;
-  };
-  if (row.tenant_id !== ctx.tenant_id) {
-    return Response.json({ error: "forbidden" }, { status: 403 });
-  }
-  if (row.status !== "pending_review") {
-    return Response.json({ error: `row_not_in_pending_review:${row.status}` }, { status: 409 });
-  }
-  if (row.document_type === "commission_statement") {
-    return Response.json({ error: "merge_not_supported_for_commission_statement" }, { status: 400 });
-  }
-
-  // Load the target contact + tenant-scope check.
-  const { data: contactData, error: contactErr } = await svc
-    .from("contacts")
-    .select("*")
-    .eq("id", body.target_contact_id)
-    .maybeSingle();
-  if (contactErr) return Response.json({ error: contactErr.message }, { status: 500 });
-  if (!contactData) return Response.json({ error: "target_contact_not_found" }, { status: 404 });
-  const contact = contactData as Record<string, unknown>;
-  if (contact.tenant_id !== ctx.tenant_id) {
-    return Response.json({ error: "target_contact_forbidden" }, { status: 403 });
-  }
-
-  // Build the update payload from non-empty import fields where the
-  // existing contact field is blank.
-  const extracted = (row.raw_extracted_fields ?? {}) as Record<string, unknown>;
-  const update: Record<string, unknown> = {};
-  const filled: string[] = [];
-  for (const field of MERGEABLE_TEXT_FIELDS) {
-    const incoming = extracted[field];
-    if (isBlank(incoming)) continue;
-    if (isBlank(contact[field])) {
-      update[field] = incoming;
-      filled.push(field);
+    // Load the queue row.
+    const { data: rowData, error: loadErr } = await svc
+      .from("import_queue")
+      .select("id, tenant_id, status, raw_extracted_fields, document_type")
+      .eq("id", queueRowId)
+      .maybeSingle();
+    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
+    const row = rowData as {
+      id: string;
+      tenant_id: string;
+      status: string;
+      raw_extracted_fields: Record<string, unknown> | null;
+      document_type: string | null;
+    };
+    if (row.tenant_id !== ctx.tenant_id) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
     }
-  }
+    if (row.status !== "pending_review") {
+      return Response.json({ error: `row_not_in_pending_review:${row.status}` }, { status: 409 });
+    }
+    if (row.document_type === "commission_statement") {
+      return Response.json({ error: "merge_not_supported_for_commission_statement" }, { status: 400 });
+    }
 
-  // Notes: always append if there's incoming text, with a provenance line.
-  const incomingNotes = extracted[NOTES_FIELD];
-  if (typeof incomingNotes === "string" && incomingNotes.trim().length > 0) {
-    const stamp = new Date().toISOString().slice(0, 10);
-    const provenance = `\n\n--- Imported ${stamp} ---\n${incomingNotes.trim()}`;
-    const existing = typeof contact[NOTES_FIELD] === "string" ? (contact[NOTES_FIELD] as string) : "";
-    update[NOTES_FIELD] = (existing + provenance).trim();
-    filled.push("notes");
-  }
+    // Load the target contact + tenant-scope check.
+    const { data: contactData, error: contactErr } = await svc
+      .from("contacts")
+      .select("*")
+      .eq("id", body.target_contact_id)
+      .maybeSingle();
+    if (contactErr) return Response.json({ error: contactErr.message }, { status: 500 });
+    if (!contactData) return Response.json({ error: "target_contact_not_found" }, { status: 404 });
+    const contact = contactData as Record<string, unknown>;
+    if (contact.tenant_id !== ctx.tenant_id) {
+      return Response.json({ error: "target_contact_forbidden" }, { status: 403 });
+    }
 
-  if (Object.keys(update).length === 0) {
-    // Nothing to merge — the import had no values that the existing
-    // contact didn't already have. Still mark the queue row accepted so
-    // the reviewer doesn't see it again.
-    await markQueueRowMerged(svc, queueRowId, user.id, body.target_contact_id, []);
+    // Build the update payload from non-empty import fields where the
+    // existing contact field is blank.
+    const extracted = (row.raw_extracted_fields ?? {}) as Record<string, unknown>;
+    const update: Record<string, unknown> = {};
+    const filled: string[] = [];
+    for (const field of MERGEABLE_TEXT_FIELDS) {
+      const incoming = extracted[field];
+      if (isBlank(incoming)) continue;
+      if (isBlank(contact[field])) {
+        update[field] = incoming;
+        filled.push(field);
+      }
+    }
+
+    // Notes: always append if there's incoming text, with a provenance line.
+    const incomingNotes = extracted[NOTES_FIELD];
+    if (typeof incomingNotes === "string" && incomingNotes.trim().length > 0) {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const provenance = `\n\n--- Imported ${stamp} ---\n${incomingNotes.trim()}`;
+      const existing = typeof contact[NOTES_FIELD] === "string" ? (contact[NOTES_FIELD] as string) : "";
+      update[NOTES_FIELD] = (existing + provenance).trim();
+      filled.push("notes");
+    }
+
+    if (Object.keys(update).length === 0) {
+      // Nothing to merge — the import had no values that the existing
+      // contact didn't already have. Still mark the queue row accepted so
+      // the reviewer doesn't see it again.
+      await markQueueRowMerged(svc, queueRowId, user.id, body.target_contact_id, []);
+      await writeAuditLog({
+        tenant_id: ctx.tenant_id,
+        actor_user_id: user.id,
+        actor_type: "user",
+        action: "import.merged_noop",
+        resource_type: "contact",
+        resource_id: body.target_contact_id,
+        context: { import_queue_id: queueRowId },
+      });
+      return Response.json({ merged: true, contact_id: body.target_contact_id, fields_filled: [], noop: true });
+    }
+
+    const { error: updateErr } = await svc
+      .from("contacts")
+      .update({ ...update, updated_at: new Date().toISOString() })
+      .eq("id", body.target_contact_id);
+    if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
+
+    await markQueueRowMerged(svc, queueRowId, user.id, body.target_contact_id, filled);
+
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
       actor_user_id: user.id,
       actor_type: "user",
-      action: "import.merged_noop",
+      action: "import.merged",
       resource_type: "contact",
       resource_id: body.target_contact_id,
-      context: { import_queue_id: queueRowId },
+      context: { import_queue_id: queueRowId, fields_filled: filled },
     });
-    return Response.json({ merged: true, contact_id: body.target_contact_id, fields_filled: [], noop: true });
+
+    return Response.json({ merged: true, contact_id: body.target_contact_id, fields_filled: filled });
+  } catch (err) {
+    return respondToAuthError(err);
   }
-
-  const { error: updateErr } = await svc
-    .from("contacts")
-    .update({ ...update, updated_at: new Date().toISOString() })
-    .eq("id", body.target_contact_id);
-  if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
-
-  await markQueueRowMerged(svc, queueRowId, user.id, body.target_contact_id, filled);
-
-  await writeAuditLog({
-    tenant_id: ctx.tenant_id,
-    actor_user_id: user.id,
-    actor_type: "user",
-    action: "import.merged",
-    resource_type: "contact",
-    resource_id: body.target_contact_id,
-    context: { import_queue_id: queueRowId, fields_filled: filled },
-  });
-
-  return Response.json({ merged: true, contact_id: body.target_contact_id, fields_filled: filled });
 }
 
 async function markQueueRowMerged(

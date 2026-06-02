@@ -9,6 +9,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { getMaxOptionsForTenant } from "@/lib/quotes/tier-gate";
 import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const OptionCreateSchema = z.object({
   label: z.string().optional(),
@@ -34,77 +35,85 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "list" });
-  const { id: quoteId } = await params;
-  const db = tenantClient(ctx);
-  const { data, error } = await db
-    .from("quote_options")
-    .select("*")
-    .eq("quote_id", quoteId)
-    .order("option_index", { ascending: true });
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ options: data ?? [] });
+  try {
+    const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "list" });
+    const { id: quoteId } = await params;
+    const db = tenantClient(ctx);
+    const { data, error } = await db
+      .from("quote_options")
+      .select("*")
+      .eq("quote_id", quoteId)
+      .order("option_index", { ascending: true });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ options: data ?? [] });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }
 
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "create" });
-  const { id: quoteId } = await params;
-  const db = tenantClient(ctx);
-  const svc = createServiceRoleClient();
+  try {
+    const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "create" });
+    const { id: quoteId } = await params;
+    const db = tenantClient(ctx);
+    const svc = createServiceRoleClient();
 
-  // Tier-cap on options per quote.
-  const maxOptions = await getMaxOptionsForTenant(ctx.tenant_id, svc);
-  const { data: existing } = await db
-    .from("quote_options")
-    .select("id, option_index")
-    .eq("quote_id", quoteId);
-  const existingRows = (existing ?? []) as Array<{ id: string; option_index: number }>;
-  if (existingRows.length >= maxOptions) {
-    return Response.json(
-      { error: "max_options_reached", max: maxOptions, current: existingRows.length },
-      { status: 409 },
-    );
-  }
-
-  const body = await req.json();
-  const parsed = OptionCreateSchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
-  }
-
-  // §38.5 line-item validation (only when all three financials provided).
-  if (
-    parsed.data.line_items &&
-    typeof parsed.data.total_amount_cents === "number" &&
-    typeof parsed.data.commissionable_fare_cents === "number"
-  ) {
-    const v = validateLineItems(parsed.data.line_items as LineItem[], {
-      total_amount_cents: parsed.data.total_amount_cents,
-      commissionable_fare_cents: parsed.data.commissionable_fare_cents,
-    });
-    if (!v.ok) {
-      return Response.json({ error: "line_item_validation_failed", details: v.errors }, { status: 400 });
+    // Tier-cap on options per quote.
+    const maxOptions = await getMaxOptionsForTenant(ctx.tenant_id, svc);
+    const { data: existing } = await db
+      .from("quote_options")
+      .select("id, option_index")
+      .eq("quote_id", quoteId);
+    const existingRows = (existing ?? []) as Array<{ id: string; option_index: number }>;
+    if (existingRows.length >= maxOptions) {
+      return Response.json(
+        { error: "max_options_reached", max: maxOptions, current: existingRows.length },
+        { status: 409 },
+      );
     }
+
+    const body = await req.json();
+    const parsed = OptionCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
+    }
+
+    // §38.5 line-item validation (only when all three financials provided).
+    if (
+      parsed.data.line_items &&
+      typeof parsed.data.total_amount_cents === "number" &&
+      typeof parsed.data.commissionable_fare_cents === "number"
+    ) {
+      const v = validateLineItems(parsed.data.line_items as LineItem[], {
+        total_amount_cents: parsed.data.total_amount_cents,
+        commissionable_fare_cents: parsed.data.commissionable_fare_cents,
+      });
+      if (!v.ok) {
+        return Response.json({ error: "line_item_validation_failed", details: v.errors }, { status: 400 });
+      }
+    }
+
+    // Next option_index = max(existing) + 1.
+    const nextIndex = existingRows.length > 0
+      ? Math.max(...existingRows.map((r) => r.option_index)) + 1
+      : 1;
+
+    const { data, error } = await db
+      .from("quote_options")
+      .insert({
+        ...parsed.data,
+        tenant_id: ctx.tenant_id,
+        quote_id: quoteId,
+        option_index: nextIndex,
+      })
+      .select()
+      .single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(data, { status: 201 });
+  } catch (err) {
+    return respondToAuthError(err);
   }
-
-  // Next option_index = max(existing) + 1.
-  const nextIndex = existingRows.length > 0
-    ? Math.max(...existingRows.map((r) => r.option_index)) + 1
-    : 1;
-
-  const { data, error } = await db
-    .from("quote_options")
-    .insert({
-      ...parsed.data,
-      tenant_id: ctx.tenant_id,
-      quote_id: quoteId,
-      option_index: nextIndex,
-    })
-    .select()
-    .single();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json(data, { status: 201 });
 }
