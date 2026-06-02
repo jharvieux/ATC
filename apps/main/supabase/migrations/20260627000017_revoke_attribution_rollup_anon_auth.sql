@@ -7,9 +7,11 @@
 -- leak. The view is currently empty, so impact is latent today, but the
 -- grant must be closed before it is populated.
 --
--- Every application read goes through the service-role client (the reports
--- routes use createServiceRoleClient; the view is registered
--- PLATFORM_READABLE for tenantClient's service-role passthrough), so this
--- revoke does not affect any app path. The refresh job is service-role too.
+-- It is registered in TENANT_SCOPED_TABLES, but no app path reads it through
+-- tenantClient: the three reports routes (leads-by-source, source-funnel,
+-- campaigns) query it via createServiceRoleClient() with an explicit
+-- .eq("tenant_id", ...) filter. service_role keeps its grant (the REVOKE only
+-- drops anon/authenticated), so this does not affect any app path. The nightly
+-- refresh job is service-role too.
 
 REVOKE SELECT ON public.attribution_rollup FROM anon, authenticated;
