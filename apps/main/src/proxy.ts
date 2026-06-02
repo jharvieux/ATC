@@ -133,6 +133,20 @@ function isAdminApiPath(pathname: string): boolean {
   return pathname.startsWith("/api/admin/") || pathname === "/api/admin";
 }
 
+// §26 — Platform-admin PAGE routes: the (admin) route group, which serves
+// /admin/* and /supervisor/*. Distinct from isAdminApiPath (/api/admin/*).
+// These pages are gated authoritatively in (admin)/layout.tsx via
+// assertPlatformAdmin; the middleware adds the coarse shape-check + host
+// restriction below as the second layer.
+function isAdminPagePath(pathname: string): boolean {
+  return (
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    pathname === "/supervisor" ||
+    pathname.startsWith("/supervisor/")
+  );
+}
+
 function hasSupabaseAuthCookie(req: NextRequest): boolean {
   for (const c of req.cookies.getAll()) {
     if (/^sb-.+-auth-token(\.\d+)?$/.test(c.name)) return true;
@@ -224,6 +238,21 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
 
   const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
   const domainRegex = process.env.PLATFORM_DOMAIN_REGEX ?? "";
+
+  // 1c. Admin PAGE gate (§26, defense-in-depth; authoritative check is in
+  //     (admin)/layout.tsx via assertPlatformAdmin). Admin pages live only on
+  //     the platform host and require a session cookie. Anything else — a
+  //     tenant/custom host, or no session cookie — gets a 404 so the admin
+  //     surface is never disclosed to anonymous or cross-host callers and the
+  //     service-role server components never run for them. The cookie here is
+  //     only shape-checked (presence of sb-<ref>-auth-token); membership in
+  //     platform_admins is verified authoritatively by the layout.
+  if (
+    isAdminPagePath(pathname) &&
+    (hostname !== primaryDomain || !hasSupabaseAuthCookie(req))
+  ) {
+    return applyRefreshedSession(notFound());
+  }
 
   // 2. Platform admin domain — passes through with "platform" sentinel.
   if (hostname === primaryDomain) {

@@ -1,5 +1,6 @@
 // Platform admin hub — links to all admin sections.
-// Auth is enforced per-route by assertPlatformAdmin; this page just navigates.
+// Auth is enforced by the (admin) layout (assertPlatformAdmin) for every page
+// in this group, and per-route on /api/admin/*; this page just navigates.
 
 import Link from "next/link";
 
