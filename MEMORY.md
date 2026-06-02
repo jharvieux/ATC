@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-134 — 2026-06-02 — #571 CI shell-injection fix targeted `reason` (not `files`); allowlist extracted to scripts/lib/*.mjs
+
+**Decision.** Hardened `ci-decide-tests.mjs` + `deploy.yml` against crafted git-tracked filenames reaching the CI shell (issue #571, PR #581, merged d8e7f2e). Two parts: (1) moved the test-scope `reason` value into a step-level `env:` var at both `echo` steps in `deploy.yml` so an embedded `$(…)` is bash variable-expanded, not command-substituted (same pattern as #552/PR #570); (2) added a fail-closed allowlist guard `isCiPathSafe(path)` (`/^[\w./()[\]-]+$/`) in the script after the empty-diff check — any path outside the charset forces `mode=full`. The predicate was extracted to **`scripts/lib/ci-path-safe.mjs`** with a unit test.
+
+**Why `.mjs` not `.ts`, and why extract at all.** `deploy.yml` invokes the script as plain `node scripts/ci-decide-tests.mjs` (no tsx/loader), so a `.ts` lib can't be imported at runtime — the lib MUST be `.mjs` even though its three peers in `scripts/lib/` are `.ts`. Extraction (vs. an inline regex) follows the repo's established "pull the load-bearing script predicate into `scripts/lib/`, unit-test it by import" convention (`substitute-placeholders`, `stripe-form-encode`, `dependency-ignore-watch` — each effectively single-use, extracted for testability). The test pins the boundary both directions: injection vectors rejected; real Next.js route-group `(tenant)` / dynamic-segment `[id]`/`[...slug]` paths accepted (a regression there would silently force the full suite on every tenant-route PR).
+
+**Non-obvious finding (issue premise was partly wrong).** #571 implies the `files` splat is the unguarded sink. It isn't — the script already single-quotes each path (`'…'`, apostrophe-escaped; added earlier for `(tenant)` route groups), so `$(…)` inside single quotes is literal. The genuinely exploitable sink was **`reason`** (raw filename → double-quoted `echo` → command substitution). The fix addresses the real vector AND adds the source-level allowlist as fail-closed defense-in-depth covering both sinks regardless of downstream quoting. This was stated honestly in the PR body and confirmed by pre-pr-reviewer at `ci-decide-tests.mjs:141`.
+
+**Rejected.** (a) Subprocess integration test (temp git repo + crafted filename) — would introduce a new test pattern absent from the repo; the extract-and-unit-test convention is already established 3×. (b) Inline regex with no test — a security guard warrants intent-pinning. (c) Converting the script to a `.ts`/tsx invocation — larger, non-surgical change to the CI invocation contract.
+
+**Related artifacts.** PR #581, issue #571, `scripts/lib/ci-path-safe.mjs`, `tests/unit/scripts/ci-path-safe.test.ts`, sibling fix #552 (PR #570).
+
+---
+
 ## D-133 — 2026-06-01 — Doc-only PRs exempt from pr-audit-section-check (and from running the audit agents)
 
 `.github/workflows/pr-audit-section-check.yml` gained a `doc-only-check` step that auto-passes the workflow when every changed file matches one of three patterns: anything ending in `*.md`, anything under `docs/**`, or anything under `specs/**`. A single non-doc file in the diff disqualifies the PR. CLAUDE.md's "Pull requests" section was updated to tell future Claude sessions to skip steps 4–6 of the PR workflow (audit subagents + body update) on those PRs.

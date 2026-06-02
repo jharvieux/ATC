@@ -1,36 +1,56 @@
-# Session state — last updated 2026-06-01 01:20 UTC
+# Session state — last updated 2026-06-02 ~04:50 PT
 
 ## Just completed
-- Merged PR #528: Apify utilization + editable budget in resource dashboard
-  - 3-layer stacked area chart (AI/Email/Apify), cruise-line breakdown table, inline budget editor
-  - GET adds apify_spend_ledger + apify_monthly_budget_usd queries; PUT extended for both fields
-  - checkMonthlyBudget gains optional capUsdOverride; adapter reads DB cap before each guard check
-  - 20 new unit tests, adapter mocks updated with maybeSingle()
-  - Also fixed pre-existing weather avg_7d test broken at month-start
-  - Also added CLAUDE.md rule: never ignore a bug — fix trivially or open an issue
-- Opened #529: monthlySpendUsd() silently swallows DB errors (fail-open risk on ledger failure)
-- Opened #530: dead ternary in runForLine() — timeout vs dispatch-failed never distinguished
+- **Autonomous Phase-B security sweep — queue drained.** Everything workable
+  files-only (no live-DB apply, no external secrets) is shipped or surfaced.
+- **PR #581 (#571 CI shell injection) MERGED to dev (d8e7f2e).** `reason` moved to
+  step-level `env:` in deploy.yml (both test-scope echo steps); fail-closed allowlist
+  `isCiPathSafe` extracted to `scripts/lib/ci-path-safe.mjs` + unit test. Both audit
+  agents clean. Honest finding recorded: the `files` splat was already mitigated by
+  per-path single-quoting; the real vector was `reason`. Logged as D-134.
+- Earlier this session: **PR #580 (#545 least-privilege grants, file-only) MERGED
+  (3e37d95)** and **PR #579 (#547/#548/#549/#550 DB security migrations, file-only)
+  MERGED (02e104e).**
+- **Nightly-failure triage posted.** #576 (2026-06-02) and #532 (2026-06-01) fail on
+  the identical assertion (`rls.test.ts §12.2 duplicate contact_relationship → 23505`).
+  Files-only diagnosis commented on #576 (cross-linked #532): schema is correct,
+  fixtures are per-run (so NOT a stale-leak) — needs test-DB access to capture the real
+  error and confirm the UNIQUE constraint is applied in the nightly DB.
 
 ## In flight
-- Nothing in flight — clean checkpoint
+- Nothing in flight — clean checkpoint. On `dev`, fast-forwarded to d8e7f2e.
+  Working tree carries only non-code noise: `.claude/scheduled_tasks.lock`
+  (harness-managed) and untracked `apps/main/supabase/config.toml` (abandoned docker
+  attempt — do NOT stage or delete).
 
 ## Next step
-- Fix #529 (monthlySpendUsd fail-open on DB error) — non-trivial, opened as issue
-- Fix #530 (dead ternary) — trivial cleanup
+- Resume from the "Blocked on user" list once the user is back. No autonomous
+  engineering work remains in the queue.
 
 ## Blocked on user
-- #518: ANON_COOKIE_SECRET provisioning in Vercel + Supabase Edge (blocks §24.x full deploy + #514)
-- #473: GitHub secrets (STRIPE_TEST_SECRET_KEY, ANTHROPIC_API_KEY_TEST)
-- #386: DB harness (blocks Cross-Tenant Probe real implementation)
-- #500: CruiseMapper ingest (operator-blocked)
-- #430: All ops checklist items (Vercel env, Stripe, Apify, PLATFORM_PEPPER)
-- #521: first-time login + promote to platform admin (needs-human-fix)
+- **#576 + #532 (nightly failure):** needs test-DB access to capture the actual
+  assertion error and verify the `contact_relationships` UNIQUE constraint exists in
+  the nightly DB. Most likely schema drift (constraint not applied) — see #576 comment.
+- **#546 (grants-snapshot tooling + CI drift check):** needs a live-DB-generated
+  baseline (mirrors `rls:snapshot`) AND a deploy.yml change (CI/CD sign-off, incl.
+  block-vs-warn posture). Can't do files-only. Documented in PR #580 body.
+- **#572 (nonce-based CSP):** larger security enhancement (middleware/layout nonce
+  propagation, report-only → enforce). Needs scope/sequencing call — not started blind.
+- **#553 leftover:** xlsx (HIGH severity, no npm fix path) + uuid (lhci two-major
+  bump) — left OPEN for a user decision. Next.js/qs already shipped.
+- **#555 (duplicate migration version 20260528000000):** needs a migration-FILE
+  rename — requires explicit permission before touching.
+- **#455 / task #52 (active_persona_id FK):** not actionable — no `personas` table
+  exists, so the FK migration would fail on apply. #455 already tracks it.
+- **#45 (#563+#562 cross-tenant probe):** needs a seeded 2-tenant Supabase test
+  project + CI secrets (CROSS_TENANT_FIXTURES / APP_BASE_URL).
+- **#47 (#514 unsigned-cookie legacy path):** time-gated — safe no earlier than ~2026-06-30.
+- **#534 / #533:** need DB_URL secret / a real staging DB (external provisioning).
+- **Ops/secrets (#521, #518, #500, #473):** needs-human-fix, outside Claude Code.
 
 ## Open questions
-- Issue #514: remove unsigned-cookie legacy path — deferred until ANON_COOKIE_SECRET deployed + 1-2 week rollover
-- Issue #455 (personas FK): stays open; actual FK migration needed once personas table exists
-- Issue #384 item 1: Cross-Tenant Probe — blocked on #386 (DB harness)
-- Post-signup cross-domain session: after signup/complete, user must re-authenticate on tenant subdomain — acceptable UX trade-off for now
-- D-091 warning: attribution binding failure has no retry path — decide attribution_bound: boolean in response or move to Inngest
-- Interactive paths in signup/complete have no test coverage at any layer; deferred until @testing-library/react + jsdom added or E2E stubs fleshed out
-- GET /api/admin/resource-utilization handler-level integration test deferred (consistent with existing route testing strategy — pure helpers tested, no handler mock suite)
+- Nightly §12.2 root cause: if the UNIQUE constraint is confirmed present in the
+  nightly DB, the cause shifts to a non-23505 error on the second insert — would need
+  the raw error string to chase further.
+- DAST tier-2 install still DEFERRED. All DAST local/staging only, never prod.
+- Switch model back to Sonnet (`/model claude-sonnet-4-6`) — this session ran on Opus.
