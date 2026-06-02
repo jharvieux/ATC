@@ -43,6 +43,7 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 // the customer-chat route's counter increment pattern (D-091 R3 #56).
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementChatMessages } from "@/lib/abuse/counters";
+import { respondToAuthError } from "@/lib/auth/respond";
 import {
   advanceBugFlow,
   advanceFeatureFlow,
@@ -96,7 +97,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       return Response.json({ error: "empty_message" }, { status: 400 });
     }
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 
   const encoder = new TextEncoder();

@@ -11,6 +11,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const VALID_FORMATS = new Set(["pdf", "docx"]);
 
@@ -81,6 +82,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ job_id, cached: false });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

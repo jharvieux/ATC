@@ -10,6 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { inngest } from "@/inngest/client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface OpenSessionBody {
   session_type?: string;
@@ -72,6 +73,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ session_id: session.id }, { status: 201 });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

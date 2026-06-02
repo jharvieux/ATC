@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { resolveShowPoweredBy } from "@/lib/branding/powered-by";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 interface BrandingBody {
   logo_url?: string;
@@ -34,7 +35,7 @@ export async function GET(req: Request): Promise<Response> {
   try {
     auth = await assertPermission(req, { resource: "tenant_branding", action: "read" });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
   const { ctx } = auth;
 
@@ -49,7 +50,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     auth = await assertPermission(req, { resource: "tenant_branding", action: "write" });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
   const { ctx } = auth;
 

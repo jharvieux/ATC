@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { searchDocs } from "@/lib/help-ai/docs-loader";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -15,6 +16,6 @@ export async function GET(req: Request): Promise<Response> {
     }
     return Response.json({ items: searchDocs(q) });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

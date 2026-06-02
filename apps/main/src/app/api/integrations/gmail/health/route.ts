@@ -14,32 +14,37 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
-  const { ctx } = await assertPermission(req, {
-    resource: "integrations.gmail",
-    action: "read",
-  });
-
-  const svc = createServiceRoleClient();
-  const { data, error } = await svc
-    .from("gmail_oauth_tokens")
-    .select("health_status, connected_email, last_healthy_at, last_health_error, pubsub_watch_expires_at")
-    .eq("tenant_id", ctx.tenant_id)
-    .maybeSingle();
-
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-
-  // No row → never connected.
-  if (!data) {
-    return Response.json({
-      health_status: "disconnected",
-      connected_email: null,
-      last_healthy_at: null,
-      last_health_error: null,
-      pubsub_watch_expires_at: null,
+  try {
+    const { ctx } = await assertPermission(req, {
+      resource: "integrations.gmail",
+      action: "read",
     });
-  }
 
-  return Response.json(data);
+    const svc = createServiceRoleClient();
+    const { data, error } = await svc
+      .from("gmail_oauth_tokens")
+      .select("health_status, connected_email, last_healthy_at, last_health_error, pubsub_watch_expires_at")
+      .eq("tenant_id", ctx.tenant_id)
+      .maybeSingle();
+
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    // No row → never connected.
+    if (!data) {
+      return Response.json({
+        health_status: "disconnected",
+        connected_email: null,
+        last_healthy_at: null,
+        last_health_error: null,
+        pubsub_watch_expires_at: null,
+      });
+    }
+
+    return Response.json(data);
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }

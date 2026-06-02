@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { resolveThresholds, type AbuseDimension } from "@/lib/abuse/thresholds";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 function currentPeriodRange(): string {
   const now = new Date();
@@ -111,6 +112,6 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, dims, rag, period: currentPeriodRange() });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

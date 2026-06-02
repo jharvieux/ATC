@@ -11,6 +11,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { encryptCredential } from "@/lib/crypto/credential-cipher";
 import { getAdapter, listActiveAdapters } from "@/lib/host-adapters/registry";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -38,8 +39,7 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json({ adapters });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unauthorized";
-    return Response.json({ error: message }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
 
@@ -120,7 +120,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, credential_status: newStatus });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unauthorized";
-    return Response.json({ error: message }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

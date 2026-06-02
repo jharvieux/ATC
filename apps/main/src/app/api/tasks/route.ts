@@ -6,6 +6,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertAssignmentAllowed } from "@/lib/tasks/tier-gate";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const TaskCreateSchema = z
   .object({
@@ -29,77 +30,85 @@ const TaskCreateSchema = z
   );
 
 export async function GET(req: Request): Promise<Response> {
-  const { ctx, user } = await assertPermission(req, { resource: "tasks", action: "list" });
-  const db = tenantClient(ctx);
-  const url = new URL(req.url);
+  try {
+    const { ctx, user } = await assertPermission(req, { resource: "tasks", action: "list" });
+    const db = tenantClient(ctx);
+    const url = new URL(req.url);
 
-  const status = url.searchParams.getAll("status");
-  const assignedToMe = url.searchParams.get("assigned_to_me") === "true";
-  const contactId = url.searchParams.get("contact_id");
-  const quoteId = url.searchParams.get("quote_id");
-  const bookingId = url.searchParams.get("booking_id");
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
+    const status = url.searchParams.getAll("status");
+    const assignedToMe = url.searchParams.get("assigned_to_me") === "true";
+    const contactId = url.searchParams.get("contact_id");
+    const quoteId = url.searchParams.get("quote_id");
+    const bookingId = url.searchParams.get("booking_id");
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 200);
 
-  let q = db
-    .from("tasks")
-    .select("*", { count: "exact" })
-    .order("due_at", { ascending: true, nullsFirst: false })
-    .limit(limit);
+    let q = db
+      .from("tasks")
+      .select("*", { count: "exact" })
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .limit(limit);
 
-  if (status.length > 0) q = q.in("status", status);
-  else q = q.in("status", ["open", "in_progress", "snoozed"]);
-  if (assignedToMe) q = q.eq("assigned_to_user_id", user.id);
-  if (contactId) q = q.eq("contact_id", contactId);
-  if (quoteId) q = q.eq("quote_id", quoteId);
-  if (bookingId) q = q.eq("booking_id", bookingId);
+    if (status.length > 0) q = q.in("status", status);
+    else q = q.in("status", ["open", "in_progress", "snoozed"]);
+    if (assignedToMe) q = q.eq("assigned_to_user_id", user.id);
+    if (contactId) q = q.eq("contact_id", contactId);
+    if (quoteId) q = q.eq("quote_id", quoteId);
+    if (bookingId) q = q.eq("booking_id", bookingId);
 
-  const { data, count, error } = await q;
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ tasks: data ?? [], total: count ?? 0 });
+    const { data, count, error } = await q;
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ tasks: data ?? [], total: count ?? 0 });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const { ctx, user } = await assertPermission(req, { resource: "tasks", action: "create" });
-  const db = tenantClient(ctx);
-  const svc = createServiceRoleClient();
+  try {
+    const { ctx, user } = await assertPermission(req, { resource: "tasks", action: "create" });
+    const db = tenantClient(ctx);
+    const svc = createServiceRoleClient();
 
-  const body = await req.json();
-  const parsed = TaskCreateSchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
+    const body = await req.json();
+    const parsed = TaskCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
+    }
+
+    // §37.10 tier gate: assigned_to_user_id requires assignment-allowed tier.
+    if (parsed.data.assigned_to_user_id && parsed.data.assigned_to_user_id !== user.id) {
+      const gate = await assertAssignmentAllowed(ctx.tenant_id, svc);
+      if (!gate.ok) return Response.json({ error: gate.reason }, { status: 403 });
+    }
+
+    const { reminder_offsets_minutes, ...taskFields } = parsed.data;
+    const { data, error } = await db
+      .from("tasks")
+      .insert({
+        ...taskFields,
+        tenant_id: ctx.tenant_id,
+        created_by_user_id: user.id,
+        origin: "manual",
+      })
+      .select()
+      .single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    // Reminders.
+    const created = data as { id: string; due_at: string | null };
+    if (reminder_offsets_minutes && reminder_offsets_minutes.length > 0 && created.due_at) {
+      const dueMs = Date.parse(created.due_at);
+      const reminders = reminder_offsets_minutes.map((minutes) => ({
+        tenant_id: ctx.tenant_id,
+        task_id: created.id,
+        remind_at: new Date(dueMs - minutes * 60 * 1000).toISOString(),
+        channel: "in_app" as const,
+      }));
+      await safeAwait(db.from("task_reminders").insert(reminders), "task_reminders.insert");
+    }
+
+    return Response.json(data, { status: 201 });
+  } catch (err) {
+    return respondToAuthError(err);
   }
-
-  // §37.10 tier gate: assigned_to_user_id requires assignment-allowed tier.
-  if (parsed.data.assigned_to_user_id && parsed.data.assigned_to_user_id !== user.id) {
-    const gate = await assertAssignmentAllowed(ctx.tenant_id, svc);
-    if (!gate.ok) return Response.json({ error: gate.reason }, { status: 403 });
-  }
-
-  const { reminder_offsets_minutes, ...taskFields } = parsed.data;
-  const { data, error } = await db
-    .from("tasks")
-    .insert({
-      ...taskFields,
-      tenant_id: ctx.tenant_id,
-      created_by_user_id: user.id,
-      origin: "manual",
-    })
-    .select()
-    .single();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-
-  // Reminders.
-  const created = data as { id: string; due_at: string | null };
-  if (reminder_offsets_minutes && reminder_offsets_minutes.length > 0 && created.due_at) {
-    const dueMs = Date.parse(created.due_at);
-    const reminders = reminder_offsets_minutes.map((minutes) => ({
-      tenant_id: ctx.tenant_id,
-      task_id: created.id,
-      remind_at: new Date(dueMs - minutes * 60 * 1000).toISOString(),
-      channel: "in_app" as const,
-    }));
-    await safeAwait(db.from("task_reminders").insert(reminders), "task_reminders.insert");
-  }
-
-  return Response.json(data, { status: 201 });
 }

@@ -46,6 +46,9 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
+      - name: Auth-error adoption guard (#556)
+        run: pnpm check:auth-error
+
       - name: Error-injection probe (D-091 follow-up)
         # Forces handlers into DB-fail / resource-down / concurrent failure
         # modes that don't fire under happy-path testing. See

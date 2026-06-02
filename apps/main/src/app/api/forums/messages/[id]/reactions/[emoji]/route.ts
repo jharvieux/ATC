@@ -2,6 +2,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function DELETE(req: Request, props: { params: Promise<{ id: string; emoji: string }> }): Promise<Response> {
   const params = await props.params;
@@ -21,7 +22,6 @@ export async function DELETE(req: Request, props: { params: Promise<{ id: string
 
     return Response.json({ ok: true });
   } catch (err) {
-    console.error("[forum-reactions DELETE]", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

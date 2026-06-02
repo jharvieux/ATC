@@ -5,6 +5,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function PATCH(
   req: Request,
@@ -44,8 +45,7 @@ export async function PATCH(
     if (!data) return Response.json({ error: "Subcontractor not found" }, { status: 404 });
     return Response.json({ subcontractor: data });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error";
-    return Response.json({ error: message }, { status: 500 });
+    return respondToAuthError(err);
   }
 }
 
@@ -67,7 +67,6 @@ export async function DELETE(
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error";
-    return Response.json({ error: message }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

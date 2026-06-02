@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
   const params = await props.params;
@@ -45,6 +46,6 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
 
     return Response.json({ ok: true });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

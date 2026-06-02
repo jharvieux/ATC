@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -36,8 +37,7 @@ export async function GET(req: Request): Promise<Response> {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ subcontractors: data ?? [] });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error";
-    return Response.json({ error: message }, { status: 500 });
+    return respondToAuthError(err);
   }
 }
 
@@ -83,7 +83,6 @@ export async function POST(req: Request): Promise<Response> {
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ subcontractor: data }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error";
-    return Response.json({ error: message }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

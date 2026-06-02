@@ -4,6 +4,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const OptionPatchSchema = z.object({
   label: z.string().optional(),
@@ -29,49 +30,57 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "update" });
-  const { id } = await params;
-  const db = tenantClient(ctx);
+  try {
+    const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "update" });
+    const { id } = await params;
+    const db = tenantClient(ctx);
 
-  const body = await req.json();
-  const parsed = OptionPatchSchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
-  }
-
-  // Line-item validation if a PATCH touches both line_items + financials.
-  if (
-    parsed.data.line_items &&
-    typeof parsed.data.total_amount_cents === "number" &&
-    typeof parsed.data.commissionable_fare_cents === "number"
-  ) {
-    const v = validateLineItems(parsed.data.line_items as LineItem[], {
-      total_amount_cents: parsed.data.total_amount_cents,
-      commissionable_fare_cents: parsed.data.commissionable_fare_cents,
-    });
-    if (!v.ok) {
-      return Response.json({ error: "line_item_validation_failed", details: v.errors }, { status: 400 });
+    const body = await req.json();
+    const parsed = OptionPatchSchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json({ error: "invalid_body", details: parsed.error.issues }, { status: 400 });
     }
-  }
 
-  const { data, error } = await db
-    .from("quote_options")
-    .update({ ...parsed.data, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select()
-    .single();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json(data);
+    // Line-item validation if a PATCH touches both line_items + financials.
+    if (
+      parsed.data.line_items &&
+      typeof parsed.data.total_amount_cents === "number" &&
+      typeof parsed.data.commissionable_fare_cents === "number"
+    ) {
+      const v = validateLineItems(parsed.data.line_items as LineItem[], {
+        total_amount_cents: parsed.data.total_amount_cents,
+        commissionable_fare_cents: parsed.data.commissionable_fare_cents,
+      });
+      if (!v.ok) {
+        return Response.json({ error: "line_item_validation_failed", details: v.errors }, { status: 400 });
+      }
+    }
+
+    const { data, error } = await db
+      .from("quote_options")
+      .update({ ...parsed.data, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(data);
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }
 
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "delete" });
-  const { id } = await params;
-  const db = tenantClient(ctx);
-  const { error } = await db.from("quote_options").delete().eq("id", id);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
-  return Response.json({ deleted: true });
+  try {
+    const { ctx } = await assertPermission(req, { resource: "quotes.options", action: "delete" });
+    const { id } = await params;
+    const db = tenantClient(ctx);
+    const { error } = await db.from("quote_options").delete().eq("id", id);
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ deleted: true });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }

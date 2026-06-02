@@ -8,6 +8,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createHash } from "node:crypto";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 function shortReferenceId(bug_id: string): string {
   // BR-{first 8 chars of sha256(bug_id) in lowercase hex}.
@@ -47,6 +48,6 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
 
     return Response.json(row);
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

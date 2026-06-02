@@ -14,26 +14,31 @@
 // operator at the runbook.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function POST(req: Request): Promise<Response> {
-  await assertPermission(req, { resource: "integrations.gmail", action: "connect" });
+  try {
+    await assertPermission(req, { resource: "integrations.gmail", action: "connect" });
 
-  const configured =
-    !!process.env.GMAIL_OAUTH_CLIENT_ID &&
-    !!process.env.GMAIL_OAUTH_CLIENT_SECRET &&
-    !!process.env.GMAIL_PUBSUB_TOPIC;
+    const configured =
+      !!process.env.GMAIL_OAUTH_CLIENT_ID &&
+      !!process.env.GMAIL_OAUTH_CLIENT_SECRET &&
+      !!process.env.GMAIL_PUBSUB_TOPIC;
 
-  return Response.json(
-    {
-      status: "not_implemented",
-      gcp_configured: configured,
-      message: configured
-        ? "GCP env vars are present but the OAuth start flow has not been wired. " +
-          "Follow Step 5 of docs/runbooks/gmail-inbound-setup.md to implement."
-        : "Gmail inbound OAuth flow is not yet configured. " +
-          "Follow docs/runbooks/gmail-inbound-setup.md to complete GCP setup + Vercel env vars.",
-      runbook: "docs/runbooks/gmail-inbound-setup.md",
-    },
-    { status: 501 },
-  );
+    return Response.json(
+      {
+        status: "not_implemented",
+        gcp_configured: configured,
+        message: configured
+          ? "GCP env vars are present but the OAuth start flow has not been wired. " +
+            "Follow Step 5 of docs/runbooks/gmail-inbound-setup.md to implement."
+          : "Gmail inbound OAuth flow is not yet configured. " +
+            "Follow docs/runbooks/gmail-inbound-setup.md to complete GCP setup + Vercel env vars.",
+        runbook: "docs/runbooks/gmail-inbound-setup.md",
+      },
+      { status: 501 },
+    );
+  } catch (err) {
+    return respondToAuthError(err);
+  }
 }

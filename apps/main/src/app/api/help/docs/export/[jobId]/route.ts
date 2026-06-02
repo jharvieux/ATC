@@ -4,6 +4,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour per §32.3.3
 
@@ -39,6 +40,6 @@ export async function GET(req: Request, props: { params: Promise<{ jobId: string
     }
     return Response.json({ state: "ready", signed_url: signed.signedUrl, format: row.format });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }

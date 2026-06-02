@@ -5,6 +5,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const ALLOWED_EMOJI = new Set(["thumbs_up", "heart", "laugh", "surprised", "celebrate", "eyes"]);
 
@@ -41,7 +42,6 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
 
     return Response.json({ ok: true }, { status: 201 });
   } catch (err) {
-    console.error("[forum-reactions POST]", err);
-    return Response.json({ error: "internal_error" }, { status: 500 });
+    return respondToAuthError(err);
   }
 }

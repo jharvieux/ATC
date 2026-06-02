@@ -2,6 +2,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
   const params = await props.params;
@@ -19,6 +20,6 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json(data);
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "unauthorized" }, { status: 401 });
+    return respondToAuthError(err);
   }
 }
