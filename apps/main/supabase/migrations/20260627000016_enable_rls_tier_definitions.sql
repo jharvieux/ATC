@@ -1,0 +1,21 @@
+-- Security advisor (lints 0013/0008) — tier_definitions RLS.
+--
+-- public.tier_definitions is exposed to the Data API but had RLS disabled,
+-- so any role with table grants could read/write every row unfiltered.
+-- It is global reference data (no tenant_id column). Every application read
+-- path goes through the service-role client -- tenantClient's
+-- PLATFORM_READABLE passthrough or createServiceRoleClient directly -- and
+-- service_role has BYPASSRLS, so enabling RLS with no policy (default-deny
+-- for anon/authenticated) closes the Data API exposure without affecting
+-- any app path.
+--
+-- A SELECT-to-authenticated policy is intentionally NOT added: nothing reads
+-- this table via the authenticated/SSR client, and a permissive USING (true)
+-- policy is barred by the migration lint gate (§5.1.2). If a direct
+-- authenticated read path is ever added, pair it with a real row predicate.
+--
+-- The companion advisor INFO tables (pending_rag_sync, supervisor_review_queue)
+-- already have RLS enabled with zero policies (default-deny) and are
+-- service-role-only by design -- no change needed.
+
+ALTER TABLE public.tier_definitions ENABLE ROW LEVEL SECURITY;
