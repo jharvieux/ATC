@@ -71,8 +71,16 @@ export function decryptCredential(payload: {
     const tag = bundle.subarray(IV_BYTES, IV_BYTES + TAG_BYTES);
     const encrypted = bundle.subarray(IV_BYTES + TAG_BYTES);
 
+    // Reject a short/truncated auth tag. Node accepts 4–16 byte GCM tags when
+    // authTagLength is unset, so a short tag weakens forgery resistance (#551).
+    // Pin the length here and on the decipher below.
+    if (tag.length !== TAG_BYTES) {
+      logDecryptionFailure({ ciphertext, key_id, code: "auth_tag_mismatch" });
+      return { ok: false, error: { code: "auth_tag_mismatch", key_id } };
+    }
+
     const key = getKeyBuffer(keyBase64);
-    const decipher = createDecipheriv(ALGORITHM, key, iv);
+    const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
     decipher.setAuthTag(tag);
 
     const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);

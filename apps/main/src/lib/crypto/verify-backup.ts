@@ -52,7 +52,16 @@ export function verifyBackup(input: BackupVerificationInput): BackupVerification
         };
       }
 
-      const decipher = createDecipheriv(ALGORITHM, key, iv);
+      // Reject a short/truncated auth tag — Node accepts 4–16 byte GCM tags when
+      // authTagLength is unset, weakening forgery resistance (#551).
+      if (tag.length !== TAG_BYTES) {
+        return {
+          passed: false,
+          reason: `Auth tag is ${tag.length} bytes, expected ${TAG_BYTES} (key: ${keyId}).`,
+        };
+      }
+
+      const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
       decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
 

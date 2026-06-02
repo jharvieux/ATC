@@ -4,6 +4,7 @@
 // Each test is self-contained (no real Supabase calls).
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { createCipheriv, randomBytes } from "node:crypto";
 
 // We mock the env() call so tests don't need real env vars
 // and can exercise different key/key-id combinations.
@@ -111,6 +112,32 @@ describe("credential-cipher (§13.5)", () => {
     if (!result.ok) {
       // Auth tag mismatch or decryption_failed — either is correct depending on where corruption lands
       expect(["auth_tag_mismatch", "decryption_failed"]).toContain(result.error.code);
+    }
+  });
+
+  it("rejects a credential sealed with a short (8-byte) GCM auth tag (#551)", () => {
+    // Node accepts 4–16 byte GCM tags when authTagLength is unset, so an
+    // attacker controlling the stored bundle could supply a shorter, more
+    // forgeable tag. This builds a bundle whose tag is a REAL 8-byte GCM tag
+    // over empty ciphertext — without the authTagLength pin + length assertion
+    // it authenticates and decryptCredential returns ok:true (the weakening).
+    // With the fix it must fail closed as auth_tag_mismatch.
+    const key = Buffer.from("a".repeat(32)); // matches CURRENT_KEY_B64 decoded
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: 8 });
+    const enc = Buffer.concat([cipher.update("", "utf8"), cipher.final()]); // empty ciphertext
+    const shortTag = cipher.getAuthTag();
+    expect(shortTag.length).toBe(8);
+    // Wire format iv||tag||ct: with empty ct the tag region is genuinely 8 bytes.
+    const bundle = Buffer.concat([iv, shortTag, enc]);
+
+    const result = decryptCredential({
+      ciphertext: bundle.toString("base64"),
+      key_id: CURRENT_KEY_ID,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("auth_tag_mismatch");
     }
   });
 
