@@ -101,7 +101,7 @@ export default function Phase2ReadinessPage(): JSX.Element {
 
   if (!adminUserId) {
     return (
-      <div style={{ padding: "2rem", fontFamily: "system-ui, sans-serif" }}>
+      <div className="px-8 py-8">
         <p>Set localStorage <code>admin-user-id</code> to your platform-admin UUID, then reload.</p>
       </div>
     );
@@ -110,38 +110,41 @@ export default function Phase2ReadinessPage(): JSX.Element {
   const allPassed = checks.every((c) => c.passed === true);
 
   return (
-    <div style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif", maxWidth: 800 }}>
-      <h1 style={{ fontSize: 24, marginBottom: "0.5rem" }}>Phase 2 readiness</h1>
-      <p style={{ color: "#6b7280", marginBottom: "1.5rem" }}>
+    <div className="px-6 py-6 max-w-[800px]">
+      <h1 className="text-2xl mb-2">Phase 2 readiness</h1>
+      <p className="text-muted-foreground mb-6">
         Per spec §32.15.3 — Phase 2 launch gates. All checks must pass before flipping{" "}
         <code>PHASE_2_CUSTOMER_BUG_FLOW_ENABLED</code> to true.
       </p>
 
       {checks.map((c, i) => (
-        <div key={i} style={{ marginBottom: "1rem", padding: "1rem", border: "1px solid #e5e7eb", borderRadius: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <span style={{
-              fontSize: 20,
-              color: c.passed === true ? "#16a34a" : c.passed === false ? "#b91c1c" : "#9ca3af",
-            }}>
+        <div key={i} className="mb-4 p-4 border border-border rounded-lg">
+          <div className="flex items-center gap-3">
+            <span className={`text-[20px] ${
+              c.passed === true
+                ? "text-green-600 dark:text-green-400"
+                : c.passed === false
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-muted-foreground"
+            }`}>
               {c.passed === true ? "✓" : c.passed === false ? "✗" : "…"}
             </span>
             <strong>{c.name}</strong>
           </div>
-          <p style={{ marginTop: "0.5rem", color: "#6b7280", fontSize: 13 }}>{c.description}</p>
+          <p className="mt-2 text-muted-foreground text-[13px]">{c.description}</p>
           {c.detail && (
-            <p style={{ marginTop: "0.25rem", fontSize: 13, color: c.passed ? "#16a34a" : "#b91c1c" }}>{c.detail}</p>
+            <p className={`mt-1 text-[13px] ${c.passed ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>
+              {c.detail}
+            </p>
           )}
         </div>
       ))}
 
-      <div style={{
-        marginTop: "1.5rem",
-        padding: "1rem",
-        borderRadius: 8,
-        background: allPassed ? "#dcfce7" : "#fef3c7",
-        color: allPassed ? "#166534" : "#92400e",
-      }}>
+      <div className={`mt-6 p-4 rounded-lg ${
+        allPassed
+          ? "bg-green-50 dark:bg-green-950/30 text-green-800 dark:text-green-300"
+          : "bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300"
+      }`}>
         {allPassed ? (
           <strong>All gates passed. Safe to flip the Phase 2 feature flag.</strong>
         ) : (

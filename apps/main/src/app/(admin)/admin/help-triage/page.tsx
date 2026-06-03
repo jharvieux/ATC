@@ -83,21 +83,16 @@ export default function HelpTriagePage(): JSX.Element {
   }
 
   return (
-    <div style={{ padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 24, marginBottom: "1rem" }}>Help triage</h1>
-      <nav style={{ marginBottom: "1.5rem", borderBottom: "1px solid #e5e7eb" }}>
+    <div className="px-6 py-6">
+      <h1 className="text-2xl mb-4">Help triage</h1>
+      <nav className="mb-6 border-b border-border">
         {(["bugs", "features", "sessions"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            style={{
-              padding: "0.5rem 1rem",
-              background: "transparent",
-              border: "none",
-              borderBottom: tab === t ? "2px solid #4f46e5" : "2px solid transparent",
-              cursor: "pointer",
-              fontWeight: tab === t ? 600 : 400,
-            }}
+            className={`px-4 py-2 bg-transparent border-none border-b-2 cursor-pointer font-${tab === t ? "semibold" : "normal"} ${
+              tab === t ? "border-b-2 border-primary text-primary" : "border-b-2 border-transparent text-muted-foreground"
+            }`}
           >
             {t === "bugs" ? "Bug submissions" : t === "features" ? "Feature requests" : "Help sessions"}
           </button>
@@ -105,32 +100,32 @@ export default function HelpTriagePage(): JSX.Element {
       </nav>
 
       {tab === "bugs" && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table className="w-full border-collapse text-[13px]">
           <thead>
-            <tr style={{ background: "#f9fafb", textAlign: "left" }}>
-              <th style={th}>Submitted</th>
-              <th style={th}>Tenant</th>
-              <th style={th}>Source</th>
-              <th style={th}>Where</th>
-              <th style={th}>Score</th>
-              <th style={th}>GitHub</th>
-              <th style={th}>State</th>
-              <th style={th}>Triage</th>
+            <tr className="bg-muted text-left">
+              <th className={thCls}>Submitted</th>
+              <th className={thCls}>Tenant</th>
+              <th className={thCls}>Source</th>
+              <th className={thCls}>Where</th>
+              <th className={thCls}>Score</th>
+              <th className={thCls}>GitHub</th>
+              <th className={thCls}>State</th>
+              <th className={thCls}>Triage</th>
             </tr>
           </thead>
           <tbody>
             {bugs.map((r) => (
-              <tr key={r.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                <td style={td}>{r.submitted_at.slice(0, 10)}</td>
-                <td style={td}>{r.tenant_id.slice(0, 8)}</td>
-                <td style={td}>{r.source_type}</td>
-                <td style={td}>{r.where_in_platform ?? "—"}</td>
-                <td style={td}>{r.confidence_score?.toFixed(2) ?? "—"}</td>
-                <td style={td}>
+              <tr key={r.id} className="border-b border-border">
+                <td className={tdCls}>{r.submitted_at.slice(0, 10)}</td>
+                <td className={tdCls}>{r.tenant_id.slice(0, 8)}</td>
+                <td className={tdCls}>{r.source_type}</td>
+                <td className={tdCls}>{r.where_in_platform ?? "—"}</td>
+                <td className={tdCls}>{r.confidence_score?.toFixed(2) ?? "—"}</td>
+                <td className={tdCls}>
                   {r.github_issue_url ? <a href={r.github_issue_url} target="_blank" rel="noreferrer">#{r.github_issue_number}</a> : "—"}
                 </td>
-                <td style={td}>{r.github_issue_state ?? "—"}</td>
-                <td style={td}>{r.triage_state}</td>
+                <td className={tdCls}>{r.github_issue_state ?? "—"}</td>
+                <td className={tdCls}>{r.triage_state}</td>
               </tr>
             ))}
           </tbody>
@@ -138,36 +133,36 @@ export default function HelpTriagePage(): JSX.Element {
       )}
 
       {tab === "features" && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table className="w-full border-collapse text-[13px]">
           <thead>
-            <tr style={{ background: "#f9fafb", textAlign: "left" }}>
-              <th style={th}>Submitted</th>
-              <th style={th}>Tenant</th>
-              <th style={th}>What</th>
-              <th style={th}>GitHub</th>
-              <th style={th}>State</th>
-              <th style={th}>Decision</th>
-              <th style={th}>Actions</th>
+            <tr className="bg-muted text-left">
+              <th className={thCls}>Submitted</th>
+              <th className={thCls}>Tenant</th>
+              <th className={thCls}>What</th>
+              <th className={thCls}>GitHub</th>
+              <th className={thCls}>State</th>
+              <th className={thCls}>Decision</th>
+              <th className={thCls}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {features.map((r) => (
-              <tr key={r.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                <td style={td}>{r.submitted_at.slice(0, 10)}</td>
-                <td style={td}>{r.tenant_id.slice(0, 8)}</td>
-                <td style={td}>{(r.what ?? "—").slice(0, 60)}</td>
-                <td style={td}>
+              <tr key={r.id} className="border-b border-border">
+                <td className={tdCls}>{r.submitted_at.slice(0, 10)}</td>
+                <td className={tdCls}>{r.tenant_id.slice(0, 8)}</td>
+                <td className={tdCls}>{(r.what ?? "—").slice(0, 60)}</td>
+                <td className={tdCls}>
                   {r.github_issue_url ? <a href={r.github_issue_url} target="_blank" rel="noreferrer">#{r.github_issue_number}</a> : "—"}
                 </td>
-                <td style={td}>{r.github_issue_state ?? "—"}</td>
-                <td style={td}>{r.decision ?? <em>pending</em>}</td>
-                <td style={td}>
+                <td className={tdCls}>{r.github_issue_state ?? "—"}</td>
+                <td className={tdCls}>{r.decision ?? <em>pending</em>}</td>
+                <td className={tdCls}>
                   {!r.decision && (
                     <>
-                      <button onClick={() => void decide(r.id, "accepted")} style={actionBtn}>Accept</button>
-                      <button onClick={() => void decide(r.id, "rejected")} style={actionBtn}>Reject</button>
-                      <button onClick={() => void decide(r.id, "deferred")} style={actionBtn}>Defer</button>
-                      <button onClick={() => void decide(r.id, "duplicate")} style={actionBtn}>Duplicate</button>
+                      <button onClick={() => void decide(r.id, "accepted")} className={actionBtnCls}>Accept</button>
+                      <button onClick={() => void decide(r.id, "rejected")} className={actionBtnCls}>Reject</button>
+                      <button onClick={() => void decide(r.id, "deferred")} className={actionBtnCls}>Defer</button>
+                      <button onClick={() => void decide(r.id, "duplicate")} className={actionBtnCls}>Duplicate</button>
                     </>
                   )}
                 </td>
@@ -178,28 +173,28 @@ export default function HelpTriagePage(): JSX.Element {
       )}
 
       {tab === "sessions" && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table className="w-full border-collapse text-[13px]">
           <thead>
-            <tr style={{ background: "#f9fafb", textAlign: "left" }}>
-              <th style={th}>Started</th>
-              <th style={th}>Tenant</th>
-              <th style={th}>User</th>
-              <th style={th}>Type</th>
-              <th style={th}>Source</th>
-              <th style={th}>Outcome</th>
-              <th style={th}>Escalated</th>
+            <tr className="bg-muted text-left">
+              <th className={thCls}>Started</th>
+              <th className={thCls}>Tenant</th>
+              <th className={thCls}>User</th>
+              <th className={thCls}>Type</th>
+              <th className={thCls}>Source</th>
+              <th className={thCls}>Outcome</th>
+              <th className={thCls}>Escalated</th>
             </tr>
           </thead>
           <tbody>
             {sessions.map((r) => (
-              <tr key={r.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                <td style={td}>{r.started_at.slice(0, 16).replace("T", " ")}</td>
-                <td style={td}>{r.tenant_id.slice(0, 8)}</td>
-                <td style={td}>{r.user_id.slice(0, 8)}</td>
-                <td style={td}>{r.session_type}</td>
-                <td style={td}>{r.source_surface}</td>
-                <td style={td}>{r.outcome ?? <em>open</em>}</td>
-                <td style={td}>{r.escalated_to_human ? "yes" : ""}</td>
+              <tr key={r.id} className="border-b border-border">
+                <td className={tdCls}>{r.started_at.slice(0, 16).replace("T", " ")}</td>
+                <td className={tdCls}>{r.tenant_id.slice(0, 8)}</td>
+                <td className={tdCls}>{r.user_id.slice(0, 8)}</td>
+                <td className={tdCls}>{r.session_type}</td>
+                <td className={tdCls}>{r.source_surface}</td>
+                <td className={tdCls}>{r.outcome ?? <em>open</em>}</td>
+                <td className={tdCls}>{r.escalated_to_human ? "yes" : ""}</td>
               </tr>
             ))}
           </tbody>
@@ -209,14 +204,6 @@ export default function HelpTriagePage(): JSX.Element {
   );
 }
 
-const th: React.CSSProperties = { padding: "0.5rem 0.75rem", fontWeight: 600, fontSize: 12, color: "#6b7280" };
-const td: React.CSSProperties = { padding: "0.5rem 0.75rem", verticalAlign: "top" };
-const actionBtn: React.CSSProperties = {
-  marginRight: 4,
-  padding: "2px 8px",
-  fontSize: 12,
-  border: "1px solid #d1d5db",
-  borderRadius: 4,
-  background: "white",
-  cursor: "pointer",
-};
+const thCls = "px-3 py-2 font-semibold text-[12px] text-muted-foreground";
+const tdCls = "px-3 py-2 align-top";
+const actionBtnCls = "mr-1 px-2 py-0.5 text-[12px] border border-border rounded bg-card cursor-pointer";

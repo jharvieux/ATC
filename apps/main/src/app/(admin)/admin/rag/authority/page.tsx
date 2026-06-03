@@ -51,6 +51,9 @@ const OVERRIDE_OPTIONS = [
   { value: "false", label: "Without override" },
 ];
 
+const thCls = "px-2 py-2 text-left border-b-2 border-border font-semibold text-sm";
+const tdCls = "px-2 py-2 border-b border-muted align-top text-sm";
+
 export default function AuthorityCurationPage(): JSX.Element {
   const [items, setItems] = useState<ChunkRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -176,9 +179,9 @@ export default function AuthorityCurationPage(): JSX.Element {
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "1200px" }}>
+    <main className="px-8 py-8 max-w-[1200px]">
       <h1>RAG Authority Override</h1>
-      <p style={{ color: "#6b7280", fontSize: 14 }}>
+      <p className="text-muted-foreground text-[14px]">
         Curate authority scores on imported knowledge chunks. Setting an
         override changes the chunk&apos;s effective authority during
         retrieval ranking (per §6.10 / §33.12). The auto-computed
@@ -186,47 +189,50 @@ export default function AuthorityCurationPage(): JSX.Element {
       </p>
 
       {error && (
-        <div
-          style={{
-            margin: "1rem 0",
-            padding: "0.75rem 1rem",
-            background: "#fee2e2",
-            border: "1px solid #dc2626",
-            borderRadius: 6,
-            color: "#991b1b",
-          }}
-        >
+        <div className="my-4 px-4 py-3 bg-red-50 dark:bg-red-950/30 border border-red-600 rounded-md text-red-800 dark:text-red-300">
           {error}
         </div>
       )}
 
       {/* Filters */}
-      <section style={{ margin: "1rem 0", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+      <section className="my-4 flex gap-4 flex-wrap items-end">
         <label>
-          <span style={{ display: "block", fontSize: 12, color: "#374151" }}>Source</span>
-          <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+          <span className="block text-[12px] text-foreground mb-0.5">Source</span>
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            className="px-2 py-1.5 border border-border rounded text-sm"
+          >
             {SOURCE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
         </label>
         <label>
-          <span style={{ display: "block", fontSize: 12, color: "#374151" }}>Scope</span>
-          <select value={scopeFilter} onChange={(e) => setScopeFilter(e.target.value)}>
+          <span className="block text-[12px] text-foreground mb-0.5">Scope</span>
+          <select
+            value={scopeFilter}
+            onChange={(e) => setScopeFilter(e.target.value)}
+            className="px-2 py-1.5 border border-border rounded text-sm"
+          >
             {SCOPE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
         </label>
         <label>
-          <span style={{ display: "block", fontSize: 12, color: "#374151" }}>Override</span>
-          <select value={hasOverrideFilter} onChange={(e) => setHasOverrideFilter(e.target.value)}>
+          <span className="block text-[12px] text-foreground mb-0.5">Override</span>
+          <select
+            value={hasOverrideFilter}
+            onChange={(e) => setHasOverrideFilter(e.target.value)}
+            className="px-2 py-1.5 border border-border rounded text-sm"
+          >
             {OVERRIDE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
         </label>
-        <div style={{ marginLeft: "auto", alignSelf: "flex-end", color: "#6b7280", fontSize: 13 }}>
+        <div className="ml-auto text-muted-foreground text-[13px]">
           {total} chunks · page {page} of {pages}
         </div>
       </section>
@@ -237,15 +243,15 @@ export default function AuthorityCurationPage(): JSX.Element {
       ) : items.length === 0 ? (
         <p>No chunks match these filters.</p>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table className="w-full border-collapse text-[13px]">
           <thead>
-            <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
-              <th style={{ padding: "0.5rem" }}>Content (excerpt)</th>
-              <th style={{ padding: "0.5rem" }}>Source</th>
-              <th style={{ padding: "0.5rem" }}>Scope</th>
-              <th style={{ padding: "0.5rem" }}>Auto</th>
-              <th style={{ padding: "0.5rem" }}>Override</th>
-              <th style={{ padding: "0.5rem" }}>Actions</th>
+            <tr className="text-left">
+              <th className={thCls}>Content (excerpt)</th>
+              <th className={thCls}>Source</th>
+              <th className={thCls}>Scope</th>
+              <th className={thCls}>Auto</th>
+              <th className={thCls}>Override</th>
+              <th className={thCls}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -254,9 +260,9 @@ export default function AuthorityCurationPage(): JSX.Element {
               const effective =
                 chunk.authority_manual_override ?? chunk.authority_auto ?? 0;
               return (
-                <tr key={chunk.id} style={{ borderBottom: "1px solid #f3f4f6", verticalAlign: "top" }}>
-                  <td style={{ padding: "0.5rem", maxWidth: 320 }}>
-                    <div style={{ color: "#111827" }}>
+                <tr key={chunk.id} className="align-top">
+                  <td className={`${tdCls} max-w-[320px]`}>
+                    <div className="text-foreground">
                       {chunk.content?.slice(0, 200)}
                       {chunk.content && chunk.content.length > 200 ? "…" : ""}
                     </div>
@@ -265,23 +271,23 @@ export default function AuthorityCurationPage(): JSX.Element {
                         href={chunk.source_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ display: "block", fontSize: 11, color: "#2563eb", marginTop: 4 }}
+                        className="block text-[11px] text-blue-600 dark:text-blue-400 mt-1"
                       >
                         {chunk.source_url}
                       </a>
                     )}
                   </td>
-                  <td style={{ padding: "0.5rem", fontSize: 12 }}>
+                  <td className={`${tdCls} text-[12px]`}>
                     {chunk.source_type ?? "—"}
                     {chunk.category && (
-                      <div style={{ color: "#6b7280" }}>{chunk.category}</div>
+                      <div className="text-muted-foreground">{chunk.category}</div>
                     )}
                   </td>
-                  <td style={{ padding: "0.5rem" }}>{chunk.scope ?? "—"}</td>
-                  <td style={{ padding: "0.5rem", fontFamily: "monospace" }}>
+                  <td className={tdCls}>{chunk.scope ?? "—"}</td>
+                  <td className={`${tdCls} font-mono`}>
                     {chunk.authority_auto?.toFixed(2) ?? "—"}
                   </td>
-                  <td style={{ padding: "0.5rem", fontFamily: "monospace" }}>
+                  <td className={`${tdCls} font-mono`}>
                     {isEditing ? (
                       <input
                         type="number"
@@ -291,7 +297,7 @@ export default function AuthorityCurationPage(): JSX.Element {
                         value={editValue}
                         onChange={(e) => setEditValue(e.target.value)}
                         placeholder="0.00-1.00 or blank to clear"
-                        style={{ width: 140 }}
+                        className="w-[140px] border border-border rounded px-1.5 py-1 text-[12px]"
                       />
                     ) : chunk.authority_manual_override !== null ? (
                       <>
@@ -299,18 +305,18 @@ export default function AuthorityCurationPage(): JSX.Element {
                           <strong>{chunk.authority_manual_override.toFixed(2)}</strong>
                         </div>
                         {chunk.authority_override_reason && (
-                          <div style={{ fontSize: 11, color: "#6b7280", maxWidth: 180 }}>
+                          <div className="text-[11px] text-muted-foreground max-w-[180px]">
                             {chunk.authority_override_reason}
                           </div>
                         )}
                         {chunk.authority_override_set_at && (
-                          <div style={{ fontSize: 10, color: "#9ca3af" }}>
+                          <div className="text-[10px] text-muted-foreground">
                             {new Date(chunk.authority_override_set_at).toLocaleString()}
                           </div>
                         )}
                       </>
                     ) : (
-                      <span style={{ color: "#9ca3af" }}>—</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                     {isEditing && (
                       <input
@@ -319,31 +325,40 @@ export default function AuthorityCurationPage(): JSX.Element {
                         onChange={(e) => setEditReason(e.target.value)}
                         placeholder="Reason (required to set)"
                         maxLength={500}
-                        style={{ display: "block", width: 220, marginTop: 4 }}
+                        className="block w-[220px] mt-1 border border-border rounded px-1.5 py-1 text-[12px]"
                       />
                     )}
-                    <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
                       effective: {effective.toFixed(2)}
                     </div>
                   </td>
-                  <td style={{ padding: "0.5rem" }}>
+                  <td className={tdCls}>
                     {isEditing ? (
                       <>
                         <button
                           type="button"
                           disabled={saving}
                           onClick={() => void saveEdit(chunk)}
-                          style={{ marginRight: 4 }}
+                          className="mr-1 px-2 py-1 border border-border rounded text-[12px] disabled:opacity-50"
                         >
                           {saving ? "Saving…" : "Save"}
                         </button>
-                        <button type="button" onClick={cancelEdit} disabled={saving}>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          disabled={saving}
+                          className="px-2 py-1 border border-border rounded text-[12px] disabled:opacity-50"
+                        >
                           Cancel
                         </button>
                       </>
                     ) : (
                       <>
-                        <button type="button" onClick={() => startEdit(chunk)} style={{ marginRight: 4 }}>
+                        <button
+                          type="button"
+                          onClick={() => startEdit(chunk)}
+                          className="mr-1 px-2 py-1 border border-border rounded text-[12px]"
+                        >
                           Edit
                         </button>
                         {chunk.authority_manual_override !== null && (
@@ -351,6 +366,7 @@ export default function AuthorityCurationPage(): JSX.Element {
                             type="button"
                             onClick={() => void clearOverride(chunk)}
                             disabled={saving}
+                            className="px-2 py-1 border border-border rounded text-[12px] disabled:opacity-50"
                           >
                             Clear
                           </button>
@@ -367,17 +383,23 @@ export default function AuthorityCurationPage(): JSX.Element {
 
       {/* Pagination */}
       {pages > 1 && (
-        <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", justifyContent: "center" }}>
-          <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
+        <div className="mt-4 flex gap-2 justify-center">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="px-3 py-1.5 border border-border rounded text-sm disabled:opacity-50"
+          >
             Previous
           </button>
-          <span style={{ alignSelf: "center", color: "#6b7280" }}>
+          <span className="self-center text-muted-foreground">
             Page {page} of {pages}
           </span>
           <button
             type="button"
             onClick={() => setPage((p) => Math.min(pages, p + 1))}
             disabled={page === pages}
+            className="px-3 py-1.5 border border-border rounded text-sm disabled:opacity-50"
           >
             Next
           </button>

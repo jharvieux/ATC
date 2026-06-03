@@ -42,33 +42,27 @@ const SECTIONS = [
 
 export default function AdminHubPage() {
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "40px 24px", maxWidth: 860, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 4 }}>Platform Admin</h1>
-      <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 40 }}>
+    <main className="px-6 py-10 max-w-[860px] mx-auto">
+      <h1 className="text-[26px] font-bold mb-1">Platform Admin</h1>
+      <p className="text-muted-foreground text-[14px] mb-10">
         All platform administration tools. Access to each section is independently gated by platform admin role.
       </p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 40 }}>
+      <div className="flex flex-col gap-10">
         {SECTIONS.map((section) => (
           <section key={section.heading}>
-            <h2 style={{ fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "#9ca3af", marginBottom: 12 }}>
+            <h2 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground mb-3">
               {section.heading}
             </h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div className="flex flex-col gap-0.5">
               {section.items.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  style={{
-                    display: "flex", flexDirection: "column",
-                    padding: "14px 16px",
-                    border: "1px solid #e5e7eb", borderRadius: 8,
-                    textDecoration: "none", color: "inherit",
-                    background: "#fff",
-                  }}
+                  className="flex flex-col px-4 py-3.5 border border-border rounded-lg no-underline text-foreground bg-card hover:bg-muted transition-colors"
                 >
-                  <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{item.label}</span>
-                  <span style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{item.desc}</span>
+                  <span className="font-semibold text-[14px] text-foreground">{item.label}</span>
+                  <span className="text-[13px] text-muted-foreground mt-0.5">{item.desc}</span>
                 </Link>
               ))}
             </div>

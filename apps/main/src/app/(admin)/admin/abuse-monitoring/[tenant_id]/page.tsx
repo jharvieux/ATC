@@ -25,10 +25,8 @@ type Detail = {
 const DIMENSIONS = ["ai_cost", "rag_cap", "chat_volume", "email_volume", "group_invite"] as const;
 const TIER_OVERRIDES = ["soft1", "soft2", "hard", "base_cap"] as const;
 
-const pageStyle: React.CSSProperties = { padding: 24, maxWidth: 1200, margin: "0 auto" };
-const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", marginTop: 8 };
-const thStyle: React.CSSProperties = { textAlign: "left", padding: 8, borderBottom: "1px solid #e5e7eb", background: "#f3f4f6" };
-const tdStyle: React.CSSProperties = { padding: 8, borderBottom: "1px solid #f3f4f6" };
+const thCls = "text-left px-2 py-2 border-b border-border bg-muted font-semibold text-sm";
+const tdCls = "px-2 py-2 border-b border-muted text-sm";
 
 export default function TenantDetailPage(props: { params: Promise<{ tenant_id: string }> }): JSX.Element {
   const { tenant_id } = use(props.params);
@@ -76,72 +74,91 @@ export default function TenantDetailPage(props: { params: Promise<{ tenant_id: s
     else window.location.reload();
   }
 
-  if (loading) return <main style={pageStyle}><p>Loading…</p></main>;
-  if (error) return <main style={pageStyle}><p style={{ color: "#dc2626" }}>{error}</p></main>;
-  if (!detail) return <main style={pageStyle}><p>No data.</p></main>;
+  if (loading) return <main className="px-6 py-6 max-w-[1200px] mx-auto"><p>Loading…</p></main>;
+  if (error) return <main className="px-6 py-6 max-w-[1200px] mx-auto"><p className="text-red-600 dark:text-red-400">{error}</p></main>;
+  if (!detail) return <main className="px-6 py-6 max-w-[1200px] mx-auto"><p>No data.</p></main>;
 
   return (
-    <main style={pageStyle}>
-      <Link href="/admin/abuse-monitoring" style={{ color: "#3b82f6" }}>← Back</Link>
+    <main className="px-6 py-6 max-w-[1200px] mx-auto">
+      <Link href="/admin/abuse-monitoring" className="text-primary">← Back</Link>
       <h1>Tenant {tenant_id}</h1>
 
-      <h2 style={{ marginTop: 24 }}>Create override</h2>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <select value={dimension} onChange={(e) => setDimension(e.target.value as typeof DIMENSIONS[number])}>
+      <h2 className="mt-6">Create override</h2>
+      <div className="flex gap-2 items-center flex-wrap">
+        <select
+          value={dimension}
+          onChange={(e) => setDimension(e.target.value as typeof DIMENSIONS[number])}
+          className="px-2 py-1.5 border border-border rounded text-sm"
+        >
           {DIMENSIONS.map((d) => <option key={d}>{d}</option>)}
         </select>
-        <select value={tier_override} onChange={(e) => setTierOverride(e.target.value as typeof TIER_OVERRIDES[number])}>
+        <select
+          value={tier_override}
+          onChange={(e) => setTierOverride(e.target.value as typeof TIER_OVERRIDES[number])}
+          className="px-2 py-1.5 border border-border rounded text-sm"
+        >
           {TIER_OVERRIDES.map((t) => <option key={t}>{t}</option>)}
         </select>
         <input
-          type="number" min="0" placeholder="threshold_value"
-          value={threshold_value} onChange={(e) => setThresholdValue(e.target.value)}
-          style={{ padding: 4, width: 140 }}
+          type="number"
+          min="0"
+          placeholder="threshold_value"
+          value={threshold_value}
+          onChange={(e) => setThresholdValue(e.target.value)}
+          className="px-2 py-1.5 border border-border rounded text-sm w-[140px]"
         />
         <input
-          placeholder="reason (≥5 chars)" value={reason} onChange={(e) => setReason(e.target.value)}
-          style={{ padding: 4, width: 280 }}
+          placeholder="reason (≥5 chars)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="px-2 py-1.5 border border-border rounded text-sm w-[280px]"
         />
-        <button disabled={submitting} onClick={createOverride}>Create override</button>
+        <button
+          disabled={submitting}
+          onClick={createOverride}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-semibold disabled:opacity-50"
+        >
+          Create override
+        </button>
       </div>
 
-      <h2 style={{ marginTop: 24 }}>Metric history (last 6 periods)</h2>
-      <table style={tableStyle}>
+      <h2 className="mt-6">Metric history (last 6 periods)</h2>
+      <table className="w-full border-collapse mt-2">
         <thead><tr>
-          <th style={thStyle}>Period</th>
-          <th style={thStyle}>AI ¢</th><th style={thStyle}>Chat #</th><th style={thStyle}>Email #</th><th style={thStyle}>Invites #</th>
-          <th style={thStyle}>AI state</th><th style={thStyle}>Chat state</th><th style={thStyle}>Email state</th><th style={thStyle}>Invite state</th>
+          <th className={thCls}>Period</th>
+          <th className={thCls}>AI ¢</th><th className={thCls}>Chat #</th><th className={thCls}>Email #</th><th className={thCls}>Invites #</th>
+          <th className={thCls}>AI state</th><th className={thCls}>Chat state</th><th className={thCls}>Email state</th><th className={thCls}>Invite state</th>
         </tr></thead>
         <tbody>
           {detail.metrics_history.map((m, i) => (
             <tr key={i}>
-              <td style={tdStyle}>{String(m.billing_period ?? "")}</td>
-              <td style={tdStyle}>{String(m.ai_cost_cents ?? "")}</td>
-              <td style={tdStyle}>{String(m.chat_messages_count ?? "")}</td>
-              <td style={tdStyle}>{String(m.email_sent_count ?? "")}</td>
-              <td style={tdStyle}>{String(m.group_invitees_count ?? "")}</td>
-              <td style={tdStyle}>{String(m.ai_cost_limit_state ?? "")}</td>
-              <td style={tdStyle}>{String(m.chat_volume_limit_state ?? "")}</td>
-              <td style={tdStyle}>{String(m.email_volume_limit_state ?? "")}</td>
-              <td style={tdStyle}>{String(m.group_invite_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(m.billing_period ?? "")}</td>
+              <td className={tdCls}>{String(m.ai_cost_cents ?? "")}</td>
+              <td className={tdCls}>{String(m.chat_messages_count ?? "")}</td>
+              <td className={tdCls}>{String(m.email_sent_count ?? "")}</td>
+              <td className={tdCls}>{String(m.group_invitees_count ?? "")}</td>
+              <td className={tdCls}>{String(m.ai_cost_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(m.chat_volume_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(m.email_volume_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(m.group_invite_limit_state ?? "")}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <h2 style={{ marginTop: 24 }}>RAG quota</h2>
+      <h2 className="mt-6">RAG quota</h2>
       {detail.rag ? (
-        <pre style={{ background: "#f9fafb", padding: 10, borderRadius: 4 }}>{JSON.stringify(detail.rag, null, 2)}</pre>
+        <pre className="bg-muted p-2.5 rounded text-[13px] font-mono overflow-auto">{JSON.stringify(detail.rag, null, 2)}</pre>
       ) : <p>No RAG quota row.</p>}
 
-      <h2 style={{ marginTop: 24 }}>Active overrides ({detail.active_overrides.length})</h2>
-      <pre style={{ background: "#f9fafb", padding: 10, borderRadius: 4 }}>{JSON.stringify(detail.active_overrides, null, 2)}</pre>
+      <h2 className="mt-6">Active overrides ({detail.active_overrides.length})</h2>
+      <pre className="bg-muted p-2.5 rounded text-[13px] font-mono overflow-auto">{JSON.stringify(detail.active_overrides, null, 2)}</pre>
 
-      <h2 style={{ marginTop: 24 }}>Recent state events</h2>
-      <pre style={{ background: "#f9fafb", padding: 10, borderRadius: 4 }}>{JSON.stringify(detail.recent_events, null, 2)}</pre>
+      <h2 className="mt-6">Recent state events</h2>
+      <pre className="bg-muted p-2.5 rounded text-[13px] font-mono overflow-auto">{JSON.stringify(detail.recent_events, null, 2)}</pre>
 
-      <h2 style={{ marginTop: 24 }}>Tenant requests</h2>
-      <pre style={{ background: "#f9fafb", padding: 10, borderRadius: 4 }}>{JSON.stringify(detail.recent_requests, null, 2)}</pre>
+      <h2 className="mt-6">Tenant requests</h2>
+      <pre className="bg-muted p-2.5 rounded text-[13px] font-mono overflow-auto">{JSON.stringify(detail.recent_requests, null, 2)}</pre>
     </main>
   );
 }
