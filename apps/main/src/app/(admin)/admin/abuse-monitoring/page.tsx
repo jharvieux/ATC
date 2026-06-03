@@ -44,6 +44,9 @@ const TAB_LABEL: Record<Tab, string> = {
   drift_log: "Drift log",
 };
 
+const thCls = "text-left px-2.5 py-2.5 border-b border-border bg-muted font-semibold text-sm";
+const tdCls = "px-2.5 py-2.5 border-b border-muted text-sm";
+
 export default function AbuseMonitoringPage(): JSX.Element {
   const [tab, setTab] = useState<Tab>("overview");
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -65,32 +68,29 @@ export default function AbuseMonitoringPage(): JSX.Element {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <main style={pageStyle}><p>Loading…</p></main>;
-  if (error) return <main style={pageStyle}><p style={{ color: "#dc2626" }}>{error}</p></main>;
-  if (!summary) return <main style={pageStyle}><p>No data.</p></main>;
+  if (loading) return <main className="px-6 py-6 max-w-[1200px] mx-auto"><p>Loading…</p></main>;
+  if (error) return <main className="px-6 py-6 max-w-[1200px] mx-auto"><p className="text-red-600 dark:text-red-400">{error}</p></main>;
+  if (!summary) return <main className="px-6 py-6 max-w-[1200px] mx-auto"><p>No data.</p></main>;
 
   return (
-    <main style={pageStyle}>
+    <main className="px-6 py-6 max-w-[1200px] mx-auto">
       <h1>Abuse monitoring</h1>
-      <p style={{ color: "#555" }}>§27 — SaaS abuse / cost-control dashboard. Updated on each page load.</p>
+      <p className="text-muted-foreground">§27 — SaaS abuse / cost-control dashboard. Updated on each page load.</p>
 
-      <nav style={{ display: "flex", gap: 12, marginTop: 16, borderBottom: "1px solid #e5e7eb" }}>
+      <nav className="flex gap-3 mt-4 border-b border-border">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            style={{
-              padding: "8px 12px",
-              border: "none",
-              background: "transparent",
-              borderBottom: tab === t ? "2px solid #3b82f6" : "2px solid transparent",
-              fontWeight: tab === t ? 600 : 400,
-              cursor: "pointer",
-            }}
+            className={`px-3 py-2 border-none bg-transparent cursor-pointer text-sm ${
+              tab === t
+                ? "border-b-2 border-primary font-semibold text-primary"
+                : "border-b-2 border-transparent font-normal text-muted-foreground"
+            }`}
           >
             {TAB_LABEL[t]}
             {t === "requests" && summary.pending_requests_count > 0 && (
-              <span style={{ marginLeft: 6, background: "#dc2626", color: "white", borderRadius: 10, padding: "1px 8px", fontSize: 12 }}>
+              <span className="ml-1.5 bg-red-600 text-white rounded-full px-2 py-0.5 text-[12px]">
                 {summary.pending_requests_count}
               </span>
             )}
@@ -98,7 +98,7 @@ export default function AbuseMonitoringPage(): JSX.Element {
         ))}
       </nav>
 
-      <div style={{ marginTop: 20 }}>
+      <div className="mt-5">
         {tab === "overview" && <OverviewTab summary={summary} />}
         {tab === "at_risk" && <AtRiskTab summary={summary} />}
         {tab === "requests" && <RequestsTab requests={requests} />}
@@ -109,31 +109,26 @@ export default function AbuseMonitoringPage(): JSX.Element {
   );
 }
 
-const pageStyle: React.CSSProperties = { padding: 24, maxWidth: 1200, margin: "0 auto" };
-const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", marginTop: 16 };
-const thStyle: React.CSSProperties = { textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb", background: "#f3f4f6" };
-const tdStyle: React.CSSProperties = { padding: 10, borderBottom: "1px solid #f3f4f6" };
-
 function OverviewTab({ summary }: { summary: Summary }): JSX.Element {
   return (
     <section>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+      <div className="grid grid-cols-4 gap-3">
         <Stat label="Tenants at risk (monthly)" value={summary.tenants_at_risk.length} />
         <Stat label="Tenants at risk (RAG)" value={summary.rag_at_risk.length} />
         <Stat label="Pending requests" value={summary.pending_requests_count} />
         <Stat label="Active overrides" value={summary.active_overrides.length} />
       </div>
-      <h3 style={{ marginTop: 24 }}>Recent state transitions (7d)</h3>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Tenant</th><th style={thStyle}>Dimension</th><th style={thStyle}>From → To</th><th style={thStyle}>Metric / threshold</th><th style={thStyle}>When</th></tr></thead>
+      <h3 className="mt-6">Recent state transitions (7d)</h3>
+      <table className="w-full border-collapse mt-4">
+        <thead><tr><th className={thCls}>Tenant</th><th className={thCls}>Dimension</th><th className={thCls}>From → To</th><th className={thCls}>Metric / threshold</th><th className={thCls}>When</th></tr></thead>
         <tbody>
           {summary.recent_transitions.map((t) => (
             <tr key={t.id}>
-              <td style={tdStyle}><TenantLink id={t.tenant_id} /></td>
-              <td style={tdStyle}>{t.dimension}</td>
-              <td style={tdStyle}>{t.from_state} → {t.to_state}</td>
-              <td style={tdStyle}>{t.metric_value} / {t.threshold_crossed}</td>
-              <td style={tdStyle}>{new Date(t.triggered_at).toLocaleString()}</td>
+              <td className={tdCls}><TenantLink id={t.tenant_id} /></td>
+              <td className={tdCls}>{t.dimension}</td>
+              <td className={tdCls}>{t.from_state} → {t.to_state}</td>
+              <td className={tdCls}>{t.metric_value} / {t.threshold_crossed}</td>
+              <td className={tdCls}>{new Date(t.triggered_at).toLocaleString()}</td>
             </tr>
           ))}
         </tbody>
@@ -146,31 +141,31 @@ function AtRiskTab({ summary }: { summary: Summary }): JSX.Element {
   return (
     <section>
       <h3>Monthly-dimension at-risk</h3>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Tenant</th><th style={thStyle}>AI cost</th><th style={thStyle}>Chat volume</th><th style={thStyle}>Email volume</th><th style={thStyle}>Group invite</th></tr></thead>
+      <table className="w-full border-collapse mt-4">
+        <thead><tr><th className={thCls}>Tenant</th><th className={thCls}>AI cost</th><th className={thCls}>Chat volume</th><th className={thCls}>Email volume</th><th className={thCls}>Group invite</th></tr></thead>
         <tbody>
           {summary.tenants_at_risk.map((row, i) => (
             <tr key={`${row.tenant_id}:${i}`}>
-              <td style={tdStyle}><TenantLink id={row.tenant_id} /></td>
-              <td style={tdStyle}>{String(row.ai_cost_limit_state ?? "")}</td>
-              <td style={tdStyle}>{String(row.chat_volume_limit_state ?? "")}</td>
-              <td style={tdStyle}>{String(row.email_volume_limit_state ?? "")}</td>
-              <td style={tdStyle}>{String(row.group_invite_limit_state ?? "")}</td>
+              <td className={tdCls}><TenantLink id={row.tenant_id} /></td>
+              <td className={tdCls}>{String(row.ai_cost_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(row.chat_volume_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(row.email_volume_limit_state ?? "")}</td>
+              <td className={tdCls}>{String(row.group_invite_limit_state ?? "")}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <h3 style={{ marginTop: 24 }}>RAG cap at-risk</h3>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Tenant</th><th style={thStyle}>State</th><th style={thStyle}>Promoted</th><th style={thStyle}>Current</th><th style={thStyle}>Base cap</th></tr></thead>
+      <h3 className="mt-6">RAG cap at-risk</h3>
+      <table className="w-full border-collapse mt-4">
+        <thead><tr><th className={thCls}>Tenant</th><th className={thCls}>State</th><th className={thCls}>Promoted</th><th className={thCls}>Current</th><th className={thCls}>Base cap</th></tr></thead>
         <tbody>
           {summary.rag_at_risk.map((r, i) => (
             <tr key={`${r.tenant_id}:${i}`}>
-              <td style={tdStyle}><TenantLink id={r.tenant_id} /></td>
-              <td style={tdStyle}>{String(r.rag_state ?? "")}</td>
-              <td style={tdStyle}>{String(r.promoted_chunks_count ?? "")}</td>
-              <td style={tdStyle}>{String(r.current_tenant_chunks_count ?? "")}</td>
-              <td style={tdStyle}>{String(r.base_cap ?? "")}</td>
+              <td className={tdCls}><TenantLink id={r.tenant_id} /></td>
+              <td className={tdCls}>{String(r.rag_state ?? "")}</td>
+              <td className={tdCls}>{String(r.promoted_chunks_count ?? "")}</td>
+              <td className={tdCls}>{String(r.current_tenant_chunks_count ?? "")}</td>
+              <td className={tdCls}>{String(r.base_cap ?? "")}</td>
             </tr>
           ))}
         </tbody>
@@ -202,25 +197,35 @@ function RequestsTab({ requests }: { requests: OverrideRequest[] }): JSX.Element
   return (
     <section>
       <h3>Pending override requests</h3>
-      <div style={{ marginBottom: 8 }}>
+      <div className="mb-2">
         <label>Deny reason (used for any deny button):{" "}
-          <input value={denyReason} onChange={(e) => setDenyReason(e.target.value)} style={{ padding: 4, width: 280 }} />
+          <input
+            value={denyReason}
+            onChange={(e) => setDenyReason(e.target.value)}
+            className="px-2 py-1 border border-border rounded text-sm w-[280px]"
+          />
         </label>
       </div>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Tenant</th><th style={thStyle}>Dimension</th><th style={thStyle}>Kind</th><th style={thStyle}>State</th><th style={thStyle}>Reason</th><th style={thStyle}>Requested</th><th style={thStyle}>Actions</th></tr></thead>
+      <table className="w-full border-collapse mt-4">
+        <thead><tr><th className={thCls}>Tenant</th><th className={thCls}>Dimension</th><th className={thCls}>Kind</th><th className={thCls}>State</th><th className={thCls}>Reason</th><th className={thCls}>Requested</th><th className={thCls}>Actions</th></tr></thead>
         <tbody>
           {requests.map((r) => (
             <tr key={r.id}>
-              <td style={tdStyle}><TenantLink id={r.tenant_id} /></td>
-              <td style={tdStyle}>{r.dimension}</td>
-              <td style={tdStyle}>{r.requested_threshold_kind ?? "—"}</td>
-              <td style={tdStyle}>{r.current_state}</td>
-              <td style={tdStyle}>{r.reason}</td>
-              <td style={tdStyle}>{new Date(r.requested_at).toLocaleString()}</td>
-              <td style={tdStyle}>
-                <button disabled={busyId === r.id} onClick={() => deny(r.id)} style={{ color: "#dc2626" }}>Deny</button>
-                <span style={{ marginLeft: 8, color: "#6b7280" }}>Approve via POST /api/admin/abuse/overrides w/ resulting_request_id={r.id}</span>
+              <td className={tdCls}><TenantLink id={r.tenant_id} /></td>
+              <td className={tdCls}>{r.dimension}</td>
+              <td className={tdCls}>{r.requested_threshold_kind ?? "—"}</td>
+              <td className={tdCls}>{r.current_state}</td>
+              <td className={tdCls}>{r.reason}</td>
+              <td className={tdCls}>{new Date(r.requested_at).toLocaleString()}</td>
+              <td className={tdCls}>
+                <button
+                  disabled={busyId === r.id}
+                  onClick={() => deny(r.id)}
+                  className="text-red-600 dark:text-red-400 bg-transparent border-none cursor-pointer text-sm disabled:opacity-50"
+                >
+                  Deny
+                </button>
+                <span className="ml-2 text-muted-foreground text-[12px]">Approve via POST /api/admin/abuse/overrides w/ resulting_request_id={r.id}</span>
               </td>
             </tr>
           ))}
@@ -248,16 +253,24 @@ function OverridesTab({ summary }: { summary: Summary }): JSX.Element {
   return (
     <section>
       <h3>Active overrides</h3>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Tenant</th><th style={thStyle}>Dimension</th><th style={thStyle}>Threshold</th><th style={thStyle}>Expires</th><th style={thStyle}>Actions</th></tr></thead>
+      <table className="w-full border-collapse mt-4">
+        <thead><tr><th className={thCls}>Tenant</th><th className={thCls}>Dimension</th><th className={thCls}>Threshold</th><th className={thCls}>Expires</th><th className={thCls}>Actions</th></tr></thead>
         <tbody>
           {summary.active_overrides.map((o) => (
             <tr key={o.id}>
-              <td style={tdStyle}><TenantLink id={o.tenant_id} /></td>
-              <td style={tdStyle}>{o.dimension}</td>
-              <td style={tdStyle}>{String(o.threshold_value)}</td>
-              <td style={tdStyle}>{o.effective_to ?? "—"}</td>
-              <td style={tdStyle}><button disabled={busyId === o.id} onClick={() => revoke(o.id)}>Revoke</button></td>
+              <td className={tdCls}><TenantLink id={o.tenant_id} /></td>
+              <td className={tdCls}>{o.dimension}</td>
+              <td className={tdCls}>{String(o.threshold_value)}</td>
+              <td className={tdCls}>{o.effective_to ?? "—"}</td>
+              <td className={tdCls}>
+                <button
+                  disabled={busyId === o.id}
+                  onClick={() => revoke(o.id)}
+                  className="px-3 py-1 border border-border rounded text-sm disabled:opacity-50"
+                >
+                  Revoke
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -270,16 +283,16 @@ function DriftTab({ summary }: { summary: Summary }): JSX.Element {
   return (
     <section>
       <h3>Recompute drift (last 7 days)</h3>
-      <p style={{ color: "#6b7280" }}>Each row is a nightly correction larger than the threshold (1¢ for ai_cost, 1 row for counts).</p>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Tenant</th><th style={thStyle}>Dimension</th><th style={thStyle}>Drift</th><th style={thStyle}>When</th></tr></thead>
+      <p className="text-muted-foreground">Each row is a nightly correction larger than the threshold (1¢ for ai_cost, 1 row for counts).</p>
+      <table className="w-full border-collapse mt-4">
+        <thead><tr><th className={thCls}>Tenant</th><th className={thCls}>Dimension</th><th className={thCls}>Drift</th><th className={thCls}>When</th></tr></thead>
         <tbody>
           {summary.recent_drift.map((d) => (
             <tr key={d.id}>
-              <td style={tdStyle}><TenantLink id={d.tenant_id} /></td>
-              <td style={tdStyle}>{d.dimension}</td>
-              <td style={tdStyle}>{d.drift_amount}</td>
-              <td style={tdStyle}>{new Date(d.detected_at).toLocaleString()}</td>
+              <td className={tdCls}><TenantLink id={d.tenant_id} /></td>
+              <td className={tdCls}>{d.dimension}</td>
+              <td className={tdCls}>{d.drift_amount}</td>
+              <td className={tdCls}>{new Date(d.detected_at).toLocaleString()}</td>
             </tr>
           ))}
         </tbody>
@@ -290,9 +303,9 @@ function DriftTab({ summary }: { summary: Summary }): JSX.Element {
 
 function Stat({ label, value }: { label: string; value: number }): JSX.Element {
   return (
-    <div style={{ border: "1px solid #e5e7eb", padding: 12, borderRadius: 6 }}>
-      <div style={{ color: "#6b7280", fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
+    <div className="border border-border p-3 rounded-md">
+      <div className="text-muted-foreground text-[12px]">{label}</div>
+      <div className="text-2xl font-bold">{value}</div>
     </div>
   );
 }

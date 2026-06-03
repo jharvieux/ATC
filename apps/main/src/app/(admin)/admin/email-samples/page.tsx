@@ -26,6 +26,9 @@ const DEFAULT_PORTS = "Miami, FL\nAt sea\nRoatán, Honduras\nHarvest Caye\nCosta
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SAILING_DATE = new Date(Date.now() + NINETY_DAYS_MS).toISOString().slice(0, 10);
 
+const inputCls = "w-full px-2 py-1.5 border border-border rounded text-[14px] box-border";
+const labelCls = "block font-semibold mb-1 text-[13px] text-foreground";
+
 export default function EmailSamplesPage() {
   const [template, setTemplate]               = useState<string>("T90");
   const [toEmail, setToEmail]                 = useState("");
@@ -102,114 +105,118 @@ export default function EmailSamplesPage() {
     }
   }
 
-  const labelStyle: React.CSSProperties = { display: "block", fontWeight: 600, marginBottom: 4, fontSize: 13 };
-  const inputStyle: React.CSSProperties = { width: "100%", padding: "6px 8px", border: "1px solid #d1d5db", borderRadius: 4, fontSize: 14, boxSizing: "border-box" };
-  const fieldStyle: React.CSSProperties = { marginBottom: 14 };
-
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: "24px 16px", fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Email Sample Sender</h1>
-      <p style={{ color: "#6b7280", marginBottom: 24, fontSize: 14 }}>
+    <div className="max-w-[720px] mx-auto px-4 py-6">
+      <h1 className="text-[20px] font-bold mb-1">Email Sample Sender</h1>
+      <p className="text-muted-foreground mb-6 text-[14px]">
         Renders any pre-cruise or group email template and optionally sends it via Resend. Uses AI Travel Concierge branding. Rate-limited to 50 sends/day.
       </p>
 
       {/* allow-void-async: React onSubmit requires a void handler; errors are surfaced in component state */}
       <form onSubmit={(e) => void handleSend(e)}>
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Template</label>
-          <select value={template} onChange={(e) => setTemplate(e.target.value)} style={inputStyle}>
+        <div className="mb-3.5">
+          <label className={labelCls}>Template</label>
+          <select value={template} onChange={(e) => setTemplate(e.target.value)} className={inputCls}>
             {TEMPLATE_OPTIONS.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
         </div>
 
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Destination Email (required for Send)</label>
-          <input type="email" value={toEmail} onChange={(e) => setToEmail(e.target.value)} style={inputStyle} placeholder="you@example.com" />
+        <div className="mb-3.5">
+          <label className={labelCls}>Destination Email (required for Send)</label>
+          <input type="email" value={toEmail} onChange={(e) => setToEmail(e.target.value)} className={inputCls} placeholder="you@example.com" />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+        <div className="grid grid-cols-2 gap-3 mb-3.5">
           <div>
-            <label style={labelStyle}>Customer Name</label>
-            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} style={inputStyle} />
+            <label className={labelCls}>Customer Name</label>
+            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={inputCls} />
           </div>
           <div>
-            <label style={labelStyle}>Ship Name</label>
-            <input value={shipName} onChange={(e) => setShipName(e.target.value)} style={inputStyle} />
+            <label className={labelCls}>Ship Name</label>
+            <input value={shipName} onChange={(e) => setShipName(e.target.value)} className={inputCls} />
           </div>
           <div>
-            <label style={labelStyle}>Cruise Line</label>
-            <input value={cruiseLine} onChange={(e) => setCruiseLine(e.target.value)} style={inputStyle} />
+            <label className={labelCls}>Cruise Line</label>
+            <input value={cruiseLine} onChange={(e) => setCruiseLine(e.target.value)} className={inputCls} />
           </div>
           <div>
-            <label style={labelStyle}>Sailing Date</label>
-            <input type="date" value={sailingDate} onChange={(e) => setSailingDate(e.target.value)} style={inputStyle} />
+            <label className={labelCls}>Sailing Date</label>
+            <input type="date" value={sailingDate} onChange={(e) => setSailingDate(e.target.value)} className={inputCls} />
           </div>
         </div>
 
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Destination Region (hero image)</label>
-          <select value={region} onChange={(e) => setRegion(e.target.value)} style={inputStyle}>
+        <div className="mb-3.5">
+          <label className={labelCls}>Destination Region (hero image)</label>
+          <select value={region} onChange={(e) => setRegion(e.target.value)} className={inputCls}>
             {REGION_OPTIONS.map((r) => (
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
           </select>
         </div>
 
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Ports of Call (one per line)</label>
-          <textarea value={ports} onChange={(e) => setPorts(e.target.value)} rows={7} style={{ ...inputStyle, resize: "vertical" }} />
+        <div className="mb-3.5">
+          <label className={labelCls}>Ports of Call (one per line)</label>
+          <textarea value={ports} onChange={(e) => setPorts(e.target.value)} rows={7} className={`${inputCls} resize-y`} />
         </div>
 
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Companion Page URL</label>
-          <input value={companionUrl} onChange={(e) => setCompanionUrl(e.target.value)} style={inputStyle} />
+        <div className="mb-3.5">
+          <label className={labelCls}>Companion Page URL</label>
+          <input value={companionUrl} onChange={(e) => setCompanionUrl(e.target.value)} className={inputCls} />
         </div>
 
         {isGroup && (
-          <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "12px 14px", marginBottom: 14 }}>
-            <p style={{ fontWeight: 600, fontSize: 13, marginTop: 0, marginBottom: 12 }}>Group Template Fields</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="bg-muted border border-border rounded-md px-3.5 py-3 mb-3.5">
+            <p className="font-semibold text-[13px] mt-0 mb-3">Group Template Fields</p>
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label style={labelStyle}>Group Name</label>
-                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} style={inputStyle} />
+                <label className={labelCls}>Group Name</label>
+                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label style={labelStyle}>Invitee Name</label>
-                <input value={inviteeName} onChange={(e) => setInviteeName(e.target.value)} style={inputStyle} />
+                <label className={labelCls}>Invitee Name</label>
+                <input value={inviteeName} onChange={(e) => setInviteeName(e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label style={labelStyle}>Invite URL</label>
-                <input value={inviteUrl} onChange={(e) => setInviteUrl(e.target.value)} style={inputStyle} />
+                <label className={labelCls}>Invite URL</label>
+                <input value={inviteUrl} onChange={(e) => setInviteUrl(e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label style={labelStyle}>Broadcast Subject</label>
-                <input value={broadcastSubject} onChange={(e) => setBroadcastSubject(e.target.value)} style={inputStyle} />
+                <label className={labelCls}>Broadcast Subject</label>
+                <input value={broadcastSubject} onChange={(e) => setBroadcastSubject(e.target.value)} className={inputCls} />
               </div>
             </div>
-            <div style={{ marginTop: 12 }}>
-              <label style={labelStyle}>Coordinator Message</label>
-              <textarea value={coordinatorMsg} onChange={(e) => setCoordinatorMsg(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical" }} />
+            <div className="mt-3">
+              <label className={labelCls}>Coordinator Message</label>
+              <textarea value={coordinatorMsg} onChange={(e) => setCoordinatorMsg(e.target.value)} rows={3} className={`${inputCls} resize-y`} />
             </div>
-            <div style={{ marginTop: 12 }}>
-              <label style={labelStyle}>Broadcast Message</label>
-              <textarea value={broadcastMessage} onChange={(e) => setBroadcastMessage(e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical" }} />
+            <div className="mt-3">
+              <label className={labelCls}>Broadcast Message</label>
+              <textarea value={broadcastMessage} onChange={(e) => setBroadcastMessage(e.target.value)} rows={4} className={`${inputCls} resize-y`} />
             </div>
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-          <button type="button" onClick={handlePreview} style={{ padding: "8px 18px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: 5, cursor: "pointer", fontSize: 14, fontWeight: 500 }}>
+        <div className="flex gap-2.5 mt-2">
+          <button
+            type="button"
+            onClick={handlePreview}
+            className="px-[18px] py-2 bg-muted border border-border rounded-md cursor-pointer text-[14px] font-medium"
+          >
             Preview in new tab
           </button>
-          <button type="submit" disabled={sending || !toEmail} style={{ padding: "8px 18px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 5, cursor: sending || !toEmail ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 600, opacity: sending || !toEmail ? 0.6 : 1 }}>
+          <button
+            type="submit"
+            disabled={sending || !toEmail}
+            className="px-[18px] py-2 bg-blue-600 text-white border-none rounded-md text-[14px] font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+          >
             {sending ? "Sending…" : "Send via Resend"}
           </button>
         </div>
 
-        {result && <p style={{ marginTop: 12, color: "#16a34a", fontWeight: 500 }}>{result}</p>}
-        {error && <p style={{ marginTop: 12, color: "#dc2626" }}>{error}</p>}
+        {result && <p className="mt-3 text-green-700 dark:text-green-400 font-medium">{result}</p>}
+        {error && <p className="mt-3 text-red-600 dark:text-red-400">{error}</p>}
       </form>
     </div>
   );

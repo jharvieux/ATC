@@ -28,7 +28,7 @@ export default async function HelpPrintPage(): Promise<JSX.Element> {
         a { color: #4f46e5; }
         pre, code { font-family: ui-monospace, monospace; background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 3px; }
       `}</style>
-      <header className="print-hide" style={{ marginBottom: "1rem", color: "#6b7280", fontSize: 13 }}>
+      <header className="print-hide mb-4 text-muted-foreground text-[13px]">
         <p>This is the print-friendly view of the platform documentation.</p>
         <p>Use your browser&apos;s print command (Cmd-P / Ctrl-P) to print or save as PDF.</p>
       </header>
