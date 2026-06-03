@@ -4,6 +4,30 @@ Newest entries on top.
 
 ---
 
+## D-146 — 2026-06-03 — Contract tests use raw fetch instead of Stripe SDK (PR #632)
+
+**Decision.** Stripe contract tests in `tests/contracts/stripe/customers.test.ts` use raw `fetch()` rather than the Stripe SDK v22. The Stripe SDK v22 uses an HTTP client path that MSW v2 interceptors do not cover — all 5 SDK-based tests timed out at 30 seconds. Using raw `fetch()` (which MSW does intercept) is sufficient to verify fixture shapes are parseable and that the fixture URLs are correct.
+
+**Why.** Verified empirically: Anthropic SDK (also v0.100.1, uses native `fetch`) was intercepted fine; Stripe SDK v22 was not. Root cause is likely that Stripe SDK v22 uses `undici` directly rather than the global `fetch`.
+
+**What was rejected.** Keeping the Stripe SDK with a longer timeout — doesn't fix interception. Mocking the SDK with `vi.mock("stripe")` — would test mock behavior, not fixture shapes. Adding a custom `httpClient` option to Stripe SDK — would work but adds complexity.
+
+**How to apply.** When the MSW/Stripe interception issue is resolved (e.g., after upgrading MSW or configuring Stripe SDK to use global fetch), swap the raw fetch tests for SDK-based tests to also verify SDK parsing behavior.
+
+---
+
+## D-145 — 2026-06-03 — S5852 input-length caps before regex calls (PR #630); React 19 dependabot ignore (PR #631)
+
+**Decision.** Three user-input-adjacent regexes (email-prompt route, import validation isPlausibleEmail, chat route redactPii) now have input-length guards before the regex runs. Email capped at 254 chars (RFC 5321 max); chat messages capped at 8000 chars. React major-version bumps blocked in dependabot until React 19 ecosystem stabilizes (ReactCurrentDispatcher removal breaks internal API dependents; @types/react 19 drops implicit FC children prop).
+
+**Why.** SonarCloud S5852 hotspots. The 3 code fixes are real actionable items; remaining 33 hotspots are false positives requiring SonarCloud UI review (mark as Safe).
+
+**What was rejected.** Removing the email regex entirely — needed for validation. Fixing the passport regex itself — O(n²) pattern is in a third-party dependency path; length cap is simpler and sufficient.
+
+**How to apply.** Remaining SonarCloud S5852 hotspots (33) need manual "Safe" marking in SonarCloud UI. React 19 ignore rule is tracked by dependency-ignore-watch workflow which will open a re-test issue when the ecosystem is ready.
+
+---
+
 ## D-144 — 2026-06-03 — Platform-domain signup assigns users to PLATFORM_DEFAULT_TENANT_ID tenant (PR #625)
 
 **Decision.** New customers signing up on ai-travelconcierge.com (the platform domain) were getting Supabase auth accounts but no `public.users` membership row, leaving them with no tenant context and a broken chat experience. Fixed by having the OAuth callback route use `process.env.PLATFORM_DEFAULT_TENANT_ID` as the target tenant for platform-domain signups when that env var is set. The "booking" tenant (`f5665f08-3ebb-40e0-ad6b-686f89364ad6`, status: onboarding — payment-exempt) was chosen as the default. `PLATFORM_DEFAULT_TENANT_ID` was added to Vercel production.
