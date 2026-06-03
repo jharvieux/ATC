@@ -66,9 +66,9 @@ export default function SubProcessorsPage(): JSX.Element {
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-muted">
-              {["Vendor", "Category", "Region"].map((h) => (
-                <th key={h} className="text-left px-2.5 py-2.5 border-b border-border font-semibold">{h}</th>
-              ))}
+              <th className="text-left px-2.5 py-2.5 border-b border-border font-semibold">Vendor</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border font-semibold">Category</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border font-semibold">Region</th>
             </tr>
           </thead>
           <tbody>
