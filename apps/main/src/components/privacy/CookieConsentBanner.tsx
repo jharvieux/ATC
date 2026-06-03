@@ -60,7 +60,6 @@ export function CookieConsentBanner(): JSX.Element | null {
     const existing = readCookie(COOKIE_NAME);
     if (!existing) {
       setOpen(true);
-      return;
     }
     // Already chosen — don't re-show.
   }, []);

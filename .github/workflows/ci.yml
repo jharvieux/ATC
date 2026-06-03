@@ -46,6 +46,9 @@ jobs:
       - name: Dropped-column reader guard (BP38/#137)
         run: pnpm check:dropped-columns
 
+      - name: Duplication guard (jscpd)
+        run: pnpm check:duplication
+
       - name: Typecheck
         run: pnpm -r typecheck
 

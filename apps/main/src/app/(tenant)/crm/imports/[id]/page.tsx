@@ -76,10 +76,7 @@ export default function ImportReviewItemPage() {
       const edited: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(editedFields)) {
         // Try to coerce numbers back to numbers (cents fields).
-        if (/_cents$/.test(k) || /^party_size$|^duration_nights$/.test(k)) {
-          const n = Number(v);
-          edited[k] = Number.isFinite(n) ? n : v;
-        } else if (k === "commission_rate") {
+        if (/_cents$/.test(k) || /^party_size$|^duration_nights$/.test(k) || k === "commission_rate") {
           const n = Number(v);
           edited[k] = Number.isFinite(n) ? n : v;
         } else {

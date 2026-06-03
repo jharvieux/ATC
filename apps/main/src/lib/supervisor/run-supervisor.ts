@@ -192,7 +192,7 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
 
   let action: "allow" | "regenerate" | "escalate";
   let regenCount = conversation.regen_count_total;
-  let newSlurConsecutiveCount = conversation.supervisor_slur_consecutive_count;
+  let newSlurConsecutiveCount: number;
 
   // Tone drift critical hit — track consecutive count for auto-escalation,
   // AND write an audit row keyed by term hash only (NEVER the term itself).

@@ -13,6 +13,7 @@
 
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import atcPlugin from "eslint-plugin-atc";
+import sonarjsConfig from "@atc/config/sonarjs.js";
 
 export default [
   {
@@ -70,4 +71,5 @@ export default [
       "atc/no-fail-open-on-resource-error": "off",
     },
   },
+  ...sonarjsConfig,
 ];
