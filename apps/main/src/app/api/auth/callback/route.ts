@@ -11,8 +11,9 @@
 //     the provider token in a short cookie and send to /signup/email-prompt.
 //   - On a TENANT domain (x-resolved-tenant-id is a UUID) upsert the
 //     public.users membership row so the user can transact. On the PLATFORM
-//     domain the resolved id is the "platform" sentinel — net-new tenant
-//     provisioning is deferred (#441), so we only establish the session.
+//     domain the resolved id is the "platform" sentinel; when
+//     PLATFORM_DEFAULT_TENANT_ID is set the upsert runs into that tenant,
+//     otherwise it is skipped (#441).
 //   - Redirect to the validated ?next= (forwarded by oauth-initiate) or "/".
 
 import { NextResponse, type NextRequest } from "next/server";

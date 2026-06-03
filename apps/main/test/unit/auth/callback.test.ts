@@ -153,6 +153,21 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
 
+  it("with no x-resolved-tenant-id header and PLATFORM_DEFAULT_TENANT_ID set: upserts into the default tenant", async () => {
+    // Guards the !tenantId branch of effectiveTenantId: a request with no
+    // header at all (e.g. a direct hit bypassing middleware) must still land
+    // the user in the default tenant when the env var is configured.
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    const res = await get("?code=abc", {});
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert.mock.calls[0]?.[0]).toMatchObject({
+      auth_user_id: "auth-user-1",
+      tenant_id: DEFAULT_TENANT_ID,
+    });
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+
   it("on the platform domain with default tenant: does NOT upsert when email is missing (bounced to email-prompt first)", async () => {
     // The no-email path redirects before the upsert block — the upsert must
     // not run for a user who still needs to supply their email.
