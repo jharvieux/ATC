@@ -93,7 +93,6 @@ export default function TenantSafetyPage(): JSX.Element {
             onChange={(e) => setNewTerm(e.target.value)}
             disabled={busy}
             className="max-w-[360px]"
-            onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
           />
           <Button type="button" onClick={add} disabled={busy || loading}>
             Add

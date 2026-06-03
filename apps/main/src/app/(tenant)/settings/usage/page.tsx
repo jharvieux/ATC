@@ -156,12 +156,12 @@ export default function UsagePage(): JSX.Element {
             <SelectItem value="rag_cap">RAG cap</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={selKind} onValueChange={(v) => setSelKind(v as typeof selKind)}>
+        <Select value={selKind || "none"} onValueChange={(v) => setSelKind(v === "none" ? "" : v as typeof selKind)}>
           <SelectTrigger className="w-[220px]">
             <SelectValue placeholder="— threshold kind (optional) —" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">— threshold kind (optional) —</SelectItem>
+            <SelectItem value="none">— threshold kind (optional) —</SelectItem>
             <SelectItem value="soft1">soft1</SelectItem>
             <SelectItem value="soft2">soft2</SelectItem>
             <SelectItem value="hard">hard</SelectItem>

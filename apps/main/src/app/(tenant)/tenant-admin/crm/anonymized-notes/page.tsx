@@ -106,7 +106,7 @@ export default function AnonymizedNotesPage(): JSX.Element {
               onChange={(e) => setEdits((curr) => ({ ...curr, [r.id]: e.target.value }))}
               rows={4}
               disabled={savingId === r.id}
-              className="w-full font-inherit"
+              className="w-full"
             />
             <div className="mt-2 flex gap-2 items-center">
               <Button type="button" onClick={() => save(r.id)} disabled={savingId === r.id}>
