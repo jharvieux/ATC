@@ -40,9 +40,17 @@ export async function GET(req: NextRequest): Promise<Response> {
   // Do NOT set options.queryParams.state — `state` is reserved by Supabase's
   // PKCE/CSRF flow. Overriding it makes Supabase reject the provider callback
   // with "OAuth state parameter is invalid" (prior bug, #438).
+  // Azure requires explicit `email` scope — without it Microsoft omits the email
+  // claim from the id_token and Supabase throws "Error getting user email from
+  // external provider" before our callback even runs. `User.Read` is also added
+  // so the Graph fallback in recoverMicrosoftEmail (§17.2) has a working token.
+  const oauthOptions: Parameters<typeof supabase.auth.signInWithOAuth>[0]["options"] = {
+    redirectTo: callbackUrl.toString(),
+    ...(provider === "azure" && { scopes: "email User.Read" }),
+  };
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: provider as "google" | "azure" | "facebook",
-    options: { redirectTo: callbackUrl.toString() },
+    options: oauthOptions,
   });
 
   if (error || !data.url) {
