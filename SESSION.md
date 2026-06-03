@@ -1,24 +1,23 @@
-# Session state — last updated 2026-06-03 17:34 CDT
+# Session state — last updated 2026-06-03 19:10 CDT
 
 ## Just completed
-- **PR #613 MERGED** (squash; branch `jharvieux-patch-1` left OPEN — it's the user's branch, not mine to delete). User added a Dependabot cooldown, but the pushed line `cooldown: "1d"` nested under `schedule:` was **invalid config** (wrong placement + wrong value type) → Dependabot would have silently ignored it (no cooldown at all). Verified the schema against GitHub docs, fixed on the branch to the documented form — a `cooldown:` block at the update-entry level with `default-days: 1` (commit `38ee673`). `pnpm verify` green, both audit agents clean (config-only; range `origin/dev...38ee673`), all required CI green, squash-merged.
-- **D-141 + D-142 PERSISTED** — opened + merged a doc-only chore PR carrying the two new MEMORY.md decision entries and this SESSION.md refresh (doc-only → `pr-audit-section-check` auto-exempt; merged on non-audit checks).
-- Earlier this session: **PR #612** (squash `2e6719e`, sonarjs+jscpd gate, D-141) and **PR #592** (squash `6c286ad`, grant-drift CI, D-142) both merged.
+- **PR #615 MERGED** (squash `6f6f1a1`, branch deleted) — Phase 1 of the UI redesign: theme foundation. Cloned the POC at https://ai-travel-concierge-tawny.vercel.app: indigo-600 (`#4f46e5`) light-mode primary + indigo-400 (`#818cf8`) dark-mode primary, Geist Sans/Mono fonts, system-aware dark/light via `next-themes` (`defaultTheme="system" + enableSystem`). 5 files: `globals.css` token rewrite, `tailwind.config.ts` font-family extension, `layout.tsx` Geist + ThemeProvider wiring, new `apps/main/src/components/theme-provider.tsx` client shim, `package.json`/`pnpm-lock.yaml` adding `geist@^1.7.2` + `next-themes@^0.4.6` (user-approved runtime deps). `pnpm verify` green (2710 tests, 53 skipped, 9 todo); all required CI green; d091-reviewer = 0 findings; pre-pr-reviewer = 0 must-fix + 1 NIT (kept as-is per the reviewer's note that root placement matches the shadcn convention).
+- **Direction override locked.** "Warm travel brand" (previously parked in `project_ui_redesign.md`) is REJECTED. POC clone is the active direction.
 
 ## In flight
-- Nothing in flight — clean checkpoint. Local `dev` synced to `origin/dev` after the chore-PR merge.
+- **chore/log-d143-ui-direction** branch open with MEMORY.md prepend (D-143) + this SESSION.md refresh — about to open as a doc-only chore PR (auto-exempts from `pr-audit-section-check`), merge on green non-audit checks.
 - The two intentionally-untracked files remain untracked (do NOT stage): `apps/main/supabase/config.toml`, `docs/ATC - dev - PDF Security Report.pdf`.
 
 ## Next step
-- Await user direction.
+- Open the chore PR, wait for green non-audit CI, squash-merge, delete branch. Then await user direction.
+- Possible next thread: Phase 2 of the UI redesign — migrate the ~120 inline-styled tsx files (`style={{...}}` literals) onto shadcn primitives so they pick up the new tokens + dark mode. Proposed order (NOT YET RATIFIED — ask user before starting): signup → chat → CRM → settings.
 
 ## Blocked on user
+- **Phase 2 sign-off** — needed before migrating inline-styled screens; confirms the proposed signup→chat→CRM→settings order.
 - **SonarCloud token** — `~/.sonar_token` MISSING. Gates the S5852 mark-safe (D-140) and local SonarCloud auth. Folds into #68.
-- **MODEL** — still on **Opus** (cannot self-switch). Recommend `/model claude-sonnet-4-6`; heavy judgement work is done.
-- **`jharvieux-patch-1`** — user's branch, left undeleted after the #613 merge (deletion is the user's call).
+- **MODEL** — still on **Opus** (cannot self-switch). Recommend `/model claude-sonnet-4-6`; heavy judgement work is done for this thread.
 
 ## Open questions
-- Grant-drift required-check split (prior-turn question D): recommended LEAVING IT FOLDED in the already-required "RLS Snapshot Diff" job — it already blocks; a separate named check is cosmetic and would need a branch-protection config change. Treat as resolved-folded unless the user revisits.
-- SonarCloud non-required gates red on two fronts, both deferred to **#68**: (a) #592's 13% new-code duplication (deliberate grants↔rls mirroring); (b) ~36 `S5852` slow-regex (ReDoS) hotspots.
-- Dependabot PRs #599/#601/#602 BEHIND; untouched. NB: with the new 1-day cooldown live, future Dependabot PRs are delayed 1 day after a release.
+- Whether the user wants a visible theme-toggle UI in addition to system-preference detection. None shipped in #615 — `useTheme()` from `next-themes` is a one-liner away if wanted; surface in the next UI thread.
+- Inline-style screens currently render with their hard-coded colors in BOTH light AND dark mode — a real limitation worth flagging if user notices "dark mode doesn't work on screen X." This is Phase 2 scope, not a bug.
 - Parked (do NOT auto-start): #45 (#563/#562 cross-tenant probe), #68 (SonarCloud dev triage).
