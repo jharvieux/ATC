@@ -4,33 +4,46 @@
 // running the tenant + host lookups (otherwise a non-draft send pays two
 // extra round-trips to return the same error). /pdf needs the full input
 // regardless of status. So the loader stays cheap (one quotes SELECT) and
-// the enrich pass (which fetches tenant + platform_settings) is a second
-// call that both routes make when they actually need to render.
+// the enrich pass (which fetches tenant + platform_settings + the
+// representative quote_options row) is a second call that both routes make
+// when they actually need to render.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import type { QuoteRenderInput } from "./render-pdf";
+import { selectRepresentativeOption } from "./representative-option";
 
+// §38 — the quotes row is a container now; trip detail + per-option
+// financials live on quote_options. The loader pulls only container/pricing
+// fields; buildRenderInputFromQuote reads the representative option for trip
+// detail.
 const QUOTE_COLUMNS =
-  "id, status, customer_access_token, cruise_line, ship_name, sailing_date, " +
-  "duration_nights, cabin_category, passenger_count, total_amount, " +
+  "id, status, customer_access_token, " +
   "locked_price_cents, estimate_price_cents, price_lock_expires_at, priced_at";
 
 export interface QuoteRow {
   id: string;
   status: string;
   customer_access_token: string | null;
+  locked_price_cents: number | null;
+  estimate_price_cents: number | null;
+  price_lock_expires_at: string | null;
+  priced_at: string | null;
+}
+
+// The slice of a quote_options row the renderer needs. customer_selected +
+// option_index drive representative selection (§38.4.3); the rest is the trip
+// summary + the per-option total used as the price fallback.
+interface RenderOptionRow {
+  option_index: number;
+  customer_selected: boolean | null;
   cruise_line: string | null;
   ship_name: string | null;
   sailing_date: string | null;
   duration_nights: number | null;
   cabin_category: string | null;
   passenger_count: number | null;
-  total_amount: number | null;
-  locked_price_cents: number | null;
-  estimate_price_cents: number | null;
-  price_lock_expires_at: string | null;
-  priced_at: string | null;
+  total_amount_cents: number | null;
 }
 
 export type LoadQuoteResult =
@@ -105,11 +118,31 @@ export async function buildRenderInputFromQuote(
         ? String((hostNameValue.value as { value?: string }).value ?? "Host Agency")
         : "Host Agency";
 
+  // §38 — trip detail lives on quote_options. Read this quote's options and
+  // pick the representative one (customer-selected, else lowest option_index).
+  // adminDb is service-role (RLS bypassed), so scope the read by BOTH
+  // tenant_id and quote_id — D-091 two-layer isolation on a service-role read.
+  const { data: optionRows, error: optionsErr } = await args.adminDb
+    .from("quote_options")
+    .select(
+      "option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, total_amount_cents",
+    )
+    .eq("tenant_id", args.ctx.tenant_id)
+    .eq("quote_id", args.quote.id)
+    .order("option_index", { ascending: true });
+  if (optionsErr) {
+    return { ok: false, status: 500, message: `options lookup: ${optionsErr.message}` };
+  }
+  const option = selectRepresentativeOption(
+    (optionRows ?? []) as RenderOptionRow[],
+  );
+
   const now = new Date().toISOString();
   const totalCents =
     args.quote.locked_price_cents ??
     args.quote.estimate_price_cents ??
-    Math.round((args.quote.total_amount ?? 0) * 100);
+    option?.total_amount_cents ??
+    0;
   const kind: "confirmed" | "estimate" =
     args.quote.locked_price_cents != null ? "confirmed" : "estimate";
 
@@ -121,12 +154,12 @@ export async function buildRenderInputFromQuote(
     // No denormalized contact field on `quotes` today; contact-lookup is
     // a follow-up that would touch /send and /pdf identically.
     customer_name: "Customer",
-    cruise_line: args.quote.cruise_line,
-    ship_name: args.quote.ship_name,
-    sailing_date: args.quote.sailing_date,
-    duration_nights: args.quote.duration_nights,
-    cabin_category: args.quote.cabin_category,
-    passenger_count: args.quote.passenger_count,
+    cruise_line: option?.cruise_line ?? null,
+    ship_name: option?.ship_name ?? null,
+    sailing_date: option?.sailing_date ?? null,
+    duration_nights: option?.duration_nights ?? null,
+    cabin_category: option?.cabin_category ?? null,
+    passenger_count: option?.passenger_count ?? null,
     line_items: [{ label: "Total", amount_cents: totalCents }],
     total_cents: totalCents,
     currency: "USD",

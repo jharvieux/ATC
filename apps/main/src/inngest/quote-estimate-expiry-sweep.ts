@@ -22,6 +22,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { QuoteEstimateExpiredEmail } from "@/emails/QuoteEstimateExpiredEmail";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 const DEFAULT_VALIDITY_DAYS = 7;
 
@@ -37,7 +38,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     const db = createServiceRoleClient();
     const { data: stale, error } = await db
       .from("quotes")
-      .select("id, tenant_id, contact_id, user_id, customer_access_token, cruise_line, ship_name")
+      .select("id, tenant_id, contact_id, user_id, customer_access_token")
       .eq("price_kind", "estimate")
       .eq("status", "sent")
       .is("customer_accepted_at", null)
@@ -54,8 +55,6 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       contact_id: string | null;
       user_id: string | null;
       customer_access_token: string | null;
-      cruise_line: string | null;
-      ship_name: string | null;
     }>;
 
     if (rows.length === 0) {
@@ -97,6 +96,21 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       return { expired: 0, emailed: 0, error: brandingsErr.message };
     }
 
+    // §38 — cruise/ship for the email subject + body live on quote_options now.
+    // Batch-fetch options for all stale quotes (service-role → scope by BOTH
+    // quote_id set and tenant_id, D-091 two-layer) and pick the representative
+    // option per quote for its label.
+    const { data: optionsRaw, error: optionsErr } = await db
+      .from("quote_options")
+      .select("quote_id, option_index, customer_selected, cruise_line, ship_name")
+      .in("quote_id", rows.map((r) => r.id))
+      .in("tenant_id", tenantIds);
+
+    if (optionsErr) {
+      console.error("[quote-estimate-expiry-sweep] options fetch failed:", optionsErr.message);
+      return { expired: 0, emailed: 0, error: optionsErr.message };
+    }
+
     type ContactRow = { id: string; first_name: string | null; last_name: string | null; email: string | null };
     type TenantRow = { id: string; legal_name: string | null; mailing_address: unknown; email_send_pattern: string | null; tenant_resend_api_key_encrypted: string | null; email_from_address: string | null; email_from_name: string | null };
     type BrandingRow = { tenant_id: string; logo_url: string | null; primary_color: string | null; secondary_color: string | null; accent_color: string | null; slogan: string | null };
@@ -110,6 +124,20 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     const brandingMap = new Map<string, BrandingRow>(
       ((brandingsRaw ?? []) as BrandingRow[]).map((b) => [b.tenant_id, b]),
     );
+
+    type SweepOptionRow = {
+      quote_id: string;
+      option_index: number;
+      customer_selected: boolean | null;
+      cruise_line: string | null;
+      ship_name: string | null;
+    };
+    const optionsByQuote = new Map<string, SweepOptionRow[]>();
+    for (const o of (optionsRaw ?? []) as SweepOptionRow[]) {
+      const existing = optionsByQuote.get(o.quote_id);
+      if (existing) existing.push(o);
+      else optionsByQuote.set(o.quote_id, [o]);
+    }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
     const { renderToStaticMarkup } = await import("react-dom/server");
@@ -137,8 +165,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       const branding = brandingMap.get(r.tenant_id) ?? {};
       const customerName =
         [contact.first_name, contact.last_name].filter(Boolean).join(" ") || "Traveler";
+      const repOption = selectRepresentativeOption(optionsByQuote.get(r.id) ?? []);
       const cruiseLabel =
-        [r.cruise_line, r.ship_name].filter(Boolean).join(" — ") || null;
+        [repOption?.cruise_line, repOption?.ship_name].filter(Boolean).join(" — ") || null;
       const refreshUrl = r.customer_access_token
         ? `${baseUrl}/q/${r.customer_access_token}`
         : null;

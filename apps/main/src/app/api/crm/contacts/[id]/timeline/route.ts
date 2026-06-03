@@ -33,8 +33,10 @@ export async function GET(
         .order("created_at", { ascending: false })
         .limit(50),
       db
+        // §38 — trip detail moved to quote_options; the timeline only renders
+        // type/created_at/status, so the container row is all we need.
         .from("quotes")
-        .select("id, created_at, status, cruise_line, ship_name, sailing_date, total_amount")
+        .select("id, created_at, status")
         .eq("contact_id", id)
         .order("created_at", { ascending: false })
         .limit(50),

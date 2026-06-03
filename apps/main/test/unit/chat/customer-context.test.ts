@@ -5,22 +5,39 @@ import { resolveCustomerContext } from "@/lib/chat/customer-context";
 
 type Row = Record<string, unknown> | null;
 
-function makeDb(routes: Record<string, { row: Row; error?: { message: string } | null }>) {
+interface Route {
+  // Single-row reads (bookings, quotes, trip_itineraries) terminate on
+  // maybeSingle and key on id:tenant_id.
+  row?: Row;
+  // Multi-row reads (quote_options, §38) terminate on order and key on
+  // quote_id:tenant_id.
+  rows?: Array<Record<string, unknown>>;
+  error?: { message: string } | null;
+}
+
+function makeDb(routes: Record<string, Route>) {
   return {
     from(table: string) {
-      const lookup: { id?: string; tenant_id?: string } = {};
+      const lookup: { id?: string; tenant_id?: string; quote_id?: string } = {};
       const chain = {
         select: () => chain,
         eq: (col: string, val: string) => {
           if (col === "id") lookup.id = val;
           if (col === "tenant_id") lookup.tenant_id = val;
+          if (col === "quote_id") lookup.quote_id = val;
           return chain;
+        },
+        order: async () => {
+          const key = `${table}:${lookup.quote_id}:${lookup.tenant_id}`;
+          const hit = routes[key];
+          if (!hit) return { data: [], error: null };
+          return { data: hit.rows ?? [], error: hit.error ?? null };
         },
         maybeSingle: async () => {
           const key = `${table}:${lookup.id}:${lookup.tenant_id}`;
           const hit = routes[key];
           if (!hit) return { data: null, error: null };
-          return { data: hit.row, error: hit.error ?? null };
+          return { data: hit.row ?? null, error: hit.error ?? null };
         },
       };
       return chain;
@@ -76,28 +93,59 @@ describe("resolveCustomerContext", () => {
     warn.mockRestore();
   });
 
-  it("handles quote context with expiry + status", async () => {
+  it("handles quote context: trip from representative option, expiry from valid_until, price from container estimate", async () => {
+    // §38 — the quote container carries status/valid_until/price; trip detail
+    // lives on the representative quote_options row. The container's estimate
+    // price wins over the option total here.
     const db = makeDb({
       "quotes:q1:t1": {
         row: {
           id: "q1",
           tenant_id: "t1",
           status: "sent",
-          expires_at: "2026-06-15",
-          cruise_line: "Holland America",
-          ship_name: "Eurodam",
-          sailing_date: "2026-09-01",
-          duration_nights: 10,
-          total_price_cents: 312500,
-          currency: "USD",
+          valid_until: "2026-06-15",
+          locked_price_cents: null,
+          estimate_price_cents: 312500,
         },
+      },
+      "quote_options:q1:t1": {
+        rows: [
+          {
+            option_index: 1,
+            customer_selected: false,
+            cruise_line: "Holland America",
+            ship_name: "Eurodam",
+            sailing_date: "2026-09-01",
+            duration_nights: 10,
+            total_amount_cents: 999999,
+            currency: "USD",
+          },
+        ],
       },
     });
     const ctx = await resolveCustomerContext({ ref: { type: "quote", id: "q1" }, tenant_id: "t1", db });
     expect(ctx).toContain("Eurodam");
-    expect(ctx).toContain("USD 3125.00");
+    expect(ctx).toContain("USD 3125.00"); // container estimate wins over option total
     expect(ctx).toContain("Quote expires: 2026-06-15");
     expect(ctx).toContain("Quote status: sent");
+  });
+
+  it("falls back to the representative option total when the container has no price (§38)", async () => {
+    const db = makeDb({
+      "quotes:q1:t1": {
+        row: { id: "q1", tenant_id: "t1", status: "sent", valid_until: null, locked_price_cents: null, estimate_price_cents: null },
+      },
+      "quote_options:q1:t1": {
+        rows: [
+          // customer-selected option wins over the lower-index one (§38.4.3).
+          { option_index: 1, customer_selected: false, cruise_line: "Royal", ship_name: "Icon", sailing_date: null, duration_nights: null, total_amount_cents: 100000, currency: "USD" },
+          { option_index: 2, customer_selected: true, cruise_line: "Celebrity", ship_name: "Edge", sailing_date: null, duration_nights: null, total_amount_cents: 250000, currency: "USD" },
+        ],
+      },
+    });
+    const ctx = await resolveCustomerContext({ ref: { type: "quote", id: "q1" }, tenant_id: "t1", db });
+    expect(ctx).toContain("Celebrity");
+    expect(ctx).toContain("USD 2500.00"); // selected option's total, since container price is null
   });
 
   it("merges itinerary + booking lookups for trip_itinerary", async () => {

@@ -142,6 +142,11 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   "host_adapters",
   "host_booking_fee_configs",
   "pricing_cache",
+  // Global persona catalog (no tenant_id) — shared across all tenants, RLS
+  // grants SELECT to any authenticated user. Read via tenantClient by the
+  // persona-switch route (#589); tenant-scoped overrides live in the separate
+  // tenant_persona_overrides / persona_addendums tables.
+  "personas",
   // Platform-wide settings (no tenant_id, singleton-ish rows).
   "platform_settings",
   "ai_kill_switch_state",

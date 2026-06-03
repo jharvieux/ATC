@@ -62,7 +62,7 @@ export async function promoteImport(args: {
   if (!rowData) return { ok: false, error: "queue_row_not_found" };
 
   const row = rowData as QueueRow;
-  const { tenant_id, document_type } = row;
+  const { document_type } = row;
 
   switch (document_type) {
     case "lead_notification":
@@ -75,9 +75,6 @@ export async function promoteImport(args: {
       // commission_statement is handled by §14.8 statement-matching, not here.
       return { ok: false, needs_review: true, reason: "unsupported_document_type" };
   }
-
-  // unreachable — switch is exhaustive over valid document_types
-  void tenant_id;
 }
 
 // ── lead / intake ────────────────────────────────────────────────────────
