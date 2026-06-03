@@ -32,33 +32,27 @@ const SECTIONS = [
 
 export default function SettingsHubPage() {
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "40px 24px", maxWidth: 720, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Settings</h1>
-      <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 36 }}>
+    <main className="px-6 py-10 max-w-[720px] mx-auto">
+      <h1 className="text-2xl font-bold mb-1">Settings</h1>
+      <p className="text-muted-foreground text-[14px] mb-9">
         Manage your workspace configuration, team, and billing.
       </p>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 36 }}>
+      <div className="flex flex-col gap-9">
         {SECTIONS.map((section) => (
           <section key={section.heading}>
-            <h2 style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "#9ca3af", marginBottom: 10 }}>
+            <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-muted-foreground mb-2.5">
               {section.heading}
             </h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div className="flex flex-col gap-0.5">
               {section.items.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  style={{
-                    display: "flex", flexDirection: "column",
-                    padding: "12px 14px",
-                    border: "1px solid #e5e7eb", borderRadius: 8,
-                    textDecoration: "none", color: "inherit",
-                    background: "#fff",
-                  }}
+                  className="flex flex-col px-3.5 py-3 border border-border rounded-lg no-underline bg-card hover:bg-accent transition-colors"
                 >
-                  <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{item.label}</span>
-                  <span style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>{item.desc}</span>
+                  <span className="font-semibold text-[14px] text-foreground">{item.label}</span>
+                  <span className="text-[13px] text-muted-foreground mt-0.5">{item.desc}</span>
                 </Link>
               ))}
             </div>

@@ -5,6 +5,8 @@
 // redact any residual PII inline.
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 interface NoteRow {
   id: string;
@@ -71,48 +73,48 @@ export default function AnonymizedNotesPage(): JSX.Element {
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 880, margin: "0 auto" }}>
+    <main className="px-6 py-8 max-w-[880px] mx-auto">
       <h1>Anonymized CRM notes</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         These notes were preserved through a customer&rsquo;s CCPA deletion (the
         text is your business record). The customer identifier has been
         anonymized to a hash placeholder. Review each note and redact any
         personally identifying information that may remain in the body.
       </p>
-      {error && <div style={{ background: "#fee2e2", padding: 12, borderRadius: 6 }}>{error}</div>}
+      {error && (
+        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 px-3.5 py-2.5 rounded-md mt-3">
+          {error}
+        </div>
+      )}
 
       {loading ? (
         <p>Loading…</p>
       ) : rows.length === 0 ? (
-        <p style={{ color: "#777" }}>No anonymized notes to review.</p>
+        <p className="text-muted-foreground">No anonymized notes to review.</p>
       ) : (
         rows.map((r) => (
           <section
             key={r.id}
-            style={{
-              padding: 16,
-              border: "1px solid #e5e7eb",
-              borderRadius: 8,
-              marginTop: 12,
-              background: "#fff",
-            }}
+            className="p-4 border border-border rounded-lg mt-3 bg-card"
           >
-            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+            <div className="text-[12px] text-muted-foreground mb-2">
               Hash: <code>{r.anonymized_customer_hash}</code> · last updated{" "}
               {new Date(r.updated_at).toLocaleString()}
             </div>
-            <textarea
+            <Textarea
               value={edits[r.id] ?? ""}
               onChange={(e) => setEdits((curr) => ({ ...curr, [r.id]: e.target.value }))}
               rows={4}
-              style={{ width: "100%", padding: 8, fontFamily: "inherit" }}
               disabled={savingId === r.id}
+              className="w-full"
             />
-            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-              <button type="button" onClick={() => save(r.id)} disabled={savingId === r.id}>
+            <div className="mt-2 flex gap-2 items-center">
+              <Button type="button" onClick={() => save(r.id)} disabled={savingId === r.id}>
                 {savingId === r.id ? "Saving…" : "Save"}
-              </button>
-              {savedId === r.id && <span style={{ color: "#16a34a", fontSize: 13 }}>Saved.</span>}
+              </Button>
+              {savedId === r.id && (
+                <span className="text-green-700 dark:text-green-400 text-[13px]">Saved.</span>
+              )}
             </div>
           </section>
         ))
