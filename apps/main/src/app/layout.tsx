@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { CookieConsentBanner } from "@/components/privacy/CookieConsentBanner";
 import { PaymentRequiredBanner } from "@/components/billing/PaymentRequiredBanner";
+import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
   title: "AI Travel Concierge",
@@ -14,11 +17,22 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      suppressHydrationWarning
+    >
       <body>
-        <PaymentRequiredBanner />
-        {children}
-        <CookieConsentBanner />
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <PaymentRequiredBanner />
+          {children}
+          <CookieConsentBanner />
+        </ThemeProvider>
       </body>
     </html>
   );
