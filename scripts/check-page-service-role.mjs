@@ -12,21 +12,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ALLOWLIST } from "./page-service-role-allowlist.mjs";
 
 const APP_ROOT = fileURLToPath(new URL("../apps/main/src/app", import.meta.url));
-
-// Pages outside (admin) that intentionally use createServiceRoleClient.
-// Each entry must document WHY the page is safe without an admin credential.
-const ALLOWLIST = new Set([
-  // Token-gated pages — the URL token IS the credential; the page resolves
-  // notFound() for invalid/expired tokens (checked in the query, no row → 404).
-  "companion/[token]/page.tsx",
-  "i/[token]/page.tsx",
-  "q/[token]/page.tsx",
-  // Public legal content — reads only published legal_documents rows; no
-  // tenant or user data is accessible via this query.
-  "legal/ai-disclaimer/page.tsx",
-]);
 
 const USES_SERVICE_ROLE = /\bcreateServiceRoleClient\b/;
 const IS_CLIENT_COMPONENT = /^\s*["']use client["']/m;
@@ -79,5 +67,5 @@ if (offenders.length > 0) {
 
 console.log(
   `✔ page-service-role: ${scanned} page(s) scanned, ` +
-    `${ALLOWLIST.size} allowlisted, 0 ungated.`,
+    `${ALLOWLIST.size} allowlisted, ${offenders.length} ungated.`,
 );

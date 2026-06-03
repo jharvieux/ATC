@@ -9,18 +9,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
+import { ALLOWLIST } from "../../scripts/page-service-role-allowlist.mjs";
 
 const APP_ROOT = fileURLToPath(
   new URL("../../apps/main/src/app", import.meta.url),
 );
-
-// Mirror of the allowlist in the script. Tests must stay in sync.
-const ALLOWLIST = new Set([
-  "companion/[token]/page.tsx",
-  "i/[token]/page.tsx",
-  "q/[token]/page.tsx",
-  "legal/ai-disclaimer/page.tsx",
-]);
 
 const USES_SERVICE_ROLE = /\bcreateServiceRoleClient\b/;
 const IS_CLIENT_COMPONENT = /^\s*["']use client["']/m;
