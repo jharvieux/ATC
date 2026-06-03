@@ -4,32 +4,27 @@
 // The user types the 6-digit code; POST → /api/auth/microsoft-email-verify
 // validates it, creates the public.users row, and lands them on "/".
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 export default function EmailVerifyPage(): React.ReactElement {
   return (
-    <main
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "100vh",
-        gap: 24,
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      <h1 style={{ fontSize: 24, fontWeight: 700 }}>Check your email</h1>
-      <p style={{ color: "#6b7280", maxWidth: 400, textAlign: "center" }}>
+    <main className="flex flex-col items-center justify-center min-h-screen gap-6 p-4">
+      <h1 className="text-2xl font-bold">Check your email</h1>
+      <p className="text-muted-foreground text-sm max-w-sm text-center">
         We sent a 6-digit verification code to the address you provided. Enter
         it below to finish signing in.
       </p>
       <form
         method="POST"
         action="/api/auth/microsoft-email-verify"
-        style={{ display: "flex", flexDirection: "column", gap: 16, width: 320 }}
+        className="flex flex-col gap-4 w-80"
       >
-        <label style={{ fontSize: 14, fontWeight: 500 }}>
-          Verification code
-          <input
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="code">Verification code</Label>
+          <Input
+            id="code"
             type="text"
             name="code"
             inputMode="numeric"
@@ -38,34 +33,10 @@ export default function EmailVerifyPage(): React.ReactElement {
             required
             placeholder="123456"
             autoComplete="one-time-code"
-            style={{
-              display: "block",
-              marginTop: 6,
-              width: "100%",
-              padding: "10px 12px",
-              border: "1px solid #d1d5db",
-              borderRadius: 8,
-              fontSize: 18,
-              letterSpacing: "0.3em",
-              textAlign: "center",
-            }}
+            className="text-lg tracking-widest text-center h-12"
           />
-        </label>
-        <button
-          type="submit"
-          style={{
-            padding: "12px 16px",
-            background: "#3b82f6",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            fontSize: 15,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          Verify and continue
-        </button>
+        </div>
+        <Button type="submit">Verify and continue</Button>
       </form>
     </main>
   );

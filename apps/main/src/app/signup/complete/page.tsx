@@ -5,6 +5,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { TIMEZONES } from "@/lib/timezones";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export function buildWorkspaceUrl(
   slug: string,
@@ -131,15 +133,20 @@ export default function SignupCompletePage(): React.ReactElement {
 
   if (workspaceUrl) {
     return (
-      <main style={centerStyle}>
-        <div style={{ fontSize: 48, lineHeight: 1 }}>✓</div>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Your workspace is ready</h1>
-        <p style={{ color: "#6b7280", maxWidth: 420, textAlign: "center", margin: 0 }}>
+      <main className="flex flex-col items-center justify-center min-h-screen gap-6 p-4">
+        <div className="text-5xl leading-none">✓</div>
+        <h1 className="text-2xl font-bold">Your workspace is ready</h1>
+        <p className="text-muted-foreground text-sm max-w-sm text-center">
           Click below to continue setup. You&apos;ll be asked to sign in once more to establish
           your session on your workspace subdomain.
         </p>
-        <a href={workspaceUrl} style={btnStyle}>Continue to your workspace →</a>
-        <p style={{ fontSize: 12, color: "#9ca3af" }}>{workspaceUrl}</p>
+        <a
+          href={workspaceUrl}
+          className="inline-flex items-center justify-center rounded-md text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 px-7 py-3"
+        >
+          Continue to your workspace →
+        </a>
+        <p className="text-xs text-muted-foreground">{workspaceUrl}</p>
       </main>
     );
   }
@@ -155,34 +162,38 @@ export default function SignupCompletePage(): React.ReactElement {
     !submitting;
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "40px 16px" }}>
-      <div style={{ width: "100%", maxWidth: 520, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Set up your agency</h1>
-        <p style={{ color: "#6b7280", marginBottom: 32, fontSize: 14 }}>
+    <main className="py-10 px-4">
+      <div className="w-full max-w-lg mx-auto">
+        <h1 className="text-2xl font-bold mb-2">Set up your agency</h1>
+        <p className="text-muted-foreground text-sm mb-8">
           Fill this in once — your workspace will be ready to use immediately after.
         </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
           <Section title="Agency">
             <Field label="Agency display name *">
-              <input style={inputStyle} value={form.display_name} onChange={set("display_name")} required placeholder="Acme Travel" />
+              <Input value={form.display_name} onChange={set("display_name")} required placeholder="Acme Travel" />
             </Field>
             <Field label="Legal business name *">
-              <input style={inputStyle} value={form.legal_name} onChange={set("legal_name")} required placeholder="Acme Travel LLC" />
+              <Input value={form.legal_name} onChange={set("legal_name")} required placeholder="Acme Travel LLC" />
             </Field>
-            <Field label="Workspace URL" hint={
-              slugChecking ? "Checking availability…" :
-              slug ? `✓ ${slug}.${typeof window !== "undefined" ? window.location.hostname : "…"}` : ""
-            } hintColor={slug && !slugChecking ? "#16a34a" : "#6b7280"}>
-              <input
-                style={{ ...inputStyle, background: "#f9fafb", color: "#6b7280", cursor: "default" }}
+            <Field
+              label="Workspace URL"
+              hint={
+                slugChecking ? "Checking availability…" :
+                slug ? `✓ ${slug}.${typeof window !== "undefined" ? window.location.hostname : "…"}` : ""
+              }
+              hintVariant={slug && !slugChecking ? "success" : "default"}
+            >
+              <Input
                 value={slug}
                 readOnly
                 placeholder="generated from agency name"
+                className="bg-muted text-muted-foreground cursor-default"
               />
             </Field>
             <Field label="Account type *">
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="flex flex-col gap-2.5">
                 <RadioOption value="byo_host" checked={form.tenant_type === "byo_host"}
                   onChange={() => setForm((f) => ({ ...f, tenant_type: "byo_host" }))}
                   label="Independent agency (BYO host)"
@@ -197,13 +208,18 @@ export default function SignupCompletePage(): React.ReactElement {
 
           <Section title="Contact & Support">
             <Field label="Support email *">
-              <input type="email" style={inputStyle} value={form.support_email} onChange={set("support_email")} required placeholder="support@acmetravel.com" />
+              <Input type="email" value={form.support_email} onChange={set("support_email")} required placeholder="support@acmetravel.com" />
             </Field>
             <Field label="Support phone">
-              <input style={inputStyle} value={form.support_phone} onChange={set("support_phone")} placeholder="+1 555 000 0000" />
+              <Input value={form.support_phone} onChange={set("support_phone")} placeholder="+1 555 000 0000" />
             </Field>
             <Field label="Time zone *">
-              <select style={inputStyle} value={form.timezone} onChange={set("timezone")} required>
+              <select
+                value={form.timezone}
+                onChange={set("timezone")}
+                required
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
                 {TIMEZONES.map((tz) => (
                   <option key={tz.value} value={tz.value}>{tz.label} ({tz.offset})</option>
                 ))}
@@ -213,74 +229,56 @@ export default function SignupCompletePage(): React.ReactElement {
 
           <Section title="Mailing Address">
             <Field label="Street address *">
-              <input style={inputStyle} value={form.line1} onChange={set("line1")} required placeholder="123 Main St" />
+              <Input value={form.line1} onChange={set("line1")} required placeholder="123 Main St" />
             </Field>
             <Field label="Apt, suite, etc.">
-              <input style={inputStyle} value={form.line2} onChange={set("line2")} placeholder="Suite 100" />
+              <Input value={form.line2} onChange={set("line2")} placeholder="Suite 100" />
             </Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 100px", gap: 10 }}>
+            <div className="grid gap-2.5 [grid-template-columns:1fr_80px_100px]">
               <Field label="City *">
-                <input style={inputStyle} value={form.city} onChange={set("city")} required />
+                <Input value={form.city} onChange={set("city")} required />
               </Field>
               <Field label="State *">
-                <input style={inputStyle} value={form.state} onChange={set("state")} required maxLength={2} />
+                <Input value={form.state} onChange={set("state")} required maxLength={2} />
               </Field>
               <Field label="ZIP *">
-                <input style={inputStyle} value={form.zip} onChange={set("zip")} required />
+                <Input value={form.zip} onChange={set("zip")} required />
               </Field>
             </div>
           </Section>
 
-          {error && <p style={{ color: "#dc2626", fontSize: 14, margin: 0 }}>{error}</p>}
+          {error && <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>}
 
-          <button type="submit" disabled={!canSubmit} style={{
-            padding: "12px 16px",
-            background: canSubmit ? "#3b82f6" : "#93c5fd",
-            color: "#fff", border: "none", borderRadius: 8,
-            fontSize: 15, fontWeight: 600,
-            cursor: canSubmit ? "pointer" : "not-allowed",
-          }}>
+          <Button type="submit" disabled={!canSubmit}>
             {submitting ? "Creating workspace…" : "Create workspace"}
-          </button>
+          </Button>
         </form>
       </div>
     </main>
   );
 }
 
-const centerStyle: React.CSSProperties = {
-  display: "flex", flexDirection: "column", alignItems: "center",
-  justifyContent: "center", minHeight: "100vh", gap: 24,
-  fontFamily: "system-ui, sans-serif", padding: "0 16px",
-};
-
-const btnStyle: React.CSSProperties = {
-  padding: "12px 28px", background: "#3b82f6", color: "#fff",
-  borderRadius: 8, textDecoration: "none", fontSize: 15, fontWeight: 600,
-};
-
-const inputStyle: React.CSSProperties = {
-  display: "block", width: "100%", padding: "10px 12px",
-  border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, boxSizing: "border-box",
-};
-
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.ReactElement {
   return (
-    <fieldset style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "16px 16px 8px" }}>
-      <legend style={{ fontSize: 13, fontWeight: 600, color: "#374151", padding: "0 4px" }}>{title}</legend>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>{children}</div>
+    <fieldset className="border border-border rounded-lg p-4 pb-2 min-w-0">
+      <legend className="text-xs font-semibold text-foreground px-1">{title}</legend>
+      <div className="flex flex-col gap-3.5">{children}</div>
     </fieldset>
   );
 }
 
-function Field({ label, hint, hintColor, children }: {
-  label: string; hint?: string; hintColor?: string; children: React.ReactNode;
+function Field({ label, hint, hintVariant = "default", children }: {
+  label: string; hint?: string; hintVariant?: "default" | "success"; children: React.ReactNode;
 }): React.ReactElement {
   return (
     <div>
-      <label style={{ display: "block", fontSize: 14, fontWeight: 500, marginBottom: 6 }}>{label}</label>
+      <label className="block text-sm font-medium mb-1.5">{label}</label>
       {children}
-      {hint && <p style={{ fontSize: 12, color: hintColor ?? "#6b7280", margin: "4px 0 0" }}>{hint}</p>}
+      {hint && (
+        <p className={`text-xs mt-1 ${hintVariant === "success" ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -289,16 +287,11 @@ function RadioOption({ value, checked, onChange, label, description }: {
   value: string; checked: boolean; onChange: () => void; label: string; description: string;
 }): React.ReactElement {
   return (
-    <label style={{
-      display: "flex", gap: 12, padding: "10px 12px",
-      border: `1px solid ${checked ? "#3b82f6" : "#d1d5db"}`,
-      borderRadius: 8, cursor: "pointer",
-      background: checked ? "#eff6ff" : "#fff",
-    }}>
-      <input type="radio" name="tenant_type" value={value} checked={checked} onChange={onChange} style={{ marginTop: 2, flexShrink: 0 }} />
+    <label className={`flex gap-3 p-3 border rounded-lg cursor-pointer ${checked ? "border-primary bg-primary/5" : "border-border bg-background"}`}>
+      <input type="radio" name="tenant_type" value={value} checked={checked} onChange={onChange} className="mt-0.5 shrink-0" />
       <div>
-        <p style={{ margin: 0, fontWeight: 500, fontSize: 14 }}>{label}</p>
-        <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{description}</p>
+        <p className="font-medium text-sm">{label}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
       </div>
     </label>
   );

@@ -6,11 +6,15 @@
 // verification code on the next step, and confirms ownership before their
 // public.users row is created.
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 export default function EmailPromptPage(): React.ReactElement {
   return (
-    <main style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 24, fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700 }}>One more step</h1>
-      <p style={{ color: "#6b7280", maxWidth: 400, textAlign: "center" }}>
+    <main className="flex flex-col items-center justify-center min-h-screen gap-6 p-4">
+      <h1 className="text-2xl font-bold">One more step</h1>
+      <p className="text-muted-foreground text-sm max-w-sm text-center">
         Your sign-in provider didn&apos;t share an email address with us. Please
         enter your email so we can create your account and keep you updated on
         your bookings.
@@ -22,23 +26,18 @@ export default function EmailPromptPage(): React.ReactElement {
 
 function EmailPromptForm(): React.ReactElement {
   return (
-    <form method="POST" action="/api/auth/microsoft-email-prompt" style={{ display: "flex", flexDirection: "column", gap: 16, width: 320 }}>
-      <label style={{ fontSize: 14, fontWeight: 500 }}>
-        Email address
-        <input
+    <form method="POST" action="/api/auth/microsoft-email-prompt" className="flex flex-col gap-4 w-80">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="email">Email address</Label>
+        <Input
+          id="email"
           type="email"
           name="email"
           required
           placeholder="you@example.com"
-          style={{ display: "block", marginTop: 6, width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15 }}
         />
-      </label>
-      <button
-        type="submit"
-        style={{ padding: "12px 16px", background: "#3b82f6", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
-      >
-        Send verification code
-      </button>
+      </div>
+      <Button type="submit">Send verification code</Button>
     </form>
   );
 }
