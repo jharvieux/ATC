@@ -134,12 +134,8 @@ export const forumModerationRetry = inngest.createFunction(
     const now = new Date();
 
     if (now < nextRetryAt) {
-      // Too early — re-emit the event to retry later
+      // Too early — re-emit the event so Inngest retries it later.
       const delayMs = nextRetryAt.getTime() - now.getTime();
-      setTimeout(() => {
-        svc; // capture for closure
-      }, 0);
-      // Re-schedule by emitting again — Inngest will pick it up
       await inngest.send({
         name: "forum/message.needs_moderation_retry",
         data: { message_id, tenant_id, forum_id },
