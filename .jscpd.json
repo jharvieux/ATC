@@ -1,0 +1,17 @@
+{
+  "path": ["apps/main/src", "apps/rag/src"],
+  "minTokens": 50,
+  "gitignore": true,
+  "ignore": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/__tests__/**",
+    "**/__mocks__/**",
+    "**/*.d.ts",
+    "**/*.json"
+  ],
+  "reporters": ["console"],
+  "threshold": 5
+}

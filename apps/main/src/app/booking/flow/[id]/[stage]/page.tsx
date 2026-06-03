@@ -597,7 +597,17 @@ function Stage3Options({ bookingId }: { bookingId: string }): React.ReactElement
             description={opt.description}
             price={opt.price_display}
             checked={selected.has(opt.kind)}
-            onChange={(checked) => setSelected((prev) => { const next = new Set(prev); if (checked) next.add(opt.kind); else next.delete(opt.kind); return next; })}
+            onChange={(checked) =>
+              setSelected((prev) => {
+                const next = new Set(prev);
+                if (checked) {
+                  next.add(opt.kind);
+                } else {
+                  next.delete(opt.kind);
+                }
+                return next;
+              })
+            }
           />
         ))}
       </div>

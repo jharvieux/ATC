@@ -57,7 +57,7 @@ function parseSampleParams(get: (key: string) => string | undefined): SamplePara
   }
 
   const portsRaw = get("ports") ?? "Miami\nAt sea\nRoatán\nHarvest Caye\nCosta Maya\nCozumel\nAt sea";
-  const ports = portsRaw.split(/\n|,/).map((p) => p.trim()).filter(Boolean);
+  const ports = portsRaw.split(/[\n,]/).map((p) => p.trim()).filter(Boolean);
 
   return {
     template,

@@ -144,8 +144,8 @@ export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing
   // <p> so the price/title don't bleed in from the all-itineraries list.
   const proseEl = $("#current_cruise").nextAll("p").first();
   const prose = collapse(proseEl.text()) || collapse($("body").text());
-  const beginMatch = /begins on\s+([A-Za-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
-  const endMatch = /ends on\s+([A-Za-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
+  const beginMatch = /begins on\s+([a-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
+  const endMatch = /ends on\s+([a-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
   const begin = beginMatch ? parseLongDate(beginMatch[1] ?? "") : null;
   if (!begin) return null;
   const end = endMatch ? parseLongDate(endMatch[1] ?? "") : null;
