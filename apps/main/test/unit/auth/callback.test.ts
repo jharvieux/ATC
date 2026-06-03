@@ -5,8 +5,9 @@
 //      cookies (applyAuthCookies) onto the redirect — the prior client never
 //      wrote a session, which is the whole bug this rewrite closes.
 //   2. Tenant-vs-platform split (#441): a UUID tenant id upserts the users
-//      membership row; the "platform" sentinel must NOT (net-new provisioning
-//      is deferred) yet must still establish the session.
+//      membership row; the "platform" sentinel skips the upsert when
+//      PLATFORM_DEFAULT_TENANT_ID is unset, but uses the default tenant when
+//      that env var is set — so platform-domain sign-ups land in a real agency.
 //   3. Post-login redirect (#437): a SAFE ?next= is honored; unsafe values
 //      fall back to "/".
 //   4. Microsoft no-email chain (§17.2): azure with no resolvable email lands
@@ -14,7 +15,7 @@
 //   5. Fail-loud: a DB error on the membership upsert must throw, never a
 //      silent redirect-to-success (a logged-in user with no row is broken).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockExchange = vi.fn();
@@ -41,8 +42,11 @@ import { GET } from "@/app/api/auth/callback/route";
 
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
 
+const DEFAULT_TENANT_ID = "f5665f08-3ebb-40e0-ad6b-000000000001";
+
 beforeEach(() => {
   vi.clearAllMocks();
+  delete process.env.PLATFORM_DEFAULT_TENANT_ID;
   mockExchange.mockResolvedValue({
     data: {
       session: {
@@ -58,6 +62,10 @@ beforeEach(() => {
     error: null,
   });
   mockUpsert.mockResolvedValue({ data: null, error: null });
+});
+
+afterEach(() => {
+  delete process.env.PLATFORM_DEFAULT_TENANT_ID;
 });
 
 function get(
@@ -119,12 +127,63 @@ describe("GET /api/auth/callback", () => {
     expect(loc.pathname).toBe("/");
   });
 
-  it("on the platform domain: does NOT upsert (provisioning deferred #441) but still sets the session", async () => {
+  it("on the platform domain with no default tenant configured: does NOT upsert but still sets the session", async () => {
+    // PLATFORM_DEFAULT_TENANT_ID is not set (deleted in beforeEach).
     const res = await get("?code=abc", { "x-resolved-tenant-id": "platform" });
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(mockApplyAuthCookies).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(302);
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+
+  it("on the platform domain with PLATFORM_DEFAULT_TENANT_ID set: upserts into that tenant", async () => {
+    // Locks the default-tenant assignment: platform-domain sign-ups must land
+    // in a real agency row so the user can access chat and other tenant features.
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    const res = await get("?code=abc", { "x-resolved-tenant-id": "platform" });
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert.mock.calls[0]?.[0]).toEqual({
+      auth_user_id: "auth-user-1",
+      tenant_id: DEFAULT_TENANT_ID,
+      email: "alice@example.com",
+      status: "active",
+    });
+    expect(mockApplyAuthCookies).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+
+  it("with no x-resolved-tenant-id header and PLATFORM_DEFAULT_TENANT_ID set: upserts into the default tenant", async () => {
+    // Guards the !tenantId branch of effectiveTenantId: a request with no
+    // header at all (e.g. a direct hit bypassing middleware) must still land
+    // the user in the default tenant when the env var is configured.
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    const res = await get("?code=abc", {});
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert.mock.calls[0]?.[0]).toMatchObject({
+      auth_user_id: "auth-user-1",
+      tenant_id: DEFAULT_TENANT_ID,
+    });
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+
+  it("on the platform domain with default tenant: does NOT upsert when email is missing (bounced to email-prompt first)", async () => {
+    // The no-email path redirects before the upsert block — the upsert must
+    // not run for a user who still needs to supply their email.
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    mockExchange.mockResolvedValue({
+      data: {
+        session: {
+          access_token: "supabase-jwt",
+          user: { id: "auth-user-noemail", email: null, app_metadata: { provider: "google" } },
+        },
+      },
+      error: null,
+    });
+    const res = await get("?code=abc", { "x-resolved-tenant-id": "platform" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/email-prompt");
   });
 
   it("Microsoft with no resolvable email: lands on /signup/email-prompt, session still set, NO upsert", async () => {
