@@ -159,7 +159,6 @@ async function processKind(
         last_seen_at: new Date().toISOString(),
         last_ingest_status: fetched.status === "robots_disallowed" ? "robots_disallowed"
           : fetched.status === "client_error" ? "client_error"
-          : fetched.status === "server_error" ? "server_error"
           : "server_error",
         last_error: fetched.status,
       }).eq("url", url), "cruisemapper_url_inventory.update");
