@@ -11,6 +11,7 @@ import { headers } from "next/headers";
 import { writeAuditLog } from "@/lib/audit/write";
 import { PublicTokenChatPanel } from "@/components/chat/PublicTokenChatPanel";
 import { fromCents, type Cents } from "@/lib/money";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -20,16 +21,8 @@ type QuoteRow = {
   id: string;
   tenant_id: string;
   status: string;
-  cruise_line: string | null;
-  ship_name: string | null;
-  sailing_date: string | null;
-  duration_nights: number | null;
-  cabin_category: string | null;
-  passenger_count: number | null;
-  commissionable_fare_cents: number | bigint | null;
-  non_commissionable_total_cents: number | bigint | null;
-  total_amount_cents: number | bigint | null;
-  currency: string | null;
+  locked_price_cents: number | bigint | null;
+  estimate_price_cents: number | bigint | null;
   custom_notes: string | null;
   customer_facing_intro: string | null;
   recommendation_rationale: string | null;
@@ -44,15 +37,18 @@ type QuoteRow = {
 
 type QuoteOptionRow = {
   id: string;
+  option_index: number;
+  customer_selected: boolean | null;
   cruise_line: string | null;
   ship_name: string | null;
   sailing_date: string | null;
   duration_nights: number | null;
   cabin_category: string | null;
   passenger_count: number | null;
+  commissionable_fare_cents: number | bigint | null;
+  non_commissionable_total_cents: number | bigint | null;
   total_amount_cents: number | bigint | null;
   currency: string | null;
-  is_selected: boolean | null;
   is_recommended: boolean | null;
 };
 
@@ -69,7 +65,7 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
   const { data, error } = await svc
     .from("quotes")
     .select(
-      "id, tenant_id, status, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, commissionable_fare_cents, non_commissionable_total_cents, total_amount_cents, currency, custom_notes, customer_facing_intro, recommendation_rationale, show_recommendation, show_breakdown_to_customer, valid_until, tenants(display_name)",
+      "id, tenant_id, status, locked_price_cents, estimate_price_cents, custom_notes, customer_facing_intro, recommendation_rationale, show_recommendation, show_breakdown_to_customer, valid_until, tenants(display_name)",
     )
     .eq("customer_access_token", token)
     .maybeSingle();
@@ -97,11 +93,18 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
   const { data: optionsData } = await svc
     .from("quote_options")
     .select(
-      "id, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, total_amount_cents, currency, is_selected, is_recommended",
+      "id, option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, commissionable_fare_cents, non_commissionable_total_cents, total_amount_cents, currency, is_recommended",
     )
     .eq("quote_id", quote.id)
-    .order("created_at", { ascending: true });
+    .eq("tenant_id", quote.tenant_id)
+    .order("option_index", { ascending: true });
   const options = (optionsData ?? []) as QuoteOptionRow[];
+
+  // §38.4.3 — trip detail + per-option financials live on quote_options; the
+  // quote is a container. Header + price summary render the representative
+  // option (customer-selected, else lowest option_index).
+  const rep = selectRepresentativeOption(options);
+  const currency = rep?.currency ?? null;
 
   const tenant = Array.isArray(quote.tenants) ? quote.tenants[0] : quote.tenants;
 
@@ -119,9 +122,9 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
     },
   });
 
-  const headerTitle = quote.cruise_line && quote.ship_name
-    ? `${quote.cruise_line} — ${quote.ship_name}`
-    : quote.cruise_line ?? quote.ship_name ?? "Your cruise quote";
+  const headerTitle = rep?.cruise_line && rep?.ship_name
+    ? `${rep.cruise_line} — ${rep.ship_name}`
+    : rep?.cruise_line ?? rep?.ship_name ?? "Your cruise quote";
 
   return (
     <main
@@ -144,9 +147,9 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
         </div>
         <h1 style={{ margin: "8px 0 4px", fontSize: 28 }}>{headerTitle}</h1>
         <div style={{ color: "#555", fontSize: 14 }}>
-          {quote.sailing_date ?? "Sailing TBD"}
-          {quote.duration_nights ? ` · ${quote.duration_nights} nights` : ""}
-          {quote.cabin_category ? ` · ${quote.cabin_category}` : ""}
+          {rep?.sailing_date ?? "Sailing TBD"}
+          {rep?.duration_nights ? ` · ${rep.duration_nights} nights` : ""}
+          {rep?.cabin_category ? ` · ${rep.cabin_category}` : ""}
         </div>
         {quote.valid_until && (
           <div style={{ marginTop: 6, fontSize: 12, color: "#92400e" }}>
@@ -174,23 +177,24 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
           }}
         >
           <dt style={{ color: "#6b7280" }}>Total</dt>
+          {/* §38.4.3 price priority: locked > estimate > representative option total */}
           <dd style={{ margin: 0, fontWeight: 600 }}>
-            {money(quote.total_amount_cents, quote.currency)}
+            {money(quote.locked_price_cents ?? quote.estimate_price_cents ?? rep?.total_amount_cents ?? null, currency)}
           </dd>
           {quote.show_breakdown_to_customer && (
             <>
               <dt style={{ color: "#6b7280" }}>Cruise fare</dt>
               <dd style={{ margin: 0 }}>
-                {money(quote.commissionable_fare_cents, quote.currency)}
+                {money(rep?.commissionable_fare_cents ?? null, currency)}
               </dd>
               <dt style={{ color: "#6b7280" }}>Other charges</dt>
               <dd style={{ margin: 0 }}>
-                {money(quote.non_commissionable_total_cents, quote.currency)}
+                {money(rep?.non_commissionable_total_cents ?? null, currency)}
               </dd>
             </>
           )}
           <dt style={{ color: "#6b7280" }}>Passengers</dt>
-          <dd style={{ margin: 0 }}>{quote.passenger_count ?? "—"}</dd>
+          <dd style={{ margin: 0 }}>{rep?.passenger_count ?? "—"}</dd>
         </dl>
       </section>
 
@@ -202,11 +206,11 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
               <li
                 key={o.id}
                 style={{
-                  border: o.is_selected ? "2px solid #1f4e79" : "1px solid #e5e7eb",
+                  border: o.customer_selected ? "2px solid #1f4e79" : "1px solid #e5e7eb",
                   borderRadius: 8,
                   padding: 14,
                   marginBottom: 10,
-                  background: o.is_selected ? "#eff6ff" : "#fff",
+                  background: o.customer_selected ? "#eff6ff" : "#fff",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
@@ -237,7 +241,7 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
                     <div style={{ fontWeight: 600 }}>{money(o.total_amount_cents, o.currency)}</div>
-                    {o.is_selected && (
+                    {o.customer_selected && (
                       <div style={{ fontSize: 11, color: "#1f4e79", marginTop: 2 }}>Selected</div>
                     )}
                   </div>
