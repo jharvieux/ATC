@@ -13,12 +13,14 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
   getTenantByCustomDomain: vi.fn(),
+  getTenantByAuthUserId: vi.fn(),
   getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
 }));
 
 vi.mock("@/lib/tenancy/resolve-tenant", () => ({
   getTenantBySlug: mocks.getTenantBySlug,
   getTenantByCustomDomain: mocks.getTenantByCustomDomain,
+  getTenantByAuthUserId: mocks.getTenantByAuthUserId,
 }));
 
 // Session refresh is exercised separately (proxy-session-refresh.test.ts);
@@ -257,12 +259,68 @@ describe("proxy()", () => {
   // -- Platform domain → "platform" sentinel ------------------------------
 
   describe("platform domain", () => {
-    it("returns next() with x-resolved-tenant-id='platform' header", async () => {
+    it("returns next() with x-resolved-tenant-id='platform' header for non-chat paths", async () => {
       const res = await proxy(makeReq({ host: "ai-travelconcierge.com" }));
       expect(res.headers.get("x-middleware-next")).toBe("1");
       // Validates the platform sentinel propagates.
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("platform");
+    });
+
+    it("sets platform sentinel on /chat when user is unauthenticated", async () => {
+      // getUser returns null (default) → no tenant lookup, sentinel falls through.
+      mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/chat" }));
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+      expect(mocks.getTenantByAuthUserId).not.toHaveBeenCalled();
+    });
+
+    it("resolves user's tenant for /chat when authenticated, forwarding a real tenant ID", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/chat" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalledWith("auth-user-1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("sub_pro");
+    });
+
+    it("resolves tenant for /api/chat/conversations on platform domain", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/api/chat/conversations" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("resolves tenant for /api/memory on platform domain", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/api/memory" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("falls back to platform sentinel on /chat when authenticated user has no tenant", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(null);
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/chat" }));
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
+    it("falls back to platform sentinel on /chat when getTenantByAuthUserId throws (fail-closed on DB error)", async () => {
+      // Locks fail-closed: a DB error must not silently forward an incorrect tenant.
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockRejectedValue(new Error("connection refused"));
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/chat" }));
+      // Falls back to platform sentinel — chat route will return 400 tenant_not_resolved,
+      // which is the correct denial behavior on DB error.
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
+    it("does NOT invoke getTenantByAuthUserId for non-chat platform-domain paths", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/for-agencies" }));
+      expect(mocks.getTenantByAuthUserId).not.toHaveBeenCalled();
     });
   });
 

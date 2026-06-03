@@ -35,6 +35,7 @@ type CacheEntry = { tenant: Tenant | null; expiresAt: number };
 
 const slugCache = new Map<string, CacheEntry>();
 const domainCache = new Map<string, CacheEntry>();
+const userTenantCache = new Map<string, CacheEntry>();
 
 const TTL_MS = 60_000;
 
@@ -90,8 +91,6 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
   return tenant;
 }
 
-const userTenantCache = new Map<string, CacheEntry>();
-
 /**
  * Resolves an authenticated user's primary tenant.
  * Used by middleware to let platform-domain users access tenant-scoped
@@ -106,7 +105,7 @@ export async function getTenantByAuthUserId(
   if (cached !== undefined) return cached;
 
   const db = createServiceRoleClient();
-  const { data: userRow } = await db
+  const { data: userRow, error: userError } = await db
     .from("users")
     .select("tenant_id")
     .eq("auth_user_id", authUserId)
@@ -114,6 +113,8 @@ export async function getTenantByAuthUserId(
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
+
+  if (userError) throw new Error(`getTenantByAuthUserId users lookup: ${userError.message}`);
 
   if (!userRow) {
     cacheSet(userTenantCache, authUserId, null);
