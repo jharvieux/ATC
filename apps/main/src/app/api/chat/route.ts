@@ -65,10 +65,8 @@ import { resolveToneLevel } from "@/lib/chat/tone-resolution";
 import { deriveFingerprint, extractClientIp } from "@/lib/chat/fingerprint";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
 import { loadConversationHistory } from "@/lib/chat/conversation-history";
-import {
-  buildSystemPrompt,
-  DEFAULT_PERSONA_SLUG,
-} from "@/lib/personas/build-system-prompt";
+import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
+import { resolveActivePersonaSlug } from "@/lib/personas/resolve-active-persona-slug";
 import { buildDisplayableAssetsBlock } from "@/lib/ai/display-assets-block";
 import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-id-validation";
 // BP32 §32.10.1 — bug-intent recognizer fires before LLM call.
@@ -509,8 +507,12 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   // ── 5. Resolve persona, tenant settings, and tone.
-  const personaSlug = args.personaSlugInput ?? DEFAULT_PERSONA_SLUG;
-  void conversationActivePersonaId;
+  // §24.6 precedence: switched persona (conversation.active_persona_id) wins
+  // over the request body, which wins over the default. See resolver.
+  const personaSlug = await resolveActivePersonaSlug(svc, {
+    activePersonaId: conversationActivePersonaId,
+    requestedSlug: args.personaSlugInput,
+  });
 
   const { data: tenantRow } = await svc
     .from("tenants")
