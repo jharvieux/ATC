@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 import { server } from "../setup";
 
-beforeAll(() => server.listen({ onUnhandledRequest: "warn" }));
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
@@ -21,7 +21,6 @@ describe("Anthropic /v1/messages contract", () => {
       messages: [{ role: "user", content: "Hello, I'm looking for travel help." }],
     });
 
-    // Core identity fields
     expect(msg.id).toBeTruthy();
     expect(msg.type).toBe("message");
     expect(msg.role).toBe("assistant");
