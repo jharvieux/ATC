@@ -195,5 +195,5 @@ function validateIntake(f: IntakeFormFields): ValidationFlag[] {
 
 // ── shared ───────────────────────────────────────────────────────────────
 function isPlausibleEmail(s: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+  return s.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }

@@ -151,6 +151,9 @@ export async function POST(req: Request): Promise<Response> {
   if (!rawUserMessage) {
     return new Response(JSON.stringify({ error: "empty_message" }), { status: 400 });
   }
+  if (rawUserMessage.length > 8000) {
+    return new Response(JSON.stringify({ error: "message_too_long" }), { status: 400 });
+  }
 
   // §25.1 / audit pass 2 Finding 1 — PII redaction.
   // Customers occasionally paste SSNs, credit cards, etc. The redactor
