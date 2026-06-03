@@ -47,10 +47,6 @@ const DEFAULT_TENANT_ID = "f5665f08-3ebb-40e0-ad6b-000000000001";
 beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.PLATFORM_DEFAULT_TENANT_ID;
-});
-
-afterEach(() => {
-  delete process.env.PLATFORM_DEFAULT_TENANT_ID;
   mockExchange.mockResolvedValue({
     data: {
       session: {
@@ -66,6 +62,10 @@ afterEach(() => {
     error: null,
   });
   mockUpsert.mockResolvedValue({ data: null, error: null });
+});
+
+afterEach(() => {
+  delete process.env.PLATFORM_DEFAULT_TENANT_ID;
 });
 
 function get(
