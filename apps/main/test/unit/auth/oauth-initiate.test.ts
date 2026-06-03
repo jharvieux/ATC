@@ -45,7 +45,7 @@ function get(qs: string): Promise<Response> {
 
 function oauthArg(): {
   provider: string;
-  options?: { redirectTo?: string; queryParams?: Record<string, string> };
+  options?: { redirectTo?: string; queryParams?: Record<string, string>; scopes?: string };
 } {
   return mockSignInWithOAuth.mock.calls[0]?.[0];
 }
@@ -108,5 +108,22 @@ describe("GET /api/auth/oauth-initiate", () => {
     mockSignInWithOAuth.mockResolvedValue({ data: { url: null }, error: { message: "boom" } });
     const res = await get("?provider=facebook");
     expect(res.status).toBe(500);
+  });
+
+  // §17.2 — Azure requires `email User.Read` scopes so Microsoft includes the
+  // email claim in the OIDC id_token. Without them Supabase throws
+  // "Error getting user email from external provider" before our callback runs.
+  it("sends email+User.Read scopes for Azure to force Microsoft to include the email claim", async () => {
+    await get("?provider=azure");
+    expect(oauthArg().options?.scopes).toBe("email User.Read");
+  });
+
+  it("does not send extra scopes for non-Azure providers", async () => {
+    await get("?provider=google");
+    expect(oauthArg().options?.scopes).toBeUndefined();
+    vi.clearAllMocks();
+    mockSignInWithOAuth.mockResolvedValue({ data: { url: "https://example.com" }, error: null });
+    await get("?provider=facebook");
+    expect(oauthArg().options?.scopes).toBeUndefined();
   });
 });
