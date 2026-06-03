@@ -69,7 +69,10 @@ async function runSweep(): Promise<unknown> {
 
 const TENANT = { id: "t1", legal_name: "Test Agency", mailing_address: null, email_send_pattern: "platform_resend", tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null };
 const CONTACT = { id: "c1", first_name: "Jane", last_name: "Doe", email: "jane@example.com" };
-const QUOTE_ROW = { id: "q1", tenant_id: "t1", contact_id: "c1", user_id: null, customer_access_token: "tok-abc", cruise_line: "NCL", ship_name: "Bliss" };
+// §38 — the quotes container no longer carries trip columns; cruise_line/
+// ship_name now come from the representative quote_options row.
+const QUOTE_ROW = { id: "q1", tenant_id: "t1", contact_id: "c1", user_id: null, customer_access_token: "tok-abc" };
+const OPTION_ROW = { quote_id: "q1", option_index: 1, customer_selected: false, cruise_line: "NCL", ship_name: "Bliss" };
 
 function setupHappyPathMocks(overrides: { updateResult?: { data: { id: string }[] | null; error: null | { message: string } } } = {}) {
   const updateResult = overrides.updateResult ?? { data: [{ id: QUOTE_ROW.id }], error: null };
@@ -82,6 +85,7 @@ function setupHappyPathMocks(overrides: { updateResult?: { data: { id: string }[
     }
     if (table === "contacts") return makeSelectChain([CONTACT]);
     if (table === "tenants") return makeSelectChain([TENANT]);
+    if (table === "quote_options") return makeSelectChain([OPTION_ROW]);
     return makeSelectChain([]);
   });
 }
@@ -104,6 +108,29 @@ describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
     expect(call.to).toBe("jane@example.com");
     expect(call.category).toBe("transactional");
     expect(call.template_id).toBe("quote_estimate_expired");
+    // §38 — subject label is built from the representative quote_options row,
+    // not the (now-dropped) quotes.cruise_line/ship_name columns.
+    expect(call.subject).toContain("NCL — Bliss");
+  });
+
+  it("§38 — falls back to the generic subject when the quote has no options", async () => {
+    mockSendEmail.mockResolvedValue({ status: "sent" });
+    let quotesCallCount = 0;
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "quotes") {
+        quotesCallCount++;
+        if (quotesCallCount === 1) return makeSelectChain([QUOTE_ROW]);
+        return makeUpdateChain({ data: [{ id: QUOTE_ROW.id }], error: null });
+      }
+      if (table === "contacts") return makeSelectChain([CONTACT]);
+      if (table === "tenants") return makeSelectChain([TENANT]);
+      // quote_options returns [] → no representative option → generic subject.
+      return makeSelectChain([]);
+    });
+
+    await runSweep();
+    const call = mockSendEmail.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.subject).toBe("Your cruise estimate has expired — request fresh pricing");
   });
 
   it("skips quotes where contact has no email — not expired, not emailed", async () => {

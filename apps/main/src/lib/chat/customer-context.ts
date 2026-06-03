@@ -12,6 +12,7 @@
 // never read a booking belonging to tenant B.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 export type CustomerContextRef =
   | { type: "booking"; id: string }
@@ -43,12 +44,20 @@ interface QuoteContextRow {
   id: string;
   tenant_id: string;
   status: string | null;
-  expires_at: string | null;
+  valid_until: string | null;
+  locked_price_cents: number | bigint | null;
+  estimate_price_cents: number | bigint | null;
+}
+
+// §38.4.3 selection fields + the trip/price the customer context surfaces.
+interface QuoteOptionContextRow {
+  option_index: number;
+  customer_selected: boolean | null;
   cruise_line: string | null;
   ship_name: string | null;
   sailing_date: string | null;
   duration_nights: number | null;
-  total_price_cents: number | bigint | null;
+  total_amount_cents: number | bigint | null;
   currency: string | null;
 }
 
@@ -117,9 +126,7 @@ export async function resolveCustomerContext(args: ResolveContextArgs): Promise<
   if (ref.type === "quote") {
     const { data, error } = await db
       .from("quotes")
-      .select(
-        "id, tenant_id, status, expires_at, cruise_line, ship_name, sailing_date, duration_nights, total_price_cents, currency",
-      )
+      .select("id, tenant_id, status, valid_until, locked_price_cents, estimate_price_cents")
       .eq("id", ref.id)
       .eq("tenant_id", tenant_id)
       .maybeSingle();
@@ -129,15 +136,35 @@ export async function resolveCustomerContext(args: ResolveContextArgs): Promise<
     }
     if (!data) return null;
     const q = data as QuoteContextRow;
+
+    // §38 — trip detail + per-option price live on quote_options. Service-role
+    // client here, so scope by BOTH tenant_id and quote_id (D-091 two-layer)
+    // and surface the representative option (customer-selected, else lowest).
+    const { data: optionRows, error: optionsErr } = await db
+      .from("quote_options")
+      .select(
+        "option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, total_amount_cents, currency",
+      )
+      .eq("quote_id", ref.id)
+      .eq("tenant_id", tenant_id)
+      .order("option_index", { ascending: true });
+    if (optionsErr) {
+      console.warn("[customer-context] quote_options lookup failed:", optionsErr.message);
+      return null;
+    }
+    const opt = selectRepresentativeOption((optionRows ?? []) as QuoteOptionContextRow[]);
+
+    // Container price wins (locked > estimate); fall back to the option total.
+    const priceCents = q.locked_price_cents ?? q.estimate_price_cents ?? opt?.total_amount_cents ?? null;
     return [
       "The customer is currently reviewing a cruise quote. Use these details when relevant:",
-      `- Cruise line: ${fmtStrOrDash(q.cruise_line)}`,
-      `- Ship: ${fmtStrOrDash(q.ship_name)}`,
-      `- Sailing date: ${fmtStrOrDash(q.sailing_date)}`,
-      `- Duration: ${fmtNumberOrDash(q.duration_nights)} nights`,
-      `- Quoted price: ${fmtMoney(q.total_price_cents, q.currency)}`,
+      `- Cruise line: ${fmtStrOrDash(opt?.cruise_line)}`,
+      `- Ship: ${fmtStrOrDash(opt?.ship_name)}`,
+      `- Sailing date: ${fmtStrOrDash(opt?.sailing_date)}`,
+      `- Duration: ${fmtNumberOrDash(opt?.duration_nights ?? null)} nights`,
+      `- Quoted price: ${fmtMoney(priceCents, opt?.currency)}`,
       `- Quote status: ${fmtStrOrDash(q.status)}`,
-      `- Quote expires: ${fmtStrOrDash(q.expires_at)}`,
+      `- Quote expires: ${fmtStrOrDash(q.valid_until)}`,
       "",
       "If the customer asks to accept, modify, or hold the quote, walk them through the on-page actions — do NOT attempt to change the price.",
     ].join("\n");

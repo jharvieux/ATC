@@ -22,6 +22,7 @@ import { triggerMatchingSequences } from "@/lib/tasks/sequence-engine";
 import { renderQuotePdfHtml } from "@/lib/quotes/render-pdf";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 interface QuoteRow {
   id: string;
@@ -33,15 +34,22 @@ interface QuoteRow {
   price_lock_expires_at: string | null;
   estimate_price_cents: number | null;
   locked_price_cents: number | null;
-  total_amount: number | null;
+  contact_id: string | null;
+  user_id: string | null;
+}
+
+// §38 — trip detail for the accepted-quote snapshot PDF comes from the
+// representative quote_options row (customer-selected, else lowest index).
+interface AcceptOption {
+  option_index: number;
+  customer_selected: boolean | null;
   cruise_line: string | null;
   ship_name: string | null;
   sailing_date: string | null;
   duration_nights: number | null;
   cabin_category: string | null;
   passenger_count: number | null;
-  contact_id: string | null;
-  user_id: string | null;
+  total_amount_cents: number | null;
 }
 
 export async function POST(
@@ -57,7 +65,7 @@ export async function POST(
     const { data: existing, error: fetchErr } = await db
       .from("quotes")
       .select(
-        "id, tenant_id, status, price_kind, priced_at, price_lock_token, price_lock_expires_at, estimate_price_cents, locked_price_cents, total_amount, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, contact_id, user_id",
+        "id, tenant_id, status, price_kind, priced_at, price_lock_token, price_lock_expires_at, estimate_price_cents, locked_price_cents, contact_id, user_id",
       )
       .eq("id", id)
       .maybeSingle();
@@ -125,22 +133,36 @@ export async function POST(
         ? String((hostNameRow.value as { value?: string }).value ?? "Host Agency")
         : "Host Agency");
 
+    // §38 — trip detail lives on quote_options. Read this quote's options via
+    // the tenant-scoped client (RLS) + an explicit quote_id filter and pick
+    // the representative one (customer-selected, else lowest option_index).
+    const { data: optionRows, error: optionsErr } = await db
+      .from("quote_options")
+      .select(
+        "option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, total_amount_cents",
+      )
+      .eq("quote_id", id)
+      .order("option_index", { ascending: true });
+    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+    const chosenOption = selectRepresentativeOption((optionRows ?? []) as AcceptOption[]);
+
     // Render the PDF HTML for the snapshot.
     const totalCents = quote.locked_price_cents
       ?? quote.estimate_price_cents
-      ?? Math.round((quote.total_amount ?? 0) * 100);
+      ?? chosenOption?.total_amount_cents
+      ?? 0;
     const rendered = renderQuotePdfHtml({
       quote_id: quote.id,
       kind,
       tenant_name: tenantName,
       host_agency_legal_name: hostName,
       customer_name: "Customer",
-      cruise_line: quote.cruise_line,
-      ship_name: quote.ship_name,
-      sailing_date: quote.sailing_date,
-      duration_nights: quote.duration_nights,
-      cabin_category: quote.cabin_category,
-      passenger_count: quote.passenger_count,
+      cruise_line: chosenOption?.cruise_line ?? null,
+      ship_name: chosenOption?.ship_name ?? null,
+      sailing_date: chosenOption?.sailing_date ?? null,
+      duration_nights: chosenOption?.duration_nights ?? null,
+      cabin_category: chosenOption?.cabin_category ?? null,
+      passenger_count: chosenOption?.passenger_count ?? null,
       line_items: [{ label: "Total", amount_cents: totalCents }],
       total_cents: totalCents,
       currency: "USD",

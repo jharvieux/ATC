@@ -11,6 +11,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { populateConversionTouch } from "@/lib/attribution/populate-conversion-touch";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -47,6 +48,70 @@ const OPTION_FIELDS = new Set([
   "total_amount_cents",
   "currency",
 ]);
+
+// §12.4 / §38 — Quote list. Each row carries its representative option's trip
+// summary (customer-selected option, else lowest option_index per §38.4.3).
+// quotes is a container now (trip + total moved to quote_options), so this is
+// two reads — the container list, then the options for those quotes grouped
+// in-process — rather than an N+1 per row.
+interface QuoteListOption {
+  quote_id: string;
+  option_index: number;
+  customer_selected: boolean | null;
+  cruise_line: string | null;
+  ship_name: string | null;
+  sailing_date: string | null;
+  total_amount_cents: number | null;
+}
+
+export async function GET(req: Request): Promise<Response> {
+  try {
+    const { ctx } = await assertPermission(req, { resource: "quotes", action: "read" });
+    const db = tenantClient(ctx);
+
+    const { data: quoteRows, error: quotesErr } = await db
+      .from("quotes")
+      .select("id, status, created_at")
+      .order("created_at", { ascending: false });
+    if (quotesErr) return Response.json({ error: quotesErr.message }, { status: 500 });
+
+    const quotes = (quoteRows ?? []) as Array<{ id: string; status: string; created_at: string }>;
+    if (quotes.length === 0) return Response.json({ quotes: [] });
+
+    const { data: optionRows, error: optionsErr } = await db
+      .from("quote_options")
+      .select(
+        "quote_id, option_index, customer_selected, cruise_line, ship_name, sailing_date, total_amount_cents",
+      )
+      .in("quote_id", quotes.map((q) => q.id))
+      .order("option_index", { ascending: true });
+    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+
+    const byQuote = new Map<string, QuoteListOption[]>();
+    for (const row of (optionRows ?? []) as QuoteListOption[]) {
+      const existing = byQuote.get(row.quote_id);
+      if (existing) existing.push(row);
+      else byQuote.set(row.quote_id, [row]);
+    }
+
+    const items = quotes.map((q) => {
+      const option = selectRepresentativeOption(byQuote.get(q.id) ?? []);
+      return {
+        id: q.id,
+        status: q.status,
+        created_at: q.created_at,
+        cruise_line: option?.cruise_line ?? null,
+        ship_name: option?.ship_name ?? null,
+        sailing_date: option?.sailing_date ?? null,
+        total_amount_cents: option?.total_amount_cents ?? null,
+      };
+    });
+
+    return Response.json({ quotes: items });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
+}
 
 export async function POST(req: Request): Promise<Response> {
   try {

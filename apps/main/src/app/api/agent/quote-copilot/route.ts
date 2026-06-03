@@ -15,6 +15,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { fromCents, type Cents } from "@/lib/money";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 const Body = z.object({
   quote_id: z.string().uuid(),
@@ -32,6 +33,8 @@ const Body = z.object({
     .optional(),
 });
 
+// The flat shape buildCopilotSystemPrompt consumes — assembled from the
+// quotes container plus its representative quote_options row (§38).
 interface QuoteRow {
   id: string;
   tenant_id: string;
@@ -48,6 +51,30 @@ interface QuoteRow {
   currency: string | null;
   custom_notes: string | null;
   valid_until: string | null;
+}
+
+interface QuoteContainerRow {
+  id: string;
+  tenant_id: string;
+  status: string;
+  custom_notes: string | null;
+  valid_until: string | null;
+}
+
+// §38.4.3 selection fields + the per-option trip/money the prompt orients on.
+interface CopilotOptionRow {
+  option_index: number;
+  customer_selected: boolean | null;
+  cruise_line: string | null;
+  ship_name: string | null;
+  sailing_date: string | null;
+  duration_nights: number | null;
+  cabin_category: string | null;
+  passenger_count: number | null;
+  commissionable_fare_cents: number | bigint | null;
+  non_commissionable_total_cents: number | bigint | null;
+  total_amount_cents: number | bigint | null;
+  currency: string | null;
 }
 
 const MODEL = "claude-sonnet-4-6";
@@ -72,20 +99,52 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const db = tenantClient(auth.ctx);
-  const { data: quoteData, error: quoteErr } = await db
+  const { data: containerData, error: quoteErr } = await db
     .from("quotes")
-    .select(
-      "id, tenant_id, status, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, commissionable_fare_cents, non_commissionable_total_cents, total_amount_cents, currency, custom_notes, valid_until",
-    )
+    .select("id, tenant_id, status, custom_notes, valid_until")
     .eq("id", body.quote_id)
     .maybeSingle();
   if (quoteErr) {
     return Response.json({ error: "quote_lookup_failed", detail: quoteErr.message }, { status: 500 });
   }
-  if (!quoteData) {
+  if (!containerData) {
     return Response.json({ error: "quote_not_found" }, { status: 404 });
   }
-  const quote = quoteData as QuoteRow;
+  const container = containerData as QuoteContainerRow;
+
+  // §38 — trip detail + per-option money live on quote_options. Read this
+  // quote's options (RLS via tenantClient + explicit quote_id filter) and
+  // orient the co-pilot to the representative one (customer-selected, else
+  // lowest option_index).
+  const { data: optionRows, error: optionsErr } = await db
+    .from("quote_options")
+    .select(
+      "option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, commissionable_fare_cents, non_commissionable_total_cents, total_amount_cents, currency",
+    )
+    .eq("quote_id", body.quote_id)
+    .order("option_index", { ascending: true });
+  if (optionsErr) {
+    return Response.json({ error: "quote_options_lookup_failed", detail: optionsErr.message }, { status: 500 });
+  }
+  const option = selectRepresentativeOption((optionRows ?? []) as CopilotOptionRow[]);
+
+  const quote: QuoteRow = {
+    id: container.id,
+    tenant_id: container.tenant_id,
+    status: container.status,
+    custom_notes: container.custom_notes,
+    valid_until: container.valid_until,
+    cruise_line: option?.cruise_line ?? null,
+    ship_name: option?.ship_name ?? null,
+    sailing_date: option?.sailing_date ?? null,
+    duration_nights: option?.duration_nights ?? null,
+    cabin_category: option?.cabin_category ?? null,
+    passenger_count: option?.passenger_count ?? null,
+    commissionable_fare_cents: option?.commissionable_fare_cents ?? null,
+    non_commissionable_total_cents: option?.non_commissionable_total_cents ?? null,
+    total_amount_cents: option?.total_amount_cents ?? null,
+    currency: option?.currency ?? null,
+  };
 
   const system = buildCopilotSystemPrompt(quote);
   const messages = [
