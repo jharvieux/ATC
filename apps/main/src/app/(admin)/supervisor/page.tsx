@@ -206,6 +206,9 @@ function groupByCheckType(
   return counts;
 }
 
+const thCls = "text-left px-2 py-2 border-b border-border";
+const tdCls = "px-2 py-2 border-b border-muted";
+
 export default async function SupervisorDashboardPage(): Promise<React.ReactElement> {
   const [escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift] =
     await Promise.all([
@@ -219,19 +222,26 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
 
   const checkTypeCounts = groupByCheckType(flaggedMessages);
 
+  const driftColorClass =
+    drift.delta_pct === null
+      ? "text-muted-foreground"
+      : drift.delta_pct > 10
+        ? "text-red-600 dark:text-red-400"
+        : drift.delta_pct < -10
+          ? "text-emerald-600 dark:text-emerald-400"
+          : "text-muted-foreground";
+
   return (
-    <main style={{ padding: "2rem", fontFamily: "sans-serif", maxWidth: "1200px" }}>
+    <main className="px-8 py-8 max-w-[1200px]">
       <h1>AI Supervisor Dashboard</h1>
 
       {/* §10.5 — Kill-switch state */}
       <section
-        style={{
-          marginTop: "1rem",
-          padding: "0.75rem 1rem",
-          background: killSwitch?.global_paused ? "#fee2e2" : "#ecfdf5",
-          border: `1px solid ${killSwitch?.global_paused ? "#dc2626" : "#10b981"}`,
-          borderRadius: 6,
-        }}
+        className={`mt-4 px-4 py-3 rounded-md border ${
+          killSwitch?.global_paused
+            ? "bg-red-50 dark:bg-red-950/20 border-red-600"
+            : "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-500"
+        }`}
       >
         <strong>Global AI kill-switch:</strong>{" "}
         {killSwitch?.global_paused ? "PAUSED" : "active"}
@@ -246,39 +256,20 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
       </section>
 
       {/* §10.5 — Regen budget exhaustion + drift trend (top-line counters) */}
-      <section
-        style={{
-          marginTop: "1rem",
-          display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
-          gap: "1rem",
-        }}
-      >
-        <div style={{ padding: "0.75rem 1rem", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-          <div style={{ fontSize: 13, color: "#6b7280" }}>Regen budget exhausted (7d)</div>
-          <div style={{ fontSize: 28, fontWeight: 600 }}>{regenExhausted}</div>
-          <div style={{ fontSize: 12, color: "#6b7280" }}>
+      <section className="mt-4 grid grid-cols-2 gap-4">
+        <div className="px-4 py-3 border border-border rounded-md">
+          <div className="text-[13px] text-muted-foreground">Regen budget exhausted (7d)</div>
+          <div className="text-[28px] font-semibold">{regenExhausted}</div>
+          <div className="text-[12px] text-muted-foreground">
             messages that hit max_regen — supervisor stopped retrying
           </div>
         </div>
-        <div style={{ padding: "0.75rem 1rem", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-          <div style={{ fontSize: 13, color: "#6b7280" }}>Drift trend (flagged-message rate)</div>
-          <div style={{ fontSize: 28, fontWeight: 600 }}>
-            {drift.current_7d} <span style={{ fontSize: 14, color: "#6b7280" }}>(prev {drift.prior_7d})</span>
+        <div className="px-4 py-3 border border-border rounded-md">
+          <div className="text-[13px] text-muted-foreground">Drift trend (flagged-message rate)</div>
+          <div className="text-[28px] font-semibold">
+            {drift.current_7d} <span className="text-[14px] text-muted-foreground">(prev {drift.prior_7d})</span>
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              color:
-                drift.delta_pct === null
-                  ? "#6b7280"
-                  : drift.delta_pct > 10
-                    ? "#dc2626"
-                    : drift.delta_pct < -10
-                      ? "#10b981"
-                      : "#6b7280",
-            }}
-          >
+          <div className={`text-[12px] ${driftColorClass}`}>
             {drift.delta_pct === null
               ? "no prior-period baseline"
               : `${drift.delta_pct >= 0 ? "+" : ""}${drift.delta_pct.toFixed(0)}% vs prior 7d`}
@@ -294,31 +285,31 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
       </p>
 
       {/* Open escalations */}
-      <section style={{ marginTop: "2rem" }}>
+      <section className="mt-8">
         <h2>Open Topic Escalations ({escalations.length})</h2>
         {escalations.length === 0 ? (
           <p>No open escalations.</p>
         ) : (
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Summary</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Status</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Initiated by</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Opened</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Assigned</th>
+                <th className={thCls}>Summary</th>
+                <th className={thCls}>Status</th>
+                <th className={thCls}>Initiated by</th>
+                <th className={thCls}>Opened</th>
+                <th className={thCls}>Assigned</th>
               </tr>
             </thead>
             <tbody>
               {escalations.map((e) => (
                 <tr key={e.id}>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{e.topic_summary}</td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{e.status}</td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{e.initiated_by ?? "—"}</td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
+                  <td className={tdCls}>{e.topic_summary}</td>
+                  <td className={tdCls}>{e.status}</td>
+                  <td className={tdCls}>{e.initiated_by ?? "—"}</td>
+                  <td className={tdCls}>
                     {new Date(e.opened_at).toLocaleString()}
                   </td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
+                  <td className={tdCls}>
                     {e.assigned_agent_id ? e.assigned_agent_id : "Unassigned"}
                   </td>
                 </tr>
@@ -329,16 +320,16 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
       </section>
 
       {/* Flagged messages by check type — last 7 days */}
-      <section style={{ marginTop: "2rem" }}>
+      <section className="mt-8">
         <h2>Recent Flagged Messages by Check Type (last 7 days)</h2>
         {Object.keys(checkTypeCounts).length === 0 ? (
           <p>No flagged messages in the last 7 days.</p>
         ) : (
-          <table style={{ borderCollapse: "collapse" }}>
+          <table className="border-collapse text-sm">
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Check</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Count</th>
+                <th className={thCls}>Check</th>
+                <th className={thCls}>Count</th>
               </tr>
             </thead>
             <tbody>
@@ -346,8 +337,8 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
                 .sort(([, a], [, b]) => b - a)
                 .map(([check, count]) => (
                   <tr key={check}>
-                    <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{check}</td>
-                    <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{count}</td>
+                    <td className={tdCls}>{check}</td>
+                    <td className={tdCls}>{count}</td>
                   </tr>
                 ))}
             </tbody>
@@ -356,31 +347,31 @@ export default async function SupervisorDashboardPage(): Promise<React.ReactElem
       </section>
 
       {/* Per-persona metrics */}
-      <section style={{ marginTop: "2rem" }}>
+      <section className="mt-8">
         <h2>Per-Persona Metrics</h2>
         {personaMetrics.length === 0 ? (
           <p>No messages yet.</p>
         ) : (
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Persona</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Responses</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Total Regens</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Thumbs Down</th>
-                <th style={{ textAlign: "left", padding: "0.5rem", borderBottom: "1px solid #ccc" }}>Regen Rate</th>
+                <th className={thCls}>Persona</th>
+                <th className={thCls}>Responses</th>
+                <th className={thCls}>Total Regens</th>
+                <th className={thCls}>Thumbs Down</th>
+                <th className={thCls}>Regen Rate</th>
               </tr>
             </thead>
             <tbody>
               {personaMetrics.map((m) => (
                 <tr key={m.persona_id ?? "none"}>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
+                  <td className={tdCls}>
                     {m.persona_id ?? "(none)"}
                   </td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{m.response_count}</td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{m.regen_count}</td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>{m.thumbs_down_count}</td>
-                  <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
+                  <td className={tdCls}>{m.response_count}</td>
+                  <td className={tdCls}>{m.regen_count}</td>
+                  <td className={tdCls}>{m.thumbs_down_count}</td>
+                  <td className={tdCls}>
                     {m.response_count > 0
                       ? `${((m.regen_count / m.response_count) * 100).toFixed(1)}%`
                       : "—"}

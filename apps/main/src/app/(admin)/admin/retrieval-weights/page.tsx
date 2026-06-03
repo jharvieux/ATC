@@ -90,35 +90,35 @@ export default function AdminRetrievalWeightsPage(): JSX.Element {
     setDraft({ match: "1", authority: "1", recency: "1", feedback: "1" });
   }
 
-  if (loading) return <main style={{ padding: 24 }}>Loading…</main>;
+  if (loading) return <main className="px-6 py-6">Loading…</main>;
 
   return (
-    <main style={{ padding: 24, maxWidth: 720 }}>
+    <main className="px-6 py-6 max-w-[720px]">
       <h1>Retrieval composite weights</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         Tunes how chunks are scored by the rag retrieval RPC. The composite is
-        <code style={{ marginLeft: 8, fontFamily: "monospace" }}>
+        <code className="ml-2">
           (match^w<sub>m</sub> × authority^w<sub>a</sub> × recency^w<sub>r</sub>) + w<sub>f</sub> × feedback
         </code>
         . Defaults (1.0 / 1.0 / 1.0 / 1.0) reproduce the pre-BP22 formula.
       </p>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {msg && <p style={{ color: "green" }}>{msg}</p>}
+      {error && <p className="text-red-600 dark:text-red-400">{error}</p>}
+      {msg && <p className="text-green-700 dark:text-green-400">{msg}</p>}
 
-      <table style={{ borderCollapse: "collapse", marginTop: 16 }}>
+      <table className="border-collapse mt-4">
         <thead>
           <tr>
-            <th style={{ textAlign: "left", padding: "6px 12px", borderBottom: "1px solid #ccc" }}>Knob</th>
-            <th style={{ textAlign: "left", padding: "6px 12px", borderBottom: "1px solid #ccc" }}>Value</th>
-            <th style={{ textAlign: "left", padding: "6px 12px", borderBottom: "1px solid #ccc" }}>What it does</th>
+            <th className="text-left px-3 py-1.5 border-b border-border">Knob</th>
+            <th className="text-left px-3 py-1.5 border-b border-border">Value</th>
+            <th className="text-left px-3 py-1.5 border-b border-border">What it does</th>
           </tr>
         </thead>
         <tbody>
           {WEIGHT_KEYS.map((w) => (
             <tr key={w}>
-              <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee", fontWeight: 600 }}>{w}</td>
-              <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee" }}>
+              <td className="px-3 py-1.5 border-b border-muted font-semibold">{w}</td>
+              <td className="px-3 py-1.5 border-b border-muted">
                 <input
                   type="number"
                   step="0.05"
@@ -127,20 +127,28 @@ export default function AdminRetrievalWeightsPage(): JSX.Element {
                   value={draft[w]}
                   onChange={(e) => setDraft({ ...draft, [w]: e.target.value })}
                   disabled={busy}
-                  style={{ width: 80, padding: 4 }}
+                  className="w-20 p-1 border border-border rounded text-sm"
                 />
               </td>
-              <td style={{ padding: "6px 12px", borderBottom: "1px solid #eee", color: "#666" }}>{HELP[w]}</td>
+              <td className="px-3 py-1.5 border-b border-muted text-muted-foreground">{HELP[w]}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
-        <button onClick={() => void save()} disabled={busy}>
+      <div className="mt-6 flex gap-3">
+        <button
+          onClick={() => void save()}
+          disabled={busy}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-semibold text-sm disabled:opacity-50"
+        >
           {busy ? "Saving…" : "Save"}
         </button>
-        <button onClick={resetDefaults} disabled={busy}>
+        <button
+          onClick={resetDefaults}
+          disabled={busy}
+          className="px-4 py-2 border border-border rounded-md text-sm disabled:opacity-50"
+        >
           Reset to defaults
         </button>
       </div>

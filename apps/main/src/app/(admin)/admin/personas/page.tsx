@@ -85,8 +85,7 @@ function draftToPatch(draft: Record<string, string>): Record<string, unknown> {
   return patch;
 }
 
-const inputStyle: React.CSSProperties = { width: "100%", padding: 6, fontFamily: "inherit", fontSize: 13 };
-const labelStyle: React.CSSProperties = { display: "block", fontWeight: 600, fontSize: 13, marginBottom: 4, marginTop: 14 };
+const inputCls = "w-full px-1.5 py-1.5 border border-border rounded text-[13px]";
 
 export default function AdminPersonasPage(): JSX.Element {
   const [personas, setPersonas] = useState<PersonaListItem[] | null>(null);
@@ -240,45 +239,49 @@ export default function AdminPersonasPage(): JSX.Element {
     }
   }
 
-  if (loading) return <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>Loading…</main>;
+  if (loading) return <main className="px-6 py-6">Loading…</main>;
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "32px 24px", maxWidth: 880, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>Personas</h1>
-      <p style={{ color: "#6b7280", fontSize: 14, marginBottom: 24 }}>
+    <main className="px-6 py-8 max-w-[880px] mx-auto">
+      <h1 className="text-2xl font-bold mb-1">Personas</h1>
+      <p className="text-muted-foreground text-[14px] mb-6">
         Edit the DB-backed persona definitions and the shared safety block. Changes take effect on the
         next chat turn (a 60-second cache may briefly serve the prior version).
       </p>
 
-      {error && <p style={{ color: "crimson", fontSize: 14 }}>{error}</p>}
-      {msg && <p style={{ color: "green", fontSize: 14 }}>{msg}</p>}
+      {error && <p className="text-red-600 dark:text-red-400 text-[14px]">{error}</p>}
+      {msg && <p className="text-green-700 dark:text-green-400 text-[14px]">{msg}</p>}
 
       {selected && detail ? (
         <section>
-          <button onClick={closeEditor} disabled={busy} style={{ marginBottom: 16 }}>
+          <button
+            onClick={closeEditor}
+            disabled={busy}
+            className="mb-4 px-3 py-1.5 border border-border rounded text-sm disabled:opacity-50"
+          >
             ← Back to list
           </button>
-          <h2 style={{ fontSize: 18, fontWeight: 700 }}>
-            {detail.slug} <span style={{ color: "#9ca3af", fontWeight: 400, fontSize: 13 }}>({detail.kind}, v{detail.version})</span>
+          <h2 className="text-[18px] font-bold">
+            {detail.slug} <span className="text-muted-foreground font-normal text-[13px]">({detail.kind}, v{detail.version})</span>
           </h2>
           {detail.kind === PLATFORM_HELP_KIND && (
-            <p style={{ color: "#b45309", fontSize: 13 }}>
+            <p className="text-amber-700 dark:text-amber-400 text-[13px]">
               This is the platform Help persona — only Display name and Prompt body shape its prompt; the
               other fields are not applied.
             </p>
           )}
 
           {FIELD_DEFS.map((f) => (
-            <label key={f.key} style={labelStyle}>
+            <label key={f.key} className="block font-semibold text-[13px] mt-3.5 mb-1 text-foreground">
               {f.label}
-              {f.required && <span style={{ color: "crimson" }}> *</span>}
+              {f.required && <span className="text-red-600 dark:text-red-400"> *</span>}
               {f.kind === "text" ? (
                 <input
                   type="text"
                   value={draft[f.key] ?? ""}
                   onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
                   disabled={busy}
-                  style={inputStyle}
+                  className={inputCls}
                 />
               ) : (
                 <textarea
@@ -286,28 +289,36 @@ export default function AdminPersonasPage(): JSX.Element {
                   onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
                   disabled={busy}
                   rows={f.kind === "lines" ? 5 : f.key === "prompt_body" ? 16 : 4}
-                  style={{ ...inputStyle, fontFamily: f.key === "prompt_body" ? "monospace" : "inherit" }}
+                  className={`${inputCls} ${f.key === "prompt_body" ? "font-mono" : ""}`}
                 />
               )}
             </label>
           ))}
 
-          <div style={{ marginTop: 20, display: "flex", gap: 12 }}>
-            <button onClick={() => void savePersona()} disabled={busy}>
+          <div className="mt-5 flex gap-3">
+            <button
+              onClick={() => void savePersona()}
+              disabled={busy}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-semibold disabled:opacity-50"
+            >
               {busy ? "Working…" : "Save"}
             </button>
-            <button onClick={() => void restorePersona()} disabled={busy}>
+            <button
+              onClick={() => void restorePersona()}
+              disabled={busy}
+              className="px-4 py-2 border border-border rounded text-sm disabled:opacity-50"
+            >
               Restore to default
             </button>
           </div>
         </section>
       ) : (
         <section>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
                 {["Name", "Slug", "Kind", "Active", "Order", "Ver", ""].map((h) => (
-                  <th key={h} style={{ textAlign: "left", padding: "6px 10px", borderBottom: "1px solid #ccc", fontSize: 12, color: "#6b7280" }}>
+                  <th key={h} className="text-left px-2.5 py-1.5 border-b border-border text-[12px] text-muted-foreground">
                     {h}
                   </th>
                 ))}
@@ -316,52 +327,68 @@ export default function AdminPersonasPage(): JSX.Element {
             <tbody>
               {(personas ?? []).map((p) => (
                 <tr key={p.slug}>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee", fontWeight: 600 }}>{p.display_name}</td>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee", fontFamily: "monospace", fontSize: 12 }}>{p.slug}</td>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee", fontSize: 12, color: "#6b7280" }}>{p.kind}</td>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee" }}>{p.is_active ? "yes" : "no"}</td>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee" }}>{p.sort_order}</td>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee" }}>{p.version}</td>
-                  <td style={{ padding: "6px 10px", borderBottom: "1px solid #eee" }}>
-                    <button onClick={() => void openEditor(p.slug)} disabled={busy}>Edit</button>
+                  <td className="px-2.5 py-1.5 border-b border-muted font-semibold">{p.display_name}</td>
+                  <td className="px-2.5 py-1.5 border-b border-muted font-mono text-[12px]">{p.slug}</td>
+                  <td className="px-2.5 py-1.5 border-b border-muted text-[12px] text-muted-foreground">{p.kind}</td>
+                  <td className="px-2.5 py-1.5 border-b border-muted">{p.is_active ? "yes" : "no"}</td>
+                  <td className="px-2.5 py-1.5 border-b border-muted">{p.sort_order}</td>
+                  <td className="px-2.5 py-1.5 border-b border-muted">{p.version}</td>
+                  <td className="px-2.5 py-1.5 border-b border-muted">
+                    <button
+                      onClick={() => void openEditor(p.slug)}
+                      disabled={busy}
+                      className="px-3 py-1 border border-border rounded text-[12px] disabled:opacity-50"
+                    >
+                      Edit
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
 
-          <h2 style={{ fontSize: 18, fontWeight: 700, marginTop: 40 }}>Safety block (Layer 2)</h2>
-          <p style={{ color: "#6b7280", fontSize: 13 }}>
+          <h2 className="text-[18px] font-bold mt-10">Safety block (Layer 2)</h2>
+          <p className="text-muted-foreground text-[13px]">
             Appended to every persona prompt. The legal kernel below is code-enforced and read-only; only the
             editable section beneath it can be changed.
           </p>
 
           {safety && (
             <>
-              <label style={labelStyle}>Legal kernel (read-only — code-enforced)</label>
+              <label className="block font-semibold text-[13px] mt-3.5 mb-1 text-foreground">
+                Legal kernel (read-only — code-enforced)
+              </label>
               <textarea
                 value={safety.legal_kernel}
                 readOnly
                 rows={12}
-                style={{ ...inputStyle, fontFamily: "monospace", background: "#f9fafb", color: "#374151" }}
+                className={`${inputCls} font-mono bg-muted text-foreground`}
               />
 
-              <label style={labelStyle}>
-                Editable safety block <span style={{ color: "#9ca3af", fontWeight: 400 }}>(v{safety.version})</span>
+              <label className="block font-semibold text-[13px] mt-3.5 mb-1 text-foreground">
+                Editable safety block <span className="text-muted-foreground font-normal">(v{safety.version})</span>
               </label>
               <textarea
                 value={safetyDraft}
                 onChange={(e) => setSafetyDraft(e.target.value)}
                 disabled={busy}
                 rows={14}
-                style={{ ...inputStyle, fontFamily: "monospace" }}
+                className={`${inputCls} font-mono`}
               />
 
-              <div style={{ marginTop: 16, display: "flex", gap: 12 }}>
-                <button onClick={() => void saveSafety()} disabled={busy}>
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={() => void saveSafety()}
+                  disabled={busy}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-semibold disabled:opacity-50"
+                >
                   {busy ? "Working…" : "Save safety block"}
                 </button>
-                <button onClick={() => void restoreSafety()} disabled={busy}>
+                <button
+                  onClick={() => void restoreSafety()}
+                  disabled={busy}
+                  className="px-4 py-2 border border-border rounded text-sm disabled:opacity-50"
+                >
                   Restore to default
                 </button>
               </div>
