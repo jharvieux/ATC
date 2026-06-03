@@ -39,3 +39,16 @@ updates:
       # peerDependencies.eslint admits ^10 (gated_by: eslint-plugin-react).
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
+      # react 19 removed ReactCurrentDispatcher from the internal API surface;
+      # dependencies that access React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED
+      # break at import time (#601, 2026-06-03). Also @types/react 19 drops the implicit
+      # children prop from React.FC (#602) — hold both until the ecosystem catches up.
+      # (gated_by: any library using React internals / React.FC children)
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
