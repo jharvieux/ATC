@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-144 — 2026-06-03 — Platform-domain signup assigns users to PLATFORM_DEFAULT_TENANT_ID tenant (PR #625)
+
+**Decision.** New customers signing up on ai-travelconcierge.com (the platform domain) were getting Supabase auth accounts but no `public.users` membership row, leaving them with no tenant context and a broken chat experience. Fixed by having the OAuth callback route use `process.env.PLATFORM_DEFAULT_TENANT_ID` as the target tenant for platform-domain signups when that env var is set. The "booking" tenant (`f5665f08-3ebb-40e0-ad6b-686f89364ad6`, status: onboarding — payment-exempt) was chosen as the default. `PLATFORM_DEFAULT_TENANT_ID` was added to Vercel production.
+
+**Why.** Platform-domain OAuth callbacks set `x-resolved-tenant-id: platform` (a sentinel, not a UUID), so the upsert block was previously skipped. Without a `users` row, the middleware's `getTenantByAuthUserId` (PR #624) returns null, the platform sentinel propagates, and all tenant-scoped routes 401.
+
+**What was rejected.** Automatically provisioning a new agency per signup — deferred in #441; too complex for this fix. Requiring customers to visit a subdomain URL — the platform domain is what marketing/email links target, so we can't gate there.
+
+**How to apply.** If `PLATFORM_DEFAULT_TENANT_ID` is unset, platform-domain signups skip the upsert (legacy behavior, #441). Add it to preview deployments too (`vercel env add PLATFORM_DEFAULT_TENANT_ID preview`).
+
+---
+
 ## D-143 — 2026-06-03 — UI redesign direction switched from "Warm travel brand" to POC clone (indigo + Geist + system-aware dark mode); Phase 1 theme foundation shipped (PR #615)
 
 **Decision.** User overrode the previously-locked "Warm travel brand" direction (`project_ui_redesign.md`) after pointing at the original POC https://ai-travel-concierge-tawny.vercel.app and saying "use that as a theme … support dark/light themes used in the browser." Shown three readings (1: literal POC clone; 2: POC structure + warm palette; 3: POC as starting reference), user picked **option 1 (literal clone)** plus browser-aware dark/light. Phase 1 (theme foundation only) shipped in PR #615 (squash-merged `6f6f1a1`); Phase 2 (migrating the ~120 inline-styled tsx files to use the new tokens) remains deferred and is NOT in scope yet.
