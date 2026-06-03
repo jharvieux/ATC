@@ -81,7 +81,6 @@ export default function EmailSamplesPage() {
     window.open(`/api/admin/email-samples?${params.toString()}`, "_blank");
   }
 
-  // allow-void-async: React onSubmit requires a void handler; errors are surfaced in component state
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!toEmail) return;
@@ -113,6 +112,7 @@ export default function EmailSamplesPage() {
         Renders any pre-cruise or group email template and optionally sends it via Resend. Uses AI Travel Concierge branding. Rate-limited to 50 sends/day.
       </p>
 
+      {/* allow-void-async: React onSubmit requires a void handler; errors are surfaced in component state */}
       <form onSubmit={(e) => void handleSend(e)}>
         <div className="mb-3.5">
           <label className={labelCls}>Template</label>
