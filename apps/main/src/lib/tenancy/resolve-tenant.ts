@@ -35,6 +35,7 @@ type CacheEntry = { tenant: Tenant | null; expiresAt: number };
 
 const slugCache = new Map<string, CacheEntry>();
 const domainCache = new Map<string, CacheEntry>();
+const userTenantCache = new Map<string, CacheEntry>();
 
 const TTL_MS = 60_000;
 
@@ -87,6 +88,43 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
 
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
   cacheSet(slugCache, slug, tenant);
+  return tenant;
+}
+
+/** Earliest-created active users row wins when a user belongs to multiple tenants. */
+export async function getTenantByAuthUserId(
+  authUserId: string,
+): Promise<Tenant | null> {
+  const cached = cacheGet(userTenantCache, authUserId);
+  if (cached !== undefined) return cached;
+
+  const db = createServiceRoleClient();
+  const { data: userRow, error: userError } = await db
+    .from("users")
+    .select("tenant_id")
+    .eq("auth_user_id", authUserId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (userError) throw new Error(`getTenantByAuthUserId users lookup: ${userError.message}`);
+
+  if (!userRow) {
+    cacheSet(userTenantCache, authUserId, null);
+    return null;
+  }
+
+  const { data, error } = await db
+    .from("tenants")
+    .select(TENANT_COLUMNS)
+    .eq("id", (userRow as { tenant_id: string }).tenant_id)
+    .maybeSingle();
+
+  if (error) throw new Error(`getTenantByAuthUserId: ${error.message}`);
+
+  const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
+  cacheSet(userTenantCache, authUserId, tenant);
   return tenant;
 }
 
