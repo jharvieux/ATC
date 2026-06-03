@@ -7,6 +7,13 @@
 // the list read-only.
 
 import { useEffect, useState } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Role = "tenant_owner" | "agent" | "viewer";
 
@@ -108,23 +115,16 @@ export default function TeamMembersPage(): JSX.Element {
   const showRoleSelectors = canEdit !== false;
 
   return (
-    <main style={{ padding: "2rem", fontFamily: "system-ui, sans-serif", maxWidth: 960 }}>
-      <h1 style={{ fontSize: 24, marginBottom: 8 }}>Team members</h1>
-      <p style={{ color: "#6b7280", marginBottom: 24 }}>
+    <main className="p-8 max-w-[960px]">
+      <h1 className="text-2xl font-semibold mb-2">Team members</h1>
+      <p className="text-muted-foreground mb-6">
         Manage the people in your account. Only owners can change roles.
       </p>
 
       {error && (
         <div
           role="alert"
-          style={{
-            background: "#fef2f2",
-            border: "1px solid #fecaca",
-            color: "#991b1b",
-            padding: "10px 14px",
-            borderRadius: 6,
-            marginBottom: 16,
-          }}
+          className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 px-3.5 py-2.5 rounded-md mb-4"
         >
           {error}
         </div>
@@ -132,30 +132,22 @@ export default function TeamMembersPage(): JSX.Element {
       {statusMsg && (
         <div
           role="status"
-          style={{
-            background: "#ecfdf5",
-            border: "1px solid #a7f3d0",
-            color: "#065f46",
-            padding: "10px 14px",
-            borderRadius: 6,
-            marginBottom: 16,
-          }}
+          className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-300 px-3.5 py-2.5 rounded-md mb-4"
         >
           {statusMsg}
         </div>
       )}
 
-      {loading && <div style={{ color: "#6b7280" }}>Loading…</div>}
+      {loading && <div className="text-muted-foreground">Loading…</div>}
 
       {!loading && (
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead style={{ background: "#f9fafb", textAlign: "left" }}>
+        <div className="border border-border rounded-lg overflow-hidden">
+          <table className="w-full border-collapse">
+            <thead className="bg-muted text-left">
               <tr>
-                <th style={{ padding: "12px 16px", fontWeight: 600 }}>Name</th>
-                <th style={{ padding: "12px 16px", fontWeight: 600 }}>Email</th>
-                <th style={{ padding: "12px 16px", fontWeight: 600 }}>Role</th>
-                <th style={{ padding: "12px 16px", fontWeight: 600 }}>Last sign-in</th>
+                {["Name", "Email", "Role", "Last sign-in"].map((h) => (
+                  <th key={h} className="px-4 py-3 font-semibold text-sm">{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -165,34 +157,30 @@ export default function TeamMembersPage(): JSX.Element {
                   [m.first_name, m.last_name].filter(Boolean).join(" ") ??
                   m.email;
                 return (
-                  <tr key={m.id} style={{ borderTop: "1px solid #f3f4f6" }}>
-                    <td style={{ padding: "12px 16px" }}>{name}</td>
-                    <td style={{ padding: "12px 16px", color: "#6b7280" }}>{m.email}</td>
-                    <td style={{ padding: "12px 16px" }}>
+                  <tr key={m.id} className="border-t border-muted">
+                    <td className="px-4 py-3 text-sm">{name}</td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">{m.email}</td>
+                    <td className="px-4 py-3 text-sm">
                       {showRoleSelectors ? (
-                        <select
+                        <Select
                           value={m.role}
-                          onChange={(e) => void changeRole(m.id, e.target.value as Role)}
+                          onValueChange={(v) => void changeRole(m.id, v as Role)}
                           disabled={busyId === m.id}
-                          style={{
-                            padding: "6px 8px",
-                            borderRadius: 4,
-                            border: "1px solid #d1d5db",
-                          }}
-                          aria-label={`Role for ${name}`}
-                          title={ROLE_DESCRIPTIONS[m.role]}
                         >
-                          {ROLES.map((r) => (
-                            <option key={r} value={r}>
-                              {ROLE_LABELS[r]}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger className="h-8 w-[130px] text-xs" aria-label={`Role for ${name}`} title={ROLE_DESCRIPTIONS[m.role]}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ROLES.map((r) => (
+                              <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       ) : (
                         <span>{ROLE_LABELS[m.role]}</span>
                       )}
                     </td>
-                    <td style={{ padding: "12px 16px", color: "#6b7280" }}>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
                       {m.last_signed_in_at
                         ? new Date(m.last_signed_in_at).toLocaleString()
                         : "—"}
@@ -202,10 +190,7 @@ export default function TeamMembersPage(): JSX.Element {
               })}
               {members.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={4}
-                    style={{ padding: "24px 16px", textAlign: "center", color: "#9ca3af" }}
-                  >
+                  <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground text-sm">
                     No active members.
                   </td>
                 </tr>
@@ -215,11 +200,11 @@ export default function TeamMembersPage(): JSX.Element {
         </div>
       )}
 
-      <section style={{ marginTop: 24, fontSize: 13, color: "#6b7280" }}>
-        <h3 style={{ fontSize: 14, color: "#374151" }}>Role meanings</h3>
-        <ul style={{ paddingLeft: 20, marginTop: 8 }}>
+      <section className="mt-6 text-[13px] text-muted-foreground">
+        <h3 className="text-[14px] text-foreground font-semibold mb-2">Role meanings</h3>
+        <ul className="pl-5 mt-2 space-y-1">
           {ROLES.map((r) => (
-            <li key={r} style={{ marginBottom: 4 }}>
+            <li key={r}>
               <strong>{ROLE_LABELS[r]}:</strong> {ROLE_DESCRIPTIONS[r]}
             </li>
           ))}

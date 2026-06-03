@@ -3,6 +3,8 @@
 // §24.5 — Tenant supplemental hate-speech deny-list (Pro+ only).
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export default function TenantSafetyPage(): JSX.Element {
   const [terms, setTerms] = useState<string[]>([]);
@@ -69,47 +71,55 @@ export default function TenantSafetyPage(): JSX.Element {
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 720, margin: "0 auto" }}>
+    <main className="px-6 py-8 max-w-[720px] mx-auto">
       <h1>Safety — supplemental deny-list</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         Add terms to your tenant&rsquo;s supplemental list. These are blocked in
         addition to the platform&rsquo;s list — you can&rsquo;t remove terms
         the platform has blocked. Pro+ tier only.
       </p>
       {error && (
-        <div style={{ background: "#fee2e2", padding: 12, marginTop: 16, borderRadius: 6 }}>
+        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 px-3.5 py-2.5 rounded-md mt-4">
           {error}
         </div>
       )}
 
-      <section style={{ marginTop: 24 }}>
+      <section className="mt-6">
         <h2>Add term</h2>
-        <input
-          type="text"
-          value={newTerm}
-          onChange={(e) => setNewTerm(e.target.value)}
-          disabled={busy}
-          style={{ padding: 6, width: "60%" }}
-        />{" "}
-        <button type="button" onClick={add} disabled={busy || loading}>
-          Add
-        </button>
+        <div className="flex gap-2 mt-2">
+          <Input
+            type="text"
+            value={newTerm}
+            onChange={(e) => setNewTerm(e.target.value)}
+            disabled={busy}
+            className="max-w-[360px]"
+          />
+          <Button type="button" onClick={add} disabled={busy || loading}>
+            Add
+          </Button>
+        </div>
       </section>
 
-      <section style={{ marginTop: 24 }}>
+      <section className="mt-6">
         <h2>Your list ({terms.length})</h2>
         {loading ? (
           <p>Loading…</p>
         ) : terms.length === 0 ? (
-          <p style={{ color: "#777" }}>Empty.</p>
+          <p className="text-muted-foreground">Empty.</p>
         ) : (
-          <ul>
+          <ul className="mt-2 space-y-2">
             {terms.map((t) => (
-              <li key={t} style={{ marginBottom: 6 }}>
-                <span style={{ fontFamily: "monospace" }}>{t}</span>{" "}
-                <button type="button" onClick={() => remove(t)} disabled={busy}>
+              <li key={t} className="flex items-center gap-3">
+                <code className="font-mono text-sm">{t}</code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => remove(t)}
+                  disabled={busy}
+                  className="h-7 text-[13px] px-2.5"
+                >
                   Remove
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
