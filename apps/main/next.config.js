@@ -48,6 +48,8 @@ const csp = [
   "form-action 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
+  // https: wildcard kept (now enforcing): images are non-executable, so allowing
+  // any https host carries no XSS risk — avoids breaking remote avatars/og images.
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   `connect-src ${buildConnectSrc()}`,
