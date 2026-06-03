@@ -4,6 +4,44 @@ Newest entries on top.
 
 ---
 
+## D-142 — 2026-06-03 — Grant-drift CI gate shipped (#546 / PR #592): prod-baseline GRANT snapshot + fail-closed diff guards the #544 outage class
+
+**Decision.** Shipped the table-level GRANT drift guard (#546) that the #544 outage motivated — a table reaching prod without its `service_role` grant is now caught as drift instead of 500'ing live. PR #592 (Claude-authored, squash-merged `6c286ad`). Mirrors the existing RLS snapshot tooling: `scripts/grants-snapshot.ts` (SELECT-only DML-grant capture for anon/authenticated/service_role on every public base table, deterministic sorted output) + `scripts/grants-snapshot-diff.ts` + `grants:snapshot|check[:main|:rag]` package scripts + `db/grants-snapshot-{main,rag}.sql` baselines. A **blocking** `grants:check` step rides inside the already-required `rls-snapshot-diff` deploy job.
+
+**Three design decisions worth keeping.** (1) **Diffs against live PROD, not the test DB** (unlike the RLS check). RLS state is migration-defined + identical across envs; GRANTS are not — hosted/local test projects auto-grant `service_role` on every table via `ALTER DEFAULT PRIVILEGES` that prod (atc-main) was provisioned without, so a prod-baseline diff against a test DB would be permanent false drift. The grants steps override the job's TEST URLs with read-only PROD URLs at the step level. (2) **Fail-closed skip semantics**: a target whose prod-DB-secret env var is unset is skipped, and a skipped target BLOCKS on any non-Dependabot run (`decideOutcome` → `skip-fail`) — only `GRANTS_ALLOW_NO_TARGETS=true` (set solely for `dependabot[bot]`) permits no-targets, so a half-configured rollout (one of two secrets set) can't silently let a regression through. (3) Baselines generated from live prod lock in the post-#545 least-privilege grants, not the #544 hotfix's broad CRUD.
+
+**Merge prerequisite — satisfied.** The check needs two read-only prod DB connection strings as GH Actions secrets (`SUPABASE_PROD_DB_URL`, `SUPABASE_RAG_PROD_DB_URL`). Confirmed configured: the required `RLS Snapshot Diff` job went GREEN on #592's own non-Dependabot run (it would have gone fail-closed red if a secret were missing). So other open PRs won't block.
+
+**Getting it merged this session.** Two blockers, both process not code: (a) the branch was BEHIND dev (strict-mode) → `gh pr update-branch` (new head `7b4d31a`); (b) the required `pr-audit-section-check` was red because the audit marker comments (06-02) pre-dated the head by ~23h after two dev-merges — markers MUST post-date head. Re-ran both audit agents at `7b4d31a`; both clean (d091: 0 findings; pre-pr: 0 findings).
+
+**Two judgment calls.** (1) **Kept the deliberate grants↔rls parallel structure** rather than extracting a shared snapshot/diff harness — pre-pr-reviewer's independent verdict was that a shared module would have to reconcile grants' stricter skip semantics (`decideOutcome`) with RLS's, making both worse than two clear files. (2) **Merged with the non-required SonarCloud "13.0% Duplication on New Code (≤3%)" gate red** — that duplication IS the deliberate rls-mirroring; deferred to #68, consistent with D-140's SonarCloud disposition.
+
+**Correction.** #592 is Claude-authored (pushed under the user's git identity), NOT the user's own PR — earlier session state had it mislabeled "hands-off."
+
+**Artifacts.** PR #592 (squash-merged `6c286ad`), issue #546. Files: `scripts/grants-snapshot.ts`, `scripts/grants-snapshot-diff.ts`, `db/grants-snapshot-{main,rag}.sql`, `tests/unit/scripts/grants-snapshot-diff.test.ts`, `.github/workflows/deploy.yml`, `package.json`. SonarCloud new-code-duplication finding folds into #68.
+
+---
+
+## D-141 — 2026-06-03 — DIY local SonarCloud-class gate: curated eslint-plugin-sonarjs (9 bug rules) + jscpd duplication gate, instead of a paid subscription
+
+**Decision.** The user wanted SonarCloud-class maintainability/bug catching pre-push WITHOUT a paid SonarQube/SonarCloud seat. Shown the options, the user chose **"path B"** — wire `eslint-plugin-sonarjs` + `jscpd` into `pnpm lint`/`pnpm verify` + CI, **"tuned so it doesn't drown us in warnings."** Standing call: enable the genuine-bug rules + fix the existing ~25 violations now, defer the noisy/style rules. Shipped PR #612 (squash `2e6719e`), merged on green CI.
+
+**Why curated, not the recommended set.** Our lint runs `eslint . --max-warnings=0`, so a `warn` fails the build identically to an `error` — there is no "advisory" tier. The recommended ~269-rule sonarjs config measured **346 findings**, almost all style/cognitive-complexity rules that fight existing conventions. So `packages/config/sonarjs.js` enables **only 9 fix-to-green bug-class rules**: no-dead-store, no-redundant-assignments, no-duplicated-branches, no-identical-functions, no-redundant-jump, prefer-single-boolean-return, no-unenclosed-multiline-block, duplicates-in-character-class, single-character-alternation. Authored ONCE (CJS, matching the other `packages/config` shared configs), consumed by both app flat configs via `...sonarjsConfig`. Glob `src/**/*.{ts,tsx,js,jsx}` deliberately matches the app's own `atc/*` rule block (`apps/main/eslint.config.mjs:55`) — NOT the config package's self-lint glob — so it skips the app-root config + `scripts/` the app already ignores.
+
+**jscpd duplication gate.** `.jscpd.json` scoped to `apps/*/src` production code (tests/mocks/d.ts excluded), `minTokens: 50`, console reporter, **`threshold: 5`**. Current baseline **4.7% duplicated lines** (411 clones / 888 files), deterministic under the fixed config — so the gate only trips on NET-NEW duplication, honoring "don't drown us." Empirically calibrated: threshold 4 → fail, 5 → pass at 4.7%. Wired into `pnpm verify` (`check:duplication`) + a mirrored CI step.
+
+**Fixed 27 pre-existing violations**, all strictly behavior-preserving (control-flow analysis + green typecheck / 2703 tests). The one structural change: extracted the byte-identical cookie-flush closure in `ssr-client.ts` into a shared `flushCapturedCookies` helper (required to clear `no-identical-functions`; existing test covers it). Confirmed NOT latent bugs: the `hold_period_days` dead-store removal in the booking submit route (hold-release is computed in `commission-split-on-received`, which re-fetches at received-time), and the chat-route `resolvedAnonSessionId` (read via `args.*`).
+
+**Audit.** d091-reviewer: 0 findings — confirmed the forums-route permission gate, booking-submit mutations, ssr-client auth/session behavior, apify quota gate, and bug-intent default-true (a feature opt-in, not a fail-open security gate) were all unchanged. pre-pr-reviewer: 0 must-fix; 1 NIT on the `files` glob — reviewed and **dismissed** (it compared against the wrong neighbor; the glob correctly mirrors the app's own rule block, and broadening it would re-introduce noise).
+
+**Deferred.** The ~36 `S5852` slow-regex (ReDoS) hotspots sonarjs/SonarCloud flag are NOT in this 9-rule set (noisy + a security-review judgement, not a mechanical fix) — routed to **#68** (SonarCloud dev-triage) as a focused review.
+
+**Rejected.** (a) Paid SonarQube/SonarCloud subscription — this DIY gate is the substitute. (b) The recommended ~269-rule sonarjs set — 346 findings under `--max-warnings=0`, mostly style fighting our conventions. (c) Broadening the sonarjs `files` glob to `**/*.ts` to match the config package's self-lint — would apply the rules to ignored app-root config + scripts.
+
+**Artifacts.** PR #612 (merged `2e6719e`). New: `packages/config/sonarjs.js`, `.jscpd.json`; edited both `eslint.config.mjs`, `package.json` (`check:duplication` + verify), `.github/workflows/ci.yml`. Dev-deps `eslint-plugin-sonarjs` + `jscpd` (user-approved).
+
+---
+
 ## D-140 — 2026-06-03 — Dropped-column reader CI gate + expand-migrate-contract rule (the #137 process fix); the gate immediately caught a 10th, customer-facing §38 reader the #608 switchover missed
 
 **Decision.** After the §38 read-switchover (#608 / D-139), the user asked for a mechanical guard so a destructive migration can't ship while app code still reads a dropped column. Shown the options, the user chose **"Rule + CI gate"** and **rejected** the larger full type-safety refactor (generating typed column constants from the schema). Shipped in PR #610 (squash `bdbf73a`), merged on the user's explicit go-ahead.
