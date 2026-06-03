@@ -209,6 +209,35 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         run: pnpm rls:check || echo "::warning::RLS drift detected on dev — run pnpm rls:snapshot and commit db/rls-snapshot-{main,rag}.sql"
 
+      # Grant-drift (#546). The RLS snapshot above captures rowsecurity + policies
+      # but NOT table GRANTs, so a table shipped without its service_role grant
+      # (the #544 prod outage) produced no diff. These steps diff live GRANTs
+      # against the committed baseline. They MUST compare against the serving
+      # (prod) DB: standard test projects auto-grant service_role via default
+      # privileges that prod was provisioned without (see scripts/local-pg-grants.sql),
+      # so a prod-baseline diff against a test DB would be permanent false drift.
+      # The step-level env therefore overrides the job's TEST URLs with read-only
+      # PROD URLs. Requires SUPABASE_PROD_DB_URL / SUPABASE_RAG_PROD_DB_URL secrets.
+      - name: Check grants drift (fail on PR and release/*)
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
+          SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
+          # Dependabot runs don't receive secrets (empty URLs → no targets);
+          # allow that case to pass only for Dependabot, as with RLS above.
+          GRANTS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
+        run: pnpm grants:check
+
+      - name: Check grants drift (warn on dev push)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
+          SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
+          # Warn-only step: if the prod secrets aren't set yet, skip quietly
+          # rather than mislabel "no targets" as drift in the warning below.
+          GRANTS_ALLOW_NO_TARGETS: "true"
+        run: pnpm grants:check || echo "::warning::Grants drift detected on dev — run pnpm grants:snapshot and commit db/grants-snapshot-{main,rag}.sql"
+
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest
