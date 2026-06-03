@@ -1,7 +1,7 @@
 // #562 regression guard — every server-component page that imports
 // createServiceRoleClient must be inside the (admin) route group (covered by
-// the AdminLayout assertPlatformAdmin gate) OR appear in the allowlist below
-// with an explicit justification.
+// the AdminLayout assertPlatformAdmin gate) OR appear in the allowlist in
+// `scripts/page-service-role-allowlist.mjs` with an explicit justification.
 //
 // This is the static Phase-1 implementation of the unauthenticated page-route
 // probe described in issue #562. It would have blocked the #559 supervisor
@@ -59,7 +59,7 @@ if (offenders.length > 0) {
       `outside the (admin) route group without an allowlist entry:\n` +
       offenders.map((f) => `   ${f}`).join("\n") +
       `\n\nEither move the page into (admin)/ (and let AdminLayout gate it) ` +
-      `or add an entry to the ALLOWLIST in scripts/check-page-service-role.mjs ` +
+      `or add an entry to the ALLOWLIST in scripts/page-service-role-allowlist.mjs ` +
       `with an explicit justification for why the page is safe without an admin credential.\n`,
   );
   process.exit(1);

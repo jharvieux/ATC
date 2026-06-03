@@ -60,7 +60,7 @@ describe("Page service-role guard (#562)", () => {
   it("allowlisted token-gated pages call notFound() for invalid tokens", () => {
     // Token pages must fail-closed: if the token doesn't resolve a row,
     // notFound() must be called so the page returns 404, not 200 with empty state.
-    for (const rel of ["companion/[token]/page.tsx", "i/[token]/page.tsx", "q/[token]/page.tsx"]) {
+    for (const rel of [...ALLOWLIST].filter((r) => r.includes("[token]"))) {
       const src = readFileSync(join(APP_ROOT, rel), "utf8");
       expect(src, `${rel} must call notFound()`).toMatch(/\bnotFound\(\)/);
     }
