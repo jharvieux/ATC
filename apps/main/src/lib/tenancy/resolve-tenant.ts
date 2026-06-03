@@ -90,6 +90,49 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
   return tenant;
 }
 
+const userTenantCache = new Map<string, CacheEntry>();
+
+/**
+ * Resolves an authenticated user's primary tenant.
+ * Used by middleware to let platform-domain users access tenant-scoped
+ * paths (e.g. /chat) without being blocked by the "platform" sentinel.
+ * Takes the earliest-created active users row when a user belongs to
+ * multiple tenants.
+ */
+export async function getTenantByAuthUserId(
+  authUserId: string,
+): Promise<Tenant | null> {
+  const cached = cacheGet(userTenantCache, authUserId);
+  if (cached !== undefined) return cached;
+
+  const db = createServiceRoleClient();
+  const { data: userRow } = await db
+    .from("users")
+    .select("tenant_id")
+    .eq("auth_user_id", authUserId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!userRow) {
+    cacheSet(userTenantCache, authUserId, null);
+    return null;
+  }
+
+  const { data, error } = await db
+    .from("tenants")
+    .select(TENANT_COLUMNS)
+    .eq("id", (userRow as { tenant_id: string }).tenant_id)
+    .maybeSingle();
+
+  if (error) throw new Error(`getTenantByAuthUserId: ${error.message}`);
+
+  const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
+  cacheSet(userTenantCache, authUserId, tenant);
+  return tenant;
+}
+
 /**
  * Resolves a bare hostname (custom domain) to a tenant.
  * Returns null for unknown domains or terminated tenants.

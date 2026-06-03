@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getTenantBySlug,
   getTenantByCustomDomain,
+  getTenantByAuthUserId,
   type Tenant,
 } from "@/lib/tenancy/resolve-tenant";
 import { derivePaymentState } from "@/lib/billing/payment-state";
@@ -230,7 +231,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   //     and before tenant resolution so cloneAndScrubHeaders forwards the
   //     freshened Cookie header downstream.
   const { supabase, applyRefreshedSession } = createMiddlewareClient(req);
-  await supabase.auth.getUser();
+  const { data: { user: authUser } } = await supabase.auth.getUser();
 
   const host = req.headers.get("host") ?? "";
   // Strip port for local dev comparisons.
@@ -255,8 +256,36 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   }
 
   // 2. Platform admin domain — passes through with "platform" sentinel.
+  //
+  // Exception: for chat-adjacent paths (/chat, /api/chat/*, /api/memory),
+  // attempt to resolve the authenticated user's primary tenant so platform
+  // staff who are also tenant members can use the chat UI. Falls back to
+  // "platform" if the user is unauthenticated, has no tenant, or the DB
+  // lookup fails.
   if (hostname === primaryDomain) {
     const headers = cloneAndScrubHeaders(req);
+
+    const isChatPath =
+      pathname === "/chat" ||
+      pathname.startsWith("/chat/") ||
+      pathname.startsWith("/api/chat") ||
+      pathname.startsWith("/api/memory");
+
+    if (isChatPath && authUser) {
+      try {
+        const tenant = await getTenantByAuthUserId(authUser.id);
+        if (tenant) {
+          headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
+          headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+          const res = NextResponse.next({ request: { headers } });
+          applyAttributionCapture(res, req);
+          return applyRefreshedSession(applyPaymentGate(res, req, tenant));
+        }
+      } catch {
+        // DB error — fall through to "platform" sentinel.
+      }
+    }
+
     headers.set(RESOLVED_TENANT_ID_HEADER, "platform");
     headers.set(RESOLVED_TENANT_TYPE_HEADER, "platform");
     return applyRefreshedSession(NextResponse.next({ request: { headers } }));
