@@ -14,6 +14,8 @@
 //   4. On close, POST /api/help/sessions/[id]/close with outcome.
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface Props {
   sessionType: "help" | "bug" | "feature";
@@ -168,47 +170,36 @@ export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX
   }
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: "min(100vw, 480px)",
-        background: "white",
-        borderLeft: "1px solid #e5e7eb",
-        boxShadow: "-8px 0 24px rgba(0,0,0,0.08)",
-        display: "flex",
-        flexDirection: "column",
-        fontFamily: "system-ui, sans-serif",
-        zIndex: 50,
-      }}
-    >
-      <header style={{ padding: "0.75rem 1rem", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center" }}>
-        <strong style={{ flex: 1, fontSize: 14 }}>{FLOW_LABELS[sessionType]}</strong>
-        <button onClick={close} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#6b7280" }}>×</button>
+    <div className="fixed top-0 right-0 bottom-0 w-[min(100vw,480px)] bg-background border-l border-border shadow-[-8px_0_24px_rgba(0,0,0,0.08)] flex flex-col z-50">
+      <header className="py-3 px-4 border-b border-border flex items-center">
+        <strong className="flex-1 text-[14px]">{FLOW_LABELS[sessionType]}</strong>
+        <button
+          onClick={close}
+          className="bg-transparent border-none cursor-pointer text-[16px] text-muted-foreground hover:text-foreground"
+        >
+          ×
+        </button>
       </header>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "1rem", fontSize: 14 }}>
+      <div className="flex-1 overflow-y-auto p-4 text-[14px]">
         {messages.length === 0 && !error && (
-          <p style={{ color: "#6b7280" }}>
+          <p className="text-muted-foreground">
             {sessionType === "bug" && "I'll ask a few questions to capture the bug."}
             {sessionType === "feature" && "I'll ask a few questions about the feature you want."}
             {sessionType === "help" && "Ask me anything about the platform."}
           </p>
         )}
-        {error && <p style={{ color: "#b91c1c" }}>{error}</p>}
+        {error && <p className="text-red-700 dark:text-red-400">{error}</p>}
         {messages.map((m, i) => (
           <div
             key={i}
-            style={{
-              marginBottom: "0.75rem",
-              padding: "0.5rem 0.75rem",
-              borderRadius: 8,
-              background: m.role === "user" ? "#eef2ff" : m.role === "assistant" ? "#f9fafb" : "#fef3c7",
-              fontSize: 14,
-              whiteSpace: "pre-wrap",
-            }}
+            className={`mb-3 px-3 py-2 rounded-lg text-[14px] whitespace-pre-wrap ${
+              m.role === "user"
+                ? "bg-primary/10 dark:bg-primary/20"
+                : m.role === "assistant"
+                  ? "bg-muted"
+                  : "bg-amber-50 dark:bg-amber-900/30"
+            }`}
           >
             {m.content}
           </div>
@@ -216,26 +207,29 @@ export function HelpAIPanel({ sessionType, sourceSurface, onClose }: Props): JSX
         <div ref={bottomRef} />
       </div>
 
-      <footer style={{ padding: "0.75rem 1rem", borderTop: "1px solid #e5e7eb" }}>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <input
+      <footer className="py-3 px-4 border-t border-border">
+        <div className="flex gap-2">
+          <Input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(input); } }}
             disabled={sending || !sessionId}
             placeholder={sending ? "Sending…" : "Type your message…"}
-            style={{ flex: 1, padding: "0.5rem 0.75rem", border: "1px solid #d1d5db", borderRadius: 6 }}
+            className="flex-1"
           />
-          <button onClick={() => void send(input)} disabled={sending || !sessionId || !input.trim()} style={{ padding: "0.5rem 0.75rem", background: "#4f46e5", color: "white", border: "none", borderRadius: 6, cursor: "pointer" }}>
+          <Button
+            onClick={() => void send(input)}
+            disabled={sending || !sessionId || !input.trim()}
+          >
             Send
-          </button>
+          </Button>
         </div>
         {sessionType === "help" && (
           <button
             onClick={() => void escalate()}
             disabled={!sessionId}
-            style={{ marginTop: "0.5rem", fontSize: 13, color: "#6b7280", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
+            className="mt-2 text-[13px] text-muted-foreground bg-transparent border-none cursor-pointer underline"
           >
             Escalate to platform support
           </button>

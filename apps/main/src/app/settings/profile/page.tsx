@@ -5,6 +5,9 @@
 // re-authenticates with the OAuth provider that holds the new address.
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 type Profile = {
   email: string;
@@ -75,20 +78,20 @@ export default function ProfilePage(): JSX.Element {
     }
   }
 
-  if (!profile) return <main style={{ padding: 24 }}>Loading…</main>;
+  if (!profile) return <main className="p-6">Loading…</main>;
 
   return (
-    <main style={{ padding: 24, maxWidth: 680, margin: "0 auto" }}>
+    <main className="p-6 max-w-[680px] mx-auto">
       <h1>Profile</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         Names and display preferences. To change your email, sign in again with
         the account that holds the new address.
       </p>
 
-      {error && <div style={{ background: "#fee2e2", padding: 12, borderRadius: 6, marginTop: 12 }}>{error}</div>}
-      {msg && <div style={{ background: "#dcfce7", padding: 12, borderRadius: 6, marginTop: 12 }}>{msg}</div>}
+      {error && <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 p-3 rounded-md mt-3">{error}</div>}
+      {msg && <div className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 p-3 rounded-md mt-3">{msg}</div>}
 
-      <section style={{ marginTop: 16 }}>
+      <section className="mt-4">
         <Field label="Email" value={profile.email} readOnly />
         <Field
           label="Sign-in provider"
@@ -112,22 +115,13 @@ export default function ProfilePage(): JSX.Element {
           hint="What we'll call you in chat (defaults to your first name)."
         />
 
-        <button
+        <Button
           onClick={save}
           disabled={busy || !isDirty()}
-          style={{
-            marginTop: 16,
-            padding: "8px 14px",
-            fontSize: 14,
-            color: "white",
-            background: isDirty() && !busy ? "#2563eb" : "#9ca3af",
-            border: 0,
-            borderRadius: 4,
-            cursor: isDirty() && !busy ? "pointer" : "default",
-          }}
+          className="mt-4"
         >
           {busy ? "Saving…" : "Save changes"}
-        </button>
+        </Button>
       </section>
     </main>
   );
@@ -147,24 +141,16 @@ function Field({
   hint?: string;
 }): JSX.Element {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ display: "block", fontSize: 13, color: "#555", marginBottom: 4 }}>{label}</label>
-      <input
+    <div className="mb-3">
+      <Label className="text-[13px] text-muted-foreground mb-1">{label}</Label>
+      <Input
         type="text"
         value={value}
         onChange={onChange ? (e) => onChange(e.target.value) : undefined}
         readOnly={readOnly}
-        style={{
-          width: "100%",
-          padding: "8px 10px",
-          fontSize: 14,
-          border: "1px solid #d1d5db",
-          borderRadius: 4,
-          background: readOnly ? "#f3f4f6" : "white",
-          color: readOnly ? "#6b7280" : "#111827",
-        }}
+        className={readOnly ? "bg-muted text-muted-foreground" : ""}
       />
-      {hint && <p style={{ margin: "4px 0 0 0", fontSize: 12, color: "#6b7280" }}>{hint}</p>}
+      {hint && <p className="mt-1 text-[12px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }

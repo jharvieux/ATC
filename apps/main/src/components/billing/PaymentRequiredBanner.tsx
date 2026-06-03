@@ -19,7 +19,6 @@ export async function PaymentRequiredBanner(): Promise<JSX.Element | null> {
   if (!state) return null;
 
   const isPastGrace = state === "past_grace";
-  const background = isPastGrace ? "#7f1d1d" : "#ca8a04";
   const message = isPastGrace
     ? "Your account is past due. Update your billing to restore full access."
     : "Your latest payment failed. Update your billing within the grace period to avoid losing access to automated features.";
@@ -27,24 +26,10 @@ export async function PaymentRequiredBanner(): Promise<JSX.Element | null> {
   return (
     <div
       role="alert"
-      style={{
-        background,
-        color: "white",
-        padding: "10px 16px",
-        textAlign: "center",
-        fontSize: 14,
-        lineHeight: 1.4,
-      }}
+      className={`py-2.5 px-4 text-center text-[14px] leading-[1.4] text-white ${isPastGrace ? "bg-red-900" : "bg-yellow-600"}`}
     >
-      <span style={{ marginRight: 12 }}>{message}</span>
-      <a
-        href="/settings/billing"
-        style={{
-          color: "white",
-          textDecoration: "underline",
-          fontWeight: 600,
-        }}
-      >
+      <span className="mr-3">{message}</span>
+      <a href="/settings/billing" className="text-white underline font-semibold">
         Update billing →
       </a>
     </div>

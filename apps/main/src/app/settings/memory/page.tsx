@@ -12,6 +12,7 @@
 // continue to use the in-chat sidebar Memory tab (D-097) for granular edits.
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 type Memory = {
   preferences: unknown;
@@ -111,7 +112,7 @@ export default function MemoryPage(): JSX.Element {
     }
   }
 
-  if (memory === null) return <main style={{ padding: 24 }}>Loading…</main>;
+  if (memory === null) return <main className="p-6">Loading…</main>;
 
   const sections: SectionKey[] = [
     "preferences",
@@ -127,20 +128,20 @@ export default function MemoryPage(): JSX.Element {
   ];
 
   return (
-    <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
+    <main className="p-6 max-w-[760px] mx-auto">
       <h1>Memory</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         What the AI remembers about you across conversations. You can clear any
         section individually or delete everything. To stop the AI from learning
-        more, visit <a href="/settings/privacy">Privacy</a> and turn on
+        more, visit <a href="/settings/privacy" className="text-primary hover:underline">Privacy</a> and turn on
         &ldquo;Opt out of personalization memory.&rdquo;
       </p>
 
-      {error && <div style={{ background: "#fee2e2", padding: 12, borderRadius: 6, marginTop: 12 }}>{error}</div>}
-      {msg && <div style={{ background: "#dcfce7", padding: 12, borderRadius: 6, marginTop: 12 }}>{msg}</div>}
+      {error && <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 p-3 rounded-md mt-3">{error}</div>}
+      {msg && <div className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 p-3 rounded-md mt-3">{msg}</div>}
 
       {memory === "none" ? (
-        <section style={{ padding: 16, border: "1px solid #e5e7eb", borderRadius: 8, marginTop: 16, color: "#555" }}>
+        <section className="p-4 border border-border rounded-lg mt-4 text-muted-foreground">
           No memory stored yet. The AI will start building context as you chat.
         </section>
       ) : (
@@ -156,43 +157,23 @@ export default function MemoryPage(): JSX.Element {
             return (
               <section
                 key={key}
-                style={{
-                  padding: 16,
-                  border: "1px solid #e5e7eb",
-                  borderRadius: 8,
-                  marginTop: 12,
-                }}
+                className="p-4 border border-border rounded-lg mt-3"
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                <div className="flex justify-between items-baseline gap-3">
                   <strong>{SECTION_LABELS[key]}</strong>
                   {!isEmpty && (
-                    <button
+                    <Button
+                      variant="outline"
                       onClick={() => clearSection(key)}
                       disabled={busy !== null}
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: 13,
-                        border: "1px solid #d1d5db",
-                        borderRadius: 4,
-                        background: "white",
-                        cursor: "pointer",
-                      }}
+                      className="h-7 text-[13px] px-2.5"
                     >
                       {busy === key ? "Clearing…" : "Clear"}
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <pre
-                  style={{
-                    margin: "8px 0 0 0",
-                    padding: 8,
-                    background: "#f9fafb",
-                    borderRadius: 4,
-                    fontSize: 13,
-                    color: isEmpty ? "#9ca3af" : "#111827",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
+                  className={`mt-2 mb-0 p-2 bg-muted rounded text-[13px] whitespace-pre-wrap break-words ${isEmpty ? "text-muted-foreground" : "text-foreground"}`}
                 >
                   {isEmpty ? "(empty)" : JSON.stringify(value, null, 2)}
                 </pre>
@@ -200,31 +181,24 @@ export default function MemoryPage(): JSX.Element {
             );
           })}
 
-          <hr style={{ margin: "24px 0", border: 0, borderTop: "1px solid #e5e7eb" }} />
+          <hr className="my-6 border-0 border-t border-border" />
 
-          <section style={{ padding: 16, border: "1px solid #fca5a5", background: "#fef2f2", borderRadius: 8 }}>
+          <section className="p-4 border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 rounded-lg">
             <strong>Delete all memory</strong>
-            <p style={{ color: "#555", fontSize: 14, margin: "4px 0 12px 0" }}>
+            <p className="text-muted-foreground text-[14px] mt-1 mb-3">
               Removes every stored fact. The conversation row itself is kept for
               tenant operational records, but its memory contents will be empty.
               You can keep using the AI; it just won&rsquo;t remember anything
               from prior conversations.
             </p>
-            <button
+            <Button
+              variant="default"
               onClick={clearAll}
               disabled={busy !== null}
-              style={{
-                padding: "8px 14px",
-                fontSize: 14,
-                color: "white",
-                background: "#dc2626",
-                border: 0,
-                borderRadius: 4,
-                cursor: "pointer",
-              }}
+              className="bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600"
             >
               {busy === "all" ? "Deleting…" : "Delete all memory"}
-            </button>
+            </Button>
           </section>
         </>
       )}

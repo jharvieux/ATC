@@ -83,31 +83,32 @@ export default function PrivacyPage(): JSX.Element {
     }
   }
 
-  if (!prefs) return <main style={{ padding: 24 }}>Loading…</main>;
+  if (!prefs) return <main className="p-6">Loading…</main>;
 
   return (
-    <main style={{ padding: 24, maxWidth: 680, margin: "0 auto" }}>
+    <main className="p-6 max-w-[680px] mx-auto">
       <h1>Privacy</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         Control marketing, personalization, and analytics. Cookie preferences
         are managed separately on the{" "}
-        <a href="/settings/privacy/cookies">Cookies</a> page.
+        <a href="/settings/privacy/cookies" className="text-primary hover:underline">Cookies</a> page.
       </p>
-      {error && <div style={{ background: "#fee2e2", padding: 12, borderRadius: 6 }}>{error}</div>}
-      {msg && <div style={{ background: "#dcfce7", padding: 12, borderRadius: 6 }}>{msg}</div>}
+      {error && <div className="bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 p-3 rounded-md">{error}</div>}
+      {msg && <div className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 p-3 rounded-md">{msg}</div>}
 
       {(Object.keys(LABELS) as Array<keyof Prefs>).map((k) => (
-        <section key={k} style={{ padding: 16, border: "1px solid #e5e7eb", borderRadius: 8, marginTop: 12 }}>
-          <label style={{ display: "flex", gap: 12, alignItems: "flex-start", cursor: "pointer" }}>
+        <section key={k} className="p-4 border border-border rounded-lg mt-3">
+          <label className="flex gap-3 items-start cursor-pointer">
             <input
               type="checkbox"
               checked={prefs[k]}
               onChange={() => toggle(k)}
               disabled={busy}
+              className="mt-0.5"
             />
             <div>
               <strong>{LABELS[k].title}</strong>
-              <p style={{ margin: "4px 0 0 0", color: "#555", fontSize: 14 }}>{LABELS[k].body}</p>
+              <p className="mt-1 mb-0 text-muted-foreground text-[14px]">{LABELS[k].body}</p>
             </div>
           </label>
         </section>
