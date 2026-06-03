@@ -48,6 +48,17 @@ describe("POST /api/auth/microsoft-email-prompt", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects email > 254 chars with 400 — length cap guards against polynomial regex backtracking (S5852)", async () => {
+    // The email regex ^[^\s@]+@[^\s@]+\.[^\s@]+$ can exhibit O(n^2) backtracking
+    // on very long inputs. Bounding to RFC 5321 max (254) keeps worst case negligible.
+    process.env.RESEND_API_KEY = "re_test";
+    const longEmail = `${"a".repeat(250)}@x.com`; // 256 chars
+    const res = await POST(postReq(longEmail));
+    expect(res.status).toBe(400);
+    expect(OTP_STORE.size).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("when RESEND_API_KEY is unset: fails loud (503) — does NOT stash a guessable OTP", async () => {
     delete process.env.RESEND_API_KEY;
     const res = await POST(postReq("alice@example.com"));
