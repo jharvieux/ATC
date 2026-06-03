@@ -9,6 +9,10 @@
 
 import * as React from "react";
 import { GroupBroadcast } from "@/emails/GroupBroadcast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 const VALID_TABS = ["overview", "invitees", "edit", "preview-email", "forum"] as const;
 type Tab = (typeof VALID_TABS)[number];
@@ -24,7 +28,7 @@ export default async function CoordinateTabPage({
 
   if (!VALID_TABS.includes(tab as Tab)) {
     return (
-      <div style={{ color: "#dc2626" }}>
+      <div className="text-red-600">
         <p>Unknown tab: <strong>{tab}</strong>. Valid tabs: {VALID_TABS.join(", ")}.</p>
       </div>
     );
@@ -51,30 +55,30 @@ function TabContent({ groupId, tab }: { groupId: string; tab: Tab }): React.Reac
 function OverviewTab({ groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Overview</h2>
-      <p style={{ color: "#6b7280", marginBottom: 24 }}>Group ID: {groupId}</p>
+      <h2 className="text-[18px] font-bold mb-4">Overview</h2>
+      <p className="text-muted-foreground mb-6">Group ID: {groupId}</p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-        <StatCard label="Booked" value="—" color="#059669" />
-        <StatCard label="Interested" value="—" color="#d97706" />
-        <StatCard label="Not going" value="—" color="#6b7280" />
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard label="Booked" value="—" valueClass="text-emerald-600" />
+        <StatCard label="Interested" value="—" valueClass="text-amber-600" />
+        <StatCard label="Not going" value="—" valueClass="text-muted-foreground" />
       </div>
 
-      <div style={{ marginTop: 24, padding: 16, background: "#f9fafb", borderRadius: 8 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Quick actions</h3>
-        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="mt-6 p-4 bg-muted rounded-lg">
+        <h3 className="text-[14px] font-semibold mb-2">Quick actions</h3>
+        <ul className="list-none p-0 m-0 flex flex-col gap-2">
           <li>
-            <a href={`/groups/${groupId}/coordinate/invitees`} style={{ color: "#6366f1", textDecoration: "none", fontSize: 14 }}>
+            <a href={`/groups/${groupId}/coordinate/invitees`} className="text-primary no-underline text-[14px]">
               → Manage invitees
             </a>
           </li>
           <li>
-            <a href={`/groups/${groupId}/coordinate/preview-email`} style={{ color: "#6366f1", textDecoration: "none", fontSize: 14 }}>
+            <a href={`/groups/${groupId}/coordinate/preview-email`} className="text-primary no-underline text-[14px]">
               → Preview invitation email
             </a>
           </li>
           <li>
-            <a href={`/groups/${groupId}/coordinate/forum`} style={{ color: "#6366f1", textDecoration: "none", fontSize: 14 }}>
+            <a href={`/groups/${groupId}/coordinate/forum`} className="text-primary no-underline text-[14px]">
               → Open group forum
             </a>
           </li>
@@ -87,22 +91,22 @@ function OverviewTab({ groupId }: { groupId: string }): React.ReactElement {
 function InviteesTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Invitees</h2>
-      <p style={{ color: "#6b7280", marginBottom: 16, fontSize: 14 }}>
+      <h2 className="text-[18px] font-bold mb-4">Invitees</h2>
+      <p className="text-muted-foreground mb-4 text-[14px]">
         Invitee management — mute, remove, or view RSVP status for each invited traveler.
       </p>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+      <table className="w-full border-collapse text-[14px]">
         <thead>
-          <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-            <th style={{ textAlign: "left", padding: "8px 12px", color: "#374151", fontWeight: 600 }}>Name</th>
-            <th style={{ textAlign: "left", padding: "8px 12px", color: "#374151", fontWeight: 600 }}>Email</th>
-            <th style={{ textAlign: "left", padding: "8px 12px", color: "#374151", fontWeight: 600 }}>RSVP</th>
-            <th style={{ textAlign: "left", padding: "8px 12px", color: "#374151", fontWeight: 600 }}>Actions</th>
+          <tr className="border-b-2 border-border">
+            <th className="text-left px-3 py-2 text-foreground font-semibold">Name</th>
+            <th className="text-left px-3 py-2 text-foreground font-semibold">Email</th>
+            <th className="text-left px-3 py-2 text-foreground font-semibold">RSVP</th>
+            <th className="text-left px-3 py-2 text-foreground font-semibold">Actions</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td colSpan={4} style={{ padding: "16px 12px", color: "#6b7280", textAlign: "center" }}>
+            <td colSpan={4} className="px-3 py-4 text-muted-foreground text-center">
               {/* TODO(prompt-24): load invitees via /api/groups/:id/invitations */}
               Loading invitees…
             </td>
@@ -116,33 +120,28 @@ function InviteesTab({ groupId: _groupId }: { groupId: string }): React.ReactEle
 function EditTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Edit Group</h2>
-      <p style={{ color: "#6b7280", marginBottom: 24, fontSize: 14 }}>
+      <h2 className="text-[18px] font-bold mb-4">Edit Group</h2>
+      <p className="text-muted-foreground mb-6 text-[14px]">
         Edit group details. Fields are read-only after the group&apos;s sailing date has passed.
       </p>
 
       {/* §18.10 sailed read-only enforcement is checked at the API level in PATCH /api/groups/:id */}
-      <form style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <form className="flex flex-col gap-4">
         <FormField label="Cruise Line" name="cruise_line" />
         <FormField label="Ship Name" name="ship_name" />
         <FormField label="Sailing Date" name="sailing_date" type="date" />
         <FormField label="Departure Port" name="departure_port" />
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Coordinator Message</span>
-          <textarea
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="coordinator_message">Coordinator Message</Label>
+          <Textarea
+            id="coordinator_message"
             name="coordinator_message"
             rows={4}
-            style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14, resize: "vertical" }}
             placeholder="Optional message shown on the invitation page…"
           />
-        </label>
+        </div>
         <div>
-          <button
-            type="submit"
-            style={{ padding: "10px 20px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 14 }}
-          >
-            Save Changes
-          </button>
+          <Button type="submit">Save Changes</Button>
         </div>
       </form>
     </section>
@@ -152,8 +151,8 @@ function EditTab({ groupId: _groupId }: { groupId: string }): React.ReactElement
 function PreviewEmailTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Preview Invitation Email</h2>
-      <p style={{ color: "#6b7280", marginBottom: 24, fontSize: 14 }}>
+      <h2 className="text-[18px] font-bold mb-4">Preview Invitation Email</h2>
+      <p className="text-muted-foreground mb-6 text-[14px]">
         This is how the invitation email will appear to invitees.
       </p>
 
@@ -161,15 +160,7 @@ function PreviewEmailTab({ groupId: _groupId }: { groupId: string }): React.Reac
           so the structural layout matches what recipients will see. The
           live send fills in real branding + subject/message; here we
           show placeholder strings. */}
-      <div
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 8,
-          padding: 0,
-          background: "#fafafa",
-          overflow: "hidden",
-        }}
-      >
+      <div className="border border-border rounded-lg bg-muted overflow-hidden">
         <GroupBroadcast
           branding={{}}
           tenant_legal_name="[Your Agency]"
@@ -190,25 +181,25 @@ function PreviewEmailTab({ groupId: _groupId }: { groupId: string }): React.Reac
 function ForumTab({ groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Group Forum</h2>
-      <p style={{ color: "#6b7280", marginBottom: 16, fontSize: 14 }}>
+      <h2 className="text-[18px] font-bold mb-2">Group Forum</h2>
+      <p className="text-muted-foreground mb-4 text-[14px]">
         Coordinator view — all message statuses visible. Use the message actions to hide, unhide, or flag content.
       </p>
 
       {/* §19.7 coordinator privileges: all statuses visible with action buttons */}
       {/* TODO(prompt-24): embed live forum component with coordinator=true prop */}
-      <div style={{ padding: 24, background: "#f9fafb", borderRadius: 8, textAlign: "center", color: "#9ca3af" }}>
+      <div className="p-6 bg-muted rounded-lg text-center text-muted-foreground">
         Forum view for group <strong>{groupId}</strong> — forum component loads here (prompt-24).
       </div>
     </section>
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: string | number; color: string }): React.ReactElement {
+function StatCard({ label, value, valueClass }: { label: string; value: string | number; valueClass?: string }): React.ReactElement {
   return (
-    <div style={{ background: "#f9fafb", borderRadius: 8, padding: 16, textAlign: "center" }}>
-      <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
-      <div style={{ fontSize: 13, color: "#6b7280" }}>{label}</div>
+    <div className="bg-muted rounded-lg p-4 text-center">
+      <div className={`text-[28px] font-bold ${valueClass ?? ""}`}>{value}</div>
+      <div className="text-[13px] text-muted-foreground">{label}</div>
     </div>
   );
 }
@@ -223,13 +214,9 @@ function FormField({
   type?: string;
 }): React.ReactElement {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>{label}</span>
-      <input
-        type={type}
-        name={name}
-        style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
-      />
-    </label>
+    <div className="flex flex-col gap-1">
+      <Label htmlFor={name}>{label}</Label>
+      <Input id={name} type={type} name={name} />
+    </div>
   );
 }

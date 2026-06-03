@@ -184,6 +184,7 @@ export default function ForAgenciesPage() {
         </div>
       </nav>
 
+      {/* Multi-stop radial+linear gradient — not expressible as static Tailwind */}
       <header id="top" className="relative overflow-hidden text-white" style={{ background: HERO_BG }}>
         <div className="mx-auto grid max-w-[1140px] items-center gap-12 px-6 py-20 md:grid-cols-2 md:py-24">
           <div>
@@ -497,6 +498,7 @@ export default function ForAgenciesPage() {
         </div>
       </section>
 
+      {/* Multi-stop linear gradient — not expressible as static Tailwind */}
       <section className="text-white" style={{ background: TRUST_BG }}>
         <div className="mx-auto max-w-[1140px] px-6 py-20 text-center">
           <Eyebrow light>AI you can put in front of clients</Eyebrow>
@@ -533,6 +535,7 @@ export default function ForAgenciesPage() {
         </div>
       </section>
 
+      {/* Radial+linear gradient combo — not expressible as static Tailwind */}
       <div className="mx-auto mb-20 max-w-[1140px] rounded-[26px] px-7 py-16 text-center text-white" style={{ background: FINAL_BG }}>
         <h2 className="text-[28px] font-bold md:text-[44px]">Start selling more cruises this week</h2>
         <p className="mx-auto mt-3.5 max-w-[560px] text-lg opacity-95">

@@ -14,6 +14,10 @@ import * as React from "react";
 import { useEffect, useState } from "react";
 import { TenantOfRecordDisclosure } from "@/components/booking/TenantOfRecordDisclosure";
 import { CustomerContextChatPanel } from "@/components/chat/CustomerContextChatPanel";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const STAGES = [
   { num: 1, label: "Trip Details" },
@@ -35,36 +39,25 @@ export default function BookingFlowPage({ params }: PageProps): React.ReactEleme
     void params.then(setResolvedParams);
   }, [params]);
 
-  if (!resolvedParams) return <div style={{ padding: 32 }}>Loading…</div>;
+  if (!resolvedParams) return <div className="p-8">Loading…</div>;
 
   const stageNum = parseInt(resolvedParams.stage, 10) as StageNum;
   const validStage = [1, 2, 3, 4].includes(stageNum);
 
   return (
     <NoAnonGuard bookingId={resolvedParams.id} returnStage={resolvedParams.stage}>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px", fontFamily: "system-ui, sans-serif", display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
-        {/* Main booking flow */}
+      <div className="max-w-[900px] mx-auto px-4 py-6 grid grid-cols-[1fr_340px] gap-6">
         <div>
           <StageProgress currentStage={validStage ? stageNum : 1} />
           {validStage ? (
             <StageContent bookingId={resolvedParams.id} stage={stageNum} />
           ) : (
-            <p style={{ color: "#dc2626" }}>Invalid stage: {resolvedParams.stage}. Valid stages: 1–4.</p>
+            <p className="text-red-600">Invalid stage: {resolvedParams.stage}. Valid stages: 1–4.</p>
           )}
         </div>
 
         {/* §20.4 — AI co-pilot panel, scoped to this booking. */}
-        <aside
-          style={{
-            background: "#f9fafb",
-            borderRadius: 10,
-            border: "1px solid #e5e7eb",
-            padding: 16,
-            height: "fit-content",
-            position: "sticky",
-            top: 24,
-          }}
-        >
+        <aside className="bg-muted border border-border rounded-xl p-4 h-fit sticky top-6">
           <CustomerContextChatPanel
             contextRef={{ type: "booking", id: resolvedParams.id }}
             title="AI Travel Assistant"
@@ -112,42 +105,33 @@ function NoAnonGuard({
     setChecked(true);
   }, [bookingId, returnStage]);
 
-  if (!checked) return <div style={{ padding: 32, color: "#6b7280" }}>Checking authentication…</div>;
+  if (!checked) return <div className="p-8 text-muted-foreground">Checking authentication…</div>;
 
   return <>{children}</>;
 }
 
 function StageProgress({ currentStage }: { currentStage: StageNum }): React.ReactElement {
   return (
-    <nav aria-label="Booking progress" style={{ display: "flex", gap: 0, marginBottom: 32 }}>
+    <nav aria-label="Booking progress" className="flex mb-8">
       {STAGES.map((s, idx) => {
         const done = s.num < currentStage;
         const active = s.num === currentStage;
         return (
-          <div key={s.num} style={{ display: "flex", alignItems: "center", flex: 1 }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <div key={s.num} className="flex items-center flex-1">
+            <div className="flex flex-col items-center gap-1">
               <div
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  background: done ? "#059669" : active ? "#6366f1" : "#e5e7eb",
-                  color: done || active ? "#fff" : "#6b7280",
-                }}
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] font-bold ${
+                  done ? "bg-emerald-600 text-white" : active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                }`}
               >
                 {done ? "✓" : s.num}
               </div>
-              <span style={{ fontSize: 11, color: active ? "#6366f1" : "#6b7280", fontWeight: active ? 600 : 400, whiteSpace: "nowrap" }}>
+              <span className={`text-[11px] whitespace-nowrap ${active ? "text-primary font-semibold" : "text-muted-foreground"}`}>
                 {s.label}
               </span>
             </div>
             {idx < STAGES.length - 1 && (
-              <div style={{ flex: 1, height: 2, background: done ? "#059669" : "#e5e7eb", margin: "0 4px", marginBottom: 20 }} />
+              <div className={`flex-1 h-0.5 mx-1 mb-5 ${done ? "bg-emerald-600" : "bg-border"}`} />
             )}
           </div>
         );
@@ -266,23 +250,23 @@ function Stage1TripDetails({ bookingId }: { bookingId: string }): React.ReactEle
   if (loading) {
     return (
       <section>
-        <p style={{ color: "#6b7280" }}>Loading your booking…</p>
+        <p className="text-muted-foreground">Loading your booking…</p>
       </section>
     );
   }
 
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Trip Details</h2>
-      <p style={{ color: "#6b7280", fontSize: 13, marginBottom: 20 }}>Booking ID: {bookingId}</p>
+      <h2 className="text-[18px] font-bold mb-5">Trip Details</h2>
+      <p className="text-muted-foreground text-[13px] mb-5">Booking ID: {bookingId}</p>
 
       {error && (
-        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+        <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[14px] mb-4">
           {error}
         </div>
       )}
 
-      <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4">
         <FormField label="Cruise Line" name="cruise_line" required value={values.cruise_line} onChange={(v) => update("cruise_line", v)} />
         <FormField label="Ship Name" name="ship_name" required value={values.ship_name} onChange={(v) => update("ship_name", v)} />
         <FormField label="Sailing Date" name="sailing_date" type="date" required value={values.sailing_date} onChange={(v) => update("sailing_date", v)} />
@@ -290,23 +274,10 @@ function Stage1TripDetails({ bookingId }: { bookingId: string }): React.ReactEle
         <FormField label="Duration (nights)" name="duration_nights" type="number" required value={values.duration_nights} onChange={(v) => update("duration_nights", v)} />
         <FormField label="Cabin Category" name="cabin_category" required value={values.cabin_category} onChange={(v) => update("cabin_category", v)} />
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-          <button
-            type="submit"
-            disabled={saving}
-            style={{
-              padding: "10px 24px",
-              background: saving ? "#9ca3af" : "#6366f1",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: saving ? "not-allowed" : "pointer",
-            }}
-          >
+        <div className="flex justify-end mt-3">
+          <Button type="submit" disabled={saving}>
             {saving ? "Saving…" : "Save & continue →"}
-          </button>
+          </Button>
         </div>
       </form>
     </section>
@@ -423,52 +394,54 @@ function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.Rea
     }
   }
 
-  if (loading) return <section><p style={{ color: "#6b7280" }}>Loading passengers…</p></section>;
+  if (loading) return <section><p className="text-muted-foreground">Loading passengers…</p></section>;
 
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Passenger Details</h2>
+      <h2 className="text-[18px] font-bold mb-5">Passenger Details</h2>
 
       {error && (
-        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+        <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[14px] mb-4">
           {error}
         </div>
       )}
 
       {passengers.map((p, idx) => (
-        <div key={idx} style={{ marginBottom: 24, padding: 20, border: "1px solid #e5e7eb", borderRadius: 8 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>
+        <div key={idx} className="mb-6 p-5 border border-border rounded-lg">
+          <h3 className="text-[14px] font-semibold mb-4">
             Passenger {idx + 1} {p.is_lead_passenger ? "(Lead)" : ""}
           </h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="flex flex-col gap-3">
             <FormField label="Legal First Name" name={`p${idx}_first`} required value={p.legal_first_name} onChange={(v) => updatePassenger(idx, "legal_first_name", v)} />
             <FormField label="Legal Last Name" name={`p${idx}_last`} required value={p.legal_last_name} onChange={(v) => updatePassenger(idx, "legal_last_name", v)} />
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
-                Date of Birth <span style={{ color: "#dc2626" }}>*</span>
-              </span>
-              <input
+            <div className="flex flex-col gap-1">
+              <Label htmlFor={`p${idx}_dob`}>
+                Date of Birth <span className="text-red-600">*</span>
+              </Label>
+              <Input
+                id={`p${idx}_dob`}
                 type="date"
                 required
                 value={p.date_of_birth}
                 onChange={(e) => updatePassenger(idx, "date_of_birth", e.target.value)}
-                style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
               />
-            </label>
+            </div>
 
             {/* §20.5 — Estimated DOB warning */}
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#374151" }}>
-              <input
-                type="checkbox"
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={`p${idx}_estimated`}
                 checked={p.date_of_birth_is_estimated}
-                onChange={(e) => updatePassenger(idx, "date_of_birth_is_estimated", e.target.checked)}
+                onCheckedChange={(checked) => updatePassenger(idx, "date_of_birth_is_estimated", !!checked)}
               />
-              Date of birth is approximate (I don&apos;t have the exact date)
-            </label>
+              <Label htmlFor={`p${idx}_estimated`} className="text-[13px] font-normal cursor-pointer">
+                Date of birth is approximate (I don&apos;t have the exact date)
+              </Label>
+            </div>
 
             {p.date_of_birth_is_estimated && (
-              <div style={{ padding: "10px 14px", background: "#fffbeb", border: "1px solid #fbbf24", borderRadius: 6, fontSize: 13, color: "#92400e" }}>
+              <div className="px-[14px] py-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700 rounded-md text-[13px] text-amber-800 dark:text-amber-400">
                 ⚠ Approximate DOB flagged. You must confirm the exact date before submitting the booking.
               </div>
             )}
@@ -478,38 +451,35 @@ function Stage2PassengerDetails({ bookingId }: { bookingId: string }): React.Rea
             <FormField label="Passport Country" name={`p${idx}_country`} value={p.passport_country} onChange={(v) => updatePassenger(idx, "passport_country", v)} />
 
             {idx > 0 && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                className="self-start border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/20"
                 onClick={() => setPassengers((prev) => prev.filter((_, i) => i !== idx))}
-                style={{ alignSelf: "flex-start", padding: "4px 12px", border: "1px solid #fca5a5", borderRadius: 6, background: "transparent", color: "#dc2626", cursor: "pointer", fontSize: 13 }}
               >
                 Remove passenger
-              </button>
+              </Button>
             )}
           </div>
         </div>
       ))}
 
-      <button
+      <Button
         type="button"
+        variant="outline"
+        className="mb-5 border-dashed border-primary text-primary"
         onClick={() => setPassengers((prev) => [...prev, emptyPassenger(false)])}
-        style={{ marginBottom: 20, padding: "8px 16px", border: "1px dashed #6366f1", borderRadius: 6, background: "transparent", color: "#6366f1", cursor: "pointer", fontSize: 13 }}
       >
         + Add another passenger
-      </button>
+      </Button>
 
-      <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
-        <a href={`/booking/flow/${bookingId}/1`} style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 14, color: "#374151", textDecoration: "none" }}>
-          ← Back
-        </a>
-        <button
-          type="button"
-          onClick={() => void handleAdvance()}
-          disabled={saving}
-          style={{ padding: "10px 24px", background: saving ? "#9ca3af" : "#6366f1", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", fontSize: 14 }}
-        >
+      <div className="flex gap-3 mt-2">
+        <Button type="button" variant="outline" asChild>
+          <a href={`/booking/flow/${bookingId}/1`}>← Back</a>
+        </Button>
+        <Button type="button" onClick={() => void handleAdvance()} disabled={saving}>
           {saving ? "Saving…" : "Save & continue →"}
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -576,19 +546,19 @@ function Stage3Options({ bookingId }: { bookingId: string }): React.ReactElement
     }
   }
 
-  if (loading) return <section><p style={{ color: "#6b7280" }}>Loading options…</p></section>;
+  if (loading) return <section><p className="text-muted-foreground">Loading options…</p></section>;
 
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Booking Options</h2>
+      <h2 className="text-[18px] font-bold mb-5">Booking Options</h2>
 
       {error && (
-        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+        <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[14px] mb-4">
           {error}
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div className="flex flex-col gap-3">
         {AVAILABLE_OPTIONS.map((opt) => (
           <OptionCard
             key={opt.kind}
@@ -612,18 +582,13 @@ function Stage3Options({ bookingId }: { bookingId: string }): React.ReactElement
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-        <a href={`/booking/flow/${bookingId}/2`} style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 14, color: "#374151", textDecoration: "none" }}>
-          ← Back
-        </a>
-        <button
-          type="button"
-          onClick={() => void handleAdvance()}
-          disabled={saving}
-          style={{ padding: "10px 24px", background: saving ? "#9ca3af" : "#6366f1", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer", fontSize: 14 }}
-        >
+      <div className="flex gap-3 mt-6">
+        <Button type="button" variant="outline" asChild>
+          <a href={`/booking/flow/${bookingId}/2`}>← Back</a>
+        </Button>
+        <Button type="button" onClick={() => void handleAdvance()} disabled={saving}>
           {saving ? "Saving…" : "Continue →"}
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -658,17 +623,16 @@ function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement 
 
   return (
     <section>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Review &amp; Submit</h2>
+      <h2 className="text-[18px] font-bold mb-5">Review &amp; Submit</h2>
 
-      {/* Booking summary placeholder */}
-      <div style={{ padding: 20, background: "#f9fafb", borderRadius: 8, marginBottom: 20 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Booking Summary</h3>
-        <p style={{ color: "#6b7280", fontSize: 13 }}>Booking ID: {bookingId}</p>
-        <p style={{ color: "#6b7280", fontSize: 13 }}>Review your trip details and passenger information before submitting.</p>
+      <div className="p-5 bg-muted rounded-lg mb-5">
+        <h3 className="text-[14px] font-semibold mb-3">Booking Summary</h3>
+        <p className="text-muted-foreground text-[13px]">Booking ID: {bookingId}</p>
+        <p className="text-muted-foreground text-[13px]">Review your trip details and passenger information before submitting.</p>
       </div>
 
       {/* §20.7 — Tenant-of-record disclosure (required on Review stage) */}
-      <div style={{ marginBottom: 20 }}>
+      <div className="mb-5">
         <TenantOfRecordDisclosure
           tenant={{ name: "Your Agency", support_email: "support@youragency.com" }}
           hostAgency={{ legal_name: "Host Agency" }}
@@ -676,35 +640,23 @@ function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement 
       </div>
 
       {error && (
-        <div style={{ padding: "12px 16px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 6, color: "#dc2626", fontSize: 14, marginBottom: 16 }}>
+        <div className="px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-300 dark:border-red-800 rounded-md text-red-700 dark:text-red-400 text-[14px] mb-4">
           {error}
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <a
-          href={`/booking/flow/${bookingId}/3`}
-          style={{ padding: "10px 20px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 14, color: "#374151", textDecoration: "none" }}
-        >
-          ← Back
-        </a>
-        <button
+      <div className="flex gap-3 items-center">
+        <Button type="button" variant="outline" asChild>
+          <a href={`/booking/flow/${bookingId}/3`}>← Back</a>
+        </Button>
+        <Button
           type="button"
           onClick={() => void handleSubmit()}
           disabled={submitting}
-          style={{
-            padding: "10px 24px",
-            background: submitting ? "#9ca3af" : "#6366f1",
-            color: "#fff",
-            border: "none",
-            borderRadius: 6,
-            fontWeight: 700,
-            cursor: submitting ? "not-allowed" : "pointer",
-            fontSize: 14,
-          }}
+          className="font-bold"
         >
           {submitting ? "Submitting…" : "Confirm & Submit Booking"}
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -713,27 +665,22 @@ function Stage4Review({ bookingId }: { bookingId: string }): React.ReactElement 
 function OptionCard({ name, label, description, price, checked, onChange }: { name: string; label: string; description: string; price: string; checked: boolean; onChange: (checked: boolean) => void }): React.ReactElement {
   return (
     <label
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 14,
-        padding: "16px 20px",
-        border: checked ? "2px solid #6366f1" : "1px solid #e5e7eb",
-        borderRadius: 8,
-        cursor: "pointer",
-        background: checked ? "#eef2ff" : "#fff",
-      }}
+      className={`flex items-start gap-3.5 px-5 py-4 rounded-lg cursor-pointer transition-colors ${
+        checked ? "border-2 border-primary bg-primary/5" : "border border-border bg-card"
+      }`}
     >
       <input
         type="checkbox"
         name={name}
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        style={{ marginTop: 2 }}
+        className="mt-0.5"
       />
       <div>
-        <div style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{label} — <span style={{ color: "#059669" }}>{price}</span></div>
-        <div style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>{description}</div>
+        <div className="font-semibold text-[14px] text-foreground">
+          {label} — <span className="text-emerald-600">{price}</span>
+        </div>
+        <div className="text-[13px] text-muted-foreground mt-1">{description}</div>
       </div>
     </label>
   );
@@ -755,18 +702,18 @@ function FormField({
   onChange: (v: string) => void;
 }): React.ReactElement {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>
-        {label} {required && <span style={{ color: "#dc2626" }}>*</span>}
-      </span>
-      <input
+    <div className="flex flex-col gap-1">
+      <Label htmlFor={name}>
+        {label} {required && <span className="text-red-600">*</span>}
+      </Label>
+      <Input
+        id={name}
         type={type}
         name={name}
         required={required}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14 }}
       />
-    </label>
+    </div>
   );
 }
