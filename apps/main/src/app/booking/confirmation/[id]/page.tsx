@@ -59,6 +59,24 @@ const STATUS_COPY: Record<string, { headline: string; body: string; tone: "good"
   },
 };
 
+const TONE_CLASSES = {
+  good: {
+    border: "border-2 border-emerald-600",
+    bg: "bg-emerald-50 dark:bg-emerald-950/20",
+    heading: "text-emerald-700 dark:text-emerald-400",
+  },
+  wait: {
+    border: "border-2 border-amber-500",
+    bg: "bg-amber-50 dark:bg-amber-950/20",
+    heading: "text-amber-700 dark:text-amber-400",
+  },
+  bad: {
+    border: "border-2 border-red-600",
+    bg: "bg-red-50 dark:bg-red-950/20",
+    heading: "text-red-700 dark:text-red-400",
+  },
+};
+
 function money(amount: string | null, currency: string | null): string {
   if (amount === null) return "—";
   return `${currency ?? "USD"} ${amount}`;
@@ -99,17 +117,17 @@ export default function BookingConfirmationPage({
 
   if (loading) {
     return (
-      <main style={{ maxWidth: 700, margin: "0 auto", padding: "48px 24px", fontFamily: "system-ui, sans-serif" }}>
-        <p style={{ color: "#6b7280" }}>Loading your booking…</p>
+      <main className="max-w-[700px] mx-auto px-6 py-12">
+        <p className="text-muted-foreground">Loading your booking…</p>
       </main>
     );
   }
 
   if (error || !booking) {
     return (
-      <main style={{ maxWidth: 700, margin: "0 auto", padding: "48px 24px", fontFamily: "system-ui, sans-serif" }}>
-        <h1 style={{ color: "#dc2626" }}>We couldn&apos;t find that booking</h1>
-        <p style={{ color: "#6b7280" }}>
+      <main className="max-w-[700px] mx-auto px-6 py-12">
+        <h1 className="text-red-600">We couldn&apos;t find that booking</h1>
+        <p className="text-muted-foreground">
           {error === "not_found"
             ? "Double-check the URL or contact your travel agent."
             : `Error: ${error ?? "unknown"}`}
@@ -123,58 +141,40 @@ export default function BookingConfirmationPage({
     body: `Status: ${booking.status.replace(/_/g, " ")}`,
     tone: "wait" as const,
   };
-  const accent =
-    copy.tone === "good" ? "#059669" : copy.tone === "wait" ? "#d97706" : "#dc2626";
-  const bg =
-    copy.tone === "good" ? "#ecfdf5" : copy.tone === "wait" ? "#fffbeb" : "#fef2f2";
+  const tc = TONE_CLASSES[copy.tone];
 
   return (
-    <main style={{ maxWidth: 700, margin: "0 auto", padding: "48px 24px", fontFamily: "system-ui, sans-serif" }}>
-      <div
-        style={{
-          background: bg,
-          border: `2px solid ${accent}`,
-          borderRadius: 10,
-          padding: 24,
-          marginBottom: 32,
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: 24, color: accent }}>{copy.headline}</h1>
-        <p style={{ margin: "12px 0 0", color: "#374151", lineHeight: 1.5 }}>{copy.body}</p>
+    <main className="max-w-[700px] mx-auto px-6 py-12">
+      <div className={`${tc.bg} ${tc.border} rounded-xl p-6 mb-8`}>
+        <h1 className={`m-0 text-[24px] ${tc.heading}`}>{copy.headline}</h1>
+        <p className="mt-3 mb-0 text-foreground leading-[1.5]">{copy.body}</p>
       </div>
 
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 700, color: "#1f4e79", marginBottom: 12 }}>
+      <section className="mb-8">
+        <h2 className="text-[16px] font-bold text-[#1f4e79] mb-3">
           Trip details
         </h2>
-        <dl
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            rowGap: 8,
-            fontSize: 14,
-          }}
-        >
-          <dt style={{ color: "#6b7280" }}>Cruise</dt>
-          <dd style={{ margin: 0 }}>
+        <dl className="grid grid-cols-[180px_1fr] gap-y-2 text-[14px]">
+          <dt className="text-muted-foreground">Cruise</dt>
+          <dd className="m-0">
             {booking.cruise_line ?? "—"} {booking.ship_name ?? ""}
           </dd>
-          <dt style={{ color: "#6b7280" }}>Sailing date</dt>
-          <dd style={{ margin: 0 }}>{booking.sailing_date ?? "—"}</dd>
-          <dt style={{ color: "#6b7280" }}>Duration</dt>
-          <dd style={{ margin: 0 }}>
+          <dt className="text-muted-foreground">Sailing date</dt>
+          <dd className="m-0">{booking.sailing_date ?? "—"}</dd>
+          <dt className="text-muted-foreground">Duration</dt>
+          <dd className="m-0">
             {booking.duration_nights ? `${booking.duration_nights} nights` : "—"}
           </dd>
-          <dt style={{ color: "#6b7280" }}>Cabin</dt>
-          <dd style={{ margin: 0 }}>{booking.cabin_category ?? "—"}</dd>
-          <dt style={{ color: "#6b7280" }}>Total</dt>
-          <dd style={{ margin: 0, fontWeight: 600 }}>
+          <dt className="text-muted-foreground">Cabin</dt>
+          <dd className="m-0">{booking.cabin_category ?? "—"}</dd>
+          <dt className="text-muted-foreground">Total</dt>
+          <dd className="m-0 font-semibold">
             {money(booking.total_amount, booking.currency)}
           </dd>
           {booking.host_booking_reference && (
             <>
-              <dt style={{ color: "#6b7280" }}>Booking reference</dt>
-              <dd style={{ margin: 0, fontFamily: "monospace", fontSize: 13 }}>
+              <dt className="text-muted-foreground">Booking reference</dt>
+              <dd className="m-0 font-mono text-[13px]">
                 {booking.host_booking_reference}
               </dd>
             </>
@@ -182,18 +182,11 @@ export default function BookingConfirmationPage({
         </dl>
       </section>
 
-      <section
-        style={{
-          borderTop: "1px solid #e5e7eb",
-          paddingTop: 20,
-          color: "#6b7280",
-          fontSize: 13,
-        }}
-      >
-        <p style={{ margin: 0 }}>
-          Booking ID: <span style={{ fontFamily: "monospace" }}>{booking.id}</span>
+      <section className="border-t border-border pt-5 text-muted-foreground text-[13px]">
+        <p className="m-0">
+          Booking ID: <span className="font-mono">{booking.id}</span>
         </p>
-        <p style={{ margin: "8px 0 0" }}>
+        <p className="mt-2 mb-0">
           Questions? Reply to your travel agent&apos;s most recent email — they have the
           full context.
         </p>

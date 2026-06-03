@@ -40,28 +40,27 @@ export default async function CompanionPage(props: PageProps) {
   const phaseLabel = PHASE_LABELS[phase] ?? phase;
 
   return (
-    <main style={{ maxWidth: 700, margin: "0 auto", padding: "32px 16px", fontFamily: "system-ui, sans-serif" }}>
-      <header style={{ borderBottom: "2px solid #3b82f6", paddingBottom: 16, marginBottom: 32 }}>
-        <h1 style={{ margin: 0, color: "#1f2937" }}>Your Voyage Guide — {phaseLabel}</h1>
+    <main className="max-w-[700px] mx-auto px-4 py-8">
+      <header className="border-b-2 border-blue-500 pb-4 mb-8">
+        <h1 className="m-0 text-foreground">Your Voyage Guide — {phaseLabel}</h1>
       </header>
-      {/* Render content sections generically from the JSONB blob */}
       {Object.entries(generated).map(([key, value]) => (
-        <section key={key} style={{ marginBottom: 32 }}>
-          <h2 style={{ color: "#374151", textTransform: "capitalize" }}>
+        <section key={key} className="mb-8">
+          <h2 className="text-foreground capitalize">
             {key.replace(/_/g, " ")}
           </h2>
           {Array.isArray(value) ? (
             <ul>
               {(value as string[]).map((item, i) => (
-                <li key={i} style={{ marginBottom: 6 }}>{item}</li>
+                <li key={i} className="mb-1.5">{item}</li>
               ))}
             </ul>
           ) : (
-            <p style={{ lineHeight: 1.7, color: "#4b5563" }}>{String(value)}</p>
+            <p className="leading-[1.7] text-muted-foreground">{String(value)}</p>
           )}
         </section>
       ))}
-      <footer style={{ borderTop: "1px solid #e5e7eb", paddingTop: 16, color: "#9ca3af", fontSize: 13 }}>
+      <footer className="border-t border-border pt-4 text-muted-foreground text-[13px]">
         <p>This page is for your eyes only — no login required.</p>
       </footer>
     </main>
