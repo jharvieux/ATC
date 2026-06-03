@@ -170,8 +170,7 @@ function WatchRow({
       data-testid="price-watch-row"
       data-watch-id={w.watch_id}
       data-status={w.status}
-      className="p-3.5 bg-card border border-border rounded-lg grid gap-3"
-      style={{ gridTemplateColumns: "1fr auto" }}
+      className="p-3.5 bg-card border border-border rounded-lg grid grid-cols-[1fr_auto] gap-3"
     >
       <div>
         <div className="flex items-center gap-2 flex-wrap">
