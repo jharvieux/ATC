@@ -9,6 +9,7 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { applyTemplate, type SubstitutionContext } from "@/lib/tasks/template";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 type SnapshotStep = {
   step_index: number;
@@ -75,13 +76,32 @@ export const taskSequenceStepFire = inngest.createFunction(
     } else if (run.quote_id) {
       const { data } = await svc
         .from("quotes")
-        .select("status, cruise_line, sailing_date, contact_id")
+        .select("status, contact_id")
         .eq("id", run.quote_id)
+        .eq("tenant_id", run.tenant_id)
         .maybeSingle();
       if (data) {
-        const q = data as { status: string; cruise_line: string | null; sailing_date: string | null; contact_id: string };
-        ctx.quote = { cruise_line: q.cruise_line, sailing_date: q.sailing_date };
+        const q = data as { status: string; contact_id: string };
         liveStatus = q.status;
+        // §38 — trip detail lives on quote_options; read the representative
+        // option (customer-selected, else lowest index) for the {{quote.*}}
+        // template vars. Service-role read, so scope by BOTH tenant_id and
+        // quote_id (D-091 two-layer isolation).
+        const { data: optionRows } = await svc
+          .from("quote_options")
+          .select("option_index, customer_selected, cruise_line, sailing_date")
+          .eq("quote_id", run.quote_id)
+          .eq("tenant_id", run.tenant_id)
+          .order("option_index", { ascending: true });
+        const opt = selectRepresentativeOption(
+          (optionRows ?? []) as Array<{
+            option_index: number;
+            customer_selected: boolean | null;
+            cruise_line: string | null;
+            sailing_date: string | null;
+          }>,
+        );
+        ctx.quote = { cruise_line: opt?.cruise_line ?? null, sailing_date: opt?.sailing_date ?? null };
         const { data: c } = await svc
           .from("contacts")
           .select("first_name, last_name")
