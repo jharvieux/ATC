@@ -26,7 +26,7 @@ export async function POST(req: Request): Promise<Response> {
   const form = await req.formData();
   const email = (form.get("email") as string | null)?.trim();
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return Response.json({ error: "Invalid email address" }, { status: 400 });
   }
 

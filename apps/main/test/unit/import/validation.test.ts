@@ -62,6 +62,29 @@ describe("validate lead_notification", () => {
     expect(flags).toHaveLength(0);
   });
 
+  it("rejects contact_email longer than 254 chars (S5852 ReDoS guard)", async () => {
+    // isPlausibleEmail has a length <= 254 guard. Without it, a crafted 10000-char
+    // string matching \s*[:#-]?\s* in the PII regex could cause O(n^2) backtracking.
+    const longEmail = `${"a".repeat(250)}@x.com`; // 256 chars — over the RFC 5321 limit
+    const flags = await validate(
+      {
+        type: "lead_notification",
+        tenant_id: "t1",
+        fields: {
+          contact_name: "X",
+          contact_email: longEmail,
+          contact_phone: null,
+          interest_summary: null,
+          destination: null,
+          travel_window: null,
+          party_size: null,
+        },
+      },
+      fakeDb({ data: [], error: null }),
+    );
+    expect(flags.some((f) => f.flag === "implausible_value" && f.reason.includes("contact_email"))).toBe(true);
+  });
+
   it("flags implausible email and party_size", async () => {
     const flags = await validate(
       {
