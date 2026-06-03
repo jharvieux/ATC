@@ -67,17 +67,24 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // Membership upsert — tenant domains only. On the platform domain the
-  // resolved id is the "platform" sentinel; provisioning a net-new tenant is
-  // deferred (#441) and the session is still established below.
+  // Membership upsert. On a tenant domain the resolved id is a UUID — use
+  // it directly. On the platform domain the resolved id is the "platform"
+  // sentinel; if PLATFORM_DEFAULT_TENANT_ID is configured, assign the user
+  // to that agency so platform-domain sign-ins result in a real membership
+  // row rather than a session with no tenant. Without the env var the upsert
+  // is skipped (legacy behaviour, #441).
   const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
-  if (tenantId && tenantId !== "platform") {
+  const effectiveTenantId =
+    tenantId === "platform" || !tenantId
+      ? (process.env.PLATFORM_DEFAULT_TENANT_ID ?? null)
+      : tenantId;
+  if (effectiveTenantId) {
     const svc = createServiceRoleClient();
     await safeAwait(
       svc.from("users").upsert(
         {
           auth_user_id: authUser.id,
-          tenant_id: tenantId,
+          tenant_id: effectiveTenantId,
           email: email ?? "",
           status: "active",
         },
