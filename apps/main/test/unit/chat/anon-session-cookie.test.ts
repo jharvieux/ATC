@@ -5,8 +5,8 @@
 //     normal flow on every request after the first.
 //   - A tampered signature is rejected so attackers can't forge session IDs to
 //     bypass rate limits or hijack conversation history.
-//   - A plain UUID cookie (no ".") is accepted during the migration window so
-//     in-flight sessions survive the deploy without losing history.
+//   - A plain UUID cookie (no ".") is rejected — the §24.x migration window
+//     is closed, so an unsigned cookie has no valid signature (#514).
 //   - A fresh session generates a UUID that round-trips through sign/verify.
 //   - buildAnonCookieHeader produces an HttpOnly; SameSite=Lax header so
 //     the cookie cannot be read by client-side JS (rate-limit bypass prevention).
@@ -38,11 +38,14 @@ describe("signAnonSession / verifyAnonSession — §24.x", () => {
     expect(verifyAnonSession("")).toBeNull();
   });
 
-  it("accepts a plain UUID during the migration window — in-flight sessions survive deploy", () => {
-    expect(verifyAnonSession(TEST_UUID)).toBe(TEST_UUID);
-  });
-
-  it("rejects a non-UUID plain value even during migration window", () => {
+  it("rejects an unsigned cookie — migration window closed, signature now mandatory (#514)", () => {
+    // A bare UUID with no ".<mac>" was grandfathered in during the §24.x
+    // migration window so in-flight sessions survived the deploy. That window
+    // is closed: an unsigned cookie must now be rejected so a client cannot
+    // present a self-chosen UUID, skip the HMAC check, and hijack a session or
+    // bypass per-session rate limits. Payload shape is irrelevant — a
+    // UUID-shaped value and a junk value are both rejected for lacking a sig.
+    expect(verifyAnonSession(TEST_UUID)).toBeNull();
     expect(verifyAnonSession("short")).toBeNull();
     expect(verifyAnonSession("not-a-uuid-at-all-xxxx")).toBeNull();
   });

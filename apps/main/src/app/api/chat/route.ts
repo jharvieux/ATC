@@ -28,7 +28,6 @@ import {
   ANON_SESSION_COOKIE,
   buildAnonCookieHeader,
   freshAnonSession,
-  signAnonSession,
   verifyAnonSession,
 } from "@/lib/chat/anon-session-cookie";
 import { redactPii } from "@/lib/pii/redact";
@@ -192,11 +191,6 @@ export async function POST(req: Request): Promise<Response> {
     const verifiedId = rawCookie ? verifyAnonSession(rawCookie) : null;
     if (verifiedId) {
       resolvedAnonSessionId = verifiedId;
-      // Re-issue if it was an unsigned legacy cookie (upgrade to signed).
-      const signedValue = signAnonSession(verifiedId);
-      if (rawCookie !== signedValue) {
-        anonCookieHeader = buildAnonCookieHeader(signedValue);
-      }
     } else {
       const fresh = freshAnonSession();
       resolvedAnonSessionId = fresh.id;
