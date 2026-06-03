@@ -14,6 +14,8 @@ afterAll(() => server.close());
 describe("Anthropic /v1/messages contract", () => {
   it("parses a persona greeting response into a valid Message object", async () => {
     const client = new Anthropic({ apiKey: "test-key" });
+    // MSW matches on URL only — the fixture returned depends on filesystem sort order,
+    // not on which system prompt we send. Body fields here are representative, not selective.
     const msg = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1024,
@@ -26,7 +28,7 @@ describe("Anthropic /v1/messages contract", () => {
     expect(msg.role).toBe("assistant");
     expect(msg.model).toBeTruthy();
 
-    // Content block — call-wrapper.ts reads content[0].text
+    // Content block — call-wrapper.ts maps content[] collecting .text from each TextBlock
     expect(msg.content).toHaveLength(1);
     const block = msg.content[0];
     expect(block.type).toBe("text");
