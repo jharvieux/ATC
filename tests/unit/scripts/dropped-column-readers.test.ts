@@ -93,7 +93,10 @@ describe("findViolations", () => {
       removed,
       [src(`await db.from("quotes").select("id, cruise_line, sailing_date");`)],
     );
-    expect(v.map((x) => x.column).sort()).toEqual(["cruise_line", "sailing_date"]);
+    expect(v.map((x) => x.column).sort((a, b) => a.localeCompare(b))).toEqual([
+      "cruise_line",
+      "sailing_date",
+    ]);
     expect(v.every((x) => x.table === "quotes")).toBe(true);
   });
 
@@ -180,6 +183,9 @@ describe("end-to-end (the BP38/#137 incident, reproduced)", () => {
     );
     const v = findViolations(removed, [reader]);
     // cruise_line + ship_name caught; total_amount_cents spared (whole-word vs dropped total_amount).
-    expect(v.map((x) => x.column).sort()).toEqual(["cruise_line", "ship_name"]);
+    expect(v.map((x) => x.column).sort((a, b) => a.localeCompare(b))).toEqual([
+      "cruise_line",
+      "ship_name",
+    ]);
   });
 });
