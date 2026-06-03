@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from "react";
 import { TIMEZONES } from "@/lib/timezones";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function buildWorkspaceUrl(
   slug: string,
@@ -140,12 +141,9 @@ export default function SignupCompletePage(): React.ReactElement {
           Click below to continue setup. You&apos;ll be asked to sign in once more to establish
           your session on your workspace subdomain.
         </p>
-        <a
-          href={workspaceUrl}
-          className="inline-flex items-center justify-center rounded-md text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 px-7 py-3"
-        >
-          Continue to your workspace →
-        </a>
+        <Button asChild className="px-7 h-auto py-3">
+          <a href={workspaceUrl}>Continue to your workspace →</a>
+        </Button>
         <p className="text-xs text-muted-foreground">{workspaceUrl}</p>
       </main>
     );
@@ -214,16 +212,16 @@ export default function SignupCompletePage(): React.ReactElement {
               <Input value={form.support_phone} onChange={set("support_phone")} placeholder="+1 555 000 0000" />
             </Field>
             <Field label="Time zone *">
-              <select
-                value={form.timezone}
-                onChange={set("timezone")}
-                required
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                {TIMEZONES.map((tz) => (
-                  <option key={tz.value} value={tz.value}>{tz.label} ({tz.offset})</option>
-                ))}
-              </select>
+              <Select value={form.timezone} onValueChange={(value) => setForm((f) => ({ ...f, timezone: value }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEZONES.map((tz) => (
+                    <SelectItem key={tz.value} value={tz.value}>{tz.label} ({tz.offset})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
           </Section>
 
