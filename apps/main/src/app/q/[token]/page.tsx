@@ -96,6 +96,7 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
       "id, option_index, customer_selected, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, passenger_count, commissionable_fare_cents, non_commissionable_total_cents, total_amount_cents, currency, is_recommended",
     )
     .eq("quote_id", quote.id)
+    .eq("tenant_id", quote.tenant_id)
     .order("option_index", { ascending: true });
   const options = (optionsData ?? []) as QuoteOptionRow[];
 
