@@ -2,8 +2,10 @@
 //
 // Steps:
 //   1. oauth.email from the OAuth claims
-//   2. Graph /me?$select=mail
-//   3. Graph /me?$select=otherMails
+//   2. Graph /me?$select=mail,userPrincipalName — mail first; UPN only if
+//      email-shaped (personal MSA accounts use UPN as their login address,
+//      but phone-only signups yield a non-email UPN — skip those)
+//   3. Graph /me?$select=otherMails — alternate/proxy addresses
 //   4. Return null → caller renders /signup/email-prompt
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -15,10 +17,17 @@ export async function recoverMicrosoftEmail(
   // Step 1: OAuth claim
   if (oauthEmail && isValidEmail(oauthEmail)) return oauthEmail;
 
-  // Step 2: Graph /me mail field
-  const meRes = await graphFetch(`${GRAPH_BASE}/me?$select=mail`, accessToken);
+  // Step 2: Graph mail + userPrincipalName in one call.
+  // UPN is the login address for personal MSA accounts (e.g. user@outlook.com)
+  // but may not be email-shaped for phone-only signups — isValidEmail guards that.
+  const meRes = await graphFetch(
+    `${GRAPH_BASE}/me?$select=mail,userPrincipalName`,
+    accessToken,
+  );
   const mail = typeof meRes.mail === "string" ? meRes.mail : null;
   if (mail && isValidEmail(mail)) return mail;
+  const upn = typeof meRes.userPrincipalName === "string" ? meRes.userPrincipalName : null;
+  if (upn && isValidEmail(upn)) return upn;
 
   // Step 3: Graph /me otherMails
   const otherRes = await graphFetch(`${GRAPH_BASE}/me?$select=otherMails`, accessToken);
