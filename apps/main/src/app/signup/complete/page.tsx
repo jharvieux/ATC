@@ -74,7 +74,7 @@ export default function SignupCompletePage(): React.ReactElement {
   }, [form.display_name]);
 
   const set = (field: keyof typeof form) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [field]: e.target.value }));
 
   async function handleSubmit(e: React.FormEvent) {
