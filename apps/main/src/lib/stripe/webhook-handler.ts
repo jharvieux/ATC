@@ -123,7 +123,6 @@ export async function handleStripeWebhook(
             "[stripe-webhook] transfer.paid: no payout_records row for transfer %s",
             transfer.id,
           );
-          processingOutcome = "unhandled";
         }
         break;
       }
@@ -213,7 +212,6 @@ export async function handleStripeWebhook(
           .eq("stripe_subscription_id", sub.id)
           .maybeSingle();
         if (!tenantRow) {
-          processingOutcome = "unhandled";
           break;
         }
 
@@ -249,7 +247,6 @@ export async function handleStripeWebhook(
         const sub = invoice.parent?.subscription_details?.subscription;
         const subId = typeof sub === "string" ? sub : sub?.id;
         if (!subId) {
-          processingOutcome = "unhandled";
           break;
         }
         const { data: tenantRow } = await db
@@ -258,7 +255,6 @@ export async function handleStripeWebhook(
           .eq("stripe_subscription_id", subId)
           .maybeSingle();
         if (!tenantRow) {
-          processingOutcome = "unhandled";
           break;
         }
         const cur = (tenantRow as { subscription_status: string | null }).subscription_status;
@@ -286,7 +282,6 @@ export async function handleStripeWebhook(
         const sub = invoice.parent?.subscription_details?.subscription;
         const subId = typeof sub === "string" ? sub : sub?.id;
         if (!subId) {
-          processingOutcome = "unhandled";
           break;
         }
         const { data: tenantRow } = await db
@@ -295,7 +290,6 @@ export async function handleStripeWebhook(
           .eq("stripe_subscription_id", subId)
           .maybeSingle();
         if (!tenantRow) {
-          processingOutcome = "unhandled";
           break;
         }
         const updates: Record<string, unknown> = { subscription_status: "past_due" };
@@ -310,7 +304,6 @@ export async function handleStripeWebhook(
         break;
       }
       default:
-        processingOutcome = "unhandled";
         break;
     }
   } catch (err) {

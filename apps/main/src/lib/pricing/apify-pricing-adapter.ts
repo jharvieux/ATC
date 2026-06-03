@@ -193,7 +193,7 @@ export class ApifyPricingAdapter implements PricingDataSource {
     let response: ApifyResponse | null = null;
     let runStatus: "succeeded" | "failed" | "partial" = "succeeded";
     let runId: string | null = null;
-    let actualSpend = estimatedSpend;
+    let actualSpend: number;
     try {
       response = await this.dispatchActor(route.actorId, input);
       runId = response.data?.id ?? null;

@@ -77,8 +77,7 @@ async function tenantHasFeatureEnabled(db: SupabaseClient, tenant_id: string): P
   // Default TRUE when platform flag is TRUE — the column may not exist on
   // existing tenant_settings rows, in which case `value` is undefined and
   // we treat it as opted-in.
-  if (value === false) return false;
-  return true;
+  return value !== false;
 }
 
 /**

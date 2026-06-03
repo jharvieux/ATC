@@ -172,7 +172,6 @@ async function submitBooking(
 
     // Step 1: Resolve platform_split_rate from tier
     let platform_split_rate: number | null = null;
-    let hold_period_days = 7;
 
     if (tenant.tier_id) {
       const { data: tierData } = await adminDb
@@ -184,7 +183,6 @@ async function submitBooking(
       if (tierData) {
         const tier = tierData as TierRow;
         platform_split_rate = tier.platform_split_rate;
-        hold_period_days = tier.hold_period_days;
       }
     }
 

@@ -30,7 +30,6 @@ type BillingData = {
 export default function BillingPage() {
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 

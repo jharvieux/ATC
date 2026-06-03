@@ -155,8 +155,7 @@ function validateStatement(f: CommissionStatementFields): ValidationFlag[] {
 
   let badRows = 0;
   for (const row of f.line_items) {
-    if (!row.provider_booking_ref) badRows++;
-    else if (row.commission_amount_cents === null) badRows++;
+    if (!row.provider_booking_ref || row.commission_amount_cents === null) badRows++;
   }
   if (badRows > 0) {
     flags.push({

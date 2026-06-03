@@ -101,6 +101,23 @@ function toResponseCookie(
   return { name, value, ...options } as ResponseCookieInput;
 }
 
+// Flush the captured Set-Cookie writes + any extra headers onto whichever
+// response the caller picked. Both factories below buffer into `pending`
+// because @supabase/ssr's setAll fires before the response object exists.
+function flushCapturedCookies<T extends NextResponse>(
+  res: T,
+  pending: { name: string; value: string; options: CookieOptions }[],
+  extraHeaders: Record<string, string>,
+): T {
+  for (const { name, value, options } of pending) {
+    res.cookies.set(toResponseCookie(name, value, options));
+  }
+  for (const [key, val] of Object.entries(extraHeaders)) {
+    res.headers.set(key, val);
+  }
+  return res;
+}
+
 // §17.x — Cross-subdomain cookie scope.
 //
 // Auth happens on the platform primary domain (e.g. ai-travelconcierge.com)
@@ -182,15 +199,8 @@ export function createRouteHandlerClient(req: NextRequest): {
     },
   });
 
-  const applyAuthCookies = <T extends NextResponse>(res: T): T => {
-    for (const { name, value, options } of pending) {
-      res.cookies.set(toResponseCookie(name, value, options));
-    }
-    for (const [key, val] of Object.entries(extraHeaders)) {
-      res.headers.set(key, val);
-    }
-    return res;
-  };
+  const applyAuthCookies = <T extends NextResponse>(res: T): T =>
+    flushCapturedCookies(res, pending, extraHeaders);
 
   return { supabase, applyAuthCookies };
 }
@@ -224,15 +234,8 @@ export function createMiddlewareClient(req: NextRequest): {
 
   // No-op unless getUser() actually refreshed (pending stays empty when the
   // access token is still valid), so steady-state responses are untouched.
-  const applyRefreshedSession = <T extends NextResponse>(res: T): T => {
-    for (const { name, value, options } of pending) {
-      res.cookies.set(toResponseCookie(name, value, options));
-    }
-    for (const [key, val] of Object.entries(extraHeaders)) {
-      res.headers.set(key, val);
-    }
-    return res;
-  };
+  const applyRefreshedSession = <T extends NextResponse>(res: T): T =>
+    flushCapturedCookies(res, pending, extraHeaders);
 
   return { supabase, applyRefreshedSession };
 }

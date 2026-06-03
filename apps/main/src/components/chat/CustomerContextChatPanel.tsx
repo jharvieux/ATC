@@ -126,9 +126,6 @@ export function CustomerContextChatPanel({
               }
               break;
             case "delta_start":
-              assistantContent = "";
-              setStreaming("");
-              break;
             case "rewriting":
               assistantContent = "";
               setStreaming("");

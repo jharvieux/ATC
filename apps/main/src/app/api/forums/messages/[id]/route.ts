@@ -40,7 +40,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     } else {
       // Unknown action — still require the baseline permission so probes can't
       // distinguish unauthenticated from invalid-body via response timing.
-      ({ ctx, user } = await assertPermission(req, { resource: "forums", action: "edit_message" }));
+      await assertPermission(req, { resource: "forums", action: "edit_message" });
       return Response.json({ error: "no_action" }, { status: 400 });
     }
 

@@ -268,7 +268,7 @@ function parseCustomerContextRef(raw: unknown): CustomerContextRef | null {
 
 async function handleChat(args: HandleChatArgs): Promise<void> {
   const svc = createServiceRoleClient();
-  const { tenantId, isAuthenticated, resolvedAnonSessionId, userMessage, customerContextRef, send, close } = args;
+  const { tenantId, isAuthenticated, userMessage, customerContextRef, send, close } = args;
 
   // ── 1. Identify caller (anonymous OR authenticated)
   let ctx: TenantContext | null = null;
