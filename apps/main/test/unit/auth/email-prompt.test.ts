@@ -52,7 +52,7 @@ describe("POST /api/auth/microsoft-email-prompt", () => {
     // The email regex ^[^\s@]+@[^\s@]+\.[^\s@]+$ can exhibit O(n^2) backtracking
     // on very long inputs. Bounding to RFC 5321 max (254) keeps worst case negligible.
     process.env.RESEND_API_KEY = "re_test";
-    const longEmail = `${"a".repeat(250)}@x.com`; // 255 chars (250 + "@x.com")
+    const longEmail = `${"a".repeat(250)}@x.com`; // 256 chars (250 + "@x.com")
     const res = await POST(postReq(longEmail));
     expect(res.status).toBe(400);
     expect(OTP_STORE.size).toBe(0);
