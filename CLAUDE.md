@@ -326,6 +326,33 @@ fixture and write a unit test that verifies it passes — guards against a futur
 refactor flipping the encoding. Note the encoding in a comment near
 constructEvent / verify call.
 
+— Destructive migrations ship AFTER the read-switchover, in their own PR (BP38/#137)
+Postgres column names are referenced from app code as STRINGS
+(`.from("quotes").select("cruise_line")`), so `tsc` CANNOT see that a migration
+dropped a column the code still asks for. That is how #137 shipped: the §38
+expand + backfill + CONTRACT migrations all landed in one commit, dropping 9
+columns off `quotes` while readers still SELECTed them — nothing failed until
+those readers 500'd in prod. (The customer quote view `/q/[token]` was a 10th
+reader missed even by the follow-up switchover, found later by the gate below.)
+
+Expand-migrate-contract is THREE separate merges, in order:
+1. **Expand** — add the new columns/table; dual-write if needed. Merge.
+2. **Switch reads** — grep EVERY reader of each column you're about to drop
+   (`grep -rn '<column>' apps/*/src` — it's a string, tsc won't help), repoint
+   them to the new location, ship + deploy. Merge.
+3. **Contract** — drop the old columns, only after step 2 is live. Merge.
+
+Never bundle the contract drop into the same PR as the expand or the read-switch.
+
+`pnpm check:dropped-columns` (CI step "Dropped-column reader guard") is the
+mechanical backstop: it fails any PR where app code names a dropped column inside
+a Supabase query string within its `.from("<table>")` chain. It is table-aware
+(a column dropped from `quotes` but live on `bookings` is fine) and whole-word
+(`total_amount` ≠ `total_amount_cents`). Limits — it only sees columns named as
+STRINGS near their `.from`: a `.select("*")` + later `row.col`, or a column that
+was NEVER on the table, slips through. The gate is a backstop, not a substitute
+for step 2.
+
 ## Honesty about uncertainty
 
 **Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.  If unsure about what was in the spec re-read that section before assuming anything.

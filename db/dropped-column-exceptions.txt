@@ -1,0 +1,12 @@
+# Dropped-column reader exceptions
+#
+# Format: one entry per line as `table.column # reason`
+#
+# A column listed here is exempt from the dropped-column reader gate
+# (scripts/check-dropped-column-readers.ts), which otherwise fails the build
+# when application code still reads a column from the table a migration
+# dropped it from (the BP38/#137 failure mode).
+#
+# Only add an entry for a DELIBERATE, justified reference — e.g. a fixture
+# that intentionally constructs the historical shape. A reason is required;
+# a bare line with no `#` reason is ignored. Prefer fixing the reader.

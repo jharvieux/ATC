@@ -43,6 +43,9 @@ jobs:
       - name: Lint migrations
         run: pnpm lint:migrations
 
+      - name: Dropped-column reader guard (BP38/#137)
+        run: pnpm check:dropped-columns
+
       - name: Typecheck
         run: pnpm -r typecheck
 
