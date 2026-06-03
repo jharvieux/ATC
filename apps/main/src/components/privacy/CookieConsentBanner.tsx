@@ -12,6 +12,7 @@
 //   • marketing    — opt-in default OFF (cross-site retargeting)
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 const COOKIE_NAME = "cookie_preferences";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
@@ -77,71 +78,58 @@ export function CookieConsentBanner(): JSX.Element | null {
     <div
       role="dialog"
       aria-label="Cookie preferences"
-      style={{
-        position: "fixed",
-        bottom: 16,
-        left: 16,
-        right: 16,
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: 20,
-        background: "#1f2937",
-        color: "#fff",
-        borderRadius: 8,
-        boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
-        zIndex: 1000,
-      }}
+      className="fixed bottom-4 left-4 right-4 max-w-[720px] mx-auto p-5 bg-gray-900 text-white rounded-lg shadow-2xl z-[1000]"
     >
-      <p style={{ margin: "0 0 12px 0", lineHeight: 1.5 }}>
+      <p className="mb-3 leading-[1.5]">
         We use cookies to operate the platform, measure performance, and
         optionally personalize. You can pick what you&rsquo;re comfortable with.
-        See <a href="/legal/sub-processors" style={{ color: "#93c5fd" }}>sub-processors</a> for who handles what.
+        See <a href="/legal/sub-processors" className="text-blue-300 hover:underline">sub-processors</a> for who handles what.
       </p>
       {customize && (
-        <div style={{ background: "rgba(255,255,255,0.05)", padding: 12, borderRadius: 6, marginBottom: 12 }}>
-          <div style={{ marginBottom: 8 }}>
+        <div className="bg-white/5 p-3 rounded-md mb-3">
+          <div className="mb-2">
             <strong>Essential</strong> — always on (session, security).
           </div>
-          <label style={{ display: "block", marginBottom: 8 }}>
+          <label className="block mb-2">
             <input
               type="checkbox"
               checked={performance}
               onChange={(e) => setPerformance(e.target.checked)}
-            />{" "}
+              className="mr-1.5"
+            />
             Performance (analytics)
           </label>
-          <label style={{ display: "block" }}>
+          <label className="block">
             <input
               type="checkbox"
               checked={marketing}
               onChange={(e) => setMarketing(e.target.checked)}
-            />{" "}
+              className="mr-1.5"
+            />
             Marketing (cross-site retargeting)
           </label>
         </div>
       )}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="flex gap-2 flex-wrap">
         {!customize && (
           <>
-            <button type="button" onClick={() => save({ performance: true, marketing: true })}
-              style={{ background: "#3b82f6", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 6 }}>
+            <Button type="button" onClick={() => save({ performance: true, marketing: true })}>
               Accept all
-            </button>
-            <button type="button" onClick={() => save({ performance: false, marketing: false })}
-              style={{ background: "transparent", color: "#fff", border: "1px solid #fff", padding: "8px 14px", borderRadius: 6 }}>
+            </Button>
+            <Button type="button" variant="outline" onClick={() => save({ performance: false, marketing: false })}
+              className="border-white text-white hover:bg-white/10 hover:text-white bg-transparent">
               Essential only
-            </button>
-            <button type="button" onClick={() => setCustomize(true)}
-              style={{ background: "transparent", color: "#fff", border: "1px solid #fff", padding: "8px 14px", borderRadius: 6 }}>
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setCustomize(true)}
+              className="border-white text-white hover:bg-white/10 hover:text-white bg-transparent">
               Customize
-            </button>
+            </Button>
           </>
         )}
         {customize && (
-          <button type="button" onClick={() => save({ performance, marketing })}
-            style={{ background: "#3b82f6", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 6 }}>
+          <Button type="button" onClick={() => save({ performance, marketing })}>
             Save preferences
-          </button>
+          </Button>
         )}
       </div>
     </div>

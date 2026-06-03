@@ -58,22 +58,13 @@ export function GmailHealthBanner(): JSX.Element | null {
   return (
     <div
       role="alert"
-      style={{
-        background: "#fff4e5",
-        borderBottom: "1px solid #ffb74d",
-        color: "#5d4037",
-        padding: "10px 16px",
-        display: "flex",
-        gap: 12,
-        alignItems: "center",
-        fontSize: 14,
-      }}
+      className="bg-orange-50 dark:bg-orange-950/20 border-b border-orange-300 dark:border-orange-700 text-orange-900 dark:text-orange-200 py-2.5 px-4 flex gap-3 items-center text-[14px]"
     >
       <strong>{copy.title}</strong>
       <span>{copy.detail}</span>
       <a
         href="/settings/integrations/gmail"
-        style={{ marginLeft: "auto", color: "#5d4037", fontWeight: 600 }}
+        className="ml-auto text-orange-900 dark:text-orange-200 font-semibold hover:underline"
       >
         Manage →
       </a>
