@@ -127,175 +127,127 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
     : rep?.cruise_line ?? rep?.ship_name ?? "Your cruise quote";
 
   return (
-    <main
-      style={{
-        maxWidth: 760,
-        margin: "0 auto",
-        padding: "32px 24px",
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      <header
-        style={{
-          borderBottom: "2px solid #1f4e79",
-          paddingBottom: 16,
-          marginBottom: 24,
-        }}
-      >
-        <div style={{ color: "#1f4e79", fontWeight: 600, fontSize: 14 }}>
+    <main className="max-w-[760px] mx-auto px-6 py-8">
+      <header className="border-b-2 border-[#1f4e79] pb-4 mb-6">
+        <div className="text-[#1f4e79] font-semibold text-[14px]">
           {tenant?.display_name ?? ""}
         </div>
-        <h1 style={{ margin: "8px 0 4px", fontSize: 28 }}>{headerTitle}</h1>
-        <div style={{ color: "#555", fontSize: 14 }}>
+        <h1 className="mt-2 mb-1 text-[28px]">{headerTitle}</h1>
+        <div className="text-muted-foreground text-[14px]">
           {rep?.sailing_date ?? "Sailing TBD"}
           {rep?.duration_nights ? ` · ${rep.duration_nights} nights` : ""}
           {rep?.cabin_category ? ` · ${rep.cabin_category}` : ""}
         </div>
         {quote.valid_until && (
-          <div style={{ marginTop: 6, fontSize: 12, color: "#92400e" }}>
+          <div className="mt-1.5 text-[12px] text-amber-800 dark:text-amber-400">
             Hold expires {new Date(quote.valid_until).toLocaleDateString()}
           </div>
         )}
       </header>
 
       {quote.customer_facing_intro && (
-        <section style={{ marginBottom: 24 }}>
-          <p style={{ margin: 0, color: "#374151", lineHeight: 1.5 }}>
+        <section className="mb-6">
+          <p className="m-0 text-foreground leading-[1.5]">
             {quote.customer_facing_intro}
           </p>
         </section>
       )}
 
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={{ color: "#1f4e79", fontSize: 18, marginBottom: 12 }}>Price</h2>
-        <dl
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            rowGap: 6,
-            fontSize: 14,
-          }}
-        >
-          <dt style={{ color: "#6b7280" }}>Total</dt>
+      <section className="mb-6">
+        <h2 className="text-[#1f4e79] text-[18px] mb-3">Price</h2>
+        <dl className="grid grid-cols-[180px_1fr] gap-y-1.5 text-[14px]">
+          <dt className="text-muted-foreground">Total</dt>
           {/* §38.4.3 price priority: locked > estimate > representative option total */}
-          <dd style={{ margin: 0, fontWeight: 600 }}>
+          <dd className="m-0 font-semibold">
             {money(quote.locked_price_cents ?? quote.estimate_price_cents ?? rep?.total_amount_cents ?? null, currency)}
           </dd>
           {quote.show_breakdown_to_customer && (
             <>
-              <dt style={{ color: "#6b7280" }}>Cruise fare</dt>
-              <dd style={{ margin: 0 }}>
+              <dt className="text-muted-foreground">Cruise fare</dt>
+              <dd className="m-0">
                 {money(rep?.commissionable_fare_cents ?? null, currency)}
               </dd>
-              <dt style={{ color: "#6b7280" }}>Other charges</dt>
-              <dd style={{ margin: 0 }}>
+              <dt className="text-muted-foreground">Other charges</dt>
+              <dd className="m-0">
                 {money(rep?.non_commissionable_total_cents ?? null, currency)}
               </dd>
             </>
           )}
-          <dt style={{ color: "#6b7280" }}>Passengers</dt>
-          <dd style={{ margin: 0 }}>{rep?.passenger_count ?? "—"}</dd>
+          <dt className="text-muted-foreground">Passengers</dt>
+          <dd className="m-0">{rep?.passenger_count ?? "—"}</dd>
         </dl>
       </section>
 
       {options.length > 0 && (
-        <section style={{ marginBottom: 24 }}>
-          <h2 style={{ color: "#1f4e79", fontSize: 18, marginBottom: 12 }}>Options</h2>
-          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        <section className="mb-6">
+          <h2 className="text-[#1f4e79] text-[18px] mb-3">Options</h2>
+          <ul className="m-0 p-0 list-none">
             {options.map((o) => (
               <li
                 key={o.id}
-                style={{
-                  border: o.customer_selected ? "2px solid #1f4e79" : "1px solid #e5e7eb",
-                  borderRadius: 8,
-                  padding: 14,
-                  marginBottom: 10,
-                  background: o.customer_selected ? "#eff6ff" : "#fff",
-                }}
+                className={`rounded-lg p-[14px] mb-2.5 ${
+                  o.customer_selected
+                    ? "border-2 border-[#1f4e79] bg-blue-50 dark:bg-blue-950/20"
+                    : "border border-border bg-card"
+                }`}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 600 }}>
+                <div className="flex justify-between items-baseline gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold">
                       {o.cruise_line ?? "—"} {o.ship_name ?? ""}{" "}
                       {o.is_recommended && (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 600,
-                            color: "#1f4e79",
-                            background: "#dbeafe",
-                            padding: "2px 6px",
-                            borderRadius: 4,
-                            marginLeft: 6,
-                          }}
-                        >
+                        <span className="text-[11px] font-semibold text-[#1f4e79] bg-blue-100 dark:bg-blue-900/40 dark:text-blue-300 px-1.5 py-0.5 rounded ml-1.5">
                           Recommended
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 13, color: "#555" }}>
+                    <div className="text-[13px] text-muted-foreground">
                       {o.sailing_date ?? "—"}
                       {o.duration_nights ? ` · ${o.duration_nights} nights` : ""}
                       {o.cabin_category ? ` · ${o.cabin_category}` : ""}
                     </div>
                   </div>
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <div style={{ fontWeight: 600 }}>{money(o.total_amount_cents, o.currency)}</div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="font-semibold">{money(o.total_amount_cents, o.currency)}</div>
                     {o.customer_selected && (
-                      <div style={{ fontSize: 11, color: "#1f4e79", marginTop: 2 }}>Selected</div>
+                      <div className="text-[11px] text-[#1f4e79] mt-0.5">Selected</div>
                     )}
                   </div>
                 </div>
               </li>
             ))}
           </ul>
-          <p style={{ fontSize: 12, color: "#6b7280", marginTop: 8 }}>
+          <p className="text-[12px] text-muted-foreground mt-2">
             To change your selection, contact your agent.
           </p>
         </section>
       )}
 
       {quote.show_recommendation && quote.recommendation_rationale && (
-        <section
-          style={{
-            marginBottom: 24,
-            background: "#f0f9ff",
-            border: "1px solid #bae6fd",
-            borderRadius: 8,
-            padding: 14,
-          }}
-        >
-          <h3 style={{ margin: "0 0 6px", fontSize: 14, color: "#0369a1" }}>
+        <section className="mb-6 bg-sky-50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-800 rounded-lg p-[14px]">
+          <h3 className="m-0 mb-1.5 text-[14px] text-sky-700 dark:text-sky-400">
             Why we recommend this
           </h3>
-          <p style={{ margin: 0, fontSize: 14, color: "#0c4a6e", lineHeight: 1.5 }}>
+          <p className="m-0 text-[14px] text-sky-900 dark:text-sky-200 leading-[1.5]">
             {quote.recommendation_rationale}
           </p>
         </section>
       )}
 
       {quote.custom_notes && (
-        <section style={{ marginBottom: 24 }}>
-          <h2 style={{ color: "#1f4e79", fontSize: 18, marginBottom: 8 }}>Notes from your agent</h2>
-          <p style={{ margin: 0, color: "#374151", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+        <section className="mb-6">
+          <h2 className="text-[#1f4e79] text-[18px] mb-2">Notes from your agent</h2>
+          <p className="m-0 text-foreground leading-[1.5] whitespace-pre-wrap">
             {quote.custom_notes}
           </p>
         </section>
       )}
 
-      <section style={{ marginTop: 32 }}>
+      <section className="mt-8">
         <PublicTokenChatPanel token={token} surface="quote" />
       </section>
 
-      <footer
-        style={{
-          marginTop: 40,
-          borderTop: "1px solid #e5e7eb",
-          paddingTop: 16,
-          color: "#888",
-          fontSize: 12,
-        }}
-      >
+      <footer className="mt-10 border-t border-border pt-4 text-muted-foreground text-[12px]">
         Questions? Ask the assistant above or reply to the email your agent sent.
       </footer>
     </main>

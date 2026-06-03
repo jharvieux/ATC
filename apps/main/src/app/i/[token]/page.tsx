@@ -104,40 +104,40 @@ export default async function PublicItineraryPage({ params }: PageProps): Promis
   });
 
   return (
-    <main style={{ maxWidth: 800, margin: "0 auto", padding: "32px 24px", fontFamily: "system-ui" }}>
-      <header style={{ borderBottom: "2px solid #1f4e79", paddingBottom: 16, marginBottom: 24 }}>
-        <div style={{ color: "#1f4e79", fontWeight: 600 }}>{tenant?.display_name ?? ""}</div>
-        <h1 style={{ margin: "8px 0 4px", fontSize: 28 }}>
+    <main className="max-w-[800px] mx-auto px-6 py-8">
+      <header className="border-b-2 border-[#1f4e79] pb-4 mb-6">
+        <div className="text-[#1f4e79] font-semibold">{tenant?.display_name ?? ""}</div>
+        <h1 className="mt-2 mb-1 text-[28px]">
           {booking.cruise_line} {booking.ship_name}
         </h1>
-        <div style={{ color: "#555" }}>
+        <div className="text-muted-foreground">
           {booking.sailing_date} · {booking.duration_nights ?? "?"} nights · {booking.cabin_category ?? "Cabin TBD"}
         </div>
       </header>
 
       <section>
-        <h2 style={{ color: "#1f4e79" }}>At a glance</h2>
-        <dl style={{ display: "grid", gridTemplateColumns: "140px 1fr", rowGap: 4 }}>
-          <dt style={{ color: "#666" }}>Embarkation</dt>
-          <dd style={{ margin: 0 }}>{booking.departure_port ?? "—"}</dd>
-          <dt style={{ color: "#666" }}>Sail date</dt>
-          <dd style={{ margin: 0 }}>{booking.sailing_date ?? "—"}</dd>
-          <dt style={{ color: "#666" }}>Cabin</dt>
-          <dd style={{ margin: 0 }}>{booking.cabin_category ?? "—"}</dd>
+        <h2 className="text-[#1f4e79]">At a glance</h2>
+        <dl className="grid grid-cols-[140px_1fr] gap-y-1">
+          <dt className="text-muted-foreground">Embarkation</dt>
+          <dd className="m-0">{booking.departure_port ?? "—"}</dd>
+          <dt className="text-muted-foreground">Sail date</dt>
+          <dd className="m-0">{booking.sailing_date ?? "—"}</dd>
+          <dt className="text-muted-foreground">Cabin</dt>
+          <dd className="m-0">{booking.cabin_category ?? "—"}</dd>
         </dl>
       </section>
 
       {lineItems.length > 0 && (
-        <section style={{ marginTop: 32 }}>
-          <h2 style={{ color: "#1f4e79" }}>Trip components</h2>
-          <ul style={{ paddingLeft: 18 }}>
+        <section className="mt-8">
+          <h2 className="text-[#1f4e79]">Trip components</h2>
+          <ul className="pl-[18px]">
             {lineItems.map((it) => (
-              <li key={it.id} style={{ marginBottom: 6 }}>
-                <strong style={{ textTransform: "capitalize" }}>{it.item_type}</strong>
+              <li key={it.id} className="mb-1.5">
+                <strong className="capitalize">{it.item_type}</strong>
                 {it.start_date ? ` · ${it.start_date}` : ""} —{" "}
                 <span>{it.description}</span>
                 {it.supplier_name && (
-                  <span style={{ color: "#888" }}> · {it.supplier_name}</span>
+                  <span className="text-muted-foreground"> · {it.supplier_name}</span>
                 )}
               </li>
             ))}
@@ -146,17 +146,17 @@ export default async function PublicItineraryPage({ params }: PageProps): Promis
       )}
 
       {row.agent_notes && (
-        <section style={{ marginTop: 32 }}>
-          <h2 style={{ color: "#1f4e79" }}>From your agent</h2>
-          <p style={{ whiteSpace: "pre-wrap" }}>{row.agent_notes}</p>
+        <section className="mt-8">
+          <h2 className="text-[#1f4e79]">From your agent</h2>
+          <p className="whitespace-pre-wrap">{row.agent_notes}</p>
         </section>
       )}
 
-      <section style={{ marginTop: 32 }}>
+      <section className="mt-8">
         <PublicTokenChatPanel token={token} surface="itinerary" />
       </section>
 
-      <footer style={{ marginTop: 48, borderTop: "1px solid #ddd", paddingTop: 16, color: "#888", fontSize: 13 }}>
+      <footer className="mt-12 border-t border-border pt-4 text-muted-foreground text-[13px]">
         Your travel agent will be in touch with updates.
       </footer>
     </main>

@@ -24,29 +24,16 @@ export default async function CoordinateLayout({
   const { id } = await params;
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px", fontFamily: "system-ui, sans-serif" }}>
+    <div className="max-w-[900px] mx-auto px-4 py-6">
       <nav
-        style={{
-          display: "flex",
-          gap: 0,
-          borderBottom: "2px solid #e5e7eb",
-          marginBottom: 24,
-        }}
+        className="flex border-b-2 border-border mb-6"
         aria-label="Coordinator tabs"
       >
         {TABS.map((tab) => (
           <Link
             key={tab.slug}
             href={`/groups/${id}/coordinate/${tab.slug}`}
-            style={{
-              padding: "10px 18px",
-              fontSize: 14,
-              fontWeight: 500,
-              color: "#374151",
-              textDecoration: "none",
-              borderBottom: "2px solid transparent",
-              marginBottom: -2,
-            }}
+            className="px-4 py-2.5 text-[14px] font-medium text-muted-foreground no-underline border-b-2 border-transparent -mb-0.5 hover:text-foreground hover:border-primary transition-colors"
           >
             {tab.label}
           </Link>
