@@ -82,59 +82,71 @@ export default function HelpPage(): JSX.Element {
   }, [query]);
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui, sans-serif" }}>
-      <aside style={{ width: 280, borderRight: "1px solid #e5e7eb", padding: "1rem", overflowY: "auto" }}>
-        <h2 style={{ fontSize: 14, fontWeight: 600, color: "#6b7280", marginBottom: 8 }}>Help docs</h2>
+    <div className="flex h-screen">
+      <aside className="w-[280px] border-r border-border p-4 overflow-y-auto">
+        <h2 className="text-[14px] font-semibold text-muted-foreground mb-2">Help docs</h2>
         <nav>
           {sections.map((s) => (
             <button
               key={s.slug}
               onClick={() => setActiveSlug(s.slug)}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "0.5rem 0.75rem",
-                textAlign: "left",
-                background: s.slug === activeSlug ? "#eef2ff" : "transparent",
-                border: "none",
-                borderRadius: 6,
-                cursor: "pointer",
-                marginBottom: 2,
-              }}
+              className={`block w-full px-3 py-2 text-left border-none rounded-md cursor-pointer mb-0.5 text-sm ${
+                s.slug === activeSlug
+                  ? "bg-indigo-50 dark:bg-indigo-950/30 text-primary font-medium"
+                  : "bg-transparent text-foreground hover:bg-muted"
+              }`}
             >
               {s.title}
             </button>
           ))}
         </nav>
-        <hr style={{ margin: "1rem 0", border: "none", borderTop: "1px solid #e5e7eb" }} />
-        <a href="/admin/help/print" style={{ fontSize: 13, color: "#6b7280" }}>Print / download view →</a>
+        <hr className="my-4 border-border" />
+        <a href="/admin/help/print" className="text-[13px] text-muted-foreground">Print / download view →</a>
       </aside>
 
-      <main style={{ flex: 1, overflowY: "auto" }}>
-        <header style={{ borderBottom: "1px solid #e5e7eb", padding: "1rem 1.5rem", display: "flex", gap: "1rem", alignItems: "center" }}>
+      <main className="flex-1 overflow-y-auto">
+        <header className="border-b border-border px-6 py-4 flex gap-4 items-center">
           <input
             type="search"
             placeholder="Search docs…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            style={{ flex: 1, padding: "0.5rem 0.75rem", border: "1px solid #d1d5db", borderRadius: 6 }}
+            className="flex-1 px-3 py-2 border border-border rounded-md text-sm"
           />
-          <button onClick={() => setPanelFlow("help")} style={btnStyle}>I need help</button>
-          <button onClick={() => setPanelFlow("bug")} style={btnStyle}>Report a bug</button>
-          <button onClick={() => setPanelFlow("feature")} style={btnStyle}>Request a feature</button>
+          <button
+            onClick={() => setPanelFlow("help")}
+            className="px-3 py-2 bg-primary text-primary-foreground border-none rounded-md cursor-pointer text-[13px] whitespace-nowrap"
+          >
+            I need help
+          </button>
+          <button
+            onClick={() => setPanelFlow("bug")}
+            className="px-3 py-2 bg-primary text-primary-foreground border-none rounded-md cursor-pointer text-[13px] whitespace-nowrap"
+          >
+            Report a bug
+          </button>
+          <button
+            onClick={() => setPanelFlow("feature")}
+            className="px-3 py-2 bg-primary text-primary-foreground border-none rounded-md cursor-pointer text-[13px] whitespace-nowrap"
+          >
+            Request a feature
+          </button>
         </header>
 
-        <div style={{ padding: "1.5rem", maxWidth: 800 }}>
+        <div className="px-6 py-6 max-w-[800px]">
           {searchHits.length > 0 && (
-            <section style={{ marginBottom: "2rem" }}>
-              <h3 style={{ fontSize: 14, color: "#6b7280", marginBottom: 8 }}>Search results</h3>
-              <ul style={{ listStyle: "none", padding: 0 }}>
+            <section className="mb-8">
+              <h3 className="text-[14px] text-muted-foreground mb-2">Search results</h3>
+              <ul className="list-none p-0">
                 {searchHits.map((h) => (
-                  <li key={h.slug} style={{ marginBottom: 8 }}>
-                    <button onClick={() => { setActiveSlug(h.slug); setQuery(""); }} style={{ background: "none", border: "none", padding: 0, color: "#4f46e5", cursor: "pointer", textAlign: "left" }}>
+                  <li key={h.slug} className="mb-2">
+                    <button
+                      onClick={() => { setActiveSlug(h.slug); setQuery(""); }}
+                      className="bg-transparent border-none p-0 text-primary cursor-pointer text-left"
+                    >
                       <strong>{h.title}</strong>
                     </button>
-                    <p style={{ fontSize: 13, color: "#6b7280", margin: "2px 0 0" }}>{h.snippet}</p>
+                    <p className="text-[13px] text-muted-foreground mt-0.5 mb-0">{h.snippet}</p>
                   </li>
                 ))}
               </ul>
@@ -143,7 +155,7 @@ export default function HelpPage(): JSX.Element {
           {doc ? (
             <article dangerouslySetInnerHTML={{ __html: doc.html }} />
           ) : (
-            <p style={{ color: "#6b7280" }}>Select a section from the left.</p>
+            <p className="text-muted-foreground">Select a section from the left.</p>
           )}
         </div>
       </main>
@@ -158,14 +170,3 @@ export default function HelpPage(): JSX.Element {
     </div>
   );
 }
-
-const btnStyle: React.CSSProperties = {
-  padding: "0.5rem 0.75rem",
-  background: "#4f46e5",
-  color: "white",
-  border: "none",
-  borderRadius: 6,
-  cursor: "pointer",
-  fontSize: 13,
-  whiteSpace: "nowrap",
-};

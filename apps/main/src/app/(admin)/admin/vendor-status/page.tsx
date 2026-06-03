@@ -12,35 +12,35 @@ export default function VendorStatusPage(): JSX.Element {
   const rows = Object.entries(snapshot);
 
   return (
-    <main style={{ padding: 24, maxWidth: 880, margin: "0 auto" }}>
+    <main className="px-6 py-6 max-w-[880px] mx-auto">
       <h1>Vendor status (this instance)</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         Updated by the <code>vendor-health-probe</code> cron every minute. This
         is a per-instance view — open the page multiple times to compare
         across instances.
       </p>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
+      <table className="w-full border-collapse mt-4 text-sm">
         <thead>
-          <tr style={{ background: "#f3f4f6" }}>
-            <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>Vendor</th>
-            <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>Status</th>
-            <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>Failures</th>
-            <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>Last checked</th>
-            <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #e5e7eb" }}>Last error</th>
+          <tr className="bg-muted">
+            <th className="text-left px-2.5 py-2.5 border-b border-border">Vendor</th>
+            <th className="text-left px-2.5 py-2.5 border-b border-border">Status</th>
+            <th className="text-left px-2.5 py-2.5 border-b border-border">Failures</th>
+            <th className="text-left px-2.5 py-2.5 border-b border-border">Last checked</th>
+            <th className="text-left px-2.5 py-2.5 border-b border-border">Last error</th>
           </tr>
         </thead>
         <tbody>
           {rows.map(([name, state]) => (
             <tr key={name}>
-              <td style={{ padding: 10, borderBottom: "1px solid #f3f4f6", fontWeight: 600 }}>{name}</td>
-              <td style={{ padding: 10, borderBottom: "1px solid #f3f4f6", color: statusColor(state.status) }}>
+              <td className="px-2.5 py-2.5 border-b border-muted font-semibold">{name}</td>
+              <td className={`px-2.5 py-2.5 border-b border-muted ${statusColorClass(state.status)}`}>
                 {state.status}
               </td>
-              <td style={{ padding: 10, borderBottom: "1px solid #f3f4f6" }}>{state.consecutive_failures}</td>
-              <td style={{ padding: 10, borderBottom: "1px solid #f3f4f6" }}>
+              <td className="px-2.5 py-2.5 border-b border-muted">{state.consecutive_failures}</td>
+              <td className="px-2.5 py-2.5 border-b border-muted">
                 {state.last_checked_at ?? "—"}
               </td>
-              <td style={{ padding: 10, borderBottom: "1px solid #f3f4f6", color: "#dc2626" }}>
+              <td className="px-2.5 py-2.5 border-b border-muted text-red-600 dark:text-red-400">
                 {state.last_error ?? "—"}
               </td>
             </tr>
@@ -51,8 +51,8 @@ export default function VendorStatusPage(): JSX.Element {
   );
 }
 
-function statusColor(s: string): string {
-  if (s === "healthy") return "#16a34a";
-  if (s === "degraded") return "#ca8a04";
-  return "#dc2626";
+function statusColorClass(s: string): string {
+  if (s === "healthy") return "text-green-600 dark:text-green-400";
+  if (s === "degraded") return "text-yellow-600 dark:text-yellow-400";
+  return "text-red-600 dark:text-red-400";
 }

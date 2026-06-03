@@ -92,7 +92,7 @@ function shortDate(iso: string): string {
 // ── Stacked area chart ────────────────────────────────────────────────────────
 
 function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number }): JSX.Element {
-  if (data.length === 0) return <p style={{ color: "#6b7280" }}>No data.</p>;
+  if (data.length === 0) return <p className="text-muted-foreground">No data.</p>;
 
   const W = 780;
   const H = 200;
@@ -128,7 +128,7 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
+      <div className="flex gap-4 mb-2 flex-wrap">
         <Legend color="#3b82f6" label="AI cost (Anthropic + OpenAI)" />
         <Legend color="#10b981" label="Email cost (Resend estimate)" />
         <Legend color="#f97316" label="Apify spend" />
@@ -189,8 +189,9 @@ function CostChart({ data, resendRate }: { data: DailyRow[]; resendRate: number 
 
 function Legend({ color, label }: { color: string; label: string }): JSX.Element {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6b7280" }}>
-      <span style={{ display: "inline-block", width: 12, height: 12, background: color, borderRadius: 2, opacity: 0.8 }} />
+    <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+      {/* Dynamic chart color — not expressible as static Tailwind */}
+      <span className="inline-block w-3 h-3 rounded-sm opacity-80" style={{ background: color }} />
       {label}
     </div>
   );
@@ -200,7 +201,7 @@ function Legend({ color, label }: { color: string; label: string }): JSX.Element
 
 function WeatherChart({ data, cap }: { data: DailyRow[]; cap: number }): JSX.Element {
   const rows = data.filter((d) => d.weather_requests > 0);
-  if (rows.length === 0) return <p style={{ color: "#6b7280" }}>No requests recorded.</p>;
+  if (rows.length === 0) return <p className="text-muted-foreground">No requests recorded.</p>;
 
   const W = 780;
   const H = 140;
@@ -227,15 +228,16 @@ function WeatherChart({ data, cap }: { data: DailyRow[]; cap: number }): JSX.Ele
 
 // ── State badge ──────────────────────────────────────────────────────────────
 
+const STATE_CLASSES: Record<string, string> = {
+  ok:    "bg-emerald-100 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-400",
+  soft1: "bg-amber-100 dark:bg-amber-950/30 text-amber-800 dark:text-amber-400",
+  soft2: "bg-orange-100 dark:bg-orange-950/30 text-orange-800 dark:text-orange-400",
+  hard:  "bg-red-100 dark:bg-red-950/30 text-red-800 dark:text-red-400",
+};
+
 function StateBadge({ state }: { state: string }): JSX.Element {
-  const styles: Record<string, React.CSSProperties> = {
-    ok:    { background: "#d1fae5", color: "#065f46" },
-    soft1: { background: "#fef3c7", color: "#92400e" },
-    soft2: { background: "#ffedd5", color: "#9a3412" },
-    hard:  { background: "#fee2e2", color: "#991b1b" },
-  };
   return (
-    <span style={{ ...(styles[state] ?? styles.ok), padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 600 }}>
+    <span className={`${STATE_CLASSES[state] ?? STATE_CLASSES.ok} px-2 py-0.5 rounded-full text-[11px] font-semibold`}>
       {state}
     </span>
   );
@@ -390,21 +392,25 @@ export default function ResourceUtilizationPage(): JSX.Element {
     }
   }
 
-  if (loading) return <main style={{ padding: 24 }}>Loading…</main>;
-  if (!data) return <main style={{ padding: 24, color: "#b91c1c" }}>{error ?? "No data."}</main>;
+  if (loading) return <main className="px-6 py-6">Loading…</main>;
+  if (!data) return <main className="px-6 py-6 text-red-700 dark:text-red-400">{error ?? "No data."}</main>;
 
   const { summary, daily, model_breakdown, tenant_proximity, apify_by_line, pricing } = data;
   const totalCostCents = summary.total_ai_cost_cents + summary.total_email_cost_cents;
 
+  const cardCls = "bg-card border border-border rounded-lg p-5 mt-5 shadow-sm";
+  const thCls = "text-left px-2.5 py-1.5 border-b-2 border-border text-[12px] text-muted-foreground uppercase tracking-[0.4px] whitespace-nowrap";
+  const tdCls = "px-2.5 py-2 border-b border-muted align-middle text-sm";
+
   return (
-    <main style={{ padding: 24, maxWidth: 1000, margin: "0 auto", fontFamily: "sans-serif" }}>
-      <h1 style={{ marginBottom: 4 }}>Resource Utilization</h1>
-      <p style={{ color: "#6b7280", marginTop: 0 }}>
+    <main className="px-6 py-6 max-w-[1000px] mx-auto">
+      <h1 className="mb-1">Resource Utilization</h1>
+      <p className="text-muted-foreground mt-0">
         Platform-wide costs and usage — current billing period {summary.period}.
       </p>
 
       {/* ── Summary cards ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginTop: 20 }}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4 mt-5">
         <SummaryCard label="Total spend (period)" value={formatDollars(totalCostCents)} sub="AI + email combined" />
         <SummaryCard label="AI spend" value={formatDollars(summary.total_ai_cost_cents)} sub={`${model_breakdown.reduce((s, r) => s + r.call_count, 0).toLocaleString()} calls`} />
         <SummaryCard label="Email spend (est.)" value={formatDollars(summary.total_email_cost_cents)} sub={`${summary.total_email_count.toLocaleString()} sent`} />
@@ -423,34 +429,34 @@ export default function ResourceUtilizationPage(): JSX.Element {
       </div>
 
       {/* ── Stacked cost chart ── */}
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>30-day cost trend</h2>
+      <section className={cardCls}>
+        <h2 className="mt-0">30-day cost trend</h2>
         <CostChart data={daily} resendRate={pricing.resend_rate} />
       </section>
 
       {/* ── AI model breakdown ── */}
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>AI usage by model (last 30 days)</h2>
+      <section className={cardCls}>
+        <h2 className="mt-0">AI usage by model (last 30 days)</h2>
         {model_breakdown.length === 0 ? (
-          <p style={{ color: "#6b7280" }}>No AI calls in this window.</p>
+          <p className="text-muted-foreground">No AI calls in this window.</p>
         ) : (
-          <table style={tableStyle}>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
                 {["Vendor", "Model", "Calls", "Input tokens", "Output tokens", "Est. cost"].map((h) => (
-                  <th key={h} style={thStyle}>{h}</th>
+                  <th key={h} className={thCls}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {model_breakdown.map((r) => (
                 <tr key={`${r.vendor}:${r.model}`}>
-                  <td style={tdStyle}>{r.vendor}</td>
-                  <td style={tdStyle}><code style={{ fontSize: 12 }}>{r.model}</code></td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.call_count.toLocaleString()}</td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>{formatTokens(r.input_tokens)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>{formatTokens(r.output_tokens)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatDollars(r.cost_cents)}</td>
+                  <td className={tdCls}>{r.vendor}</td>
+                  <td className={tdCls}><code className="text-[12px]">{r.model}</code></td>
+                  <td className={`${tdCls} text-right`}>{r.call_count.toLocaleString()}</td>
+                  <td className={`${tdCls} text-right`}>{formatTokens(r.input_tokens)}</td>
+                  <td className={`${tdCls} text-right`}>{formatTokens(r.output_tokens)}</td>
+                  <td className={`${tdCls} text-right tabular-nums`}>{formatDollars(r.cost_cents)}</td>
                 </tr>
               ))}
             </tbody>
@@ -459,17 +465,17 @@ export default function ResourceUtilizationPage(): JSX.Element {
       </section>
 
       {/* ── Weather monitoring ── */}
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Open-Meteo weather requests</h2>
-        <p style={{ color: "#6b7280", marginTop: 0 }}>
+      <section className={cardCls}>
+        <h2 className="mt-0">Open-Meteo weather requests</h2>
+        <p className="text-muted-foreground mt-0">
           Free tier cap: {summary.weather_cap.toLocaleString()} req/day.
           Today: <strong>{summary.weather_requests_today.toLocaleString()}</strong>.
           This month: {summary.weather_requests_month.toLocaleString()}.
         </p>
         <WeatherChart data={daily} cap={summary.weather_cap} />
-        <div style={{ marginTop: 16 }}>
-          <form onSubmit={saveCap} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ fontSize: 13, color: "#374151" }}>
+        <div className="mt-4">
+          <form onSubmit={saveCap} className="flex gap-3 items-center flex-wrap">
+            <label className="text-[13px] text-foreground">
               Adjust daily cap:
               <input
                 type="number"
@@ -477,52 +483,56 @@ export default function ResourceUtilizationPage(): JSX.Element {
                 onChange={(e) => setCapDraft(e.target.value)}
                 min={1}
                 max={10000}
-                style={{ ...numInput, marginLeft: 10, width: 90 }}
+                className="ml-2.5 w-[90px] px-2 py-1 border border-border rounded text-right text-[13px]"
                 disabled={savingCap}
               />
             </label>
-            <button type="submit" disabled={savingCap} style={btnSecondary}>
+            <button
+              type="submit"
+              disabled={savingCap}
+              className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium disabled:opacity-50"
+            >
               {savingCap ? "Saving…" : "Save cap"}
             </button>
           </form>
           {capMsg && (
-            <p style={{ color: capMsg.ok ? "#15803d" : "#b91c1c", marginTop: 8, fontSize: 13 }}>{capMsg.text}</p>
+            <p className={`mt-2 text-[13px] ${capMsg.ok ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>{capMsg.text}</p>
           )}
         </div>
       </section>
 
       {/* ── Apify pricing data ── */}
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Apify pricing data (last 30 days)</h2>
-        <p style={{ color: "#6b7280", marginTop: 0 }}>
+      <section className={cardCls}>
+        <h2 className="mt-0">Apify pricing data (last 30 days)</h2>
+        <p className="text-muted-foreground mt-0">
           Month-to-date: <strong>${summary.apify_spend_usd_period.toFixed(2)}</strong>.{" "}
           Budget cap: <strong>${summary.apify_monthly_budget_usd.toFixed(0)}/month</strong>.
         </p>
         {apify_by_line.length === 0 ? (
-          <p style={{ color: "#6b7280" }}>No Apify runs in this window.</p>
+          <p className="text-muted-foreground">No Apify runs in this window.</p>
         ) : (
-          <table style={tableStyle}>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
                 {["Cruise line", "Runs", "Spend (USD)"].map((h) => (
-                  <th key={h} style={thStyle}>{h}</th>
+                  <th key={h} className={thCls}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {apify_by_line.map((r) => (
                 <tr key={r.cruise_line ?? "(none)"}>
-                  <td style={tdStyle}>{r.cruise_line ?? <em>none</em>}</td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>{r.run_count.toLocaleString()}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>${r.spend_usd.toFixed(4)}</td>
+                  <td className={tdCls}>{r.cruise_line ?? <em>none</em>}</td>
+                  <td className={`${tdCls} text-right`}>{r.run_count.toLocaleString()}</td>
+                  <td className={`${tdCls} text-right tabular-nums`}>${r.spend_usd.toFixed(4)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
-        <div style={{ marginTop: 16 }}>
-          <form onSubmit={saveApifyBudget} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ fontSize: 13, color: "#374151" }}>
+        <div className="mt-4">
+          <form onSubmit={saveApifyBudget} className="flex gap-3 items-center flex-wrap">
+            <label className="text-[13px] text-foreground">
               Monthly budget cap (USD):
               <input
                 type="number"
@@ -530,43 +540,47 @@ export default function ResourceUtilizationPage(): JSX.Element {
                 onChange={(e) => setApifyBudgetDraft(e.target.value)}
                 min={1}
                 step={1}
-                style={{ ...numInput, marginLeft: 10, width: 90 }}
+                className="ml-2.5 w-[90px] px-2 py-1 border border-border rounded text-right text-[13px]"
                 disabled={savingApifyBudget}
               />
             </label>
-            <button type="submit" disabled={savingApifyBudget} style={btnSecondary}>
+            <button
+              type="submit"
+              disabled={savingApifyBudget}
+              className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium disabled:opacity-50"
+            >
               {savingApifyBudget ? "Saving…" : "Save budget"}
             </button>
           </form>
           {apifyBudgetMsg && (
-            <p style={{ color: apifyBudgetMsg.ok ? "#15803d" : "#b91c1c", marginTop: 8, fontSize: 13 }}>{apifyBudgetMsg.text}</p>
+            <p className={`mt-2 text-[13px] ${apifyBudgetMsg.ok ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>{apifyBudgetMsg.text}</p>
           )}
         </div>
       </section>
 
       {/* ── Tenant proximity ── */}
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Tenant threshold proximity — current period</h2>
+      <section className={cardCls}>
+        <h2 className="mt-0">Tenant threshold proximity — current period</h2>
         {tenant_proximity.length === 0 ? (
-          <p style={{ color: "#6b7280" }}>No tenant usage recorded this period.</p>
+          <p className="text-muted-foreground">No tenant usage recorded this period.</p>
         ) : (
-          <table style={tableStyle}>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
                 {["Tenant", "Slug", "AI spend", "AI limit state", "Emails sent", "Email state"].map((h) => (
-                  <th key={h} style={thStyle}>{h}</th>
+                  <th key={h} className={thCls}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {tenant_proximity.map((t) => (
                 <tr key={t.tenant_id}>
-                  <td style={tdStyle}>{t.display_name}</td>
-                  <td style={tdStyle}><code style={{ fontSize: 12 }}>{t.slug}</code></td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatDollars(t.ai_cost_cents)}</td>
-                  <td style={tdStyle}><StateBadge state={t.ai_cost_limit_state} /></td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>{t.email_sent_count.toLocaleString()}</td>
-                  <td style={tdStyle}><StateBadge state={t.email_volume_limit_state} /></td>
+                  <td className={tdCls}>{t.display_name}</td>
+                  <td className={tdCls}><code className="text-[12px]">{t.slug}</code></td>
+                  <td className={`${tdCls} text-right tabular-nums`}>{formatDollars(t.ai_cost_cents)}</td>
+                  <td className={tdCls}><StateBadge state={t.ai_cost_limit_state} /></td>
+                  <td className={`${tdCls} text-right`}>{t.email_sent_count.toLocaleString()}</td>
+                  <td className={tdCls}><StateBadge state={t.email_volume_limit_state} /></td>
                 </tr>
               ))}
             </tbody>
@@ -575,48 +589,53 @@ export default function ResourceUtilizationPage(): JSX.Element {
       </section>
 
       {/* ── Pricing catalog ── */}
-      <section style={card}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h2 style={{ marginTop: 0 }}>Pricing catalog</h2>
+      <section className={cardCls}>
+        <div className="flex justify-between items-baseline">
+          <h2 className="mt-0">Pricing catalog</h2>
           {!editingPricing && (
-            <button onClick={() => setEditingPricing(true)} style={btnSecondary}>Edit</button>
+            <button
+              onClick={() => setEditingPricing(true)}
+              className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium"
+            >
+              Edit
+            </button>
           )}
         </div>
 
         {pricingMsg && (
-          <p style={{ color: pricingMsg.ok ? "#15803d" : "#b91c1c", marginBottom: 12 }}>{pricingMsg.text}</p>
+          <p className={`mb-3 ${pricingMsg.ok ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}>{pricingMsg.text}</p>
         )}
 
         {editingPricing ? (
           <form onSubmit={savePricing}>
-            <h3 style={{ marginTop: 0, fontSize: 14 }}>AI models (cents per million tokens)</h3>
-            <table style={tableStyle}>
+            <h3 className="mt-0 text-[14px]">AI models (cents per million tokens)</h3>
+            <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <th style={thStyle}>Model</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Input ¢/M</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Output ¢/M</th>
+                  <th className={thCls}>Model</th>
+                  <th className={`${thCls} text-right`}>Input ¢/M</th>
+                  <th className={`${thCls} text-right`}>Output ¢/M</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(pricingDraft).map(([model, v]) => (
                   <tr key={model}>
-                    <td style={tdStyle}><code style={{ fontSize: 12 }}>{model}</code></td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>
+                    <td className={tdCls}><code className="text-[12px]">{model}</code></td>
+                    <td className={`${tdCls} text-right`}>
                       <input
                         type="number"
                         value={v.input}
                         onChange={(e) => setPricingDraft((prev) => ({ ...prev, [model]: { input: e.target.value, output: prev[model]?.output ?? "0" } }))}
-                        style={numInput}
+                        className="w-[100px] px-2 py-1 border border-border rounded text-right text-[13px]"
                         min={0}
                       />
                     </td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>
+                    <td className={`${tdCls} text-right`}>
                       <input
                         type="number"
                         value={v.output}
                         onChange={(e) => setPricingDraft((prev) => ({ ...prev, [model]: { input: prev[model]?.input ?? "0", output: e.target.value } }))}
-                        style={numInput}
+                        className="w-[100px] px-2 py-1 border border-border rounded text-right text-[13px]"
                         min={0}
                       />
                     </td>
@@ -625,62 +644,70 @@ export default function ResourceUtilizationPage(): JSX.Element {
               </tbody>
             </table>
 
-            <div style={{ marginTop: 16 }}>
-              <label style={{ fontSize: 14, color: "#374151" }}>
+            <div className="mt-4">
+              <label className="text-[14px] text-foreground">
                 Resend cost per email (fractional cents × 100):
                 <input
                   type="number"
                   value={resendDraft}
                   onChange={(e) => setResendDraft(e.target.value)}
-                  style={{ ...numInput, marginLeft: 12 }}
+                  className="ml-3 w-[100px] px-2 py-1 border border-border rounded text-right text-[13px]"
                   min={0}
                   step={0.1}
                 />
               </label>
-              <span style={{ marginLeft: 12, fontSize: 12, color: "#6b7280" }}>
+              <span className="ml-3 text-[12px] text-muted-foreground">
                 Default 19 = 0.19¢/email (Resend Hobby: $1.90/1k)
               </span>
             </div>
 
-            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-              <button type="submit" disabled={savingPricing} style={btnPrimary}>
+            <div className="flex gap-3 mt-4">
+              <button
+                type="submit"
+                disabled={savingPricing}
+                className="px-4 py-2 bg-blue-600 text-white border-none rounded-md font-semibold text-[13px] disabled:opacity-50"
+              >
                 {savingPricing ? "Saving…" : "Save pricing"}
               </button>
-              <button type="button" onClick={() => { setEditingPricing(false); setPricingMsg(null); }} style={btnSecondary}>
+              <button
+                type="button"
+                onClick={() => { setEditingPricing(false); setPricingMsg(null); }}
+                className="px-4 py-2 bg-card border border-border rounded-md text-sm font-medium"
+              >
                 Cancel
               </button>
             </div>
           </form>
         ) : (
           <>
-            <h3 style={{ marginTop: 0, fontSize: 14 }}>AI models (cents per million tokens)</h3>
-            <table style={tableStyle}>
+            <h3 className="mt-0 text-[14px]">AI models (cents per million tokens)</h3>
+            <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <th style={thStyle}>Model</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Input ¢/M</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Output ¢/M</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Input $/M</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Output $/M</th>
+                  <th className={thCls}>Model</th>
+                  <th className={`${thCls} text-right`}>Input ¢/M</th>
+                  <th className={`${thCls} text-right`}>Output ¢/M</th>
+                  <th className={`${thCls} text-right`}>Input $/M</th>
+                  <th className={`${thCls} text-right`}>Output $/M</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(pricing.ai).map(([model, p]) => (
                   <tr key={model}>
-                    <td style={tdStyle}><code style={{ fontSize: 12 }}>{model}</code></td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{p.input_per_million_cents.toLocaleString()}</td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{p.output_per_million_cents.toLocaleString()}</td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{(p.input_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{(p.output_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className={tdCls}><code className="text-[12px]">{model}</code></td>
+                    <td className={`${tdCls} text-right`}>{p.input_per_million_cents.toLocaleString()}</td>
+                    <td className={`${tdCls} text-right`}>{p.output_per_million_cents.toLocaleString()}</td>
+                    <td className={`${tdCls} text-right`}>{(p.input_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className={`${tdCls} text-right`}>{(p.output_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p style={{ marginTop: 12, fontSize: 13, color: "#6b7280" }}>
+            <p className="mt-3 text-[13px] text-muted-foreground">
               Resend rate: <strong>{pricing.resend_rate}</strong> ({(pricing.resend_rate / 100).toFixed(4)}¢/email,{" "}
               {formatDollars(pricing.resend_rate * 1000)} per 1k emails)
             </p>
-            <p style={{ fontSize: 12, color: "#9ca3af" }}>
+            <p className="text-[12px] text-muted-foreground">
               Pricing is used for cost estimates only. Actual vendor invoices are the source of truth. Update when vendor rates change.
             </p>
           </>
@@ -694,81 +721,10 @@ export default function ResourceUtilizationPage(): JSX.Element {
 
 function SummaryCard({ label, value, sub, alert }: { label: string; value: string; sub?: string; alert?: boolean }): JSX.Element {
   return (
-    <div style={{
-      background: "white",
-      border: `1px solid ${alert ? "#fca5a5" : "#e5e7eb"}`,
-      borderRadius: 8,
-      padding: "14px 18px",
-      boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-    }}>
-      <div style={{ fontSize: 12, color: "#6b7280", textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4, color: alert ? "#dc2626" : undefined }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>{sub}</div>}
+    <div className={`bg-card border rounded-lg px-[18px] py-[14px] shadow-sm ${alert ? "border-red-300 dark:border-red-700" : "border-border"}`}>
+      <div className="text-[12px] text-muted-foreground uppercase tracking-[0.5px]">{label}</div>
+      <div className={`text-[26px] font-bold mt-1 ${alert ? "text-red-600 dark:text-red-400" : "text-foreground"}`}>{value}</div>
+      {sub && <div className="text-[12px] text-muted-foreground mt-0.5">{sub}</div>}
     </div>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const card: React.CSSProperties = {
-  background: "white",
-  border: "1px solid #e5e7eb",
-  borderRadius: 8,
-  padding: 20,
-  marginTop: 20,
-  boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-};
-
-const tableStyle: React.CSSProperties = {
-  borderCollapse: "collapse",
-  width: "100%",
-  fontSize: 13,
-};
-
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "6px 10px",
-  borderBottom: "2px solid #e5e7eb",
-  fontSize: 12,
-  color: "#6b7280",
-  textTransform: "uppercase",
-  letterSpacing: 0.4,
-  whiteSpace: "nowrap",
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "8px 10px",
-  borderBottom: "1px solid #f3f4f6",
-  verticalAlign: "middle",
-};
-
-const btnPrimary: React.CSSProperties = {
-  padding: "8px 16px",
-  background: "#2563eb",
-  color: "white",
-  border: "none",
-  borderRadius: 6,
-  fontWeight: 600,
-  cursor: "pointer",
-  fontSize: 13,
-};
-
-const btnSecondary: React.CSSProperties = {
-  padding: "8px 16px",
-  background: "white",
-  color: "#374151",
-  border: "1px solid #d1d5db",
-  borderRadius: 6,
-  fontWeight: 500,
-  cursor: "pointer",
-  fontSize: 13,
-};
-
-const numInput: React.CSSProperties = {
-  width: 100,
-  padding: "4px 8px",
-  border: "1px solid #d1d5db",
-  borderRadius: 4,
-  fontSize: 13,
-  textAlign: "right",
-};

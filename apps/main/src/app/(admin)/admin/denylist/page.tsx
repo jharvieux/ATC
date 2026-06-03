@@ -96,79 +96,94 @@ export default function AdminDenylistPage(): JSX.Element {
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
+    <main className="px-6 py-6 max-w-[760px] mx-auto">
       <h1>Platform deny-list</h1>
-      <p style={{ color: "#555" }}>
+      <p className="text-muted-foreground">
         Slurs and hate-speech terms blocked on every AI response.{" "}
         <strong>{data.count}</strong> term{data.count === 1 ? "" : "s"} currently in the list.
         Terms themselves are not retrievable — only hashes are shown.
       </p>
 
       {error && (
-        <div style={{ background: "#fee2e2", padding: 12, marginTop: 16, borderRadius: 6 }}>
+        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 px-3.5 py-2.5 rounded-md mt-4">
           {error}
         </div>
       )}
       {msg && (
-        <div style={{ background: "#dcfce7", padding: 12, marginTop: 16, borderRadius: 6 }}>
+        <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-300 px-3.5 py-2.5 rounded-md mt-4">
           {msg}
         </div>
       )}
 
-      <section style={{ marginTop: 24, padding: 16, border: "1px solid #e5e7eb", borderRadius: 8 }}>
-        <h2 style={{ marginTop: 0 }}>Add term</h2>
-        <label style={{ display: "block", marginBottom: 8 }}>
+      <section className="mt-6 p-4 border border-border rounded-lg">
+        <h2 className="mt-0">Add term</h2>
+        <label className="block mb-2">
           Term
           <input
             type="text"
             value={newTerm}
             onChange={(e) => setNewTerm(e.target.value)}
-            style={{ display: "block", width: "100%", padding: 6, marginTop: 4 }}
+            className="block w-full px-2 py-1.5 border border-border rounded mt-1 text-sm"
             disabled={busy}
           />
         </label>
-        <label style={{ display: "block", marginBottom: 8 }}>
+        <label className="block mb-2">
           Reason (recorded in audit log)
           <input
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            style={{ display: "block", width: "100%", padding: 6, marginTop: 4 }}
+            className="block w-full px-2 py-1.5 border border-border rounded mt-1 text-sm"
             disabled={busy}
           />
         </label>
-        <button type="button" onClick={addTerm} disabled={busy || loading}>
+        <button
+          type="button"
+          onClick={addTerm}
+          disabled={busy || loading}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-semibold disabled:opacity-50"
+        >
           {busy ? "Saving…" : "Add term"}
         </button>
       </section>
 
-      <section style={{ marginTop: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ margin: 0 }}>Hashes</h2>
-          <button type="button" onClick={downloadCsv} disabled={data.hashes.length === 0}>
+      <section className="mt-6">
+        <div className="flex justify-between items-center">
+          <h2 className="m-0">Hashes</h2>
+          <button
+            type="button"
+            onClick={downloadCsv}
+            disabled={data.hashes.length === 0}
+            className="px-3 py-1.5 border border-border rounded text-sm disabled:opacity-50"
+          >
             Download CSV
           </button>
         </div>
         {loading ? (
           <p>Loading…</p>
         ) : data.hashes.length === 0 ? (
-          <p style={{ color: "#777" }}>List is empty.</p>
+          <p className="text-muted-foreground">List is empty.</p>
         ) : (
-          <table style={{ width: "100%", marginTop: 12, borderCollapse: "collapse" }}>
+          <table className="w-full mt-3 border-collapse text-sm">
             <thead>
               <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 8 }}>
+                <th className="text-left border-b border-border px-2 py-2">
                   Hash
                 </th>
-                <th style={{ borderBottom: "1px solid #e5e7eb", padding: 8 }}></th>
+                <th className="border-b border-border px-2 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {data.hashes.map((h) => (
                 <tr key={h}>
-                  <td style={{ padding: 8, fontFamily: "monospace" }}>{h}</td>
-                  <td style={{ padding: 8, textAlign: "right" }}>
-                    <button type="button" onClick={() => removeHash(h)} disabled={busy}>
+                  <td className="px-2 py-2 font-mono">{h}</td>
+                  <td className="px-2 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeHash(h)}
+                      disabled={busy}
+                      className="px-3 py-1 border border-border rounded text-sm disabled:opacity-50"
+                    >
                       Remove
                     </button>
                   </td>
