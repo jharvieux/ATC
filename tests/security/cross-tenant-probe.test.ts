@@ -25,10 +25,15 @@ const API_ROOT = join(process.cwd(), "apps", "main", "src", "app", "api");
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+// APP_BASE_URL is the deployed Next.js app (e.g. the Vercel preview URL).
+// SUPABASE_URL is the Supabase project endpoint — these are two different
+// origins and must not be used interchangeably. See issue #563.
+const APP_BASE_URL = process.env.APP_BASE_URL ?? "";
 
 const FIXTURES_AVAILABLE =
   SUPABASE_URL !== "" &&
   SERVICE_KEY !== "" &&
+  APP_BASE_URL !== "" &&
   process.env.CROSS_TENANT_FIXTURES === "true";
 
 type AllowlistEntry = { route: string; method: string; reason: string };
@@ -55,7 +60,7 @@ function makeRequest(
     path = path.replace(/\[[^\]]+\]/, "00000000-0000-0000-0000-000000000000");
   }
 
-  const url = `${SUPABASE_URL.replace(/\/$/, "")}${path}`;
+  const url = `${APP_BASE_URL.replace(/\/$/, "")}${path}`;
   return new Request(url, {
     method: entry.method,
     headers: {
