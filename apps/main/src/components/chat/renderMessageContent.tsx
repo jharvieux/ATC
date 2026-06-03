@@ -77,17 +77,17 @@ export function renderMessageContent(
     if (asset && renderedAssetCount < MAX_RENDERED_ASSETS) {
       renderedAssetCount += 1;
       out.push(
-        <span key={`asset-${key++}`} style={{ display: "inline-block", margin: "2px 0" }}>
+        <span key={`asset-${key++}`} className="inline-block my-0.5">
           <a
             href={asset.image_url}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "#2563eb", textDecoration: "underline" }}
+            className="text-primary underline"
           >
             View {asset.kind.replace(/_/g, " ")} ↗
           </a>
           {asset.attribution ? (
-            <span style={{ marginLeft: 6, color: "#6b7280", fontSize: 12 }}>
+            <span className="ml-1.5 text-muted-foreground text-[12px]">
               ({asset.attribution})
             </span>
           ) : null}

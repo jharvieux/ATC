@@ -9,8 +9,9 @@
 // No new server work — this is purely UI assembly.
 
 import { useCallback, useEffect, useState } from "react";
-
-type Tab = "history" | "memory" | "prefs";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Conversation {
   id: string;
@@ -35,38 +36,21 @@ interface MemoryRow {
 }
 
 export function ChatSidebar(): JSX.Element {
-  const [tab, setTab] = useState<Tab>("history");
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <h3 style={{ marginTop: 0, marginBottom: 12, fontSize: 15 }}>Chat</h3>
-      <nav style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-        {(["history", "memory", "prefs"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              flex: 1,
-              fontSize: 12,
-              padding: "4px 6px",
-              border: "1px solid #d1d5db",
-              borderRadius: 4,
-              background: tab === t ? "#1d4ed8" : "white",
-              color: tab === t ? "white" : "#374151",
-              cursor: "pointer",
-              textTransform: "capitalize",
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </nav>
-
-      <div style={{ flex: 1, overflowY: "auto", fontSize: 13 }}>
-        {tab === "history" && <HistoryPanel />}
-        {tab === "memory" && <MemoryPanel />}
-        {tab === "prefs" && <PrefsPanel />}
-      </div>
+    <div className="flex flex-col h-full">
+      <h3 className="mt-0 mb-3 text-[15px]">Chat</h3>
+      <Tabs defaultValue="history" className="flex flex-col flex-1 overflow-hidden">
+        <TabsList className="w-full mb-2 h-8 text-[12px]">
+          <TabsTrigger value="history" className="flex-1 text-[12px]">History</TabsTrigger>
+          <TabsTrigger value="memory" className="flex-1 text-[12px]">Memory</TabsTrigger>
+          <TabsTrigger value="prefs" className="flex-1 text-[12px]">Prefs</TabsTrigger>
+        </TabsList>
+        <div className="flex-1 overflow-y-auto text-[13px]">
+          <TabsContent value="history"><HistoryPanel /></TabsContent>
+          <TabsContent value="memory"><MemoryPanel /></TabsContent>
+          <TabsContent value="prefs"><PrefsPanel /></TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
@@ -91,28 +75,21 @@ function HistoryPanel(): JSX.Element {
     })();
   }, []);
 
-  if (err) return <p style={{ color: "#b91c1c" }}>Couldn&apos;t load history: {err}</p>;
-  if (!convos) return <p style={{ color: "#6b7280" }}>Loading…</p>;
-  if (convos.length === 0) return <p style={{ color: "#6b7280" }}>No conversations yet.</p>;
+  if (err) return <p className="text-red-700 dark:text-red-400">Couldn&apos;t load history: {err}</p>;
+  if (!convos) return <p className="text-muted-foreground">Loading…</p>;
+  if (convos.length === 0) return <p className="text-muted-foreground">No conversations yet.</p>;
 
   return (
-    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+    <ul className="list-none p-0 m-0">
       {convos.map((c) => (
-        <li key={c.id} style={{ marginBottom: 8 }}>
+        <li key={c.id} className="mb-2">
           <a
             href={`/chat?id=${c.id}`}
-            style={{
-              display: "block",
-              color: "#1d4ed8",
-              textDecoration: "none",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
+            className="block text-primary no-underline overflow-hidden text-ellipsis whitespace-nowrap hover:underline"
           >
             {c.title ?? "(untitled)"}
           </a>
-          <span style={{ color: "#9ca3af", fontSize: 11 }}>
+          <span className="text-muted-foreground text-[11px]">
             {c.message_count ?? 0} msgs ·{" "}
             {c.last_message_at ? new Date(c.last_message_at).toLocaleDateString() : "—"}
           </span>
@@ -142,9 +119,9 @@ function MemoryPanel(): JSX.Element {
     })();
   }, []);
 
-  if (err) return <p style={{ color: "#b91c1c" }}>Couldn&apos;t load memory: {err}</p>;
-  if (mem === "empty") return <p style={{ color: "#6b7280" }}>No memory yet — keep chatting and we&apos;ll learn.</p>;
-  if (!mem) return <p style={{ color: "#6b7280" }}>Loading…</p>;
+  if (err) return <p className="text-red-700 dark:text-red-400">Couldn&apos;t load memory: {err}</p>;
+  if (mem === "empty") return <p className="text-muted-foreground">No memory yet — keep chatting and we&apos;ll learn.</p>;
+  if (!mem) return <p className="text-muted-foreground">Loading…</p>;
 
   return (
     <div>
@@ -156,9 +133,9 @@ function MemoryPanel(): JSX.Element {
       <Section title="Loyalty" data={mem.loyalty_programs} />
       <Section title="Important dates" data={mem.important_dates} />
       {mem.notes_freeform && (
-        <div style={{ marginTop: 8 }}>
-          <h4 style={{ fontSize: 12, color: "#6b7280", margin: "8px 0 2px" }}>Notes</h4>
-          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{mem.notes_freeform}</p>
+        <div className="mt-2">
+          <h4 className="text-[12px] text-muted-foreground mt-2 mb-0.5">Notes</h4>
+          <p className="m-0 whitespace-pre-wrap">{mem.notes_freeform}</p>
         </div>
       )}
     </div>
@@ -170,20 +147,9 @@ function Section({ title, data }: { title: string; data: unknown }): JSX.Element
   if (Array.isArray(data) && data.length === 0) return null;
   if (typeof data === "object" && Object.keys(data as object).length === 0) return null;
   return (
-    <div style={{ marginTop: 8 }}>
-      <h4 style={{ fontSize: 12, color: "#6b7280", margin: "8px 0 2px" }}>{title}</h4>
-      <pre
-        style={{
-          background: "#f9fafb",
-          border: "1px solid #e5e7eb",
-          borderRadius: 4,
-          padding: 6,
-          margin: 0,
-          fontSize: 11,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-        }}
-      >
+    <div className="mt-2">
+      <h4 className="text-[12px] text-muted-foreground mt-2 mb-0.5">{title}</h4>
+      <pre className="bg-muted border border-border rounded p-1.5 m-0 text-[11px] whitespace-pre-wrap break-words">
         {JSON.stringify(data, null, 2)}
       </pre>
     </div>
@@ -228,11 +194,11 @@ function PrefsPanel(): JSX.Element {
     }
   }, [tone, notes]);
 
-  if (!loaded) return <p style={{ color: "#6b7280" }}>Loading…</p>;
+  if (!loaded) return <p className="text-muted-foreground">Loading…</p>;
 
   return (
     <div>
-      <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>
+      <label className="block text-[12px] text-foreground mb-1">
         Rapport tone (1 reserved → 5 warm)
       </label>
       <input
@@ -242,46 +208,31 @@ function PrefsPanel(): JSX.Element {
         step={1}
         value={tone}
         onChange={(e) => setTone(Number(e.target.value))}
-        style={{ width: "100%" }}
+        className="w-full"
       />
-      <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 12 }}>Current: {tone}</div>
+      <div className="text-[11px] text-muted-foreground mb-3">Current: {tone}</div>
 
-      <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>
+      <label className="block text-[12px] text-foreground mb-1">
         Notes (anything you want the AI to remember)
       </label>
-      <textarea
+      <Textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         rows={5}
-        style={{
-          width: "100%",
-          border: "1px solid #d1d5db",
-          borderRadius: 4,
-          padding: 6,
-          fontSize: 12,
-          fontFamily: "inherit",
-        }}
+        className="text-[12px]"
       />
 
-      <button
+      <Button
         onClick={() => void save()}
         disabled={saving}
-        style={{
-          marginTop: 8,
-          padding: "6px 12px",
-          fontSize: 12,
-          background: "#1d4ed8",
-          color: "white",
-          border: "none",
-          borderRadius: 4,
-          cursor: saving ? "not-allowed" : "pointer",
-          opacity: saving ? 0.6 : 1,
-        }}
+        className="mt-2 text-[12px] h-8 px-3"
       >
         {saving ? "Saving…" : "Save"}
-      </button>
+      </Button>
       {status && (
-        <p style={{ fontSize: 11, color: status === "Saved." ? "#059669" : "#b91c1c", marginTop: 6 }}>{status}</p>
+        <p className={`text-[11px] mt-1.5 ${status === "Saved." ? "text-emerald-600 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
+          {status}
+        </p>
       )}
     </div>
   );

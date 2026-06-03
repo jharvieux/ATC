@@ -16,6 +16,8 @@ import { SignupWall } from "@/components/chat/SignupWall";
 import { HardLimitMessage } from "@/components/chat/HardLimitMessage";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { PoweredBy } from "@/components/branding/PoweredBy";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 const DRAFT_KEY = "atc-chat-draft";
 
@@ -196,21 +198,14 @@ export default function ChatPage(): JSX.Element {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    <div className="flex flex-col h-screen">
       <AIDisclosureBanner />
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        <aside
-          style={{
-            width: 260,
-            borderRight: "1px solid #e5e7eb",
-            padding: 16,
-          }}
-          className="chat-sidebar"
-        >
+      <div className="flex flex-1 overflow-hidden">
+        <aside className="hidden md:block w-[260px] border-r border-border p-4 overflow-y-auto shrink-0">
           <ChatSidebar />
         </aside>
 
-        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <main className="flex-1 flex flex-col overflow-hidden">
           {signupWall && <SignupWall body={signupWall} />}
           {hardLimit && <HardLimitMessage body={hardLimit.body} resetAt={hardLimit.reset_at} />}
           <StreamingArea
@@ -221,7 +216,9 @@ export default function ChatPage(): JSX.Element {
           />
 
           {error && (
-            <div style={{ padding: 12, background: "#fee2e2", color: "#991b1b" }}>{error}</div>
+            <div className="p-3 bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 text-sm">
+              {error}
+            </div>
           )}
 
           {!hardLimit && !signupWall && (
@@ -230,37 +227,20 @@ export default function ChatPage(): JSX.Element {
                 e.preventDefault();
                 void send();
               }}
-              style={{
-                display: "flex",
-                gap: 8,
-                padding: 12,
-                borderTop: "1px solid #e5e7eb",
-                background: "#fff",
-              }}
+              className="flex gap-2 p-3 border-t border-border bg-background"
             >
-              <input
+              <Input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Type a message…"
                 disabled={sending}
                 aria-label="Message input"
-                style={{ flex: 1, padding: 10, borderRadius: 6, border: "1px solid #d1d5db" }}
+                className="flex-1"
               />
-              <button
-                type="submit"
-                disabled={sending || !input.trim()}
-                style={{
-                  background: "#3b82f6",
-                  color: "#fff",
-                  border: "none",
-                  padding: "0 18px",
-                  borderRadius: 6,
-                  cursor: sending ? "not-allowed" : "pointer",
-                }}
-              >
+              <Button type="submit" disabled={sending || !input.trim()}>
                 {sending ? "…" : "Send"}
-              </button>
+              </Button>
             </form>
           )}
           {/* §16.7 — Powered-by attribution. show=true is the BYO Research /
@@ -270,14 +250,6 @@ export default function ChatPage(): JSX.Element {
           <PoweredBy show={true} />
         </main>
       </div>
-
-      <style jsx>{`
-        @media (min-width: 768px) {
-          .chat-sidebar {
-            display: block !important;
-          }
-        }
-      `}</style>
     </div>
   );
 }
