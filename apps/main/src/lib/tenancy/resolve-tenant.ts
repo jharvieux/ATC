@@ -91,13 +91,7 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
   return tenant;
 }
 
-/**
- * Resolves an authenticated user's primary tenant.
- * Used by middleware to let platform-domain users access tenant-scoped
- * paths (e.g. /chat) without being blocked by the "platform" sentinel.
- * Takes the earliest-created active users row when a user belongs to
- * multiple tenants.
- */
+/** Earliest-created active users row wins when a user belongs to multiple tenants. */
 export async function getTenantByAuthUserId(
   authUserId: string,
 ): Promise<Tenant | null> {

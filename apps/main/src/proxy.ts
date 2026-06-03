@@ -268,7 +268,8 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     const isChatPath =
       pathname === "/chat" ||
       pathname.startsWith("/chat/") ||
-      pathname.startsWith("/api/chat") ||
+      pathname === "/api/chat" ||
+      pathname.startsWith("/api/chat/") ||
       pathname.startsWith("/api/memory");
 
     if (isChatPath && authUser) {
