@@ -185,7 +185,7 @@ export function CustomerContextChatPanel({
       <div
         ref={scrollRef}
         className="bg-background border border-border rounded-md p-2.5 min-h-[120px] overflow-y-auto text-[13px]"
-        style={{ maxHeight }}
+        style={{ maxHeight }} /* prop-driven; can't be a static Tailwind class */
       >
         {bubbles.length === 0 && !streaming && (
           <p className="text-muted-foreground m-0">

@@ -11,8 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-
-type Tab = "history" | "memory" | "prefs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Conversation {
   id: string;
@@ -37,32 +36,21 @@ interface MemoryRow {
 }
 
 export function ChatSidebar(): JSX.Element {
-  const [tab, setTab] = useState<Tab>("history");
-
   return (
     <div className="flex flex-col h-full">
       <h3 className="mt-0 mb-3 text-[15px]">Chat</h3>
-      <nav className="flex gap-1 mb-3">
-        {(["history", "memory", "prefs"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 text-[12px] px-1.5 py-1 border rounded capitalize cursor-pointer transition-colors ${
-              tab === t
-                ? "bg-primary text-primary-foreground border-primary"
-                : "bg-background text-foreground border-input hover:bg-accent"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </nav>
-
-      <div className="flex-1 overflow-y-auto text-[13px]">
-        {tab === "history" && <HistoryPanel />}
-        {tab === "memory" && <MemoryPanel />}
-        {tab === "prefs" && <PrefsPanel />}
-      </div>
+      <Tabs defaultValue="history" className="flex flex-col flex-1 overflow-hidden">
+        <TabsList className="w-full mb-2 h-8 text-[12px]">
+          <TabsTrigger value="history" className="flex-1 text-[12px]">History</TabsTrigger>
+          <TabsTrigger value="memory" className="flex-1 text-[12px]">Memory</TabsTrigger>
+          <TabsTrigger value="prefs" className="flex-1 text-[12px]">Prefs</TabsTrigger>
+        </TabsList>
+        <div className="flex-1 overflow-y-auto text-[13px]">
+          <TabsContent value="history"><HistoryPanel /></TabsContent>
+          <TabsContent value="memory"><MemoryPanel /></TabsContent>
+          <TabsContent value="prefs"><PrefsPanel /></TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
