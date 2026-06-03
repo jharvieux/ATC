@@ -4,6 +4,7 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+      cooldown: "1d" # Delays PRs until the release has been out for at least 1 day
     open-pull-requests-limit: 10
     groups:
       production-minor-patch:
