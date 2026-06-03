@@ -177,6 +177,7 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
           }}
         >
           <dt style={{ color: "#6b7280" }}>Total</dt>
+          {/* §38.4.3 price priority: locked > estimate > representative option total */}
           <dd style={{ margin: 0, fontWeight: 600 }}>
             {money(quote.locked_price_cents ?? quote.estimate_price_cents ?? rep?.total_amount_cents ?? null, currency)}
           </dd>

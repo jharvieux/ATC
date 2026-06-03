@@ -17,6 +17,8 @@ import {
   type SourceFile,
 } from "./lib/dropped-column-readers";
 
+// Enumerate every app under apps/ — main AND rag each have supabase/migrations
+// + src, so this is intentionally wider than lint-migrations.ts (main-only).
 const APPS_DIR = "apps";
 const EXCEPTIONS_FILE = path.join("db", "dropped-column-exceptions.txt");
 const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "build", "coverage", ".turbo"]);
@@ -64,10 +66,22 @@ function readExceptions(): Set<string> {
 
 function main(): void {
   const migrations = readMigrations();
+  const sources = readSources();
+
+  // Fail loud, not open: this is a safety gate, so "nothing to scan" almost
+  // always means a misconfigured CWD — not a legitimately empty repo. Printing
+  // "passed" on zero inputs would make the gate a silent false-green, the exact
+  // skipped-check failure it exists to prevent.
+  if (migrations.length === 0 || sources.length === 0) {
+    console.error(
+      `Dropped-column reader check could not run: found ${migrations.length} migration(s) ` +
+        `and ${sources.length} source file(s) under ${APPS_DIR}/. Run from the repo root.`,
+    );
+    process.exit(1);
+  }
+
   const removed = computeRemovedColumns(parseColumnOps(migrations));
   const droppedCount = [...removed.values()].reduce((n, s) => n + s.size, 0);
-
-  const sources = readSources();
   const exceptions = readExceptions();
   const violations = findViolations(removed, sources).filter(
     (v) => !exceptions.has(`${v.table}.${v.column}`),
