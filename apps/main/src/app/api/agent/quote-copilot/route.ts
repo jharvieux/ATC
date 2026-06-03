@@ -33,8 +33,7 @@ const Body = z.object({
     .optional(),
 });
 
-// The flat shape buildCopilotSystemPrompt consumes — assembled from the
-// quotes container plus its representative quote_options row (§38).
+// Synthesized flat shape (container + representative option, §38), not a DB row.
 interface QuoteRow {
   id: string;
   tenant_id: string;

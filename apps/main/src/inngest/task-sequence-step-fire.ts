@@ -78,6 +78,7 @@ export const taskSequenceStepFire = inngest.createFunction(
         .from("quotes")
         .select("status, contact_id")
         .eq("id", run.quote_id)
+        .eq("tenant_id", run.tenant_id)
         .maybeSingle();
       if (data) {
         const q = data as { status: string; contact_id: string };
