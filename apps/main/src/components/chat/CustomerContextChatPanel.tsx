@@ -16,6 +16,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CustomerContextRef } from "@/lib/chat/customer-context";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface ChatBubble {
   role: "user" | "assistant" | "system";
@@ -174,36 +176,19 @@ export function CustomerContextChatPanel({
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#374151", margin: 0 }}>
-        {title}
-      </h3>
-      <p style={{ fontSize: 11, color: "#9ca3af", margin: 0 }}>
+    <div className="flex flex-col gap-2">
+      <h3 className="text-[14px] font-bold text-foreground m-0">{title}</h3>
+      <p className="text-[11px] text-muted-foreground m-0">
         AI — replies may include errors. Confirm anything important with your agent.
       </p>
 
       <div
         ref={scrollRef}
-        style={{
-          background: "#fff",
-          border: "1px solid #e5e7eb",
-          borderRadius: 6,
-          padding: 10,
-          maxHeight,
-          minHeight: 120,
-          overflowY: "auto",
-          fontSize: 13,
-        }}
+        className="bg-background border border-border rounded-md p-2.5 min-h-[120px] overflow-y-auto text-[13px]"
+        style={{ maxHeight }}
       >
         {bubbles.length === 0 && !streaming && (
-          <p style={{ color: "#9ca3af", margin: 0 }}>
+          <p className="text-muted-foreground m-0">
             Ask me anything about your trip — cabins, ports, packing, timing, options.
           </p>
         )}
@@ -216,16 +201,7 @@ export function CustomerContextChatPanel({
       </div>
 
       {error && (
-        <div
-          style={{
-            background: "#fee2e2",
-            border: "1px solid #fecaca",
-            color: "#991b1b",
-            padding: "6px 8px",
-            borderRadius: 4,
-            fontSize: 12,
-          }}
-        >
+        <div className="bg-red-100 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 px-2 py-1.5 rounded text-[12px]">
           {error}
         </div>
       )}
@@ -235,38 +211,20 @@ export function CustomerContextChatPanel({
           e.preventDefault();
           void send();
         }}
-        style={{ display: "flex", gap: 6 }}
+        className="flex gap-1.5"
       >
-        <input
+        <Input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={placeholder}
           disabled={sending}
           aria-label="Message"
-          style={{
-            flex: 1,
-            padding: "8px 10px",
-            border: "1px solid #d1d5db",
-            borderRadius: 4,
-            fontSize: 13,
-          }}
+          className="flex-1 text-[13px]"
         />
-        <button
-          type="submit"
-          disabled={sending || !input.trim()}
-          style={{
-            background: "#3b82f6",
-            color: "#fff",
-            border: "none",
-            padding: "0 12px",
-            borderRadius: 4,
-            cursor: sending ? "not-allowed" : "pointer",
-            fontSize: 13,
-          }}
-        >
+        <Button type="submit" disabled={sending || !input.trim()}>
           {sending ? "…" : "Send"}
-        </button>
+        </Button>
       </form>
     </div>
   );
@@ -276,24 +234,15 @@ function Bubble({ bubble }: { bubble: ChatBubble }): JSX.Element {
   const isUser = bubble.role === "user";
   const isSystem = bubble.role === "system";
   return (
-    <div
-      style={{
-        marginBottom: 8,
-        display: "flex",
-        justifyContent: isUser ? "flex-end" : "flex-start",
-      }}
-    >
+    <div className={`mb-2 flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        style={{
-          background: isSystem ? "#fef3c7" : isUser ? "#dbeafe" : "#f3f4f6",
-          color: "#111827",
-          padding: "6px 10px",
-          borderRadius: 8,
-          maxWidth: "85%",
-          whiteSpace: "pre-wrap",
-          fontSize: 13,
-          lineHeight: 1.4,
-        }}
+        className={`px-2.5 py-1.5 rounded-lg max-w-[85%] whitespace-pre-wrap text-[13px] leading-[1.4] text-foreground ${
+          isSystem
+            ? "bg-amber-50 dark:bg-amber-900/30"
+            : isUser
+              ? "bg-blue-100 dark:bg-blue-900/30"
+              : "bg-muted"
+        }`}
       >
         {bubble.content}
       </div>

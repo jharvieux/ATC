@@ -68,7 +68,7 @@ export function MessageBubble({
 
   if (isSystem) {
     return (
-      <div style={{ margin: "12px 0", padding: 10, background: "#f1f5f9", borderRadius: 6, color: "#475569", fontSize: 14 }}>
+      <div className="my-3 p-2.5 bg-muted rounded-md text-muted-foreground text-[14px]">
         {msg.content}
       </div>
     );
@@ -76,73 +76,63 @@ export function MessageBubble({
 
   return (
     <div
-      style={{
-        display: "flex",
-        gap: 12,
-        alignItems: "flex-start",
-        margin: "12px 0",
-        flexDirection: msg.role === "user" ? "row-reverse" : "row",
-      }}
+      className={`flex gap-3 items-start my-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}
     >
       <div
-        title={isAssistant && msg.used_memory && showMemoryIndicator
-          ? "This response used context from your previous conversations."
-          : undefined}
-        style={{
-          width: 32,
-          height: 32,
-          borderRadius: 16,
-          background: msg.role === "user" ? "#3b82f6" : "#10b981",
-          color: "#fff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 13,
-          fontWeight: 600,
-          flexShrink: 0,
-        }}
+        title={
+          isAssistant && msg.used_memory && showMemoryIndicator
+            ? "This response used context from your previous conversations."
+            : undefined
+        }
+        className={`w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-semibold shrink-0 text-white ${msg.role === "user" ? "bg-primary" : "bg-emerald-500"}`}
       >
         {msg.role === "user" ? "You" : (msg.persona_display_name ?? "AI").slice(0, 2)}
       </div>
-      <div style={{ maxWidth: "70%" }}>
+      <div className="max-w-[70%]">
         {isAssistant && (
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 2 }}>
+          <div className="text-[12px] text-muted-foreground mb-0.5">
             {msg.persona_display_name ?? msg.persona_slug ?? "Assistant"}
-            <span title={msg.created_at} style={{ marginLeft: 8 }}>
+            <span title={msg.created_at} className="ml-2">
               {relativeTime(msg.created_at)}
             </span>
           </div>
         )}
         <div
-          style={{
-            background: msg.role === "user" ? "#3b82f6" : "#f3f4f6",
-            color: msg.role === "user" ? "#fff" : "#111827",
-            padding: "10px 14px",
-            borderRadius: 12,
-            whiteSpace: "pre-wrap",
-          }}
+          className={`px-3.5 py-2.5 rounded-xl whitespace-pre-wrap ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}
         >
           {isAssistant
             ? renderMessageContent(msg.content, msg.assets, { showAssetLinks: showSources })
             : msg.content}
         </div>
         {isAssistant && (
-          <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#6b7280" }}>
+          <div className="mt-1.5 flex gap-2 items-center text-[12px] text-muted-foreground">
             {msg.citations && msg.citations.length > 0 && (
               <MessageSources citations={msg.citations} visible={showSources} />
             )}
-            <button type="button" onClick={copy} aria-label="Copy message"
-              style={{ border: "none", background: "transparent", cursor: "pointer", color: "#6b7280" }}>
+            <button
+              type="button"
+              onClick={copy}
+              aria-label="Copy message"
+              className="border-none bg-transparent cursor-pointer text-muted-foreground"
+            >
               {copied ? "Copied" : "Copy"}
             </button>
-            <button type="button" onClick={() => handleFeedback(1)}
-              aria-label="Thumbs up" aria-pressed={score === 1}
-              style={{ border: "none", background: "transparent", cursor: "pointer", color: score === 1 ? "#10b981" : "#6b7280" }}>
+            <button
+              type="button"
+              onClick={() => handleFeedback(1)}
+              aria-label="Thumbs up"
+              aria-pressed={score === 1}
+              className={`border-none bg-transparent cursor-pointer ${score === 1 ? "text-emerald-500" : "text-muted-foreground"}`}
+            >
               👍
             </button>
-            <button type="button" onClick={() => handleFeedback(-1)}
-              aria-label="Thumbs down" aria-pressed={score === -1}
-              style={{ border: "none", background: "transparent", cursor: "pointer", color: score === -1 ? "#ef4444" : "#6b7280" }}>
+            <button
+              type="button"
+              onClick={() => handleFeedback(-1)}
+              aria-label="Thumbs down"
+              aria-pressed={score === -1}
+              className={`border-none bg-transparent cursor-pointer ${score === -1 ? "text-red-500" : "text-muted-foreground"}`}
+            >
               👎
             </button>
           </div>

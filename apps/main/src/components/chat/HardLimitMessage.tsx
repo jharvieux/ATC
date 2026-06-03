@@ -1,6 +1,8 @@
 // §24.9 — Hard-limit system message rendered when the customer hits the cap.
 // NOT in-character — clearly platform-spoken.
 
+import { Button } from "@/components/ui/button";
+
 export function HardLimitMessage({
   body,
   resetAt,
@@ -12,44 +14,18 @@ export function HardLimitMessage({
   return (
     <div
       role="alert"
-      style={{
-        margin: 16,
-        padding: 20,
-        background: "#fef3c7",
-        border: "1px solid #f59e0b",
-        borderRadius: 8,
-        color: "#78350f",
-      }}
+      className="m-4 p-5 bg-amber-50 dark:bg-amber-950/20 border border-amber-400 dark:border-amber-600 rounded-lg text-amber-900 dark:text-amber-200"
     >
-      <p style={{ margin: "0 0 8px 0", fontWeight: 700 }}>Chat limit reached</p>
-      <p style={{ margin: "0 0 12px 0", whiteSpace: "pre-wrap" }}>{body}</p>
-      <p style={{ margin: "0 0 16px 0", fontSize: 13 }}>Quota resets {resetPretty}.</p>
-      <div style={{ display: "flex", gap: 10 }}>
-        <a
-          href="/api/chat/escalate"
-          style={{
-            background: "#1f2937",
-            color: "#fff",
-            padding: "8px 14px",
-            borderRadius: 6,
-            textDecoration: "none",
-          }}
-        >
-          Talk to a human
-        </a>
-        <a
-          href="/bookings"
-          style={{
-            background: "#fff",
-            color: "#1f2937",
-            border: "1px solid #1f2937",
-            padding: "8px 14px",
-            borderRadius: 6,
-            textDecoration: "none",
-          }}
-        >
-          View my bookings
-        </a>
+      <p className="mb-2 font-bold">Chat limit reached</p>
+      <p className="mb-3 whitespace-pre-wrap">{body}</p>
+      <p className="mb-4 text-[13px]">Quota resets {resetPretty}.</p>
+      <div className="flex gap-2.5">
+        <Button asChild>
+          <a href="/api/chat/escalate">Talk to a human</a>
+        </Button>
+        <Button asChild variant="outline">
+          <a href="/bookings">View my bookings</a>
+        </Button>
       </div>
     </div>
   );

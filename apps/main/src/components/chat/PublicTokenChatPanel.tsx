@@ -8,6 +8,8 @@
 // them as previous_turns so the AI stays coherent.
 
 import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface Turn {
   id: string;
@@ -96,26 +98,11 @@ export function PublicTokenChatPanel({
   }
 
   return (
-    <section
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 10,
-        background: "#fff",
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      <header
-        style={{
-          padding: "12px 16px",
-          borderBottom: "1px solid #e5e7eb",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+    <section className="border border-border rounded-[10px] bg-card">
+      <header className="px-4 py-3 border-b border-border flex justify-between items-center">
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#1f4e79" }}>{title}</div>
-          <div style={{ fontSize: 11, color: "#6b7280" }}>
+          <div className="text-[14px] font-semibold text-primary">{title}</div>
+          <div className="text-[11px] text-muted-foreground">
             AI — for changes to your booking, talk to your agent.
           </div>
         </div>
@@ -126,14 +113,7 @@ export function PublicTokenChatPanel({
               setTurns([]);
               setError(null);
             }}
-            style={{
-              fontSize: 12,
-              color: "#6b7280",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              textDecoration: "underline",
-            }}
+            className="text-[12px] text-muted-foreground bg-transparent border-none cursor-pointer underline"
           >
             Clear
           </button>
@@ -142,35 +122,19 @@ export function PublicTokenChatPanel({
 
       <div
         ref={scrollRef}
-        style={{
-          padding: "12px 16px",
-          maxHeight: 320,
-          minHeight: 120,
-          overflowY: "auto",
-          fontSize: 14,
-        }}
+        className="px-4 py-3 max-h-80 min-h-[120px] overflow-y-auto text-[14px]"
       >
         {turns.length === 0 ? (
           <div>
-            <p style={{ fontSize: 12, color: "#6b7280", marginTop: 0, marginBottom: 10 }}>
-              Try one of these:
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <p className="text-[12px] text-muted-foreground mt-0 mb-2.5">Try one of these:</p>
+            <div className="flex flex-wrap gap-1.5">
               {starters.map((p) => (
                 <button
                   key={p}
                   type="button"
                   onClick={() => void ask(p)}
                   disabled={sending}
-                  style={{
-                    fontSize: 12,
-                    padding: "4px 8px",
-                    border: "1px solid #e5e7eb",
-                    background: "#f9fafb",
-                    color: "#374151",
-                    borderRadius: 999,
-                    cursor: sending ? "not-allowed" : "pointer",
-                  }}
+                  className="text-[12px] px-2 py-1 border border-border bg-muted text-foreground rounded-full cursor-pointer hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {p}
                 </button>
@@ -178,47 +142,34 @@ export function PublicTokenChatPanel({
             </div>
           </div>
         ) : (
-          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+          <ul className="m-0 p-0 list-none">
             {turns.map((t) => (
-              <li key={t.id} style={{ marginBottom: 14 }}>
+              <li key={t.id} className="mb-3.5">
                 <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: t.role === "user" ? "#1f4e79" : t.role === "system" ? "#92400e" : "#374151",
-                  }}
+                  className={`text-[11px] font-semibold ${
+                    t.role === "user"
+                      ? "text-primary"
+                      : t.role === "system"
+                        ? "text-amber-700 dark:text-amber-400"
+                        : "text-foreground"
+                  }`}
                 >
                   {t.role === "user" ? "You" : t.role === "system" ? "Note" : "Assistant"}
                 </span>
-                <p
-                  style={{
-                    margin: "2px 0 0 0",
-                    color: "#111827",
-                    whiteSpace: "pre-wrap",
-                    lineHeight: 1.4,
-                  }}
-                >
+                <p className="mt-0.5 mb-0 text-foreground whitespace-pre-wrap leading-[1.4]">
                   {t.content}
                 </p>
               </li>
             ))}
             {sending && (
-              <li style={{ fontSize: 12, color: "#6b7280" }}>Assistant is thinking…</li>
+              <li className="text-[12px] text-muted-foreground">Assistant is thinking…</li>
             )}
           </ul>
         )}
       </div>
 
       {error && (
-        <div
-          style={{
-            padding: "8px 16px",
-            background: "#fee2e2",
-            borderTop: "1px solid #fecaca",
-            color: "#991b1b",
-            fontSize: 12,
-          }}
-        >
+        <div className="px-4 py-2 bg-red-100 dark:bg-red-900/30 border-t border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 text-[12px]">
           {error}
         </div>
       )}
@@ -228,44 +179,20 @@ export function PublicTokenChatPanel({
           e.preventDefault();
           void ask(input);
         }}
-        style={{
-          borderTop: "1px solid #e5e7eb",
-          padding: 12,
-          display: "flex",
-          gap: 6,
-        }}
+        className="border-t border-border p-3 flex gap-1.5"
       >
-        <input
+        <Input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask anything about your trip…"
           disabled={sending}
           aria-label="Message"
-          style={{
-            flex: 1,
-            padding: "8px 10px",
-            border: "1px solid #d1d5db",
-            borderRadius: 6,
-            fontSize: 14,
-          }}
+          className="flex-1"
         />
-        <button
-          type="submit"
-          disabled={sending || !input.trim()}
-          style={{
-            background: "#1f4e79",
-            color: "#fff",
-            border: "none",
-            padding: "0 16px",
-            borderRadius: 6,
-            cursor: sending ? "not-allowed" : "pointer",
-            fontSize: 14,
-            fontWeight: 500,
-          }}
-        >
+        <Button type="submit" disabled={sending || !input.trim()}>
           {sending ? "…" : "Send"}
-        </button>
+        </Button>
       </form>
     </section>
   );

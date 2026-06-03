@@ -8,17 +8,7 @@ export function AIDisclosureBanner({ text }: { text?: string }): JSX.Element {
     <div
       role="note"
       aria-label="AI disclosure"
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 5,
-        background: "#fffbeb",
-        borderBottom: "1px solid #fde68a",
-        color: "#78350f",
-        fontSize: 13,
-        padding: "8px 16px",
-        textAlign: "center",
-      }}
+      className="sticky top-0 z-[5] bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[13px] py-2 px-4 text-center"
     >
       {body}
     </div>
