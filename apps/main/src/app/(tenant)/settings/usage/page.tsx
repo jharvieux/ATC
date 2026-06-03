@@ -5,6 +5,15 @@
 // /api/tenant/override-requests.
 
 import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type DimRow = {
   dimension: "ai_cost" | "chat_volume" | "email_volume" | "group_invite";
@@ -89,96 +98,120 @@ export default function UsagePage(): JSX.Element {
     else { setReason(""); window.location.reload(); }
   }
 
-  if (loading) return <main style={pageStyle}><p>Loading…</p></main>;
-  if (error) return <main style={pageStyle}><p style={{ color: "#dc2626" }}>{error}</p></main>;
-  if (!summary) return <main style={pageStyle}><p>No data.</p></main>;
+  if (loading) return <main className="px-6 py-8 max-w-[980px] mx-auto"><p>Loading…</p></main>;
+  if (error) return <main className="px-6 py-8 max-w-[980px] mx-auto"><p className="text-red-600 dark:text-red-400">{error}</p></main>;
+  if (!summary) return <main className="px-6 py-8 max-w-[980px] mx-auto"><p>No data.</p></main>;
 
   return (
-    <main style={pageStyle}>
+    <main className="px-6 py-8 max-w-[980px] mx-auto">
       <h1>Usage &amp; limits</h1>
-      <p style={{ color: "#555" }}>Current billing period: {summary.period}</p>
+      <p className="text-muted-foreground">Current billing period: {summary.period}</p>
 
-      <h2 style={{ marginTop: 24 }}>Monthly dimensions</h2>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Dimension</th><th style={thStyle}>Current</th><th style={thStyle}>Soft1</th><th style={thStyle}>Soft2</th><th style={thStyle}>Hard</th><th style={thStyle}>State</th></tr></thead>
-        <tbody>
-          {summary.dims.map((d) => (
-            <tr key={d.dimension}>
-              <td style={tdStyle}>{DIM_LABEL[d.dimension]}</td>
-              <td style={tdStyle}>{d.current}</td>
-              <td style={tdStyle}>{d.thresholds.soft1}</td>
-              <td style={tdStyle}>{d.thresholds.soft2}</td>
-              <td style={tdStyle}>{d.thresholds.hard}</td>
-              <td style={{ ...tdStyle, color: stateColor(d.state), fontWeight: 600 }}>{d.state}</td>
+      <h2 className="mt-6">Monthly dimensions</h2>
+      <div className="overflow-x-auto mt-2">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {["Dimension", "Current", "Soft1", "Soft2", "Hard", "State"].map((h) => (
+                <th key={h} className="text-left px-2 py-2 border-b border-border bg-muted font-semibold">{h}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {summary.dims.map((d) => (
+              <tr key={d.dimension}>
+                <td className="px-2 py-2 border-b border-muted">{DIM_LABEL[d.dimension]}</td>
+                <td className="px-2 py-2 border-b border-muted">{d.current}</td>
+                <td className="px-2 py-2 border-b border-muted">{d.thresholds.soft1}</td>
+                <td className="px-2 py-2 border-b border-muted">{d.thresholds.soft2}</td>
+                <td className="px-2 py-2 border-b border-muted">{d.thresholds.hard}</td>
+                <td className={`px-2 py-2 border-b border-muted font-semibold ${stateColorClass(d.state)}`}>{d.state}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-      <h2 style={{ marginTop: 24 }}>RAG knowledge base</h2>
+      <h2 className="mt-6">RAG knowledge base</h2>
       <p>
-        State: <strong style={{ color: stateColor(summary.rag.state) }}>{summary.rag.state}</strong> —
+        State: <strong className={stateColorClass(summary.rag.state)}>{summary.rag.state}</strong> —
         {" "}{summary.rag.current_chunks} of {summary.rag.effective_cap} chunks used
         {" "}(base cap {summary.rag.base_cap}, promoted +{summary.rag.promoted_chunks}).
       </p>
 
-      <h2 style={{ marginTop: 24 }}>Request an override</h2>
-      <p style={{ color: "#6b7280", marginTop: 0 }}>
+      <h2 className="mt-6">Request an override</h2>
+      <p className="text-muted-foreground mt-0">
         Submitted requests go to platform admins. Approved overrides take effect immediately and last 30 days by default.
       </p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <select value={selDim} onChange={(e) => setSelDim(e.target.value as DimRow["dimension"] | "rag_cap")}>
-          <option value="ai_cost">AI cost</option>
-          <option value="chat_volume">Chat volume</option>
-          <option value="email_volume">Email volume</option>
-          <option value="group_invite">Group invite</option>
-          <option value="rag_cap">RAG cap</option>
-        </select>
-        <select value={selKind} onChange={(e) => setSelKind(e.target.value as typeof selKind)}>
-          <option value="">— threshold kind (optional) —</option>
-          <option value="soft1">soft1</option>
-          <option value="soft2">soft2</option>
-          <option value="hard">hard</option>
-          <option value="base_cap">base_cap (RAG)</option>
-        </select>
-        <input
-          placeholder="reason (≥5 chars)" value={reason}
+      <div className="flex gap-2 items-center flex-wrap mt-3">
+        <Select value={selDim} onValueChange={(v) => setSelDim(v as DimRow["dimension"] | "rag_cap")}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ai_cost">AI cost</SelectItem>
+            <SelectItem value="chat_volume">Chat volume</SelectItem>
+            <SelectItem value="email_volume">Email volume</SelectItem>
+            <SelectItem value="group_invite">Group invite</SelectItem>
+            <SelectItem value="rag_cap">RAG cap</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={selKind} onValueChange={(v) => setSelKind(v as typeof selKind)}>
+          <SelectTrigger className="w-[220px]">
+            <SelectValue placeholder="— threshold kind (optional) —" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">— threshold kind (optional) —</SelectItem>
+            <SelectItem value="soft1">soft1</SelectItem>
+            <SelectItem value="soft2">soft2</SelectItem>
+            <SelectItem value="hard">hard</SelectItem>
+            <SelectItem value="base_cap">base_cap (RAG)</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          placeholder="reason (≥5 chars)"
+          value={reason}
           onChange={(e) => setReason(e.target.value)}
-          style={{ padding: 4, width: 360 }}
+          className="w-[360px]"
         />
-        <button disabled={submitting} onClick={submitRequest}>Submit request</button>
+        <Button type="button" disabled={submitting} onClick={submitRequest}>
+          Submit request
+        </Button>
       </div>
 
-      <h2 style={{ marginTop: 32 }}>Your request history</h2>
-      <table style={tableStyle}>
-        <thead><tr><th style={thStyle}>Dimension</th><th style={thStyle}>Kind</th><th style={thStyle}>Status</th><th style={thStyle}>Requested</th><th style={thStyle}>Reviewed</th><th style={thStyle}>Deny reason</th></tr></thead>
-        <tbody>
-          {requests.map((r) => (
-            <tr key={r.id}>
-              <td style={tdStyle}>{r.dimension}</td>
-              <td style={tdStyle}>{r.requested_threshold_kind ?? "—"}</td>
-              <td style={tdStyle}>{r.status}</td>
-              <td style={tdStyle}>{new Date(r.requested_at).toLocaleString()}</td>
-              <td style={tdStyle}>{r.reviewed_at ? new Date(r.reviewed_at).toLocaleString() : "—"}</td>
-              <td style={tdStyle}>{r.deny_reason ?? ""}</td>
+      <h2 className="mt-8">Your request history</h2>
+      <div className="overflow-x-auto mt-2">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {["Dimension", "Kind", "Status", "Requested", "Reviewed", "Deny reason"].map((h) => (
+                <th key={h} className="text-left px-2 py-2 border-b border-border bg-muted font-semibold">{h}</th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {requests.map((r) => (
+              <tr key={r.id}>
+                <td className="px-2 py-2 border-b border-muted">{r.dimension}</td>
+                <td className="px-2 py-2 border-b border-muted">{r.requested_threshold_kind ?? "—"}</td>
+                <td className="px-2 py-2 border-b border-muted">{r.status}</td>
+                <td className="px-2 py-2 border-b border-muted">{new Date(r.requested_at).toLocaleString()}</td>
+                <td className="px-2 py-2 border-b border-muted">{r.reviewed_at ? new Date(r.reviewed_at).toLocaleString() : "—"}</td>
+                <td className="px-2 py-2 border-b border-muted">{r.deny_reason ?? ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </main>
   );
 }
 
-const pageStyle: React.CSSProperties = { padding: 24, maxWidth: 980, margin: "0 auto" };
-const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", marginTop: 8 };
-const thStyle: React.CSSProperties = { textAlign: "left", padding: 8, borderBottom: "1px solid #e5e7eb", background: "#f3f4f6" };
-const tdStyle: React.CSSProperties = { padding: 8, borderBottom: "1px solid #f3f4f6" };
-
-function stateColor(s: string): string {
-  if (s === "ok") return "#16a34a";
-  if (s === "soft1" || s === "approaching") return "#ca8a04";
-  if (s === "soft2") return "#ea580c";
-  return "#dc2626";
+function stateColorClass(s: string): string {
+  if (s === "ok") return "text-green-700 dark:text-green-400";
+  if (s === "soft1" || s === "approaching") return "text-amber-700 dark:text-amber-400";
+  if (s === "soft2") return "text-orange-600 dark:text-orange-400";
+  return "text-red-600 dark:text-red-400";
 }
 
 // §17.x — session is in HttpOnly cookies that ride along same-origin fetches;
