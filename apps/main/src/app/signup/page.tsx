@@ -3,13 +3,7 @@
 // ("I'm setting up my agency"). Each triggers the appropriate Supabase OAuth
 // flow with the correct redirect_to for post-OAuth routing.
 
-import { createClient } from "@supabase/supabase-js";
-
 export default function SignupPage(): React.ReactElement {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  void supabaseUrl; void anonKey;
-
   return (
     <main style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 32, fontFamily: "system-ui, sans-serif" }}>
       <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Create your account</h1>
