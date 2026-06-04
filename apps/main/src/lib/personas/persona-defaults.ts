@@ -35,6 +35,7 @@ type TravelPersonaBase = {
   tone_calibration_placeholder: string;
   disclosure_pattern: string;
   background: string;
+  customer_bio: string;
   prompt_body: string;
 };
 
@@ -48,7 +49,18 @@ type HelpPersonaBase = {
   prompt_body: string;
 };
 
-function fromTravelBase(base: TravelPersonaBase): PersonaRecord {
+/**
+ * Adds the admin-only customer-facing bio (used by /agents/[slug] and the
+ * persona editor) on top of the prompt-assembler's PersonaRecord. Kept
+ * out of PersonaRecord proper because the prompt assembler doesn't read
+ * it — including it there would violate the D-091 "every field feeds the
+ * output" invariant.
+ */
+export type PersonaDefaultRecord = PersonaRecord & {
+  customer_bio: string | null;
+};
+
+function fromTravelBase(base: TravelPersonaBase): PersonaDefaultRecord {
   return {
     slug: base.slug,
     kind: PERSONA_KIND_TRAVEL,
@@ -56,6 +68,7 @@ function fromTravelBase(base: TravelPersonaBase): PersonaRecord {
     tagline: base.tagline,
     specialty: base.specialty,
     background: base.background,
+    customer_bio: base.customer_bio,
     voice: base.character.voice,
     tone_style: base.character.tone_style,
     expertise_primary: base.expertise_area.primary,
@@ -68,7 +81,7 @@ function fromTravelBase(base: TravelPersonaBase): PersonaRecord {
   };
 }
 
-function fromHelpBase(base: HelpPersonaBase): PersonaRecord {
+function fromHelpBase(base: HelpPersonaBase): PersonaDefaultRecord {
   return {
     slug: base.slug,
     kind: PERSONA_KIND_PLATFORM_HELP,
@@ -76,6 +89,7 @@ function fromHelpBase(base: HelpPersonaBase): PersonaRecord {
     tagline: base.tagline,
     specialty: base.specialty,
     background: "",
+    customer_bio: null,
     voice: null,
     tone_style: null,
     expertise_primary: null,
@@ -89,7 +103,7 @@ function fromHelpBase(base: HelpPersonaBase): PersonaRecord {
 }
 
 // Ordered for seed sort_order: Marcus first (CATCHALL default), help_ai last.
-export const PERSONA_DEFAULTS: PersonaRecord[] = [
+export const PERSONA_DEFAULTS: PersonaDefaultRecord[] = [
   fromTravelBase(marcus),
   fromTravelBase(marco),
   fromTravelBase(priya),
@@ -99,6 +113,6 @@ export const PERSONA_DEFAULTS: PersonaRecord[] = [
   fromHelpBase(helpAi),
 ];
 
-export function getPersonaDefault(slug: string): PersonaRecord | undefined {
+export function getPersonaDefault(slug: string): PersonaDefaultRecord | undefined {
   return PERSONA_DEFAULTS.find((p) => p.slug === slug);
 }

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
+import { fetchPersonaCustomerBio } from "@/lib/agents/fetch-customer-bio";
 
 interface PageParams {
   params: Promise<{ slug: string }>;
@@ -20,6 +21,15 @@ export default async function AgentProfilePage({ params }: PageParams) {
   if (!agent) notFound();
 
   const headerProps = await getSiteHeaderProps();
+
+  // Prefer the DB-authored bio (admins edit it through /admin/personas);
+  // fall back to the catalog so the page still renders if the persona
+  // row is missing the field. Split on blank lines into paragraphs to
+  // match the catalog's paragraph-array shape.
+  const dbBio = await fetchPersonaCustomerBio(agent.slug);
+  const bioParagraphs = dbBio
+    ? dbBio.split(/\n\s*\n/).map((s) => s.trim()).filter((s) => s.length > 0)
+    : [...agent.bio];
 
   return (
     <>
@@ -45,7 +55,7 @@ export default async function AgentProfilePage({ params }: PageParams) {
           </div>
         </div>
         <div className="mt-10 flex flex-col gap-4 text-base leading-relaxed text-foreground/90">
-          {agent.bio.map((paragraph, i) => (
+          {bioParagraphs.map((paragraph, i) => (
             <p key={i}>{paragraph}</p>
           ))}
         </div>
