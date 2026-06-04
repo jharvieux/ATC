@@ -431,6 +431,16 @@ The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the 
 4. **Then run both audit agents** (they resolve the PR number from the branch and self-post their marker comments):
    - Invoke `d091-reviewer` for D-091 anti-pattern coverage.
    - Invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
+
+   **Model selection.** Default is Sonnet. Override to Opus on the FIRST audit run (pass `model: "opus"` on the Agent tool call) when ANY of these apply:
+   - Diff ≥ 10 files OR ≥ 500 net-added lines.
+   - Diff includes a SQL migration (new tables, RLS policies, grants, column add/drop).
+   - Diff adds a net-new API route under `apps/*/src/app/api/`, a new Inngest function, or a cron handler.
+   - Diff includes webhook signature verification, idempotency rows, or state-machine transitions (`progressTo`, `transitionTo`, etc.).
+   - Diff adds a new service-role code path (page or route using the service-role client).
+
+   Re-runs after fix-commits use Sonnet, even if the original first-run used Opus — re-runs are checking known patterns, not exploring new surface area. Exception: if the fix-commit itself introduced one of the triggers above (rare), use Opus again.
+
 5. If either agent reports findings, fix them, push, and re-run that agent (it will post a fresh comment superseding the stale one).
 6. Update the `## Audit` block in the PR body with the combined findings summary and a standalone `Status:` line.
 7. Wait for CI to complete. If all checks pass, merge (squash merge by default). Delete the feature branch after merge.

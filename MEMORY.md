@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-147 — 2026-06-03 — Opus for first-run audit agents on big/risky diffs (CLAUDE.md)
+
+**Decision.** First audit-agent run (d091-reviewer + pre-pr-reviewer) escalates to Opus (`model: "opus"` on the Agent tool call) when ANY of: diff ≥ 10 files OR ≥ 500 net-added lines; SQL migration present; net-new API route / Inngest function / cron handler; webhook signature, idempotency, or state-machine transition code; new service-role code path. Re-runs after fix-commits always use Sonnet (default) — re-runs check known patterns, not new surface area. Encoded in CLAUDE.md "Pull requests" → step 4.
+
+**Why.** PR #635 (22 files, +2103 lines, RSS cron + LLM scorer + admin CRUD + public API + new tables) ran on Sonnet and the audits came back clean, but cross-file D-091 patterns (void-async in serverless, CAS row-count, idempotency ordering, state-machine boundary validation) are exactly where Opus's reasoning advantage compounds and where misses ship silent production bugs. The user does not review code; the audit agents ARE the review. 5× cost on the first pass of a large/risky PR is cheap insurance vs a #137-class incident.
+
+**What was rejected.** (a) Always Sonnet — too risky on migration/webhook/state-machine diffs given user's no-code-review workflow. (b) Always Opus — wasteful on small re-runs and trivial diffs; existing Sonnet runs have been adequate for those. (c) User-decides each time — adds friction the policy is meant to remove.
+
+**How to apply.** Before launching `d091-reviewer` / `pre-pr-reviewer` for the first time on a PR, check the trigger list. If any trigger fires, pass `model: "opus"` to the Agent tool. On follow-up runs after addressing findings, omit the override (Sonnet default). Related artifacts: CLAUDE.md "Pull requests" → "Model selection."
+
+---
+
 ## D-146 — 2026-06-03 — Contract tests use raw fetch instead of Stripe SDK (PR #632)
 
 **Decision.** Stripe contract tests in `tests/contracts/stripe/customers.test.ts` use raw `fetch()` rather than the Stripe SDK v22. The Stripe SDK v22 uses an HTTP client path that MSW v2 interceptors do not cover — all 5 SDK-based tests timed out at 30 seconds. Using raw `fetch()` (which MSW does intercept) is sufficient to verify fixture shapes are parseable and that the fixture URLs are correct.
