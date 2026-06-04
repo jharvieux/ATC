@@ -9,6 +9,7 @@
 
 import * as cheerio from "cheerio";
 import { shipSlugFromUrl } from "./url-slug";
+import { pickSpecValue } from "./pick-spec-value";
 
 export interface ParsedShip {
   shipName: string;
@@ -38,22 +39,6 @@ function num(s: string | null | undefined): number | null {
   if (!m) return null;
   const v = parseFloat((m[1] ?? "").replace(/,/g, ""));
   return Number.isFinite(v) ? v : null;
-}
-
-function pickSpecValue($: cheerio.CheerioAPI, labels: string[]): string | null {
-  // CruiseMapper's spec layouts vary: try a few common patterns.
-  for (const label of labels) {
-    // Pattern A: <th>Label</th><td>value</td>
-    const a = $(`th:contains("${label}")`).first().next("td").text().trim();
-    if (a) return a;
-    // Pattern B: <dt>Label</dt><dd>value</dd>
-    const b = $(`dt:contains("${label}")`).first().next("dd").text().trim();
-    if (b) return b;
-    // Pattern C: <li><span class="label">Label</span><span>value</span></li>
-    const c = $(`li:contains("${label}")`).first().find("span").last().text().trim();
-    if (c && c.toLowerCase() !== label.toLowerCase()) return c;
-  }
-  return null;
 }
 
 export function parseShipPage(html: string, sourceUrl: string): ParsedShip | null {

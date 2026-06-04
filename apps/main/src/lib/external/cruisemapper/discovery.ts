@@ -20,9 +20,17 @@ function baseUrl(): string {
   return (process.env.CRUISEMAPPER_DIY_BASE_URL ?? "https://www.cruisemapper.com").replace(/\/$/, "");
 }
 
-function extractDetailUrls(html: string, base: string, pathPrefix: string): string[] {
+// Exported so the URL-shape filter (issue #694) can be unit-tested without
+// mocking fetchCruiseMapperPage + the DB. The discover* wrappers are the
+// production entry points.
+export function extractDetailUrls(html: string, base: string, pathPrefix: string): string[] {
   const $ = cheerio.load(html);
   const urls = new Set<string>();
+  // Require a path segment AFTER the prefix so we don't match sibling paths
+  // like `/ports-in-arctic-and-antarctica-10` for prefix `/ports` (issue #694).
+  // CruiseMapper's region-listing URLs share the `/ports` prefix but are NOT
+  // valid input for the port-detail parser.
+  const requiredPrefix = pathPrefix.endsWith("/") ? pathPrefix : `${pathPrefix}/`;
   $("a[href]").each((_, el) => {
     const href = $(el).attr("href");
     if (!href) return;
@@ -30,9 +38,9 @@ function extractDetailUrls(html: string, base: string, pathPrefix: string): stri
     try { abs = new URL(href, base).toString(); } catch { return; }
     const u = new URL(abs);
     if (u.host !== new URL(base).host) return;
-    if (!u.pathname.startsWith(pathPrefix)) return;
-    // Skip the index page itself.
-    if (u.pathname === pathPrefix || u.pathname === `${pathPrefix}/`) return;
+    if (!u.pathname.startsWith(requiredPrefix)) return;
+    // Drop the bare-prefix index page itself ("/ports/" with no slug after).
+    if (u.pathname === requiredPrefix) return;
     // Strip fragment + querystring for canonical inventory keys.
     u.hash = "";
     u.search = "";
