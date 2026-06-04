@@ -1,8 +1,6 @@
-// Tests for the tenant-branding fetch's null-fast paths. The DB
-// branches need integration coverage — this unit suite locks down
-// the short-circuit behavior so a regression to one of the cheap
-// returns can't silently send a platform request through a needless
-// service-role query.
+// Lock down the two null-fast inputs (null id, "platform" sentinel) so
+// a regression to those branches can't silently send platform-domain
+// requests through a needless service-role query.
 
 import { describe, it, expect } from "vitest";
 import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";

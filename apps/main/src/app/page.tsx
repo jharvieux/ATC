@@ -14,8 +14,6 @@ import { AgentCardGrid } from "@/components/landing/AgentCardGrid";
 import { resolvePostLoginDestination } from "@/lib/auth/resolve-post-login";
 import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";
 
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
-
 export default async function HomePage() {
   // Compute header props (which already does a getUser) before deciding
   // whether to dispatch — that way anonymous visitors hit getUser exactly
@@ -38,9 +36,12 @@ export default async function HomePage() {
 
   // Tenant-branded hero — only fires for tenant subdomains. On the
   // platform domain `branding` stays null and the generic hero renders.
+  // proxy.ts emits the resolved tenant id (or the "platform" sentinel)
+  // on this header — it's stripped from inbound requests so the value
+  // is always middleware-set, never attacker-supplied.
   const branding = headerProps.isPlatformDomain
     ? null
-    : await fetchTenantBranding(incoming.get(RESOLVED_TENANT_ID_HEADER));
+    : await fetchTenantBranding(incoming.get("x-resolved-tenant-id"));
 
   return (
     <>
@@ -85,18 +86,16 @@ function TenantHero({ branding }: { branding: NonNullable<Awaited<ReturnType<typ
   return (
     <>
       {branding.logo_url ? (
-        <span className="inline-flex items-center" style={{ display: "inline-flex" }}>
+        <span className="inline-flex items-center">
           <img
             src={branding.logo_url}
             alt={branding.display_name}
             className="h-12 w-auto block dark:hidden"
-            style={{ height: 48 }}
           />
           <img
             src={branding.logo_dark_url ?? branding.logo_url}
             alt={branding.display_name}
             className="h-12 w-auto hidden dark:block"
-            style={{ height: 48 }}
           />
         </span>
       ) : null}

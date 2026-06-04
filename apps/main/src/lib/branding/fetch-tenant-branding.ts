@@ -38,14 +38,12 @@ export async function fetchTenantBranding(
     .eq("id", tenantId)
     .maybeSingle();
 
-  // A truly broken DB connection should surface as 500 — but a NotFound
-  // or RLS-denial here is silent fallback territory because the landing
-  // has a perfectly good platform-hero default. Only re-throw on the
-  // shapes that mean "we genuinely could not query."
-  if (error) {
-    if (error.code === "PGRST116" || error.code === "PGRST204") return null;
-    throw new Error(`fetchTenantBranding: ${error.message}`);
-  }
+  // `.maybeSingle()` returns `{ data: null, error: null }` for zero rows
+  // — not-found is handled by the `!data` check below. Anything in
+  // `error` here is a real DB/network failure that should 500 rather
+  // than silently degrade to the platform hero. (`.single()` would have
+  // emitted PGRST116 on zero rows, but we deliberately use maybeSingle.)
+  if (error) throw new Error(`fetchTenantBranding: ${error.message}`);
   if (!data || data.status !== "active") return null;
 
   // Supabase nested-select returns the joined table as an array even
