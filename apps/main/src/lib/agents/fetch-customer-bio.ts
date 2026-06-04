@@ -27,6 +27,5 @@ export async function fetchPersonaCustomerBio(slug: string): Promise<string | nu
   // instead of silently degrading to the catalog bio.
   if (error) throw new Error(`fetchPersonaCustomerBio: ${error.message}`);
   if (!data || !data.is_active) return null;
-  const row = data as { customer_bio: string | null; is_active: boolean };
-  return row.customer_bio?.trim() ? row.customer_bio : null;
+  return data.customer_bio?.trim() ? data.customer_bio : null;
 }

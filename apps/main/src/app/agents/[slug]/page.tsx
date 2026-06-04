@@ -1,6 +1,13 @@
 // Chat-now CTA points at /chat/[slug], a route Phase 5c will add. The
 // link is intentionally live now so no follow-up wiring is needed when
 // that phase lands.
+//
+// ISR with a 60s window: the page is statically generated at build time
+// for all 6 catalog slugs (generateStaticParams), then re-fetched at
+// most once per minute on the next request. Without this, the build-
+// time render would freeze whatever bio the DB had at deploy, defeating
+// the "admins edit without a code deploy" point of #652.
+export const revalidate = 60;
 
 import { notFound } from "next/navigation";
 import Image from "next/image";
