@@ -25,12 +25,20 @@ export interface LogoProps {
   decorative?: boolean;
 }
 
+// The bundled horizontal SVG has viewBox 1118×220 so aspect-ratio is
+// fixed. Setting it on `<img>` style lets the browser reserve the
+// correct width BEFORE the SVG response arrives — without it the span
+// renders 0px wide and surrounding content shifts when the asset lands
+// (#671). Encoded as a constant so a future SVG change has one source
+// of truth.
+const HORIZONTAL_ASPECT_RATIO = "1118 / 220";
+
 export function Logo({
   className,
   height = 32,
   decorative = false,
 }: LogoProps): React.ReactElement {
-  const style = { height };
+  const style = { height, aspectRatio: HORIZONTAL_ASPECT_RATIO };
   const alt = decorative ? "" : "AI Travel Concierge";
   return (
     <span className={className} style={{ display: "inline-flex", alignItems: "center" }}>
