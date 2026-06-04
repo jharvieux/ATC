@@ -1,10 +1,12 @@
 // Platform-admin left sidebar. Sections from sidebar-sections.ts; each
 // section is collapsible (chevron toggle); the open/closed state per
-// section is persisted to localStorage so the operator's setup survives
-// page navigation. The whole sidebar can also collapse on small screens
-// (toggle in the AdminShell header).
+// section is persisted to a server-readable cookie (collapsed-cookie.ts)
+// so the initial SSR HTML matches the operator's saved state — no
+// hydration flash (#669). The whole sidebar can also collapse on small
+// screens (toggle in the AdminShell header).
 //
-// Client component: localStorage + usePathname for active-link highlight.
+// Client component: usePathname for active-link highlight + document.cookie
+// writes on toggle. Reads come from `initialCollapsed` (server-threaded).
 
 "use client";
 
@@ -15,32 +17,14 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ADMIN_NAV_SECTIONS, type AdminNavSection } from "./sidebar-sections";
 import { isActiveLink } from "./is-active-link";
-
-const STORAGE_KEY = "atc.admin.sidebar.collapsed-sections.v1";
-
-function loadCollapsed(): Record<string, boolean> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    // Parsed shape isn't trusted — return empty map on any irregularity.
-    if (typeof parsed !== "object" || parsed === null) return {};
-    return parsed as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
+import { serializeCollapsedCookie } from "./collapsed-cookie";
 
 function saveCollapsed(state: Record<string, boolean>): void {
   if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // Quota-exceeded / disabled storage — sidebar still functions for
-    // this session, just won't persist on the next visit. Not surfacing
-    // the failure to the operator because the consequence is invisible.
-  }
+  // Cookie-based persistence so the parent server layout can read the
+  // initial state and ship correct SSR HTML — no all-open-flash on
+  // hydration (#669). See collapsed-cookie.ts for the contract.
+  document.cookie = serializeCollapsedCookie(state);
 }
 
 export interface AdminSidebarProps {
@@ -50,19 +34,20 @@ export interface AdminSidebarProps {
    *    keeps the sidebar permanently visible so the operator never loses
    *    nav. Driven by the hamburger button in the AdminShell top bar. */
   open: boolean;
+  /** Persisted collapsed-sections state read from the cookie on the
+   *  server. Threaded down so the first client render matches the SSR
+   *  HTML — no flash (#669). */
+  initialCollapsed: Record<string, boolean>;
 }
 
-export function AdminSidebar({ open }: AdminSidebarProps): React.ReactElement {
+export function AdminSidebar({
+  open,
+  initialCollapsed,
+}: AdminSidebarProps): React.ReactElement {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>(
-    {},
+    initialCollapsed,
   );
-
-  // Hydrate from localStorage after mount — the first paint matches the
-  // server-rendered "all open" state to avoid hydration mismatch.
-  React.useEffect(() => {
-    setCollapsed(loadCollapsed());
-  }, []);
 
   const toggle = React.useCallback((heading: string) => {
     setCollapsed((prev) => {
