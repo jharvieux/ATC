@@ -11,11 +11,18 @@ vi.mock("@/lib/embeddings/batch/openai-client", () => ({
   downloadBatchOutput: vi.fn(),
 }));
 
+// Stub out the cost-log helper so reconcile tests focus on chunk/state
+// updates. The cost-log behavior is covered by embedding-cost-log.test.ts.
+vi.mock("@/lib/embeddings/cost-log", () => ({
+  logEmbeddingCall: vi.fn(async () => undefined),
+}));
+
 import { reconcileEmbeddingBatches } from "@/lib/embeddings/batch/reconcile";
 import {
   getBatchStatus,
   downloadBatchOutput,
 } from "@/lib/embeddings/batch/openai-client";
+import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
 
 interface DbState {
   pending: Array<{
@@ -25,6 +32,7 @@ interface DbState {
     status: string;
     batch_id: string | null;
     submitted_at: string | null;
+    tenant_id?: string | null;
     output_file_id?: string | null;
     error_detail?: string | null;
   }>;
@@ -229,6 +237,66 @@ describe("reconcileEmbeddingBatches", () => {
     expect(state.chunkUpdates.find((u) => u.id === "c1")?.embedding).toBe("[0.1,0.2,0.3]");
     expect(state.chunkUpdates.find((u) => u.id === "c2")?.embedding).toBe("[0.4,0.5,0.6]");
     expect(state.pending.every((p) => p.status === "done")).toBe(true);
+  });
+
+  it("logs embedding cost with tenant_id from pending_embedding row (#689)", async () => {
+    (logEmbeddingCall as unknown as { mockClear: () => void }).mockClear();
+    (getBatchStatus as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce({
+      id: "batch-tenant",
+      status: "completed",
+      output_file_id: "out-tenant",
+      error_file_id: null,
+      errors: null,
+    });
+    const outputLines = [
+      JSON.stringify({
+        custom_id: "cu-t1",
+        response: {
+          status_code: 200,
+          body: {
+            data: [{ embedding: [0.1], index: 0 }],
+            model: "text-embedding-3-small",
+            usage: { prompt_tokens: 1234 },
+          },
+        },
+        error: null,
+      }),
+      JSON.stringify({
+        custom_id: "cu-platform",
+        response: {
+          status_code: 200,
+          body: {
+            data: [{ embedding: [0.2], index: 0 }],
+            model: "text-embedding-3-small",
+            usage: { prompt_tokens: 99 },
+          },
+        },
+        error: null,
+      }),
+    ].join("\n");
+    (downloadBatchOutput as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce(outputLines);
+
+    const state: DbState = {
+      pending: [
+        { id: "p-t1", chunk_id: "c-t1", custom_id: "cu-t1", status: "submitted", batch_id: "batch-tenant", submitted_at: "2026-06-04T00:00:00Z", tenant_id: "tenant-A" },
+        { id: "p-platform", chunk_id: "c-platform", custom_id: "cu-platform", status: "submitted", batch_id: "batch-tenant", submitted_at: "2026-06-04T00:01:00Z", tenant_id: null },
+      ],
+      chunkUpdates: [],
+      pendingUpdates: [],
+    };
+    const db = mockDb(state);
+
+    await reconcileEmbeddingBatches({ db });
+
+    const calls = (logEmbeddingCall as unknown as { mock: { calls: Array<[Record<string, unknown>]> } }).mock.calls;
+    expect(calls).toHaveLength(2);
+    const tenantCall = calls.find((c) => (c[0] as Record<string, unknown>).tenant_id === "tenant-A");
+    const platformCall = calls.find((c) => (c[0] as Record<string, unknown>).tenant_id === null);
+    expect(tenantCall).toBeDefined();
+    expect(platformCall).toBeDefined();
+    expect((tenantCall![0] as Record<string, unknown>).source).toBe("batch");
+    expect((tenantCall![0] as Record<string, unknown>).input_tokens).toBe(1234);
+    expect((platformCall![0] as Record<string, unknown>).input_tokens).toBe(99);
   });
 
   it("marks a row failed when the output line is non-200", async () => {

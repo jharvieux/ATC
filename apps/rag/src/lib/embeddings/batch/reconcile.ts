@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
 import { downloadBatchOutput, getBatchStatus } from "./openai-client";
 import type {
   BatchOutputLine,
@@ -119,7 +120,7 @@ async function applyCompletedBatch(args: {
 
   const { data: pendingData, error: pendingErr } = await db
     .from("pending_embedding")
-    .select("id, chunk_id, custom_id")
+    .select("id, chunk_id, custom_id, tenant_id")
     .eq("batch_id", batchId)
     .eq("status", "submitted");
   if (pendingErr) {
@@ -129,12 +130,13 @@ async function applyCompletedBatch(args: {
   }
   const byCustomId = new Map<
     string,
-    Pick<PendingEmbeddingRow, "id" | "chunk_id" | "custom_id">
+    { id: string; chunk_id: string; custom_id: string; tenant_id: string | null }
   >();
   for (const r of (pendingData ?? []) as Array<{
     id: string;
     chunk_id: string;
     custom_id: string;
+    tenant_id: string | null;
   }>) {
     byCustomId.set(r.custom_id, r);
   }
@@ -188,6 +190,26 @@ async function applyCompletedBatch(args: {
           .eq("id", pending.id),
         "pending_embedding.update.done",
       );
+      // Log the per-row cost so the platform admin dashboard at /admin/resources
+      // can aggregate embedding spend alongside Anthropic chat spend. Best-
+      // effort: a log failure must not poison the rest of the batch — the
+      // chunk's embedding is already persisted at this point and that's the
+      // critical artifact.
+      try {
+        await logEmbeddingCall({
+          db,
+          tenant_id: pending.tenant_id,
+          model: parsed.response?.body?.model ?? "text-embedding-3-small",
+          source: "batch",
+          input_tokens: parsed.response?.body?.usage?.prompt_tokens ?? 0,
+        });
+      } catch (err) {
+        console.warn(
+          `[batch:reconcile] cost log failed for pending=${pending.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
       rows_succeeded++;
     } else {
       const detail =

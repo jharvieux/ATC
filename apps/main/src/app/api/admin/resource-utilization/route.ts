@@ -13,7 +13,52 @@ import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platf
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { AI_PRICING_DEFAULTS, type ModelPricing } from "@/lib/ai/pricing";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { getRagReadClient } from "@/lib/db/rag-read";
 import { parseBigIntCol, buildDailyArray, aggregateByModel, aggregateApifyByCruiseLine, sortTenantsByProximity, type DailyRow, type ModelRow, type TenantRow, type ApifyCruiseLineRow } from "./aggregations";
+
+// Issue #689 — Read rag_ai_call_log entries over the last 30 days and the
+// current billing period. Failure of the rag side must NOT break the
+// dashboard: the main-side cost view is still meaningful on its own.
+async function fetchRagEmbeddingRows(thirtyDaysAgo: string, periodStartIso: string): Promise<{
+  daily: Array<{ created_at: string; cost_estimate_cents: unknown }>;
+  byModel: Array<{ vendor: string; model: string; input_tokens: number; output_tokens: number; cost_estimate_cents: unknown }>;
+  tenantPeriod: Map<string, number>;
+}> {
+  try {
+    const rag = getRagReadClient();
+    const [dailyRes, modelRes, tenantRes] = await Promise.all([
+      rag.from("rag_ai_call_log").select("created_at, cost_estimate_cents").gte("created_at", thirtyDaysAgo),
+      rag.from("rag_ai_call_log").select("vendor, model, input_tokens, output_tokens, cost_estimate_cents").gte("created_at", thirtyDaysAgo),
+      rag.from("rag_ai_call_log").select("tenant_id, cost_estimate_cents").gte("created_at", periodStartIso).not("tenant_id", "is", null),
+    ]);
+    if (dailyRes.error || modelRes.error || tenantRes.error) {
+      console.warn("[resource-utilization] rag query error:",
+        dailyRes.error?.message ?? modelRes.error?.message ?? tenantRes.error?.message);
+      return { daily: [], byModel: [], tenantPeriod: new Map() };
+    }
+    const tenantPeriod = new Map<string, number>();
+    for (const r of (tenantRes.data ?? []) as Array<{ tenant_id: string; cost_estimate_cents: unknown }>) {
+      tenantPeriod.set(r.tenant_id, (tenantPeriod.get(r.tenant_id) ?? 0) + parseBigIntCol(r.cost_estimate_cents));
+    }
+    return {
+      daily: (dailyRes.data ?? []) as Array<{ created_at: string; cost_estimate_cents: unknown }>,
+      byModel: (modelRes.data ?? []) as Array<{ vendor: string; model: string; input_tokens: number; output_tokens: number; cost_estimate_cents: unknown }>,
+      tenantPeriod,
+    };
+  } catch (err) {
+    console.warn(
+      "[resource-utilization] rag read client unavailable, dashboard will show main-side data only:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return { daily: [], byModel: [], tenantPeriod: new Map() };
+  }
+}
+
+function periodStartIso(period: string): string {
+  // period shape: "[YYYY-MM-DD,YYYY-MM-DD)" — pull the lower bound.
+  const m = period.match(/^\[(\d{4}-\d{2}-\d{2}),/);
+  return m ? `${m[1]}T00:00:00Z` : new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
+}
 
 const RESEND_PRICE_KEY = "resend_cost_per_email_cents";
 // Resend Hobby tier: $1.90/1k emails = 0.19¢ each. Stored as 19 = 0.19¢
@@ -49,6 +94,9 @@ export async function GET(req: Request): Promise<Response> {
       async (db, recordQuery) => {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
         const period = currentBillingPeriod();
+        const periodStart = periodStartIso(period);
+
+        const ragRowsPromise = fetchRagEmbeddingRows(thirtyDaysAgo, periodStart);
 
         const [
           aiDailyResult,
@@ -117,17 +165,28 @@ export async function GET(req: Request): Promise<Response> {
 
         const apifyByCruiseLine: ApifyCruiseLineRow[] = aggregateApifyByCruiseLine(apifyLedgerRows);
 
+        // Merge rag embedding rows into the AI cost streams so the existing
+        // chart + table render embeddings alongside chat spend. Failure on
+        // the rag side returns empty arrays + an empty tenant map (see
+        // fetchRagEmbeddingRows) so this never breaks the dashboard.
+        const ragRows = await ragRowsPromise;
+        recordQuery({ op: "select", table: "rag_ai_call_log", row_count: ragRows.daily.length + ragRows.byModel.length });
+
         const daily: DailyRow[] = buildDailyArray(
-          aiDailyResult.data as Array<{ created_at: string; cost_estimate_cents: unknown }>,
+          [
+            ...(aiDailyResult.data as Array<{ created_at: string; cost_estimate_cents: unknown }>),
+            ...ragRows.daily,
+          ],
           emailDailyResult.data as Array<{ sent_at: string | null }>,
           weatherHistoryResult.data as Array<{ metric_date: string; requests_count: number }>,
           new Date(),
           apifyLedgerRows,
         );
 
-        const modelBreakdown: ModelRow[] = aggregateByModel(
-          modelBreakdownResult.data as Array<{ vendor: string; model: string; input_tokens: number; output_tokens: number; cost_estimate_cents: unknown }>,
-        );
+        const modelBreakdown: ModelRow[] = aggregateByModel([
+          ...(modelBreakdownResult.data as Array<{ vendor: string; model: string; input_tokens: number; output_tokens: number; cost_estimate_cents: unknown }>),
+          ...ragRows.byModel,
+        ]);
 
         const tenantInfoMap = new Map<string, { slug: string; display_name: string }>();
         for (const t of tenantsResult.data as Array<{ id: string; slug: string; display_name: string }>) {
@@ -143,11 +202,15 @@ export async function GET(req: Request): Promise<Response> {
             email_volume_limit_state: string;
           }>).map((m) => {
             const info = tenantInfoMap.get(m.tenant_id) ?? { slug: m.tenant_id, display_name: "—" };
+            // Surface tenant-attributed embedding cost (display only — the
+            // cost-limit state itself is computed by main's enforcement layer
+            // which doesn't yet know about embedding spend; tracked in #689).
+            const ragEmbeddingCents = ragRows.tenantPeriod.get(m.tenant_id) ?? 0;
             return {
               tenant_id: m.tenant_id,
               slug: info.slug,
               display_name: info.display_name,
-              ai_cost_cents: parseBigIntCol(m.ai_cost_cents),
+              ai_cost_cents: parseBigIntCol(m.ai_cost_cents) + ragEmbeddingCents,
               ai_cost_limit_state: m.ai_cost_limit_state,
               email_sent_count: m.email_sent_count,
               email_volume_limit_state: m.email_volume_limit_state,
