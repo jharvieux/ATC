@@ -65,18 +65,21 @@ export function SiteHeaderMenu({
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              {/* POST is conventionally the signout method; rendering a
-                  form-button keeps it semantically correct without a
-                  client-side state change. */}
-              <form action="/api/auth/signout" method="post">
-                <button
-                  type="submit"
-                  className="w-full text-left"
-                >
-                  Sign out
-                </button>
-              </form>
+            {/* DropdownMenuItem onSelect (instead of a nested <form>) so
+                ENTER/SPACE on the highlighted item actually fire the
+                action — the prior <form asChild> forwarded keyboard
+                activation to the <form> element, which has no keypress
+                handler (#664). Window-navigate (not router.push) so
+                server components re-render with the cookie cleared. */}
+            <DropdownMenuItem
+              onSelect={() => {
+                void fetch("/api/auth/signout", { method: "POST" })
+                  .finally(() => {
+                    window.location.assign("/");
+                  });
+              }}
+            >
+              Sign out
             </DropdownMenuItem>
           </>
         )}
