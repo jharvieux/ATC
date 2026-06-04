@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
+import { AgentCardGrid } from "@/components/landing/AgentCardGrid";
 import { resolvePostLoginDestination } from "@/lib/auth/resolve-post-login";
 
 export default async function HomePage() {
@@ -33,22 +34,25 @@ export default async function HomePage() {
   return (
     <>
       <SiteHeader {...headerProps} />
-      <main className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-24 text-center">
-        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          Meet your AI travel agents
-        </h1>
-        <p className="max-w-xl text-lg text-muted-foreground">
-          Specialist agents for every kind of cruise — Caribbean, Mediterranean, Alaska,
-          family, accessible, luxury. Available 24/7, endlessly patient.
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          <Button asChild className="h-11 px-8 text-base">
-            <Link href="/signup">Find my agent</Link>
-          </Button>
-          <Button asChild variant="outline" className="h-11 px-8 text-base">
-            <Link href="/signup">Log in</Link>
-          </Button>
-        </div>
+      <main>
+        <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-24 text-center">
+          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+            Meet your AI travel agents
+          </h1>
+          <p className="max-w-xl text-lg text-muted-foreground">
+            Specialist agents for every kind of cruise — Caribbean, Mediterranean, Alaska,
+            family, accessible, luxury. Available 24/7, endlessly patient.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Button asChild className="h-11 px-8 text-base">
+              <Link href="/signup">Find my agent</Link>
+            </Button>
+            <Button asChild variant="outline" className="h-11 px-8 text-base">
+              <Link href="/signup">Log in</Link>
+            </Button>
+          </div>
+        </section>
+        <AgentCardGrid />
       </main>
     </>
   );
