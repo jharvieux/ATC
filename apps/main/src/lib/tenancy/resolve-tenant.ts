@@ -21,6 +21,9 @@ export type Tenant = {
   // tenant row so a payment-state lookup doesn't cost a second DB hit.
   subscription_status: string | null;
   non_paying_since: string | null;
+  // #699 — ATC-owned tenants (e.g. "Booking", ATC's direct-customer
+  // business) bypass the payment gate. The platform doesn't bill itself.
+  is_platform_internal: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -64,7 +67,7 @@ function cacheSet(
 // Lookups
 // ---------------------------------------------------------------------------
 
-const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, subscription_status, non_paying_since";
+const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, subscription_status, non_paying_since, is_platform_internal";
 
 /**
  * Resolves a subdomain slug to a tenant.
