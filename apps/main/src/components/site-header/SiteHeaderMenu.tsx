@@ -73,6 +73,10 @@ export function SiteHeaderMenu({
                 server components re-render with the cookie cleared. */}
             <DropdownMenuItem
               onSelect={() => {
+                // allow-void-async: browser onSelect handler; finally()
+                // guarantees the redirect fires even if the fetch errors
+                // (otherwise the user is stuck on stale UI with a
+                // server-side cleared session).
                 void fetch("/api/auth/signout", { method: "POST" })
                   .finally(() => {
                     window.location.assign("/");
