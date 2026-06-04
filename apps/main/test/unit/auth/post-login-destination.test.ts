@@ -104,7 +104,7 @@ describe("pickHighestRankActiveMembership", () => {
   const row = (role: string): MembershipRow => ({
     role,
     tenant_id: `tenant-${role}`,
-    tenants: { onboarding_stage: "complete" },
+    tenants: { onboarding_stage: "complete", status: "active" },
   });
 
   it("picks tenant_owner over agent over viewer when multiple memberships exist", () => {
@@ -154,14 +154,16 @@ describe("normalizeTenant", () => {
   // thing and handles both.
 
   it("returns the inner object when supabase returns the embedded shape", () => {
-    expect(normalizeTenant({ onboarding_stage: "tax_form" })).toEqual({
+    expect(normalizeTenant({ onboarding_stage: "tax_form", status: "active" })).toEqual({
       onboarding_stage: "tax_form",
+      status: "active",
     });
   });
 
   it("picks the first element when supabase returns the embedded shape as a one-element array (the #665 bug)", () => {
-    expect(normalizeTenant([{ onboarding_stage: "tax_form" }])).toEqual({
+    expect(normalizeTenant([{ onboarding_stage: "tax_form", status: "active" }])).toEqual({
       onboarding_stage: "tax_form",
+      status: "active",
     });
   });
 

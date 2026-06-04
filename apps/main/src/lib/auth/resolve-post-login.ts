@@ -20,7 +20,14 @@ import {
  *  what we KNOW is a 1:1 relationship. The sibling fetch-tenant-branding.ts
  *  helper hit the same issue and handles both shapes; the dispatcher must
  *  too (#665). `normalizeTenant` collapses both into the object shape. */
-type EmbeddedTenant = { onboarding_stage: OnboardingStage | null };
+type EmbeddedTenant = {
+  onboarding_stage: OnboardingStage | null;
+  /** Tenant lifecycle status. Inactive/suspended tenants are filtered
+   *  out before role-ranking so a still-active user under a deactivated
+   *  tenant doesn't get routed to /crm and then 403'd by assertPermission
+   *  (#666). Mirrors fetch-tenant-branding.ts's status check. */
+  status: string;
+};
 
 export type MembershipRow = {
   role: string;
@@ -107,16 +114,21 @@ export async function resolvePostLoginDestination(
   // working context.
   const { data: rows, error: rowsErr } = await db
     .from("users")
-    .select("role, tenant_id, status, tenants(onboarding_stage)")
+    .select("role, tenant_id, status, tenants(onboarding_stage, status)")
     .eq("auth_user_id", authUserId)
     .eq("status", "active");
   if (rowsErr) {
     throw new Error(`resolvePostLoginDestination: users lookup: ${rowsErr.message}`);
   }
 
-  const picked = pickHighestRankActiveMembership(
-    (rows ?? []) as unknown as MembershipRow[],
+  // Filter out memberships whose embedded tenant is inactive — a still-
+  // active user under a suspended tenant must not be routed to /crm
+  // where assertPermission will 403. Falls through to viewer/chat (#666).
+  const rowsWithActiveTenant = ((rows ?? []) as unknown as MembershipRow[]).filter(
+    (r) => normalizeTenant(r.tenants)?.status === "active",
   );
+
+  const picked = pickHighestRankActiveMembership(rowsWithActiveTenant);
 
   // No active row with a known role — could be: callback skipped the
   // membership upsert (legacy: PLATFORM_DEFAULT_TENANT_ID unset, see
