@@ -212,7 +212,12 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
   }
 
   return (
-    <div className="flex flex-col h-screen">
+    // `h-full` so the consumer owns the height container. /chat/[slug]
+    // wraps this in an h-screen column under its agent header; /chat
+    // wraps it directly. Using h-screen here would stack 100vh ABOVE
+    // the agent header on /chat/[slug] and push the compose form off-
+    // screen (#663).
+    <div className="flex flex-col h-full">
       <NewsTickerBanner />
       <AIDisclosureBanner />
       <div className="flex flex-1 overflow-hidden">
