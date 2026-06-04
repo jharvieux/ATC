@@ -233,7 +233,14 @@ export default function ForAgenciesPage() {
         </div>
       </header>
 
-      <HostBar />
+      <div className="border-b border-border bg-background py-6">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-x-10 gap-y-3 px-6">
+          <span className="text-xs font-medium text-muted-foreground">Works alongside the host agencies you already book with</span>
+          {["Travel Leaders", "Avoya", "Cruise Planners", "+ your host"].map((h) => (
+            <span key={h} className="text-sm font-semibold text-muted-foreground">{h}</span>
+          ))}
+        </div>
+      </div>
 
       {/* §2 — A day on the job (new). Before / After. */}
       <section className="border-b border-border bg-muted/30">
@@ -266,7 +273,7 @@ export default function ForAgenciesPage() {
       {/* §3 — Three outcomes. Replaces "Why agents switch." */}
       <section className="py-20">
         <div className="mx-auto max-w-7xl px-6 text-center">
-          <Eyebrow>Why agents switch</Eyebrow>
+          <Eyebrow>Three outcomes</Eyebrow>
           <h2 className="mt-3 text-3xl font-bold tracking-tight md:text-4xl">
             Built to give you back time, status, and your evenings.
           </h2>
@@ -353,7 +360,6 @@ export default function ForAgenciesPage() {
             <h2 className="mt-3 text-3xl font-bold tracking-tight md:text-4xl">A complete cruise-selling workspace</h2>
           </div>
 
-          {/* Mockup 1 — CRM. */}
           <div className="mt-12 grid items-center gap-12 md:grid-cols-2">
             <div>
               <h3 className="text-2xl font-bold tracking-tight md:text-3xl">A CRM that fills itself in</h3>
@@ -372,7 +378,6 @@ export default function ForAgenciesPage() {
             <CrmMock />
           </div>
 
-          {/* Mockup 2 — Quote. */}
           <div className="mt-20 grid items-center gap-12 md:grid-cols-2">
             <div className="md:order-2">
               <h3 className="text-2xl font-bold tracking-tight md:text-3xl">Quotes your clients can say yes to</h3>
@@ -391,7 +396,6 @@ export default function ForAgenciesPage() {
             <QuoteMock />
           </div>
 
-          {/* Mockup 3 — Pre-cruise email sequence. */}
           <div className="mt-20">
             <div className="text-center">
               <h3 className="text-2xl font-bold tracking-tight md:text-3xl">Pre-cruise emails the AI sends for you</h3>
@@ -539,21 +543,6 @@ export default function ForAgenciesPage() {
           </div>
         </div>
       </footer>
-    </div>
-  );
-}
-
-// Trust bar — the host names that don't have logos. Kept as muted text
-// rather than fake-logo greyboxes per spec guardrail "don't invent proof."
-function HostBar() {
-  return (
-    <div className="border-b border-border bg-background py-6">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-x-10 gap-y-3 px-6">
-        <span className="text-xs font-medium text-muted-foreground">Works alongside the host agencies you already book with</span>
-        {["Travel Leaders", "Avoya", "Cruise Planners", "+ your host"].map((h) => (
-          <span key={h} className="text-sm font-semibold text-muted-foreground">{h}</span>
-        ))}
-      </div>
     </div>
   );
 }
