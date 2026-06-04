@@ -21,6 +21,7 @@ import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { PoweredBy } from "@/components/branding/PoweredBy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { buildChatRequestBody } from "@/components/chat/build-chat-request-body";
 
 const DRAFT_KEY = "atc-chat-draft";
 
@@ -90,13 +91,13 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          message,
-          conversation_id: conversationIdRef.current,
-          // Forward the per-agent slug only when set — keeps the default
-          // /chat path's request shape unchanged.
-          ...(personaSlug ? { persona_slug: personaSlug } : {}),
-        }),
+        body: JSON.stringify(
+          buildChatRequestBody({
+            message,
+            conversation_id: conversationIdRef.current,
+            personaSlug,
+          }),
+        ),
       });
       if (!res.ok || !res.body) {
         const txt = await res.text();
