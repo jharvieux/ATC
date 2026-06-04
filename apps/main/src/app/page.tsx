@@ -45,7 +45,7 @@ export default async function HomePage() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Button asChild className="h-11 px-8 text-base">
-              <Link href="/signup">Find my agent</Link>
+              <Link href="/agents/quiz">Find my agent</Link>
             </Button>
             <Button asChild variant="outline" className="h-11 px-8 text-base">
               <Link href="/signup">Log in</Link>
