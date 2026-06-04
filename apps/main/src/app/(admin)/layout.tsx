@@ -17,10 +17,11 @@
 // Request to reuse the route-handler gate verbatim.
 
 import React from "react";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { assertPlatformAdmin } from "@/lib/auth/assert-platform-admin";
 import { AdminShell } from "@/components/admin-shell/AdminShell";
+import { COOKIE_NAME, parseCollapsedCookie } from "@/components/admin-shell/collapsed-cookie";
 
 export default async function AdminLayout({
   children,
@@ -40,5 +41,12 @@ export default async function AdminLayout({
     notFound();
   }
 
-  return <AdminShell>{children}</AdminShell>;
+  // Read the persisted sidebar-collapsed state cookie-side so the initial
+  // SSR HTML matches the operator's saved state — no all-open-flash on
+  // hydration (#669).
+  const initialCollapsed = parseCollapsedCookie(
+    (await cookies()).get(COOKIE_NAME)?.value,
+  );
+
+  return <AdminShell initialCollapsed={initialCollapsed}>{children}</AdminShell>;
 }
