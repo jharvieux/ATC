@@ -16,9 +16,18 @@ import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { AdminSidebar } from "./AdminSidebar";
 
+export interface AdminShellProps {
+  children: React.ReactNode;
+  /** Initial collapsed-sections state read from the cookie on the
+   *  server, threaded through so the first paint matches the operator's
+   *  saved state without a client-side flash (#669). */
+  initialCollapsed: Record<string, boolean>;
+}
+
 export function AdminShell({
   children,
-}: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+  initialCollapsed,
+}: Readonly<AdminShellProps>): React.ReactElement {
   const [open, setOpen] = React.useState(true);
 
   return (
@@ -47,7 +56,7 @@ export function AdminShell({
         </div>
       </header>
       <div className="flex flex-1">
-        <AdminSidebar open={open} />
+        <AdminSidebar open={open} initialCollapsed={initialCollapsed} />
         <main className="flex-1 overflow-x-hidden">{children}</main>
       </div>
     </div>

@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/headers", () => ({
   headers: () => Promise.resolve({ get: mocks.headersGet }),
+  // (admin)/layout reads the sidebar-collapsed cookie to pass initial
+  // state to AdminShell (#669). Empty-cookie path is fine for the auth-
+  // gate tests; the cookie behavior is covered in the collapsed-cookie tests.
+  cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
 vi.mock("next/navigation", () => ({
