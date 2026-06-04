@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-151 — 2026-06-04 — RAG service env vars: SUPABASE_RAG_* is canonical; do NOT rely on the NEXT_PUBLIC_SUPABASE_URL fallback
+
+**Decision.** All new rag code reading the rag Supabase MUST use `SUPABASE_RAG_URL` + `SUPABASE_RAG_SERVICE_ROLE_KEY` directly, with no fallback. The atc-rag Vercel Production env now carries both. The older fallback pattern (`process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL`) in some files is legacy — do not replicate it in new modules.
+
+**Why.** Discovered today during the rag prod-deploy gate check: the atc-rag Vercel Production env had only `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, not the canonical `SUPABASE_RAG_*` names. PR #688's 3 new Inngest crons and `apps/rag/src/lib/db/supabase.ts → getRagDb()` (used by every ingest route) read only the canonical names, no fallback. If we'd promoted to prod without fixing the env, every ingest call and every batch cron would have thrown `SUPABASE_RAG_URL or SUPABASE_RAG_SERVICE_ROLE_KEY not set` on first invocation. The fallback in the older crons silently masked this for promo-state-reconcile/drift, retrieval-log-aggregate, and api/feedback. `apps/rag/.env.example` already documented `SUPABASE_RAG_*` as canonical (§28.3 comment); the inconsistency was code drift, not a deliberate dual-name design.
+
+**Rejected.** Adding the fallback pattern to the new code (matching the older crons). Two problems: (1) it cements a name-collision footgun — if anyone ever points the atc-rag project at a *different* Supabase project than the main one, `NEXT_PUBLIC_SUPABASE_URL` would point at the wrong DB and the fallback would silently use it; (2) it makes the env contract ambiguous, which makes future onboarding harder. Single-canonical-name is the right invariant; we backfilled the Vercel env to match.
+
+**Related artifacts.**
+- PR #688 (merged) — OpenAI Batch API for RAG embeddings; introduced the 3 crons that exposed this gap.
+- PR #691 (merged) — embedding cost telemetry + admin dashboard integration; same naming pattern in `apps/main/src/lib/db/rag-read.ts`.
+- `apps/rag/.env.example` lines 16–22 — canonical name documentation.
+- `apps/rag/src/lib/db/supabase.ts` — single source of truth for the rag service-role client.
+- Vercel atc-rag Production env: `SUPABASE_RAG_URL` + `SUPABASE_RAG_SERVICE_ROLE_KEY` set 2026-06-04.
+
+**Cleanup follow-up (TODO).** The older crons (`promo-state-reconcile.ts`, `promo-state-drift-alert.ts`, `retrieval-log-aggregate.ts`) and `api/feedback/route.ts` still carry the fallback. Worth removing the fallback in a separate housekeeping PR so the codebase has one rule. Not opened as an issue today — small enough to do inline next time those files are touched. Flag if it's still around in a month.
+
+---
+
 ## D-150 — 2026-06-04 — Adding commits to an in-flight protected release branch: temp-relax + recreate
 
 **Decision.** To add new content to a `release/*` branch that has already been pushed (and whose pipeline is mid-flight awaiting prod approval), the mechanical path is:
