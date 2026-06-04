@@ -19,6 +19,11 @@ const ALLOWED_PATH_SUFFIXES = [
   // §26 platform-admin session gate: looks up auth_user_id in platform_admins,
   // which is a service-role-only table (all RLS policies deny authenticated).
   "/lib/auth/assert-platform-admin.ts",
+  // Post-login dispatcher: decides where a freshly-authenticated user lands.
+  // Looks up platform_admins (service-role-only) and a cross-tenant
+  // users+tenants join — at this point there is no resolved tenant context,
+  // so RLS-aware clients have nothing to scope to. Read-only.
+  "/lib/auth/resolve-post-login.ts",
   // Middleware tenant resolver: runs before any user context exists, so
   // service-role is the only viable client. See BP04 / spec §1.4.
   "/lib/tenancy/resolve-tenant.ts",
