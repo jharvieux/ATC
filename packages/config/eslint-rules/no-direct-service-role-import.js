@@ -24,6 +24,13 @@ const ALLOWED_PATH_SUFFIXES = [
   // users+tenants join — at this point there is no resolved tenant context,
   // so RLS-aware clients have nothing to scope to. Read-only.
   "/lib/auth/resolve-post-login.ts",
+  // Public landing tenant-branding fetch: anonymous visitors hitting
+  // tenant subdomains need to see the tenant's display_name + logo +
+  // slogan before any auth happens. RLS on tenant_branding requires
+  // authenticated tenant membership; we can't scope that for anon. The
+  // fields read are all public-marketing-only (no PII, no credentials).
+  // Read-only.
+  "/lib/branding/fetch-tenant-branding.ts",
   // Middleware tenant resolver: runs before any user context exists, so
   // service-role is the only viable client. See BP04 / spec §1.4.
   "/lib/tenancy/resolve-tenant.ts",
