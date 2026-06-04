@@ -202,6 +202,7 @@ const envSchema = z.object({
   // RAG ingestion — §22
   RAG_INGEST_PII_REDACTION_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
   RAG_INGEST_NORMALIZATION_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
+  TRAVEL_NEWS_HAIKU_MODEL: z.string().optional().default("claude-haiku-4-5-20251001"),
   // Threshold above which a normalized chunk auto-flags for global-review consideration (§22.6).
   RAG_INGEST_GLOBAL_RELEVANCE_AUTOFLAG_THRESHOLD: z.coerce.number().min(0).max(1).optional().default(0.6),
   // Aggregation window for PII quarantine alerts (§22.4a).

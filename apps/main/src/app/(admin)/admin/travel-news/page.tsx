@@ -121,13 +121,25 @@ export default function TravelNewsPage(): JSX.Element {
   }
 
   async function hideArticle(id: string): Promise<void> {
-    await fetch(`/api/admin/travel-news/articles/${id}/hide`, { method: "POST" });
+    const res = await fetch(`/api/admin/travel-news/articles/${id}/hide`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json() as { error?: string };
+      setFeedError(body.error ?? "Failed to hide article");
+      return;
+    }
+    setFeedError(null);
     await loadData();
   }
 
   async function sendToRag(id: string): Promise<void> {
     const res = await fetch(`/api/admin/travel-news/articles/${id}/rag`, { method: "POST" });
-    if (res.ok) await loadData();
+    if (!res.ok) {
+      const body = await res.json() as { error?: string };
+      setFeedError(body.error ?? "Failed to send to RAG");
+      return;
+    }
+    setFeedError(null);
+    await loadData();
   }
 
   function fmt(iso: string | null): string {
