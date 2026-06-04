@@ -11,19 +11,24 @@ import { getSiteHeaderProps } from "@/components/site-header/get-site-header-pro
 import { resolvePostLoginDestination } from "@/lib/auth/resolve-post-login";
 
 export default async function HomePage() {
-  const incoming = await headers();
-  const forwarded = new Headers();
-  const cookie = incoming.get("cookie");
-  if (cookie) forwarded.set("cookie", cookie);
-  const auth = incoming.get("authorization");
-  if (auth) forwarded.set("authorization", auth);
-
-  const dest = await resolvePostLoginDestination(
-    new Request("https://placeholder.internal/", { headers: forwarded }),
-  );
-  if (dest) redirect(dest);
-
+  // Compute header props (which already does a getUser) before deciding
+  // whether to dispatch — that way anonymous visitors hit getUser exactly
+  // once instead of twice (the dispatcher would also call it). Authenticated
+  // visitors redirect so the second call inside resolvePostLogin is fine.
   const headerProps = await getSiteHeaderProps();
+
+  if (headerProps.isAuthenticated) {
+    const incoming = await headers();
+    const forwarded = new Headers();
+    const cookie = incoming.get("cookie");
+    if (cookie) forwarded.set("cookie", cookie);
+    const auth = incoming.get("authorization");
+    if (auth) forwarded.set("authorization", auth);
+    const dest = await resolvePostLoginDestination(
+      new Request("https://placeholder.internal/", { headers: forwarded }),
+    );
+    if (dest) redirect(dest);
+  }
 
   return (
     <>

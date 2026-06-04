@@ -51,7 +51,11 @@ export function SiteHeaderMenu({
           </>
         )}
         {/* Authenticated — common "Home" routes back through the
-            post-login dispatcher (the / page redirects based on role). */}
+            post-login dispatcher (the / page redirects based on role).
+            `isPlatformDomain` is intentionally unused in this branch
+            until Phase 5 adds tenant-specific authenticated items
+            (e.g. "My bookings with <tenant>"). The prop is kept on the
+            type so the change site is local when that lands. */}
         {isAuthenticated && (
           <>
             <DropdownMenuItem asChild>

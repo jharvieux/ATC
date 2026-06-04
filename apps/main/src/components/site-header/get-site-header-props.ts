@@ -31,7 +31,13 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
   const supabase = createRequestScopedClient(
     new Request("https://placeholder.internal/", { headers: forwarded }),
   );
-  const { data } = await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getUser();
+  // Surface unexpected auth errors loudly rather than silently rendering
+  // the Login button to a possibly-authenticated user. Matches the
+  // destructuring pattern in resolve-post-login.ts and
+  // assert-platform-admin.ts. "No session" is `data.user === null`, NOT
+  // an error — only network/JWT-verification failures populate `error`.
+  if (error) throw new Error(`getSiteHeaderProps: getUser failed: ${error.message}`);
   const isAuthenticated = data?.user != null;
 
   return { isPlatformDomain, isAuthenticated };
