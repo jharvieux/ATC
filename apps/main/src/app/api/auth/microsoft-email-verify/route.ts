@@ -19,8 +19,8 @@ import { OTP_STORE, MAX_OTP_ATTEMPTS } from "@/lib/auth/otp-store";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const PENDING_EMAIL_COOKIE = "_ms_pending_email";
 
 export async function POST(req: NextRequest): Promise<Response> {

@@ -17,8 +17,7 @@
 import type { TenantContext } from "./tenant-context";
 import { tryTestBypass } from "../auth/test-bypass";
 import { createRequestScopedClient } from "../auth/ssr-client";
-
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
+import { RESOLVED_TENANT_ID_HEADER } from "../tenancy/header-names";
 
 /**
  * Derives a tenant context from an HTTP request. Middleware (proxy.ts) sets

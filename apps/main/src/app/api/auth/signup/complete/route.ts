@@ -26,8 +26,8 @@ import {
   clearPendingAttributionCookie,
 } from "@/lib/attribution/read-pending-cookie";
 import { progressTo } from "@/lib/onboarding/state-machine";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const VALID_TENANT_TYPES = new Set(["byo_host", "sub_host"]);
 
 interface MailingAddress {

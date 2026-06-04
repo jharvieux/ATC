@@ -22,8 +22,7 @@ import { recoverMicrosoftEmail } from "@/lib/auth/microsoft-email-recovery";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { safeNextFor } from "@/lib/auth/safe-redirect";
-
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 export async function GET(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
