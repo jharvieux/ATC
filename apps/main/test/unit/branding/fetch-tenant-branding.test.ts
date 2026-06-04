@@ -51,6 +51,10 @@ describe("fetchTenantBranding — null-fast inputs", () => {
 
 describe("fetchTenantBranding — DB branches (issue #655)", () => {
   it("returns populated branding for an active tenant with a branding row", async () => {
+    // Why: the happy path — every public landing on a tenant subdomain
+    // depends on this returning the flattened TenantBranding shape (not
+    // the Supabase nested-array shape). If the flattening regresses, the
+    // landing renders display_name="undefined" instead of the brand.
     mockMaybeSingle.mockResolvedValueOnce({
       data: {
         display_name: "Acme Travel",
