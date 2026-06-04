@@ -10,8 +10,15 @@
 #   Layer 2 — PR comments: both subagents post their full report as a
 #   PR comment with a stable marker (`<!-- d091-audit:v1 -->` and
 #   `<!-- prepr-audit:v1 -->`). Each comment's createdAt is compared
-#   against the head commit's committedDate, so an audit run BEFORE the
-#   most recent push doesn't pass.
+#   against the latest CODE-CHANGING commit, so an audit run BEFORE the
+#   most recent real change doesn't pass.
+#
+#   "Code-changing" means the commit's diff has at least one file entry.
+#   Empty commits — used to refresh the workflow's PR-body snapshot when
+#   the body changes — are walked over: the audit threshold is the date
+#   of the previous non-empty commit, not the empty commit at HEAD. That
+#   way reposting the existing audit comments verbatim is sufficient when
+#   only no-op commits separate them from HEAD.
 #
 # Layer 2 is the load-bearing part — Layer 1 alone could be fabricated
 # in the PR body without ever running the subagents. The marker-on-comment
@@ -173,7 +180,7 @@ jobs:
           echo "✓ Audit section present (chars=$CHAR_COUNT)"
           printf '%s' "$SECTION" | head -20
 
-      - name: Verify both subagent comments posted AFTER the latest commit
+      - name: Verify both subagent comments posted AFTER the latest code-changing commit
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -183,13 +190,41 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Head commit's authored time — what the audits must beat.
-          HEAD_DATE=$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.committer.date')
+          # Walk back through any empty commits at HEAD to find the most
+          # recent commit that actually changed files. An empty commit
+          # (e.g. `git commit --allow-empty` used to refresh THIS check's
+          # PR-body snapshot) doesn't invalidate prior audits — the audited
+          # tree is identical. The walk is capped to keep this bounded on
+          # weird branches.
+          EFFECTIVE_SHA="$HEAD_SHA"
+          WALK_LIMIT=20
+          i=0
+          while [ "$i" -lt "$WALK_LIMIT" ]; do
+            COMMIT_JSON=$(gh api "repos/$REPO/commits/$EFFECTIVE_SHA")
+            FILE_COUNT=$(printf '%s' "$COMMIT_JSON" | jq '.files | length')
+            if [ "$FILE_COUNT" -gt 0 ]; then
+              break
+            fi
+            PARENT=$(printf '%s' "$COMMIT_JSON" | jq -r '.parents[0].sha // empty')
+            if [ -z "$PARENT" ]; then
+              echo "::notice::No parent for empty commit $EFFECTIVE_SHA; using it as the threshold."
+              break
+            fi
+            echo "::notice::Skipping empty commit $EFFECTIVE_SHA (no file changes) → $PARENT"
+            EFFECTIVE_SHA="$PARENT"
+            i=$((i + 1))
+          done
+
+          HEAD_DATE=$(gh api "repos/$REPO/commits/$EFFECTIVE_SHA" --jq '.commit.committer.date')
           if [ -z "$HEAD_DATE" ]; then
-            echo "::error::Could not resolve committed date for head SHA $HEAD_SHA."
+            echo "::error::Could not resolve committed date for effective SHA $EFFECTIVE_SHA."
             exit 1
           fi
-          echo "Head commit $HEAD_SHA committed at $HEAD_DATE"
+          if [ "$EFFECTIVE_SHA" = "$HEAD_SHA" ]; then
+            echo "Head commit $HEAD_SHA committed at $HEAD_DATE"
+          else
+            echo "Effective audit threshold $EFFECTIVE_SHA committed at $HEAD_DATE (walked past $i empty commit(s) from HEAD $HEAD_SHA)"
+          fi
 
           # ISO 8601 timestamps sort lexicographically, so plain string
           # comparison is correct here (both APIs return UTC `Z` strings).
@@ -218,12 +253,13 @@ jobs:
               echo "::error::$name audit comment is stale."
               echo ""
               echo "Newest $name comment was posted at $newest, but the latest"
-              echo "commit ($HEAD_SHA) was made at $HEAD_DATE. Re-run the"
-              echo "$name subagent so it posts a fresh comment for the current"
-              echo "head."
+              echo "code-changing commit ($EFFECTIVE_SHA) was made at $HEAD_DATE."
+              echo "Re-run the $name subagent so it posts a fresh comment, OR"
+              echo "(if no source changed since the last audit) re-post the"
+              echo "existing comment body verbatim with the same marker."
               return 1
             fi
-            echo "✓ $name audit comment posted $newest (>= head $HEAD_DATE)"
+            echo "✓ $name audit comment posted $newest (>= threshold $HEAD_DATE)"
           }
 
           # Collect both failures so the author sees them together rather
