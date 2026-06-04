@@ -351,11 +351,15 @@ export default function TravelNewsPage(): JSX.Element {
                     <td className="px-3 py-2.5 text-right">
                       <button
                         onClick={async () => {
-                          await fetch(`/api/admin/travel-news/articles/${article.id}/hide`, {
+                          const res = await fetch(`/api/admin/travel-news/articles/${article.id}/hide`, {
                             method: "PATCH",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({ is_hidden: false }),
                           });
+                          if (!res.ok) {
+                            const body = await res.json() as { error?: string };
+                            setFeedError(body.error ?? "Failed to unhide article");
+                            return;
+                          }
+                          setFeedError(null);
                           await loadData();
                         }}
                         className="text-[12px] text-primary hover:underline"
