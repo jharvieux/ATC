@@ -5,9 +5,8 @@
 
 import { headers } from "next/headers";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import type { SiteHeaderProps } from "./SiteHeader";
-
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 
 export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
   const incoming = await headers();

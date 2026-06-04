@@ -44,6 +44,7 @@ import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { checkSentence } from "@/lib/supervisor/per-sentence-check";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import { writeAuditLog } from "@/lib/audit/write";
 import { vendorHealthStatus } from "@/lib/vendor-health/registry";
@@ -173,7 +174,7 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const tenantId = req.headers.get("x-resolved-tenant-id");
+  const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
   if (!tenantId || tenantId === "platform") {
     return new Response(
       JSON.stringify({ error: "tenant_not_resolved" }),

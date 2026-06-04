@@ -14,8 +14,8 @@ import {
 import { derivePaymentState } from "@/lib/billing/payment-state";
 import { extractAttributionFromRequest } from "@/lib/attribution/extract-utm";
 import { createMiddlewareClient } from "@/lib/auth/ssr-client";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
-const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 const RESOLVED_TENANT_TYPE_HEADER = "x-resolved-tenant-type";
 // §15.16 — Payment gate banner state, surfaced to the app layout so it can
 // render the "payment required" banner. One of "" (clear), "within_grace",

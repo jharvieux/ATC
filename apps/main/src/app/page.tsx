@@ -13,6 +13,7 @@ import { getSiteHeaderProps } from "@/components/site-header/get-site-header-pro
 import { AgentCardGrid } from "@/components/landing/AgentCardGrid";
 import { resolvePostLoginDestination } from "@/lib/auth/resolve-post-login";
 import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 export default async function HomePage() {
   // Compute header props (which already does a getUser) before deciding
@@ -41,7 +42,7 @@ export default async function HomePage() {
   // is always middleware-set, never attacker-supplied.
   const branding = headerProps.isPlatformDomain
     ? null
-    : await fetchTenantBranding(incoming.get("x-resolved-tenant-id"));
+    : await fetchTenantBranding(incoming.get(RESOLVED_TENANT_ID_HEADER));
 
   return (
     <>

@@ -5,6 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 interface ConsentBody {
   document_type: string;
@@ -88,7 +89,7 @@ export async function POST(req: Request): Promise<Response> {
 
   // For tenant-scoped documents (ica_subhost), capture tenant_id from middleware header.
   const tenantId = body.document_type === "ica_subhost"
-    ? (req.headers.get("x-resolved-tenant-id") ?? null)
+    ? (req.headers.get(RESOLVED_TENANT_ID_HEADER) ?? null)
     : null;
 
   const { error: insertErr } = await db.from("legal_consents").insert({
