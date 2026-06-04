@@ -122,7 +122,13 @@ function Section({
       {!collapsed && (
         <ul className="mt-1 flex flex-col gap-0.5">
           {section.items.map((item) => {
-            const active = currentPath === item.href;
+            // Prefix-match so drilling into a nested admin page (e.g.
+            // /admin/tenants/review-queue/abc) still highlights its parent
+            // ("Tenant Review Queue"). The `+ "/"` suffix prevents
+            // /admin/personas/seed-tier from matching /admin/personas (an
+            // unintended sibling) — only true descendants count. #668.
+            const active =
+              currentPath === item.href || currentPath?.startsWith(item.href + "/") === true;
             return (
               <li key={item.href}>
                 <Link
