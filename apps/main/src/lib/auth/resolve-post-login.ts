@@ -15,9 +15,6 @@ import {
   type PostLoginRole,
 } from "@/lib/auth/post-login-destination";
 
-/** Shape of one row returned by the user-membership query. Exported so
- *  pickHighestRankActiveMembership can be unit-tested without spinning
- *  up the DB adapter. */
 /** PostgREST returns embedded foreign-table joins as either a single
  *  object OR an array depending on how the FK is resolved — even for
  *  what we KNOW is a 1:1 relationship. The sibling fetch-tenant-branding.ts
