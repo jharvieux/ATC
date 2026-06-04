@@ -22,6 +22,8 @@ import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embed } from "@/lib/embeddings/openai";
+import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
+import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
 import { ReferenceIngestRequestSchema } from "@/lib/schemas/reference-ingest";
 
@@ -100,12 +102,17 @@ export const POST = withServiceAuth(async (req, ctx) => {
     return Response.json(out);
   }
 
-  let embedding: number[];
-  try {
-    embedding = await embed(body.text);
-  } catch (err) {
-    console.error("[ingest/reference] embedding failed:", err);
-    return Response.json({ error: "embedding_failed" }, { status: 500 });
+  // Embed. Batch-mode behavior matches /ingest/itinerary (issue #686):
+  // updates keep prior embedding; inserts omit embedding (NULL); both enqueue.
+  const batchEnabled = isEmbeddingBatchEnabled();
+  let embedding: number[] | null = null;
+  if (!batchEnabled) {
+    try {
+      embedding = await embed(body.text);
+    } catch (err) {
+      console.error("[ingest/reference] embedding failed:", err);
+      return Response.json({ error: "embedding_failed" }, { status: 500 });
+    }
   }
 
   const nowIso = new Date().toISOString();
@@ -113,21 +120,27 @@ export const POST = withServiceAuth(async (req, ctx) => {
   const sourceUrl = body.source_url ?? null;
   const sourceDomain = body.source_domain ?? null;
 
+  let chunkId: string;
+  let outcomeStatus: "updated" | "ingested";
+
   if (existing) {
+    const updateFields: Record<string, unknown> = {
+      content: body.text,
+      content_hash: contentHash,
+      category: body.category,
+      cruise_line_or_supplier: body.cruise_line ?? null,
+      ship_or_property: body.ship ?? null,
+      destination: body.destination ?? null,
+      ingested_at: nowIso,
+      status: "approved",
+      related_asset_ids: body.related_asset_ids,
+    };
+    if (!batchEnabled && embedding) {
+      updateFields.embedding = `[${embedding.join(",")}]`;
+    }
     const { data: updated, error: updErr } = await db
       .from("knowledge_chunks")
-      .update({
-        content: body.text,
-        content_hash: contentHash,
-        embedding: `[${embedding.join(",")}]`,
-        category: body.category,
-        cruise_line_or_supplier: body.cruise_line ?? null,
-        ship_or_property: body.ship ?? null,
-        destination: body.destination ?? null,
-        ingested_at: nowIso,
-        status: "approved",
-        related_asset_ids: body.related_asset_ids,
-      })
+      .update(updateFields)
       .eq("id", existing.id)
       .select("id")
       .single();
@@ -135,16 +148,12 @@ export const POST = withServiceAuth(async (req, ctx) => {
       console.error("[ingest/reference] chunk update failed:", updErr);
       return Response.json({ error: "chunk_update_failed" }, { status: 500 });
     }
-    const out: IngestOutcome = { status: "updated", chunk_id: updated.id as string };
-    return Response.json(out);
-  }
-
-  const { data: inserted, error: insErr } = await db
-    .from("knowledge_chunks")
-    .insert({
+    chunkId = updated.id as string;
+    outcomeStatus = "updated";
+  } else {
+    const insertFields: Record<string, unknown> = {
       content: body.text,
       content_hash: contentHash,
-      embedding: `[${embedding.join(",")}]`,
       scope: "global",
       tenant_id: null,
       category: body.category,
@@ -160,13 +169,32 @@ export const POST = withServiceAuth(async (req, ctx) => {
       ingested_at: nowIso,
       approved_at: nowIso,
       related_asset_ids: body.related_asset_ids,
-    })
-    .select("id")
-    .single();
-  if (insErr || !inserted) {
-    console.error("[ingest/reference] chunk insert failed:", insErr);
-    return Response.json({ error: "chunk_insert_failed" }, { status: 500 });
+    };
+    if (!batchEnabled && embedding) {
+      insertFields.embedding = `[${embedding.join(",")}]`;
+    }
+    const { data: inserted, error: insErr } = await db
+      .from("knowledge_chunks")
+      .insert(insertFields)
+      .select("id")
+      .single();
+    if (insErr || !inserted) {
+      console.error("[ingest/reference] chunk insert failed:", insErr);
+      return Response.json({ error: "chunk_insert_failed" }, { status: 500 });
+    }
+    chunkId = inserted.id as string;
+    outcomeStatus = "ingested";
   }
-  const out: IngestOutcome = { status: "ingested", chunk_id: inserted.id as string };
+
+  if (batchEnabled) {
+    try {
+      await enqueueEmbedding({ chunk_id: chunkId, content: body.text, db });
+    } catch (err) {
+      console.error("[ingest/reference] enqueue embedding failed:", err);
+      return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
+    }
+  }
+
+  const out: IngestOutcome = { status: outcomeStatus, chunk_id: chunkId };
   return Response.json(out);
 });

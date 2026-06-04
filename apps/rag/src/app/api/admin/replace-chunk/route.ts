@@ -14,6 +14,8 @@ export const dynamic = "force-dynamic";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embed } from "@/lib/embeddings/openai";
+import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
+import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
 
 interface ReplaceBody {
@@ -83,20 +85,28 @@ export const POST = withServiceAuth(async (req, ctx) => {
     );
   }
 
-  let embedding: number[];
-  try {
-    embedding = await embed(body.content);
-  } catch (err) {
-    console.error("[replace-chunk] embedding failed: %s", err);
-    return Response.json({ error: "embedding_failed" }, { status: 500 });
+  // Batch mode (issue #686): keep prior embedding on the chunk (so retrieval
+  // stays warm) and enqueue a fresh embedding via OpenAI Batch. Sync mode
+  // (flag off) recomputes inline as before.
+  const batchEnabled = isEmbeddingBatchEnabled();
+  let embedding: number[] | null = null;
+  if (!batchEnabled) {
+    try {
+      embedding = await embed(body.content);
+    } catch (err) {
+      console.error("[replace-chunk] embedding failed: %s", err);
+      return Response.json({ error: "embedding_failed" }, { status: 500 });
+    }
   }
 
   const update: Record<string, unknown> = {
     content: body.content,
     content_hash: Buffer.from(body.content).toString("base64").slice(0, 64),
-    embedding: `[${embedding.join(",")}]`,
     updated_at: new Date().toISOString(),
   };
+  if (!batchEnabled && embedding) {
+    update.embedding = `[${embedding.join(",")}]`;
+  }
   if (body.source_url !== undefined) update.source_url = body.source_url;
   if (body.category) update.category = body.category;
 
@@ -114,6 +124,15 @@ export const POST = withServiceAuth(async (req, ctx) => {
     // hard-deleted between that read and this write — surface it instead of a
     // false { ok: true } (D-091).
     return Response.json({ error: "chunk_not_found" }, { status: 404 });
+  }
+
+  if (batchEnabled) {
+    try {
+      await enqueueEmbedding({ chunk_id: body.chunk_id, content: body.content, db });
+    } catch (err) {
+      console.error("[replace-chunk] enqueue embedding failed: %s", err);
+      return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
+    }
   }
 
   console.info("[replace-chunk] chunk=%s scope=%s replaced", body.chunk_id, chunk.scope);
