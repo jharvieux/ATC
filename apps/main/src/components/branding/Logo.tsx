@@ -17,6 +17,12 @@ export interface LogoProps {
   className?: string;
   /** Pixel height of the logo. Width auto-scales to preserve aspect ratio. */
   height?: number;
+  /**
+   * When true the logo renders with empty alt so screen readers skip it.
+   * Use this when an adjacent visible element already announces the brand
+   * (a wordmark, a hero heading) — otherwise SRs read the brand twice (#672).
+   */
+  decorative?: boolean;
 }
 
 // The bundled horizontal SVG has viewBox 1118×220 so aspect-ratio is
@@ -27,19 +33,24 @@ export interface LogoProps {
 // of truth.
 const HORIZONTAL_ASPECT_RATIO = "1118 / 220";
 
-export function Logo({ className, height = 32 }: LogoProps): React.ReactElement {
+export function Logo({
+  className,
+  height = 32,
+  decorative = false,
+}: LogoProps): React.ReactElement {
   const style = { height, aspectRatio: HORIZONTAL_ASPECT_RATIO };
+  const alt = decorative ? "" : "AI Travel Concierge";
   return (
     <span className={className} style={{ display: "inline-flex", alignItems: "center" }}>
       <img
         src="/brand/logo-horizontal.svg"
-        alt="AI Travel Concierge"
+        alt={alt}
         style={style}
         className="block dark:hidden w-auto"
       />
       <img
         src="/brand/logo-horizontal-reverse.svg"
-        alt="AI Travel Concierge"
+        alt={alt}
         style={style}
         className="hidden dark:block w-auto"
       />
