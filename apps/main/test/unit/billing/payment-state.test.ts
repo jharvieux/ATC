@@ -26,14 +26,14 @@ function daysAgo(n: number): string {
 
 describe("derivePaymentState — paying statuses", () => {
   it("active → paying", () => {
-    const s = derivePaymentState({ subscription_status: "active", non_paying_since: null, status: "active" , is_platform_internal: false }, NOW);
+    const s = derivePaymentState({ subscription_status: "active", non_paying_since: null, status: "active", is_platform_internal: false }, NOW);
     expect(s.isPaying).toBe(true);
     expect(s.isPastGrace).toBe(false);
     expect(s.isWithinGrace).toBe(false);
   });
 
   it("trialing → paying", () => {
-    const s = derivePaymentState({ subscription_status: "trialing", non_paying_since: null, status: "active" , is_platform_internal: false }, NOW);
+    const s = derivePaymentState({ subscription_status: "trialing", non_paying_since: null, status: "active", is_platform_internal: false }, NOW);
     expect(s.isPaying).toBe(true);
   });
 });
@@ -42,7 +42,7 @@ describe("derivePaymentState — non-paying statuses", () => {
   for (const status of ["past_due", "unpaid", "canceled", "incomplete", "incomplete_expired", "paused"] as const) {
     it(`${status} within grace → isWithinGrace=true`, () => {
       const s = derivePaymentState(
-        { subscription_status: status, non_paying_since: daysAgo(3), status: "active" , is_platform_internal: false },
+        { subscription_status: status, non_paying_since: daysAgo(3), status: "active", is_platform_internal: false },
         NOW,
       );
       expect(s.isPaying).toBe(false);
@@ -53,7 +53,7 @@ describe("derivePaymentState — non-paying statuses", () => {
 
     it(`${status} past grace → isPastGrace=true`, () => {
       const s = derivePaymentState(
-        { subscription_status: status, non_paying_since: daysAgo(NON_PAYING_GRACE_DAYS + 1), status: "active" , is_platform_internal: false },
+        { subscription_status: status, non_paying_since: daysAgo(NON_PAYING_GRACE_DAYS + 1), status: "active", is_platform_internal: false },
         NOW,
       );
       expect(s.isPaying).toBe(false);
@@ -66,7 +66,7 @@ describe("derivePaymentState — non-paying statuses", () => {
 describe("derivePaymentState — boundary", () => {
   it(`exactly ${NON_PAYING_GRACE_DAYS} days → past grace (inclusive boundary)`, () => {
     const s = derivePaymentState(
-      { subscription_status: "past_due", non_paying_since: daysAgo(NON_PAYING_GRACE_DAYS), status: "active" , is_platform_internal: false },
+      { subscription_status: "past_due", non_paying_since: daysAgo(NON_PAYING_GRACE_DAYS), status: "active", is_platform_internal: false },
       NOW,
     );
     expect(s.isPastGrace).toBe(true);
@@ -74,7 +74,7 @@ describe("derivePaymentState — boundary", () => {
 
   it(`${NON_PAYING_GRACE_DAYS - 0.1} days → still within grace`, () => {
     const s = derivePaymentState(
-      { subscription_status: "past_due", non_paying_since: daysAgo(NON_PAYING_GRACE_DAYS - 0.1), status: "active" , is_platform_internal: false },
+      { subscription_status: "past_due", non_paying_since: daysAgo(NON_PAYING_GRACE_DAYS - 0.1), status: "active", is_platform_internal: false },
       NOW,
     );
     expect(s.isWithinGrace).toBe(true);
@@ -83,7 +83,7 @@ describe("derivePaymentState — boundary", () => {
 
 describe("derivePaymentState — webhook backfill lag", () => {
   it("NULL subscription_status on an active-status tenant → treated as within grace (lenient)", () => {
-    const s = derivePaymentState({ subscription_status: null, non_paying_since: null, status: "active" , is_platform_internal: false }, NOW);
+    const s = derivePaymentState({ subscription_status: null, non_paying_since: null, status: "active", is_platform_internal: false }, NOW);
     expect(s.isPaying).toBe(false);
     expect(s.isWithinGrace).toBe(true);
     expect(s.isPastGrace).toBe(false);
@@ -93,7 +93,7 @@ describe("derivePaymentState — webhook backfill lag", () => {
 describe("derivePaymentState — non-active tenant statuses", () => {
   it("onboarding → always paying (pre-checkout flow)", () => {
     const s = derivePaymentState(
-      { subscription_status: null, non_paying_since: null, status: "onboarding" , is_platform_internal: false },
+      { subscription_status: null, non_paying_since: null, status: "onboarding", is_platform_internal: false },
       NOW,
     );
     expect(s.isPaying).toBe(true);
@@ -101,7 +101,7 @@ describe("derivePaymentState — non-active tenant statuses", () => {
 
   it("pending_review → always paying", () => {
     const s = derivePaymentState(
-      { subscription_status: null, non_paying_since: null, status: "pending_review" , is_platform_internal: false },
+      { subscription_status: null, non_paying_since: null, status: "pending_review", is_platform_internal: false },
       NOW,
     );
     expect(s.isPaying).toBe(true);
@@ -109,7 +109,7 @@ describe("derivePaymentState — non-active tenant statuses", () => {
 
   it("suspended → always past grace, regardless of subscription state", () => {
     const s = derivePaymentState(
-      { subscription_status: "active", non_paying_since: null, status: "suspended" , is_platform_internal: false },
+      { subscription_status: "active", non_paying_since: null, status: "suspended", is_platform_internal: false },
       NOW,
     );
     expect(s.isPaying).toBe(false);
@@ -118,7 +118,7 @@ describe("derivePaymentState — non-active tenant statuses", () => {
 
   it("terminated → always past grace", () => {
     const s = derivePaymentState(
-      { subscription_status: "active", non_paying_since: null, status: "terminated" , is_platform_internal: false },
+      { subscription_status: "active", non_paying_since: null, status: "terminated", is_platform_internal: false },
       NOW,
     );
     expect(s.isPastGrace).toBe(true);

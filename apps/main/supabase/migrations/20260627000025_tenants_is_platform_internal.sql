@@ -20,8 +20,6 @@ COMMENT ON COLUMN public.tenants.is_platform_internal IS
   'TRUE for ATC-owned tenants that should bypass the payment gate (#699). '
   'Set sparingly — every TRUE row skips billing enforcement.';
 
--- Partial index — most tenants will have FALSE; the index only stores
--- the small set of internal tenants for fast lookup.
-CREATE INDEX tenants_is_platform_internal_idx
-  ON public.tenants (id)
-  WHERE is_platform_internal = TRUE;
+-- No index added: current read paths fetch the column alongside other
+-- tenant fields via primary-key or status filters, never scanned by the
+-- flag alone. Revisit if a "list all internal tenants" query ever lands.

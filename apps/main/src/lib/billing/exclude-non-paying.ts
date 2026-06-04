@@ -82,7 +82,7 @@ export async function assertTenantStillPayingById(
 ): Promise<PaymentAssertion> {
   const { data, error } = await db
     .from("tenants")
-    .select("status, subscription_status, non_paying_since")
+    .select("status, subscription_status, non_paying_since, is_platform_internal")
     .eq("id", tenant_id)
     .maybeSingle();
   if (error) {

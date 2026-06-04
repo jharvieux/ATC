@@ -40,6 +40,8 @@ type TenantRow = {
   status: string;
   subscription_status: string | null;
   non_paying_since: string | null;
+  // #699 — internal tenants bypass the payment gate.
+  is_platform_internal?: boolean;
 };
 
 type CommissionRow = {
@@ -65,7 +67,7 @@ export const reconcileStatementAutomated = inngest.createFunction(
 
     const { data: tenantsRaw } = await db
       .from("tenants")
-      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id, is_sandbox, status, subscription_status, non_paying_since")
+      .select("id, display_name, tenant_type, stripe_connect_account_id, tier_id, is_sandbox, status, subscription_status, non_paying_since, is_platform_internal")
       .in("tenant_type", ["sub_host"])
       .eq("status", "active")
       // §15.12 sandbox: exclude at the query layer (defense-in-depth). The
