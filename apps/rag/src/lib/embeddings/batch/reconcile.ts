@@ -72,10 +72,14 @@ export async function reconcileEmbeddingBatches(args: {
     result.batches_polled++;
     const status = await getBatchStatus(batchId);
 
+    // `cancelling` is transient — the batch is in the process of being
+    // cancelled but may still emit results. Wait for the terminal
+    // `cancelled` status before flipping rows to failed.
     if (
       status.status === "validating" ||
       status.status === "in_progress" ||
-      status.status === "finalizing"
+      status.status === "finalizing" ||
+      status.status === "cancelling"
     ) {
       continue;
     }
@@ -83,8 +87,8 @@ export async function reconcileEmbeddingBatches(args: {
     if (status.status === "completed") {
       if (!status.output_file_id) {
         // Completed but no output file — defensive: mark every row failed.
-        await failBatch(db, batchId, "completed_without_output_file");
-        result.rows_failed += await countSubmittedForBatch(db, batchId);
+        const failedRows = await failBatch(db, batchId, "completed_without_output_file");
+        result.rows_failed += failedRows;
         result.batches_completed++;
         continue;
       }
@@ -95,12 +99,11 @@ export async function reconcileEmbeddingBatches(args: {
       continue;
     }
 
-    // failed / expired / cancelled / cancelling
+    // failed / expired / cancelled — terminal failures with no output to apply.
     const detail =
       status.errors?.data?.[0]?.message ?? `batch_${status.status}`;
-    const failed = await countSubmittedForBatch(db, batchId);
-    await failBatch(db, batchId, detail);
-    result.rows_failed += failed;
+    const failedRows = await failBatch(db, batchId, detail);
+    result.rows_failed += failedRows;
     result.batches_completed++;
   }
 
@@ -234,24 +237,15 @@ async function applyCompletedBatch(args: {
   return { rows_succeeded, rows_failed };
 }
 
-async function countSubmittedForBatch(
-  db: SupabaseClient,
-  batchId: string,
-): Promise<number> {
-  const { count } = await db
-    .from("pending_embedding")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "submitted")
-    .eq("batch_id", batchId);
-  return count ?? 0;
-}
-
+// Flip every still-submitted row for `batchId` to failed and return the
+// count actually affected (read from .select("id") on the same statement —
+// avoids the TOCTOU window of count-then-update).
 async function failBatch(
   db: SupabaseClient,
   batchId: string,
   detail: string,
-): Promise<void> {
-  await safeAwait(
+): Promise<number> {
+  const rows = await safeAwait(
     db
       .from("pending_embedding")
       .update({
@@ -260,7 +254,9 @@ async function failBatch(
         completed_at: new Date().toISOString(),
       })
       .eq("batch_id", batchId)
-      .eq("status", "submitted"),
+      .eq("status", "submitted")
+      .select("id"),
     "pending_embedding.update.batch_failed",
   );
+  return Array.isArray(rows) ? rows.length : 0;
 }

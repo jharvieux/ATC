@@ -7,6 +7,6 @@
 
 export function isEmbeddingBatchEnabled(): boolean {
   const raw = process.env.OPENAI_EMBEDDING_BATCH_ENABLED;
-  if (raw === undefined || raw === null || raw === "") return true;
+  if (raw === undefined || raw === "") return true;
   return raw.toLowerCase() !== "false" && raw !== "0";
 }

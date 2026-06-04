@@ -10,9 +10,11 @@
 // two flushes can't race. If the cron crashes between step 4 (batch created)
 // and step 5 (row update), the same rows remain in 'pending' and the next
 // flush will create a second batch with the same content. That's wasteful
-// (~$0.001 each at small volumes) but not incorrect — the reconciler dedups
-// on chunk_id when it writes embeddings back, so the chunk's embedding will
-// be set once even if two batches both compute it.
+// (~$0.001 each at small volumes) but not silently incorrect — both batches
+// resolve into their own pending_embedding row scoped by custom_id, and the
+// chunk's embedding column gets written twice (last-writer-wins). Both
+// vectors are valid embeddings of the same content, so the order doesn't
+// matter for retrieval correctness.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -29,6 +31,13 @@ export interface FlushResult {
   remaining: number;
 }
 
+// OpenAI Batch API caps each batch at 50,000 requests / 200 MB. We bundle up
+// to 200 embeddings per flush — comfortably below both ceilings, large enough
+// that the 10-minute flush cadence keeps backlog bounded under heavy ingest
+// (~1,200 chunks/hour throughput at steady state), and small enough that a
+// single failed batch only forces re-embedding ≤200 rows. Anthropic's neighbour
+// (apps/main/src/lib/ai/batch/flush.ts) uses 50 because message-batch payloads
+// are 10–20× larger per row than embedding inputs.
 const MAX_REQUESTS_PER_BATCH = 200;
 
 function embeddingModel(): string {

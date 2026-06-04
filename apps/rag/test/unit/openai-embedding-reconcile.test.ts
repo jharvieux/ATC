@@ -88,31 +88,41 @@ function mockDb(state: DbState) {
             return k;
           }
           // pending_embedding update — supports both `.eq("id", x)` and
-          // `.eq("batch_id", x).eq("status", "submitted")` chains.
+          // `.eq("batch_id", x).eq("status", "submitted").select("id")` chains.
           const u = {
             _id: undefined as string | undefined,
             _batchId: undefined as string | undefined,
             _statusFilter: undefined as string | undefined,
+            _selectChained: false,
             eq(col: string, val: string) {
               if (col === "id") u._id = val;
               else if (col === "batch_id") u._batchId = val;
               else if (col === "status") u._statusFilter = val;
               return u;
             },
-            then(resolve: (v: { data: null; error: null }) => void) {
+            select(_cols: string) {
+              u._selectChained = true;
+              return u;
+            },
+            then(
+              resolve: (v: { data: { id: string }[] | null; error: null }) => void,
+            ) {
+              const affected: { id: string }[] = [];
               if (u._id) {
                 state.pendingUpdates.push({ id: u._id, payload });
                 const row = state.pending.find((p) => p.id === u._id);
                 if (row && typeof payload.status === "string") row.status = payload.status;
+                if (row) affected.push({ id: row.id });
               } else if (u._batchId) {
                 for (const row of state.pending) {
                   if (row.batch_id !== u._batchId) continue;
                   if (u._statusFilter && row.status !== u._statusFilter) continue;
                   state.pendingUpdates.push({ id: row.id, payload });
+                  affected.push({ id: row.id });
                   if (typeof payload.status === "string") row.status = payload.status;
                 }
               }
-              resolve({ data: null, error: null });
+              resolve({ data: u._selectChained ? affected : null, error: null });
             },
           };
           return u;
@@ -253,6 +263,92 @@ describe("reconcileEmbeddingBatches", () => {
     expect(out.rows_failed).toBe(1);
     expect(state.chunkUpdates).toHaveLength(0);
     expect(state.pending[0]?.status).toBe("failed");
+  });
+
+  it("treats 'cancelling' as transient — leaves rows in submitted", async () => {
+    (getBatchStatus as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce({
+      id: "batch-cancelling",
+      status: "cancelling",
+      output_file_id: null,
+      error_file_id: null,
+      errors: null,
+    });
+    const state: DbState = {
+      pending: [
+        { id: "p1", chunk_id: "c1", custom_id: "cu1", status: "submitted", batch_id: "batch-cancelling", submitted_at: "2026-06-04T00:00:00Z" },
+      ],
+      chunkUpdates: [],
+      pendingUpdates: [],
+    };
+    const db = mockDb(state);
+    const out = await reconcileEmbeddingBatches({ db });
+    expect(out.batches_polled).toBe(1);
+    expect(out.batches_completed).toBe(0);
+    expect(out.rows_failed).toBe(0);
+    expect(state.pending[0]?.status).toBe("submitted");
+  });
+
+  it("flips rows to failed when status='completed' but no output_file_id", async () => {
+    (getBatchStatus as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce({
+      id: "batch-no-output",
+      status: "completed",
+      output_file_id: null,
+      error_file_id: null,
+      errors: null,
+    });
+    const state: DbState = {
+      pending: [
+        { id: "p1", chunk_id: "c1", custom_id: "cu1", status: "submitted", batch_id: "batch-no-output", submitted_at: "2026-06-04T00:00:00Z" },
+        { id: "p2", chunk_id: "c2", custom_id: "cu2", status: "submitted", batch_id: "batch-no-output", submitted_at: "2026-06-04T00:01:00Z" },
+      ],
+      chunkUpdates: [],
+      pendingUpdates: [],
+    };
+    const db = mockDb(state);
+    const out = await reconcileEmbeddingBatches({ db });
+    expect(out.rows_failed).toBe(2);
+    expect(out.rows_succeeded).toBe(0);
+    expect(state.chunkUpdates).toHaveLength(0);
+    expect(state.pending.every((p) => p.status === "failed")).toBe(true);
+    const detail = state.pendingUpdates.find((u) => (u.payload as Record<string, unknown>).error_detail)?.payload as Record<string, unknown>;
+    expect(detail?.error_detail).toBe("completed_without_output_file");
+  });
+
+  it("marks a row failed if its custom_id has no matching output line", async () => {
+    (getBatchStatus as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce({
+      id: "batch-partial",
+      status: "completed",
+      output_file_id: "out-partial",
+      error_file_id: null,
+      errors: null,
+    });
+    // Only one output line for cu1; cu2 is missing.
+    const outputLines = [
+      JSON.stringify({
+        custom_id: "cu1",
+        response: { status_code: 200, body: { data: [{ embedding: [0.7], index: 0 }], model: "text-embedding-3-small" } },
+        error: null,
+      }),
+    ].join("\n");
+    (downloadBatchOutput as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce(outputLines);
+
+    const state: DbState = {
+      pending: [
+        { id: "p1", chunk_id: "c1", custom_id: "cu1", status: "submitted", batch_id: "batch-partial", submitted_at: "2026-06-04T00:00:00Z" },
+        { id: "p2", chunk_id: "c2", custom_id: "cu2", status: "submitted", batch_id: "batch-partial", submitted_at: "2026-06-04T00:01:00Z" },
+      ],
+      chunkUpdates: [],
+      pendingUpdates: [],
+    };
+    const db = mockDb(state);
+
+    const out = await reconcileEmbeddingBatches({ db });
+    expect(out.rows_succeeded).toBe(1);
+    expect(out.rows_failed).toBe(1);
+    expect(state.pending.find((p) => p.id === "p1")?.status).toBe("done");
+    expect(state.pending.find((p) => p.id === "p2")?.status).toBe("failed");
+    const p2Update = state.pendingUpdates.find((u) => u.id === "p2");
+    expect((p2Update?.payload as Record<string, unknown>).error_detail).toBe("no_output_line_for_custom_id");
   });
 
   it("marks every row failed when the batch itself failed", async () => {

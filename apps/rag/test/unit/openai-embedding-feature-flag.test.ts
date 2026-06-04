@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("isEmbeddingBatchEnabled", () => {
-  it("defaults to true when env var is absent", () => {
+  it("defaults to true when env var is absent (intent: shipping default-on per #686)", () => {
     delete process.env.OPENAI_EMBEDDING_BATCH_ENABLED;
     expect(isEmbeddingBatchEnabled()).toBe(true);
   });

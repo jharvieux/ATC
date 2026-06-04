@@ -21,6 +21,7 @@ export const dynamic = "force-dynamic";
 import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { embed } from "@/lib/embeddings/openai";
 import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
@@ -191,6 +192,15 @@ export const POST = withServiceAuth(async (req, ctx) => {
       await enqueueEmbedding({ chunk_id: chunkId, content: body.text, db });
     } catch (err) {
       console.error("[ingest/reference] enqueue embedding failed:", err);
+      // INSERT path: orphan chunk would create a duplicate on retry. Roll
+      // back. UPDATE path: chunk already existed before this request, leave
+      // it alone.
+      if (outcomeStatus === "ingested") {
+        await safeAwait(
+          db.from("knowledge_chunks").delete().eq("id", chunkId),
+          "knowledge_chunks.delete.orphan_after_enqueue_failure",
+        );
+      }
       return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
     }
   }

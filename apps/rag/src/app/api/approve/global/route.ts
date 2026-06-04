@@ -100,6 +100,13 @@ export const POST = withServiceAuth(async (req, ctx) => {
       await enqueueEmbedding({ chunk_id: chunk.id, content, db });
     } catch (err) {
       console.error("[approve/global] enqueue embedding failed:", err);
+      // The queue row hasn't been flipped to 'approved' yet, so a retry
+      // would re-enter this handler and insert a SECOND chunk. Delete the
+      // orphan so retry is clean.
+      await safeAwait(
+        db.from("knowledge_chunks").delete().eq("id", chunk.id),
+        "knowledge_chunks.delete.orphan_after_enqueue_failure",
+      );
       return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
     }
   }
