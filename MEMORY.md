@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-148 — 2026-06-04 — UX redesign overnight initiative: 5-phase split shipped (PRs #637–#643)
+
+**Decision.** Shipped the POC-clone UX redesign in 5 sequential phases (each its own PR, merged before the next started). The split:
+
+  Phase 1 (#637) — `Logo` + `LogoMark` theme-aware components, app/icon.svg favicon, drop into landing + signup. Foundation.
+  Phase 2 (#638) — `lib/auth/post-login-destination.ts` (pure) + `resolve-post-login.ts` (DB-aware) + landing dispatcher. End of "blank-page after login" — every user type now lands somewhere role-appropriate.
+  Phase 3 (#639) — `SiteHeader` (logo + hamburger menu + Login button) + landing hero + `(tenant)/layout.tsx` so every tenant page gets the shared chrome.
+  Phase 4 (#640) — `AdminShell` + collapsible `AdminSidebar` replacing the chrome-less admin gate. Sections persist in localStorage. Section data in `sidebar-sections.ts` mirrors /admin hub.
+  Phase 5 split into 3 sub-PRs:
+    5a (#641) — `AGENT_CATALOG` + landing showcase, photos scraped from POC.
+    5b (#642) — `/agents/quiz` 4-question picker + `/agents/[slug]` profile pages. `pickAgentFromTags` pure scorer + 8 intent tests.
+    5c (#643) — `ChatExperience` extracted from /chat/page.tsx; new `/chat/[slug]` route forwards `persona_slug` to the existing chat API (which already supported the field).
+
+**Why.** User explicitly asked for the 5 items in order. Sequential PRs avoided rebase conflicts and let audit agents catch issues per-phase. The Phase 5 sub-split kept each diff under ~350 lines and let the audit agents stay focused (POC scrape, picker logic, chat extraction are independent concerns).
+
+**What was rejected.** (a) One big PR — would have been unreviewable. (b) Reusing the existing chat client without extraction — would have meant either a duplicate or a global state change. (c) Sourcing agent bios from DB personas.background — would have required a new service-role public-read code path; deferred as a follow-up. (d) Image optimization on the 15MB of agent photos — out of scope for the overnight pass.
+
+**How to apply.** All five user-listed problems are addressed in dev:
+  - Blank landing → Phase 3 hero + Phase 5a agent cards
+  - Blank post-login → Phase 2 dispatcher
+  - Hamburger menu → Phase 3
+  - Login button on landing → Phase 3
+  - Admin left-side nav → Phase 4
+  - Chat looks like POC + find-an-agent → Phase 5
+Each phase preserved backward compatibility (logos optional, dispatcher only triggers on `/`, SiteHeader skipped for admin/chat/onboarding, default chat surface unchanged). Follow-ups: image optimization on agent photos, DB-sourced bios, tenant-branded landing variant.
+
+**Artifacts.** PRs #637 #638 #639 #640 #641 #642 #643 (all merged to dev). Related memory: [[project-ui-redesign]] (D-143 POC clone direction).
+
+---
+
 ## D-147 — 2026-06-03 — Opus for first-run audit agents on big/risky diffs (CLAUDE.md)
 
 **Decision.** First audit-agent run (d091-reviewer + pre-pr-reviewer) escalates to Opus (`model: "opus"` on the Agent tool call) when ANY of: diff ≥ 10 files OR ≥ 500 net-added lines; SQL migration present; net-new API route / Inngest function / cron handler; webhook signature, idempotency, or state-machine transition code; new service-role code path. Re-runs after fix-commits always use Sonnet (default) — re-runs check known patterns, not new surface area. Encoded in CLAUDE.md "Pull requests" → step 4.
