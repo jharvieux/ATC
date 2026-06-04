@@ -78,8 +78,17 @@ export async function resolvePostLoginDestination(
     tenant_id: string;
     tenants: { onboarding_stage: OnboardingStage | null } | null;
   };
-  const typed = rows as unknown as Row[];
-  const picked = typed.reduce((best, row) =>
+  // Filter to known roles defensively — if a future enum value lands in
+  // users.role before app code catches up, the unfiltered cast would let
+  // `ROLE_RANK[unknown] === undefined` slip into the reducer and
+  // silently keep the first row regardless of rank.
+  const known = (rows as unknown as { role: string }[])
+    .filter((r): r is Row => r.role in ROLE_RANK)
+    .map((r) => r as Row);
+  if (known.length === 0) {
+    return postLoginDestination({ isPlatformAdmin: false, role: "viewer" });
+  }
+  const picked = known.reduce((best, row) =>
     ROLE_RANK[row.role] > ROLE_RANK[best.role] ? row : best,
   );
 
