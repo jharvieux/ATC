@@ -76,12 +76,15 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
         recordQuery({ op: "select", table: "tenants" });
         const { data: tenantsRaw } = await db
           .from("tenants")
-          .select("id, tier_id, seat_count, billing_period, status, subscription_status, non_paying_since")
+          .select("id, tier_id, seat_count, billing_period, status, subscription_status, non_paying_since, is_platform_internal")
           .in("status", ["active", "sandbox"])
           .limit(5000);
 
         // §15.16 — skip tenants past the 7-day non-payment grace window.
         // Within-grace tenants still run (grace preserves automated features).
+        // #699 — is_platform_internal=true rows are exempt from the gate
+        // (handled inside excludeNonPayingPastGrace via derivePaymentState),
+        // so they pass through to the abuse-recompute loop normally.
         let skippedNonPaying = 0;
         const tenants = excludeNonPayingPastGrace(
           (tenantsRaw ?? []) as Array<{
@@ -92,6 +95,7 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
             status: string;
             subscription_status: string | null;
             non_paying_since: string | null;
+            is_platform_internal?: boolean;
           }>,
           (t) => {
             skippedNonPaying++;

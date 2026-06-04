@@ -12,6 +12,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
+import { redirectPlatformChatToBooking } from "@/lib/chat/platform-redirect";
 
 interface PageParams {
   params: Promise<{ slug: string }>;
@@ -19,8 +20,11 @@ interface PageParams {
 
 export default async function AgentChatPage({ params }: PageParams) {
   const { slug } = await params;
+  // Validate the slug before redirecting — an invalid slug should 404
+  // regardless of which subdomain we'd send the visitor to.
   const agent = AGENT_CATALOG.find((a) => a.slug === slug);
   if (!agent) notFound();
+  await redirectPlatformChatToBooking(`/${slug}`);
 
   return (
     <div className="flex flex-col h-screen">

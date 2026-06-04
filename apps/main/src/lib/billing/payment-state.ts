@@ -40,6 +40,13 @@ export interface TenantPaymentFields {
   // Onboarding tenants haven't paid yet by design; they shouldn't get
   // gated out of the onboarding flow.
   status: "onboarding" | "pending_review" | "active" | "suspended" | "terminated" | string;
+  // #699 — ATC-owned tenants bypass the payment gate. The platform
+  // doesn't bill itself. Optional in the type so callers that don't
+  // select the column (the cron loops written before this flag landed)
+  // still typecheck — at runtime the DB column is NOT NULL DEFAULT
+  // FALSE, so any row actually fetched has a concrete value. `undefined`
+  // is treated as `false` in derivePaymentState.
+  is_platform_internal?: boolean;
 }
 
 export interface PaymentState {
@@ -58,9 +65,20 @@ export interface PaymentState {
 }
 
 export function derivePaymentState(t: TenantPaymentFields, now: Date = new Date()): PaymentState {
+  // #699 — ATC-owned tenants (is_platform_internal=TRUE) bypass the
+  // payment gate. Checked FIRST so the exemption applies regardless of
+  // status — internal tenants should run as `active` for branding/RLS
+  // semantics without ever hitting billing.
+  if (t.is_platform_internal === true) {
+    return { isPaying: true, isPastGrace: false, isWithinGrace: false, daysSinceNonPaying: 0 };
+  }
+
   // Onboarding / pending_review tenants are pre-payment by design; the
   // payment gate doesn't apply yet (the onboarding flow has its own
   // checkout step that drives them to active).
+  //
+  // NOTE: this exemption has no time bound today — a tenant stuck in
+  // onboarding could use paid features indefinitely. Tracked in #700.
   if (t.status === "onboarding" || t.status === "pending_review") {
     return { isPaying: true, isPastGrace: false, isWithinGrace: false, daysSinceNonPaying: 0 };
   }

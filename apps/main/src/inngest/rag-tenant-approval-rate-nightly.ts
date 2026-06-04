@@ -44,19 +44,21 @@ export const ragTenantApprovalRateNightly = inngest.createFunction(
     // Fetch active tenants.
     const { data: tenantsRaw, error: tErr } = await db
       .from("tenants")
-      .select("id, status, subscription_status, non_paying_since")
+      .select("id, status, subscription_status, non_paying_since, is_platform_internal")
       .eq("status", "active");
     if (tErr) {
       console.error("[rag-tenant-approval-rate-nightly] tenants fetch failed:", tErr.message);
       return { ok: false };
     }
 
-    // §15.16 — skip past-grace tenants.
+    // §15.16 — skip past-grace tenants. #699 internal tenants (Booking)
+    // are exempt from the payment gate and pass through.
     const tenants = excludeNonPayingPastGrace(
       (tenantsRaw ?? []) as Array<TenantRow & {
         status: string;
         subscription_status: string | null;
         non_paying_since: string | null;
+        is_platform_internal?: boolean;
       }>,
     );
 
