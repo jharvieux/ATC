@@ -1,7 +1,14 @@
 // BP36 §33.5 — port-parser unit tests.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parsePortPage } from "../../../src/lib/external/cruisemapper/parsers/port-parser";
+
+const FIXTURE_DIR = join(__dirname, "../../fixtures/cruisemapper");
+function liveFixture(name: string): string {
+  return readFileSync(join(FIXTURE_DIR, name), "utf-8");
+}
 
 const FIXTURE_PORT = `
 <!doctype html><html><body>
@@ -52,5 +59,27 @@ describe("parsePortPage", () => {
     const a = parsePortPage(FIXTURE_PORT, "https://x.test/y")!.text;
     const b = parsePortPage(FIXTURE_PORT, "https://x.test/y")!.text;
     expect(a).toBe(b);
+  });
+
+  // Issue #694 — live CruiseMapper port page uses <span class="infoLabel">
+  // for Region (Pattern D). Verify at least the region extracts so the
+  // sanity gate passes.
+  it("parses a live CruiseMapper port detail page (Istanbul, June 2026 layout)", () => {
+    const html = liveFixture("port-istanbul-71.html");
+    const p = parsePortPage(html, "https://www.cruisemapper.com/ports/istanbul-port-71");
+    expect(p).not.toBeNull();
+    if (!p) return;
+    expect(p.portName).toContain("Istanbul");
+    expect(p.region).toContain("Mediterranean");
+    expect(p.portSlug).toBe("istanbul-port-71");
+  });
+
+  // The discovery filter (issue #694 part 2) drops region-listing URLs from
+  // the inventory, but defense-in-depth: if one ever slips through, the
+  // parser MUST return null so the parse-failure halt threshold catches it.
+  it("returns null on a region-listing page (no per-port spec data)", () => {
+    const html = liveFixture("port-listing-arctic-10.html");
+    const p = parsePortPage(html, "https://www.cruisemapper.com/ports-in-arctic-and-antarctica-10");
+    expect(p).toBeNull();
   });
 });

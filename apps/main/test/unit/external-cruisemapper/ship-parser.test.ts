@@ -1,7 +1,14 @@
 // BP36 §33.5 — ship-parser unit tests with representative fixture HTML.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseShipPage } from "../../../src/lib/external/cruisemapper/parsers/ship-parser";
+
+const FIXTURE_DIR = join(__dirname, "../../fixtures/cruisemapper");
+function liveFixture(name: string): string {
+  return readFileSync(join(FIXTURE_DIR, name), "utf-8");
+}
 
 const FIXTURE_SHIP = `
 <!doctype html><html><body>
@@ -78,5 +85,31 @@ describe("parseShipPage", () => {
     const a = parseShipPage(FIXTURE_SHIP, "https://x.test/y")!.text;
     const b = parseShipPage(FIXTURE_SHIP, "https://x.test/y")!.text;
     expect(a).toBe(b);
+  });
+
+  // Issue #694 — live CruiseMapper page (June 2026 layout) uses two markup
+  // patterns the original parser didn't handle: <span class="infoLabel"> for
+  // Cruise line, and <tr><td>Label</td><td>value</td></tr> for the rest of
+  // the spec data. This test asserts both patterns now extract.
+  it("parses a live CruiseMapper ship page (Norwegian Prima, June 2026 layout)", () => {
+    const html = liveFixture("ship-norwegian-prima-2216.html");
+    const p = parseShipPage(html, "https://www.cruisemapper.com/ships/Norwegian-Prima-2216");
+    expect(p).not.toBeNull();
+    if (!p) return;
+    expect(p.shipName).toBe("Norwegian Prima");
+    // Pattern D (span.infoLabel + sibling)
+    expect(p.cruiseLine).toContain("Norwegian Cruise Line");
+    // Pattern E (td-td pairs in the spec table)
+    expect(p.yearBuilt).toBe(2022);
+    expect(p.builder).toContain("Fincantieri");
+    expect(p.shipClass).toContain("PRIMA");
+    expect(p.flagState).toContain("Bahamas");
+    expect(p.passengerCapacity).toBeGreaterThan(3000);
+    expect(p.crewCount).toBe(1388);
+    expect(p.deckCount).toBe(20);
+    expect(p.cabinCount).toBe(1646);
+    expect(p.shipSlug).toBe("Norwegian-Prima-2216");
+    expect(p.text).toContain("Norwegian Prima");
+    expect(p.text).toContain("Norwegian Cruise Line");
   });
 });

@@ -4,6 +4,7 @@
 // text output for RAG content-hash idempotency.
 
 import * as cheerio from "cheerio";
+import { pickSpecValue } from "./pick-spec-value";
 
 export interface ParsedPort {
   portName: string;
@@ -15,16 +16,6 @@ export interface ParsedPort {
   portSlug: string;
   sourceUrl: string;
   text: string;
-}
-
-function pickSpecValue($: cheerio.CheerioAPI, labels: string[]): string | null {
-  for (const label of labels) {
-    const a = $(`th:contains("${label}")`).first().next("td").text().trim();
-    if (a) return a;
-    const b = $(`dt:contains("${label}")`).first().next("dd").text().trim();
-    if (b) return b;
-  }
-  return null;
 }
 
 function paragraphAfter($: cheerio.CheerioAPI, heading: string): string | null {
