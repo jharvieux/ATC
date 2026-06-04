@@ -42,7 +42,7 @@ export function SiteHeaderMenu({
         {!isAuthenticated && isPlatformDomain && (
           <>
             <DropdownMenuItem asChild>
-              <Link href="/signup">Find my agent</Link>
+              <Link href="/agents/quiz">Find my agent</Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link href="/group">Group cruises</Link>
