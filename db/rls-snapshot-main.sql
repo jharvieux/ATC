@@ -58,6 +58,8 @@
 -- public.legal_consents (rls_enabled)
 -- public.legal_documents (rls_enabled)
 -- public.messages (rls_enabled)
+-- public.news_articles (rls_enabled)
+-- public.news_feeds (rls_enabled)
 -- public.notifications (rls_enabled)
 -- public.payout_balances (rls_enabled)
 -- public.payout_records (rls_enabled)
