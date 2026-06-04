@@ -212,6 +212,20 @@ If you encounter a bug while doing other work, you must act on it — never leav
 
 "I'll track it as a follow-up" is only acceptable if the GitHub issue exists by the end of the session. Leaving a known bug untracked is not acceptable.
 
+— Every follow-up or deferral gets a GitHub issue
+The same "issue or it didn't happen" rule applies to anything you deliberately defer — not just bugs. If during a PR you decide to ship X without Y (image optimization left as a follow-up, DB schema cleanup deferred, a test gap noted by the reviewer, a known incomplete UX variant, a known performance opportunity), open a GitHub issue **before the PR merges**. Reference the issue from the PR body's "Follow-ups" or "Not in scope" section, and from MEMORY if the decision is significant.
+
+Why: the PR's "deferred items" bullets get forgotten the moment the PR closes. A MEMORY note is queryable by another agent but not by the user from the GitHub UI. The issue is the durable handle the user needs to ask "what's outstanding here?" without re-reading every PR description.
+
+Applies to:
+- Things you explicitly chose to defer ("X is a follow-up")
+- Audit findings you addressed by changing scope rather than fixing
+- Known gaps surfaced by reviewers but intentionally left in
+- Performance / asset / cleanup items noted in PR descriptions
+- "We should also..." items raised but not built this round
+
+The acceptance bar is *not* "issue exists" — it's "issue is specific enough that someone returning cold could pick it up." Include: what the problem is, where it lives (file paths), what the acceptance criteria are, and why it was deferred.
+
  — Goal-Driven Execution
 Define success criteria. Loop until verified.
 Don't follow steps. Define success and iterate.
