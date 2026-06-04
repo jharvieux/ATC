@@ -125,6 +125,7 @@ export const PLATFORM_ADMIN_REASONS = [
   "travel_news_feed_create",
   "travel_news_feed_update",
   "travel_news_feed_delete",
+  "travel_news_manual_refresh",
   "travel_news_articles_read",
   "travel_news_article_hide",
   "travel_news_article_unhide",

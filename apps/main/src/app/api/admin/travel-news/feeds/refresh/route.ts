@@ -18,7 +18,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   await withPlatformAdminAudit(
-    { admin_user_id: ctx.admin_user_id, reason: "travel_news_feeds_read", operation: "news_feeds.manual_refresh_trigger" },
+    { admin_user_id: ctx.admin_user_id, reason: "travel_news_manual_refresh", operation: "news_feeds.manual_refresh_trigger" },
     async (_db, _recordQuery) => {
       await inngest.send({ name: "travel-news/manual-refresh", data: {} });
     },

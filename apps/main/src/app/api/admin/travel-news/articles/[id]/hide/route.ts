@@ -8,7 +8,7 @@ import {
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 async function setHidden(
   req: Request,
@@ -26,18 +26,19 @@ async function setHidden(
   const reason = isHidden ? "travel_news_article_hide" : "travel_news_article_unhide";
   const opCtx = isHidden ? "news_articles.hide" : "news_articles.unhide";
 
-  await withPlatformAdminAudit(
+  const updated = await withPlatformAdminAudit(
     { admin_user_id: ctx.admin_user_id, reason, operation: opCtx },
     async (db, recordQuery) => {
       recordQuery({ op: "update", table: "news_articles" });
-      await safeAwaitRowCount(
+      const rows = await safeAwait<Array<{ id: string }>>(
         db.from("news_articles").update({ is_hidden: isHidden }).eq("id", id).select("id"),
         opCtx,
-        1,
       );
+      return rows ?? [];
     },
   );
 
+  if (updated.length === 0) return Response.json({ error: "not_found" }, { status: 404 });
   return Response.json({ is_hidden: isHidden });
 }
 
