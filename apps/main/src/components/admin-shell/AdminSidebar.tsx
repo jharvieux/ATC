@@ -14,6 +14,7 @@ import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ADMIN_NAV_SECTIONS, type AdminNavSection } from "./sidebar-sections";
+import { isActiveLink } from "./is-active-link";
 
 const STORAGE_KEY = "atc.admin.sidebar.collapsed-sections.v1";
 
@@ -122,13 +123,7 @@ function Section({
       {!collapsed && (
         <ul className="mt-1 flex flex-col gap-0.5">
           {section.items.map((item) => {
-            // Prefix-match so drilling into a nested admin page (e.g.
-            // /admin/tenants/review-queue/abc) still highlights its parent
-            // ("Tenant Review Queue"). The `+ "/"` suffix prevents
-            // /admin/personas/seed-tier from matching /admin/personas (an
-            // unintended sibling) — only true descendants count. #668.
-            const active =
-              currentPath === item.href || currentPath?.startsWith(item.href + "/") === true;
+            const active = isActiveLink(currentPath, item.href);
             return (
               <li key={item.href}>
                 <Link
