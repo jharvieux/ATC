@@ -43,9 +43,11 @@ function saveCollapsed(state: Record<string, boolean>): void {
 }
 
 export interface AdminSidebarProps {
-  /** When false, the sidebar still occupies space but hides its body
-   *  content (used by the mobile/small-screen collapse toggle in
-   *  AdminShell). */
+  /** Toggles the sidebar width via Tailwind:
+   *  - `open=true`  → `w-64` on all viewports.
+   *  - `open=false` → `w-0` below `lg`, but `w-64` on `lg` and up — desktop
+   *    keeps the sidebar permanently visible so the operator never loses
+   *    nav. Driven by the hamburger button in the AdminShell top bar. */
   open: boolean;
 }
 
