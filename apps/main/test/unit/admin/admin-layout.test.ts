@@ -25,6 +25,10 @@ vi.mock("next/headers", () => ({
 
 vi.mock("next/navigation", () => ({
   notFound: mocks.notFound,
+  // AdminShell -> AdminSidebar -> usePathname for active-link highlight.
+  // The shell is rendered (not just imported) by the layout when auth
+  // passes, so the mock has to cover anything the shell imports.
+  usePathname: () => "/admin",
 }));
 
 vi.mock("@/lib/auth/assert-platform-admin", () => ({

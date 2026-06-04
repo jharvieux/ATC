@@ -20,6 +20,7 @@ import React from "react";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { assertPlatformAdmin } from "@/lib/auth/assert-platform-admin";
+import { AdminShell } from "@/components/admin-shell/AdminShell";
 
 export default async function AdminLayout({
   children,
@@ -39,5 +40,5 @@ export default async function AdminLayout({
     notFound();
   }
 
-  return <>{children}</>;
+  return <AdminShell>{children}</AdminShell>;
 }
