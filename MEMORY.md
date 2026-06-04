@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-149 — 2026-06-04 — All follow-ups/deferrals get GitHub issues (CLAUDE.md rule)
+
+**Decision.** The "Never ignore a bug you find" rule (issue-or-it-didn't-happen) is extended to every kind of deferral, not just bugs. Anything noted as a follow-up during a PR — image optimization, schema cleanup, deferred UX variant, performance item, test gap surfaced by reviewers — gets a GitHub issue **before the PR merges**. The PR body's "Not in scope" list references the issue; MEMORY records the decision when significant.
+
+**Why.** During the overnight UX redesign (D-148), four items were deferred during the 8 PRs that shipped: agent photo optimization, DB-sourced bios, tenant-branded landing, ChatExperience test. All were documented in PR descriptions and MEMORY. When the user asked "did you create issues for the follow-ups," the honest answer was no — and that was the gap. PR-body bullets get forgotten when the PR closes; MEMORY notes are queryable by agents but not by the user from the GitHub project view. The issue is the durable handle the user needs.
+
+**What was rejected.** (a) "MEMORY entry is enough" — not user-visible in the GitHub UI without grepping the repo. (b) "PR-description deferred-items list is enough" — closes with the PR. (c) "Only file issues for blocking deferrals" — judgment call too easy to fudge; explicit rule is clearer.
+
+**How to apply.** Before merging any PR, scan its description and audit comments for "follow-up," "deferred," "out of scope," "noted for awareness," "would be sound to add" — for each, file an issue with the problem, where it lives (file paths), acceptance criteria, and the reason it was deferred. Add a "Follow-ups" section to the PR body listing issue numbers. Reference the rule in CLAUDE.md "Never ignore a bug you find" sub-section.
+
+**Artifacts.** CLAUDE.md "Every follow-up or deferral gets a GitHub issue" rule. Triggered by retroactive creation of issues #645 #646 #647 #648 for D-148 deferrals.
+
+---
+
 ## D-148 — 2026-06-04 — UX redesign overnight initiative: 5-phase split shipped (PRs #637–#643)
 
 **Decision.** Shipped the POC-clone UX redesign in 5 sequential phases (each its own PR, merged before the next started). The split:
