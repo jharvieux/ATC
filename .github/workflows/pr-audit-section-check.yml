@@ -215,7 +215,10 @@ jobs:
             i=$((i + 1))
           done
 
-          HEAD_DATE=$(gh api "repos/$REPO/commits/$EFFECTIVE_SHA" --jq '.commit.committer.date')
+          # The loop above leaves COMMIT_JSON cached for EFFECTIVE_SHA on
+          # every exit path (FILE_COUNT>0 break, no-parent break, and
+          # walk-limit fall-through), so reuse it instead of re-fetching.
+          HEAD_DATE=$(printf '%s' "$COMMIT_JSON" | jq -r '.commit.committer.date')
           if [ -z "$HEAD_DATE" ]; then
             echo "::error::Could not resolve committed date for effective SHA $EFFECTIVE_SHA."
             exit 1
