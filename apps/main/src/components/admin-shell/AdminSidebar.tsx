@@ -1,10 +1,12 @@
 // Platform-admin left sidebar. Sections from sidebar-sections.ts; each
 // section is collapsible (chevron toggle); the open/closed state per
-// section is persisted to localStorage so the operator's setup survives
-// page navigation. The whole sidebar can also collapse on small screens
-// (toggle in the AdminShell header).
+// section is persisted to a server-readable cookie (collapsed-cookie.ts)
+// so the initial SSR HTML matches the operator's saved state — no
+// hydration flash (#669). The whole sidebar can also collapse on small
+// screens (toggle in the AdminShell header).
 //
-// Client component: localStorage + usePathname for active-link highlight.
+// Client component: usePathname for active-link highlight + document.cookie
+// writes on toggle. Reads come from `initialCollapsed` (server-threaded).
 
 "use client";
 
