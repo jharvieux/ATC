@@ -4,7 +4,7 @@
 // renders the header.
 
 import { headers } from "next/headers";
-import { createRequestScopedClient } from "@/lib/auth/ssr-client";
+import { getCachedUser } from "@/lib/auth/get-cached-user";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import type { SiteHeaderProps } from "./SiteHeader";
 
@@ -19,25 +19,10 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
   const resolved = incoming.get(RESOLVED_TENANT_ID_HEADER);
   const isPlatformDomain = !resolved || resolved === "platform";
 
-  // Auth — forward cookies onto a synthetic Request so we can reuse the
-  // SSR client helper. `getUser` returns `data.user === null` cleanly
-  // when there's no session; we let `createRequestScopedClient`'s
-  // env-misconfig throw propagate (matches resolve-post-login.ts and
-  // assert-platform-admin.ts).
-  const forwarded = new Headers();
-  const cookie = incoming.get("cookie");
-  if (cookie) forwarded.set("cookie", cookie);
-  const supabase = createRequestScopedClient(
-    new Request("https://placeholder.internal/", { headers: forwarded }),
-  );
-  const { data, error } = await supabase.auth.getUser();
-  // Supabase populates `error` with "Auth session missing!" for normal
-  // anonymous visitors — NOT a server failure. The earlier "throw on
-  // any error" version 500'd the landing page for every unauthenticated
-  // visit (found on local dev smoke test). Match the resolve-post-login
-  // pattern: any error or absent user → treat as anonymous. Genuine
-  // env-misconfig still throws upstream in createRequestScopedClient.
-  const isAuthenticated = !error && data?.user != null;
+  // Request-scoped memoization (#667): when this layout + its rendered
+  // page both need auth state, share one Supabase JWT verification per
+  // request rather than running it twice. See get-cached-user.ts.
+  const { isAuthenticated } = await getCachedUser();
 
   return { isPlatformDomain, isAuthenticated };
 }
