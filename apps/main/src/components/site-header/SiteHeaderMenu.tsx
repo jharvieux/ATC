@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { performSignout } from "@/lib/auth/perform-signout";
 
 export interface SiteHeaderMenuProps {
   isPlatformDomain: boolean;
@@ -71,18 +72,10 @@ export function SiteHeaderMenu({
                 activation to the <form> element, which has no keypress
                 handler (#664). Window-navigate (not router.push) so
                 server components re-render with the cookie cleared. */}
-            <DropdownMenuItem
-              onSelect={() => {
-                // allow-void-async: browser onSelect handler; finally()
-                // guarantees the redirect fires even if the fetch errors
-                // (otherwise the user is stuck on stale UI with a
-                // server-side cleared session).
-                void fetch("/api/auth/signout", { method: "POST" })
-                  .finally(() => {
-                    window.location.assign("/");
-                  });
-              }}
-            >
+            {/* The sign-out behavior is in lib/auth/perform-signout so the
+                .finally() redirect-on-error invariant is unit-testable
+                without a DOM (#675). */}
+            <DropdownMenuItem onSelect={performSignout}>
               Sign out
             </DropdownMenuItem>
           </>
