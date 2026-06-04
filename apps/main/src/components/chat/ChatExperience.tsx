@@ -239,6 +239,9 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
             <form
               onSubmit={(e) => {
                 e.preventDefault();
+                // allow-void-async: browser onSubmit handler; send()
+                // manages its own loading/error state via useState and
+                // cannot be awaited from a synchronous event handler.
                 void send();
               }}
               className="flex gap-2 p-3 border-t border-border bg-background"
