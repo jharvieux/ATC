@@ -8,6 +8,7 @@ import { postLoginDestination } from "@/lib/auth/post-login-destination";
 import {
   pickHighestRankActiveMembership,
   normalizeTenant,
+  isRouteableTenant,
   type MembershipRow,
 } from "@/lib/auth/resolve-post-login";
 
@@ -173,5 +174,39 @@ describe("normalizeTenant", () => {
 
   it("returns null for an empty array (FK present but the join filtered out)", () => {
     expect(normalizeTenant([])).toBeNull();
+  });
+});
+
+describe("isRouteableTenant", () => {
+  // The bug this guards (#666): a still-active user under a suspended /
+  // terminated tenant was being routed to /crm and then 403'd by
+  // assertPermission. Onboarding-in-flight (`onboarding`, `pending_review`)
+  // tenants MUST stay routeable — the dispatcher's whole job is to send
+  // them to the right onboarding stage.
+
+  it("returns true for `active` tenants (fully live)", () => {
+    expect(isRouteableTenant({ onboarding_stage: "complete", status: "active" })).toBe(true);
+  });
+
+  it("returns true for `onboarding` tenants (mid-funnel, dispatcher should still route them to /onboarding/{stage})", () => {
+    // Critical regression case: the original fix used `=== \"active\"`
+    // which would have broken every new tenant signing up mid-onboarding.
+    expect(isRouteableTenant({ onboarding_stage: "tax_form", status: "onboarding" })).toBe(true);
+  });
+
+  it("returns true for `pending_review` tenants (awaiting platform-admin approval but still in the funnel)", () => {
+    expect(isRouteableTenant({ onboarding_stage: "review_submitted", status: "pending_review" })).toBe(true);
+  });
+
+  it("returns false for `suspended` tenants (member shouldn't be sent to /crm where assertPermission will 403)", () => {
+    expect(isRouteableTenant({ onboarding_stage: "complete", status: "suspended" })).toBe(false);
+  });
+
+  it("returns false for `terminated` tenants (tenant has been deleted)", () => {
+    expect(isRouteableTenant({ onboarding_stage: "complete", status: "terminated" })).toBe(false);
+  });
+
+  it("returns false for null (no tenant joined)", () => {
+    expect(isRouteableTenant(null)).toBe(false);
   });
 });

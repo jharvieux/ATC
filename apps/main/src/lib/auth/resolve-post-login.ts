@@ -22,12 +22,28 @@ import {
  *  too (#665). `normalizeTenant` collapses both into the object shape. */
 type EmbeddedTenant = {
   onboarding_stage: OnboardingStage | null;
-  /** Tenant lifecycle status. Inactive/suspended tenants are filtered
-   *  out before role-ranking so a still-active user under a deactivated
-   *  tenant doesn't get routed to /crm and then 403'd by assertPermission
-   *  (#666). Mirrors fetch-tenant-branding.ts's status check. */
+  /** Tenant lifecycle status. DB CHECK constraint: one of `onboarding`,
+   *  `pending_review`, `active`, `suspended`, `terminated`. The
+   *  dispatcher filters out `suspended` and `terminated` so a user under
+   *  a deactivated tenant doesn't get routed to /crm and 403'd by
+   *  assertPermission (#666). `onboarding` and `pending_review` are
+   *  ALLOWED — they're normal mid-funnel states, routed via the
+   *  onboarding-stage URL map. */
   status: string;
 };
+
+/** Tenant statuses that route normally (onboarding flow + crm). Other
+ *  statuses (`suspended`, `terminated`) drop the membership row from the
+ *  picker — the user falls through to /chat. */
+const ROUTEABLE_TENANT_STATUSES: ReadonlySet<string> = new Set([
+  "onboarding",
+  "pending_review",
+  "active",
+]);
+
+export function isRouteableTenant(t: EmbeddedTenant | null): boolean {
+  return t !== null && ROUTEABLE_TENANT_STATUSES.has(t.status);
+}
 
 export type MembershipRow = {
   role: string;
@@ -121,14 +137,15 @@ export async function resolvePostLoginDestination(
     throw new Error(`resolvePostLoginDestination: users lookup: ${rowsErr.message}`);
   }
 
-  // Filter out memberships whose embedded tenant is inactive — a still-
-  // active user under a suspended tenant must not be routed to /crm
-  // where assertPermission will 403. Falls through to viewer/chat (#666).
-  const rowsWithActiveTenant = ((rows ?? []) as unknown as MembershipRow[]).filter(
-    (r) => normalizeTenant(r.tenants)?.status === "active",
+  // Filter out memberships whose embedded tenant is non-routeable
+  // (`suspended` / `terminated`). A still-active user under a
+  // deactivated tenant must not be routed to /crm where assertPermission
+  // will 403. Falls through to viewer/chat (#666).
+  const rowsWithRouteableTenant = ((rows ?? []) as unknown as MembershipRow[]).filter(
+    (r) => isRouteableTenant(normalizeTenant(r.tenants)),
   );
 
-  const picked = pickHighestRankActiveMembership(rowsWithActiveTenant);
+  const picked = pickHighestRankActiveMembership(rowsWithRouteableTenant);
 
   // No active row with a known role — could be: callback skipped the
   // membership upsert (legacy: PLATFORM_DEFAULT_TENANT_ID unset, see
