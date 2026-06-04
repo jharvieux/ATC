@@ -1,7 +1,6 @@
-// Per-agent profile page. Renders the matching catalog entry's photo,
-// name, specialty, tagline, multi-paragraph bio, and a "Chat now" CTA
-// pointing at /chat/[slug] (which Phase 5c will wire to the actual
-// per-agent chat). 404 if the slug isn't in the catalog.
+// Chat-now CTA points at /chat/[slug], a route Phase 5c will add. The
+// link is intentionally live now so no follow-up wiring is needed when
+// that phase lands.
 
 /* eslint-disable @next/next/no-img-element */
 

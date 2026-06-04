@@ -35,7 +35,7 @@ export const AGENT_CATALOG: readonly AgentCatalogEntry[] = [
       "Marcus has spent fifteen years walking the docks of San Juan, Aruba, and Cozumel — every Caribbean port has a different rhythm, and he knows which ones reward divers, which ones reward foodies, and which ones reward people who just want to read on a beach.",
       "His specialty is matching the right island chain to your travel style. Eastern, Western, Southern, the ABC islands, the Bahamas — they sound interchangeable in a brochure and aren't.",
     ],
-    quizTags: ["caribbean", "warm", "beach", "snorkel"],
+    quizTags: ["caribbean", "warm", "beach"],
   },
   {
     slug: "marco-bellini",

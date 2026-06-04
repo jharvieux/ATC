@@ -65,19 +65,15 @@ export const QUIZ_QUESTIONS: readonly QuizQuestion[] = [
  * (deterministic — same input always returns the same agent).
  */
 export function pickAgentFromTags(selected: string[]): string {
-  const tally = new Map<string, number>();
+  let winnerSlug = AGENT_CATALOG[0]!.slug;
+  // -1 starting score guarantees the first agent wins ties against
+  // higher-indexed agents whose score is also 0 (empty selection case).
+  let winnerScore = -1;
   for (const agent of AGENT_CATALOG) {
     let score = 0;
     for (const tag of selected) {
       if (agent.quizTags.includes(tag)) score += 1;
     }
-    tally.set(agent.slug, score);
-  }
-  let winnerSlug = AGENT_CATALOG[0]!.slug;
-  let winnerScore = -1;
-  // Iterate in catalog order so a tie returns the earlier entry.
-  for (const agent of AGENT_CATALOG) {
-    const score = tally.get(agent.slug) ?? 0;
     if (score > winnerScore) {
       winnerScore = score;
       winnerSlug = agent.slug;
