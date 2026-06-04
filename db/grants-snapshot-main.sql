@@ -217,6 +217,12 @@ GRANT INSERT, SELECT, UPDATE ON public.legal_documents TO service_role;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.messages TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.messages TO service_role;
 
+-- TABLE: public.news_articles
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.news_articles TO service_role;
+
+-- TABLE: public.news_feeds
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.news_feeds TO service_role;
+
 -- TABLE: public.notifications
 GRANT SELECT, UPDATE ON public.notifications TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.notifications TO service_role;

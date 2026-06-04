@@ -58,6 +58,8 @@
 -- public.legal_consents (rls_enabled)
 -- public.legal_documents (rls_enabled)
 -- public.messages (rls_enabled)
+-- public.news_articles (rls_enabled)
+-- public.news_feeds (rls_enabled)
 -- public.notifications (rls_enabled)
 -- public.payout_balances (rls_enabled)
 -- public.payout_records (rls_enabled)
@@ -873,6 +875,18 @@ CREATE POLICY "messages_update_policy" ON public.messages
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.news_articles
+CREATE POLICY "no_access" ON public.news_articles
+  FOR ALL TO PUBLIC
+  USING (false)
+  WITH CHECK (false);
+
+-- TABLE: public.news_feeds
+CREATE POLICY "no_access" ON public.news_feeds
+  FOR ALL TO PUBLIC
+  USING (false)
+  WITH CHECK (false);
 
 -- TABLE: public.notifications
 CREATE POLICY "notifications_delete_service" ON public.notifications

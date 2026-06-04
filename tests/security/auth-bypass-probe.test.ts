@@ -62,6 +62,10 @@ const AUTH_TOKENS = [
   "OTP_STORE",
   // Supabase OAuth initiation (authority is the OAuth provider, not us).
   "signInWithOAuth",
+  // Low-level platform-admin auth primitive. Always paired with withPlatformAdminAudit
+  // in routes that perform DB operations; used standalone only for fire-and-forget dispatches
+  // where the audit wrapper's DB callback isn't needed.
+  "assertPlatformAdmin",
 ] as const;
 
 /**
@@ -106,6 +110,12 @@ const PUBLIC_ROUTE_ALLOWLIST: Array<{ pattern: RegExp; reason: string }> = [
     reason:
       "#572 CSP violation collector; intentionally unauthenticated (browsers POST reports directly with no credentials). " +
       "Makes no allow/deny decision and no DB write — abuse-resistant via content-type + body-size gates and log de-dup.",
+  },
+  {
+    pattern: /\/api\/travel-news\/route\.ts$/,
+    reason:
+      "§TN — public travel news ticker; read-only, no PII. Deny-all RLS on authenticated roles; " +
+      "service-role read filtered to relevance_score≥60 non-hidden articles only.",
   },
 ];
 

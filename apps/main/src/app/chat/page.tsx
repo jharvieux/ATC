@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AIDisclosureBanner } from "@/components/chat/AIDisclosureBanner";
+import { NewsTickerBanner } from "@/components/chat/NewsTickerBanner";
 import { StreamingArea } from "@/components/chat/StreamingArea";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { SignupWall } from "@/components/chat/SignupWall";
@@ -199,6 +200,7 @@ export default function ChatPage(): JSX.Element {
 
   return (
     <div className="flex flex-col h-screen">
+      <NewsTickerBanner />
       <AIDisclosureBanner />
       <div className="flex flex-1 overflow-hidden">
         <aside className="hidden md:block w-[260px] border-r border-border p-4 overflow-y-auto shrink-0">
