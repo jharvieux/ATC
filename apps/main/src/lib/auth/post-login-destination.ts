@@ -12,19 +12,25 @@ import { type OnboardingStage } from "@/lib/onboarding/state-machine";
 
 export type PostLoginRole = "tenant_owner" | "agent" | "viewer";
 
-export interface PostLoginInputs {
-  /** From the users row that gates assertPermission. */
-  role: PostLoginRole;
-  /** True if the auth_user_id is in platform_admins. */
-  isPlatformAdmin: boolean;
-  /**
-   * The tenant's onboarding_stage. `null` for a brand-new tenant whose
-   * tenants row exists but hasn't started any stage; `"complete"` for
-   * fully-onboarded tenants. `undefined` for users that aren't tenant
-   * staff (e.g. end customers on the platform tenant).
-   */
-  tenantOnboardingStage?: OnboardingStage | null;
-}
+/**
+ * Discriminated union so the type can't represent nonsense (e.g.
+ * "admin with role=viewer", which used to be passed as `{ role: "viewer",
+ * isPlatformAdmin: true }` from the resolver). When `isPlatformAdmin` is
+ * true, the role/stage fields are irrelevant and not even allowed.
+ */
+export type PostLoginInputs =
+  | { isPlatformAdmin: true }
+  | {
+      isPlatformAdmin: false;
+      role: PostLoginRole;
+      /**
+       * The tenant's onboarding_stage. `null` for a brand-new tenant whose
+       * tenants row exists but hasn't started any stage; `"complete"` for
+       * fully-onboarded tenants. `undefined` for users that aren't tenant
+       * staff (e.g. end customers on the platform tenant).
+       */
+      tenantOnboardingStage?: OnboardingStage | null;
+    };
 
 /**
  * Map onboarding_stage values to the path that stage's UI lives at. The

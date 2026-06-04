@@ -1,9 +1,6 @@
-// Landing page. Two paths:
-//   - Anonymous visitor → render the placeholder landing (Phase 3 will
-//     give this a real hero + login button).
-//   - Logged-in user → redirect to the post-login dispatcher destination
-//     (their admin hub / next onboarding step / tenant home / chat),
-//     because the placeholder was the "blank page after login" symptom.
+// Dispatch lives here (not in /api/auth/callback) so post-login routing
+// has a single source of truth — adding it to the callback would mean
+// keeping two redirect tables in sync. See resolve-post-login.ts.
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";

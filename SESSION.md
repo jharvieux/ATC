@@ -1,31 +1,40 @@
-# Session state — last updated 2026-06-03 18:15 PST
+# Session state — last updated 2026-06-03 22:25 PST
 
 ## Just completed
-- Merged PR #628 (page-service-role guard + cross-tenant probe URL fix)
-- Merged PR #630 (S5852 input-length caps: email 254-char, chat 8000-char, import validation)
-- Merged PR #631 (React 19 dependabot ignore — closes #601, #602)
-- Merged PR #632 (contract tests — removes vacuous CI check for #384 item 2)
-- Closed issues: #547, #550, #553, #572, #594 (partial), #601, #602
-- Re-opened #384 with item 2 marked done; items 1 and 3 still open
+- Merged PR #635 (Travel News ticker — RSS cron, LLM scorer, admin console, public API)
+- Merged PR #636 (docs: Opus-vs-Sonnet threshold for first-run audit agents → CLAUDE.md + MEMORY D-147)
 
 ## In flight
-- Nothing in flight — clean checkpoint
+- **Overnight UX redesign initiative.** 5 sequential PRs, one phase each, in order:
+  1. **Phase 1 — Logo system** (Sonnet). Logo + LogoMark components, theme-aware reverse for dark, favicons, drop into landing/auth/admin shells.
+  2. **Phase 2 — Post-login routing dispatcher** (Sonnet). End-customer → /chat, tenant agent → tenant home, platform admin → /admin, onboarding-incomplete → next step. Currently EVERY user type lands blank post-login.
+  3. **Phase 3 — Landing pages + hamburger menu + Login CTA** (Sonnet). POC-style header on both platform domain AND tenant subdomain. This is the visible fix for "landing only has a logo, nothing to do."
+  4. **Phase 4 — Admin collapsible left sidebar** (Opus). Refactor (admin)/layout.tsx to left-side shell, sections collapsible, state persisted per admin.
+  5. **Phase 5 — Chat redesign to POC** (Opus). Find-an-agent flow, agent bio cards with photos scraped from POC, map onto existing personas.
+
+### Phase 1 status: starting
+- Branch: feature/logo-system (about to create)
+- Logos: specs/Logos/ (logo-horizontal.svg, logo-horizontal-reverse.svg, logo-mark.svg, logo-mark-reverse.svg)
+
+## Resolved with user before going dark
+- Agent → persona mapping: 1:1 match (no new personas)
+- Photo source: scrape live POC https://ai-travel-concierge-tawny.vercel.app
+- Admin sidebar grouping: my call, surface in PR for revision
+- PR cadence: sequential, one merged before the next starts
+- Stop conditions: continue on reversible decisions w/ note; stop on auth/permission ambiguity, spec conflicts, destructive DB work
 
 ## Next step
-- All remaining open issues are operator tasks or blocked on infra:
-  - #534 / #533: restore DB steps in deploy.yml — blocked on DB_URL secret + staging DB
-  - #518, #500, #473, #430: secrets/infra provisioning — needs user action
-  - #429, #428: OAuth + Gmail setup — needs user action
-  - #386: migrate nightly suites off prod DB — operator task
-  - #384 items 1+3: cross-tenant probe impl (blocked on #386) + E2E stubs (product decision)
-  - #427, #426, #444: tracking/epic issues — no code work
-- Remaining SonarCloud S5852 hotspots (33 false positives) need manual "Safe" marking in SonarCloud UI
+- Create feature/logo-system branch
+- Build apps/main/src/components/brand/{Logo,LogoMark}.tsx
+- Copy SVGs into apps/main/public/brand/
+- Wire favicons (favicon.ico + apple-icon.png from logo-mark, light + dark variants)
+- Drop logos into existing landing (app/page.tsx), auth pages, admin layout
+- pnpm verify + browser smoke test + PR
 
 ## Blocked on user
-- SonarCloud S5852: 33 remaining hotspots need manual review in SonarCloud UI (mark as "Safe")
-- All ops/provisioning issues (#518, #473, #430, #429, #428, #386, #534, #533)
-- E2E placeholder specs (#384 item 3) — scope/prioritization decision
+- Nothing — user authorized overnight run
 
 ## Open questions
-- Vercel preview env: PLATFORM_DEFAULT_TENANT_ID may still need to be added to preview environment
-  (mentioned in D-144 — "Add it to preview deployments too")
+- POC fetch reliability (Phase 5) — if site is down at scrape time, will use initials placeholder
+</content>
+</invoke>

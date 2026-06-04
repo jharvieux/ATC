@@ -8,13 +8,11 @@ import { postLoginDestination } from "@/lib/auth/post-login-destination";
 
 describe("postLoginDestination", () => {
   it("sends platform admins to /admin (admin work is why they log in, even if they're also a tenant member)", () => {
-    expect(
-      postLoginDestination({
-        role: "tenant_owner",
-        isPlatformAdmin: true,
-        tenantOnboardingStage: "complete",
-      }),
-    ).toBe("/admin");
+    // The discriminated union doesn't even allow passing a role here —
+    // that's the type-level guarantee that role doesn't influence the
+    // admin destination. Previously this was a runtime concern documented
+    // in a comment; now it's a compile-time invariant.
+    expect(postLoginDestination({ isPlatformAdmin: true })).toBe("/admin");
   });
 
   it("sends an onboarding-incomplete tenant_owner to the matching stage URL (not the tenant home)", () => {
@@ -23,8 +21,8 @@ describe("postLoginDestination", () => {
     // pending stage so the funnel resumes.
     expect(
       postLoginDestination({
-        role: "tenant_owner",
         isPlatformAdmin: false,
+        role: "tenant_owner",
         tenantOnboardingStage: "tax_form",
       }),
     ).toBe("/onboarding/tax-form");
@@ -36,8 +34,8 @@ describe("postLoginDestination", () => {
     // 404 like /onboarding/state_of_operation.
     expect(
       postLoginDestination({
-        role: "agent",
         isPlatformAdmin: false,
+        role: "agent",
         tenantOnboardingStage: "state_of_operation",
       }),
     ).toBe("/onboarding/state-of-operation");
@@ -46,8 +44,8 @@ describe("postLoginDestination", () => {
   it("sends a fully-onboarded tenant_owner to the tenant CRM home", () => {
     expect(
       postLoginDestination({
-        role: "tenant_owner",
         isPlatformAdmin: false,
+        role: "tenant_owner",
         tenantOnboardingStage: "complete",
       }),
     ).toBe("/crm/contacts");
@@ -56,8 +54,8 @@ describe("postLoginDestination", () => {
   it("sends a fully-onboarded agent to the same tenant CRM home (agents work in the same surface as owners)", () => {
     expect(
       postLoginDestination({
-        role: "agent",
         isPlatformAdmin: false,
+        role: "agent",
         tenantOnboardingStage: "complete",
       }),
     ).toBe("/crm/contacts");
@@ -66,8 +64,8 @@ describe("postLoginDestination", () => {
   it("sends viewers to /chat (end customers don't have an onboarding state)", () => {
     expect(
       postLoginDestination({
-        role: "viewer",
         isPlatformAdmin: false,
+        role: "viewer",
       }),
     ).toBe("/chat");
   });
@@ -77,8 +75,8 @@ describe("postLoginDestination", () => {
     // tenants row; that null must NOT route them to an onboarding URL.
     expect(
       postLoginDestination({
-        role: "viewer",
         isPlatformAdmin: false,
+        role: "viewer",
         tenantOnboardingStage: null,
       }),
     ).toBe("/chat");
@@ -89,8 +87,8 @@ describe("postLoginDestination", () => {
     // page is /onboarding/profile, so that's where the dispatcher sends them.
     expect(
       postLoginDestination({
-        role: "tenant_owner",
         isPlatformAdmin: false,
+        role: "tenant_owner",
         tenantOnboardingStage: "signup",
       }),
     ).toBe("/onboarding/profile");

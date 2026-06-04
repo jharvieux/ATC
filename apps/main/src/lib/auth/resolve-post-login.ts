@@ -19,13 +19,12 @@ export async function resolvePostLoginDestination(
   req: Request,
 ): Promise<string | null> {
   // Read the session first. Anonymous → no destination, caller renders
-  // the landing.
-  let supabase;
-  try {
-    supabase = createRequestScopedClient(req);
-  } catch {
-    return null;
-  }
+  // the landing. `createRequestScopedClient` throws on missing env vars
+  // — we deliberately do NOT catch that here, matching the fail-loud
+  // pattern in `assert-platform-admin.ts`. Silent fallback on server
+  // misconfig would route every logged-in user to the public landing
+  // and look like a benign UX bug instead of a 500.
+  const supabase = createRequestScopedClient(req);
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   if (authErr || !authData?.user) return null;
   const authUserId = authData.user.id;
@@ -42,13 +41,8 @@ export async function resolvePostLoginDestination(
   if (adminErr) {
     throw new Error(`resolvePostLoginDestination: platform_admins lookup: ${adminErr.message}`);
   }
-  const isPlatformAdmin = adminRow !== null;
-
-  if (isPlatformAdmin) {
-    return postLoginDestination({
-      role: "viewer", // unused when isPlatformAdmin, satisfies type
-      isPlatformAdmin: true,
-    });
+  if (adminRow !== null) {
+    return postLoginDestination({ isPlatformAdmin: true });
   }
 
   // Fetch the user's tenant membership row + the tenant's onboarding
@@ -71,7 +65,7 @@ export async function resolvePostLoginDestination(
   // because PLATFORM_DEFAULT_TENANT_ID was unset), default to the
   // customer experience.
   if (!rows || rows.length === 0) {
-    return postLoginDestination({ role: "viewer", isPlatformAdmin: false });
+    return postLoginDestination({ isPlatformAdmin: false, role: "viewer" });
   }
 
   const ROLE_RANK: Record<PostLoginRole, number> = {
@@ -90,8 +84,8 @@ export async function resolvePostLoginDestination(
   );
 
   return postLoginDestination({
-    role: picked.role,
     isPlatformAdmin: false,
+    role: picked.role,
     tenantOnboardingStage: picked.tenants?.onboarding_stage ?? null,
   });
 }
