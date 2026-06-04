@@ -35,7 +35,7 @@ export default async function HomePage() {
     <>
       <SiteHeader {...headerProps} />
       <main>
-        <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-20 text-center">
+        <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-24 text-center">
           <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
             Meet your AI travel agents
           </h1>

@@ -9,15 +9,10 @@
 // bundled with the app). The `image` field stores the public URL path.
 
 export interface AgentCatalogEntry {
-  /** URL slug — also the DB persona key once the chat refactor lands. */
   slug: string;
-  /** Full display name. */
   name: string;
-  /** Region/topic specialty shown under the name on the card. */
   specialty: string;
-  /** Single-line tagline shown on the card and profile page. */
   tagline: string;
-  /** Public-asset URL for the agent's photo. */
   image: string;
 }
 
