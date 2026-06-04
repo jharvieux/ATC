@@ -15,6 +15,51 @@ import {
   type PostLoginRole,
 } from "@/lib/auth/post-login-destination";
 
+/** Shape of one row returned by the user-membership query. Exported so
+ *  pickHighestRankActiveMembership can be unit-tested without spinning
+ *  up the DB adapter. */
+export type MembershipRow = {
+  role: string;
+  tenant_id: string;
+  tenants: { onboarding_stage: OnboardingStage | null } | null;
+};
+
+const ROLE_RANK: Record<PostLoginRole, number> = {
+  tenant_owner: 3,
+  agent: 2,
+  viewer: 1,
+};
+
+function isKnownRole(role: string): role is PostLoginRole {
+  return role in ROLE_RANK;
+}
+
+/**
+ * From the set of active membership rows for one user, pick the one whose
+ * role has the highest rank (tenant_owner > agent > viewer). Rows whose
+ * role isn't in the known enum are dropped — this protects against a
+ * future SQL enum addition that the app code hasn't caught up to (the
+ * naive reducer would silently keep the first row because
+ * `ROLE_RANK[unknown] === undefined` and `undefined > undefined === false`).
+ *
+ * Returns `null` if no rows have a known role.
+ *
+ * Pure — no DB access. The DB adapter (resolvePostLoginDestination) calls
+ * this on the raw query result.
+ */
+export function pickHighestRankActiveMembership(
+  rows: MembershipRow[],
+): (Omit<MembershipRow, "role"> & { role: PostLoginRole }) | null {
+  const known = rows.filter(
+    (r): r is Omit<MembershipRow, "role"> & { role: PostLoginRole } =>
+      isKnownRole(r.role),
+  );
+  if (known.length === 0) return null;
+  return known.reduce((best, row) =>
+    ROLE_RANK[row.role] > ROLE_RANK[best.role] ? row : best,
+  );
+}
+
 export async function resolvePostLoginDestination(
   req: Request,
 ): Promise<string | null> {
@@ -48,9 +93,9 @@ export async function resolvePostLoginDestination(
   // Fetch the user's tenant membership row + the tenant's onboarding
   // stage in a single round trip via foreign-table select. There may be
   // multiple membership rows if a user belongs to several tenants
-  // (cross-tenant admin tools); we pick the active one with the highest
-  // privilege (tenant_owner > agent > viewer) so the dispatch matches the
-  // user's working context.
+  // (cross-tenant admin tools); pickHighestRankActiveMembership picks
+  // the most-privileged active row so the dispatch matches the user's
+  // working context.
   const { data: rows, error: rowsErr } = await db
     .from("users")
     .select("role, tenant_id, status, tenants(onboarding_stage)")
@@ -60,37 +105,17 @@ export async function resolvePostLoginDestination(
     throw new Error(`resolvePostLoginDestination: users lookup: ${rowsErr.message}`);
   }
 
-  // No active tenant membership at all — the auth callback should have
-  // upserted a row, but if it didn't (legacy account, callback skipped
-  // because PLATFORM_DEFAULT_TENANT_ID was unset), default to the
-  // customer experience.
-  if (!rows || rows.length === 0) {
-    return postLoginDestination({ isPlatformAdmin: false, role: "viewer" });
-  }
-
-  const ROLE_RANK: Record<PostLoginRole, number> = {
-    tenant_owner: 3,
-    agent: 2,
-    viewer: 1,
-  };
-  type Row = {
-    role: PostLoginRole;
-    tenant_id: string;
-    tenants: { onboarding_stage: OnboardingStage | null } | null;
-  };
-  // Filter to known roles defensively — if a future enum value lands in
-  // users.role before app code catches up, the unfiltered cast would let
-  // `ROLE_RANK[unknown] === undefined` slip into the reducer and
-  // silently keep the first row regardless of rank.
-  const known = (rows as unknown as { role: string }[])
-    .filter((r): r is Row => r.role in ROLE_RANK)
-    .map((r) => r as Row);
-  if (known.length === 0) {
-    return postLoginDestination({ isPlatformAdmin: false, role: "viewer" });
-  }
-  const picked = known.reduce((best, row) =>
-    ROLE_RANK[row.role] > ROLE_RANK[best.role] ? row : best,
+  const picked = pickHighestRankActiveMembership(
+    (rows ?? []) as unknown as MembershipRow[],
   );
+
+  // No active row with a known role — could be: callback skipped the
+  // membership upsert (legacy: PLATFORM_DEFAULT_TENANT_ID unset, see
+  // #441), or every row has an unknown role from a future enum value.
+  // Either way the safest landing is the customer chat surface.
+  if (picked === null) {
+    return postLoginDestination({ isPlatformAdmin: false, role: "viewer" });
+  }
 
   return postLoginDestination({
     isPlatformAdmin: false,

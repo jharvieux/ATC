@@ -5,6 +5,10 @@
 
 import { describe, it, expect } from "vitest";
 import { postLoginDestination } from "@/lib/auth/post-login-destination";
+import {
+  pickHighestRankActiveMembership,
+  type MembershipRow,
+} from "@/lib/auth/resolve-post-login";
 
 describe("postLoginDestination", () => {
   it("sends platform admins to /admin (admin work is why they log in, even if they're also a tenant member)", () => {
@@ -92,5 +96,49 @@ describe("postLoginDestination", () => {
         tenantOnboardingStage: "signup",
       }),
     ).toBe("/onboarding/profile");
+  });
+});
+
+describe("pickHighestRankActiveMembership", () => {
+  const row = (role: string): MembershipRow => ({
+    role,
+    tenant_id: `tenant-${role}`,
+    tenants: { onboarding_stage: "complete" },
+  });
+
+  it("picks tenant_owner over agent over viewer when multiple memberships exist", () => {
+    // Reason this matters: a platform admin who's also embedded as a viewer
+    // on a tenant shouldn't be dispatched as a viewer. Highest privilege wins.
+    const picked = pickHighestRankActiveMembership([
+      row("viewer"),
+      row("tenant_owner"),
+      row("agent"),
+    ]);
+    expect(picked?.role).toBe("tenant_owner");
+  });
+
+  it("returns null when every row has an unknown role (future SQL enum value the app hasn't caught up to)", () => {
+    // Without the filter guard the naive reducer would keep the first row
+    // silently — wrong pick, no error in logs. The fallback is what the
+    // resolver uses to send the user to /chat instead of crashing.
+    const picked = pickHighestRankActiveMembership([
+      row("unknown_role_added_later"),
+      row("another_unknown_role"),
+    ]);
+    expect(picked).toBeNull();
+  });
+
+  it("returns null on empty input (user has no active memberships)", () => {
+    expect(pickHighestRankActiveMembership([])).toBeNull();
+  });
+
+  it("filters unknown rows out but still picks the highest of the known ones", () => {
+    // Mixed case — confirms the filter is per-row, not all-or-nothing.
+    const picked = pickHighestRankActiveMembership([
+      row("future_admin_role"),
+      row("agent"),
+      row("viewer"),
+    ]);
+    expect(picked?.role).toBe("agent");
   });
 });
