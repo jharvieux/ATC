@@ -6,9 +6,8 @@
 // builds the profile page). Both links work after their phases ship —
 // no follow-up wiring needed here.
 
-/* eslint-disable @next/next/no-img-element */
-
 import * as React from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
@@ -31,11 +30,15 @@ export function AgentCardGrid(): React.ReactElement {
             className="flex flex-col gap-4 rounded-lg border border-border bg-card p-6 shadow-sm"
           >
             <div className="flex items-center gap-4">
-              <img
-                src={agent.image}
-                alt={agent.name}
-                className="h-20 w-20 rounded-full object-cover"
-              />
+              <div className="relative h-20 w-20 flex-none overflow-hidden rounded-full">
+                <Image
+                  src={agent.image}
+                  alt={agent.name}
+                  fill
+                  sizes="80px"
+                  className="object-cover"
+                />
+              </div>
               <div>
                 <h3 className="text-lg font-semibold">{agent.name}</h3>
                 <p className="text-sm text-muted-foreground">{agent.specialty}</p>

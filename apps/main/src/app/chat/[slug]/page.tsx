@@ -7,9 +7,8 @@
 // backend already accepts persona_slug — see /api/chat/route.ts
 // (`personaSlugInput: body.persona_slug ?? null`).
 
-/* eslint-disable @next/next/no-img-element */
-
 import { notFound } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
@@ -26,11 +25,15 @@ export default async function AgentChatPage({ params }: PageParams) {
   return (
     <div className="flex flex-col h-screen">
       <div className="flex items-center gap-3 border-b border-border bg-background px-4 py-2">
-        <img
-          src={agent.image}
-          alt={agent.name}
-          className="h-8 w-8 rounded-full object-cover"
-        />
+        <div className="relative h-8 w-8 flex-none overflow-hidden rounded-full">
+          <Image
+            src={agent.image}
+            alt={agent.name}
+            fill
+            sizes="32px"
+            className="object-cover"
+          />
+        </div>
         <div className="flex flex-col leading-tight">
           <span className="text-sm font-semibold">{agent.name}</span>
           <span className="text-[11px] text-muted-foreground">{agent.specialty}</span>
