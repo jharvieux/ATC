@@ -62,6 +62,8 @@ const AUTH_TOKENS = [
   "OTP_STORE",
   // Supabase OAuth initiation (authority is the OAuth provider, not us).
   "signInWithOAuth",
+  // Direct platform-admin gate (used when audit logging isn't needed, e.g. fire-and-forget event dispatch).
+  "assertPlatformAdmin",
 ] as const;
 
 /**

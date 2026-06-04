@@ -128,6 +128,8 @@ import {
   aiBatchFlushRagPiiRedaction,
 } from "@/inngest/ai-batch-flush";
 import { precruiseSendFromBatchResult } from "@/inngest/precruise-generate-and-send";
+// §TN: Travel news feed refresh
+import { travelNewsRefresh } from "@/inngest/travel-news-refresh";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
@@ -254,5 +256,7 @@ export const { GET, POST, PUT } = serve({
     aiBatchFlushPersonaAddendumRescreen,
     aiBatchFlushRagPiiRedaction,
     precruiseSendFromBatchResult,
+    // §TN: Travel news feed refresh (every 6h + manual trigger)
+    travelNewsRefresh,
   ],
 });

@@ -119,6 +119,16 @@ export const PLATFORM_ADMIN_REASONS = [
   "persona_config_restore",
   "persona_safety_update",
   "persona_safety_restore",
+
+  // §TN — Travel news feed + article management.
+  "travel_news_feeds_read",
+  "travel_news_feed_create",
+  "travel_news_feed_update",
+  "travel_news_feed_delete",
+  "travel_news_articles_read",
+  "travel_news_article_hide",
+  "travel_news_article_unhide",
+  "travel_news_article_rag_submit",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

@@ -370,6 +370,14 @@ const ALLOWED_PATH_SUFFIXES = [
   // §23.4 — Weather usage sustained-high operator alert cron. Background
   // job, no user session; reads platform-internal tables (RLS deny-all).
   "/inngest/weather-usage-alert.ts",
+  // §TN — Travel news refresh cron: background Inngest job, no user session.
+  // Fetches platform-level RSS feeds (news_feeds / news_articles have RLS
+  // deny-all for authenticated; service_role is the only write path).
+  "/inngest/travel-news-refresh.ts",
+  // §TN — Travel news public ticker API: server-side fetch from news_articles
+  // (RLS deny-all for authenticated; only service_role can read). No user
+  // session required; response is public read-only.
+  "/app/api/travel-news/route.ts",
 ];
 
 function endsWithAllowed(filename) {

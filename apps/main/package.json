@@ -29,6 +29,7 @@
     "clsx": "^2.1.1",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
+    "fast-xml-parser": "^5.8.0",
     "geist": "^1.7.2",
     "inngest": "^4.5.0",
     "jose": "^6.2.3",
