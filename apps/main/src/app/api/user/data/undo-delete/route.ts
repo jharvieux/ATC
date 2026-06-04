@@ -6,6 +6,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 export async function POST(req: Request): Promise<Response> {
   const authHeader = req.headers.get("authorization");
@@ -27,7 +28,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const authUserId = authData.user.id;
 
-  const tenantId = req.headers.get("x-resolved-tenant-id");
+  const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
   if (!tenantId || tenantId === "platform") {
     return Response.json({ error: "tenant_unresolved" }, { status: 400 });
   }

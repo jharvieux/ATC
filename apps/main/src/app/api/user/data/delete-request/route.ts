@@ -11,6 +11,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 interface DeleteBody {
   email_confirmation: string;
@@ -41,7 +42,7 @@ export async function POST(req: Request): Promise<Response> {
   // multiple tenants; clicking "delete my account" on tenant A's app must
   // not silently flag the user's tenant B row. The middleware reliably
   // injects x-resolved-tenant-id (#164), so we filter by it.
-  const tenantId = req.headers.get("x-resolved-tenant-id");
+  const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
   if (!tenantId || tenantId === "platform") {
     return Response.json({ error: "tenant_unresolved" }, { status: 400 });
   }
