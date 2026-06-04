@@ -20,7 +20,10 @@ export const dynamic = "force-dynamic";
 import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { embed } from "@/lib/embeddings/openai";
+import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
+import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
 import { ItineraryIngestRequestSchema } from "@/lib/schemas/itinerary-ingest";
 
@@ -87,13 +90,18 @@ export const POST = withServiceAuth(async (req, ctx) => {
     return Response.json(outcome);
   }
 
-  // 3. Embed.
-  let embedding: number[];
-  try {
-    embedding = await embed(body.text);
-  } catch (err) {
-    console.error("[ingest/itinerary] embedding failed:", err);
-    return Response.json({ error: "embedding_failed" }, { status: 500 });
+  // 3. Embed. With batch mode (issue #686), defer to OpenAI Batch via the
+  //    flush cron — the chunk lands with NULL embedding (insert path) or
+  //    keeps the prior embedding (update path) until reconcile fills it in.
+  const batchEnabled = isEmbeddingBatchEnabled();
+  let embedding: number[] | null = null;
+  if (!batchEnabled) {
+    try {
+      embedding = await embed(body.text);
+    } catch (err) {
+      console.error("[ingest/itinerary] embedding failed:", err);
+      return Response.json({ error: "embedding_failed" }, { status: 500 });
+    }
   }
 
   const fetchedAtIso = body.fetched_at ?? new Date().toISOString();
@@ -108,26 +116,35 @@ export const POST = withServiceAuth(async (req, ctx) => {
     : 0.45;
 
   // 4. Upsert knowledge_chunks row.
-  //    On UPDATE we replace content, embedding, content_hash, and authority
-  //    for the matching chunk. On INSERT we link from itineraries.related_chunk_id.
+  //    On UPDATE we replace content, content_hash, and authority for the
+  //    matching chunk. Embedding handling:
+  //      - batch enabled: leave embedding column untouched on update (chunk
+  //        stays queryable with stale vector until reconcile overwrites);
+  //        omit embedding on insert (NULL → skipped by pgvector until
+  //        reconciled).
+  //      - batch disabled: write the freshly-computed sync embedding.
+  //    On INSERT we link from itineraries.related_chunk_id.
   let chunkId: string;
   if (existingRow?.related_chunk_id) {
+    const updateFields: Record<string, unknown> = {
+      content: body.text,
+      content_hash: contentHash,
+      category: "itinerary",
+      cruise_line_or_supplier: body.cruise_line,
+      ship_or_property: body.ship,
+      destination: body.region ?? null,
+      source_url: sourceUrl,
+      authority_auto: authorityAuto,
+      contains_pricing: containsPricing,
+      ingested_at: fetchedAtIso,
+      status: "approved",
+    };
+    if (!batchEnabled && embedding) {
+      updateFields.embedding = `[${embedding.join(",")}]`;
+    }
     const { data: updated, error: updErr } = await db
       .from("knowledge_chunks")
-      .update({
-        content: body.text,
-        content_hash: contentHash,
-        embedding: `[${embedding.join(",")}]`,
-        category: "itinerary",
-        cruise_line_or_supplier: body.cruise_line,
-        ship_or_property: body.ship,
-        destination: body.region ?? null,
-        source_url: sourceUrl,
-        authority_auto: authorityAuto,
-        contains_pricing: containsPricing,
-        ingested_at: fetchedAtIso,
-        status: "approved",
-      })
+      .update(updateFields)
       .eq("id", existingRow.related_chunk_id)
       .select("id")
       .single();
@@ -137,27 +154,30 @@ export const POST = withServiceAuth(async (req, ctx) => {
     }
     chunkId = updated.id as string;
   } else {
+    const insertFields: Record<string, unknown> = {
+      content: body.text,
+      content_hash: contentHash,
+      scope: "global",
+      tenant_id: null,
+      category: "itinerary",
+      cruise_line_or_supplier: body.cruise_line,
+      ship_or_property: body.ship,
+      destination: body.region ?? null,
+      source_type: "cruisemapper_itinerary",
+      source_url: sourceUrl,
+      source_domain: "cruisemapper.com",
+      authority_auto: authorityAuto,
+      contains_pricing: containsPricing,
+      status: "approved",
+      ingested_at: fetchedAtIso,
+      approved_at: fetchedAtIso,
+    };
+    if (!batchEnabled && embedding) {
+      insertFields.embedding = `[${embedding.join(",")}]`;
+    }
     const { data: inserted, error: insErr } = await db
       .from("knowledge_chunks")
-      .insert({
-        content: body.text,
-        content_hash: contentHash,
-        embedding: `[${embedding.join(",")}]`,
-        scope: "global",
-        tenant_id: null,
-        category: "itinerary",
-        cruise_line_or_supplier: body.cruise_line,
-        ship_or_property: body.ship,
-        destination: body.region ?? null,
-        source_type: "cruisemapper_itinerary",
-        source_url: sourceUrl,
-        source_domain: "cruisemapper.com",
-        authority_auto: authorityAuto,
-        contains_pricing: containsPricing,
-        status: "approved",
-        ingested_at: fetchedAtIso,
-        approved_at: fetchedAtIso,
-      })
+      .insert(insertFields)
       .select("id")
       .single();
     if (insErr || !inserted) {
@@ -165,6 +185,24 @@ export const POST = withServiceAuth(async (req, ctx) => {
       return Response.json({ error: "chunk_insert_failed" }, { status: 500 });
     }
     chunkId = inserted.id as string;
+  }
+
+  if (batchEnabled) {
+    try {
+      await enqueueEmbedding({ chunk_id: chunkId, content: body.text, db });
+    } catch (err) {
+      console.error("[ingest/itinerary] enqueue embedding failed:", err);
+      // INSERT path: clean up the freshly-created chunk so a client retry
+      // re-runs the full ingest cleanly instead of duplicating. UPDATE path:
+      // leave the chunk alone (it was already-present, embedding intact).
+      if (!existingRow) {
+        await safeAwait(
+          db.from("knowledge_chunks").delete().eq("id", chunkId),
+          "knowledge_chunks.delete.orphan_after_enqueue_failure",
+        );
+      }
+      return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
+    }
   }
 
   // 5. Upsert the itineraries row.

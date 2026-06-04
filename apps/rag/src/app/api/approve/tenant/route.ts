@@ -7,6 +7,8 @@ export const dynamic = "force-dynamic";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embed } from "@/lib/embeddings/openai";
+import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
+import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { ApproveRequestSchema } from "@/lib/schemas/retrieve";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -48,42 +50,66 @@ export const POST = withServiceAuth(async (req, ctx) => {
   const content = body.edits?.content ?? item.raw_content;
   const category = body.edits?.category ?? item.raw_metadata?.category ?? "general";
 
-  // Generate embedding for the final content
-  let embedding: number[];
-  try {
-    embedding = await embed(content);
-  } catch (err) {
-    console.error("[approve/tenant] embedding failed:", err);
-    return Response.json({ error: "embedding_failed" }, { status: 500 });
+  // Embed. Batch mode (issue #686): omit embedding from the insert (NULL
+  // means /api/retrieve skips this chunk until reconcile fills it). Sync mode
+  // computes inline.
+  const batchEnabled = isEmbeddingBatchEnabled();
+  let embedding: number[] | null = null;
+  if (!batchEnabled) {
+    try {
+      embedding = await embed(content);
+    } catch (err) {
+      console.error("[approve/tenant] embedding failed:", err);
+      return Response.json({ error: "embedding_failed" }, { status: 500 });
+    }
   }
 
-  // Insert into knowledge_chunks
+  const chunkFields: Record<string, unknown> = {
+    content,
+    content_hash: Buffer.from(content).toString("base64").slice(0, 64),
+    scope: "tenant",
+    tenant_id: ctx.tenant_id,
+    category,
+    source_type: item.raw_source_type,
+    source_url: body.edits?.source_url ?? item.raw_source_url,
+    authority_auto: item.ai_authority_score ?? 0.5,
+    authority_manual_override: body.edits?.authority_override ?? null,
+    authority_override_reason: body.edits?.authority_override_reason ?? null,
+    expires_at: body.edits?.expires_at ?? item.edited_expires_at ?? null,
+    contains_pricing: item.raw_metadata?.contains_pricing ?? false,
+    status: "approved",
+    approved_by_user_id: ctx.user_id ?? null,
+    approved_at: new Date().toISOString(),
+  };
+  if (!batchEnabled && embedding) {
+    chunkFields.embedding = `[${embedding.join(",")}]`;
+  }
+
   const { data: chunk, error: chunkErr } = await db
     .from("knowledge_chunks")
-    .insert({
-      content,
-      content_hash: Buffer.from(content).toString("base64").slice(0, 64),
-      embedding: `[${embedding.join(",")}]`,
-      scope: "tenant",
-      tenant_id: ctx.tenant_id,
-      category,
-      source_type: item.raw_source_type,
-      source_url: body.edits?.source_url ?? item.raw_source_url,
-      authority_auto: item.ai_authority_score ?? 0.5,
-      authority_manual_override: body.edits?.authority_override ?? null,
-      authority_override_reason: body.edits?.authority_override_reason ?? null,
-      expires_at: body.edits?.expires_at ?? item.edited_expires_at ?? null,
-      contains_pricing: item.raw_metadata?.contains_pricing ?? false,
-      status: "approved",
-      approved_by_user_id: ctx.user_id ?? null,
-      approved_at: new Date().toISOString(),
-    })
+    .insert(chunkFields)
     .select("id")
     .single();
 
   if (chunkErr || !chunk) {
     console.error("[approve/tenant] chunk insert failed:", chunkErr);
     return Response.json({ error: "approval_internal_error" }, { status: 500 });
+  }
+
+  if (batchEnabled) {
+    try {
+      await enqueueEmbedding({ chunk_id: chunk.id, content, db });
+    } catch (err) {
+      console.error("[approve/tenant] enqueue embedding failed:", err);
+      // The queue row hasn't been flipped to 'approved' yet, so a retry
+      // would re-enter this handler and insert a SECOND chunk. Delete the
+      // orphan so retry is clean.
+      await safeAwait(
+        db.from("knowledge_chunks").delete().eq("id", chunk.id),
+        "knowledge_chunks.delete.orphan_after_enqueue_failure",
+      );
+      return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
+    }
   }
 
   // Update queue row to approved
