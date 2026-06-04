@@ -2,9 +2,8 @@
 // link is intentionally live now so no follow-up wiring is needed when
 // that phase lands.
 
-/* eslint-disable @next/next/no-img-element */
-
 import { notFound } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
@@ -27,11 +26,16 @@ export default async function AgentProfilePage({ params }: PageParams) {
       <SiteHeader {...headerProps} />
       <main className="mx-auto max-w-3xl px-6 py-16">
         <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-          <img
-            src={agent.image}
-            alt={agent.name}
-            className="h-40 w-40 flex-none rounded-full object-cover"
-          />
+          <div className="relative h-40 w-40 flex-none overflow-hidden rounded-full">
+            <Image
+              src={agent.image}
+              alt={agent.name}
+              fill
+              sizes="160px"
+              priority
+              className="object-cover"
+            />
+          </div>
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-bold tracking-tight">{agent.name}</h1>
             <p className="text-muted-foreground">{agent.specialty}</p>
