@@ -41,6 +41,8 @@ export default function TravelNewsPage(): JSX.Element {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
+  const [feedError, setFeedError] = useState<string | null>(null);
+
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
 
@@ -85,16 +87,28 @@ export default function TravelNewsPage(): JSX.Element {
   }
 
   async function deleteFeed(id: string): Promise<void> {
-    await fetch(`/api/admin/travel-news/feeds/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/admin/travel-news/feeds/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json() as { error?: string };
+      setFeedError(body.error ?? "Failed to delete feed");
+      return;
+    }
+    setFeedError(null);
     await loadData();
   }
 
   async function toggleActive(feed: Feed): Promise<void> {
-    await fetch(`/api/admin/travel-news/feeds/${feed.id}`, {
+    const res = await fetch(`/api/admin/travel-news/feeds/${feed.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ is_active: !feed.is_active }),
     });
+    if (!res.ok) {
+      const body = await res.json() as { error?: string };
+      setFeedError(body.error ?? "Failed to update feed");
+      return;
+    }
+    setFeedError(null);
     await loadData();
   }
 
@@ -127,6 +141,10 @@ export default function TravelNewsPage(): JSX.Element {
       <p className="text-muted-foreground text-[14px] mb-8">
         Manage RSS feeds, trigger refreshes, and curate articles for the chat page news ticker.
       </p>
+
+      {feedError && (
+        <p className="mb-4 text-[13px] text-red-600">{feedError}</p>
+      )}
 
       {/* Feed management */}
       <section className="mb-10">

@@ -28,6 +28,9 @@ const KEYWORD_ALLOWLIST = [
   "travel advisory", "travel warning", "port closure", "hurricane season",
 ];
 
+const MAX_FEEDS_PER_RUN = 20;
+const MAX_ITEMS_PER_FEED = 40;
+
 interface RssItem {
   title: string;
   link: string;
@@ -104,7 +107,6 @@ interface ScoreResult {
 }
 
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
-const MAX_ITEMS_PER_FEED = 40;
 
 async function llmScoreItems(items: RssItem[]): Promise<ScoreResult[]> {
   if (items.length === 0) return [];
@@ -200,10 +202,13 @@ export const travelNewsRefresh = inngest.createFunction(
       "news_feeds.list",
     );
 
-    for (const feed of feeds ?? []) {
+    const capped = (feeds ?? []).slice(0, MAX_FEEDS_PER_RUN);
+    let failures = 0;
+    for (const feed of capped) {
       try {
         await refreshFeed(db, feed);
       } catch (err) {
+        failures++;
         console.error("[travel-news-refresh] feed error", { feed_id: feed.id, url: feed.url, err });
       }
     }
@@ -216,6 +221,10 @@ export const travelNewsRefresh = inngest.createFunction(
       "news_articles.purge_old",
     );
 
-    return { ok: true, feeds_processed: feeds?.length ?? 0 };
+    if (failures > 0 && failures === capped.length) {
+      throw new Error(`[travel-news-refresh] all ${failures} feeds failed — marking run as failed`);
+    }
+
+    return { ok: true, feeds_processed: capped.length, failures };
   },
 );
