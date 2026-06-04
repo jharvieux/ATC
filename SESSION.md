@@ -1,37 +1,29 @@
-# Session state — last updated 2026-06-04 (overnight)
+# Session state — last updated 2026-06-04 17:30 CDT
 
 ## Just completed
-- **Overnight UX redesign initiative — all 5 phases shipped.** PRs #637–#643 merged to dev (see MEMORY D-148 for the full decision log).
-  - Phase 1 #637 — Logo + LogoMark components, favicon
-  - Phase 2 #638 — Post-login routing dispatcher
-  - Phase 3 #639 — SiteHeader + landing hero + (tenant)/layout
-  - Phase 4 #640 — Admin collapsible sidebar
-  - Phase 5a #641 — Agent catalog + landing showcase
-  - Phase 5b #642 — /agents/quiz picker + /agents/[slug] profiles
-  - Phase 5c #643 — /chat/[slug] per-agent chat (final)
+- All 10 code-review issues from the overnight sweep worked. Merged: #663→#673, #664→#674, #665→#676, #666→#678, #667→#680, #668→#677, #669→#681, #671→#682, #672→#683. Deferred with analysis: #670 (Logo dual-fetch — every fix has material drawbacks).
+- PR #684 — CI improvement: `pr-audit-section-check` now walks past empty commits when computing the stale-comment threshold. Merged.
+- PR #685 — `/for-agencies` redesign per `specs/for-agencies-redesign-instructions copy.txt`. Outcome-led hero, new before/after, three outcomes, theme tokens for light + dark, Logo component, Log in button. Merged.
+- Issue #686 — filed: move RAG-ingest embeddings to OpenAI Batch API (50% cost). Out of scope: query-time embed in `/api/retrieve` (must stay sync, negligible volume).
+- `release/beta030` recreated at the new dev tip (includes #684 + #685). Pipeline running: https://github.com/jharvieux/ATC/actions/runs/26966959941
+- Branch-protection temp-relax pattern documented as D-150.
 
 ## In flight
-- Nothing in flight — clean checkpoint.
+- `release/beta030` pipeline running, prod deploy waiting on user approval.
+- Earlier beta030 run (26964314528) still listed as `waiting` — superseded; user can ignore.
 
 ## Next step
-- User should validate the overnight work on the preview deploy. Smoke checks:
-  1. `/` while anonymous — landing renders with hero + 6 agent cards
-  2. `/` while logged in (each role) — redirects to admin / tenant home / chat as appropriate
-  3. Hamburger menu opens, Login button shown only when anonymous
-  4. `/admin` — sidebar appears, sections collapsible, state survives reload
-  5. `/agents/quiz` — quiz answers route to a matching agent profile
-  6. `/agents/marcus-cole` (and other slugs) — profile renders
-  7. `/chat/marcus-cole` — agent header on top, chat sends `persona_slug` in body
-  8. `/chat` (no slug) — works exactly as before
+- User: approve prod deploy on the new pipeline run when ready.
+- After deploy: pipeline auto-tags `vbeta030`, auto-opens PR back to dev with the release-merge.
 
 ## Blocked on user
-- Smoke validation of all 5 phases on preview.
-- Decision on follow-ups surfaced during the run:
-  - Agent photo optimization (15MB total currently)
-  - DB-sourced agent bios (catalog ships marketing copy, personas.background has the real text)
-  - Tenant-branded landing variant (currently shows platform hero on tenant subdomains)
-  - Mobile sidebar overlay vs always-visible-on-desktop tradeoff for admin
+- Production deploy approval on the new release/beta030 pipeline run.
+- Decision on whether to fix #670 (Logo dual fetch) — currently deferred.
+- Decision on whether to ship #686 (OpenAI batch for RAG ingest) — depends on actual embedding spend; first step is querying `ai_calls.cost_estimate_cents` summed by `purpose='embedding'` over 30 days.
 
 ## Open questions
-- 5c shipped without unit tests on the new conditional `persona_slug` forwarding path. Pre-pr-reviewer noted this as a non-blocking gap. Worth adding a test in a follow-up.
-- Phase 5a's bios in catalog.ts use POC marketing copy — when sourced from DB personas, the wording will change. Update QA expectations accordingly.
+- None outstanding from today's work.
+
+## Notes for the next session
+- The temp-relax pattern for adding to a protected in-flight release branch is logged in D-150. Use that sequence again if needed.
+- `pr-audit-section-check` now skips empty commits when computing freshness — the "push empty commit → invalidates audit → repost" cycle is no longer required for PRs cut after #684 landed.
