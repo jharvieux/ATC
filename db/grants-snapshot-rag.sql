@@ -16,7 +16,13 @@
 -- TABLE: public.knowledge_ingestion_queue
 -- (no DML grants to anon/authenticated/service_role)
 
+-- TABLE: public.pending_embedding
+-- (no DML grants to anon/authenticated/service_role)
+
 -- TABLE: public.platform_settings
+-- (no DML grants to anon/authenticated/service_role)
+
+-- TABLE: public.rag_ai_call_log
 -- (no DML grants to anon/authenticated/service_role)
 
 -- TABLE: public.rag_media_assets
