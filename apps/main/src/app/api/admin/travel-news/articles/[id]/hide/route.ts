@@ -24,16 +24,15 @@ async function setHidden(
   }
 
   const reason = isHidden ? "travel_news_article_hide" : "travel_news_article_unhide";
-  const operation = isHidden ? "news_articles.hide" : "news_articles.unhide";
-  const context = isHidden ? "news_articles.hide" : "news_articles.unhide";
+  const opCtx = isHidden ? "news_articles.hide" : "news_articles.unhide";
 
   await withPlatformAdminAudit(
-    { admin_user_id: ctx.admin_user_id, reason, operation },
+    { admin_user_id: ctx.admin_user_id, reason, operation: opCtx },
     async (db, recordQuery) => {
       recordQuery({ op: "update", table: "news_articles" });
       await safeAwaitRowCount(
         db.from("news_articles").update({ is_hidden: isHidden }).eq("id", id).select("id"),
-        context,
+        opCtx,
         1,
       );
     },

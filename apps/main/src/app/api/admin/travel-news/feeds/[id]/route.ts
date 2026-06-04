@@ -9,7 +9,7 @@ import {
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { safeAwait, safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function PATCH(
   req: Request,
@@ -79,17 +79,18 @@ export async function DELETE(
 
   const { id } = await params;
 
-  await withPlatformAdminAudit(
+  const deleted = await withPlatformAdminAudit(
     { admin_user_id: ctx.admin_user_id, reason: "travel_news_feed_delete", operation: "news_feeds.delete" },
     async (db, recordQuery) => {
       recordQuery({ op: "delete", table: "news_feeds" });
-      await safeAwaitRowCount(
+      const rows = await safeAwait<Array<{ id: string }>>(
         db.from("news_feeds").delete().eq("id", id).select("id"),
         "news_feeds.delete",
-        1,
       );
+      return rows ?? [];
     },
   );
 
+  if (deleted.length === 0) return Response.json({ error: "not_found" }, { status: 404 });
   return new Response(null, { status: 204 });
 }

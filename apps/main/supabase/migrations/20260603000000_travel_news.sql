@@ -36,6 +36,13 @@ ALTER TABLE news_articles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "no_access" ON news_articles USING (false) WITH CHECK (false);
 GRANT SELECT, INSERT, UPDATE, DELETE ON news_articles TO service_role;
 
+-- Ticker query: is_hidden=false AND relevance_score>=60, ordered by published_at DESC
+CREATE INDEX news_articles_ticker_idx ON news_articles (is_hidden, relevance_score, published_at DESC)
+  WHERE is_hidden = false;
+
+-- Purge cron: delete by created_at
+CREATE INDEX news_articles_created_at_idx ON news_articles (created_at);
+
 -- Seed default travel RSS feeds.
 INSERT INTO news_feeds (name, url) VALUES
   ('Travel Weekly',         'https://www.travelweekly.com/rss'),

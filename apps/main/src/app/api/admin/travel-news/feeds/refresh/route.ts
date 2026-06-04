@@ -6,16 +6,23 @@ import {
   assertPlatformAdmin,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
+import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 
 export async function POST(req: Request): Promise<Response> {
+  let ctx;
   try {
-    await assertPlatformAdmin(req);
+    ctx = await assertPlatformAdmin(req);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
   }
 
-  await inngest.send({ name: "travel-news/manual-refresh", data: {} });
+  await withPlatformAdminAudit(
+    { admin_user_id: ctx.admin_user_id, reason: "travel_news_feeds_read", operation: "news_feeds.manual_refresh_trigger" },
+    async (_db, _recordQuery) => {
+      await inngest.send({ name: "travel-news/manual-refresh", data: {} });
+    },
+  );
 
   return Response.json({ queued: true });
 }

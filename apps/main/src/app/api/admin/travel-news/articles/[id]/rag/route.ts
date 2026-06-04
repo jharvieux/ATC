@@ -1,13 +1,16 @@
 // §TN — Admin: send a travel news article to the RAG pipeline.
 // Uses PLATFORM_DEFAULT_TENANT_ID so the submission is platform-level knowledge.
-// Sets rag_submitted_at on the article so the UI can prevent re-submission.
+//
+// Idempotency: atomically claims the article via a CAS UPDATE
+// (WHERE rag_submitted_at IS NULL) before calling createSubmission, so
+// concurrent admin POSTs can't both queue duplicate RAG submissions.
 
 import {
   assertPlatformAdmin,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { safeAwait, safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 
 export async function POST(
@@ -32,22 +35,39 @@ export async function POST(
   const result = await withPlatformAdminAudit(
     { admin_user_id: ctx.admin_user_id, reason: "travel_news_article_rag_submit", operation: "news_articles.rag_submit" },
     async (db, recordQuery) => {
-      recordQuery({ op: "select", table: "news_articles" });
-      const articles = await safeAwait<
-        Array<{ id: string; title: string; url: string; description: string | null; rag_submitted_at: string | null }>
+      // CAS claim: atomically set rag_submitted_at and retrieve the article in
+      // one statement. If rag_submitted_at was already set, UPDATE matches 0
+      // rows and we return 409 without ever calling createSubmission.
+      recordQuery({ op: "update", table: "news_articles" });
+      const claimed = await safeAwait<
+        Array<{ id: string; title: string; url: string; description: string | null }>
       >(
-        db.from("news_articles").select("id, title, url, description, rag_submitted_at").eq("id", id).limit(1),
-        "news_articles.fetch_for_rag",
+        db
+          .from("news_articles")
+          .update({ rag_submitted_at: new Date().toISOString() })
+          .eq("id", id)
+          .is("rag_submitted_at", null)
+          .select("id, title, url, description"),
+        "news_articles.claim_for_rag",
       );
 
-      const article = articles?.[0];
-      if (!article) return { error: "not_found" } as const;
-      if (article.rag_submitted_at) return { error: "already_submitted" } as const;
+      if (!claimed || claimed.length === 0) {
+        // Either row doesn't exist or was already claimed.
+        const exists = await safeAwait<Array<{ id: string }>>(
+          db.from("news_articles").select("id").eq("id", id).limit(1),
+          "news_articles.existence_check",
+        );
+        return exists && exists.length > 0
+          ? ({ error: "already_submitted" } as const)
+          : ({ error: "not_found" } as const);
+      }
 
+      const article = claimed[0]!;
       const content = article.description
         ? `${article.title}\n\n${article.description}`
         : article.title;
 
+      recordQuery({ op: "insert", table: "rag_submissions" });
       const submission = await createSubmission({
         db,
         tenant_id: tenantId,
@@ -57,13 +77,6 @@ export async function POST(
         source_title: article.title,
         original_content: content,
       });
-
-      recordQuery({ op: "update", table: "news_articles" });
-      await safeAwaitRowCount(
-        db.from("news_articles").update({ rag_submitted_at: new Date().toISOString() }).eq("id", id).select("id"),
-        "news_articles.set_rag_submitted_at",
-        1,
-      );
 
       return { submission_id: submission.submission_id };
     },

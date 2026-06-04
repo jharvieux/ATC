@@ -103,6 +103,9 @@ interface ScoreResult {
   score: number;
 }
 
+const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+const MAX_ITEMS_PER_FEED = 40;
+
 async function llmScoreItems(items: RssItem[]): Promise<ScoreResult[]> {
   if (items.length === 0) return [];
 
@@ -119,7 +122,7 @@ async function llmScoreItems(items: RssItem[]): Promise<ScoreResult[]> {
 
   const { text } = await instrumentedClaudeCall({
     tenant_id: PLATFORM_TENANT_ID,
-    model: "claude-haiku-4-5-20251001",
+    model: HAIKU_MODEL,
     purpose: "rag_relevance_scoring",
     max_tokens: 1024,
     messages: [{ role: "user", content: prompt }],
@@ -128,7 +131,8 @@ async function llmScoreItems(items: RssItem[]): Promise<ScoreResult[]> {
   try {
     const json = text.slice(text.indexOf("["), text.lastIndexOf("]") + 1);
     return JSON.parse(json) as ScoreResult[];
-  } catch {
+  } catch (err) {
+    console.error("[travel-news-refresh] llmScoreItems parse failed", { err, text: text.slice(0, 200) });
     return [];
   }
 }
@@ -138,7 +142,7 @@ async function refreshFeed(
   feed: { id: string; url: string; name: string },
 ): Promise<void> {
   const items = await fetchFeedItems(feed.url);
-  const filtered = items.filter(passesKeywordFilter);
+  const filtered = items.filter(passesKeywordFilter).slice(0, MAX_ITEMS_PER_FEED);
 
   // Score in batches of 20.
   const scored: ScoreResult[] = [];
