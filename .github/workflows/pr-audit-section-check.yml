@@ -196,10 +196,14 @@ jobs:
           # PR-body snapshot) doesn't invalidate prior audits — the audited
           # tree is identical. The walk is capped to keep this bounded on
           # weird branches.
+          # Structured so that on every break, $COMMIT_JSON is the
+          # response for the current $EFFECTIVE_SHA — the limit check runs
+          # BEFORE we advance, so we never leave the loop with a stale
+          # cached JSON for the prior SHA.
           EFFECTIVE_SHA="$HEAD_SHA"
           WALK_LIMIT=20
           i=0
-          while [ "$i" -lt "$WALK_LIMIT" ]; do
+          while :; do
             COMMIT_JSON=$(gh api "repos/$REPO/commits/$EFFECTIVE_SHA")
             FILE_COUNT=$(printf '%s' "$COMMIT_JSON" | jq '.files | length')
             if [ "$FILE_COUNT" -gt 0 ]; then
@@ -210,14 +214,15 @@ jobs:
               echo "::notice::No parent for empty commit $EFFECTIVE_SHA; using it as the threshold."
               break
             fi
+            if [ "$i" -ge "$WALK_LIMIT" ]; then
+              echo "::notice::Walk limit ($WALK_LIMIT empty commits) reached; using $EFFECTIVE_SHA as the threshold."
+              break
+            fi
             echo "::notice::Skipping empty commit $EFFECTIVE_SHA (no file changes) → $PARENT"
             EFFECTIVE_SHA="$PARENT"
             i=$((i + 1))
           done
 
-          # The loop above leaves COMMIT_JSON cached for EFFECTIVE_SHA on
-          # every exit path (FILE_COUNT>0 break, no-parent break, and
-          # walk-limit fall-through), so reuse it instead of re-fetching.
           HEAD_DATE=$(printf '%s' "$COMMIT_JSON" | jq -r '.commit.committer.date')
           if [ -z "$HEAD_DATE" ]; then
             echo "::error::Could not resolve committed date for effective SHA $EFFECTIVE_SHA."
