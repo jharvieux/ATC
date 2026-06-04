@@ -31,6 +31,11 @@ const ALLOWED_PATH_SUFFIXES = [
   // fields read are all public-marketing-only (no PII, no credentials).
   // Read-only.
   "/lib/branding/fetch-tenant-branding.ts",
+  // Public agent-profile customer-bio fetch: anonymous visitors hitting
+  // /agents/[slug] need to see the bio platform admins author. RLS on
+  // personas requires authenticated users; the customer_bio column is
+  // explicitly public-marketing content per #652. Read-only.
+  "/lib/agents/fetch-customer-bio.ts",
   // Middleware tenant resolver: runs before any user context exists, so
   // service-role is the only viable client. See BP04 / spec §1.4.
   "/lib/tenancy/resolve-tenant.ts",

@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PersonaRecord } from "./assemble-persona-prompt";
+import type { PersonaDefaultRecord } from "./persona-defaults";
 import { safeAwait, safeAwaitRowCount } from "@/lib/db/safe-mutation";
 
 export const PERSONA_EDITABLE_COLUMNS = [
@@ -21,6 +22,7 @@ export const PERSONA_EDITABLE_COLUMNS = [
   "tagline",
   "specialty",
   "background",
+  "customer_bio",
   "voice",
   "tone_style",
   "expertise_primary",
@@ -96,13 +98,16 @@ export function validatePersonaPatch(body: unknown): PersonaValidation {
   return { ok: true, patch };
 }
 
-/** Full editable-field payload from a code-default PersonaRecord (restore = full reset). */
-export function personaDefaultPatch(p: PersonaRecord): Record<string, unknown> {
+/** Full editable-field payload from a code-default PersonaDefaultRecord
+ *  (restore = full reset). Includes customer_bio, which lives on the
+ *  default record but not on the prompt-assembler's PersonaRecord. */
+export function personaDefaultPatch(p: PersonaDefaultRecord): Record<string, unknown> {
   return {
     display_name: p.display_name,
     tagline: p.tagline,
     specialty: p.specialty,
     background: p.background,
+    customer_bio: p.customer_bio,
     voice: p.voice,
     tone_style: p.tone_style,
     expertise_primary: p.expertise_primary,
