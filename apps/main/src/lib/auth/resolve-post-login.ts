@@ -18,11 +18,23 @@ import {
 /** Shape of one row returned by the user-membership query. Exported so
  *  pickHighestRankActiveMembership can be unit-tested without spinning
  *  up the DB adapter. */
+/** PostgREST returns embedded foreign-table joins as either a single
+ *  object OR an array depending on how the FK is resolved — even for
+ *  what we KNOW is a 1:1 relationship. The sibling fetch-tenant-branding.ts
+ *  helper hit the same issue and handles both shapes; the dispatcher must
+ *  too (#665). `normalizeTenant` collapses both into the object shape. */
+type EmbeddedTenant = { onboarding_stage: OnboardingStage | null };
+
 export type MembershipRow = {
   role: string;
   tenant_id: string;
-  tenants: { onboarding_stage: OnboardingStage | null } | null;
+  tenants: EmbeddedTenant | EmbeddedTenant[] | null;
 };
+
+export function normalizeTenant(t: MembershipRow["tenants"]): EmbeddedTenant | null {
+  if (t === null) return null;
+  return Array.isArray(t) ? t[0] ?? null : t;
+}
 
 const ROLE_RANK: Record<PostLoginRole, number> = {
   tenant_owner: 3,
@@ -117,9 +129,10 @@ export async function resolvePostLoginDestination(
     return postLoginDestination({ isPlatformAdmin: false, role: "viewer" });
   }
 
+  const tenant = normalizeTenant(picked.tenants);
   return postLoginDestination({
     isPlatformAdmin: false,
     role: picked.role,
-    tenantOnboardingStage: picked.tenants?.onboarding_stage ?? null,
+    tenantOnboardingStage: tenant?.onboarding_stage ?? null,
   });
 }

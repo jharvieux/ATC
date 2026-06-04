@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import { postLoginDestination } from "@/lib/auth/post-login-destination";
 import {
   pickHighestRankActiveMembership,
+  normalizeTenant,
   type MembershipRow,
 } from "@/lib/auth/resolve-post-login";
 
@@ -140,5 +141,35 @@ describe("pickHighestRankActiveMembership", () => {
       row("viewer"),
     ]);
     expect(picked?.role).toBe("agent");
+  });
+});
+
+describe("normalizeTenant", () => {
+  // The bug this protects against (#665): PostgREST returns embedded
+  // foreign-table joins as EITHER a single object OR an array, even for
+  // 1:1 relationships. The dispatcher's pre-fix typing assumed the
+  // object shape only — array-shape responses silently routed
+  // onboarding-incomplete tenants to /crm/contacts instead of the
+  // pending onboarding stage. fetch-tenant-branding.ts hit the same
+  // thing and handles both.
+
+  it("returns the inner object when supabase returns the embedded shape", () => {
+    expect(normalizeTenant({ onboarding_stage: "tax_form" })).toEqual({
+      onboarding_stage: "tax_form",
+    });
+  });
+
+  it("picks the first element when supabase returns the embedded shape as a one-element array (the #665 bug)", () => {
+    expect(normalizeTenant([{ onboarding_stage: "tax_form" }])).toEqual({
+      onboarding_stage: "tax_form",
+    });
+  });
+
+  it("returns null for null (no membership row joined)", () => {
+    expect(normalizeTenant(null)).toBeNull();
+  });
+
+  it("returns null for an empty array (FK present but the join filtered out)", () => {
+    expect(normalizeTenant([])).toBeNull();
   });
 });
