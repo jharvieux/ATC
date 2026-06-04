@@ -16,24 +16,25 @@
 import { cache } from "react";
 import { headers } from "next/headers";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
-import type { User } from "@supabase/supabase-js";
 
 export interface CachedUserResult {
-  /** The Supabase auth user, or null if no valid session. */
-  user: User | null;
   /** True iff the lookup succeeded AND a session existed. */
   isAuthenticated: boolean;
+  // NOTE: a `user: User` field belongs here once #679 migrates
+  // assertPermission to this helper — that's the consumer that needs
+  // the full User payload. Holding off pre-emptively per D-091
+  // Pattern 11 (no stub-shaped fields with no current consumer).
 }
 
 /**
- * Returns the current session's auth user (or null), memoized for the
- * remainder of the React render tree's lifetime.
+ * Returns whether the current request has an authenticated session,
+ * memoized for the remainder of the React render tree's lifetime.
  *
  * Behavior matches the established pattern in resolve-post-login.ts:
  * any error from getUser() (including the routine
  * AuthSessionMissingError for anonymous visitors) collapses to
- * `{ user: null, isAuthenticated: false }`. Env-misconfig still throws
- * upstream inside createRequestScopedClient.
+ * `{ isAuthenticated: false }`. Env-misconfig still throws upstream
+ * inside createRequestScopedClient.
  */
 export const getCachedUser = cache(async (): Promise<CachedUserResult> => {
   const incoming = await headers();
@@ -44,6 +45,5 @@ export const getCachedUser = cache(async (): Promise<CachedUserResult> => {
     new Request("https://placeholder.internal/", { headers: forwarded }),
   );
   const { data, error } = await supabase.auth.getUser();
-  if (error || !data?.user) return { user: null, isAuthenticated: false };
-  return { user: data.user, isAuthenticated: true };
+  return { isAuthenticated: !error && data?.user != null };
 });
