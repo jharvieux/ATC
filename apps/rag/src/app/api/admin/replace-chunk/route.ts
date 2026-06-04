@@ -131,6 +131,10 @@ export const POST = withServiceAuth(async (req, ctx) => {
       await enqueueEmbedding({ chunk_id: body.chunk_id, content: body.content, db });
     } catch (err) {
       console.error("[replace-chunk] enqueue embedding failed: %s", err);
+      // No rollback here (deliberately different from the ingest/approve
+      // routes): the chunk pre-existed the request, so the failure leaves a
+      // valid chunk with a stale embedding-vs-content pairing. A clean retry
+      // re-writes the content and re-enqueues.
       return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
     }
   }
