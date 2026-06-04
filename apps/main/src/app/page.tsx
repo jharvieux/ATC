@@ -2,6 +2,8 @@
 // has a single source of truth — adding it to the callback would mean
 // keeping two redirect tables in sync. See resolve-post-login.ts.
 
+/* eslint-disable @next/next/no-img-element */
+
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -10,6 +12,9 @@ import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
 import { AgentCardGrid } from "@/components/landing/AgentCardGrid";
 import { resolvePostLoginDestination } from "@/lib/auth/resolve-post-login";
+import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";
+
+const RESOLVED_TENANT_ID_HEADER = "x-resolved-tenant-id";
 
 export default async function HomePage() {
   // Compute header props (which already does a getUser) before deciding
@@ -17,9 +22,9 @@ export default async function HomePage() {
   // once instead of twice (the dispatcher would also call it). Authenticated
   // visitors redirect so the second call inside resolvePostLogin is fine.
   const headerProps = await getSiteHeaderProps();
+  const incoming = await headers();
 
   if (headerProps.isAuthenticated) {
-    const incoming = await headers();
     const forwarded = new Headers();
     const cookie = incoming.get("cookie");
     if (cookie) forwarded.set("cookie", cookie);
@@ -31,18 +36,22 @@ export default async function HomePage() {
     if (dest) redirect(dest);
   }
 
+  // Tenant-branded hero — only fires for tenant subdomains. On the
+  // platform domain `branding` stays null and the generic hero renders.
+  const branding = headerProps.isPlatformDomain
+    ? null
+    : await fetchTenantBranding(incoming.get(RESOLVED_TENANT_ID_HEADER));
+
   return (
     <>
       <SiteHeader {...headerProps} />
       <main>
         <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-24 text-center">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-            Meet your AI travel agents
-          </h1>
-          <p className="max-w-xl text-lg text-muted-foreground">
-            Specialist agents for every kind of cruise — Caribbean, Mediterranean, Alaska,
-            family, accessible, luxury. Available 24/7, endlessly patient.
-          </p>
+          {branding ? (
+            <TenantHero branding={branding} />
+          ) : (
+            <PlatformHero />
+          )}
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Button asChild className="h-11 px-8 text-base">
               <Link href="/agents/quiz">Find my agent</Link>
@@ -54,6 +63,49 @@ export default async function HomePage() {
         </section>
         <AgentCardGrid />
       </main>
+    </>
+  );
+}
+
+function PlatformHero() {
+  return (
+    <>
+      <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+        Meet your AI travel agents
+      </h1>
+      <p className="max-w-xl text-lg text-muted-foreground">
+        Specialist agents for every kind of cruise — Caribbean, Mediterranean, Alaska,
+        family, accessible, luxury. Available 24/7, endlessly patient.
+      </p>
+    </>
+  );
+}
+
+function TenantHero({ branding }: { branding: NonNullable<Awaited<ReturnType<typeof fetchTenantBranding>>> }) {
+  return (
+    <>
+      {branding.logo_url ? (
+        <span className="inline-flex items-center" style={{ display: "inline-flex" }}>
+          <img
+            src={branding.logo_url}
+            alt={branding.display_name}
+            className="h-12 w-auto block dark:hidden"
+            style={{ height: 48 }}
+          />
+          <img
+            src={branding.logo_dark_url ?? branding.logo_url}
+            alt={branding.display_name}
+            className="h-12 w-auto hidden dark:block"
+            style={{ height: 48 }}
+          />
+        </span>
+      ) : null}
+      <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+        {branding.display_name}
+      </h1>
+      <p className="max-w-xl text-lg text-muted-foreground">
+        {branding.slogan ?? "Your AI travel concierge — specialist agents for every kind of cruise, ready when you are."}
+      </p>
     </>
   );
 }
