@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 40 280 280" width="280" height="280" role="img" aria-label="AI Travel Concierge mark">
+  <defs>
+    <linearGradient id="seaGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5DADE2"></stop><stop offset="100%" stop-color="#0A2342"></stop>
+    </linearGradient>
+    <linearGradient id="horizonStroke" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5DADE2" stop-opacity="0.4"></stop>
+      <stop offset="50%" stop-color="#0A2342"></stop>
+      <stop offset="100%" stop-color="#5DADE2" stop-opacity="0.4"></stop>
+    </linearGradient>
+    <clipPath id="markClip"><circle cx="170" cy="180" r="130"></circle></clipPath>
+  </defs>
+  <g>
+    <circle cx="170" cy="180" r="130" fill="none" stroke="#0A2342" stroke-opacity="0.12" stroke-width="1"></circle>
+    <g clip-path="url(#markClip)">
+      <rect x="40" y="50" width="260" height="260" fill="url(#seaGrad)" opacity="0.06"></rect>
+      <g fill="#0A2342" opacity="0.18">
+        <circle cx="80" cy="240" r="1.4"></circle><circle cx="120" cy="260" r="1.4"></circle><circle cx="160" cy="280" r="1.4"></circle>
+        <circle cx="210" cy="255" r="1.4"></circle><circle cx="250" cy="235" r="1.4"></circle><circle cx="100" cy="280" r="1.4"></circle>
+        <circle cx="190" cy="290" r="1.4"></circle><circle cx="230" cy="270" r="1.4"></circle><circle cx="140" cy="225" r="1.2"></circle>
+        <circle cx="180" cy="245" r="1.2"></circle><circle cx="220" cy="215" r="1.2"></circle>
+      </g>
+      <g stroke="#0A2342" stroke-opacity="0.14" stroke-width="0.6" fill="none">
+        <path d="M80 240 L120 260 L160 280 L210 255 L250 235"></path>
+        <path d="M100 280 L160 280 L190 290 L230 270"></path>
+        <path d="M140 225 L180 245 L220 215"></path>
+        <path d="M120 260 L140 225"></path><path d="M210 255 L220 215"></path><path d="M160 280 L180 245"></path>
+      </g>
+      <path d="M40 200 Q 170 178 300 200" fill="none" stroke="url(#horizonStroke)" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M40 200 Q 170 178 300 200 L 300 220 Q 170 198 40 220 Z" fill="#5DADE2" opacity="0.06"></path>
+      <path d="M40 215 Q 170 193 300 215" fill="none" stroke="#5DADE2" stroke-width="0.6" stroke-opacity="0.35"></path>
+    </g>
+    <g transform="translate(170 180)">
+      <path d="M-22 -2 L 22 -2 L 17 6 L -17 6 Z" fill="#0A2342"></path>
+      <rect x="-0.6" y="-26" width="1.2" height="24" fill="#0A2342"></rect>
+      <path d="M0 -26 L 12 -6 L 0 -6 Z" fill="#0A2342"></path>
+      <path d="M0 -26 L -10 -6 L 0 -6 Z" fill="#5DADE2"></path>
+      <path d="M0 -26 L 4 -28 L 0 -30 Z" fill="#0A2342"></path>
+    </g>
+  </g>
+</svg>
