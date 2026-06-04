@@ -40,12 +40,33 @@ function buildConnectSrc() {
   return sources.join(" ");
 }
 
+// form-action allowlist. OAuth signup posts to /api/auth/oauth-initiate which
+// 302s the browser to https://<project>.supabase.co/auth/v1/authorize. Browsers
+// apply form-action to the full redirect chain (CSP3 / Chrome), so the Supabase
+// host must be allowlisted here or every signup click silently aborts at the
+// redirect — observable only via report-uri (which is how this bug was found).
+// Same fail-closed pattern as buildConnectSrc: a missing var omits the source
+// rather than silently widening to '*'.
+function buildFormActionSrc() {
+  const sources = ["'self'"];
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl) {
+    try {
+      const { host } = new URL(supabaseUrl);
+      sources.push(`https://${host}`);
+    } catch {
+      /* malformed URL — omit */
+    }
+  }
+  return sources.join(" ");
+}
+
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "form-action 'self'",
+  `form-action ${buildFormActionSrc()}`,
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   // https: wildcard kept (now enforcing): images are non-executable, so allowing
