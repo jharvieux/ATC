@@ -38,13 +38,15 @@ export const billingPeriodRollover = inngest.createFunction(
         recordQuery({ op: "select", table: "tenants" });
         const { data: tenantsRaw } = await db
           .from("tenants")
-          .select("id, status, subscription_status, non_paying_since")
+          .select("id, status, subscription_status, non_paying_since, is_platform_internal")
           .in("status", ["active", "sandbox"])
           .limit(5000);
 
         // §15.16 — past-grace tenants don't need a fresh period row; the
         // counter UPSERT pattern creates rows lazily on first event, and
-        // they shouldn't be generating events.
+        // they shouldn't be generating events. #699 internal tenants are
+        // exempt and pass through (Booking still uses period rollovers
+        // for usage tracking even though it doesn't pay).
         let skippedNonPaying = 0;
         const tenants = excludeNonPayingPastGrace(
           (tenantsRaw ?? []) as Array<{
@@ -52,6 +54,7 @@ export const billingPeriodRollover = inngest.createFunction(
             status: string;
             subscription_status: string | null;
             non_paying_since: string | null;
+            is_platform_internal?: boolean;
           }>,
           () => { skippedNonPaying++; },
         );

@@ -54,6 +54,8 @@ interface TenantContactRow {
   email_from_name: string | null;
   subscription_status: string | null;
   non_paying_since: string | null;
+  // #699 — internal tenants bypass the payment gate.
+  is_platform_internal?: boolean;
 }
 
 export const complianceNightly = inngest.createFunction(
@@ -78,7 +80,7 @@ export const complianceNightly = inngest.createFunction(
       .select(
         "id, status, support_email, legal_name, display_name, mailing_address, " +
         "email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, " +
-        "email_from_name, subscription_status, non_paying_since",
+        "email_from_name, subscription_status, non_paying_since, is_platform_internal",
       )
       .eq("status", "active");
 
