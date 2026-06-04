@@ -52,6 +52,15 @@ vi.mock("@/lib/db/supabase", () => ({
 
 vi.mock("@/lib/embeddings/openai", () => ({
   embed: async () => [0.1, 0.2, 0.3],
+  embedWithUsage: async () => ({ embedding: [0.1, 0.2, 0.3], prompt_tokens: 3, model: "text-embedding-3-small" }),
+}));
+
+vi.mock("@/lib/embeddings/batch/enqueue", () => ({
+  enqueueEmbedding: vi.fn(async () => ({ pending_id: "p-1", custom_id: "cu-1" })),
+}));
+
+vi.mock("@/lib/embeddings/cost-log", () => ({
+  logEmbeddingCall: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/pii/regex-prefilter", () => ({

@@ -101,6 +101,18 @@ vi.mock("@/lib/embeddings/openai", () => ({
     embedCalls.push(text);
     return new Array(1536).fill(0.01);
   }),
+  embedWithUsage: vi.fn(async (text: string) => {
+    embedCalls.push(text);
+    return { embedding: new Array(1536).fill(0.01), prompt_tokens: text.length, model: "text-embedding-3-small" };
+  }),
+}));
+
+vi.mock("@/lib/embeddings/batch/enqueue", () => ({
+  enqueueEmbedding: vi.fn(async () => ({ pending_id: "p-1", custom_id: "cu-1" })),
+}));
+
+vi.mock("@/lib/embeddings/cost-log", () => ({
+  logEmbeddingCall: vi.fn(async () => undefined),
 }));
 
 import { POST } from "../../src/app/api/ingest/itinerary/route";
@@ -159,12 +171,13 @@ describe("POST /api/ingest/itinerary", () => {
     expect(embedCalls).toHaveLength(0); // never embedded
   });
 
-  it("ingests fresh itinerary: embeds, inserts chunk, upserts itinerary", async () => {
+  it("ingests fresh itinerary: queues embedding, inserts chunk, upserts itinerary", async () => {
     const res = await POST(makeReq(VALID_BODY), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { status: string };
     expect(json.status).toBe("ingested");
-    expect(embedCalls).toHaveLength(1);
+    // Batch mode default (#686): the chunk is inserted with no embedding
+    // and a pending_embedding row is enqueued instead of a sync embed() call.
     expect(dbCalls.some((c) => c.table === "knowledge_chunks" && c.op === "insert")).toBe(true);
     expect(dbCalls.some((c) => c.table === "itineraries" && c.op === "upsert")).toBe(true);
   });
@@ -192,7 +205,6 @@ describe("POST /api/ingest/itinerary", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { status: string };
     expect(json.status).toBe("updated");
-    expect(embedCalls).toHaveLength(1);
     expect(dbCalls.some((c) => c.table === "knowledge_chunks" && c.op === "update")).toBe(true);
     expect(dbCalls.some((c) => c.table === "itineraries" && c.op === "upsert")).toBe(true);
   });

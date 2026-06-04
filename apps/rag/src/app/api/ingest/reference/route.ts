@@ -22,7 +22,8 @@ import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import { embed } from "@/lib/embeddings/openai";
+import { embedWithUsage } from "@/lib/embeddings/openai";
+import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
 import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
@@ -107,9 +108,13 @@ export const POST = withServiceAuth(async (req, ctx) => {
   // updates keep prior embedding; inserts omit embedding (NULL); both enqueue.
   const batchEnabled = isEmbeddingBatchEnabled();
   let embedding: number[] | null = null;
+  let syncEmbeddingUsage: { prompt_tokens: number; model: string; latency_ms: number } | null = null;
   if (!batchEnabled) {
+    const t0 = Date.now();
     try {
-      embedding = await embed(body.text);
+      const r = await embedWithUsage(body.text);
+      embedding = r.embedding;
+      syncEmbeddingUsage = { prompt_tokens: r.prompt_tokens, model: r.model, latency_ms: Date.now() - t0 };
     } catch (err) {
       console.error("[ingest/reference] embedding failed:", err);
       return Response.json({ error: "embedding_failed" }, { status: 500 });
@@ -189,7 +194,8 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
   if (batchEnabled) {
     try {
-      await enqueueEmbedding({ chunk_id: chunkId, content: body.text, db });
+      // Platform-admin ingest of a global chunk — no tenant to attribute cost to.
+      await enqueueEmbedding({ chunk_id: chunkId, content: body.text, tenant_id: null, db });
     } catch (err) {
       console.error("[ingest/reference] enqueue embedding failed:", err);
       // INSERT path: orphan chunk would create a duplicate on retry. Roll
@@ -202,6 +208,19 @@ export const POST = withServiceAuth(async (req, ctx) => {
         );
       }
       return Response.json({ error: "embedding_enqueue_failed" }, { status: 500 });
+    }
+  } else if (syncEmbeddingUsage) {
+    try {
+      await logEmbeddingCall({
+        db,
+        tenant_id: null,
+        model: syncEmbeddingUsage.model,
+        source: "sync",
+        input_tokens: syncEmbeddingUsage.prompt_tokens,
+        latency_ms: syncEmbeddingUsage.latency_ms,
+      });
+    } catch (err) {
+      console.warn("[ingest/reference] cost log failed:", err);
     }
   }
 

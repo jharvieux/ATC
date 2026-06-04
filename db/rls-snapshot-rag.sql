@@ -4,6 +4,8 @@
 -- Generated against schema: public
 
 -- Tables with RLS enabled:
+-- public.pending_embedding (rls_enabled)
+-- public.rag_ai_call_log (rls_enabled)
 -- public.rag_media_assets (rls_enabled)
 -- public.rag_retrieval_log_daily (rls_enabled)
 --

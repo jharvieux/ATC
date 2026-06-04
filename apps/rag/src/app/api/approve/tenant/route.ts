@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
-import { embed } from "@/lib/embeddings/openai";
+import { embedWithUsage } from "@/lib/embeddings/openai";
+import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
 import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { ApproveRequestSchema } from "@/lib/schemas/retrieve";
@@ -55,9 +56,13 @@ export const POST = withServiceAuth(async (req, ctx) => {
   // computes inline.
   const batchEnabled = isEmbeddingBatchEnabled();
   let embedding: number[] | null = null;
+  let syncEmbeddingUsage: { prompt_tokens: number; model: string; latency_ms: number } | null = null;
   if (!batchEnabled) {
+    const t0 = Date.now();
     try {
-      embedding = await embed(content);
+      const r = await embedWithUsage(content);
+      embedding = r.embedding;
+      syncEmbeddingUsage = { prompt_tokens: r.prompt_tokens, model: r.model, latency_ms: Date.now() - t0 };
     } catch (err) {
       console.error("[approve/tenant] embedding failed:", err);
       return Response.json({ error: "embedding_failed" }, { status: 500 });
@@ -96,9 +101,25 @@ export const POST = withServiceAuth(async (req, ctx) => {
     return Response.json({ error: "approval_internal_error" }, { status: 500 });
   }
 
+  if (!batchEnabled && syncEmbeddingUsage) {
+    try {
+      await logEmbeddingCall({
+        db,
+        tenant_id: ctx.tenant_id,
+        model: syncEmbeddingUsage.model,
+        source: "sync",
+        input_tokens: syncEmbeddingUsage.prompt_tokens,
+        latency_ms: syncEmbeddingUsage.latency_ms,
+      });
+    } catch (err) {
+      console.warn("[approve/tenant] cost log failed:", err);
+    }
+  }
+
   if (batchEnabled) {
     try {
-      await enqueueEmbedding({ chunk_id: chunk.id, content, db });
+      // Tenant-scope approval — embedding cost attributes to ctx.tenant_id.
+      await enqueueEmbedding({ chunk_id: chunk.id, content, tenant_id: ctx.tenant_id, db });
     } catch (err) {
       console.error("[approve/tenant] enqueue embedding failed:", err);
       // The queue row hasn't been flipped to 'approved' yet, so a retry

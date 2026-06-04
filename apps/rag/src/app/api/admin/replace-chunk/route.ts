@@ -13,7 +13,8 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
-import { embed } from "@/lib/embeddings/openai";
+import { embedWithUsage } from "@/lib/embeddings/openai";
+import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
 import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
 import { isEmbeddingBatchEnabled } from "@/lib/embeddings/feature-flag";
 import { detectZeroTolerancePII } from "@/lib/pii/regex-prefilter";
@@ -90,9 +91,13 @@ export const POST = withServiceAuth(async (req, ctx) => {
   // (flag off) recomputes inline as before.
   const batchEnabled = isEmbeddingBatchEnabled();
   let embedding: number[] | null = null;
+  let syncEmbeddingUsage: { prompt_tokens: number; model: string; latency_ms: number } | null = null;
   if (!batchEnabled) {
+    const t0 = Date.now();
     try {
-      embedding = await embed(body.content);
+      const r = await embedWithUsage(body.content);
+      embedding = r.embedding;
+      syncEmbeddingUsage = { prompt_tokens: r.prompt_tokens, model: r.model, latency_ms: Date.now() - t0 };
     } catch (err) {
       console.error("[replace-chunk] embedding failed: %s", err);
       return Response.json({ error: "embedding_failed" }, { status: 500 });
@@ -126,9 +131,26 @@ export const POST = withServiceAuth(async (req, ctx) => {
     return Response.json({ error: "chunk_not_found" }, { status: 404 });
   }
 
+  if (!batchEnabled && syncEmbeddingUsage) {
+    try {
+      await logEmbeddingCall({
+        db,
+        tenant_id: chunk.tenant_id,
+        model: syncEmbeddingUsage.model,
+        source: "sync",
+        input_tokens: syncEmbeddingUsage.prompt_tokens,
+        latency_ms: syncEmbeddingUsage.latency_ms,
+      });
+    } catch (err) {
+      console.warn("[replace-chunk] cost log failed:", err);
+    }
+  }
+
   if (batchEnabled) {
     try {
-      await enqueueEmbedding({ chunk_id: body.chunk_id, content: body.content, db });
+      // Tenant-scope chunks attribute embedding cost to the owning tenant;
+      // global chunks have chunk.tenant_id = null and bill as platform overhead.
+      await enqueueEmbedding({ chunk_id: body.chunk_id, content: body.content, tenant_id: chunk.tenant_id, db });
     } catch (err) {
       console.error("[replace-chunk] enqueue embedding failed: %s", err);
       // No rollback here (deliberately different from the ingest/approve

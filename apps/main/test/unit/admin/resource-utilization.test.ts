@@ -135,6 +135,27 @@ describe("aggregateByModel", () => {
     expect(aggregateByModel(rows)).toHaveLength(2);
   });
 
+  it("merges rag embedding rows alongside main chat rows (#689 dashboard integration)", async () => {
+    const { aggregateByModel } = await import("@/app/api/admin/resource-utilization/aggregations");
+    // Simulates the route merging main ai_call_log + rag rag_ai_call_log
+    // into one rowset before aggregation. The dashboard's "AI by model"
+    // table should show the embedding model as its own row.
+    const merged = [
+      { vendor: "anthropic", model: "claude-sonnet-4-6", input_tokens: 1000, output_tokens: 500, cost_estimate_cents: 100 },
+      { vendor: "openai", model: "text-embedding-3-small", input_tokens: 500_000, output_tokens: 0, cost_estimate_cents: 100 },
+      { vendor: "openai", model: "text-embedding-3-small", input_tokens: 1_500_000, output_tokens: 0, cost_estimate_cents: 300 },
+    ];
+    const result = aggregateByModel(merged);
+    expect(result).toHaveLength(2);
+    const embedRow = result.find((r) => r.model === "text-embedding-3-small");
+    expect(embedRow).toBeDefined();
+    expect(embedRow!.vendor).toBe("openai");
+    expect(embedRow!.call_count).toBe(2);
+    expect(embedRow!.input_tokens).toBe(2_000_000);
+    expect(embedRow!.output_tokens).toBe(0);
+    expect(embedRow!.cost_cents).toBe(400);
+  });
+
   it("sorts by cost_cents descending", async () => {
     const { aggregateByModel } = await import("@/app/api/admin/resource-utilization/aggregations");
     const rows = [

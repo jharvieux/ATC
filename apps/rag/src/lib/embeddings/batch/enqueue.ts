@@ -10,6 +10,10 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 export interface EnqueueEmbeddingArgs {
   chunk_id: string;
   content: string;
+  /** Triggering tenant for cost attribution. NULL for platform-admin
+   *  ingests (global itinerary/reference, approve/global, replace-chunk
+   *  on global chunks). */
+  tenant_id: string | null;
   db: SupabaseClient;
 }
 
@@ -42,6 +46,7 @@ export async function enqueueEmbedding(
         content: trimmed,
         custom_id: customId,
         status: "pending",
+        tenant_id: args.tenant_id,
       })
       .select("id, custom_id")
       .single(),
