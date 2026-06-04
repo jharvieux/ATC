@@ -17,8 +17,10 @@ export async function embed(text: string): Promise<number[]> {
 
 // Returns the embedding plus the token count and resolved model. Use this
 // from cost-attributable callsites (the 5 ingest routes when the batch flag
-// is off). /api/retrieve uses embed() directly because the chat critical
-// path can't afford an extra DB write.
+// is off). /api/retrieve intentionally stays on embed() and skips the cost
+// log — the chat critical path can't afford an extra DB write, and query-
+// time embedding spend is negligible compared to ingest (one call per chat
+// turn vs N per ingested doc).
 export async function embedWithUsage(text: string): Promise<{
   embedding: number[];
   prompt_tokens: number;

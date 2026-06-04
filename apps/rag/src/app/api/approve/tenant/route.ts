@@ -118,6 +118,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
   if (batchEnabled) {
     try {
+      // Tenant-scope approval — embedding cost attributes to ctx.tenant_id.
       await enqueueEmbedding({ chunk_id: chunk.id, content, tenant_id: ctx.tenant_id, db });
     } catch (err) {
       console.error("[approve/tenant] enqueue embedding failed:", err);
