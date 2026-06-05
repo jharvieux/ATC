@@ -4,6 +4,31 @@ Newest entries on top.
 
 ---
 
+## D-153 — 2026-06-04 — RAG embedding cost flows to main via nightly Inngest reconciler (not direct cross-service write)
+
+**Decision.** A nightly Inngest cron at 04:30 UTC reads recent `rag_ai_call_log` rows from the RAG DB (via `getRagReadClient`) and calls an atomic `reconcile_rag_cost_row` RPC on main DB that does ledger-INSERT + `increment_tenant_ai_cost` in a single PL/pgSQL transaction. Per-row idempotency comes from a new `rag_cost_reconcile_ledger` table with `rag_log_id` as PRIMARY KEY. Lookback window is 25h (cron interval + 1h safety margin) so no row falls through the seam between runs. Rows with `tenant_id IS NULL` (platform overhead) and `PLATFORM_SENTINEL_TENANT_ID` (cross-tenant cron embeddings) are skipped.
+
+**Why.** `lib/embeddings/cost-log.ts` on the rag service writes one `rag_ai_call_log` row per embedding call. The platform-admin dashboard at `/admin/resources` merges these for display (#691), but the enforcement layer on main (`tenant_usage_metrics.ai_cost_cents` → soft1 → soft2 → hard limit state machine) never saw embedding spend. A tenant ingesting heavily through approve/tenant or replace-chunk would never trip their AI cost limit purely from embedding — a real abuse surface.
+
+**Rejected.**
+
+- **Direct cross-service write at the rag call site.** Considered: rag's `logEmbeddingCall` opens a service-role connection to main and calls `increment_tenant_ai_cost` immediately. Real-time enforcement (0h lag). Rejected because it puts the RAG hot ingest path on a service-role dependency back to main, expands the attack surface, and silently mis-accounts on any cross-service failure. Two-phase-commit semantics across DBs are impossible without distributed-TX infrastructure we don't have.
+- **Hourly reconciler.** Recommended initially; user picked nightly to minimize cost / log volume. Acceptable: 24h max enforcement lag for embedding cost is fine because the hard-limit state machine still kicks in once the increment lands.
+- **Watermark instead of per-row ledger.** Considered: a single-row `last_reconciled_at` table on main. Rejected because partial-batch failure followed by retry would double-count whichever tenants succeeded before the failure. Per-row PK dedup eliminates that footgun — every `rag_log_id` is counted exactly once, ever, regardless of retry topology.
+
+**Trade-off.** Up to 24h enforcement lag for embedding spend. Acceptable for steady-state embedding traffic; the hard-limit state machine still fires once the increment lands. Acceptable for adversarial cases too because the limit is a recurring monthly cap and 24h of overrun on a single billing period is recoverable via abuse-override.
+
+**Related artifacts.**
+
+- Issue #692
+- Cron: `apps/main/src/inngest/rag-cost-reconcile.ts`
+- Migration: `apps/main/supabase/migrations/20260628000000_rag_cost_reconcile_ledger.sql`
+- Atomic RPC: `public.reconcile_rag_cost_row(rag_log_id, tenant_id, billing_period, amount_cents) RETURNS BOOLEAN`
+- Audit trail: every per-run summary writes one `audit_log` row via `withPlatformAdminAudit` with `reason='rag_cost_reconciliation'` (new enum value in `platform-admin-reasons.ts`).
+- Related: [[D-152]] (stale-onboarding suspension — sibling enforcement cron pattern with the same `withPlatformAdminAudit` + Inngest scaffolding).
+
+---
+
 ## D-152 — 2026-06-04 — Stale-onboarding tenants auto-suspended after 14 days
 
 **Decision.** Tenants in `status='onboarding'` for more than 14 days (since `created_at`) get auto-flipped to `status='suspended'` by a nightly cron (`onboarding-stale-suspend`), with two carve-outs: `is_platform_internal=true` (#699) and `onboarding_stage IN ('review_submitted', 'complete')`. Platform admins can manually re-activate any tenant caught by the sweep.
