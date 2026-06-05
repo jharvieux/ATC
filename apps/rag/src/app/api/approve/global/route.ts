@@ -5,6 +5,7 @@
 // content can be promoted to global by a platform admin.
 export const dynamic = "force-dynamic";
 
+import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embedWithUsage } from "@/lib/embeddings/openai";
@@ -70,7 +71,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
   const chunkFields: Record<string, unknown> = {
     content,
-    content_hash: Buffer.from(content).toString("base64").slice(0, 64),
+    content_hash: createHash("sha256").update(content).digest("hex"),
     scope: "global",
     tenant_id: null,
     category,

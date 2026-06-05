@@ -4,6 +4,7 @@
 // scoped to the approving tenant. body.tenant_id must match ctx.tenant_id.
 export const dynamic = "force-dynamic";
 
+import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embedWithUsage } from "@/lib/embeddings/openai";
@@ -71,7 +72,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
   const chunkFields: Record<string, unknown> = {
     content,
-    content_hash: Buffer.from(content).toString("base64").slice(0, 64),
+    content_hash: createHash("sha256").update(content).digest("hex"),
     scope: "tenant",
     tenant_id: ctx.tenant_id,
     category,
