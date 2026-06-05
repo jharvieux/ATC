@@ -110,6 +110,29 @@ describe("proxy() session refresh", () => {
     expect(mocks.applyRefreshedSession).not.toHaveBeenCalled();
   });
 
+  // Regression test for PKCE "code verifier not found in storage":
+  // auth-js _removeSession() deletes code_verifier BEFORE firing SIGNED_OUT,
+  // so applyServerStorage includes the code_verifier deletion in its setAll
+  // call → middleware setAll zeroes the cookie in req.headers → callback
+  // reads empty value → combineChunks returns null → error. Fix: skip
+  // getUser() for /api/auth/* so stale-session cleanup never runs.
+  it("skips getUser on /api/auth/* routes to protect the PKCE code_verifier cookie", async () => {
+    const authPaths = [
+      "/api/auth/callback",
+      "/api/auth/oauth-initiate",
+      "/api/auth/signout",
+      "/api/auth/me",
+    ];
+    for (const p of authPaths) {
+      vi.clearAllMocks();
+      mocks.applyRefreshedSession.mockImplementation(<T>(res: T): T => res);
+      const res = await proxy(req("ai-travelconcierge.com", p));
+      expect(mocks.getUser, `getUser should not be called for ${p}`).not.toHaveBeenCalled();
+      expect(mocks.applyRefreshedSession).toHaveBeenCalledTimes(1);
+      expect(mocks.applyRefreshedSession.mock.calls[0]?.[0]).toBe(res);
+    }
+  });
+
   it("skips the refresh on the test-bypass short-circuit (no session involved)", async () => {
     (process.env as Record<string, string>).NODE_ENV = "development";
     process.env.VERCEL_ENV = "development";

@@ -230,8 +230,20 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   //     Runs after the admin gate + test bypass (neither uses cookie sessions)
   //     and before tenant resolution so cloneAndScrubHeaders forwards the
   //     freshened Cookie header downstream.
+  //
+  //     PKCE safety: /api/auth/* routes are exempt from getUser(). auth-js
+  //     _removeSession() clears the PKCE code_verifier from removedItems
+  //     BEFORE firing SIGNED_OUT, so applyServerStorage includes the
+  //     code_verifier deletion in its setAll call. The middleware setAll calls
+  //     req.cookies.set("...-code-verifier", "") which zeroes the cookie in
+  //     the forwarded Cookie header. The callback handler then reads an empty
+  //     value, combineChunks returns null (falsy), and exchangeCodeForSession
+  //     throws AuthPKCECodeVerifierMissingError. Auth routes manage their own
+  //     session state and do not need server-side refresh.
   const { supabase, applyRefreshedSession } = createMiddlewareClient(req);
-  const { data: { user: authUser } } = await supabase.auth.getUser();
+  const authUser = pathname.startsWith("/api/auth/")
+    ? null
+    : (await supabase.auth.getUser()).data.user;
 
   const host = req.headers.get("host") ?? "";
   // Strip port for local dev comparisons.
