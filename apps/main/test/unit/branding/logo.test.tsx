@@ -1,4 +1,11 @@
-// #672 — Logo a11y prop contract.
+// #672 — Logo a11y prop contract. After #670 the component renders inline
+// SVG instead of <img>, so the announce/skip contract is expressed via
+// role + aria-label (announce) vs aria-hidden (skip), not alt-text.
+//
+// The invariant matters because Logo is the brand mark in SiteHeader; an
+// adjacent hero heading already names the brand visually, and if the SVG
+// also announces "AI Travel Concierge" the screen reader reads the brand
+// twice. The decorative=true path is the SR-skip escape hatch.
 
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -6,14 +13,17 @@ import { createElement } from "react";
 import { Logo } from "@/components/branding/Logo";
 
 describe("Logo decorative prop", () => {
-  it("sets alt to brand name by default so screen readers announce it", () => {
+  it("announces the brand via role=img + aria-label by default", () => {
     const html = renderToStaticMarkup(createElement(Logo));
-    expect(html).toContain('alt="AI Travel Concierge"');
+    expect(html).toContain('role="img"');
+    expect(html).toContain('aria-label="AI Travel Concierge"');
+    expect(html).not.toContain("aria-hidden");
   });
 
-  it("renders empty alt when decorative=true so screen readers skip it", () => {
+  it("hides the SVG from screen readers when decorative=true", () => {
     const html = renderToStaticMarkup(createElement(Logo, { decorative: true }));
-    expect(html).not.toContain('alt="AI Travel Concierge"');
-    expect(html).toContain('alt=""');
+    expect(html).toContain("aria-hidden");
+    expect(html).not.toContain('aria-label="AI Travel Concierge"');
+    expect(html).not.toContain('role="img"');
   });
 });
