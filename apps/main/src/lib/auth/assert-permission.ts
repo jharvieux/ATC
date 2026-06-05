@@ -127,26 +127,30 @@ export async function assertPermission(
   const pathname = new URL(req.url).pathname;
 
   // Bearer token path — used by the browser extension and iOS Shortcut.
-  // These clients cannot set HttpOnly cookies; they authenticate with a
-  // Supabase access_token sent as `Authorization: Bearer <jwt>`. Skip
-  // getCachedUser() (cookie-based) and verify the token directly.
-  // Sensitive routes (§17.7) are not reachable via Bearer — external
-  // clients lack the re-auth UI — so the re-auth check is omitted.
+  // These clients cannot set HttpOnly cookies; they authenticate via
+  // `Authorization: Bearer <jwt>`. tenantContextFromRequest already
+  // verified the JWT and membership; ctx.source.user_id is the confirmed
+  // auth_user_id — no second getUser() call needed.
+  // Sensitive routes (§17.7) require a browser re-auth UI that external
+  // clients don't have, so they are hard-blocked here.
   const bearerToken = extractBearerToken(req);
   if (bearerToken) {
-    const supabase = createBearerClient(bearerToken);
-    const { data: bearerData, error: bearerErr } = await supabase.auth.getUser(bearerToken);
-    if (bearerErr || !bearerData.user) {
-      throw new Error("assertPermission: invalid or expired bearer token.");
+    if (isSensitiveRoute(pathname)) {
+      throw new AuthReauthRequired(pathname);
     }
-    const pending = await getConsentPending(bearerData.user.id);
+    if (ctx.source.kind !== "http_request") {
+      throw new Error("assertPermission: bearer path: unexpected context source kind.");
+    }
+    const authUserId = ctx.source.user_id;
+    const pending = await getConsentPending(authUserId);
     if (pending.length > 0) {
       throw new ConsentPendingError(pathname, pending);
     }
+    const supabase = createBearerClient(bearerToken);
     const { data: bearerRow, error: bearerRowErr } = await supabase
       .from("users")
       .select("id, auth_user_id, tenant_id, status, role")
-      .eq("auth_user_id", bearerData.user.id)
+      .eq("auth_user_id", authUserId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
     if (bearerRowErr) {

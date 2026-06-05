@@ -28,7 +28,7 @@ function show(view) {
   view.classList.remove("hidden");
 }
 
-async function isTokenExpired(expiresAt) {
+function isTokenExpired(expiresAt) {
   return Date.now() / 1000 >= expiresAt - 60;
 }
 
@@ -64,7 +64,7 @@ async function init() {
     return;
   }
 
-  if (await isTokenExpired(session.expiresAt)) {
+  if (isTokenExpired(session.expiresAt)) {
     const refreshed = await refreshSession(session);
     if (!refreshed) {
       await chrome.storage.local.remove("session");

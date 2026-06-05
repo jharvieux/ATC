@@ -11,10 +11,3 @@ export const EXTENSION_CORS_HEADERS = {
 export function corsOptionsResponse(): Response {
   return new Response(null, { status: 204, headers: EXTENSION_CORS_HEADERS });
 }
-
-export function withCors(res: Response): Response {
-  for (const [key, value] of Object.entries(EXTENSION_CORS_HEADERS)) {
-    res.headers.set(key, value);
-  }
-  return res;
-}

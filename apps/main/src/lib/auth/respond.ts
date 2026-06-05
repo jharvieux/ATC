@@ -33,7 +33,9 @@ import { PlatformAdminError } from "./assert-platform-admin";
 const KNOWN_AUTH_FAILURE_PREFIXES = [
   "assertPermission: missing Authorization Bearer token",
   "assertPermission: invalid or expired access token",
+  "assertPermission: invalid or expired bearer token",
   "assertPermission: user is not an active member",
+  "assertPermission: bearer path:",
   "tenantContextFromRequest:",
 ] as const;
 

@@ -162,8 +162,6 @@ function withCookieDomain(options: CookieOptions, domain: string | undefined): C
   return { ...options, domain };
 }
 
-// Extracts the raw JWT from an `Authorization: Bearer <token>` header.
-// Returns null if the header is absent or not a Bearer token.
 export function extractBearerToken(req: Request): string | null {
   const auth = req.headers.get("Authorization");
   return auth?.startsWith("Bearer ") ? auth.slice(7) : null;
