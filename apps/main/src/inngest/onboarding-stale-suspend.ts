@@ -3,7 +3,7 @@
 // Background: `derivePaymentState` early-returns `isPaying: true` for any
 // tenant in status='onboarding' (apps/main/src/lib/billing/payment-state.ts).
 // The assumption was that onboarding leads to active+paying quickly, but
-// nothing actually enforces that. A SaaS customer who signs up but never
+// nothing actually enforced that. A SaaS customer who signs up but never
 // completes Stripe checkout stays in onboarding indefinitely and can keep
 // using paid features (chat, RAG, etc.) for free.
 //
@@ -52,18 +52,25 @@ export const onboardingStaleSuspend = inngest.createFunction(
           Date.now() - STALE_ONBOARDING_DAYS * 24 * 60 * 60 * 1000,
         ).toISOString();
 
-        const { data: stale, error } = await db
-          .from("tenants")
-          .select("id, slug, onboarding_stage, created_at")
-          .eq("status", "onboarding")
-          .eq("is_platform_internal", false)
-          .lt("created_at", cutoff)
-          .not("onboarding_stage", "in", `(${EXEMPT_STAGES.map((s) => `"${s}"`).join(",")})`)
-          .limit(500);
-        if (error) {
-          console.error("[onboarding-stale-suspend] tenants lookup failed:", error.message);
-          return { ok: false, error: error.message };
-        }
+        // Throw on DB-error so Inngest's automated retry kicks in for
+        // transient failures. Returning {ok:false} would silently mark
+        // the run "successful" and skip the retry — abuse keeps running.
+        const stale = await safeAwait(
+          db
+            .from("tenants")
+            .select("id, slug, onboarding_stage, created_at")
+            .eq("status", "onboarding")
+            .eq("is_platform_internal", false)
+            .lt("created_at", cutoff)
+            // PostgREST .not(col, "in", "(a,b)") expects bare comma-
+            // separated tokens. Quoting the values (e.g. "(\"a\",\"b\")")
+            // matches strings that literally contain the quote
+            // characters, so neither carve-out would fire — protected
+            // tenants would get suspended.
+            .not("onboarding_stage", "in", `(${EXEMPT_STAGES.join(",")})`)
+            .limit(500),
+          "tenants.select.stale_onboarding_candidates",
+        );
         const rows = (stale ?? []) as Array<{
           id: string;
           slug: string;
@@ -74,25 +81,40 @@ export const onboardingStaleSuspend = inngest.createFunction(
 
         let suspended = 0;
         for (const t of rows) {
-          // Suspend explicitly via safeAwaitRowCount-style return so we can
-          // tell if the CAS-shaped guard (status='onboarding') matched. A
-          // tenant that finished onboarding between the SELECT and this
-          // UPDATE will return 0 rows and we don't suspend them.
-          const { data: updated } = await db
-            .from("tenants")
-            .update({ status: "suspended" })
-            .eq("id", t.id)
-            .eq("status", "onboarding")
-            .select("id");
-          if ((updated ?? []).length === 1) {
+          // CAS-guarded transition (.eq("status", "onboarding") on the
+          // UPDATE) so a tenant that finished onboarding between the
+          // SELECT above and this UPDATE doesn't get suspended.
+          //
+          // safeAwait unwraps {data, error} and THROWS on truthy error.
+          // We CAN'T use the manual `{ data: updated }` destructure +
+          // length check pattern because a transient DB failure would
+          // look identical to a CAS loss (both produce `updated` empty
+          // or undefined), silently skipping the tenant with no log,
+          // no audit, no metric — and the returned `suspended` count
+          // would lie about completeness.
+          //
+          // Crash window: if the process dies between this UPDATE and
+          // the audit_log INSERT below, the tenant ends up suspended
+          // with no audit row. On the next firing the CAS guard sees
+          // status='suspended' (not 'onboarding') and skips the row, so
+          // no re-suspension and no retroactive audit. Acceptable
+          // because the console.info on this line still fires before
+          // the crash, so the suspend is observable in runtime logs.
+          const updated = (await safeAwait(
+            db
+              .from("tenants")
+              .update({ status: "suspended" })
+              .eq("id", t.id)
+              .eq("status", "onboarding")
+              .select("id"),
+            "tenants.update.auto_suspend_stale_onboarding",
+          )) as Array<{ id: string }> | null;
+          if (updated && updated.length === 1) {
             suspended++;
             console.info(
               "[onboarding-stale-suspend] suspended tenant=%s slug=%s stage=%s created_at=%s",
               t.id, t.slug, t.onboarding_stage ?? "null", t.created_at,
             );
-            // Audit + ops trail. Platform admins can re-activate via the
-            // existing admin tenants surface if a legitimate customer got
-            // caught by the sweep.
             await safeAwait(
               db.from("audit_log").insert({
                 tenant_id: t.id,
@@ -102,13 +124,14 @@ export const onboardingStaleSuspend = inngest.createFunction(
                 resource_type: "tenant",
                 resource_id: t.id,
                 changes: {
+                  slug: t.slug,
                   onboarding_stage: t.onboarding_stage,
                   created_at: t.created_at,
                   stale_threshold_days: STALE_ONBOARDING_DAYS,
                   cron_id: "onboarding-stale-suspend",
                 },
               }),
-              "audit_log.insert",
+              "audit_log.insert.auto_suspend_stale_onboarding",
             );
           }
         }
