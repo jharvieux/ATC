@@ -53,8 +53,8 @@ function buildConnectSrc() {
 // Keeping them in sync is easier than wiring them through env vars.
 const OAUTH_PROVIDER_FORM_ACTION_HOSTS = [
   "https://login.microsoftonline.com", // Azure / Microsoft
-  "https://accounts.google.com",        // Google
-  "https://www.facebook.com",           // Facebook
+  "https://accounts.google.com",
+  "https://www.facebook.com",
 ];
 
 function buildFormActionSrc() {
