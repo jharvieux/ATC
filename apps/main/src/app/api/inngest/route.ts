@@ -99,6 +99,8 @@ import { billingPeriodRollover } from "@/inngest/billing-period-rollover";
 import { thresholdRecomputeOnSubscriptionChange } from "@/inngest/threshold-recompute-on-subscription-change";
 import { abuseStateTransitionNotify } from "@/inngest/abuse-state-transition-notify";
 import { abuseOverrideExpirySweep } from "@/inngest/abuse-override-expiry-sweep";
+// #700 — anti-abuse: suspend tenants stuck in onboarding past 14d
+import { onboardingStaleSuspend } from "@/inngest/onboarding-stale-suspend";
 import { weatherUsageAlert } from "@/inngest/weather-usage-alert";
 import { githubIssueRetry } from "@/inngest/github-issue-retry";
 import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
@@ -226,6 +228,7 @@ export const { GET, POST, PUT } = serve({
     thresholdRecomputeOnSubscriptionChange,
     abuseStateTransitionNotify,
     abuseOverrideExpirySweep,
+    onboardingStaleSuspend,
     weatherUsageAlert,
     // BP31: Self-Service Help — GitHub issue creation resilience (§32.7.5)
     githubIssueRetry,
