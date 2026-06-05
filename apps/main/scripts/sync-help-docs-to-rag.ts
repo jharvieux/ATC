@@ -10,7 +10,7 @@
  * Operator can run locally for testing:
  *
  *   RAG_SERVICE_URL=... \
- *   SERVICE_JWT_PRIVATE_KEY=... SERVICE_JWT_KEY_ID=... \
+ *   SERVICE_JWT_PRIVATE_KEY=... SERVICE_JWT_KEY_ID_CURRENT=... \
  *   OPENAI_API_KEY=... \
  *   tsx apps/main/scripts/sync-help-docs-to-rag.ts
  *
