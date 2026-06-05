@@ -27,7 +27,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({ from: mockFrom }),
 }));
 
-import { POST } from "@/app/api/auth/microsoft-email-verify/route";
+import { POST, _resetIpAttemptsForTests } from "@/app/api/auth/microsoft-email-verify/route";
 import { OTP_STORE, MAX_OTP_ATTEMPTS } from "@/lib/auth/otp-store";
 
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
@@ -35,6 +35,7 @@ const TENANT_ID = "11111111-2222-3333-4444-555555555555";
 beforeEach(() => {
   vi.clearAllMocks();
   OTP_STORE.clear();
+  _resetIpAttemptsForTests();
   mockGetUser.mockResolvedValue({
     data: { user: { id: "auth-user-1" } },
     error: null,
@@ -44,7 +45,7 @@ beforeEach(() => {
 
 function postReq(
   code: string,
-  opts: { email?: string; tenant?: string } = {},
+  opts: { email?: string; tenant?: string; ip?: string } = {},
 ): NextRequest {
   const form = new URLSearchParams();
   form.set("code", code);
@@ -56,6 +57,7 @@ function postReq(
     "content-type": "application/x-www-form-urlencoded",
     "x-resolved-tenant-id": opts.tenant ?? TENANT_ID,
   };
+  if (opts.ip !== undefined) headers["x-forwarded-for"] = opts.ip;
   if (cookieParts.length > 0) headers["cookie"] = cookieParts.join("; ");
   return new NextRequest("https://tenant.example.com/api/auth/microsoft-email-verify", {
     method: "POST",
@@ -167,5 +169,22 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     );
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+
+  it("after 10 attempts from the same IP: the 11th is rejected before consulting OTP_STORE", async () => {
+    OTP_STORE.set("alice@example.com", {
+      code: "123456",
+      expires: Date.now() + 60_000,
+      attempts: 0,
+    });
+    // Exhaust the 10-attempt window for this IP.
+    for (let i = 0; i < 10; i++) {
+      await POST(postReq("999999", { email: "alice@example.com", ip: "1.2.3.4" }));
+    }
+    // 11th attempt: IP bucket is full — route must reject before touching OTP_STORE or session.
+    const res = await POST(postReq("123456", { email: "alice@example.com", ip: "1.2.3.4" }));
+    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
   });
 });

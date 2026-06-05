@@ -68,11 +68,22 @@ export const ragExtractContent = inngest.createFunction(
     });
 
     if (result.status === "extracted" && result.content) {
+      // 1 MB cap — prevents a compressed document from expanding into an
+      // unbounded string that exhausts DB row limits and downstream Haiku budgets.
+      const MAX_EXTRACTED_CHARS = 1_000_000;
+      const originalLen = result.content.length;
+      const capped = originalLen > MAX_EXTRACTED_CHARS;
+      if (capped) {
+        console.warn("[rag-extract-content] extracted content capped", {
+          submission_id, original_chars: originalLen, cap: MAX_EXTRACTED_CHARS,
+        });
+      }
+      const content = capped ? result.content.slice(0, MAX_EXTRACTED_CHARS) : result.content;
       await safeAwait(db
         .from("rag_submissions")
         .update({
           extraction_status: "extracted",
-          extracted_content: result.content,
+          extracted_content: content,
           updated_at: new Date().toISOString(),
         })
         .eq("id", submission_id), "rag_submissions.update");
