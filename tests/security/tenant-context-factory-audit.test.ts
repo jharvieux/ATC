@@ -72,6 +72,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("throws when the cookie session does not resolve to an auth user", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: { getUser: async () => ({ data: null, error: { message: "invalid jwt" } }) },
         from: () => ({
@@ -94,6 +96,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("throws when authenticated user has no active membership in the resolved tenant", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
@@ -129,6 +133,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("throws when the user-row lookup itself errors", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
@@ -163,6 +169,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("returns the resolved context when the cookie session names an active member (no Bearer required)", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({

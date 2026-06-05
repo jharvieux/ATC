@@ -1,153 +1,287 @@
-// popup.js — handles the sign-in form and signed-in status display.
+// popup.js — connection management for the ATC Knowledge Clipper extension.
+//
+// Auth flow: the extension never handles credentials. Instead it reads the
+// Supabase session cookie that the platform sets after the user signs in with
+// their OAuth provider (Google, Microsoft, or Facebook). If no cookie is found
+// the user is prompted to open the platform in a tab and sign in there first.
 
 const loadingView = document.getElementById("loading-view");
-const signedInView = document.getElementById("signed-in-view");
-const signedOutView = document.getElementById("signed-out-view");
-const displayTenantUrl = document.getElementById("display-tenant-url");
+const connectedView = document.getElementById("connected-view");
+const connectView = document.getElementById("connect-view");
+const needsSigninView = document.getElementById("needs-signin-view");
+const displayPlatformUrl = document.getElementById("display-platform-url");
+const signinPlatformUrl = document.getElementById("signin-platform-url");
 const tenantUrlInput = document.getElementById("tenant-url");
-const emailInput = document.getElementById("email");
-const passwordInput = document.getElementById("password");
-const signInBtn = document.getElementById("sign-in-btn");
-const signOutBtn = document.getElementById("sign-out-btn");
-const errorMsg = document.getElementById("error-msg");
+const connectBtn = document.getElementById("connect-btn");
+const connectError = document.getElementById("connect-error");
+const disconnectBtn = document.getElementById("disconnect-btn");
+const openPlatformBtn = document.getElementById("open-platform-btn");
+const recheckBtn = document.getElementById("recheck-btn");
+const changeUrlBtn = document.getElementById("change-url-btn");
+
+function show(view) {
+  for (const v of [loadingView, connectedView, connectView, needsSigninView]) {
+    v.classList.add("hidden");
+  }
+  view.classList.remove("hidden");
+}
 
 function showError(msg) {
-  errorMsg.textContent = msg;
-  errorMsg.classList.remove("hidden");
+  connectError.textContent = msg;
+  connectError.classList.remove("hidden");
 }
 
 function clearError() {
-  errorMsg.classList.add("hidden");
-  errorMsg.textContent = "";
-}
-
-function show(view) {
-  loadingView.classList.add("hidden");
-  signedInView.classList.add("hidden");
-  signedOutView.classList.add("hidden");
-  view.classList.remove("hidden");
+  connectError.classList.add("hidden");
 }
 
 function isTokenExpired(expiresAt) {
   return Date.now() / 1000 >= expiresAt - 60;
 }
 
-async function refreshSession(session) {
-  const res = await fetch(
-    `${session.supabaseUrl}/auth/v1/token?grant_type=refresh_token`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: session.supabaseAnonKey,
-      },
-      body: JSON.stringify({ refresh_token: session.refreshToken }),
-    },
-  );
-  if (!res.ok) return null;
-  const data = await res.json();
-  if (!data.access_token) return null;
-  return {
-    ...session,
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: Math.floor(Date.now() / 1000) + data.expires_in,
-  };
+// Supabase SSR stores the session in cookies named sb-<project-ref>-auth-token.
+// Large tokens are split across sb-<project-ref>-auth-token.0, .1, etc.
+// The project ref is the first segment of the Supabase project hostname.
+function cookieBaseName(supabaseUrl) {
+  const ref = new URL(supabaseUrl).hostname.split(".")[0];
+  return `sb-${ref}-auth-token`;
 }
 
-async function init() {
-  const stored = await chrome.storage.local.get("session");
-  const session = stored.session;
+async function readSupabaseSessionFromCookies(tenantUrl, supabaseUrl) {
+  const baseName = cookieBaseName(supabaseUrl);
+  const all = await chrome.cookies.getAll({ url: tenantUrl });
+  const authCookies = all
+    .filter((c) => c.name === baseName || c.name.startsWith(`${baseName}.`))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  if (!session) {
-    show(signedOutView);
-    return;
-  }
+  if (authCookies.length === 0) return null;
 
-  if (isTokenExpired(session.expiresAt)) {
-    const refreshed = await refreshSession(session);
-    if (!refreshed) {
-      await chrome.storage.local.remove("session");
-      show(signedOutView);
-      return;
-    }
-    await chrome.storage.local.set({ session: refreshed });
-    displayTenantUrl.textContent = refreshed.tenantUrl;
-  } else {
-    displayTenantUrl.textContent = session.tenantUrl;
-  }
-
-  show(signedInView);
-}
-
-signInBtn.addEventListener("click", async () => {
-  clearError();
-  const tenantUrl = tenantUrlInput.value.trim().replace(/\/$/, "");
-  const email = emailInput.value.trim();
-  const password = passwordInput.value;
-
-  if (!tenantUrl || !email || !password) {
-    showError("All fields are required.");
-    return;
-  }
-
-  signInBtn.disabled = true;
-  signInBtn.textContent = "Signing in…";
-
+  const combined = authCookies.map((c) => c.value).join("");
   try {
-    // Discover Supabase config from the platform.
-    const configRes = await fetch(`${tenantUrl}/api/extension/config`);
-    if (!configRes.ok) {
-      showError("Could not reach that platform URL. Check the address and try again.");
-      return;
-    }
-    const { supabase_url: supabaseUrl, supabase_anon_key: supabaseAnonKey } =
-      await configRes.json();
+    return JSON.parse(decodeURIComponent(combined));
+  } catch {
+    return null;
+  }
+}
 
-    // Sign in via Supabase password grant.
-    const authRes = await fetch(
-      `${supabaseUrl}/auth/v1/token?grant_type=password`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseAnonKey,
-        },
-        body: JSON.stringify({ email, password }),
-      },
-    );
-    const authData = await authRes.json();
-    if (!authRes.ok || !authData.access_token) {
-      showError(authData.error_description ?? authData.message ?? "Sign in failed.");
-      return;
-    }
+// Attempts to connect to the platform at tenantUrl.
+// Returns a session object on success, null if no active platform session exists.
+// Throws an Error with a user-facing message on network/config failure.
+async function tryConnect(tenantUrl) {
+  let configRes;
+  try {
+    configRes = await fetch(`${tenantUrl}/api/extension/config`);
+  } catch {
+    throw new Error("Network error. Check your connection and try again.");
+  }
+  if (!configRes.ok) {
+    throw new Error("Could not reach that platform URL. Check the address and try again.");
+  }
+
+  const { supabase_url: supabaseUrl, supabase_anon_key: supabaseAnonKey } =
+    await configRes.json();
+
+  const parsed = await readSupabaseSessionFromCookies(tenantUrl, supabaseUrl);
+  if (!parsed || !parsed.access_token) return null;
+
+  if (isTokenExpired(parsed.expires_at)) {
+    const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: supabaseAnonKey },
+      body: JSON.stringify({ refresh_token: parsed.refresh_token }),
+    });
+    if (!res.ok) return null;
+    const refreshed = await res.json();
+    if (!refreshed.access_token) return null;
 
     const session = {
       tenantUrl,
       supabaseUrl,
       supabaseAnonKey,
-      accessToken: authData.access_token,
-      refreshToken: authData.refresh_token,
-      expiresAt: Math.floor(Date.now() / 1000) + authData.expires_in,
+      accessToken: refreshed.access_token,
+      refreshToken: refreshed.refresh_token,
+      expiresAt: Math.floor(Date.now() / 1000) + refreshed.expires_in,
     };
-    await chrome.storage.local.set({ session });
+    await chrome.storage.local.set({ session, tenantUrl });
+    return session;
+  }
 
-    displayTenantUrl.textContent = tenantUrl;
-    show(signedInView);
+  const session = {
+    tenantUrl,
+    supabaseUrl,
+    supabaseAnonKey,
+    accessToken: parsed.access_token,
+    refreshToken: parsed.refresh_token,
+    expiresAt: parsed.expires_at,
+  };
+  await chrome.storage.local.set({ session, tenantUrl });
+  return session;
+}
+
+async function init() {
+  const stored = await chrome.storage.local.get(["session", "tenantUrl"]);
+
+  // Fast path: non-expired stored session.
+  if (stored.session && !isTokenExpired(stored.session.expiresAt)) {
+    displayPlatformUrl.textContent = stored.session.tenantUrl;
+    show(connectedView);
+    return;
+  }
+
+  // Determine the best URL to pre-populate. Priority:
+  //   1. Stored session URL (may be expired, still the right URL to reconnect).
+  //   2. Previously-saved tenantUrl (user connected before but disconnected).
+  //   3. Active tab URL (auto-detect if the user is on the platform right now).
+  let candidateUrl = stored.session?.tenantUrl ?? stored.tenantUrl ?? null;
+
+  if (!candidateUrl) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.url) {
+        const u = new URL(tab.url);
+        if (u.protocol === "https:") candidateUrl = `${u.protocol}//${u.host}`;
+      }
+    } catch {
+      // Tabs query failed — proceed without pre-fill.
+    }
+  }
+
+  if (!candidateUrl) {
+    show(connectView);
+    return;
+  }
+
+  tenantUrlInput.value = candidateUrl;
+
+  // If we had a stored session try a token refresh before hitting cookies.
+  if (stored.session) {
+    try {
+      const res = await fetch(
+        `${stored.session.supabaseUrl}/auth/v1/token?grant_type=refresh_token`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: stored.session.supabaseAnonKey,
+          },
+          body: JSON.stringify({ refresh_token: stored.session.refreshToken }),
+        },
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.access_token) {
+          const refreshed = {
+            ...stored.session,
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token,
+            expiresAt: Math.floor(Date.now() / 1000) + data.expires_in,
+          };
+          await chrome.storage.local.set({ session: refreshed });
+          displayPlatformUrl.textContent = refreshed.tenantUrl;
+          show(connectedView);
+          return;
+        }
+      }
+    } catch {
+      // Refresh failed — fall through to cookie detection.
+    }
+    await chrome.storage.local.remove("session");
+  }
+
+  // Try to read the Supabase session cookie from the platform domain.
+  try {
+    const result = await tryConnect(candidateUrl);
+    if (result) {
+      displayPlatformUrl.textContent = candidateUrl;
+      show(connectedView);
+      return;
+    }
+  } catch {
+    // Config fetch failed (wrong URL or offline) — show connect form pre-filled.
+    show(connectView);
+    return;
+  }
+
+  // Cookie not found: prompt sign-in.
+  signinPlatformUrl.textContent = candidateUrl;
+  show(needsSigninView);
+}
+
+connectBtn.addEventListener("click", async () => {
+  clearError();
+  const tenantUrl = tenantUrlInput.value.trim().replace(/\/$/, "");
+  if (!tenantUrl) {
+    showError("Enter your platform URL.");
+    return;
+  }
+  try {
+    const u = new URL(tenantUrl);
+    if (u.protocol !== "https:") throw new Error();
+  } catch {
+    showError("Enter a valid https:// URL.");
+    return;
+  }
+
+  connectBtn.disabled = true;
+  connectBtn.textContent = "Connecting…";
+  await chrome.storage.local.set({ tenantUrl });
+
+  try {
+    const result = await tryConnect(tenantUrl);
+    if (result === null) {
+      signinPlatformUrl.textContent = tenantUrl;
+      show(needsSigninView);
+      return;
+    }
+    displayPlatformUrl.textContent = tenantUrl;
+    show(connectedView);
   } catch (err) {
-    showError("Network error. Check your connection and try again.");
+    showError(err instanceof Error ? err.message : "Connection failed.");
   } finally {
-    signInBtn.disabled = false;
-    signInBtn.textContent = "Sign in";
+    connectBtn.disabled = false;
+    connectBtn.textContent = "Connect";
   }
 });
 
-signOutBtn.addEventListener("click", async () => {
+openPlatformBtn.addEventListener("click", async () => {
+  const stored = await chrome.storage.local.get("tenantUrl");
+  if (stored.tenantUrl) chrome.tabs.create({ url: stored.tenantUrl });
+});
+
+recheckBtn.addEventListener("click", async () => {
+  const stored = await chrome.storage.local.get("tenantUrl");
+  if (!stored.tenantUrl) {
+    show(connectView);
+    return;
+  }
+
+  recheckBtn.disabled = true;
+  recheckBtn.textContent = "Checking…";
+
+  try {
+    const result = await tryConnect(stored.tenantUrl);
+    if (result) {
+      displayPlatformUrl.textContent = stored.tenantUrl;
+      show(connectedView);
+    } else {
+      signinPlatformUrl.textContent = stored.tenantUrl;
+      show(needsSigninView);
+    }
+  } catch {
+    // Leave on needs-signin view.
+  } finally {
+    recheckBtn.disabled = false;
+    recheckBtn.textContent = "I've signed in — connect";
+  }
+});
+
+changeUrlBtn.addEventListener("click", () => {
+  show(connectView);
+});
+
+disconnectBtn.addEventListener("click", async () => {
   await chrome.storage.local.remove("session");
-  tenantUrlInput.value = "";
-  emailInput.value = "";
-  passwordInput.value = "";
-  show(signedOutView);
+  show(connectView);
 });
 
 init();

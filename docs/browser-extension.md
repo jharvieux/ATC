@@ -18,14 +18,25 @@ The extension is not yet published to the Chrome Web Store. Until it is, install
 
 ---
 
-## First-time sign-in
+## First-time connection
+
+The extension connects to the platform using your existing browser session — no separate login is required. It reads the session your browser already has from signing into the platform with Google, Microsoft, or Facebook.
 
 1. Click the **ATC Knowledge Clipper** icon in your toolbar
-2. Enter your **Platform URL** — the subdomain your agency uses, e.g. `https://yourteam.atcplatform.com`
-3. Enter your **email** and **password** (same credentials you use to log into the platform)
-4. Click **Sign in**
+2. Enter your **Platform URL**, e.g. `https://yourteam.atcplatform.com`
+3. Click **Connect**
 
-The extension discovers your Supabase auth config automatically from the platform URL. Your session is stored in the extension's local storage and refreshed automatically — you only need to sign in once per browser profile.
+**If you are already signed into the platform in this browser**, the extension connects immediately — no further steps needed.
+
+**If you are not yet signed in**, the extension will show a "Sign in required" screen:
+
+1. Click **Open platform to sign in**
+2. The platform opens in a new tab — sign in with Google, Microsoft, or Facebook as normal
+3. Return to the extension popup and click **I've signed in — connect**
+
+Your session is stored in the extension's local storage and refreshed automatically. You only need to connect once per browser profile.
+
+> **Auto-detection**: if the platform URL is already saved from a previous connection, or if you currently have a platform tab open, the extension will pre-fill the URL automatically.
 
 ---
 
@@ -43,9 +54,9 @@ The extension discovers your Supabase auth config automatically from the platfor
 
 ## How authentication works
 
-The extension authenticates using your Supabase access token (a short-lived JWT stored in `chrome.storage.local`). It never stores your password. When the token expires, it is automatically refreshed using your refresh token. If refresh fails (e.g. after a password change), you will be prompted to sign in again.
+The extension reads the Supabase session cookie set by the platform after you sign in with your OAuth provider (Google, Microsoft, or Facebook). The extension never handles credentials. When the access token is close to expiry, it is refreshed automatically using your Supabase refresh token. If the refresh fails (e.g. after a sign-out on the platform), you will see "Sign in required" and can reconnect in one click.
 
-API calls use `Authorization: Bearer <token>` — no cookies are sent.
+API calls use `Authorization: Bearer <token>` — the session cookie is only read locally for the token value and is never sent across origins.
 
 ---
 
@@ -54,8 +65,9 @@ API calls use `Authorization: Bearer <token>` — no cookies are sent.
 | Symptom | Fix |
 |---|---|
 | "Could not reach that platform URL" | Check the URL — it must include `https://` and match your tenant subdomain exactly |
-| "Session expired" in submit popup | Click the extension icon and sign in again |
-| Submit popup appears blank | The pending capture may have expired (> 1 session); right-click and select again |
+| "Sign in required" after entering URL | Open the platform in a tab, sign in, then click "I've signed in — connect" |
+| "Session expired" in submit popup | Open the extension popup and reconnect |
+| Submit popup appears blank | The pending capture may have expired; right-click and select again |
 | 403 Forbidden | Your account may not have the `rag_submissions: create` permission — contact your tenant admin |
 | Extension icon not visible | Go to `chrome://extensions`, confirm ATC Clipper is enabled, and pin it from the toolbar |
 

@@ -5,7 +5,9 @@
   "description": "Save content to your AI Travel Concierge knowledge base while browsing cruise and travel supplier sites.",
   "permissions": [
     "contextMenus",
-    "storage"
+    "storage",
+    "cookies",
+    "tabs"
   ],
   "host_permissions": [
     "https://*/*"

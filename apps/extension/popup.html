@@ -22,10 +22,11 @@
       margin-bottom: 16px;
       font-size: 13px;
     }
-    .status-box.signed-in { background: #f0fdf4; border: 1px solid #bbf7d0; }
-    .status-box.signed-out { background: #fff7ed; border: 1px solid #fed7aa; }
+    .status-box.connected { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .status-box.disconnected { background: #fff7ed; border: 1px solid #fed7aa; }
+    .status-box.info { background: #eff6ff; border: 1px solid #bfdbfe; }
     .status-label { font-weight: 600; margin-bottom: 4px; }
-    .tenant-url { color: #666; font-size: 12px; word-break: break-all; }
+    .platform-url { color: #666; font-size: 12px; word-break: break-all; }
     .instruction {
       color: #555;
       font-size: 13px;
@@ -52,52 +53,62 @@
       font-weight: 600;
       cursor: pointer;
     }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
     .btn-primary { background: #4f46e5; color: #fff; }
-    .btn-primary:hover { background: #4338ca; }
+    .btn-primary:hover:not(:disabled) { background: #4338ca; }
     .btn-secondary { background: #f3f4f6; color: #374151; margin-top: 8px; }
-    .btn-secondary:hover { background: #e5e7eb; }
+    .btn-secondary:hover:not(:disabled) { background: #e5e7eb; }
     .btn-danger { background: #fef2f2; color: #dc2626; margin-top: 8px; border: 1px solid #fecaca; }
-    .btn-danger:hover { background: #fee2e2; }
+    .btn-danger:hover:not(:disabled) { background: #fee2e2; }
     .error { color: #dc2626; font-size: 12px; margin-top: 6px; }
+    .hint { color: #6b7280; font-size: 12px; margin-top: 8px; text-align: center; }
     .hidden { display: none; }
-    #settings-section h2 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
   </style>
 </head>
 <body>
   <h1>ATC Knowledge Clipper</h1>
   <p class="subtitle">AI Travel Concierge</p>
 
-  <div id="signed-in-view" class="hidden">
-    <div class="status-box signed-in">
-      <div class="status-label">✓ Signed in</div>
-      <div class="tenant-url" id="display-tenant-url"></div>
+  <!-- Connected view -->
+  <div id="connected-view" class="hidden">
+    <div class="status-box connected">
+      <div class="status-label">✓ Connected</div>
+      <div class="platform-url" id="display-platform-url"></div>
     </div>
     <p class="instruction">
       Select text on any cruise or travel supplier page, right-click, and choose
       <strong>Add to ATC Knowledge Base</strong>.
     </p>
-    <button class="btn-danger" id="sign-out-btn">Sign out</button>
+    <button class="btn-danger" id="disconnect-btn">Disconnect</button>
   </div>
 
-  <div id="signed-out-view" class="hidden">
-    <div class="status-box signed-out">
-      <div class="status-label">Not signed in</div>
-      <div>Enter your platform details below.</div>
+  <!-- Enter URL view -->
+  <div id="connect-view" class="hidden">
+    <div class="status-box disconnected">
+      <div class="status-label">Not connected</div>
+      <div>Enter your platform URL to connect.</div>
     </div>
-
-    <div id="settings-section">
-      <h2>Connect to your platform</h2>
-      <label for="tenant-url">Platform URL</label>
-      <input id="tenant-url" type="url" placeholder="https://yourteam.atcplatform.com" />
-      <label for="email">Email</label>
-      <input id="email" type="email" placeholder="you@example.com" />
-      <label for="password">Password</label>
-      <input id="password" type="password" placeholder="••••••••" />
-      <button class="btn-primary" id="sign-in-btn">Sign in</button>
-      <div class="error hidden" id="error-msg"></div>
-    </div>
+    <label for="tenant-url">Platform URL</label>
+    <input id="tenant-url" type="url" placeholder="https://yourteam.atcplatform.com" />
+    <button class="btn-primary" id="connect-btn">Connect</button>
+    <div class="error hidden" id="connect-error"></div>
   </div>
 
+  <!-- Sign-in required view -->
+  <div id="needs-signin-view" class="hidden">
+    <div class="status-box info">
+      <div class="status-label">Sign in required</div>
+      <div class="platform-url" id="signin-platform-url"></div>
+    </div>
+    <p class="instruction">
+      Sign in to your platform using Google, Microsoft, or Facebook, then return here.
+    </p>
+    <button class="btn-primary" id="open-platform-btn">Open platform to sign in</button>
+    <button class="btn-secondary" id="recheck-btn">I've signed in — connect</button>
+    <button class="btn-secondary" id="change-url-btn">Use a different URL</button>
+  </div>
+
+  <!-- Loading view -->
   <div id="loading-view">
     <p class="instruction">Loading…</p>
   </div>
