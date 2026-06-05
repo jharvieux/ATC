@@ -287,6 +287,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.quote_options TO service_role;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.quotes TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.quotes TO service_role;
 
+-- TABLE: public.rag_cost_reconcile_ledger
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_cost_reconcile_ledger TO service_role;
+
 -- TABLE: public.rag_global_promotions
 GRANT SELECT ON public.rag_global_promotions TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_global_promotions TO service_role;

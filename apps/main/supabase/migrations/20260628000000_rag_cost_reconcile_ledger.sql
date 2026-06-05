@@ -35,9 +35,23 @@ CREATE INDEX rag_cost_reconcile_ledger_reconciled_idx
   ON public.rag_cost_reconcile_ledger(reconciled_at);
 
 ALTER TABLE public.rag_cost_reconcile_ledger ENABLE ROW LEVEL SECURITY;
--- No policies = service-role only. The reconciler is the only writer; the
+
+-- Authenticated users have no business touching this table — it's strictly
+-- internal reconciler state. Service-role bypass + explicit per-action
+-- deny policies (the §30.8 lint gate requires one policy per action even
+-- on service-role-only tables). The reconciler is the only writer; the
 -- platform-admin dashboard reads ai_cost from tenant_usage_metrics, not
 -- from this ledger.
+CREATE POLICY rag_cost_reconcile_ledger_no_user_select ON public.rag_cost_reconcile_ledger
+  FOR SELECT USING (FALSE);
+CREATE POLICY rag_cost_reconcile_ledger_no_user_insert ON public.rag_cost_reconcile_ledger
+  FOR INSERT WITH CHECK (FALSE);
+CREATE POLICY rag_cost_reconcile_ledger_no_user_update ON public.rag_cost_reconcile_ledger
+  FOR UPDATE USING (FALSE);
+CREATE POLICY rag_cost_reconcile_ledger_no_user_delete ON public.rag_cost_reconcile_ledger
+  FOR DELETE USING (FALSE);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.rag_cost_reconcile_ledger TO service_role;
 
 -- 2. Atomic dedup-and-increment RPC.
 --

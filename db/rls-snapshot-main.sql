@@ -1106,6 +1106,20 @@ CREATE POLICY "quotes_update_policy" ON public.quotes
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
+-- TABLE: public.rag_cost_reconcile_ledger
+CREATE POLICY "rag_cost_reconcile_ledger_no_user_delete" ON public.rag_cost_reconcile_ledger
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "rag_cost_reconcile_ledger_no_user_insert" ON public.rag_cost_reconcile_ledger
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "rag_cost_reconcile_ledger_no_user_select" ON public.rag_cost_reconcile_ledger
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "rag_cost_reconcile_ledger_no_user_update" ON public.rag_cost_reconcile_ledger
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
 -- TABLE: public.rag_global_promotions
 CREATE POLICY "rag_global_promotions_delete_policy" ON public.rag_global_promotions
   FOR DELETE TO PUBLIC
