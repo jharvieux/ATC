@@ -76,6 +76,7 @@
 -- public.price_watches (rls_enabled)
 -- public.quote_options (rls_enabled)
 -- public.quotes (rls_enabled)
+-- public.rag_cost_reconcile_ledger (rls_enabled)
 -- public.rag_global_promotions (rls_enabled)
 -- public.rag_submissions (rls_enabled)
 -- public.request_idempotency (rls_enabled)
