@@ -44,10 +44,10 @@ export function AdminShell({
           </button>
           <Link href="/admin" aria-label="Admin home" className="flex items-center gap-2">
             <span className="hidden sm:inline-flex">
-              <Logo height={28} />
+              <Logo height={49} />
             </span>
             <span className="sm:hidden">
-              <LogoMark size={28} />
+              <LogoMark size={49} />
             </span>
             <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Admin

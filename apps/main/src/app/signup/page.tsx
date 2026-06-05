@@ -10,7 +10,7 @@ import { Logo } from "@/components/branding/Logo";
 export default function SignupPage(): React.ReactElement {
   return (
     <main className="flex flex-col items-center justify-center min-h-screen gap-8 p-4">
-      <Logo height={48} />
+      <Logo height={84} />
       <h1 className="text-3xl font-bold">Create your account</h1>
       <div className="flex gap-6 flex-wrap justify-center">
         <SignupCard
