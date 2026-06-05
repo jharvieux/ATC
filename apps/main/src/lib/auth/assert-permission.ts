@@ -24,6 +24,7 @@ import { tryTestBypass } from "./test-bypass";
 import { isPermitted, type UserRole } from "./permission-grants";
 import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
 import { createRequestScopedClient } from "./ssr-client";
+import { getCachedUser } from "./get-cached-user";
 
 export type User = {
   id: string;
@@ -123,12 +124,22 @@ export async function assertPermission(
 
   const ctx = await tenantContextFromRequest(req);
 
-  const supabase = createRequestScopedClient(req);
-
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
+  // #679 — getCachedUser shares one supabase.auth.getUser() round-trip
+  // with the (tenant)/layout's getSiteHeaderProps for server-rendered
+  // pages. On pure /api/* routes there's no layout above, so the cache
+  // is a no-op but harmless. The cached client uses a placeholder
+  // request shape but the same Cookie header, so the verified JWT
+  // payload is identical to what a `req`-bound client would produce.
+  const { user: authUser } = await getCachedUser();
+  if (!authUser) {
     throw new Error("assertPermission: invalid or expired access token.");
   }
+
+  // Separate supabase client for the sensitive-routes getSession() below.
+  // Both clients build from the same incoming Cookie header, so the
+  // session payload is identical to what the cached client would see —
+  // see the "SAFETY DEPENDS ON CALL ORDER" block on the getSession use.
+  const supabase = createRequestScopedClient(req);
 
   const pathname = new URL(req.url).pathname;
 
@@ -139,7 +150,7 @@ export async function assertPermission(
   // through assertPermission, so this doesn't deadlock the user out of
   // accepting; downstream they'll catch ConsentPendingError, return 403 with
   // `consent_pending` + return_to, and the client routes to /consent.
-  const pending = await getConsentPending(authData.user.id);
+  const pending = await getConsentPending(authUser.id);
   if (pending.length > 0) {
     throw new ConsentPendingError(pathname, pending);
   }
@@ -149,10 +160,13 @@ export async function assertPermission(
   // no network) and decode auth_time.
   //
   // SAFETY DEPENDS ON CALL ORDER: getSession reads the cookie payload WITHOUT
-  // verifying the JWT signature. We trust the payload only because getUser
+  // verifying the JWT signature. We trust the payload only because getCachedUser
   // above just verified the same token bytes against the auth server in the
-  // same request. Do NOT reorder this block above the getUser call, and do
-  // NOT use getSession in this file for any other purpose.
+  // same request — both supabase clients (the cached one inside getCachedUser
+  // and `supabase` here) build from the same incoming Cookie header, so the
+  // session payload is identical to what was verified. Do NOT reorder this
+  // block above the getCachedUser call, and do NOT use getSession in this file
+  // for any other purpose.
   if (isSensitiveRoute(pathname)) {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData?.session?.access_token ?? null;
@@ -169,7 +183,7 @@ export async function assertPermission(
   const { data: row, error } = await supabase
     .from("users")
     .select("id, auth_user_id, tenant_id, status, role")
-    .eq("auth_user_id", authData.user.id)
+    .eq("auth_user_id", authUser.id)
     .eq("tenant_id", ctx.tenant_id)
     .maybeSingle();
 
