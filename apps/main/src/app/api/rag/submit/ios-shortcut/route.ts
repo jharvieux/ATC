@@ -32,9 +32,11 @@ export async function POST(req: Request): Promise<Response> {
       // Rather than re-implementing storage upload here, return 307 so the
       // client uploads to /api/rag/submit/file directly. The Shortcut definition
       // (in docs/ios-shortcut.md) handles the redirect transparently.
-      return Response.json(
-        { hint: "multipart_uploads_should_post_to_file_endpoint" },
-        { status: 307, headers: { Location: "/api/rag/submit/file" } },
+      return withCorsHeaders(
+        Response.json(
+          { hint: "multipart_uploads_should_post_to_file_endpoint" },
+          { status: 307, headers: { Location: "/api/rag/submit/file" } },
+        ),
       );
     }
 
@@ -42,11 +44,11 @@ export async function POST(req: Request): Promise<Response> {
     try {
       body = await req.json();
     } catch {
-      return Response.json({ error: "invalid_json" }, { status: 400 });
+      return withCorsHeaders(Response.json({ error: "invalid_json" }, { status: 400 }));
     }
 
     if (!body.text || body.text.trim().length === 0) {
-      return Response.json({ error: "text_required" }, { status: 400 });
+      return withCorsHeaders(Response.json({ error: "text_required" }, { status: 400 }));
     }
 
     const result = await createSubmission({

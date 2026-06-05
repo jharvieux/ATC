@@ -1,8 +1,8 @@
 // §22.9 — Browser extension submission endpoint.
 //
-// The extension authenticates the user via the standard Supabase password
-// flow (per docs/browser-extension.md). Once authenticated, the extension
-// POSTs: { url, page_title, selection } with Authorization: Bearer <token>.
+// The extension authenticates via OAuth cookie detection (per docs/browser-extension.md):
+// it reads the Supabase session cookie to extract the access token, then POSTs
+// { url, page_title, selection } with Authorization: Bearer <token>.
 // CORS headers allow requests from chrome-extension:// origins.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
@@ -30,11 +30,11 @@ export async function POST(req: Request): Promise<Response> {
     try {
       body = await req.json();
     } catch {
-      return Response.json({ error: "invalid_json" }, { status: 400 });
+      return withCorsHeaders(Response.json({ error: "invalid_json" }, { status: 400 }));
     }
 
     if (!body.selection || body.selection.trim().length === 0) {
-      return Response.json({ error: "selection_required" }, { status: 400 });
+      return withCorsHeaders(Response.json({ error: "selection_required" }, { status: 400 }));
     }
 
     const result = await createSubmission({
