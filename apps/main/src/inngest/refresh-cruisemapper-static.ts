@@ -23,6 +23,7 @@
 
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { discoverShipUrls, discoverPortUrls, discoverDeckPlanUrls } from "@/lib/external/cruisemapper/discovery";
 import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
@@ -120,12 +121,18 @@ export const refreshCruisemapperStatic = inngest.createFunction(
       return { skipped: true, reason: "CRUISEMAPPER_DIY_USER_AGENT not set" };
     }
 
-    const shipUrls = await step.run("discover-ships", () =>
-      withPlatformAdminAudit(AUDIT_META, (db, recordQuery) => {
+    // One platform-admin audit row per run (the prior single-wrapper behaviour).
+    // The per-URL steps below run in separate invocations and use a plain
+    // service-role client, so wrapping each in withPlatformAdminAudit would emit
+    // one audit_log row per URL instead of one per run.
+    await step.run("audit-run", () =>
+      withPlatformAdminAudit(AUDIT_META, async (_db, recordQuery) => {
         recordQuery({ op: "select", table: "cruisemapper_url_inventory" });
-        return discoverShipUrls(db);
+        return { audited: true };
       }),
     );
+
+    const shipUrls = await step.run("discover-ships", () => discoverShipUrls(createServiceRoleClient()));
 
     // Ships first — heaviest unit (ship intel + price ranges + sailing ingest).
     const ship = emptyKindResult();
@@ -133,9 +140,7 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     for (let i = 0; i < shipUrls.length; i++) {
       const url = shipUrls[i]!;
       await step.sleep(`pace-ship-${i}`, FETCH_PACING);
-      const r = await step.run(`ship-${i}`, () =>
-        withPlatformAdminAudit(AUDIT_META, (db) => processOneShip(db, url)),
-      );
+      const r = await step.run(`ship-${i}`, () => processOneShip(createServiceRoleClient(), url));
       mergeKind(ship, r.ship);
       mergeSailing(sailing, r.sailing);
       const reason = haltReason(ship, "ship");
@@ -147,20 +152,13 @@ export const refreshCruisemapperStatic = inngest.createFunction(
       }
     }
 
-    const portUrls = await step.run("discover-ports", () =>
-      withPlatformAdminAudit(AUDIT_META, (db, recordQuery) => {
-        recordQuery({ op: "select", table: "cruisemapper_url_inventory" });
-        return discoverPortUrls(db);
-      }),
-    );
+    const portUrls = await step.run("discover-ports", () => discoverPortUrls(createServiceRoleClient()));
 
     const port = emptyKindResult();
     for (let i = 0; i < portUrls.length; i++) {
       const url = portUrls[i]!;
       await step.sleep(`pace-port-${i}`, FETCH_PACING);
-      const r = await step.run(`port-${i}`, () =>
-        withPlatformAdminAudit(AUDIT_META, (db) => processOneUrl(db, url, "port")),
-      );
+      const r = await step.run(`port-${i}`, () => processOneUrl(createServiceRoleClient(), url, "port"));
       mergeKind(port, r);
       const reason = haltReason(port, "port");
       if (reason) {
@@ -174,17 +172,13 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     // BP37: deck discovery must happen AFTER ships are in inventory so deck
     // links can be enumerated per ship. One step — its internal re-fetches are
     // token-bucket-paced within the single invocation.
-    const deckUrls = await step.run("discover-decks", () =>
-      withPlatformAdminAudit(AUDIT_META, (db) => discoverDeckPlanUrls(db)),
-    );
+    const deckUrls = await step.run("discover-decks", () => discoverDeckPlanUrls(createServiceRoleClient()));
 
     const deck = emptyKindResult();
     for (let i = 0; i < deckUrls.length; i++) {
       const url = deckUrls[i]!;
       await step.sleep(`pace-deck-${i}`, FETCH_PACING);
-      const r = await step.run(`deck-${i}`, () =>
-        withPlatformAdminAudit(AUDIT_META, (db) => processOneUrl(db, url, "deck_plan")),
-      );
+      const r = await step.run(`deck-${i}`, () => processOneUrl(createServiceRoleClient(), url, "deck_plan"));
       mergeKind(deck, r);
       const reason = haltReason(deck, "deck_plan");
       if (reason) {

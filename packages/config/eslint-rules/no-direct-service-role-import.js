@@ -395,6 +395,13 @@ const ALLOWED_PATH_SUFFIXES = [
   // (RLS deny-all for authenticated; only service_role can read). No user
   // session required; response is public read-only.
   "/app/api/travel-news/route.ts",
+  // BP36 §33.5 — CruiseMapper DIY static refresh cron: cross-tenant system
+  // job (no user session) ingesting global reference content + pricing. Each
+  // URL is processed in its own Inngest step.run (separate invocation), so one
+  // withPlatformAdminAudit context can't span them — the job writes a single
+  // platform-admin audit row per run and uses the service-role client for the
+  // per-step work. §5.4.4.
+  "/inngest/refresh-cruisemapper-static.ts",
 ];
 
 function endsWithAllowed(filename) {
