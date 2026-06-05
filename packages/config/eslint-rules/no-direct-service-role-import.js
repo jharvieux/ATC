@@ -402,6 +402,10 @@ const ALLOWED_PATH_SUFFIXES = [
   // platform-admin audit row per run and uses the service-role client for the
   // per-step work. §5.4.4.
   "/inngest/refresh-cruisemapper-static.ts",
+  // #485 / §33.4 — CruiseMapper sailing refresh cron: same shape as the static
+  // refresh above (cross-tenant system job, per-URL Inngest steps, one audit
+  // row per run). §5.4.4.
+  "/inngest/refresh-cruisemapper-sailings.ts",
 ];
 
 function endsWithAllowed(filename) {

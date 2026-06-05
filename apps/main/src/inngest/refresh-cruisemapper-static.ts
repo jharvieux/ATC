@@ -8,12 +8,15 @@
 //   3. For each URL: fetch (change-detect via inventory.content_hash) → parse → screen → RAG ingest.
 //   4. Per-kind: if parse failure rate > 5%, halt the run and alert (parser likely broken).
 //
+// Sailing ingest is NOT done here — it runs every month in
+// refresh-cruisemapper-sailings (#485 / #770). This job covers ship intel +
+// price ranges + ports + deck plans only.
+//
 // Durability (#770): every URL is processed in its own Inngest step.run, so no
-// single Vercel invocation accumulates the whole job's runtime — which exceeds
-// maxDuration once RAG ingest does real work (~1.7k serial sailing POSTs). The
-// in-process token bucket can't pace fetches across separate step invocations,
-// so external fetches are paced with step.sleep instead. The parse-failure
-// halt is evaluated on the running per-kind totals across steps.
+// single Vercel invocation accumulates the whole job's runtime. The in-process
+// token bucket can't pace fetches across separate step invocations, so external
+// fetches are paced with step.sleep instead. The parse-failure halt is
+// evaluated on the running per-kind totals across steps.
 //
 // Idempotency: the deterministic source_identifier is
 //   cruisemapper:ship:{slug} / cruisemapper:port:{slug} / cruisemapper:deck:{slug}
@@ -36,8 +39,6 @@ import { upsertGeneralPriceRange } from "@/lib/pricing/general-pricing-ranges";
 import { screenForPromptInjection } from "@/lib/external/cruisemapper/prompt-injection-screen";
 import { ingestReferenceToRag } from "@/lib/external/cruisemapper/rag-reference-ingest";
 import { recordDeckPlanImage } from "@/lib/external/cruisemapper/image-asset-recorder";
-// #485 follow-up — sailing + list parsers share the ship-page fetch.
-import { processSailingHtml, emptySailingResult, type SailingRunResult } from "@/lib/external/cruisemapper/sailing-ingest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -78,17 +79,6 @@ export function mergeKind(into: KindRunResult, one: KindRunResult): void {
   into.updated += one.updated;
   into.unchanged_rag += one.unchanged_rag;
   into.errors += one.errors;
-}
-
-export function mergeSailing(into: SailingRunResult, one: SailingRunResult): void {
-  into.current_parsed += one.current_parsed;
-  into.current_ingested += one.current_ingested;
-  into.current_errors += one.current_errors;
-  into.list_items += one.list_items;
-  into.list_price_cache_written += one.list_price_cache_written;
-  into.list_price_cache_errors += one.list_price_cache_errors;
-  into.list_ingested += one.list_ingested;
-  into.list_errors += one.list_errors;
 }
 
 // Parse-failure circuit breaker on the running per-kind totals: once we have a
@@ -134,15 +124,13 @@ export const refreshCruisemapperStatic = inngest.createFunction(
 
     const shipUrls = await step.run("discover-ships", () => discoverShipUrls(createServiceRoleClient()));
 
-    // Ships first — heaviest unit (ship intel + price ranges + sailing ingest).
+    // Ships first — ship intel + price ranges.
     const ship = emptyKindResult();
-    const sailing = emptySailingResult();
     for (let i = 0; i < shipUrls.length; i++) {
       const url = shipUrls[i]!;
       await step.sleep(`pace-ship-${i}`, FETCH_PACING);
       const r = await step.run(`ship-${i}`, () => processOneShip(createServiceRoleClient(), url));
-      mergeKind(ship, r.ship);
-      mergeSailing(sailing, r.sailing);
+      mergeKind(ship, r);
       const reason = haltReason(ship, "ship");
       if (reason) {
         ship.halted = true;
@@ -192,7 +180,6 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     return {
       discovered: { ship: shipUrls.length, port: portUrls.length, deck_plan: deckUrls.length },
       ship,
-      sailing,
       port,
       deck,
     };
@@ -349,17 +336,12 @@ async function processOneUrl(
   return result;
 }
 
-// Process ONE ship URL: ship intel + (best-effort) price ranges + sailing
-// ingest, all off the same fetched HTML. Sailing/price failures never affect
-// the ship parse counters or the halt decision — ship intel always lands if
-// the ship parser succeeds.
-async function processOneShip(
-  db: SupabaseClient,
-  url: string,
-): Promise<{ ship: KindRunResult; sailing: SailingRunResult }> {
+// Process ONE ship URL: ship intel + (best-effort) price ranges off the same
+// fetched HTML. Price-range failures never affect the ship parse counters —
+// ship intel always lands if the ship parser succeeds.
+async function processOneShip(db: SupabaseClient, url: string): Promise<KindRunResult> {
   const ship = emptyKindResult();
   ship.attempted = 1;
-  const sailing = emptySailingResult();
 
   const previousBodyHash = await priorContentHash(db, url);
   const fetched = await fetchCruiseMapperPage(url, previousBodyHash ? { previousBodyHash } : {});
@@ -367,14 +349,14 @@ async function processOneShip(
   if (fetched.status === "unchanged") {
     ship.unchanged_fetch = 1;
     await markInventory(db, url, "unchanged", null);
-    return { ship, sailing };
+    return ship;
   }
   if (fetched.status !== "ok") {
     ship.errors = 1;
     const status = fetched.status === "robots_disallowed" ? "robots_disallowed"
       : fetched.status === "client_error" ? "client_error" : "server_error";
     await markInventory(db, url, status, fetched.status);
-    return { ship, sailing };
+    return ship;
   }
 
   ship.fetched = 1;
@@ -383,14 +365,14 @@ async function processOneShip(
   if (!parsed) {
     ship.parse_failed = 1;
     await markInventory(db, url, "parse_failed", "parser_returned_null");
-    return { ship, sailing };
+    return ship;
   }
 
   const injection = screenForPromptInjection(parsed.text);
   if (!injection.ok) {
     ship.injection_quarantined = 1;
     await markInventory(db, url, "quarantined", `injection_pattern: ${injection.matchedPattern}`);
-    return { ship, sailing };
+    return ship;
   }
 
   // D-088 — price ranges from the same HTML (best-effort, doesn't block ship intel).
@@ -413,11 +395,6 @@ async function processOneShip(
     }
   }
 
-  // #485 follow-up — sailing + list parsers, best-effort alongside ship intel.
-  if (process.env.CRUISEMAPPER_SAILING_INGEST_ENABLED === "true") {
-    await processSailingHtml(db, fetched.body, url, sailing);
-  }
-
   const payload = {
     source_identifier: `cruisemapper:ship:${parsed.shipSlug}`,
     category: "ship_intel" as const,
@@ -428,5 +405,5 @@ async function processOneShip(
     ...(parsed.cruiseLine ? { cruise_line: parsed.cruiseLine } : {}),
   };
   await finalizeIngest(ship, await ingestReferenceToRag(payload), db, url, fetched.bodyHash);
-  return { ship, sailing };
+  return ship;
 }

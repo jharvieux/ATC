@@ -36,6 +36,20 @@ export function emptySailingResult(): SailingRunResult {
   };
 }
 
+// Sum a per-URL sailing result into a running total. Used when each ship page
+// is processed in its own Inngest step (#770) and the per-step results are
+// aggregated by the orchestrator.
+export function mergeSailing(into: SailingRunResult, one: SailingRunResult): void {
+  into.current_parsed += one.current_parsed;
+  into.current_ingested += one.current_ingested;
+  into.current_errors += one.current_errors;
+  into.list_items += one.list_items;
+  into.list_price_cache_written += one.list_price_cache_written;
+  into.list_price_cache_errors += one.list_price_cache_errors;
+  into.list_ingested += one.list_ingested;
+  into.list_errors += one.list_errors;
+}
+
 /**
  * Parse the current sailing + upcoming-sailings list from already-fetched HTML
  * and ingest both to RAG. Price quotes from the list are also written to the

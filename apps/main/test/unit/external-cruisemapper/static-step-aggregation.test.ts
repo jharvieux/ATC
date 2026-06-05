@@ -7,11 +7,9 @@ import { describe, expect, it } from "vitest";
 import {
   emptyKindResult,
   mergeKind,
-  mergeSailing,
   haltReason,
   type KindRunResult,
 } from "../../../src/inngest/refresh-cruisemapper-static";
-import { emptySailingResult } from "../../../src/lib/external/cruisemapper/sailing-ingest";
 
 function kind(partial: Partial<KindRunResult>): KindRunResult {
   return { ...emptyKindResult(), ...partial };
@@ -40,17 +38,6 @@ describe("static refresh — per-step result aggregation", () => {
     const total = emptyKindResult();
     mergeKind(total, kind({ attempted: 1, halted: true }));
     expect(total.halted).toBe(false);
-  });
-
-  it("mergeSailing sums sailing counters across ships", () => {
-    const total = emptySailingResult();
-    mergeSailing(total, { ...emptySailingResult(), current_parsed: 1, list_items: 40, list_ingested: 38, list_price_cache_written: 35 });
-    mergeSailing(total, { ...emptySailingResult(), current_parsed: 1, list_items: 10, list_errors: 10 });
-    expect(total.current_parsed).toBe(2);
-    expect(total.list_items).toBe(50);
-    expect(total.list_ingested).toBe(38);
-    expect(total.list_errors).toBe(10);
-    expect(total.list_price_cache_written).toBe(35);
   });
 });
 
