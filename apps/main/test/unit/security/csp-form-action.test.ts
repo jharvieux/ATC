@@ -65,4 +65,22 @@ describe("CSP form-action allowlist", () => {
     expect(csp).toContain("form-action 'self'");
     expect(csp).not.toContain("*");
   });
+
+  // OAuth provider redirect chain — Chrome CSP3 applies form-action to every
+  // hop. Supabase redirects the browser to the IdP after authorize; without
+  // these the click silently aborts at the final redirect to the provider.
+  it("includes login.microsoftonline.com for the Microsoft OAuth redirect chain", async () => {
+    const csp = await getCspHeader();
+    expect(csp).toMatch(/form-action [^;]*https:\/\/login\.microsoftonline\.com/);
+  });
+
+  it("includes accounts.google.com for the Google OAuth redirect chain", async () => {
+    const csp = await getCspHeader();
+    expect(csp).toMatch(/form-action [^;]*https:\/\/accounts\.google\.com/);
+  });
+
+  it("includes www.facebook.com for the Facebook OAuth redirect chain", async () => {
+    const csp = await getCspHeader();
+    expect(csp).toMatch(/form-action [^;]*https:\/\/www\.facebook\.com/);
+  });
 });

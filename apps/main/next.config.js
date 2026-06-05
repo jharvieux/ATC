@@ -41,12 +41,22 @@ function buildConnectSrc() {
 }
 
 // form-action allowlist. OAuth signup posts to /api/auth/oauth-initiate which
-// 302s the browser to https://<project>.supabase.co/auth/v1/authorize. Browsers
-// apply form-action to the full redirect chain (CSP3 / Chrome), so the Supabase
-// host must be allowlisted here or every signup click silently aborts at the
-// redirect — observable only via report-uri (which is how this bug was found).
-// Same fail-closed pattern as buildConnectSrc: a missing var omits the source
-// rather than silently widening to '*'.
+// 302s through https://<project>.supabase.co/auth/v1/authorize then on to the
+// OAuth provider (Microsoft, Google, Facebook). Browsers apply form-action to
+// the full redirect chain (CSP3 / Chrome), so every hop must be allowed or the
+// navigation is silently blocked — observable only via report-uri (which is how
+// this bug was found). Same fail-closed pattern as buildConnectSrc: a missing
+// var omits the source rather than silently widening to '*'.
+//
+// Provider endpoints are hardcoded — they're the canonical stable IdP hosts and
+// match ALLOWED_PROVIDERS in apps/main/src/app/api/auth/oauth-initiate/route.ts.
+// Keeping them in sync is easier than wiring them through env vars.
+const OAUTH_PROVIDER_FORM_ACTION_HOSTS = [
+  "https://login.microsoftonline.com", // Azure / Microsoft
+  "https://accounts.google.com",
+  "https://www.facebook.com",
+];
+
 function buildFormActionSrc() {
   const sources = ["'self'"];
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -58,6 +68,7 @@ function buildFormActionSrc() {
       /* malformed URL — omit */
     }
   }
+  sources.push(...OAUTH_PROVIDER_FORM_ACTION_HOSTS);
   return sources.join(" ");
 }
 
