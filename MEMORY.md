@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-158 — 2026-06-05 — PKCE code_verifier erasure by middleware session cleanup
+
+`proxy.ts` skips `getUser()` for all `/api/auth/*` routes to prevent `AuthPKCECodeVerifierMissingError` on OAuth callback.
+
+**Why:** auth-js `_removeSession()` marks the code_verifier in `removedItems` BEFORE firing `SIGNED_OUT`. When `applyServerStorage` runs in the SIGNED_OUT handler, it includes the code_verifier deletion in the `setAll` call. The middleware's `setAll` calls `req.cookies.set("...-code-verifier", "")`, zeroing the cookie in the forwarded Cookie header. The callback handler reads an empty value, `combineChunks` returns null (falsy), and `exchangeCodeForSession` throws the PKCE error. This only manifests when the user has a stale/invalid session cookie at OAuth callback time.
+
+**What was rejected:** Fixing auth-js library internals (not our code). Exempting only `/api/auth/callback` (the simpler full-prefix skip is correct and safer). Any approach that tries to preserve the cookie after the fact.
+
+**Fix:** PR #764. Added regression test in `proxy-session-refresh.test.ts`.
+
+---
+
 ## D-157 — 2026-06-05 — beta040 shipped to prod from pre-security-fix tag
 
 User elected to push the `beta040` tag to production as-is, even though PR #758 (JWT key rename, timing-safe HMAC, SHA-256 hashes, fail-closed Inngest) had already merged to dev. Security fixes will ship in the next release.
