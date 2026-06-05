@@ -71,7 +71,7 @@
     "lighthouse": "^13.3.0",
     "msw": "^2.14.6",
     "postgres": "^3.4.9",
-    "semver": "^7.8.1",
+    "semver": "^7.8.2",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vite": "^7.3.5",
