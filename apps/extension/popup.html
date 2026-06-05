@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATC Knowledge Base Clipper</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      color: #111;
+      background: #fff;
+      width: 320px;
+      padding: 16px;
+    }
+    h1 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+    .status-box {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .status-box.signed-in { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .status-box.signed-out { background: #fff7ed; border: 1px solid #fed7aa; }
+    .status-label { font-weight: 600; margin-bottom: 4px; }
+    .tenant-url { color: #666; font-size: 12px; word-break: break-all; }
+    .instruction {
+      color: #555;
+      font-size: 13px;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 10px;
+      outline: none;
+    }
+    input:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+    button {
+      width: 100%;
+      padding: 9px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-secondary { background: #f3f4f6; color: #374151; margin-top: 8px; }
+    .btn-secondary:hover { background: #e5e7eb; }
+    .btn-danger { background: #fef2f2; color: #dc2626; margin-top: 8px; border: 1px solid #fecaca; }
+    .btn-danger:hover { background: #fee2e2; }
+    .error { color: #dc2626; font-size: 12px; margin-top: 6px; }
+    .hidden { display: none; }
+    #settings-section h2 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <h1>ATC Knowledge Clipper</h1>
+  <p class="subtitle">AI Travel Concierge</p>
+
+  <div id="signed-in-view" class="hidden">
+    <div class="status-box signed-in">
+      <div class="status-label">✓ Signed in</div>
+      <div class="tenant-url" id="display-tenant-url"></div>
+    </div>
+    <p class="instruction">
+      Select text on any cruise or travel supplier page, right-click, and choose
+      <strong>Add to ATC Knowledge Base</strong>.
+    </p>
+    <button class="btn-danger" id="sign-out-btn">Sign out</button>
+  </div>
+
+  <div id="signed-out-view" class="hidden">
+    <div class="status-box signed-out">
+      <div class="status-label">Not signed in</div>
+      <div>Enter your platform details below.</div>
+    </div>
+
+    <div id="settings-section">
+      <h2>Connect to your platform</h2>
+      <label for="tenant-url">Platform URL</label>
+      <input id="tenant-url" type="url" placeholder="https://yourteam.atcplatform.com" />
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="you@example.com" />
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="••••••••" />
+      <button class="btn-primary" id="sign-in-btn">Sign in</button>
+      <div class="error hidden" id="error-msg"></div>
+    </div>
+  </div>
+
+  <div id="loading-view">
+    <p class="instruction">Loading…</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

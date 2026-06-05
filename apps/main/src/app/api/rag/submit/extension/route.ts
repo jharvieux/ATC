@@ -1,19 +1,24 @@
 // §22.9 — Browser extension submission endpoint.
 //
-// The extension authenticates the user via the standard Supabase OAuth flow
-// (per docs/browser-extension.md). Once authenticated, the extension POSTs:
-//   { url, page_title, selection }
-// to this endpoint with the user's session bearer.
+// The extension authenticates the user via the standard Supabase password
+// flow (per docs/browser-extension.md). Once authenticated, the extension
+// POSTs: { url, page_title, selection } with Authorization: Bearer <token>.
+// CORS headers allow requests from chrome-extension:// origins.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { corsOptionsResponse, EXTENSION_CORS_HEADERS } from "@/lib/http/cors";
 
 interface Body {
   url?: string;
   page_title?: string;
   selection: string;
+}
+
+export function OPTIONS(): Response {
+  return corsOptionsResponse();
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -42,7 +47,7 @@ export async function POST(req: Request): Promise<Response> {
       original_content: body.selection,
     });
 
-    return Response.json(result);
+    return Response.json(result, { headers: EXTENSION_CORS_HEADERS });
   } catch (err) {
     return respondToAuthError(err);
   }

@@ -162,6 +162,25 @@ function withCookieDomain(options: CookieOptions, domain: string | undefined): C
   return { ...options, domain };
 }
 
+// Extracts the raw JWT from an `Authorization: Bearer <token>` header.
+// Returns null if the header is absent or not a Bearer token.
+export function extractBearerToken(req: Request): string | null {
+  const auth = req.headers.get("Authorization");
+  return auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+}
+
+// Creates a Supabase client that authenticates via an explicit Bearer JWT
+// rather than session cookies. All PostgREST queries carry the token so
+// RLS applies under the user's identity. Call `supabase.auth.getUser(token)`
+// (not the no-arg form) to verify the JWT against Supabase's auth server.
+export function createBearerClient(token: string): SupabaseClient {
+  const { url, anonKey } = supabaseAnonConfig();
+  return createServerClient(url, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    cookies: { getAll: () => [], setAll: () => {} },
+  });
+}
+
 export function createRequestScopedClient(req: Request): SupabaseClient {
   const { url, anonKey } = supabaseAnonConfig();
   const cookies = parseCookieHeader(req.headers.get("cookie"));

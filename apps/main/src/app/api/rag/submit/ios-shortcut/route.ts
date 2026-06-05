@@ -2,17 +2,22 @@
 //
 // Accepts either text (Content-Type: application/json with { text, url? })
 // or a file (multipart/form-data with field 'file', identical to the
-// /api/rag/submit/file flow).
+// /api/rag/submit/file flow). Auth via Authorization: Bearer <token>.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { corsOptionsResponse, EXTENSION_CORS_HEADERS } from "@/lib/http/cors";
 
 interface TextBody {
   text: string;
   url?: string;
   title?: string;
+}
+
+export function OPTIONS(): Response {
+  return corsOptionsResponse();
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -54,7 +59,7 @@ export async function POST(req: Request): Promise<Response> {
       original_content: body.text,
     });
 
-    return Response.json(result);
+    return Response.json(result, { headers: EXTENSION_CORS_HEADERS });
   } catch (err) {
     return respondToAuthError(err);
   }

@@ -23,7 +23,7 @@ import {
 import { tryTestBypass } from "./test-bypass";
 import { isPermitted, type UserRole } from "./permission-grants";
 import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
-import { createRequestScopedClient } from "./ssr-client";
+import { createRequestScopedClient, createBearerClient, extractBearerToken } from "./ssr-client";
 import { getCachedUser } from "./get-cached-user";
 
 export type User = {
@@ -124,6 +124,46 @@ export async function assertPermission(
 
   const ctx = await tenantContextFromRequest(req);
 
+  const pathname = new URL(req.url).pathname;
+
+  // Bearer token path — used by the browser extension and iOS Shortcut.
+  // These clients cannot set HttpOnly cookies; they authenticate with a
+  // Supabase access_token sent as `Authorization: Bearer <jwt>`. Skip
+  // getCachedUser() (cookie-based) and verify the token directly.
+  // Sensitive routes (§17.7) are not reachable via Bearer — external
+  // clients lack the re-auth UI — so the re-auth check is omitted.
+  const bearerToken = extractBearerToken(req);
+  if (bearerToken) {
+    const supabase = createBearerClient(bearerToken);
+    const { data: bearerData, error: bearerErr } = await supabase.auth.getUser(bearerToken);
+    if (bearerErr || !bearerData.user) {
+      throw new Error("assertPermission: invalid or expired bearer token.");
+    }
+    const pending = await getConsentPending(bearerData.user.id);
+    if (pending.length > 0) {
+      throw new ConsentPendingError(pathname, pending);
+    }
+    const { data: bearerRow, error: bearerRowErr } = await supabase
+      .from("users")
+      .select("id, auth_user_id, tenant_id, status, role")
+      .eq("auth_user_id", bearerData.user.id)
+      .eq("tenant_id", ctx.tenant_id)
+      .maybeSingle();
+    if (bearerRowErr) {
+      throw new Error(`assertPermission: DB error: ${bearerRowErr.message}`);
+    }
+    if (!bearerRow || (bearerRow as { status: string }).status !== "active") {
+      throw new Error(
+        "assertPermission: user is not an active member of the resolved tenant.",
+      );
+    }
+    const bearerUser = bearerRow as User;
+    if (!isPermitted(bearerUser.role, opts.resource, opts.action)) {
+      throw new AuthForbidden(opts.resource, opts.action, bearerUser.role);
+    }
+    return { ctx, user: bearerUser };
+  }
+
   // #679 — getCachedUser shares one supabase.auth.getUser() round-trip
   // with the (tenant)/layout's getSiteHeaderProps for server-rendered
   // pages. On pure /api/* routes there's no layout above, so the cache
@@ -140,8 +180,6 @@ export async function assertPermission(
   // session payload is identical to what the cached client would see —
   // see the "SAFETY DEPENDS ON CALL ORDER" block on the getSession use.
   const supabase = createRequestScopedClient(req);
-
-  const pathname = new URL(req.url).pathname;
 
   // §17.4 Versioned consent gate. If the caller has pending user_consent_pending
   // rows (new document version published since their last acceptance), block
