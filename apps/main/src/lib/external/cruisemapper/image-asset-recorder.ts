@@ -21,7 +21,9 @@ const HOST_ALLOWLIST = new Set<string>([
   "cdn.cruisemapper.com",
 ]);
 
-const IMAGE_EXT_RE = /\.(png|jpg|jpeg|webp)(\?.*)?$/i;
+// CruiseMapper publishes deck plan images as .gif (/images/deckplans/<hex>.gif),
+// so gif must be allowed alongside the photographic formats.
+const IMAGE_EXT_RE = /\.(png|jpg|jpeg|webp|gif)(\?.*)?$/i;
 
 export interface RecordImageInput {
   imageUrl: string;

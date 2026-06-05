@@ -5,7 +5,7 @@
 // requires `/` after the prefix so only true detail URLs survive.
 
 import { describe, expect, it } from "vitest";
-import { extractDetailUrls } from "../../../src/lib/external/cruisemapper/discovery";
+import { extractDetailUrls, extractDeckPlanLinks } from "../../../src/lib/external/cruisemapper/discovery";
 
 const BASE = "https://www.cruisemapper.com";
 
@@ -82,5 +82,52 @@ describe("extractDetailUrls — URL shape filter", () => {
     const urls = extractDetailUrls(html, BASE, "/ships");
     expect(urls).toHaveLength(2);
     expect(urls).toContain("https://www.cruisemapper.com/ships/Norwegian-Prima-2216");
+  });
+});
+
+describe("extractDeckPlanLinks — combined gallery URL filter (#768)", () => {
+  const SHIP_URL = "https://www.cruisemapper.com/ships/Carnival-Horizon-1355";
+
+  it("keeps the /deckplans/<slug> combined gallery link (absolute + relative dedup)", () => {
+    const html = `
+      <html><body>
+        <a href="https://www.cruisemapper.com/deckplans/Carnival-Horizon-1355">Deck plans</a>
+        <a href="/deckplans/Carnival-Horizon-1355">Deck plans</a>
+      </body></html>
+    `;
+    expect(extractDeckPlanLinks(html, SHIP_URL)).toEqual([
+      "https://www.cruisemapper.com/deckplans/Carnival-Horizon-1355",
+    ]);
+  });
+
+  it("drops the bare /deckplans index and the per-deck sub-pages", () => {
+    const html = `
+      <html><body>
+        <a href="/deckplans">All deck plans</a>
+        <a href="/deckplans/Carnival-Horizon-1355">Gallery</a>
+        <a href="/deckplans/Carnival-Horizon-1355/deck01-3956">Deck 01</a>
+        <a href="/deckplans/Carnival-Horizon-1355/deck12-3967">Deck 12</a>
+      </body></html>
+    `;
+    expect(extractDeckPlanLinks(html, SHIP_URL)).toEqual([
+      "https://www.cruisemapper.com/deckplans/Carnival-Horizon-1355",
+    ]);
+  });
+
+  it("strips fragments + query strings and ignores off-host links", () => {
+    const html = `
+      <html><body>
+        <a href="https://example.com/deckplans/Spoof-1">External</a>
+        <a href="/deckplans/Carnival-Horizon-1355?from=ship#decks">Gallery</a>
+      </body></html>
+    `;
+    expect(extractDeckPlanLinks(html, SHIP_URL)).toEqual([
+      "https://www.cruisemapper.com/deckplans/Carnival-Horizon-1355",
+    ]);
+  });
+
+  it("returns nothing when the ship page has no deck-plans link", () => {
+    const html = `<html><body><a href="/ships/Carnival-Horizon-1355">Ship</a></body></html>`;
+    expect(extractDeckPlanLinks(html, SHIP_URL)).toEqual([]);
   });
 });

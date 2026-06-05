@@ -243,8 +243,9 @@ async function processKind(
         destination: port.portName,
       };
     } else {
-      // BP37 deck plans: record each image as a hot-linked asset,
-      // collect the asset IDs, then ingest the chunk with related_asset_ids.
+      // BP37 deck plans: one combined gallery page per ship → record each
+      // deck's image as a hot-linked asset, collect the asset IDs, then ingest
+      // a single per-ship chunk with related_asset_ids.
       const deck = parsed as NonNullable<ReturnType<typeof parseDeckPlanPage>>;
       const assetIds: string[] = [];
       for (const img of deck.images) {
@@ -252,16 +253,15 @@ async function processKind(
           imageUrl: img.imageUrl,
           sourcePageUrl: url,
           shipSlug: deck.shipSlug,
-          deckNumber: deck.deckNumber,
+          deckNumber: img.deckNumber,
           caption: img.caption,
           width: img.width,
           height: img.height,
         });
         if (rec.status === "recorded" && rec.asset_id) assetIds.push(rec.asset_id);
       }
-      const deckSlug = `${deck.shipSlug}-deck-${String(deck.deckNumber ?? "?").padStart(2, "0")}`;
       payload = {
-        source_identifier: `cruisemapper:deck:${deckSlug}`,
+        source_identifier: `cruisemapper:deck:${deck.shipSlug}`,
         category: "deck_intel" as const,
         text: deck.text,
         source_url: url,
