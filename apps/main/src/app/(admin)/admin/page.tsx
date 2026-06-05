@@ -33,6 +33,7 @@ const SECTIONS = [
     heading: "Support & Operations",
     items: [
       { href: "/admin/help-triage",          label: "Help Triage",              desc: "Review bug submissions, feature requests, and help sessions across all tenants." },
+      { href: "/admin/reconciliation",        label: "Commission Reconciliation",  desc: "Upload a CSV commission statement to auto-match line items against open bookings." },
       { href: "/admin/resources",            label: "Cost & Resource Monitoring", desc: "30-day cost trends, per-model AI breakdown, tenant threshold table, pricing catalog." },
       { href: "/admin/vendor-status",        label: "Vendor Status",            desc: "Live snapshot of vendor health (AI, email, weather, payment processors)." },
       { href: "/admin/email-samples",        label: "Email Samples",            desc: "Preview and test-send any platform email template via Resend." },

@@ -21,11 +21,11 @@ import { RESOLVED_TENANT_ID_HEADER } from "../tenancy/header-names";
 
 /**
  * Derives a tenant context from an HTTP request. Middleware (proxy.ts) sets
- * `x-resolved-tenant-id` from the host. The user's session lives in the
- * HttpOnly cookies set by /api/auth/callback and refreshed by middleware;
- * createRequestScopedClient reads them through @supabase/ssr. We verify the
- * user has an active `users` row for the named tenant under the user's own
- * JWT so RLS applies.
+ * `x-resolved-tenant-id` from the host. Auth is resolved from either an
+ * `Authorization: Bearer <token>` header (extension/iOS Shortcut paths) or
+ * the HttpOnly session cookies set by /api/auth/callback (browser paths). We
+ * verify the user has an active `users` row for the named tenant under the
+ * user's own JWT so RLS applies.
  */
 export async function tenantContextFromRequest(
   req: Request,

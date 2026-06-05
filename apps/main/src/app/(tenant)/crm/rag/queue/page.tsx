@@ -10,6 +10,7 @@
 import React, { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { FileDropZone } from "@/components/ui/file-drop-zone";
 
 const TEXT_INPUT_CLS =
   "rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
@@ -169,6 +170,15 @@ export default function RagQueuePage() {
         Approve good content; reject anything that&apos;s incorrect, off-topic, or contains private
         customer info that wasn&apos;t caught by the redactor.
       </p>
+
+      <FileDropZone
+        accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,application/vnd.ms-excel,.xls,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx,application/vnd.ms-powerpoint,.ppt,text/plain,.txt,text/markdown,.md,text/html,.html,image/jpeg,.jpg,.jpeg,image/png,.png"
+        acceptLabel="PDF, Word, Excel, PowerPoint, text, or image"
+        maxBytes={52_428_800}
+        endpoint="/api/rag/submit/file"
+        onSuccess={() => { load(); }}
+        className="mb-6"
+      />
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>

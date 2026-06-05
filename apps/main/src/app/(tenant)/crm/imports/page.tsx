@@ -7,6 +7,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { FileDropZone } from "@/components/ui/file-drop-zone";
 
 interface ImportItem {
   id: string;
@@ -122,6 +123,15 @@ export default function ImportsReviewPage() {
           + Manual entry
         </Link>
       </div>
+
+      <FileDropZone
+        accept="application/pdf,.pdf"
+        acceptLabel="PDF only"
+        maxBytes={10 * 1024 * 1024}
+        endpoint="/api/imports/upload"
+        onSuccess={() => { void fetchItems(); }}
+        className="mb-6"
+      />
 
       <div className="flex gap-3 mb-4">
         <select
