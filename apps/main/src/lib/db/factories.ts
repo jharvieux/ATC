@@ -16,7 +16,7 @@
 
 import type { TenantContext } from "./tenant-context";
 import { tryTestBypass } from "../auth/test-bypass";
-import { createRequestScopedClient } from "../auth/ssr-client";
+import { createRequestScopedClient, createBearerClient, extractBearerToken } from "../auth/ssr-client";
 import { RESOLVED_TENANT_ID_HEADER } from "../tenancy/header-names";
 
 /**
@@ -63,9 +63,14 @@ export async function tenantContextFromRequest(
     };
   }
 
-  const supabase = createRequestScopedClient(req);
+  const bearerToken = extractBearerToken(req);
+  const supabase = bearerToken
+    ? createBearerClient(bearerToken)
+    : createRequestScopedClient(req);
 
-  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  const { data: userData, error: userErr } = bearerToken
+    ? await supabase.auth.getUser(bearerToken)
+    : await supabase.auth.getUser();
   if (userErr || !userData?.user) {
     throw new Error(
       "tenantContextFromRequest: invalid or expired access token.",

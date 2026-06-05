@@ -117,6 +117,12 @@ const PUBLIC_ROUTE_ALLOWLIST: Array<{ pattern: RegExp; reason: string }> = [
       "§TN — public travel news ticker; read-only, no PII. Deny-all RLS on authenticated roles; " +
       "service-role read filtered to relevance_score≥60 non-hidden articles only.",
   },
+  {
+    pattern: /\/api\/extension\/config\/route\.ts$/,
+    reason:
+      "§22.9 — returns NEXT_PUBLIC_SUPABASE_URL + anon key so the browser extension can " +
+      "bootstrap auth. Both values are already in the JS bundle; no secrets are disclosed.",
+  },
 ];
 
 function findAuthTokensInSource(filePath: string): string[] {

@@ -43,6 +43,8 @@ vi.mock("@/lib/auth/get-cached-user", () => ({
 }));
 
 vi.mock("@/lib/auth/ssr-client", () => ({
+  extractBearerToken: () => null,
+  createBearerClient: () => ({}),
   createRequestScopedClient: () => ({
     from: () => ({
       select: () => ({

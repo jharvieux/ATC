@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "ATC Knowledge Base Clipper",
+  "version": "1.0.0",
+  "description": "Save content to your AI Travel Concierge knowledge base while browsing cruise and travel supplier sites.",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "cookies",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ATC Knowledge Base Clipper"
+  }
+}

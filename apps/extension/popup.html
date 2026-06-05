@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATC Knowledge Base Clipper</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      color: #111;
+      background: #fff;
+      width: 320px;
+      padding: 16px;
+    }
+    h1 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { color: #666; font-size: 12px; margin-bottom: 16px; }
+    .status-box {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+    .status-box.connected { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .status-box.disconnected { background: #fff7ed; border: 1px solid #fed7aa; }
+    .status-box.info { background: #eff6ff; border: 1px solid #bfdbfe; }
+    .status-label { font-weight: 600; margin-bottom: 4px; }
+    .platform-url { color: #666; font-size: 12px; word-break: break-all; }
+    .instruction {
+      color: #555;
+      font-size: 13px;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 10px;
+      outline: none;
+    }
+    input:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+    button {
+      width: 100%;
+      padding: 9px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #4338ca; }
+    .btn-secondary { background: #f3f4f6; color: #374151; margin-top: 8px; }
+    .btn-secondary:hover:not(:disabled) { background: #e5e7eb; }
+    .btn-danger { background: #fef2f2; color: #dc2626; margin-top: 8px; border: 1px solid #fecaca; }
+    .btn-danger:hover:not(:disabled) { background: #fee2e2; }
+    .error { color: #dc2626; font-size: 12px; margin-top: 6px; }
+    .hint { color: #6b7280; font-size: 12px; margin-top: 8px; text-align: center; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>ATC Knowledge Clipper</h1>
+  <p class="subtitle">AI Travel Concierge</p>
+
+  <!-- Connected view -->
+  <div id="connected-view" class="hidden">
+    <div class="status-box connected">
+      <div class="status-label">✓ Connected</div>
+      <div class="platform-url" id="display-platform-url"></div>
+    </div>
+    <p class="instruction">
+      Select text on any cruise or travel supplier page, right-click, and choose
+      <strong>Add to ATC Knowledge Base</strong>.
+    </p>
+    <button class="btn-danger" id="disconnect-btn">Disconnect</button>
+  </div>
+
+  <!-- Enter URL view -->
+  <div id="connect-view" class="hidden">
+    <div class="status-box disconnected">
+      <div class="status-label">Not connected</div>
+      <div>Enter your platform URL to connect.</div>
+    </div>
+    <label for="tenant-url">Platform URL</label>
+    <input id="tenant-url" type="url" placeholder="https://yourteam.atcplatform.com" />
+    <button class="btn-primary" id="connect-btn">Connect</button>
+    <div class="error hidden" id="connect-error"></div>
+  </div>
+
+  <!-- Sign-in required view -->
+  <div id="needs-signin-view" class="hidden">
+    <div class="status-box info">
+      <div class="status-label">Sign in required</div>
+      <div class="platform-url" id="signin-platform-url"></div>
+    </div>
+    <p class="instruction">
+      Sign in to your platform using Google, Microsoft, or Facebook, then return here.
+    </p>
+    <button class="btn-primary" id="open-platform-btn">Open platform to sign in</button>
+    <button class="btn-secondary" id="recheck-btn">I've signed in — connect</button>
+    <button class="btn-secondary" id="change-url-btn">Use a different URL</button>
+  </div>
+
+  <!-- Loading view -->
+  <div id="loading-view">
+    <p class="instruction">Loading…</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

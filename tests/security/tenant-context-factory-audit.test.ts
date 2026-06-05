@@ -72,6 +72,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("throws when the cookie session does not resolve to an auth user", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: { getUser: async () => ({ data: null, error: { message: "invalid jwt" } }) },
         from: () => ({
@@ -94,6 +96,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("throws when authenticated user has no active membership in the resolved tenant", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
@@ -129,6 +133,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("throws when the user-row lookup itself errors", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
@@ -163,6 +169,8 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
 
   it("returns the resolved context when the cookie session names an active member (no Bearer required)", async () => {
     vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: () => null,
+      createBearerClient: () => ({}),
       createRequestScopedClient: () => ({
         auth: {
           getUser: async () => ({
@@ -193,6 +201,53 @@ describe("tenantContextFromRequest — adversarial inputs", () => {
     const ctx = await tenantContextFromRequest(req);
     expect(ctx.tenant_id).toBe("tenant-uuid-here");
     expect(ctx.source).toEqual({ kind: "http_request", user_id: "auth-user-1" });
+  });
+
+  it("uses bearer client when Authorization: Bearer header present, not cookie client", async () => {
+    let cookieClientCalled = false;
+    vi.doMock("@/lib/auth/ssr-client", () => ({
+      extractBearerToken: (req: Request) => {
+        const auth = req.headers.get("Authorization");
+        return auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+      },
+      createBearerClient: () => ({
+        auth: {
+          getUser: async (_token: string) => ({
+            data: { user: { id: "auth-user-bearer" } },
+            error: null,
+          }),
+        },
+        from: () => ({
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { id: "u-bearer", status: "active" },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+      createRequestScopedClient: () => {
+        cookieClientCalled = true;
+        throw new Error("cookie client must not be called on bearer path");
+      },
+    }));
+    const { tenantContextFromRequest } = await import(
+      "../../apps/main/src/lib/db/factories"
+    );
+    const req = new Request("https://atc.example/api/x", {
+      headers: {
+        "x-resolved-tenant-id": "tenant-uuid-here",
+        Authorization: "Bearer test-jwt",
+      },
+    });
+    const ctx = await tenantContextFromRequest(req);
+    expect(cookieClientCalled).toBe(false);
+    expect(ctx.tenant_id).toBe("tenant-uuid-here");
+    expect(ctx.source).toEqual({ kind: "http_request", user_id: "auth-user-bearer" });
   });
 });
 
