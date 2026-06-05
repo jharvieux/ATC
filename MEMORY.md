@@ -4,6 +4,33 @@ Newest entries on top.
 
 ---
 
+## D-152 — 2026-06-04 — Stale-onboarding tenants auto-suspended after 14 days
+
+**Decision.** Tenants in `status='onboarding'` for more than 14 days (since `created_at`) get auto-flipped to `status='suspended'` by a nightly cron (`onboarding-stale-suspend`), with two carve-outs: `is_platform_internal=true` (#699) and `onboarding_stage IN ('review_submitted', 'complete')`. Platform admins can manually re-activate any tenant caught by the sweep.
+
+**Why.** `derivePaymentState` early-returns `isPaying: true` for any tenant in onboarding status (apps/main/src/lib/billing/payment-state.ts:64-69). The implicit assumption was that onboarding leads to active+paying quickly, but nothing actually enforced that. A SaaS customer who signed up but never completed Stripe checkout would stay in onboarding indefinitely and keep using paid features (chat, RAG, etc.) for free — a real abuse vector surfaced during #699 (Booking-tenant billing exemption) review.
+
+**Why 14 days specifically.** Short enough to deter the abuse vector (a customer who's serious finishes setup within a couple of weeks), long enough that legitimate customers who take their time setting up don't get cut off mid-flow. Anyone caught by mistake can be manually re-activated by a platform admin.
+
+**Rejected.**
+- Route-level guard restricting onboarding tenants to `/onboarding/*` paths. Too invasive — would also break legitimate onboarding flows that bounce through other routes (e.g., legal docs at `/legal/*` are reached during the `legal` stage). The cron approach is a cheaper backstop that catches abandonment without changing in-flight UX.
+- Stricter `derivePaymentState` (e.g., onboarding exemption only valid for ≤7 days since signup). Considered but rejected because it changes a hot-path behavior used by every request — the cron is more surgical and the suspension is observable (status flip) instead of silent payment-gate revocation.
+- Shorter window (7 days). Discussed but felt punitive — some legitimate customers may take time gathering Stripe Connect tax forms, business licenses, etc. The 7-day grace window in `derivePaymentState` (NON_PAYING_GRACE_DAYS) is already for tenants who DID get past checkout, so doubling it for onboarding-abandonment felt like the right balance.
+
+**Carve-outs explained.**
+- `is_platform_internal=true` exempt: ATC-owned tenants (Booking) shouldn't get auto-suspended (would gate the platform out of its own surface).
+- `onboarding_stage='review_submitted'`: tenant has completed their submission and is awaiting platform-admin review. Suspending them would punish the customer for an internal SLA failure.
+- `onboarding_stage='complete'`: shouldn't co-occur with `status='onboarding'` but the row could exist mid-webhook-race. Skip defensively.
+
+**Related artifacts.**
+- Issue #700 (opened, closed by the PR shipping this decision)
+- Cron: `apps/main/src/inngest/onboarding-stale-suspend.ts`
+- Audit trail: every auto-suspension writes one `audit_log` row with `actor_type='system'`, `action='tenant.auto_suspended_stale_onboarding'`
+- See D-148 / D-149 for related billing-gate-semantics decisions
+- See D-151 for the related `is_platform_internal` flag introduction
+
+---
+
 ## D-151 — 2026-06-04 — RAG service env vars: SUPABASE_RAG_* is canonical; do NOT rely on the NEXT_PUBLIC_SUPABASE_URL fallback
 
 **Decision.** All new rag code reading the rag Supabase MUST use `SUPABASE_RAG_URL` + `SUPABASE_RAG_SERVICE_ROLE_KEY` directly, with no fallback. The atc-rag Vercel Production env now carries both. The older fallback pattern (`process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL`) in some files is legacy — do not replicate it in new modules.
