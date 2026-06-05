@@ -102,7 +102,7 @@ export async function finalizeTermination(
   return { finalized: true };
 }
 
-async function onTerminated(
+export async function onTerminated(
   db: ReturnType<typeof createServiceRoleClient>,
   tenantId: string,
   kind: "voluntary" | "involuntary_content" | "involuntary_other",
