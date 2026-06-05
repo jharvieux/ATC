@@ -70,7 +70,7 @@ const envSchema = z.object({
   // INTER_SERVICE_JWT_*; operator chose to keep the existing SERVICE_JWT_
   // prefix. See docs/env-audit.md and MEMORY D-062.)
   SERVICE_JWT_PRIVATE_KEY: z.string().min(1),
-  SERVICE_JWT_KEY_ID: z.string().min(1),
+  SERVICE_JWT_KEY_ID_CURRENT: z.string().min(1),
   SERVICE_JWT_TTL_SECONDS: z.coerce.number().int().positive().optional().default(300),
   // RAG service sync (§8.7)
   RAG_SERVICE_URL: z.string().url(),

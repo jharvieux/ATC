@@ -36,9 +36,9 @@ export interface SignServiceJwtOptions {
 let cachedKey: { kid: string; key: CryptoKey } | null = null;
 
 async function getSigningKey(): Promise<{ kid: string; key: CryptoKey }> {
-  const kid = process.env.SERVICE_JWT_KEY_ID;
+  const kid = process.env.SERVICE_JWT_KEY_ID_CURRENT;
   const pemRaw = process.env.SERVICE_JWT_PRIVATE_KEY;
-  if (!kid) throw new Error("signServiceJwt: SERVICE_JWT_KEY_ID not set");
+  if (!kid) throw new Error("signServiceJwt: SERVICE_JWT_KEY_ID_CURRENT not set");
   if (!pemRaw) throw new Error("signServiceJwt: SERVICE_JWT_PRIVATE_KEY not set");
 
   if (cachedKey && cachedKey.kid === kid) return cachedKey;

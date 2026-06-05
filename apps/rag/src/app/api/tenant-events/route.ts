@@ -6,6 +6,7 @@
 // RAG_WEBHOOK_SECRET.
 export const dynamic = "force-dynamic";
 
+import { timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
@@ -50,7 +51,14 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "server_misconfigured" }, { status: 500 });
   }
   const expected = await hmacHex(secret, rawBody);
-  if (sigHeader !== expected) {
+  // Both sides are lowercase hex strings from hmacHex(); Buffer.from(str)
+  // defaults to UTF-8, comparing character bytes — correct for hex comparison.
+  // Length parity check prevents the Buffer.byteLength mismatch throw.
+  if (
+    !sigHeader ||
+    sigHeader.length !== expected.length ||
+    !timingSafeEqual(Buffer.from(sigHeader), Buffer.from(expected))
+  ) {
     return Response.json({ error: "invalid_signature" }, { status: 401 });
   }
 

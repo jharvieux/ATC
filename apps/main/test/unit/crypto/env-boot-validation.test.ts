@@ -25,7 +25,7 @@ function baseEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
     INNGEST_SIGNING_KEY: "signkey",
     INNGEST_EVENT_KEY: "eventkey",
     SERVICE_JWT_PRIVATE_KEY: "privkey",
-    SERVICE_JWT_KEY_ID: "kid1",
+    SERVICE_JWT_KEY_ID_CURRENT: "kid1",
     RAG_SERVICE_URL: "https://rag.test.example.com",
     RAG_WEBHOOK_SECRET: "rag-secret",
     APP_ENCRYPTION_KEY_CURRENT: APP_KEY_B64,

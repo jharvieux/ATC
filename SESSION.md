@@ -1,34 +1,34 @@
-# Session state — last updated 2026-06-04 21:05 UTC
+# Session state — last updated 2026-06-05 17:00 UTC
 
 ## Just completed
-
-- **PR #704 merged** — onboarding-stale-suspend cron (closes #700). Nightly Inngest cron flips `status='onboarding' → 'suspended'` for tenants stale > 14d, with carve-outs for `is_platform_internal=true` (#699) and `onboarding_stage IN ('review_submitted', 'complete')`. CAS-guarded UPDATE, throws on DB error so Inngest retries. 7 tests verify filter shape, CAS guard, audit-row gating, SELECT/UPDATE error paths. Audits clean.
-- **PR #705 merged** — inline Logo + LogoMark SVGs (closes #670). Replaces dual `<img src>` (fetches both light + reverse variants every page load) with inline SVG JSX. Single `<svg>` with shared `<defs>` namespaced via `React.useId()` for multi-instance safety. A11y contract preserved (role/aria-label vs aria-hidden).
-- **PR #706 merged** — nightly RAG cost reconciler (closes #692). Cron at 04:30 UTC reads `rag_ai_call_log` from RAG DB and calls atomic `reconcile_rag_cost_row` RPC on main DB. PL/pgSQL function does ledger-INSERT (PK on `rag_log_id` for retry-safe dedup) + `increment_tenant_ai_cost` in one TX. New migration includes explicit no-user RLS deny policies per §30.8 lint gate. 9 tests including keyset-pagination tuple-compare shape + BIGINT `.toString()` round-trip. See D-153.
-- **PR #707 merged** — Logo + LogoMark sizes bumped 1.75× across all 6 call sites (per user request). for-agencies nav row grew from `h-16` to `h-20` to keep margins around the larger 49px logo. Audits clean.
-- **#384 closed** — split into **#708** (Cross-Tenant Probe fixtures, blocked on #386) and **#709** (E2E fixme'd specs, blocked on #386). Issue 2 was already fixed by PR #632; only Item 1 + Item 3 had residual work and both depend on the test DB harness.
+- Ran `/triage apps/main/src/VULN-FINDINGS.json --repo apps/main/src` (3-vote adversarial verifiers): 44 findings → 20 TP, 13 needs-manual-test, 10 FP, 1 duplicate
+- Updated all 43 GitHub issues (#715–#757) with triage verdicts, severity, labels (`triage:confirmed` / `triage:false-positive` / `triage:needs-manual-test` / `triage:duplicate`), and closed 10 FP + 1 duplicate
+- Wrote `apps/main/src/TRIAGE.json` + `apps/main/src/TRIAGE.md` (ranked output)
+- Opened PR #758 `feature/rag-security-day1` — RAG day-1 remediation:
+  - f020 (#733): SERVICE_JWT_KEY_ID → SERVICE_JWT_KEY_ID_CURRENT (env var alignment, signer + env.ts + .env.example)
+  - f007/f008 (#724): timingSafeEqual HMAC in tenant-events + platform-settings-events
+  - f038 (#751): fail-closed on involuntary_content termination (Inngest throw)
+  - f017 (#731): content_hash SHA-256 in approve/tenant, approve/global, replace-chunk
 
 ## In flight
-
-Nothing in flight — clean checkpoint. On `dev`, no uncommitted code changes (SESSION.md + MEMORY.md edits being committed alongside this update).
+- PR #758 feature/rag-security-day1 — audit agents running (D-091 + pre-PR)
 
 ## Next step
-
-Next session should pick a tractable issue. Current open-issue snapshot:
-
-- **Needs #386 first**: #708, #709 (test DB harness must land before either can move).
-- **Needs your input**: #386 (Supabase project provisioning — a dashboard task).
-- **Operator decisions blocking**: #500, #473, #430, #429, #428.
-- **External state blocked**: #534 (DB_URL secret), #533 (staging DB), #659 / #660 (GitHub repo settings UI).
-- **Tracking epics, not actionable**: #427, #426, #444.
+- Wait for audit agents on PR #758 to complete; fix any findings; merge
+- Address remaining confirmed HIGH TPs not in PR #758:
+  - f001 (#715): cross-tenant trip_resources read — service-role query missing tenant_id
+  - f028 (#741): quote acceptance TOCTOU — public route needs CAS status guard
+  - f022 (#735): OTP brute-force — needs Redis in main app (user decision: see open question)
+  - f012 (#716): PII bypass via reviewer edits — needs product scoping
+- Medium TPs: f002 (#719), f003 (#717), f033 (#746), f034 (#747), f024 (#737), f014 (#727), f021 (#734), f023 (#736), f027 (#740), f031 (#744), f035 (#748)
 
 ## Blocked on user
-
-- **#386** — provisioning a dedicated test Supabase project. Once that's done, #708 and #709 become tractable code work.
-- **MEMORY D-152 cross-reference inaccuracy** — still flagged. References D-148/D-149 as "billing-gate-semantics" and D-151 as `is_platform_internal` introduction; both wrong (D-148 is UX redesign, D-149 is follow-up-issue rule, D-151 is RAG env var canonicalization). Hook is append-only; fix path is a D-153 acknowledgment ONLY with explicit user permission. **Update**: D-153 was used for the RAG reconciler arch decision (this session); a D-154+ entry is the path if you want to acknowledge the D-152 errata.
+- **#386** — provisioning a dedicated test Supabase project. Blocks #708 and #709.
+- **#712** — long-lived token for iOS Shortcut. Needs design decision on UX and DB schema.
+- **#735 (f022)** — OTP brute-force: Redis is already in RAG service but not `apps/main`. Fixing properly requires adding Redis to main — confirm before starting.
+- **#716 (f012)** — PII bypass: which PII fields should be re-checked on `body.edits.content`? Same Haiku pipeline as ingest?
+- **#734 (f021)** — Decompression bomb: what cap value for `MAX_EXTRACTED_CHARS`? (5MB? 10MB? Affects large document quality.)
 
 ## Open questions
-
-- Should the RAG cost reconciler's lookback window scale with cron frequency, or is the 25h fixed value fine for a daily run? Currently hardcoded; test asserts 25h. Not blocking.
-- Should `rag_cost_reconcile_ledger` have a TTL purge cron to bound growth? Index on `reconciled_at` exists for it. Not blocking; only a concern after embedding traffic stabilizes.
-- Model: this session ran on Opus 4.7 throughout. Per CLAUDE.md end-of-session protocol, the model should be switched back to Sonnet for the next session via `/model claude-sonnet-4-6`.
+- f044 comment at line 114-116 (apps/rag/src/app/api/retrieve/route.ts) has a documentation inaccuracy — low priority doc fix
+- Dead 307 multipart branch in `ios-shortcut/route.ts` — pre-existing nit from prior session

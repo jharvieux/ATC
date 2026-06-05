@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-154 — 2026-06-05 — RAG security day-1: 4 fixes shipped in PR #758; 3 decisions deferred pending user input
+
+**Decision.** Shipped `feature/rag-security-day1` (PR #758) with 4 confirmed triage findings:
+- f020: `SERVICE_JWT_KEY_ID` → `SERVICE_JWT_KEY_ID_CURRENT` in signer + env schema (HIGH — key rotation was broken)
+- f007/f008: `timingSafeEqual` HMAC comparison in both RAG webhook routes (MEDIUM)
+- f038: fail-closed throw on `involuntary_content` termination in Inngest (HIGH per D-091)
+- f017: `content_hash` SHA-256 in approve/tenant, approve/global, replace-chunk (LOW)
+
+**Deferred (user decisions pending):**
+- f022 (#735): OTP brute-force — requires Redis in `apps/main`; user must confirm this scope before building
+- f012 (#716): PII bypass via `body.edits.content` — requires clarifying which PII categories to re-check and whether to re-run full Haiku ingest pipeline
+- f021 (#734): Decompression bomb cap — requires product decision on `MAX_EXTRACTED_CHARS` value (quality vs. security trade-off for large documents)
+
+**Why deferred.** Each of the three requires a scope or product decision that could have unintended cost or quality side-effects. Shipping without alignment would be guessing on the user's behalf.
+
+**Rejected.** Fixing all 20 confirmed TPs in one PR — too large a blast radius and multiple require product input.
+
+---
+
 ## D-153 — 2026-06-04 — RAG embedding cost flows to main via nightly Inngest reconciler (not direct cross-service write)
 
 **Decision.** A nightly Inngest cron at 04:30 UTC reads recent `rag_ai_call_log` rows from the RAG DB (via `getRagReadClient`) and calls an atomic `reconcile_rag_cost_row` RPC on main DB that does ledger-INSERT + `increment_tenant_ai_cost` in a single PL/pgSQL transaction. Per-row idempotency comes from a new `rag_cost_reconcile_ledger` table with `rag_log_id` as PRIMARY KEY. Lookback window is 25h (cron interval + 1h safety margin) so no row falls through the seam between runs. Rows with `tenant_id IS NULL` (platform overhead) and `PLATFORM_SENTINEL_TENANT_ID` (cross-tenant cron embeddings) are skipped.

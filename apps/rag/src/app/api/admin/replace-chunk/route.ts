@@ -11,6 +11,7 @@
 //   global chunks → service_identifier must be 'platform-admin'
 export const dynamic = "force-dynamic";
 
+import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
 import { embedWithUsage } from "@/lib/embeddings/openai";
@@ -106,7 +107,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
   const update: Record<string, unknown> = {
     content: body.content,
-    content_hash: Buffer.from(body.content).toString("base64").slice(0, 64),
+    content_hash: createHash("sha256").update(body.content).digest("hex"),
     updated_at: new Date().toISOString(),
   };
   if (!batchEnabled && embedding) {

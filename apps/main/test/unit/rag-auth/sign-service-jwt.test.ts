@@ -29,7 +29,7 @@ describe("signServiceJwt", () => {
 
   beforeEach(() => {
     process.env.SERVICE_JWT_PRIVATE_KEY = TEST_PRIVATE_KEY_PEM;
-    process.env.SERVICE_JWT_KEY_ID = "test-key-v1";
+    process.env.SERVICE_JWT_KEY_ID_CURRENT = "test-key-v1";
     _resetSigningKeyCacheForTests();
   });
 
@@ -98,10 +98,10 @@ describe("signServiceJwt", () => {
     ).rejects.toThrow(/SERVICE_JWT_PRIVATE_KEY/);
   });
 
-  it("throws clearly when SERVICE_JWT_KEY_ID is missing", async () => {
-    delete process.env.SERVICE_JWT_KEY_ID;
+  it("throws clearly when SERVICE_JWT_KEY_ID_CURRENT is missing", async () => {
+    delete process.env.SERVICE_JWT_KEY_ID_CURRENT;
     await expect(
       signServiceJwt({ tenant_id: "00000000-0000-0000-0000-000000000001", scope: "read" }),
-    ).rejects.toThrow(/SERVICE_JWT_KEY_ID/);
+    ).rejects.toThrow(/SERVICE_JWT_KEY_ID_CURRENT/);
   });
 });

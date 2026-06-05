@@ -102,7 +102,7 @@ export async function finalizeTermination(
   return { finalized: true };
 }
 
-async function onTerminated(
+export async function onTerminated(
   db: ReturnType<typeof createServiceRoleClient>,
   tenantId: string,
   kind: "voluntary" | "involuntary_content" | "involuntary_other",
@@ -154,6 +154,12 @@ async function onTerminated(
   if (!response.ok) {
     const text = await response.text();
     console.error("[tenant-on-terminated] RAG chunk marking failed: %s %s", response.status, text);
-    // Non-fatal — chunk marking can be retried via admin action.
+    if (kind === "involuntary_content") {
+      // §15.14.3 requires involuntary_content chunks to reach the pending review
+      // queue. Throw to trigger Inngest retry — fail-closed per D-091.
+      throw new Error(`RAG chunk marking failed for involuntary_content termination (${response.status}): ${text}`);
+    }
+    // voluntary / involuntary_other: chunk status update is advisory; admin can
+    // retry via the RAG curation panel if needed.
   }
 }

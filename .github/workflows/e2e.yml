@@ -44,7 +44,7 @@ jobs:
       INNGEST_SIGNING_KEY: signkey-ci-placeholder
       INNGEST_EVENT_KEY: eventkey-ci-placeholder
       SERVICE_JWT_PRIVATE_KEY: ci-placeholder-service-jwt-private-key
-      SERVICE_JWT_KEY_ID: v1
+      SERVICE_JWT_KEY_ID_CURRENT: v1
       RAG_SERVICE_URL: http://localhost:3001
       RAG_WEBHOOK_SECRET: ci-placeholder-rag-webhook-secret
       APP_ENCRYPTION_KEY_CURRENT: YoOSb0MA3sHr9bR5Li7pLTkMNLfF01LbENEGOrYN99Y=
