@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-158 — 2026-06-05 — CruiseMapper crons restructured: sailing decoupled to a durable monthly cron; per-URL Inngest steps (supersedes D-126 one-fetch design)
+
+Three PRs this session reworked the CruiseMapper ingest crons after they were found broken / timing out once the RAG env fixes (#766 Redis unreachable, #767 stale RAG service-role key) let ingestion actually run:
+- **#769** — deck-plan discovery never worked: it searched for `/ships/<slug>/deck-NN` links, but CruiseMapper publishes one combined `/deckplans/<Ship-Slug-Id>` gallery page per ship (confirmed by live fetch). Discovery + parser rewritten (one per-ship chunk); `.gif` added to the image-recorder extension allowlist (deck images are `.gif`, were silently rejected).
+- **#771** — `refresh-cruisemapper-static` ran the whole pipeline in ONE Vercel invocation → `FUNCTION_INVOCATION_TIMEOUT` (the ~1.7k serial sailing POSTs dominated). Refactored to per-URL `step.run` + `step.sleep` pacing + orchestrator-level parse-failure halt + one platform-admin audit row per run (a plain, allowlisted service-role client, because a single `withPlatformAdminAudit` context can't span separate step invocations).
+- **#773** — sailing ingest decoupled from the quarterly static job into the monthly `refresh-cruisemapper-sailings` cron, which now runs EVERY month (`0 4 1 * *`) with the same durable per-URL-step shape. RAG ingest fetches gained `AbortSignal.timeout(20s)`.
+
+**Why:** the single-invocation design was a latent timeout, masked while ingest failed fast on `redis_unreachable`. Durable Inngest steps fix it. Per user request, sailing was broken out so one cron owns it year-round, removing the awkward skip-Jan/Apr/Jul/Oct coordination D-126 introduced.
+
+**Supersedes D-126's "one-fetch quarterly design":** the static job no longer runs the sailing parsers on the ship fetch. Trade-off accepted: ship pages are now fetched twice in quarterly months (static @ 02:00 for ship intel; sailing @ 04:00) — the inverse of D-126's optimization — in exchange for a uniform monthly schedule and durability. ~38 extra fetches × 4 months/year is negligible.
+
+**What was rejected:** a plain `maxDuration` bump (estimated 8-15 min runtime exceeds even the 800s ceiling); chunked steps (per-ship sailing-volume variance makes per-URL isolation more robust); keeping sailing in static (user wanted it decoupled).
+
+**Related:** PRs #769, #771, #773; issues #766 (Redis), #767 (RAG service-role key), #770 (static timeout), #772 (itineraries cron still single-invocation — deferred).
+
+---
+
 ## D-157 — 2026-06-05 — beta040 shipped to prod from pre-security-fix tag
 
 User elected to push the `beta040` tag to production as-is, even though PR #758 (JWT key rename, timing-safe HMAC, SHA-256 hashes, fail-closed Inngest) had already merged to dev. Security fixes will ship in the next release.

@@ -1,43 +1,74 @@
-// #485 follow-up §33.4 — Monthly CruiseMapper sailing refresh (non-quarterly months).
+// #485 follow-up §33.4 — Monthly CruiseMapper sailing refresh.
 //
-// Cron: 1st of Feb, Mar, May, Jun, Aug, Sep, Nov, Dec at 04:00 UTC.
-// Jan, Apr, Jul, Oct are covered by refresh-cruisemapper-static (quarterly),
-// which already runs both ship + sailing parsers on the same fetch.
+// Cron: 1st of every month at 04:00 UTC. Previously skipped Jan/Apr/Jul/Oct
+// because the quarterly static job covered sailing in those months; sailing is
+// now decoupled from static and runs every month (#770), so this single cron
+// owns sailing refresh year-round.
 //
 // Kill switch: CRUISEMAPPER_SAILING_INGEST_ENABLED.
 //
 // Flow:
 //   1. Load ship URLs from cruisemapper_url_inventory (kind="ship") — no
-//      re-discovery; the quarterly run keeps the inventory current.
-//   2. For each URL: fetch with body-hash conditional GET (previousBodyHash from
-//      inventory) → skip unchanged pages entirely.
-//   3. Run parseSailingPage (current itinerary with day_by_day) + parseSailingList
-//      (upcoming sailings for price cache updates) on the fetched HTML.
-//   4. Ingest to RAG + pricing cache via processSailingHtml.
-//   5. Parse-failure rate > 5% after 20 samples → halt + operator alert.
+//      re-discovery; the quarterly static run keeps the inventory current.
+//   2. For each URL (its own Inngest step): conditional GET via the inventory
+//      content_hash → skip unchanged; else parseSailingPage (current itinerary
+//      with day_by_day) + parseSailingList (upcoming sailings for price cache)
+//      → RAG + pricing cache via processSailingHtml.
+//   3. Parse-failure rate > 5% after 20 samples → halt + operator alert.
+//
+// Durability (#770): each ship page is processed in its own step.run, so no
+// single Vercel invocation accumulates the ~1.7k serial sailing POSTs (which
+// exceeds maxDuration). External fetches are paced with step.sleep, and one
+// platform-admin audit row is written per run.
 //
 // Idempotency: the RAG /api/ingest/itinerary endpoint deduplicates on
-// (cruise_line, ship, departure_date, departure_port) + content_hash. Unchanged
-// sailings are no-ops at the RAG layer even if the page body changed.
+// (cruise_line, ship, departure_date, departure_port) + content_hash, and the
+// inventory content_hash short-circuits unchanged fetches — so Inngest's
+// automatic step retries can't double-write.
 
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
-import { processSailingHtml, emptySailingResult, type SailingRunResult } from "@/lib/external/cruisemapper/sailing-ingest";
+import { processSailingHtml, emptySailingResult, mergeSailing, type SailingRunResult } from "@/lib/external/cruisemapper/sailing-ingest";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20;
+// ~1 req/sec pacing between external fetches, matching the prior token bucket.
+const FETCH_PACING = "1s";
+
+const AUDIT_META = {
+  admin_user_id: "system-cron",
+  reason: "external_pricing_refresh",
+  operation: "refresh_cruisemapper_sailings",
+} as const;
+
+export interface SailingUrlResult {
+  sailing: SailingRunResult;
+  fetch_unchanged: number; // 0 | 1
+  fetch_errors: number; // 0 | 1
+  parse_failed: number; // 0 | 1
+}
+
+// Parse-failure circuit breaker on the running totals across steps. Unchanged
+// and fetch-error pages count toward `attempted` but never toward
+// `parseFailures`, so a run of mostly-unchanged pages can't trip the halt.
+export function sailingHaltReason(attempted: number, parseFailures: number): string | null {
+  if (attempted < MIN_SAMPLES_BEFORE_HALT) return null;
+  const ratio = parseFailures / attempted;
+  if (ratio <= PARSE_FAILURE_HALT_RATIO) return null;
+  return `sailing parse_failure_rate ${(ratio * 100).toFixed(1)}% > ${(PARSE_FAILURE_HALT_RATIO * 100).toFixed(0)}% after ${attempted} pages`;
+}
 
 export const refreshCruisemapperSailings = inngest.createFunction(
   {
     id: "refresh-cruisemapper-sailings",
-    // Months 2,3,5,6,8,9,11,12 — skip Jan/Apr/Jul/Oct (quarterly handles those).
-    triggers: [{ cron: "0 4 1 2,3,5,6,8,9,11,12 *" }],
+    triggers: [{ cron: "0 4 1 * *" }],
   },
-  async () => {
+  async ({ step }) => {
     if (process.env.STAGING_MODE === "true") return { skipped_for_staging: true };
     if (process.env.CRUISEMAPPER_SAILING_INGEST_ENABLED !== "true") {
       return { skipped: true, reason: "CRUISEMAPPER_SAILING_INGEST_ENABLED=false" };
@@ -46,21 +77,64 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       return { skipped: true, reason: "CRUISEMAPPER_DIY_USER_AGENT not set" };
     }
 
-    return withPlatformAdminAudit(
-      {
-        admin_user_id: "system-cron",
-        reason: "external_pricing_refresh",
-        operation: "refresh_cruisemapper_sailings",
-      },
-      async (db, recordQuery) => {
+    // One platform-admin audit row per run (per-URL steps use a plain
+    // service-role client; wrapping each would emit one audit row per URL).
+    await step.run("audit-run", () =>
+      withPlatformAdminAudit(AUDIT_META, async (_db, recordQuery) => {
         recordQuery({ op: "select", table: "cruisemapper_url_inventory" });
-        const shipUrls = await loadShipUrls(db);
-        const result = await processSailingUrls(db, shipUrls);
-        return { ship_pages_attempted: shipUrls.length, ...result };
-      },
+        return { audited: true };
+      }),
     );
+
+    const shipUrls = await step.run("load-ships", () => loadShipUrls(createServiceRoleClient()));
+
+    const sailing = emptySailingResult();
+    let fetchUnchanged = 0;
+    let fetchErrors = 0;
+    let attempted = 0;
+    let parseFailures = 0;
+    let halted = false;
+    let haltReasonStr: string | undefined;
+
+    for (let i = 0; i < shipUrls.length; i++) {
+      const url = shipUrls[i]!;
+      await step.sleep(`pace-${i}`, FETCH_PACING);
+      const r = await step.run(`sailing-${i}`, () => processOneSailingUrl(createServiceRoleClient(), url));
+      attempted += 1;
+      mergeSailing(sailing, r.sailing);
+      fetchUnchanged += r.fetch_unchanged;
+      fetchErrors += r.fetch_errors;
+      parseFailures += r.parse_failed;
+
+      const reason = sailingHaltReason(attempted, parseFailures);
+      if (reason) {
+        halted = true;
+        haltReasonStr = reason;
+        await step.run(`halt-${i}`, () => alertSailingHalt(attempted, parseFailures, reason));
+        break;
+      }
+    }
+
+    return {
+      ship_pages_attempted: shipUrls.length,
+      ...sailing,
+      fetch_unchanged: fetchUnchanged,
+      fetch_errors: fetchErrors,
+      halted,
+      ...(haltReasonStr ? { halt_reason: haltReasonStr } : {}),
+    };
   },
 );
+
+async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
+  await sendOperatorAlert({
+    severity: "high",
+    signal: "cruisemapper_sailing_parser_failure_rate",
+    detail: reason,
+    payload: { attempted, failures: parseFailures },
+  });
+  return { alerted: true };
+}
 
 async function loadShipUrls(db: SupabaseClient): Promise<string[]> {
   const { data, error } = await db
@@ -71,105 +145,66 @@ async function loadShipUrls(db: SupabaseClient): Promise<string[]> {
   return ((data ?? []) as Array<{ url: string }>).map((r) => r.url);
 }
 
-async function processSailingUrls(
-  db: SupabaseClient,
-  urls: string[],
-): Promise<SailingRunResult & { fetch_unchanged: number; fetch_errors: number; halted: boolean; halt_reason?: string }> {
-  const sailing = emptySailingResult();
-  let fetchUnchanged = 0;
-  let fetchErrors = 0;
-  let halted = false;
-  let haltReason: string | undefined;
-
-  // Load content hashes from the inventory for conditional GETs.
-  const { data: prior, error: priorErr } = await db
+async function priorShipHash(db: SupabaseClient, url: string): Promise<string | undefined> {
+  const { data, error } = await db
     .from("cruisemapper_url_inventory")
-    .select("url, content_hash")
+    .select("content_hash")
+    .eq("url", url)
     .eq("kind", "ship")
-    .in("url", urls.slice(0, 5000));
-  if (priorErr) throw new Error(`cruisemapper_url_inventory.select failed: ${priorErr.message}`);
-  const priorHashByUrl = new Map<string, string>();
-  for (const row of (prior ?? []) as Array<{ url: string; content_hash: string | null }>) {
-    if (row.content_hash) priorHashByUrl.set(row.url, row.content_hash);
-  }
+    .maybeSingle();
+  if (error) throw new Error(`cruisemapper_url_inventory.select failed: ${error.message}`);
+  return (data as { content_hash: string | null } | null)?.content_hash ?? undefined;
+}
 
-  let attempted = 0;
-  let parseFailures = 0;
+// Process ONE ship page's sailing data: conditional GET → parse current sailing
+// + upcoming list → RAG + pricing cache via processSailingHtml. Returns the
+// single-URL counters the orchestrator aggregates.
+async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<SailingUrlResult> {
+  const sailing = emptySailingResult();
 
-  for (const url of urls) {
-    attempted += 1;
+  const previousBodyHash = await priorShipHash(db, url);
+  const fetched = await fetchCruiseMapperPage(url, previousBodyHash ? { previousBodyHash } : {});
 
-    if (attempted >= MIN_SAMPLES_BEFORE_HALT) {
-      const ratio = parseFailures / attempted;
-      if (ratio > PARSE_FAILURE_HALT_RATIO) {
-        halted = true;
-        haltReason = `sailing parse_failure_rate ${(ratio * 100).toFixed(1)}% > ${(PARSE_FAILURE_HALT_RATIO * 100).toFixed(0)}% after ${attempted} pages`;
-        await sendOperatorAlert({
-          severity: "high",
-          signal: "cruisemapper_sailing_parser_failure_rate",
-          detail: haltReason,
-          payload: { attempted, failures: parseFailures },
-        });
-        break;
-      }
-    }
-
-    const previousBodyHash = priorHashByUrl.get(url);
-    const fetched = await fetchCruiseMapperPage(
-      url,
-      previousBodyHash ? { previousBodyHash } : {},
-    );
-
-    if (fetched.status === "unchanged") {
-      fetchUnchanged += 1;
-      // Touch last_seen_at so inventory doesn't look stale.
-      await safeAwait(
-        db.from("cruisemapper_url_inventory")
-          .update({ last_seen_at: new Date().toISOString() })
-          .eq("url", url)
-          .eq("kind", "ship"),
-        "cruisemapper_url_inventory.update",
-      );
-      continue;
-    }
-
-    if (fetched.status !== "ok") {
-      fetchErrors += 1;
-      await safeAwait(
-        db.from("cruisemapper_url_inventory")
-          .update({ last_seen_at: new Date().toISOString(), last_ingest_status: fetched.status, last_error: fetched.status })
-          .eq("url", url)
-          .eq("kind", "ship"),
-        "cruisemapper_url_inventory.update.sailing_error",
-      );
-      continue;
-    }
-
-    const beforeParsed = sailing.current_parsed;
-    await processSailingHtml(db, fetched.body, url, sailing);
-    const parseSucceeded = sailing.current_parsed > beforeParsed;
-    if (!parseSucceeded) parseFailures += 1;
-
-    // Stamp the body hash so next month's conditional GET skips unchanged pages.
+  if (fetched.status === "unchanged") {
+    // Touch last_seen_at so inventory doesn't look stale.
     await safeAwait(
       db.from("cruisemapper_url_inventory")
-        .update({
-          last_seen_at: new Date().toISOString(),
-          content_hash: fetched.bodyHash,
-          last_ingest_status: parseSucceeded ? "ingested" : "parse_failed",
-          last_error: parseSucceeded ? null : "sailing_parser_returned_null",
-        })
+        .update({ last_seen_at: new Date().toISOString() })
         .eq("url", url)
         .eq("kind", "ship"),
-      "cruisemapper_url_inventory.update.sailing",
+      "cruisemapper_url_inventory.update",
     );
+    return { sailing, fetch_unchanged: 1, fetch_errors: 0, parse_failed: 0 };
   }
 
-  return {
-    ...sailing,
-    fetch_unchanged: fetchUnchanged,
-    fetch_errors: fetchErrors,
-    halted,
-    ...(haltReason ? { halt_reason: haltReason } : {}),
-  };
+  if (fetched.status !== "ok") {
+    await safeAwait(
+      db.from("cruisemapper_url_inventory")
+        .update({ last_seen_at: new Date().toISOString(), last_ingest_status: fetched.status, last_error: fetched.status })
+        .eq("url", url)
+        .eq("kind", "ship"),
+      "cruisemapper_url_inventory.update.sailing_error",
+    );
+    return { sailing, fetch_unchanged: 0, fetch_errors: 1, parse_failed: 0 };
+  }
+
+  const beforeParsed = sailing.current_parsed;
+  await processSailingHtml(db, fetched.body, url, sailing);
+  const parseSucceeded = sailing.current_parsed > beforeParsed;
+
+  // Stamp the body hash so next month's conditional GET skips unchanged pages.
+  await safeAwait(
+    db.from("cruisemapper_url_inventory")
+      .update({
+        last_seen_at: new Date().toISOString(),
+        content_hash: fetched.bodyHash,
+        last_ingest_status: parseSucceeded ? "ingested" : "parse_failed",
+        last_error: parseSucceeded ? null : "sailing_parser_returned_null",
+      })
+      .eq("url", url)
+      .eq("kind", "ship"),
+    "cruisemapper_url_inventory.update.sailing",
+  );
+
+  return { sailing, fetch_unchanged: 0, fetch_errors: 0, parse_failed: parseSucceeded ? 0 : 1 };
 }
