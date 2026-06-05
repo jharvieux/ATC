@@ -35,7 +35,9 @@ const KNOWN_AUTH_FAILURE_PREFIXES = [
   "assertPermission: invalid or expired access token",
   "assertPermission: invalid or expired bearer token",
   "assertPermission: user is not an active member",
-  "assertPermission: bearer path:",
+  // Note: "assertPermission: bearer path: unexpected context source kind"
+  // is intentionally NOT listed here — that's an internal server invariant
+  // violation (should 500), not a bad credential (should 401).
   "tenantContextFromRequest:",
 ] as const;
 

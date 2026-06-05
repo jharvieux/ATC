@@ -146,6 +146,8 @@ export async function assertPermission(
     if (pending.length > 0) {
       throw new ConsentPendingError(pathname, pending);
     }
+    // A second users-row SELECT is unavoidable: tenantContextFromRequest's
+    // membership check only fetches `id, status`; we need `role` for RBAC.
     const supabase = createBearerClient(bearerToken);
     const { data: bearerRow, error: bearerRowErr } = await supabase
       .from("users")

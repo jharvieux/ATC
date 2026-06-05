@@ -5,7 +5,7 @@
 // are NEXT_PUBLIC_* (already in the JS bundle) so exposing them here
 // is not a secret disclosure.
 
-import { corsOptionsResponse, EXTENSION_CORS_HEADERS } from "@/lib/http/cors";
+import { corsOptionsResponse, EXTERNAL_CLIENT_CORS_HEADERS } from "@/lib/http/cors";
 
 export function OPTIONS(): Response {
   return corsOptionsResponse();
@@ -18,12 +18,12 @@ export function GET(): Response {
   if (!supabaseUrl || !supabaseAnonKey) {
     return Response.json(
       { error: "platform_not_configured" },
-      { status: 503, headers: EXTENSION_CORS_HEADERS },
+      { status: 503, headers: EXTERNAL_CLIENT_CORS_HEADERS },
     );
   }
 
   return Response.json(
     { supabase_url: supabaseUrl, supabase_anon_key: supabaseAnonKey },
-    { headers: EXTENSION_CORS_HEADERS },
+    { headers: EXTERNAL_CLIENT_CORS_HEADERS },
   );
 }

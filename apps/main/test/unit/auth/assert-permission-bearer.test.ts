@@ -136,7 +136,7 @@ describe("assertPermission — bearer token path", () => {
     expect(body.error).toBe("unauthorized");
   });
 
-  it("DB error on users lookup returns 401, not 500", async () => {
+  it("DB error on users lookup surfaces as 500 (server fault, not credential failure)", async () => {
     mocks.createBearerClient.mockReturnValue(
       makeBearerClient(null, { message: "connection error" }),
     );
@@ -185,6 +185,27 @@ describe("assertPermission — bearer token path", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("forbidden");
+  });
+
+  it("pending consent throws ConsentPendingError → 403 consent_pending", async () => {
+    const { ConsentPendingError } = await import("@/lib/auth/assert-permission");
+    mocks.getConsentPending.mockResolvedValue([
+      { document_type: "tou", document_id_pending: "doc-1", flagged_at: "2026-06-01T00:00:00Z" },
+    ]);
+    let err: unknown;
+    try {
+      await assertPermission(
+        makeRequest("/api/rag/submit/extension"),
+        { resource: "rag_submissions", action: "create" },
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ConsentPendingError);
+    const res = respondToAuthError(err);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("consent_pending");
   });
 
   it("does not call createBearerClient when no bearer token present", async () => {

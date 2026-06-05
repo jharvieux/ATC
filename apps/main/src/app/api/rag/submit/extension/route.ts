@@ -9,7 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { corsOptionsResponse, EXTENSION_CORS_HEADERS } from "@/lib/http/cors";
+import { corsOptionsResponse, EXTERNAL_CLIENT_CORS_HEADERS } from "@/lib/http/cors";
 
 interface Body {
   url?: string;
@@ -47,7 +47,7 @@ export async function POST(req: Request): Promise<Response> {
       original_content: body.selection,
     });
 
-    return Response.json(result, { headers: EXTENSION_CORS_HEADERS });
+    return Response.json(result, { headers: EXTERNAL_CLIENT_CORS_HEADERS });
   } catch (err) {
     return respondToAuthError(err);
   }
