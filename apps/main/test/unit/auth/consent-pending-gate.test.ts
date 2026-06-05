@@ -22,7 +22,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 const mocks = vi.hoisted(() => ({
   getConsentPending: vi.fn(),
   tenantContextFromRequest: vi.fn(),
-  getUser: vi.fn(),
+  getCachedUser: vi.fn(),
   usersMaybeSingle: vi.fn(),
 }));
 
@@ -34,9 +34,16 @@ vi.mock("@/lib/db/factories", () => ({
   tenantContextFromRequest: mocks.tenantContextFromRequest,
 }));
 
+// #679 — assertPermission now reads the verified user from getCachedUser
+// (request-scoped React.cache memoization) instead of calling
+// supabase.auth.getUser directly. Mock the helper, not the underlying
+// client, so the test doesn't need to wire up next/headers.
+vi.mock("@/lib/auth/get-cached-user", () => ({
+  getCachedUser: mocks.getCachedUser,
+}));
+
 vi.mock("@/lib/auth/ssr-client", () => ({
   createRequestScopedClient: () => ({
-    auth: { getUser: mocks.getUser },
     from: () => ({
       select: () => ({
         eq: () => ({
@@ -80,9 +87,9 @@ describe("assertPermission — consent gate", () => {
       tenant_id: "t-1",
       source: { kind: "http_request", user_id: "auth-1" },
     });
-    mocks.getUser.mockResolvedValue({
-      data: { user: { id: "auth-1" } },
-      error: null,
+    mocks.getCachedUser.mockResolvedValue({
+      isAuthenticated: true,
+      user: { id: "auth-1" },
     });
     mocks.usersMaybeSingle.mockResolvedValue({
       data: {

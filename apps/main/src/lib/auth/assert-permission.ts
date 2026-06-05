@@ -24,6 +24,7 @@ import { tryTestBypass } from "./test-bypass";
 import { isPermitted, type UserRole } from "./permission-grants";
 import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
 import { createRequestScopedClient } from "./ssr-client";
+import { getCachedUser } from "./get-cached-user";
 
 export type User = {
   id: string;
@@ -123,12 +124,25 @@ export async function assertPermission(
 
   const ctx = await tenantContextFromRequest(req);
 
-  const supabase = createRequestScopedClient(req);
-
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
+  // #679 — getCachedUser shares one supabase.auth.getUser() round-trip
+  // with the (tenant)/layout's getSiteHeaderProps for server-rendered
+  // pages. On pure /api/* routes there's no layout above, so the cache
+  // is a no-op but harmless (a single in-flight request resolves once
+  // regardless). The cached client uses a placeholder request shape
+  // but the same cookie, so the verified JWT payload is identical.
+  // Renamed to `authUser` to avoid colliding with the local DB users-
+  // table row variable returned to the caller below.
+  const { user: authUser } = await getCachedUser();
+  if (!authUser) {
     throw new Error("assertPermission: invalid or expired access token.");
   }
+
+  // assertPermission still needs its own supabase client for the
+  // getSession() call on sensitive routes below — getSession reads the
+  // cookie payload only (no network), so the duplicate client creation
+  // is cheap. It exists separately because the cached helper deliberately
+  // returns only the verified user, not the session token.
+  const supabase = createRequestScopedClient(req);
 
   const pathname = new URL(req.url).pathname;
 
@@ -139,7 +153,7 @@ export async function assertPermission(
   // through assertPermission, so this doesn't deadlock the user out of
   // accepting; downstream they'll catch ConsentPendingError, return 403 with
   // `consent_pending` + return_to, and the client routes to /consent.
-  const pending = await getConsentPending(authData.user.id);
+  const pending = await getConsentPending(authUser.id);
   if (pending.length > 0) {
     throw new ConsentPendingError(pathname, pending);
   }
@@ -169,7 +183,7 @@ export async function assertPermission(
   const { data: row, error } = await supabase
     .from("users")
     .select("id, auth_user_id, tenant_id, status, role")
-    .eq("auth_user_id", authData.user.id)
+    .eq("auth_user_id", authUser.id)
     .eq("tenant_id", ctx.tenant_id)
     .maybeSingle();
 
