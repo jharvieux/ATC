@@ -1,6 +1,8 @@
 # iOS Shortcut — Add to ATC Knowledge Base
 
-An Apple Shortcuts shortcut that lets you share any webpage, selected text, PDF, or image from Safari (or any other app) directly to your ATC knowledge base.
+An Apple Shortcuts shortcut that lets you share any selected text or webpage from Safari (or any other app) directly to your ATC knowledge base.
+
+> **Token generation UI coming soon.** This shortcut requires a personal API token. The Settings → Integrations page that generates long-lived tokens is not yet built — see [#712](https://github.com/jharvieux/ATC/issues/712) for status. The setup steps below describe the target state once that feature ships.
 
 ---
 
@@ -9,22 +11,27 @@ An Apple Shortcuts shortcut that lets you share any webpage, selected text, PDF,
 - iPhone or iPad running iOS 16.4 or later
 - The **Shortcuts** app (pre-installed on all modern iOS devices)
 - An active ATC platform account
+- A personal API token (see below)
 
 ---
 
 ## One-time setup
 
-### Step 1 — Sign in and copy your access token
+### Step 1 — Get your API token
 
-The shortcut authenticates using a long-lived API token. To generate one:
+**When Settings → Integrations is available:**
+1. Open your platform in a browser: `https://yourteam.atcplatform.com`
+2. Sign in and go to **Settings → Integrations**
+3. Tap **Generate API Token** and copy it to your clipboard
 
-1. Open Safari and navigate to your tenant's platform, e.g. `https://yourteam.atcplatform.com`
-2. Sign in as normal
-3. Navigate to **Settings → API Access** (or equivalent in your tenant)
-4. Tap **Generate Shortcut Token** — this creates a token scoped for shortcut use
-5. Tap **Copy** to copy the token to your clipboard
+**Developer workaround (until the UI ships):**
+On a Mac, open the platform in Safari, sign in, then open Web Inspector (Develop menu → Show Web Inspector → Console) and run:
 
-> If your platform does not yet show a "Shortcut Token" option, use your current session's access token: in Safari, open the developer console (`Settings → Safari → Advanced → Web Inspector`) and run `(await (await fetch('/api/me')).json())` to confirm auth, then retrieve the token from `supabase.auth.getSession()`. Contact your tenant admin for a dedicated shortcut token.
+```javascript
+(await window.__supabase?.auth?.getSession())?.data?.session?.access_token
+```
+
+Copy the printed token. Note that session JWTs expire in approximately 1 hour — you will need to update the `ATC Token` action in the shortcut each time it expires. Long-lived tokens from Settings → Integrations will not have this limitation.
 
 ### Step 2 — Create the shortcut
 
@@ -33,14 +40,14 @@ Open the **Shortcuts** app and tap the **+** button to create a new shortcut. Ad
 #### Actions
 
 1. **Receive input from Share Sheet**
-   - Input types: **Text**, **URL**, **Safari web pages**, **PDFs**, **Images**
+   - Input types: **Text**, **URL**, **Safari web pages**
    - If there is no input: **Continue**
 
 2. **Get details of Safari web page** *(add only if you want the page title)*
    - Input: Shortcut Input
    - Detail: **Name** → save as variable `Page Title`
 
-3. **Text** — paste your **access token** here. Save as variable `ATC Token`.
+3. **Text** — paste your **API token** here. Save as variable `ATC Token`.
 
 4. **Text** — paste your full platform URL, e.g. `https://yourteam.atcplatform.com`. Save as variable `Platform URL`.
 
@@ -80,13 +87,7 @@ Tap the shortcut name at the top, rename it to **Add to ATC KB**, and tap **Done
 2. Tap **Share** in the contextual menu
 3. Tap **Add to ATC KB**
 
-### From Files (PDFs)
-
-1. In the Files app, long-press a PDF
-2. Tap **Share**
-3. Tap **Add to ATC KB**
-
-> **Note**: For file uploads (PDFs, images), the shortcut sends the content as base64-encoded JSON. The platform automatically routes it through the same file processing pipeline as the web UI upload. File size limit: 50 MB.
+> **Text only.** The shortcut submits text content. File sharing (PDFs, images) is not currently supported by the iOS Shortcut — use the web upload UI for files.
 
 ---
 
@@ -104,18 +105,17 @@ You will not see an immediate change to AI responses — the review step is requ
 
 | Symptom | Fix |
 |---|---|
-| 401 Unauthorized | Token has expired. Repeat Step 1 to generate a fresh token and update the `ATC Token` text action |
+| 401 Unauthorized | Token has expired. Repeat Step 1 to get a fresh token and update the `ATC Token` text action |
 | 403 Forbidden | Your account may not have the `rag_submissions: create` permission — contact your tenant admin |
 | "platform_not_configured" | The platform URL in your `Platform URL` action may be wrong — check for a trailing slash or typo |
 | No notification after share | Open the shortcut in the Shortcuts app and run it manually to see the full error response |
-| File too large | The 50 MB limit applies; split large PDFs before sharing |
 
 ---
 
 ## Token security
 
-Your access token is stored as plain text inside the Shortcut. To keep it safe:
+Your API token is stored as plain text inside the Shortcut. To keep it safe:
 
 - Do not share the shortcut via iCloud Sharing — this would expose your token to anyone who installs it
-- If your token is compromised, generate a new one in **Settings → API Access** and update the shortcut
+- If your token is compromised, revoke it in **Settings → Integrations** and update the shortcut
 - The token is scoped to `rag_submissions: create` only — it cannot read bookings, chats, or other data

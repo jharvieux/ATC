@@ -1,0 +1,127 @@
+# Rebuild `/for-agencies` — repositioning + restyle spec
+
+**Repo:** the AI Travel Concierge site (the same codebase that ships the consumer app at `ai-travel-concierge-tawny.vercel.app`).
+**Page to change:** `/for-agencies`.
+**One-line goal:** Lead with the *outcomes* that make an agent buy — **time saved**, **looking like a bigger operation**, and **research done for them** — and restyle the page to match the consumer app (light + dark themes). Demote "keep your host / keep your commissions" from the headline to a single trust line + one FAQ. It's table stakes, not a selling point.
+
+---
+
+## 0. Do this first — reuse the existing design system
+
+Before writing any markup, read the consumer app and **reuse its actual primitives** so the for-agencies page looks like it shipped from the same codebase:
+
+- Theme tokens / CSS variables (or `tailwind.config` colors) for light **and** dark.
+- The light/dark mechanism (e.g. `next-themes`) — wire the same toggle into the for-agencies nav and persist the choice; respect `prefers-color-scheme` on first load.
+- Font families already loaded (display, body, mono). Do **not** introduce Inter/Roboto/Arial.
+- Existing Button, Card, Badge/Tag, and the **agent card** component (used on the consumer "Meet Your AI Travel Agents" page) — reuse the agent card for the AI-crew section here.
+
+**Brand fallback** (only if a token isn't exposed):
+
+| Role | Light | Dark |
+|---|---|---|
+| Ink / navy | `#0A2342` | `#EAF2FA` |
+| Accent / sky | `#2E92D6` (links) · `#5DADE2` (brand) | `#5DADE2` |
+| Background | `#FBFAF7` | `#071626` |
+| Surface / card | `#FFFFFF` | `#0C2138` |
+| Border | `#E7E0D4` | `#1C3A57` |
+| Success | `#1E8A5B` | `#5BD49B` |
+
+Type fallback: one serif display (e.g. Spectral) + one humanist sans body (e.g. Plus Jakarta Sans) + one mono for domains/CRM/step-numbers (e.g. JetBrains Mono). **Defer to the reference site's real fonts if they differ.**
+
+Component guidance: solid-accent primary button (navy on light / sky on dark), bordered ghost secondary, ~11px radius; cards with 1px token border + soft shadow + 16px radius; **one** sky accent per section (eyebrow / emphasis / a 3px top-rule), no full-bleed gradient backgrounds; use the white/reverse logo mark on dark.
+
+---
+
+## 1. New section order
+
+Replace the current order with this. Tags: **[rewrite]** new copy, **[new]** new section, **[keep]** structure stays / restyle only, **[reframe]** same content, new framing.
+
+1. **Hero — outcome-led** *[rewrite]*
+2. **"A day on the job" — before / after** *[new]*
+3. **Three outcomes** (Hours back · Look bigger · Research done) *[reframe]* — replaces "Why agents switch"
+4. **Live in an afternoon** — 3-step setup, reframed to kill the setup objection *[keep]*
+5. **Meet your AI crew** — six specialists, restyled with the consumer agent card *[keep]*
+6. **Inside the platform** — CRM / quotes / pre-cruise emails (keep all three mockups) *[keep]*
+7. **Every reply checked** — supervisor/safety *[keep]*
+8. **Pricing** — same tiers + a one-line ROI banner above *[reframe]*
+9. **FAQ — objections first** — setup → cost → host/commissions → trial → white-label → solo → safety *[reorder]*
+10. **Final CTA** *[rewrite]*
+
+Keep the CTA as **"Start free 30-day trial"** everywhere (primary action). Keep the existing nav anchors; update labels to match new sections.
+
+---
+
+## 2. Copy (paste-ready)
+
+### §1 Hero
+- **Eyebrow:** For independent cruise agents
+- **Headline:** Sell more cruises in *half the time*. *(italicize "half the time" in the accent color)*
+- **Subhead:** Your AI cruise crew quotes, researches, and follows up for you — so a single agent runs like a full agency. You keep your host and every commission; we just hand you back the hours.
+- **Primary CTA:** Start your free 30-day trial → `/signup`
+- **Secondary CTA:** See it work → (`#how` or `#platform`)
+- **Under-CTA microcopy:** **No charge during your trial.** The 30 days start when you activate — not the day you sign up.
+- **Trust line (small, muted):** Bring your own host · Keep 100% of your commission · White-label on Agency
+- Keep the existing hero chat mockup (Priya Sharma luxury concierge) as the hero visual.
+
+### §2 "A day on the job" — before / after  *(new)*
+- **Heading:** Your day, minus the busywork.
+- **Subhead:** Same bookings. A fraction of the desk time.
+- **Before (muted column):** An hour Googling Alaska ports. Building a quote by hand. Re-typing the same pre-cruise email. Remembering to follow up — or not.
+- **After (accent column):** Ask the crew. A branded quote, a drafted email, and a fully-logged CRM record are ready before your coffee's cold. The 90/7/1-day follow-ups send themselves.
+- Layout: two columns; Before in a neutral surface, After accented (sky top-rule or sky check icons).
+
+### §3 Three outcomes  *(reframe of "Why agents switch")*
+- **Section heading:** Built to give you back time, status, and your evenings.
+- **Card 1 — Get your evenings back:** Quotes in seconds, emails drafted, CRM filled in, follow-ups automatic — the AI does the desk work while you sell and live.
+- **Card 2 — Look like a bigger shop:** A branded chat on your own domain, polished quotes, and emails from your address. Clients see an agency; you stay a team of one.
+- **Card 3 — The research is already done:** Six specialists who know the ports, ships, and cabins cold — plus a knowledge base that answers from your own materials.
+
+### §4 Live in an afternoon  *(reframe header to defuse setup objection)*
+- **Heading:** No migration. No IT. Live this afternoon.
+- **Subhead:** Connect the host you already use, meet your crew, share your link. That's the whole setup — most agents are quoting clients the same day.
+- Keep the existing 3 steps: **1. Connect your host · 2. Meet your AI crew · 3. Sell on your domain.**
+
+### §8 Pricing — ROI banner  *(add above the existing pricing cards)*
+- **Banner line:** One booking covers the whole year. A single cruise commission typically dwarfs a year of Professional — the only question is how many evenings it buys back.
+- Keep the three tiers (Research $19 / Professional $59 / Agency $99), the monthly/annual toggle, the seat ladder, and the comparison table **exactly as they are.**
+
+### §9 FAQ — reordered, objections first
+1. **How long does setup take?** An afternoon. Add your host credentials, your six specialists are ready out of the box, and you share your chat link. No migration, no IT, no data entry — most agents quote a client the same day.
+2. **Is it worth the monthly cost?** A single cruise commission usually covers a year of the software. If the AI saves you a few hours a week and helps you close one extra booking, it has more than paid for itself.
+3. **Do I keep my host and commissions?** *(condense the current two host/commission FAQs into one reassurance)* Yes — you bring your own host credentials and bookings/commissions flow through your existing host exactly as today. We're the software layer on top, never in the middle of your money.
+4. **How does the free trial work?** *(keep existing)*
+5. **Can I put my own brand on it?** *(keep existing)*
+6. **What if I'm a one-person shop?** *(keep existing)*
+7. **Is the AI safe to put in front of my clients?** *(keep existing)*
+
+### §10 Final CTA
+- **Heading:** Get your evenings back this week.
+- **Body:** Quote faster, look bigger, and let the research, follow-ups, and admin run themselves. Keep your host. Keep your commission. Free for 30 days.
+- **CTA:** Start your free trial → `/signup`
+- **Microcopy:** No charge during your trial · No setup fees · Cancel anytime
+
+---
+
+## 3. Guardrails
+
+- **Do not change host/commission *mechanics*** — only the messaging weight. The product still brings-your-own-host; we're just not leading with it.
+- **Keep every existing mockup**: hero chat, CRM table, side-by-side quote, the 90/7/1-day pre-cruise email sequence, and the supervisor/safety chips. Restyle to tokens; don't remove.
+- **Ship working light AND dark.** Test both. Persist the user's choice and respect system preference on first paint (no flash of wrong theme).
+- **Accessibility:** maintain AA contrast in both themes; CTA hit targets ≥ 44px; honor `prefers-reduced-motion` for any entrance animation.
+- **Don't invent proof.** No fake testimonials, logos, or stats — keep it benefit-led until real proof exists.
+- **Keep it minimal.** One accent per section, no gradient-wash backgrounds, no emoji.
+
+---
+
+## 4. Acceptance checklist
+
+- [ ] Hero headline sells time/outcome; host+commission reduced to one trust line.
+- [ ] New before/after section present and renders in both themes.
+- [ ] "Why agents switch" trio replaced by the three outcomes.
+- [ ] Setup section header leads with "no migration / same day."
+- [ ] ROI banner sits above unchanged pricing tiers.
+- [ ] FAQ reordered: setup → cost → host/commissions → rest.
+- [ ] All CTAs read "Start free 30-day trial" and point to `/signup`.
+- [ ] Light + dark both correct; theme choice persists; no theme flash.
+- [ ] Uses existing tokens/fonts/components from the consumer app.
+- [ ] All original mockups retained and restyled.

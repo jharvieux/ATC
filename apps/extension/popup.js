@@ -78,6 +78,9 @@ async function tryConnect(tenantUrl) {
     throw new Error("Could not reach that platform URL. Check the address and try again.");
   }
 
+  // Platform is reachable — persist the URL now so it's pre-filled on next open.
+  await chrome.storage.local.set({ tenantUrl });
+
   const { supabase_url: supabaseUrl, supabase_anon_key: supabaseAnonKey } =
     await configRes.json();
 
@@ -224,7 +227,6 @@ connectBtn.addEventListener("click", async () => {
 
   connectBtn.disabled = true;
   connectBtn.textContent = "Connecting…";
-  await chrome.storage.local.set({ tenantUrl });
 
   try {
     const result = await tryConnect(tenantUrl);
