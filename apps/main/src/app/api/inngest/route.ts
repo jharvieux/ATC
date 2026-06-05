@@ -101,6 +101,8 @@ import { abuseStateTransitionNotify } from "@/inngest/abuse-state-transition-not
 import { abuseOverrideExpirySweep } from "@/inngest/abuse-override-expiry-sweep";
 // #700 — anti-abuse: suspend tenants stuck in onboarding past 14d
 import { onboardingStaleSuspend } from "@/inngest/onboarding-stale-suspend";
+// #692 — nightly reconcile of RAG embedding cost into tenant_usage_metrics
+import { ragCostReconcile } from "@/inngest/rag-cost-reconcile";
 import { weatherUsageAlert } from "@/inngest/weather-usage-alert";
 import { githubIssueRetry } from "@/inngest/github-issue-retry";
 import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
@@ -229,6 +231,7 @@ export const { GET, POST, PUT } = serve({
     abuseStateTransitionNotify,
     abuseOverrideExpirySweep,
     onboardingStaleSuspend,
+    ragCostReconcile,
     weatherUsageAlert,
     // BP31: Self-Service Help — GitHub issue creation resilience (§32.7.5)
     githubIssueRetry,

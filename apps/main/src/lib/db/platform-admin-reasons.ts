@@ -120,6 +120,11 @@ export const PLATFORM_ADMIN_REASONS = [
   "persona_safety_update",
   "persona_safety_restore",
 
+  // #692 — Nightly cron that reconciles RAG embedding cost into
+  // tenant_usage_metrics.ai_cost_cents. Distinct from platform_metrics_rollup
+  // because it touches tenant-scoped billing state, not aggregate metrics.
+  "rag_cost_reconciliation",
+
   // §TN — Travel news feed + article management.
   "travel_news_feeds_read",
   "travel_news_feed_create",
