@@ -51,6 +51,8 @@ export async function ingestReferenceToRag(payload: RefIngestPayload): Promise<R
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify(payload),
+      // Bound the call so a slow/hung RAG response can't stall the caller (#770).
+      signal: AbortSignal.timeout(20_000),
     });
   } catch (err) {
     return { status: "error", reason: err instanceof Error ? err.message : String(err) };
