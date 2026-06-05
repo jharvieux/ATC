@@ -127,21 +127,18 @@ export async function assertPermission(
   // #679 — getCachedUser shares one supabase.auth.getUser() round-trip
   // with the (tenant)/layout's getSiteHeaderProps for server-rendered
   // pages. On pure /api/* routes there's no layout above, so the cache
-  // is a no-op but harmless (a single in-flight request resolves once
-  // regardless). The cached client uses a placeholder request shape
-  // but the same cookie, so the verified JWT payload is identical.
-  // Renamed to `authUser` to avoid colliding with the local DB users-
-  // table row variable returned to the caller below.
+  // is a no-op but harmless. The cached client uses a placeholder
+  // request shape but the same Cookie header, so the verified JWT
+  // payload is identical to what a `req`-bound client would produce.
   const { user: authUser } = await getCachedUser();
   if (!authUser) {
     throw new Error("assertPermission: invalid or expired access token.");
   }
 
-  // assertPermission still needs its own supabase client for the
-  // getSession() call on sensitive routes below — getSession reads the
-  // cookie payload only (no network), so the duplicate client creation
-  // is cheap. It exists separately because the cached helper deliberately
-  // returns only the verified user, not the session token.
+  // Separate supabase client for the sensitive-routes getSession() below.
+  // Both clients build from the same incoming Cookie header, so the
+  // session payload is identical to what the cached client would see —
+  // see the "SAFETY DEPENDS ON CALL ORDER" block on the getSession use.
   const supabase = createRequestScopedClient(req);
 
   const pathname = new URL(req.url).pathname;
@@ -163,10 +160,13 @@ export async function assertPermission(
   // no network) and decode auth_time.
   //
   // SAFETY DEPENDS ON CALL ORDER: getSession reads the cookie payload WITHOUT
-  // verifying the JWT signature. We trust the payload only because getUser
+  // verifying the JWT signature. We trust the payload only because getCachedUser
   // above just verified the same token bytes against the auth server in the
-  // same request. Do NOT reorder this block above the getUser call, and do
-  // NOT use getSession in this file for any other purpose.
+  // same request — both supabase clients (the cached one inside getCachedUser
+  // and `supabase` here) build from the same incoming Cookie header, so the
+  // session payload is identical to what was verified. Do NOT reorder this
+  // block above the getCachedUser call, and do NOT use getSession in this file
+  // for any other purpose.
   if (isSensitiveRoute(pathname)) {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData?.session?.access_token ?? null;

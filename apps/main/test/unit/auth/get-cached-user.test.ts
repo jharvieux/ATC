@@ -74,4 +74,34 @@ describe("getCachedUser", () => {
     const result = await getCachedUser();
     expect(result.isAuthenticated).toBe(false);
   });
+
+  // #679 — direct unit assertion that the `user` field is populated on
+  // success and null on every failure mode. assertPermission depends on
+  // `user.id` for the consent gate + tenant-membership lookups; if this
+  // field regressed to null when it should be set (or vice-versa) the
+  // entire auth hot path would 500 or 401 incorrectly.
+  it("populates `user` with the Supabase User on success", async () => {
+    mocks.getUser.mockResolvedValueOnce({
+      data: { user: { id: "user-123", email: "x@example.com" } },
+      error: null,
+    });
+    const result = await getCachedUser();
+    expect(result.user).not.toBeNull();
+    expect(result.user?.id).toBe("user-123");
+  });
+
+  it("returns user=null on auth error (AuthSessionMissingError, expired JWT, etc.)", async () => {
+    mocks.getUser.mockResolvedValueOnce({
+      data: { user: null },
+      error: { name: "AuthSessionMissingError", message: "Auth session missing!" },
+    });
+    const result = await getCachedUser();
+    expect(result.user).toBeNull();
+  });
+
+  it("returns user=null when data is missing entirely (no session, no failure)", async () => {
+    mocks.getUser.mockResolvedValueOnce({ data: null, error: null });
+    const result = await getCachedUser();
+    expect(result.user).toBeNull();
+  });
 });

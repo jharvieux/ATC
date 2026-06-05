@@ -19,14 +19,29 @@ import type { User } from "@supabase/supabase-js";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 
 // React.cache is a server-only API; in vitest's node env it can be
-// undefined depending on how `react` resolves. Fall back to a
-// passthrough so importing this module from tests that don't
+// undefined depending on how `react` resolves. Outside production fall
+// back to a passthrough so importing this module from tests that don't
 // explicitly mock `react.cache` doesn't throw at module load time.
-// Behavior is equivalent for single-call cases — only the cross-call
-// sharing invariant requires the real cache, which is exercised by the
-// dedicated get-cached-user.test that DOES mock react.
+//
+// In production the passthrough would SILENTLY revert to the 2x auth-
+// call behavior #679 closed, with no observable failure. Throw loudly
+// at module load if cache is missing in production so a future React/
+// Next regression that removed the export is caught immediately.
 type CacheFn = <T extends (...a: never[]) => unknown>(fn: T) => T;
-const cache: CacheFn = typeof reactCache === "function" ? (reactCache as CacheFn) : ((fn) => fn);
+const cache: CacheFn = (() => {
+  if (typeof reactCache === "function") return reactCache as CacheFn;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "get-cached-user: react.cache is not a function in production. " +
+        "This indicates a React/Next regression — request memoization " +
+        "would silently break, doubling auth round-trips per page render.",
+    );
+  }
+  // Non-production (test) — passthrough is fine; the dedicated test for
+  // this module mocks react.cache directly when it needs to exercise
+  // the real-cache invariant.
+  return (fn) => fn;
+})();
 
 export interface CachedUserResult {
   /** True iff the lookup succeeded AND a session existed. */
