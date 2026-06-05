@@ -4,6 +4,33 @@ Newest entries on top.
 
 ---
 
+## D-157 — 2026-06-05 — beta040 shipped to prod from pre-security-fix tag
+
+User elected to push the `beta040` tag to production as-is, even though PR #758 (JWT key rename, timing-safe HMAC, SHA-256 hashes, fail-closed Inngest) had already merged to dev. Security fixes will ship in the next release.
+
+**Why:** user's call — they created the tag and understood the tradeoff.
+**How to apply:** when cutting the next release, verify the tag includes dev HEAD so the D-154/D-155/D-156 fixes are included.
+
+---
+
+## D-156 — 2026-06-05 — RAG security day-2: 3 medium findings fixed in PR #759
+
+f021 (1 MB extraction cap), f022 (in-process OTP IP rate limiter, 10 req/IP/15 min), f012 (PII pipeline on reviewer `edits.content`, fail-closed 422). All three were user decisions made in-session.
+
+**Why:** per user choices: Redis upgrade for IP limiting deferred to #735; cap value 1 MB (1_000_000 chars); PII pipeline runs on all reviewer edits.
+**How to apply:** IP rate limiter is per-instance — multi-instance Redis upgrade tracked in #735. Cap value set at module scope in `rag-extract-content.ts`.
+
+---
+
+## D-155 — 2026-06-05 — Security triage: 20 TP / 13 NMT / 10 FP across 43 findings; all issued
+
+Full triage of `apps/main/src/VULN-FINDINGS.json` (43 findings from vuln-scan). 11 FP/duplicate issues closed. Remaining 27 open issues span #715–#752. Top unaddressed: f001 (#715 cross-tenant trip_resources HIGH), f028 (#741 quote TOCTOU), f030 (#743 knowledge_chunks hydration no tenant filter), f002 (#719 Stripe dedup order).
+
+**Why:** triage + issue creation run as part of session-start protocol.
+**How to apply:** use issue numbers when building day-3+ remediation PRs.
+
+---
+
 ## D-154 — 2026-06-05 — RAG security day-1: 4 fixes shipped in PR #758; 3 decisions deferred pending user input
 
 **Decision.** Shipped `feature/rag-security-day1` (PR #758) with 4 confirmed triage findings:
