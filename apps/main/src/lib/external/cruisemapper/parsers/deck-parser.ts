@@ -37,6 +37,8 @@ export interface ParsedDeckPlan {
   text: string;              // deterministic prose for RAG ingest
 }
 
+// Integer-only: strips all non-digits. Every caller passes HTML width/height
+// attributes or URL deck numbers, which are always integers — not for floats.
 function num(s: string | null | undefined): number | null {
   if (!s) return null;
   const v = parseInt(s.replace(/[^\d]/g, ""), 10);

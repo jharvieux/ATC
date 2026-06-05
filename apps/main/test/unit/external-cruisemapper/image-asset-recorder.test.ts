@@ -36,4 +36,10 @@ describe("isHostAllowed", () => {
   it("accepts image URLs with query strings", () => {
     expect(_isHostAllowedForTests("https://www.cruisemapper.com/x.jpg?v=2").allowed).toBe(true);
   });
+
+  it("accepts .gif deck-plan images — the real CruiseMapper format (#768)", () => {
+    // CruiseMapper serves deck plans as .gif; before #768 the extension
+    // allowlist omitted gif, so every deck image was rejected here.
+    expect(_isHostAllowedForTests("https://www.cruisemapper.com/images/deckplans/1355a0a74af575c.gif").allowed).toBe(true);
+  });
 });
