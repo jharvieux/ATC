@@ -75,8 +75,8 @@ export async function discoverPortUrls(db: SupabaseClient): Promise<string[]> {
 
 /**
  * BP37 §33.5 — discover deck plan URLs by visiting every ship page in
- * the inventory and extracting links whose paths look like deck plans
- * (e.g., `/ships/<slug>/deck-09`). Subject to the rate limiter and
+ * the inventory and extracting the link to its combined deck-plans gallery
+ * page (`/deckplans/<Ship-Slug-Id>`). Subject to the rate limiter and
  * robots.txt check via fetchCruiseMapperPage.
  *
  * Returns the full deck-plan inventory after upsert.
@@ -94,7 +94,9 @@ export async function discoverDeckPlanUrls(db: SupabaseClient): Promise<string[]
   return await loadInventoryByKind(db, "deck_plan");
 }
 
-function extractDeckPlanLinks(html: string, shipUrl: string): string[] {
+// Exported so the deck-plan URL-shape filter (issue #768) can be unit-tested
+// without mocking fetchCruiseMapperPage + the DB.
+export function extractDeckPlanLinks(html: string, shipUrl: string): string[] {
   const $ = cheerio.load(html);
   const out = new Set<string>();
   const base = baseUrl();
@@ -105,8 +107,11 @@ function extractDeckPlanLinks(html: string, shipUrl: string): string[] {
     try { abs = new URL(href, shipUrl).toString(); } catch { return; }
     const u = new URL(abs);
     if (u.host !== new URL(base).host) return;
-    // Match /<...>/deck-NN segments only.
-    if (!/\/deck-\d+(?:[\/.]|$)/i.test(u.pathname)) return;
+    // CruiseMapper deck plans live at /deckplans/<Ship-Slug-Id> — one combined
+    // gallery page per ship. Match exactly that shape: the literal /deckplans/
+    // prefix plus a single non-empty slug segment. Excludes the bare /deckplans
+    // index and the per-deck sub-pages (/deckplans/<slug>/deckNN-id).
+    if (!/^\/deckplans\/[^/]+$/i.test(u.pathname)) return;
     u.hash = "";
     u.search = "";
     out.add(u.toString());
