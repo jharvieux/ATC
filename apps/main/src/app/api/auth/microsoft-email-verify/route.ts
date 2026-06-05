@@ -29,6 +29,9 @@ const PENDING_EMAIL_COOKIE = "_ms_pending_email";
 // cap in OTP_STORE. Multi-instance Redis upgrade tracked in #735.
 const OTP_IP_WINDOW_MS = 15 * 60 * 1000;
 const OTP_IP_LIMIT = 10;
+// Opportunistic sweep threshold: evict stale entries when the map exceeds this
+// size, preventing unbounded growth from IPs that hit once and never return.
+const OTP_IP_SWEEP_THRESHOLD = 1000;
 interface IpEntry { count: number; windowStart: number }
 const ipAttempts = new Map<string, IpEntry>();
 
@@ -36,6 +39,11 @@ function checkOtpIpRateLimit(ip: string): boolean {
   const now = Date.now();
   const entry = ipAttempts.get(ip);
   if (!entry || now - entry.windowStart > OTP_IP_WINDOW_MS) {
+    if (ipAttempts.size > OTP_IP_SWEEP_THRESHOLD) {
+      for (const [k, v] of ipAttempts) {
+        if (now - v.windowStart > OTP_IP_WINDOW_MS) ipAttempts.delete(k);
+      }
+    }
     ipAttempts.set(ip, { count: 1, windowStart: now });
     return true;
   }
@@ -44,12 +52,19 @@ function checkOtpIpRateLimit(ip: string): boolean {
   return true;
 }
 
+export function _resetIpAttemptsForTests(): void {
+  ipAttempts.clear();
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
 
   const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     req.headers.get("x-real-ip") ??
+    // "unknown" bucket is intentional fail-closed: callers without forwarded
+    // headers (misconfigured edge, direct invocation) share one bucket and
+    // exhaust the limit together. Vercel always sets x-forwarded-for in prod.
     "unknown";
   if (!checkOtpIpRateLimit(ip)) {
     return errorRedirect(url, "Too many verification attempts. Please try again in 15 minutes.");

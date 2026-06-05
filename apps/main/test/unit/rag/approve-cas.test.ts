@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   } as Record<string, unknown>,
   cas: { data: [{ id: "sub-1" }], error: null } as CasResult,
   fetch: vi.fn(),
+  haikuPiiRedact: vi.fn().mockImplementation(async (content: string) => ({ status: "clean" as const, content })),
 }));
 
 vi.mock("@/lib/auth/assert-permission", () => ({
@@ -62,7 +63,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({
 }));
 
 vi.mock("@/lib/rag-ingest/haiku-pii-redact", () => ({
-  haikuPiiRedact: async (content: string) => ({ status: "clean", content }),
+  haikuPiiRedact: mocks.haikuPiiRedact,
 }));
 
 vi.mock("@/lib/abuse/counters", () => ({
@@ -109,11 +110,15 @@ afterEach(() => {
   else process.env.RAG_SERVICE_URL = ORIG_URL;
 });
 
-async function callApprove(): Promise<Response> {
+async function callApprove(body: Record<string, unknown> = {}): Promise<Response> {
   const { POST } = await import("@/app/api/rag/queue/[id]/approve/route");
-  return POST(new Request("http://test/api/rag/queue/sub-1/approve", { method: "POST", body: "{}" }), {
-    params: Promise.resolve({ id: "sub-1" }),
-  });
+  return POST(
+    new Request("http://test/api/rag/queue/sub-1/approve", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+    { params: Promise.resolve({ id: "sub-1" }) },
+  );
 }
 
 describe("approve — review_status CAS row-count assert (#394)", () => {
@@ -143,5 +148,32 @@ describe("approve — review_status CAS row-count assert (#394)", () => {
     const res = await callApprove();
     expect(res.status).toBe(500);
     await expect(res.json()).resolves.toEqual({ error: "db boom" });
+  });
+
+  // ── PII pipeline on reviewer edits (f012) ────────────────────────────────
+
+  it("returns 422 pii_check_failed when Haiku redaction fails for edits.content (fail-closed)", async () => {
+    // Removing the 422 branch in approve/route.ts would cause this test to
+    // return 200 instead — the test fails as required.
+    mocks.haikuPiiRedact.mockResolvedValueOnce({ status: "failed", reason: "haiku_error: x" });
+    const res = await callApprove({ edits: { content: "some edited text" } });
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({ error: "pii_check_failed" });
+  });
+
+  it("redacts SSN from edits.content before forwarding to RAG (redactPii runs before Haiku)", async () => {
+    let capturedRawContent: unknown;
+    mocks.fetch.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if ((url as string).includes("/api/ingest")) {
+        capturedRawContent = JSON.parse((opts?.body as string) ?? "{}").raw_content;
+        return { ok: true, json: async () => ({ queue_item_id: "q-1" }) } as unknown as Response;
+      }
+      return { ok: true, json: async () => ({ chunk_id: "chunk-1" }) } as unknown as Response;
+    });
+
+    const res = await callApprove({ edits: { content: "SSN is 123-45-6789 see attached" } });
+    expect(res.status).toBe(200);
+    expect(capturedRawContent).not.toContain("123-45-6789");
+    expect(capturedRawContent).toContain("[REDACTED_SSN]");
   });
 });
