@@ -23,8 +23,38 @@ import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 const PENDING_EMAIL_COOKIE = "_ms_pending_email";
 
+// In-process IP rate limiter — 10 attempts per IP per 15 minutes.
+// Per-instance only (no Redis); acceptable for the low-concurrency §17.2 OTP
+// flow. An attacker cycling instances still sees the per-email MAX_OTP_ATTEMPTS
+// cap in OTP_STORE. Multi-instance Redis upgrade tracked in #735.
+const OTP_IP_WINDOW_MS = 15 * 60 * 1000;
+const OTP_IP_LIMIT = 10;
+interface IpEntry { count: number; windowStart: number }
+const ipAttempts = new Map<string, IpEntry>();
+
+function checkOtpIpRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = ipAttempts.get(ip);
+  if (!entry || now - entry.windowStart > OTP_IP_WINDOW_MS) {
+    ipAttempts.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= OTP_IP_LIMIT) return false;
+  entry.count += 1;
+  return true;
+}
+
 export async function POST(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
+
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    "unknown";
+  if (!checkOtpIpRateLimit(ip)) {
+    return errorRedirect(url, "Too many verification attempts. Please try again in 15 minutes.");
+  }
+
   const form = await req.formData();
   const code = (form.get("code") as string | null)?.trim() ?? "";
 

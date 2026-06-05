@@ -18,6 +18,8 @@ import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { adjustRagChunkCount } from "@/lib/abuse/counters";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { redactPii } from "@/lib/pii/redact";
+import { haikuPiiRedact } from "@/lib/rag-ingest/haiku-pii-redact";
 
 interface RagIngestResponse {
   queue_item_id?: string;
@@ -71,8 +73,24 @@ export async function POST(
       return Response.json({ error: "not_in_ready_for_review" }, { status: 409 });
     }
 
+    // If the reviewer supplied edited content, run it through both PII passes
+    // before using it — the edit input bypasses the Inngest ingest pipeline
+    // that already ran on the original content (f012).
+    let editContent = body.edits?.content as string | undefined;
+    if (editContent !== undefined) {
+      const { redacted: regexRedacted } = redactPii(editContent);
+      const haikuResult = await haikuPiiRedact(regexRedacted, { tenant_id: row.tenant_id });
+      if (haikuResult.status === "failed") {
+        return Response.json(
+          { error: "pii_check_failed", detail: haikuResult.reason },
+          { status: 422 },
+        );
+      }
+      editContent = haikuResult.content;
+    }
+
     const content =
-      (body.edits?.content as string | undefined) ?? row.redacted_content ?? row.extracted_content ?? "";
+      editContent ?? row.redacted_content ?? row.extracted_content ?? "";
     if (content.length === 0) {
       return Response.json({ error: "empty_content" }, { status: 400 });
     }

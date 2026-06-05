@@ -56,6 +56,13 @@ vi.mock("@/lib/abuse/snapshot", () => ({
   loadTenantSnapshot: async () => ({
     tenant: { id: "t-1", tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
   }),
+  // call-wrapper (imported by haikuPiiRedact) re-exports this from snapshot.
+  PLATFORM_TENANT_ID: "00000000-0000-0000-0000-000000000000",
+  _resetSnapshotCacheForTests: () => {},
+}));
+
+vi.mock("@/lib/rag-ingest/haiku-pii-redact", () => ({
+  haikuPiiRedact: async (content: string) => ({ status: "clean", content }),
 }));
 
 vi.mock("@/lib/abuse/counters", () => ({
