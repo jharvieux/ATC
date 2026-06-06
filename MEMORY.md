@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-164 — 2026-06-06 — Shipped #787/#788/#789 (RAG ingest + embedding hardening); found RAG-tests-not-in-CI gap (#792)
+
+Three fixes surfaced while tracking the first post-#766 CruiseMapper bulk ingest:
+
+**#788 — inventory load 1000-row cap (PR #791).** `loadInventoryByKind` selected without `.range()`, so PostgREST's default 1000-row response cap silently truncated port ingest to 1000/1569 (566 ports dropped). Fixed with 1000-row `.range()` pagination; the sailing cron now shares the one loader (dropped duplicate `loadShipUrls`); throws on DB error instead of masking as empty inventory.
+
+**#787 — RAG Redis client resilience (PR #793).** verifyServiceJwt fail-closes to `redis_unreachable` (503) on any Redis error, so the default `maxRetriesPerRequest:1` dropped ~9% of ingest auth checks at cold-start. Raised to 3 + bounded reconnect backoff (200ms→2s cap). **Decision: reconnect count is intentionally UNBOUNDED (not `null` after N)** — a null-returning bound would make a warm serverless instance give up and then fail-closed on EVERY auth check until it recycles (worse than reconnecting every 2s); matches ioredis's default; fail-closed still holds via maxRetriesPerRequest. Accepted tradeoff: a retried SET NX whose OK was lost can report a rare spurious `replay` (self-heals next run with a fresh jti).
+
+**#789 — embedding reconcile bulk-write + batch 200→2000 (PR #794).** Reconcile applied a completed batch one row at a time (~3 sequential round-trips/row) + parsed output twice → timeout + ~10× memory risk at 2000 rows. Refactor: single-pass parse; bounded-concurrency writes (`EMBED_WRITE_CONCURRENCY=25`, write-before-flip so abort-on-error leaves rows `submitted` → idempotent retry); chunked bulk status flips (`STATUS_FLIP_CHUNK=200`, to stay under the PostgREST URL limit); cost aggregated per (tenant,model); per-run budget `MAX_ROWS_PER_RUN=4000`. Then `MAX_REQUESTS_PER_BATCH` 200→2000. **Rejected: a Postgres RPC for single-statement bulk embedding UPDATE** — needs a migration + manual prod-apply (pipeline auto-migrate is disabled, TODO #534); chose app-only parallelism (no migration/prod-apply dependency). RPC remains a future option if DB write load (not wall-time) becomes the constraint.
+
+**Finding — #792 (RAG unit tests not in CI).** Root `vitest.config.ts` includes only `apps/main/test` + `tests/`; no workflow runs `pnpm -r test` / `pnpm --dir apps/rag test` (only error-injection + e2e touch RAG). So `apps/rag/test/unit/*` run locally only — a broken RAG unit test merges undetected. **How to apply: until #792 is fixed, verify RAG changes with `pnpm --dir apps/rag test` in addition to `pnpm verify` (which does NOT run them).**
+
+---
+
 ## D-163 — 2026-06-05 — Cruise data scope: ports folded into Phase 1; Phase 3 (#783) connected group-booking flow created
 
 Two scope expansions to the cruise-data initiative (D-161), both at user request after beta042 shipped:
