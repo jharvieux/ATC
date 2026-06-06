@@ -240,10 +240,26 @@ async function upsertInventory(db: SupabaseClient, urls: string[], kind: "ship" 
   }
 }
 
-async function loadInventoryByKind(db: SupabaseClient, kind: "ship" | "port" | "deck_plan"): Promise<string[]> {
-  const { data } = await db
-    .from("cruisemapper_url_inventory")
-    .select("url")
-    .eq("kind", kind);
-  return ((data ?? []) as Array<{ url: string }>).map((r) => r.url);
+// Load every inventory URL for a kind. PostgREST caps a single .select() at
+// 1000 rows by default, so this MUST paginate with .range() — a non-paginated
+// load silently truncated port ingest to the first 1000 URLs (issue #788).
+// Exported so the sailing cron shares one paginated loader instead of keeping a
+// second copy that can drift. Throws on DB error rather than masking it as an
+// empty inventory.
+export async function loadInventoryByKind(db: SupabaseClient, kind: "ship" | "port" | "deck_plan"): Promise<string[]> {
+  const PAGE = 1000;
+  const urls: string[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await db
+      .from("cruisemapper_url_inventory")
+      .select("url")
+      .eq("kind", kind)
+      .order("url", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`cruisemapper_url_inventory.select failed: ${error.message}`);
+    const rows = (data ?? []) as Array<{ url: string }>;
+    for (const r of rows) urls.push(r.url);
+    if (rows.length < PAGE) break;
+  }
+  return urls;
 }

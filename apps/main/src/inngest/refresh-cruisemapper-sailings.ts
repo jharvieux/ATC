@@ -33,6 +33,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
+import { loadInventoryByKind } from "@/lib/external/cruisemapper/discovery";
 import { processSailingHtml, emptySailingResult, mergeSailing, type SailingRunResult } from "@/lib/external/cruisemapper/sailing-ingest";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -97,7 +98,7 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       }),
     );
 
-    const shipUrls = await step.run("load-ships", () => loadShipUrls(createServiceRoleClient()));
+    const shipUrls = await step.run("load-ships", () => loadInventoryByKind(createServiceRoleClient(), "ship"));
 
     const sailing = emptySailingResult();
     let fetchUnchanged = 0;
@@ -161,15 +162,6 @@ async function alertSailingHalt(attempted: number, parseFailures: number, reason
     payload: { attempted, failures: parseFailures },
   });
   return { alerted: true };
-}
-
-async function loadShipUrls(db: SupabaseClient): Promise<string[]> {
-  const { data, error } = await db
-    .from("cruisemapper_url_inventory")
-    .select("url")
-    .eq("kind", "ship");
-  if (error) throw new Error(`cruisemapper_url_inventory.select failed: ${error.message}`);
-  return ((data ?? []) as Array<{ url: string }>).map((r) => r.url);
 }
 
 async function priorShipHash(db: SupabaseClient, url: string): Promise<string | undefined> {
