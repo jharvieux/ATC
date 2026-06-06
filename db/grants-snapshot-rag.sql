@@ -5,38 +5,38 @@
 -- Captures DML grants (SELECT, INSERT, UPDATE, DELETE) for roles anon, authenticated, service_role.
 
 -- TABLE: public.itineraries
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.itineraries TO service_role;
 
 -- TABLE: public.knowledge_chunk_feedback_events
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.knowledge_chunk_feedback_events TO service_role;
 
 -- TABLE: public.knowledge_chunks
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.knowledge_chunks TO service_role;
 
 -- TABLE: public.knowledge_ingestion_queue
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.knowledge_ingestion_queue TO service_role;
 
 -- TABLE: public.pending_embedding
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.pending_embedding TO service_role;
 
 -- TABLE: public.platform_settings
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.platform_settings TO service_role;
 
 -- TABLE: public.rag_ai_call_log
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_ai_call_log TO service_role;
 
 -- TABLE: public.rag_media_assets
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_media_assets TO service_role;
 
 -- TABLE: public.rag_retrieval_log
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_retrieval_log TO service_role;
 
 -- TABLE: public.rag_retrieval_log_daily
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_retrieval_log_daily TO service_role;
 
 -- TABLE: public.schema_migrations
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.schema_migrations TO service_role;
 
 -- TABLE: public.tenant_registry_shadow
--- (no DML grants to anon/authenticated/service_role)
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_registry_shadow TO service_role;
 
