@@ -1,22 +1,23 @@
-# Session state — last updated 2026-06-05 21:15 UTC
+# Session state — last updated 2026-06-05 21:40 UTC
 
 ## Just completed
-- Verified live atc-rag Redis via fast `/api/feedback` probe (401 = Redis up) — #766 Redis blocker confirmed cleared at the infra layer, no code fix needed
-- Saved the reusable Redis-probe technique to auto-memory (`reference_rag_redis_probe.md`)
-- Cut **beta042** from `origin/dev` HEAD (1ff1f844) + pushed `release/beta042` → production pipeline running (run 27050609248), awaiting the prod approval gate
-- Created cruise-line DB plan issues: **#780** (Phase 1 — canonical `cruise_lines` + `cruise_ships` tables + platform-admin add/disable screen + scraper cutover) and **#781** (Phase 2 — normalize free-text columns; explicitly covers quotes + group bookings)
-- MEMORY.md: added D-160 (beta042 release) and D-161 (cruise-line DB decision)
+- **beta042 DEPLOYED to production** (user approved the prod gate) — cruisemapper ingest fixes (#768–#779) + PKCE (#764) are now live
+- Verified live atc-rag Redis via fast `/api/feedback` probe (401 = up); saved the probe technique to auto-memory
+- Cruise-data plan fully scoped across three issues:
+  - **#780 Phase 1** — canonical `cruise_lines` + `cruise_ships` (incl. `ship_class`) + `ports` tables; platform-admin add/disable screen; scraper cutover. Ports reconcile with existing `port_info_chunks` (no duplicate).
+  - **#781 Phase 2** — normalize free-text `cruise_line` columns to FKs (covers quotes + group bookings)
+  - **#783 Phase 3** — connected group-booking UX (line/ship/class dropdowns + date → auto-filled ports/itinerary); requires a NEW structured sailing catalog (parser already produces `MappedItinerary`, currently RAG-only)
+- MEMORY.md: D-160 (beta042), D-161 (cruise-data decision), D-162 (ship_class), D-163 (ports + Phase 3)
 
 ## In flight
-- **release/beta042 production deploy** — needs manual approval at the GitHub `production` environment gate: https://github.com/jharvieux/ATC/actions/runs/27050609248
-- Working tree clean apart from untracked scratch files (release was cut from origin/dev; nothing uncommitted)
+- Doc-only checkpoint PR **#782** (MEMORY + SESSION) — auto-merge enabled; may need a follow-up commit for D-163 + this SESSION update (check whether #782 already merged before pushing)
 
 ## Next step
-- After beta042 is approved + deploys: re-trigger `refresh-cruisemapper-static` and verify `cruisemapper_url_inventory.last_error` clears — the end-to-end ingest test that also exercises verifyServiceJwt Step 5 (the tenant_registry_shadow service_role lookup fixed by #779)
+- End-to-end ingest test now that beta042 is live: trigger `refresh-cruisemapper-static` and verify `cruisemapper_url_inventory.last_error` clears (exercises verifyServiceJwt all 6 steps incl. the Step 5 tenant_registry_shadow lookup fixed by #779)
 
 ## Blocked on user
-- GitHub `production` approval to complete the beta042 deploy
+- Nothing — beta042 approved and deployed
 
 ## Open questions
-- Phase 1/2 schema scope DECIDED: ships INCLUDED (essential — the booking→knowledge join is ship-level), plus `aliases` / `tier` / `is_active` / `cruisemapper_slug`. A canonical `ports` table was DEFERRED — confirm if you want ports folded into Phase 1 too.
-- Open security issues (#715–#752) + Day-3 PRs (f001/f028) still backlogged — intentionally not in beta042
+- Phase 3 (#783) needs a structured `cruise_sailings` + `sailing_port_calls` catalog; the sailing parser already computes the data but it's only RAG-ingested today. Could split #783 into 3a (catalog) + 3b (UX) if too large.
+- Open security issues (#715–#752) + Day-3 PRs (f001/f028) still backlogged — not in beta042

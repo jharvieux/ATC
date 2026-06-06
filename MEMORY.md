@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-163 — 2026-06-05 — Cruise data scope: ports folded into Phase 1; Phase 3 (#783) connected group-booking flow created
+
+Two scope expansions to the cruise-data initiative (D-161), both at user request after beta042 shipped:
+
+**Ports folded into Phase 1 (#780)** — reverses D-161's "ports deferred." Adds a canonical `ports` table (slug, canonical_name, country, region, cruisemapper_slug, is_active, aliases). **Reconciliation flagged:** `port_info_chunks` already exists as a structured port store keyed by `port_code`/`port_name` (read by the pre-cruise email cron, fed by `port-parser.ts`) — the `ports` table must FK/fold it, NOT duplicate. Admin screen + seed extended to ports.
+
+**Phase 3 created (#783)** — the connected group-booking creation UX: line → ship (filtered, optional class) → date → auto-filled ports/itinerary, persisting canonical FKs. The user's "connect everything" vision.
+
+**Key finding driving Phase 3 scope:** there is NO structured "ship + departure_date → ordered ports" catalog today. The sailing parser already produces it — `cruisemapper/itinerary-mapper.ts` returns `MappedItinerary` (`portsOfCall`, `dayByDay`) — but only the `.text` is RAG-ingested and the structured fields are discarded (same discard pattern as `ship_class`). So Phase 3 isn't just UI wiring: it must persist a structured sailing catalog (`cruise_sailings` + `sailing_port_calls`) from the existing parser first. `trip_itineraries` is per-booking customer output (BP39), not a source catalog.
+
+**Sequencing:** Phase 1 (#780 tables) → Phase 2 (#781 group bookings carry FK columns) → Phase 3 (#783 catalog + UX).
+
+---
+
 ## D-162 — 2026-06-05 — Add structured `ship_class` to cruise_ships (revises D-161's "specs out")
 
 D-161 deferred ship class/tonnage/etc. as "no feature needs it yet." User named the feature: customers sometimes want to pick a particular ship class — which needs a queryable column — so `ship_class` (text, nullable) is added to the Phase 1 `cruise_ships` table (#780).
