@@ -73,7 +73,12 @@ export async function GET(req: NextRequest): Promise<Response> {
   // parser, not a startsWith chain, decides the host, so userinfo / fullwidth /
   // encoded-slash tricks all fail the parsed.origin equality.
   const safe = safeNextFor(url.searchParams.get("next"), url.origin);
-  const isAgencyProvisioning = safe?.path === "/signup/complete";
+  // Compare the PATHNAME, not safe.path (which is pathname + search + hash). A
+  // caller passing next=/signup/complete?x=… must still count as the agency
+  // flow, or the upsert below would re-create the default-tenant row and
+  // reintroduce #800. safe is same-origin-validated, so the URL parse is safe.
+  const isAgencyProvisioning =
+    safe !== null && new URL(safe.path, url.origin).pathname === "/signup/complete";
 
   // Membership upsert. On a tenant domain the resolved id is a UUID — use it
   // directly. On the platform domain the resolved id is the "platform" sentinel;

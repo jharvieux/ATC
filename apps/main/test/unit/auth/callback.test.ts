@@ -167,6 +167,18 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/complete");
   });
 
+  it("recognizes the agency flow even when next carries a query string (hardens #800)", async () => {
+    // safeNextFor returns pathname+search; the guard must match on pathname only,
+    // else next=/signup/complete?x=… would slip through and re-create the default
+    // membership row (a silent #800 regression).
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    const res = await get("?code=abc&next=%2Fsignup%2Fcomplete%3Futm%3Dx", {
+      "x-resolved-tenant-id": "platform",
+    });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/complete");
+  });
+
   it("with no x-resolved-tenant-id header and PLATFORM_DEFAULT_TENANT_ID set: upserts into the default tenant", async () => {
     // Guards the !tenantId branch of effectiveTenantId: a request with no
     // header at all (e.g. a direct hit bypassing middleware) must still land
