@@ -203,8 +203,8 @@ describe("loadInventoryByKind — paginates past the 1000-row cap (#788)", () =>
         let kind = "";
         const builder: MockBuilder = {
           select: () => builder,
-          eq: (_col, val) => {
-            kind = val;
+          eq: (col, val) => {
+            if (col === "kind") kind = val;
             return builder;
           },
           order: () => builder,
@@ -250,6 +250,23 @@ describe("loadInventoryByKind — paginates past the 1000-row cap (#788)", () =>
 
     expect(result).toHaveLength(251);
     expect(calls).toEqual([{ from: 0, to: 999 }]);
+  });
+
+  it("makes one extra empty window when the row count is an exact multiple of 1000", async () => {
+    const ports = Array.from({ length: 1000 }, (_, i) => ({
+      url: `https://www.cruisemapper.com/ports/exact-${String(i).padStart(4, "0")}`,
+    }));
+    const { db, calls } = makeMockDb({ port: ports });
+
+    const result = await loadInventoryByKind(db, "port");
+
+    expect(result).toHaveLength(1000);
+    // The first window is full (1000), so the loop can't tell it's the last —
+    // it issues a second window that returns 0 rows, then stops.
+    expect(calls).toEqual([
+      { from: 0, to: 999 },
+      { from: 1000, to: 1999 },
+    ]);
   });
 
   it("throws on a DB error rather than masking it as an empty inventory", async () => {
