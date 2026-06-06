@@ -1,23 +1,22 @@
-# Session state — last updated 2026-06-06 04:35 UTC
+# Session state — last updated 2026-06-06 05:05 UTC
 
 ## Just completed
-- beta042 deployed to prod (CruiseMapper ingest fixes #768–#779 + PKCE #764 live)
-- Tracked the first post-#766 bulk ingest: ships + deck plans fully embedded; ports were partial (the 1000-row load cap → #788) and embeddings throughput-limited (→ #789)
-- Shipped + merged **#788** (PR #791, inventory pagination), **#787** (PR #793, Redis client resilience), **#789** (PR #794, embedding reconcile bulk-write + batch 200→2000) — all audited clean (d091 + pre-pr; #794 first pass at Opus)
-- Filed **#792** (RAG unit tests not run in CI); #787/#788/#789 auto-closed on merge
-- MEMORY: D-164
+- Shipped + merged the RAG/ingest hardening set: **#788** (PR #791, inventory pagination), **#787** (PR #793, Redis resilience), **#789** (PR #794, embedding reconcile bulk-write + batch 200→2000), and **#796** (PR #797, sailing-cron time-budgeted stepping + parallel per-ship POSTs)
+- Analyzed the itinerary ingest load: `refresh-cruisemapper-sailings` is the loader (1 + N POSTs/ship, N uncapped); itineraries table currently empty (job not run at scale). Load ~15× the static job's
+- Filed #792 (RAG unit tests not CI-gated)
+- MEMORY: D-164 (#787/788/789 + #792), D-165 (#796 time-budgeted stepping; reusable for #774)
 
 ## In flight
-- Doc-only checkpoint PR (MEMORY D-164 + this SESSION) — auto-merging. Otherwise clean.
+- Doc-only checkpoint PR (MEMORY D-165 + this SESSION) — auto-merging. Otherwise clean.
 
 ## Next step
-- Re-run `refresh-cruisemapper-static` (now that #788 is merged + #794's faster embedding is live): should ingest the remaining ~566 ports (already in inventory) and drain embeddings faster at the 2000 batch size. Verify via `cruisemapper_url_inventory` + `pending_embedding` counts.
+- These four fixes are merged to **dev**, not prod. To exercise them (re-run cruisemapper to pick up the ~566 missing ports + run the first full sailing/itinerary ingest), cut the next beta release (beta043) — gated prod deploy, same as beta042.
+- After deploy: re-run `refresh-cruisemapper-static` (gets remaining ports), then trigger `refresh-cruisemapper-sailings` (first full itinerary load) and watch Inngest step durations + the embedding backlog drain.
 
 ## Blocked on user
-- Nothing
+- Beta043 release cut (prod deploy) is the user's call — these four fixes are dev-only until then.
 
 ## Open questions
-- **#792** (RAG unit tests not CI-gated) open — until fixed, verify RAG changes with `pnpm --dir apps/rag test` (NOT covered by `pnpm verify`)
-- Vendor-health probe expansion (#785) + durable alerting (#786) still open
-- Cruise-line DB plan (#780 Phase 1 → #781 Phase 2 → #783 Phase 3) not started
-- Open security backlog (#715–#752) unaddressed
+- #792 (RAG unit tests not CI-gated) open — verify RAG changes with `pnpm --dir apps/rag test`
+- #774 Tier-2 crons can reuse the #796 time-budgeted-stepping pattern (see D-165)
+- Vendor-health probe expansion (#785) + alerting (#786), cruise-line DB plan (#780/#781/#783), security backlog (#715–#752) all still open
