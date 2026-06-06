@@ -22,6 +22,12 @@ export function getRedis(): Redis {
     _redis = new Redis(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 3,
+      // Reconnect backoff (200ms → 2s cap). Intentionally unbounded (ioredis's
+      // own default shape): a strategy that returns null would make a warm
+      // instance give up and then fail-closed on EVERY auth check until it
+      // recycles — worse than a cheap reconnect attempt every 2s. Serverless
+      // instance churn bounds the loop anyway. Fail-closed still holds while
+      // disconnected: commands fail via maxRetriesPerRequest → 503.
       retryStrategy: (times) => Math.min(times * 200, 2_000),
     });
   }
