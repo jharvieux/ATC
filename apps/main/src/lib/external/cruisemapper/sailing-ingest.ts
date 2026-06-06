@@ -12,6 +12,11 @@ import { mapSailing, mapSailingListItem } from "./itinerary-mapper";
 import { ingestItineraryToRag } from "./rag-itinerary-ingest";
 import { upsertPriceQuote } from "@/lib/pricing/pricing-cache";
 
+// Per-ship upcoming-sailing ingests run in bounded-concurrency waves (#796) so a
+// high-sailing-count ship doesn't serialize hundreds of RAG POSTs into the cron
+// step's wall-time. The ingests are independent + idempotent (content_hash).
+const SAILING_POST_CONCURRENCY = 8;
+
 export interface SailingRunResult {
   current_parsed: number;
   current_ingested: number;
@@ -84,31 +89,37 @@ export async function processSailingHtml(
     result.current_errors += 1;
   }
 
-  // Upcoming sailings list — prices + RAG text, no day_by_day.
+  // Upcoming sailings list — prices + RAG text, no day_by_day. Independent +
+  // idempotent per item, so process them in bounded-concurrency waves (#796)
+  // instead of one serial await per sailing.
   const listItems = parseSailingList(html);
   result.list_items += listItems.length;
 
-  for (const item of listItems) {
-    const listMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "");
-    if (!listMapped) continue;
+  for (let i = 0; i < listItems.length; i += SAILING_POST_CONCURRENCY) {
+    await Promise.all(
+      listItems.slice(i, i + SAILING_POST_CONCURRENCY).map(async (item) => {
+        const listMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "");
+        if (!listMapped) return;
 
-    if (listMapped.cacheQuote) {
-      try {
-        await upsertPriceQuote(db, listMapped.cacheQuote);
-        result.list_price_cache_written += 1;
-      } catch (err) {
-        // Best-effort — price cache is a convenience mirror; RAG ingest proceeds.
-        console.warn("[sailing-ingest] price-cache upsert failed (non-fatal)",
-          { shipUrl, data_row_id: item.data_row_id, err });
-        result.list_price_cache_errors += 1;
-      }
-    }
+        if (listMapped.cacheQuote) {
+          try {
+            await upsertPriceQuote(db, listMapped.cacheQuote);
+            result.list_price_cache_written += 1;
+          } catch (err) {
+            // Best-effort — price cache is a convenience mirror; RAG ingest proceeds.
+            console.warn("[sailing-ingest] price-cache upsert failed (non-fatal)",
+              { shipUrl, data_row_id: item.data_row_id, err });
+            result.list_price_cache_errors += 1;
+          }
+        }
 
-    const outcome = await ingestItineraryToRag(listMapped);
-    if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {
-      result.list_ingested += 1;
-    } else {
-      result.list_errors += 1;
-    }
+        const outcome = await ingestItineraryToRag(listMapped);
+        if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {
+          result.list_ingested += 1;
+        } else {
+          result.list_errors += 1;
+        }
+      }),
+    );
   }
 }

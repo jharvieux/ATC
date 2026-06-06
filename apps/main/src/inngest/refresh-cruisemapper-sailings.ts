@@ -40,9 +40,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20;
-// Ship pages per step. Smaller than the static job's batches because sailing
-// ingest does many serial RAG itinerary POSTs per ship.
-const SAILING_CHUNK = 5;
+// Per-step wall-clock budget (#796). A step processes ships until this is spent
+// (always finishing the current ship + at least one), then the orchestrator
+// resumes from the returned cursor — so no single Inngest step exceeds
+// maxDuration regardless of any ship's sailing count. Kept well under the 300s
+// function limit to leave headroom for the in-progress ship to finish.
+const STEP_BUDGET_MS = 180_000;
 
 const AUDIT_META = {
   admin_user_id: "system-cron",
@@ -57,7 +60,8 @@ export interface SailingUrlResult {
   parse_failed: number; // 0 | 1
 }
 
-interface SailingBatchResult {
+interface SailingWindowResult {
+  nextIndex: number;
   attempted: number;
   sailing: SailingRunResult;
   fetch_unchanged: number;
@@ -108,20 +112,24 @@ export const refreshCruisemapperSailings = inngest.createFunction(
     let halted = false;
     let haltReasonStr: string | undefined;
 
-    for (let i = 0; i < shipUrls.length; i += SAILING_CHUNK) {
-      const batch = shipUrls.slice(i, i + SAILING_CHUNK);
-      const r = await step.run(`sailing-${i / SAILING_CHUNK}`, () => processSailingBatch(batch));
+    let cursor = 0;
+    let stepNum = 0;
+    while (cursor < shipUrls.length) {
+      const start = cursor;
+      const r = await step.run(`sailing-${stepNum}`, () => processSailingWindow(shipUrls, start));
       attempted += r.attempted;
       mergeSailing(sailing, r.sailing);
       fetchUnchanged += r.fetch_unchanged;
       fetchErrors += r.fetch_errors;
       parseFailures += r.parse_failed;
+      cursor = r.nextIndex;
+      stepNum += 1;
 
       const reason = sailingHaltReason(attempted, parseFailures);
       if (reason) {
         halted = true;
         haltReasonStr = reason;
-        await step.run(`halt-${i / SAILING_CHUNK}`, () => alertSailingHalt(attempted, parseFailures, reason));
+        await step.run(`halt-${stepNum}`, () => alertSailingHalt(attempted, parseFailures, reason));
         break;
       }
     }
@@ -137,21 +145,43 @@ export const refreshCruisemapperSailings = inngest.createFunction(
   },
 );
 
-// Process a batch of ship pages in one step, aggregating the per-URL results.
-async function processSailingBatch(urls: string[]): Promise<SailingBatchResult> {
+// Process ship pages starting at `start` in one step, stopping once the wall-
+// clock budget is spent so the step can't exceed maxDuration (#796). The
+// orchestrator resumes from the returned nextIndex.
+async function processSailingWindow(urls: string[], start: number): Promise<SailingWindowResult> {
   const db = createServiceRoleClient();
+  return runSailingWindow(urls, start, STEP_BUDGET_MS, (url) => processOneSailingUrl(db, url));
+}
+
+// Core windowing loop, separated from the service-role wiring so it's unit-
+// testable: process `urls` from `start` via `processOne`, stopping once `now()`
+// passes the deadline. Always advances at least one ship per call so the run
+// makes progress even if a single ship alone exceeds the budget.
+export async function runSailingWindow(
+  urls: string[],
+  start: number,
+  budgetMs: number,
+  processOne: (url: string) => Promise<SailingUrlResult>,
+  now: () => number = Date.now,
+): Promise<SailingWindowResult> {
   const sailing = emptySailingResult();
   let fetch_unchanged = 0;
   let fetch_errors = 0;
   let parse_failed = 0;
-  for (const url of urls) {
-    const r = await processOneSailingUrl(db, url);
+  let attempted = 0;
+  const deadline = now() + budgetMs;
+  let i = start;
+  while (i < urls.length) {
+    const r = await processOne(urls[i]!);
     mergeSailing(sailing, r.sailing);
     fetch_unchanged += r.fetch_unchanged;
     fetch_errors += r.fetch_errors;
     parse_failed += r.parse_failed;
+    attempted += 1;
+    i += 1;
+    if (now() >= deadline) break;
   }
-  return { attempted: urls.length, sailing, fetch_unchanged, fetch_errors, parse_failed };
+  return { nextIndex: i, attempted, sailing, fetch_unchanged, fetch_errors, parse_failed };
 }
 
 async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
