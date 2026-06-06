@@ -1,0 +1,33 @@
+// #787 — the RAG Redis client must ride out transient blips under the cron's
+// burst instead of fail-closing every verifyServiceJwt SET NX. `lazyConnect`
+// means constructing the client opens no socket, so we can read back its
+// resolved options without a live Redis. vi.resetModules + a per-test dynamic
+// import give each case a fresh getRedis() singleton so they stay independent.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+describe("getRedis options — resilience under burst (#787)", () => {
+  const prev = process.env.REDIS_URL;
+  beforeEach(() => {
+    vi.resetModules();
+    process.env.REDIS_URL = "rediss://example.invalid:6379";
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = prev;
+  });
+
+  it("retries each command more than once before failing closed", async () => {
+    const { getRedis } = await import("../../src/lib/redis/client");
+    expect(getRedis().options.maxRetriesPerRequest).toBe(3);
+  });
+
+  it("reconnects with a backoff that grows then caps at 2s", async () => {
+    const { getRedis } = await import("../../src/lib/redis/client");
+    const rs = getRedis().options.retryStrategy;
+    expect(typeof rs).toBe("function");
+    if (typeof rs !== "function") return;
+    expect(rs(1)).toBe(200);
+    expect(rs(5)).toBe(1000);
+    expect(rs(100)).toBe(2000); // capped
+  });
+});
