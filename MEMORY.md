@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-159 — 2026-06-05 — CruiseMapper ship discovery per-cruise-line (38 → ~215 ships); per-URL steps → BATCHED steps (revises D-158's rejected-chunking)
+
+Ship discovery (#777) was scraping only page 1 of CruiseMapper's paginated global `/ships` index (~38 ships). Reworked to enumerate ~17 covered cruise lines' fleets (major US-market + premium/luxury US customers book; Costa + Viking-river excluded) from `/cruise-lines/<line>` pages, scoped to the `.shipListItem` fleet cards (the line pages also embed a global ship browser whose links must NOT leak in), following each line page's `?page=N` fleet pagination. Result: **~215 ships**.
+
+**Revises D-158.** D-158's "What was rejected" listed *chunked steps* in favour of per-URL `step.run`. That rejection was premised on ~38 ships, where per-URL was fine and more robust to per-ship sailing-volume variance. At ~215 ships, per-URL steps generate ~900 steps in the static job (ships + decks), which approaches Inngest's per-run step ceiling. So the static + sailing processing loops were converted to **batched** `step.run` (`SHIP/PORT/DECK_CHUNK` 10/10/8; `SAILING_CHUNK` 5). The per-URL helper functions are unchanged — only the loop wrapping. `step.sleep` pacing was removed (the in-process token bucket paces fetches within each batch).
+
+**Why the reversal is safe:** the sailing-variance concern that motivated per-URL is mitigated by a small `SAILING_CHUNK` (5) plus idempotent step retries (upsert-by-key + content_hash), so a heavy batch that ever times out is retried, not lost.
+
+**Related:** PR #777; `/ports` has the same page-1 pagination bug (tracked in #776); #774 (Tier-2 cron hardening).
+
+---
+
 ## D-158 — 2026-06-05 — CruiseMapper crons restructured: sailing decoupled to a durable monthly cron; per-URL Inngest steps (supersedes D-126 one-fetch design)
 
 Three PRs this session reworked the CruiseMapper ingest crons after they were found broken / timing out once the RAG env fixes (#766 Redis unreachable, #767 stale RAG service-role key) let ingestion actually run:
