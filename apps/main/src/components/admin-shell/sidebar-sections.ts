@@ -21,6 +21,7 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
       { href: "/admin/tenants/review-queue", label: "Tenant Review Queue" },
       { href: "/admin/abuse-monitoring", label: "Abuse Monitoring" },
       { href: "/admin/denylist", label: "Content Deny-list" },
+      { href: "/admin/admins", label: "Platform Admins" },
     ],
   },
   {

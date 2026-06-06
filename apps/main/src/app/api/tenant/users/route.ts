@@ -23,7 +23,7 @@ interface MemberRow {
 
 export async function GET(req: Request): Promise<Response> {
   try {
-    const { ctx } = await assertPermission(req, {
+    const { ctx, user } = await assertPermission(req, {
       resource: "team_members",
       action: "list",
     });
@@ -41,7 +41,10 @@ export async function GET(req: Request): Promise<Response> {
       return Response.json({ error: error.message }, { status: 500 });
     }
 
-    return Response.json({ members: (data ?? []) as MemberRow[] });
+    return Response.json({
+      members: (data ?? []) as MemberRow[],
+      caller_role: user.role,
+    });
   } catch (err) {
     return respondToAuthError(err);
   }
