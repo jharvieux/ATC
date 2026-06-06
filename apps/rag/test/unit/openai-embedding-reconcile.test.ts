@@ -99,6 +99,7 @@ function mockDb(state: DbState) {
           // `.eq("batch_id", x).eq("status", "submitted").select("id")` chains.
           const u = {
             _id: undefined as string | undefined,
+            _inIds: undefined as string[] | undefined,
             _batchId: undefined as string | undefined,
             _statusFilter: undefined as string | undefined,
             _selectChained: false,
@@ -106,6 +107,10 @@ function mockDb(state: DbState) {
               if (col === "id") u._id = val;
               else if (col === "batch_id") u._batchId = val;
               else if (col === "status") u._statusFilter = val;
+              return u;
+            },
+            in(col: string, vals: string[]) {
+              if (col === "id") u._inIds = vals;
               return u;
             },
             select(_cols: string) {
@@ -116,11 +121,16 @@ function mockDb(state: DbState) {
               resolve: (v: { data: { id: string }[] | null; error: null }) => void,
             ) {
               const affected: { id: string }[] = [];
-              if (u._id) {
-                state.pendingUpdates.push({ id: u._id, payload });
-                const row = state.pending.find((p) => p.id === u._id);
+              const applyToId = (id: string) => {
+                state.pendingUpdates.push({ id, payload });
+                const row = state.pending.find((p) => p.id === id);
                 if (row && typeof payload.status === "string") row.status = payload.status;
                 if (row) affected.push({ id: row.id });
+              };
+              if (u._id) {
+                applyToId(u._id);
+              } else if (u._inIds) {
+                for (const id of u._inIds) applyToId(id);
               } else if (u._batchId) {
                 for (const row of state.pending) {
                   if (row.batch_id !== u._batchId) continue;
@@ -441,5 +451,47 @@ describe("reconcileEmbeddingBatches", () => {
     expect(out.rows_failed).toBe(2);
     expect(out.rows_succeeded).toBe(0);
     expect(state.chunkUpdates).toHaveLength(0);
+  });
+
+  it("bulk-applies a >1000-row batch in concurrency waves, isolating failures (#789)", async () => {
+    const N = 1200;
+    (getBatchStatus as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce({
+      id: "batch-big",
+      status: "completed",
+      output_file_id: "out-big",
+      error_file_id: null,
+      errors: null,
+    });
+    const pending = Array.from({ length: N }, (_, i) => ({
+      id: `p${i}`,
+      chunk_id: `c${i}`,
+      custom_id: `cu${i}`,
+      status: "submitted",
+      batch_id: "batch-big",
+      submitted_at: "2026-06-04T00:00:00Z",
+    }));
+    // Three rows come back non-200 — they must fail without touching the rest.
+    const failIdx = new Set([7, 500, 1199]);
+    const outputLines = pending
+      .map((p, i) =>
+        failIdx.has(i)
+          ? JSON.stringify({ custom_id: p.custom_id, response: { status_code: 500, body: null }, error: { message: "model_overloaded" } })
+          : JSON.stringify({ custom_id: p.custom_id, response: { status_code: 200, body: { data: [{ embedding: [i / 1000], index: 0 }], model: "text-embedding-3-small" } }, error: null }),
+      )
+      .join("\n");
+    (downloadBatchOutput as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce(outputLines);
+
+    const state: DbState = { pending, chunkUpdates: [], pendingUpdates: [] };
+    const db = mockDb(state);
+
+    const out = await reconcileEmbeddingBatches({ db });
+
+    expect(out.rows_succeeded).toBe(N - 3);
+    expect(out.rows_failed).toBe(3);
+    expect(state.chunkUpdates).toHaveLength(N - 3);
+    expect(state.pending.filter((p) => p.status === "done")).toHaveLength(N - 3);
+    expect(state.pending.filter((p) => p.status === "failed")).toHaveLength(3);
+    expect(state.pending.find((p) => p.id === "p500")?.status).toBe("failed");
+    expect(state.pending.find((p) => p.id === "p501")?.status).toBe("done");
   });
 });

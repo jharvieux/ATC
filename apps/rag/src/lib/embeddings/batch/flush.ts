@@ -31,14 +31,17 @@ export interface FlushResult {
   remaining: number;
 }
 
-// OpenAI Batch API caps each batch at 50,000 requests / 200 MB. We bundle up
-// to 200 embeddings per flush — comfortably below both ceilings, large enough
-// that the 10-minute flush cadence keeps backlog bounded under heavy ingest
-// (~1,200 chunks/hour throughput at steady state), and small enough that a
-// single failed batch only forces re-embedding ≤200 rows. Anthropic's neighbour
+// OpenAI Batch API caps each batch at 50,000 requests / 200 MB. We bundle up to
+// 2,000 embeddings per flush — comfortably below both ceilings (a 2,000-row
+// input is ~1 MB; chunk content averages ~400 bytes), giving ~12,000 chunks/hour
+// at the 10-minute cadence so bulk backfills drain quickly. This is safe at 2,000
+// only because the reconciler (#789) applies a completed batch via
+// bounded-concurrency writes + bulked status flips + a per-run row budget, so it
+// stays well under the function timeout. A single failed batch re-embeds ≤2,000
+// rows (~$0.04 at small volumes — negligible). The Anthropic neighbour
 // (apps/main/src/lib/ai/batch/flush.ts) uses 50 because message-batch payloads
 // are 10–20× larger per row than embedding inputs.
-const MAX_REQUESTS_PER_BATCH = 200;
+const MAX_REQUESTS_PER_BATCH = 2_000;
 
 function embeddingModel(): string {
   return process.env.OPENAI_EMBEDDING_MODEL ?? "text-embedding-3-small";
