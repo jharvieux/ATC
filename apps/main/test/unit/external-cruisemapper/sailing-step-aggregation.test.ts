@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from "vitest";
 import { emptySailingResult, mergeSailing } from "../../../src/lib/external/cruisemapper/sailing-ingest";
-import { sailingHaltReason } from "../../../src/inngest/refresh-cruisemapper-sailings";
+import { sailingHaltReason, runSailingWindow } from "../../../src/inngest/refresh-cruisemapper-sailings";
+import type { SailingUrlResult } from "../../../src/inngest/refresh-cruisemapper-sailings";
 
 describe("sailing refresh — per-step aggregation", () => {
   it("mergeSailing sums every counter across ships", () => {
@@ -39,5 +40,75 @@ describe("sailing refresh — parse-failure halt", () => {
   it("unchanged-heavy runs don't trip the halt — unchanged/error pages count toward attempted, not failures", () => {
     // 100 attempted, only 1 real parse failure → 1%, well under 5%.
     expect(sailingHaltReason(100, 1)).toBeNull();
+  });
+});
+
+describe("runSailingWindow — time-budgeted stepping (#796)", () => {
+  function fakeResult(over: Partial<SailingUrlResult> = {}): SailingUrlResult {
+    return { sailing: emptySailingResult(), fetch_unchanged: 0, fetch_errors: 0, parse_failed: 0, ...over };
+  }
+
+  it("processes all ships from the start when the budget isn't exhausted", async () => {
+    const urls = ["a", "b", "c", "d"];
+    const processed: string[] = [];
+    const r = await runSailingWindow(
+      urls,
+      0,
+      10_000,
+      async (url) => {
+        processed.push(url);
+        return fakeResult({ sailing: { ...emptySailingResult(), current_ingested: 1 } });
+      },
+      () => 1000, // clock never advances → deadline never reached
+    );
+    expect(processed).toEqual(["a", "b", "c", "d"]);
+    expect(r.nextIndex).toBe(4);
+    expect(r.attempted).toBe(4);
+    expect(r.sailing.current_ingested).toBe(4);
+  });
+
+  it("stops once the budget is spent but always advances at least one ship", async () => {
+    const urls = ["a", "b", "c"];
+    let t = 1000;
+    const processed: string[] = [];
+    const r = await runSailingWindow(
+      urls,
+      0,
+      50,
+      async (url) => {
+        processed.push(url);
+        t += 60; // each ship alone overruns the 50ms budget
+        return fakeResult();
+      },
+      () => t,
+    );
+    expect(processed).toEqual(["a"]);
+    expect(r.attempted).toBe(1);
+    expect(r.nextIndex).toBe(1); // resume cursor advanced past the one processed
+  });
+
+  it("resumes from a non-zero cursor", async () => {
+    const urls = ["a", "b", "c", "d"];
+    const processed: string[] = [];
+    const r = await runSailingWindow(urls, 2, 10_000, async (url) => {
+      processed.push(url);
+      return fakeResult();
+    }, () => 0);
+    expect(processed).toEqual(["c", "d"]);
+    expect(r.nextIndex).toBe(4);
+    expect(r.attempted).toBe(2);
+  });
+
+  it("aggregates per-ship counters across the window", async () => {
+    const r = await runSailingWindow(
+      ["a", "b"],
+      0,
+      10_000,
+      async () => fakeResult({ fetch_unchanged: 1, parse_failed: 1, sailing: { ...emptySailingResult(), list_ingested: 5 } }),
+      () => 0,
+    );
+    expect(r.fetch_unchanged).toBe(2);
+    expect(r.parse_failed).toBe(2);
+    expect(r.sailing.list_ingested).toBe(10);
   });
 });
