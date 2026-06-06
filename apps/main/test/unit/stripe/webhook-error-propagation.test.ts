@@ -55,6 +55,18 @@ vi.mock("@/lib/db/service-role-client", () => ({
           };
           return chain;
         },
+        delete() {
+          const chain = {
+            eq() {
+              return {
+                then(resolve: (v: { data: null; error: null }) => unknown) {
+                  return resolve({ data: null, error: null });
+                },
+              };
+            },
+          };
+          return chain;
+        },
       };
     },
   }),
@@ -167,6 +179,10 @@ describe("Stripe webhook — D-091 P1 #1 error propagation", () => {
 
   it("returns 200 on duplicate event (idempotency dedup)", async () => {
     dbBehavior.insertResult = { error: { code: "23505", message: "duplicate key" } };
+    dbBehavior.selectResult["maybeSingle"] = {
+      data: { processing_completed_at: "2026-06-06T10:00:00Z", processing_outcome: "success" },
+      error: null,
+    };
     const res = await handleStripeWebhook(makeRequest(), "platform");
     expect(res.status).toBe(200);
   });

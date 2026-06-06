@@ -74,6 +74,18 @@ vi.mock("@/lib/db/service-role-client", () => ({
           };
           return u;
         },
+        delete() {
+          const d: Record<string, unknown> = {
+            eq() {
+              return {
+                then(resolve: (v: { data: null; error: null }) => unknown) {
+                  return resolve({ data: null, error: null });
+                },
+              };
+            },
+          };
+          return d;
+        },
       };
     },
   }),

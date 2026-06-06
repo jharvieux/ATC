@@ -5,7 +5,9 @@
 //
 // Processing contract (§7.9a):
 //   1. Verify stripe-signature — 400 on failure, no retry
-//   2. Atomic idempotency insert into stripe_webhook_events — 200 on duplicate
+//   2. Atomic idempotency insert into stripe_webhook_events
+//      - 200 on duplicate only after prior processing completed successfully
+//      - 500 and clear stale row when duplicate is incomplete/error so Stripe retries
 //   3. Dispatch to event-type handler. Currently wired:
 //        - transfer.paid                       (§14.7  payout settlement)
 //        - checkout.session.completed          (§15.8  subscription IDs + stage)
@@ -25,6 +27,19 @@ import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export type WebhookEndpoint = "platform" | "connect";
+
+async function clearStripeWebhookEventRow(
+  db: ReturnType<typeof createServiceRoleClient>,
+  eventId: string,
+): Promise<void> {
+  const { error } = await db
+    .from("stripe_webhook_events")
+    .delete()
+    .eq("stripe_event_id", eventId);
+  if (error) {
+    throw new Error(`stripe_webhook_events cleanup failed: ${error.message}`);
+  }
+}
 
 export async function handleStripeWebhook(
   req: Request,
@@ -72,8 +87,32 @@ export async function handleStripeWebhook(
   if (insertErr) {
     // Postgres unique-constraint violation (23505) = duplicate delivery
     if (insertErr.code === "23505") {
-      console.log("[stripe-webhook] Duplicate event %s — returning 200", event.id);
-      return new Response("Duplicate", { status: 200 });
+      const { data: existingEvent, error: lookupErr } = await db
+        .from("stripe_webhook_events")
+        .select("processing_completed_at, processing_outcome")
+        .eq("stripe_event_id", event.id)
+        .maybeSingle();
+      if (lookupErr) {
+        console.error("[stripe-webhook] Duplicate lookup failed for %s: %s", event.id, lookupErr.message);
+        return new Response("Database error", { status: 500 });
+      }
+
+      const completedAt = (existingEvent as { processing_completed_at?: string | null } | null)?.processing_completed_at;
+      const outcome = (existingEvent as { processing_outcome?: string | null } | null)?.processing_outcome;
+      if (completedAt && outcome !== "error") {
+        console.log("[stripe-webhook] Duplicate event %s — returning 200", event.id);
+        return new Response("Duplicate", { status: 200 });
+      }
+
+      try {
+        await clearStripeWebhookEventRow(db, event.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[stripe-webhook] Failed to clear stale duplicate %s: %s", event.id, msg);
+        return new Response("Database error", { status: 500 });
+      }
+      console.warn("[stripe-webhook] Duplicate event %s had incomplete/error processing — cleared row for retry", event.id);
+      return new Response("Retry incomplete webhook", { status: 500 });
     }
     console.error("[stripe-webhook] Insert failed: %s", insertErr.message);
     return new Response("Database error", { status: 500 });
@@ -328,6 +367,12 @@ export async function handleStripeWebhook(
 
   // Step 5: Return based on outcome
   if (processingOutcome === "error") {
+    try {
+      await clearStripeWebhookEventRow(db, event.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[stripe-webhook] Failed to clear errored row for %s: %s", event.id, msg);
+    }
     return new Response("Handler error", { status: 500 });
   }
 
