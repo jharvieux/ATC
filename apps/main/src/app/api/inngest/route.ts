@@ -109,11 +109,9 @@ import { helpDocsPdfGenerate } from "@/inngest/help-docs-pdf-generate";
 import { helpDocsDocxGenerate } from "@/inngest/help-docs-docx-generate";
 import { helpDocVersionsPurge } from "@/inngest/help-doc-versions-purge";
 import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset";
-// BP35 §33.4 — CruiseMapper itinerary monthly refresh
-import { refreshCruisemapperItineraries } from "@/inngest/refresh-cruisemapper-itineraries";
 // BP36 §33.5 — CruiseMapper DIY static quarterly refresh
 import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
-// #485 follow-up §33.4 — CruiseMapper sailing monthly refresh (non-quarterly months)
+// #485 follow-up §33.4 — CruiseMapper sailing monthly refresh
 import { refreshCruisemapperSailings } from "@/inngest/refresh-cruisemapper-sailings";
 // BP40 §33.8 — Price-watch daily evaluator
 import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
@@ -241,11 +239,9 @@ export const { GET, POST, PUT } = serve({
     helpDocVersionsPurge,
     // BP32: help_submission_rate daily reset (§32.11.2 per-day semantics)
     helpSubmissionDailyReset,
-    // BP35: CruiseMapper itinerary monthly refresh (§33.4)
-    refreshCruisemapperItineraries,
     // BP36: CruiseMapper DIY static quarterly refresh (§33.5)
     refreshCruisemapperStatic,
-    // #485 follow-up: CruiseMapper sailing monthly refresh (non-quarterly months)
+    // #485 follow-up: CruiseMapper sailing monthly refresh
     refreshCruisemapperSailings,
     // BP40: Price-watch daily evaluator (§33.8)
     evaluatePriceWatches,
