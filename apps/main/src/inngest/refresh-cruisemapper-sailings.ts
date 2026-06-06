@@ -10,16 +10,18 @@
 // Flow:
 //   1. Load ship URLs from cruisemapper_url_inventory (kind="ship") — no
 //      re-discovery; the quarterly static run keeps the inventory current.
-//   2. For each URL (its own Inngest step): conditional GET via the inventory
-//      content_hash → skip unchanged; else parseSailingPage (current itinerary
-//      with day_by_day) + parseSailingList (upcoming sailings for price cache)
-//      → RAG + pricing cache via processSailingHtml.
+//   2. For each URL: conditional GET via the inventory content_hash → skip
+//      unchanged; else parseSailingPage (current itinerary with day_by_day) +
+//      parseSailingList (upcoming sailings for price cache) → RAG + pricing
+//      cache via processSailingHtml.
 //   3. Parse-failure rate > 5% after 20 samples → halt + operator alert.
 //
-// Durability (#770): each ship page is processed in its own step.run, so no
-// single Vercel invocation accumulates the ~1.7k serial sailing POSTs (which
-// exceeds maxDuration). External fetches are paced with step.sleep, and one
-// platform-admin audit row is written per run.
+// Durability (#770): ship pages are processed in BATCHES, each batch its own
+// Inngest step.run, so no single Vercel invocation accumulates the ~1.7k serial
+// sailing POSTs (which exceeds maxDuration) and the step count stays bounded as
+// the fleet grows. External fetches are paced by the in-process token bucket
+// within each batch invocation, and one platform-admin audit row is written per
+// run.
 //
 // Idempotency: the RAG /api/ingest/itinerary endpoint deduplicates on
 // (cruise_line, ship, departure_date, departure_port) + content_hash, and the
@@ -37,8 +39,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20;
-// ~1 req/sec pacing between external fetches, matching the prior token bucket.
-const FETCH_PACING = "1s";
+// Ship pages per step. Smaller than the static job's batches because sailing
+// ingest does many serial RAG itinerary POSTs per ship.
+const SAILING_CHUNK = 5;
 
 const AUDIT_META = {
   admin_user_id: "system-cron",
@@ -51,6 +54,14 @@ export interface SailingUrlResult {
   fetch_unchanged: number; // 0 | 1
   fetch_errors: number; // 0 | 1
   parse_failed: number; // 0 | 1
+}
+
+interface SailingBatchResult {
+  attempted: number;
+  sailing: SailingRunResult;
+  fetch_unchanged: number;
+  fetch_errors: number;
+  parse_failed: number;
 }
 
 // Parse-failure circuit breaker on the running totals across steps. Unchanged
@@ -77,8 +88,8 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       return { skipped: true, reason: "CRUISEMAPPER_DIY_USER_AGENT not set" };
     }
 
-    // One platform-admin audit row per run (per-URL steps use a plain
-    // service-role client; wrapping each would emit one audit row per URL).
+    // One platform-admin audit row per run (batch steps use a plain service-role
+    // client; wrapping each would emit one audit row per batch).
     await step.run("audit-run", () =>
       withPlatformAdminAudit(AUDIT_META, async (_db, recordQuery) => {
         recordQuery({ op: "select", table: "cruisemapper_url_inventory" });
@@ -96,11 +107,10 @@ export const refreshCruisemapperSailings = inngest.createFunction(
     let halted = false;
     let haltReasonStr: string | undefined;
 
-    for (let i = 0; i < shipUrls.length; i++) {
-      const url = shipUrls[i]!;
-      await step.sleep(`pace-${i}`, FETCH_PACING);
-      const r = await step.run(`sailing-${i}`, () => processOneSailingUrl(createServiceRoleClient(), url));
-      attempted += 1;
+    for (let i = 0; i < shipUrls.length; i += SAILING_CHUNK) {
+      const batch = shipUrls.slice(i, i + SAILING_CHUNK);
+      const r = await step.run(`sailing-${i / SAILING_CHUNK}`, () => processSailingBatch(batch));
+      attempted += r.attempted;
       mergeSailing(sailing, r.sailing);
       fetchUnchanged += r.fetch_unchanged;
       fetchErrors += r.fetch_errors;
@@ -110,7 +120,7 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       if (reason) {
         halted = true;
         haltReasonStr = reason;
-        await step.run(`halt-${i}`, () => alertSailingHalt(attempted, parseFailures, reason));
+        await step.run(`halt-${i / SAILING_CHUNK}`, () => alertSailingHalt(attempted, parseFailures, reason));
         break;
       }
     }
@@ -125,6 +135,23 @@ export const refreshCruisemapperSailings = inngest.createFunction(
     };
   },
 );
+
+// Process a batch of ship pages in one step, aggregating the per-URL results.
+async function processSailingBatch(urls: string[]): Promise<SailingBatchResult> {
+  const db = createServiceRoleClient();
+  const sailing = emptySailingResult();
+  let fetch_unchanged = 0;
+  let fetch_errors = 0;
+  let parse_failed = 0;
+  for (const url of urls) {
+    const r = await processOneSailingUrl(db, url);
+    mergeSailing(sailing, r.sailing);
+    fetch_unchanged += r.fetch_unchanged;
+    fetch_errors += r.fetch_errors;
+    parse_failed += r.parse_failed;
+  }
+  return { attempted: urls.length, sailing, fetch_unchanged, fetch_errors, parse_failed };
+}
 
 async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
   await sendOperatorAlert({
@@ -158,7 +185,7 @@ async function priorShipHash(db: SupabaseClient, url: string): Promise<string | 
 
 // Process ONE ship page's sailing data: conditional GET → parse current sailing
 // + upcoming list → RAG + pricing cache via processSailingHtml. Returns the
-// single-URL counters the orchestrator aggregates.
+// single-URL counters the batch aggregates.
 async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<SailingUrlResult> {
   const sailing = emptySailingResult();
 

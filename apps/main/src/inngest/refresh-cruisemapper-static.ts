@@ -4,7 +4,7 @@
 //
 // Flow:
 //   1. Kill switch: CRUISEMAPPER_DIY_INGEST_ENABLED + CRUISEMAPPER_DIY_USER_AGENT.
-//   2. Discover ship + port URLs (subject to rate limit + robots.txt).
+//   2. Discover ship (per cruise-line fleet) + port URLs.
 //   3. For each URL: fetch (change-detect via inventory.content_hash) → parse → screen → RAG ingest.
 //   4. Per-kind: if parse failure rate > 5%, halt the run and alert (parser likely broken).
 //
@@ -12,11 +12,11 @@
 // refresh-cruisemapper-sailings (#485 / #770). This job covers ship intel +
 // price ranges + ports + deck plans only.
 //
-// Durability (#770): every URL is processed in its own Inngest step.run, so no
-// single Vercel invocation accumulates the whole job's runtime. The in-process
-// token bucket can't pace fetches across separate step invocations, so external
-// fetches are paced with step.sleep instead. The parse-failure halt is
-// evaluated on the running per-kind totals across steps.
+// Durability (#770): URLs are processed in BATCHES, each batch its own Inngest
+// step.run, so no single Vercel invocation accumulates the whole job's runtime
+// and the total step count stays bounded as the fleet grows (~215 ships across
+// the covered cruise lines). External fetches are paced by the in-process token
+// bucket within each batch invocation.
 //
 // Idempotency: the deterministic source_identifier is
 //   cruisemapper:ship:{slug} / cruisemapper:port:{slug} / cruisemapper:deck:{slug}
@@ -44,8 +44,12 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20; // don't halt on a tiny initial sample
-// ~1 req/sec pacing between external fetches, matching the prior token bucket.
-const FETCH_PACING = "1s";
+// Per-step batch sizes. Each batch's external fetches are paced by the
+// in-process token bucket within its single step invocation; batching keeps the
+// total Inngest step count bounded as the fleet grows (~215 ships).
+const SHIP_CHUNK = 10; // ship intel + price ranges — light per URL
+const PORT_CHUNK = 10; // 1 fetch + 1 RAG ingest — light
+const DECK_CHUNK = 8;  // fetch + several image records + 1 RAG ingest
 
 export interface KindRunResult {
   attempted: number;
@@ -112,9 +116,9 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     }
 
     // One platform-admin audit row per run (the prior single-wrapper behaviour).
-    // The per-URL steps below run in separate invocations and use a plain
+    // The batch steps below run in separate invocations and use a plain
     // service-role client, so wrapping each in withPlatformAdminAudit would emit
-    // one audit_log row per URL instead of one per run.
+    // one audit_log row per batch instead of one per run.
     await step.run("audit-run", () =>
       withPlatformAdminAudit(AUDIT_META, async (_db, recordQuery) => {
         recordQuery({ op: "select", table: "cruisemapper_url_inventory" });
@@ -124,18 +128,18 @@ export const refreshCruisemapperStatic = inngest.createFunction(
 
     const shipUrls = await step.run("discover-ships", () => discoverShipUrls(createServiceRoleClient()));
 
-    // Ships first — ship intel + price ranges.
+    // Ships first — ship intel + price ranges. Processed in batches so the step
+    // count stays bounded as the fleet grows.
     const ship = emptyKindResult();
-    for (let i = 0; i < shipUrls.length; i++) {
-      const url = shipUrls[i]!;
-      await step.sleep(`pace-ship-${i}`, FETCH_PACING);
-      const r = await step.run(`ship-${i}`, () => processOneShip(createServiceRoleClient(), url));
+    for (let i = 0; i < shipUrls.length; i += SHIP_CHUNK) {
+      const batch = shipUrls.slice(i, i + SHIP_CHUNK);
+      const r = await step.run(`ships-${i / SHIP_CHUNK}`, () => processShipBatch(batch));
       mergeKind(ship, r);
       const reason = haltReason(ship, "ship");
       if (reason) {
         ship.halted = true;
         ship.halt_reason = reason;
-        await step.run(`halt-ship-${i}`, () => alertHalt("ship", ship));
+        await step.run(`halt-ship-${i / SHIP_CHUNK}`, () => alertHalt("ship", ship));
         break;
       }
     }
@@ -143,16 +147,15 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     const portUrls = await step.run("discover-ports", () => discoverPortUrls(createServiceRoleClient()));
 
     const port = emptyKindResult();
-    for (let i = 0; i < portUrls.length; i++) {
-      const url = portUrls[i]!;
-      await step.sleep(`pace-port-${i}`, FETCH_PACING);
-      const r = await step.run(`port-${i}`, () => processOneUrl(createServiceRoleClient(), url, "port"));
+    for (let i = 0; i < portUrls.length; i += PORT_CHUNK) {
+      const batch = portUrls.slice(i, i + PORT_CHUNK);
+      const r = await step.run(`ports-${i / PORT_CHUNK}`, () => processUrlBatch(batch, "port"));
       mergeKind(port, r);
       const reason = haltReason(port, "port");
       if (reason) {
         port.halted = true;
         port.halt_reason = reason;
-        await step.run(`halt-port-${i}`, () => alertHalt("port", port));
+        await step.run(`halt-port-${i / PORT_CHUNK}`, () => alertHalt("port", port));
         break;
       }
     }
@@ -163,16 +166,15 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     const deckUrls = await step.run("discover-decks", () => discoverDeckPlanUrls(createServiceRoleClient()));
 
     const deck = emptyKindResult();
-    for (let i = 0; i < deckUrls.length; i++) {
-      const url = deckUrls[i]!;
-      await step.sleep(`pace-deck-${i}`, FETCH_PACING);
-      const r = await step.run(`deck-${i}`, () => processOneUrl(createServiceRoleClient(), url, "deck_plan"));
+    for (let i = 0; i < deckUrls.length; i += DECK_CHUNK) {
+      const batch = deckUrls.slice(i, i + DECK_CHUNK);
+      const r = await step.run(`decks-${i / DECK_CHUNK}`, () => processUrlBatch(batch, "deck_plan"));
       mergeKind(deck, r);
       const reason = haltReason(deck, "deck_plan");
       if (reason) {
         deck.halted = true;
         deck.halt_reason = reason;
-        await step.run(`halt-deck-${i}`, () => alertHalt("deck_plan", deck));
+        await step.run(`halt-deck-${i / DECK_CHUNK}`, () => alertHalt("deck_plan", deck));
         break;
       }
     }
@@ -185,6 +187,22 @@ export const refreshCruisemapperStatic = inngest.createFunction(
     };
   },
 );
+
+// Process a batch of ship URLs in one step. One service-role client per batch;
+// the in-process token bucket paces the external fetches within this invocation.
+async function processShipBatch(urls: string[]): Promise<KindRunResult> {
+  const db = createServiceRoleClient();
+  const total = emptyKindResult();
+  for (const url of urls) mergeKind(total, await processOneShip(db, url));
+  return total;
+}
+
+async function processUrlBatch(urls: string[], kind: "port" | "deck_plan"): Promise<KindRunResult> {
+  const db = createServiceRoleClient();
+  const total = emptyKindResult();
+  for (const url of urls) mergeKind(total, await processOneUrl(db, url, kind));
+  return total;
+}
 
 async function alertHalt(kind: string, totals: KindRunResult): Promise<{ alerted: true }> {
   await sendOperatorAlert({

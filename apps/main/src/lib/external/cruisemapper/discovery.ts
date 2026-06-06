@@ -13,8 +13,37 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchCruiseMapperPage } from "./diy-fetcher";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-const SHIP_INDEX_PATH = "/ships";
 const PORT_INDEX_PATH = "/ports";
+
+// CruiseMapper cruise-line pages for the lines we cover — major US-market lines
+// plus the premium/luxury lines US customers book. Ship discovery enumerates
+// each line's fleet from these pages, NOT the global /ships index (which is
+// paginated ~38/page and dominated by river/expedition/foreign-market ships).
+// Slug-ids confirmed live 2026-06-05. Viking ocean only (river excluded);
+// Costa excluded (minimal US presence).
+const CRUISE_LINE_PAGES = [
+  "/cruise-lines/Carnival-Cruise-Line-9",
+  "/cruise-lines/Royal-Caribbean-1",
+  "/cruise-lines/Norwegian-Cruise-Line-10",
+  "/cruise-lines/Celebrity-Cruises-5",
+  "/cruise-lines/Princess-Cruises-3",
+  "/cruise-lines/Holland-America-11",
+  "/cruise-lines/MSC-Cruises-13",
+  "/cruise-lines/Disney-Cruise-Line-12",
+  "/cruise-lines/Virgin-Voyages-109",
+  "/cruise-lines/Viking-Cruises-78",
+  "/cruise-lines/Oceania-Cruises-29",
+  "/cruise-lines/Cunard-31",
+  "/cruise-lines/Azamara-Cruises-7",
+  "/cruise-lines/Regent-Seven-Seas-Cruises-28",
+  "/cruise-lines/Seabourn-Cruises-2",
+  "/cruise-lines/Silversea-Cruises-19",
+  "/cruise-lines/Windstar-Cruises-30",
+];
+
+// Each line page paginates its fleet (~15 ships/page) via ?page=N; cap the
+// follow so a misbehaving "next" can't loop unbounded.
+const MAX_FLEET_PAGES_PER_LINE = 8;
 
 function baseUrl(): string {
   return (process.env.CRUISEMAPPER_DIY_BASE_URL ?? "https://www.cruisemapper.com").replace(/\/$/, "");
@@ -49,15 +78,48 @@ export function extractDetailUrls(html: string, base: string, pathPrefix: string
   return [...urls];
 }
 
+// Extract a cruise-line page's OWN fleet ship URLs. Scoped to the
+// `.shipListItem` cards in the fleet list — NOT every /ships/ link on the page,
+// because the page also embeds a global ship browser whose links would
+// re-pull the unscoped global list (the original 38-ship coverage bug).
+export function extractFleetShipUrls(html: string, base: string): string[] {
+  const $ = cheerio.load(html);
+  const out = new Set<string>();
+  const host = new URL(base).host;
+  $(".shipListItem a[href]").each((_, el) => {
+    const href = $(el).attr("href");
+    if (!href) return;
+    let abs: string;
+    try { abs = new URL(href, base).toString(); } catch { return; }
+    const u = new URL(abs);
+    if (u.host !== host) return;
+    if (!/^\/ships\/[^/]+$/.test(u.pathname)) return; // detail page only
+    u.hash = "";
+    u.search = "";
+    out.add(u.toString());
+  });
+  return [...out];
+}
+
+// Discover ships by enumerating each covered cruise line's fleet (following the
+// line page's ?page=N fleet pagination) rather than the paginated global /ships
+// index. Falls back to existing inventory if every line page fails.
 export async function discoverShipUrls(db: SupabaseClient): Promise<string[]> {
-  const indexUrl = `${baseUrl()}${SHIP_INDEX_PATH}`;
-  const res = await fetchCruiseMapperPage(indexUrl);
-  if (res.status !== "ok") {
-    console.warn(`[cm-diy] ship index fetch failed: ${res.status}`);
-    return await loadInventoryByKind(db, "ship");
+  const base = baseUrl();
+  const found = new Set<string>();
+  for (const linePath of CRUISE_LINE_PAGES) {
+    for (let page = 1; page <= MAX_FLEET_PAGES_PER_LINE; page += 1) {
+      const url = `${base}${linePath}${page > 1 ? `?page=${page}` : ""}`;
+      const res = await fetchCruiseMapperPage(url);
+      if (res.status !== "ok") break;
+      const before = found.size;
+      for (const u of extractFleetShipUrls(res.body, base)) found.add(u);
+      // Stop when a page adds no new ships — past the last fleet page, or the
+      // line page clamped ?page back to the last page.
+      if (found.size === before) break;
+    }
   }
-  const fresh = extractDetailUrls(res.body, baseUrl(), "/ships");
-  await upsertInventory(db, fresh, "ship");
+  if (found.size > 0) await upsertInventory(db, [...found], "ship");
   return await loadInventoryByKind(db, "ship");
 }
 
