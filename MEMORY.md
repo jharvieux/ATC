@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-165 — 2026-06-06 — Sailing cron: adaptive time-budgeted Inngest stepping (#796); reusable for #774
+
+The monthly sailing cron's fixed `SAILING_CHUNK=5` batch with **serial** per-ship RAG POSTs could exceed the 300s function maxDuration on high-sailing-count ships (`parseSailingList` doesn't cap N). Fixed (PR #797): (a) parallelize each ship's upcoming-sailing POSTs in bounded-concurrency waves (8); (b) replace the fixed-chunk loop with a **time-budgeted cursor** — each `step.run` processes ships until a ~180s wall-clock budget is spent (always ≥1 ship), returns `nextIndex`, and the orchestrator resumes from there. Each Inngest step is its own invocation, so bounding the per-step callback to <300s bounds the whole job; the step count adapts to actual work. The windowing loop is extracted as `runSailingWindow(urls, start, budgetMs, processOne, now)` for unit testing (injected clock).
+
+**Reusable pattern.** This time-budgeted-cursor shape is the general fix for the #774 Tier-2 single-invocation crons (`custom-domain-reverify`, `payouts-execute-transfer`, `quote-estimate-expiry-sweep`, `rag-tenant-scoped-purge`): bound each step by a wall-clock budget + durable cursor rather than a fixed item count, so unbounded working sets can't time out.
+
+**Why it was latent:** the `itineraries` table is empty — the sailing job hasn't run at scale (only the static job has). This bounds it before the first full run, whose load is ~15× the static job's (~251 ships × (1+N) POSTs).
+
+---
+
 ## D-164 — 2026-06-06 — Shipped #787/#788/#789 (RAG ingest + embedding hardening); found RAG-tests-not-in-CI gap (#792)
 
 Three fixes surfaced while tracking the first post-#766 CruiseMapper bulk ingest:
