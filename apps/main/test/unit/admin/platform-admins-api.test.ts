@@ -10,12 +10,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 interface DbConfig {
-  rpcId?: string | null;
-  existing?: boolean;
-  insertRow?: unknown;
-  targetRole?: string | null;
-  superadminCount?: number;
-  updateRow?: unknown;
+  rpcId?: string | null;   // admin_lookup_auth_user_by_email result (POST add)
+  existing?: boolean;      // platform_admins exists-check (POST add)
+  insertRow?: unknown;     // platform_admins.insert row (POST add)
+  rpcStatus?: string;      // admin_change_platform_role / admin_remove_platform_admin (PATCH/DELETE)
 }
 
 const mocks = vi.hoisted(() => {
@@ -55,28 +53,19 @@ vi.mock("@/lib/db/platform-admin-client", () => ({
 }));
 
 function makeDb(cfg: DbConfig) {
+  // GET (list) + POST (add) use the query builder; PATCH/DELETE go through rpc().
   function builder() {
-    const state = { selectCols: "", count: false, op: "select" as "select" | "insert" | "update" | "delete" };
+    const state = { selectCols: "", op: "select" as "select" | "insert" };
     function resolve(): unknown {
       if (state.op === "insert") return { data: cfg.insertRow ?? { auth_user_id: "new", role: "reviewer" }, error: null };
-      if (state.op === "update") return { data: cfg.updateRow ?? { auth_user_id: "t", role: "reviewer" }, error: null };
-      if (state.op === "delete") return { data: [{ auth_user_id: "removed" }], error: null };
-      if (state.count) return { count: cfg.superadminCount ?? 2, error: null };
-      if (state.selectCols.includes("role")) return { data: cfg.targetRole ? { role: cfg.targetRole } : null, error: null };
       if (state.selectCols.trim() === "auth_user_id") return { data: cfg.existing ? { auth_user_id: "x" } : null, error: null };
       return { data: [], error: null };
     }
     const api = {
-      select(cols?: string, opts?: { count?: string; head?: boolean }) {
-        state.selectCols = cols ?? "";
-        if (opts?.count) state.count = true;
-        return api;
-      },
+      select(cols?: string) { state.selectCols = cols ?? ""; return api; },
       order: () => api,
       eq: () => api,
       insert: () => { state.op = "insert"; return api; },
-      update: () => { state.op = "update"; return api; },
-      delete: () => { state.op = "delete"; return api; },
       maybeSingle: () => Promise.resolve(resolve()),
       single: () => Promise.resolve(resolve()),
       then: (r: (v: unknown) => void) => r(resolve()),
@@ -85,7 +74,12 @@ function makeDb(cfg: DbConfig) {
   }
   return {
     from: () => builder(),
-    rpc: () => Promise.resolve({ data: cfg.rpcId ?? null, error: null }),
+    rpc: (name: string) =>
+      Promise.resolve(
+        name === "admin_lookup_auth_user_by_email"
+          ? { data: cfg.rpcId ?? null, error: null }
+          : { data: cfg.rpcStatus ?? "ok", error: null },
+      ),
   };
 }
 
@@ -157,20 +151,20 @@ describe("PATCH /api/admin/admins/:id (change role)", () => {
   });
 
   it("returns 409 when demoting the last superadmin", async () => {
-    mocks.dbConfig = { targetRole: "superadmin", superadminCount: 1 };
+    mocks.dbConfig = { rpcStatus: "last_superadmin" };
     const res = await PATCH(jsonReq({ role: "reviewer" }), params("other"));
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: "last_superadmin" });
   });
 
   it("returns 404 when the target is not an admin", async () => {
-    mocks.dbConfig = { targetRole: null };
+    mocks.dbConfig = { rpcStatus: "not_found" };
     const res = await PATCH(jsonReq({ role: "reviewer" }), params("other"));
     expect(res.status).toBe(404);
   });
 
   it("allows demoting a superadmin when another remains", async () => {
-    mocks.dbConfig = { targetRole: "superadmin", superadminCount: 2, updateRow: { auth_user_id: "other", role: "reviewer" } };
+    mocks.dbConfig = { rpcStatus: "ok" };
     const res = await PATCH(jsonReq({ role: "reviewer" }), params("other"));
     expect(res.status).toBe(200);
   });
@@ -184,14 +178,14 @@ describe("DELETE /api/admin/admins/:id (remove)", () => {
   });
 
   it("returns 409 when removing the last superadmin", async () => {
-    mocks.dbConfig = { targetRole: "superadmin", superadminCount: 1 };
+    mocks.dbConfig = { rpcStatus: "last_superadmin" };
     const res = await DELETE(jsonReq(), params("other"));
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: "last_superadmin" });
   });
 
   it("removes a non-last admin", async () => {
-    mocks.dbConfig = { targetRole: "reviewer", superadminCount: 2 };
+    mocks.dbConfig = { rpcStatus: "ok" };
     const res = await DELETE(jsonReq(), params("other"));
     expect(res.status).toBe(200);
   });
