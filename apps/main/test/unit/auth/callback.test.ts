@@ -287,6 +287,39 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
 
+  it("null-email + agency flow (next=/signup/complete): bounces to email-prompt AND sets _ms_pending_next so the OTP round-trip can return to provisioning (#441)", async () => {
+    mockExchange.mockResolvedValue({
+      data: {
+        session: {
+          access_token: "supabase-jwt",
+          user: { id: "auth-user-noemail-agency", email: null, app_metadata: { provider: "facebook" } },
+        },
+      },
+      error: null,
+    });
+    const res = await get("?code=abc&next=%2Fsignup%2Fcomplete", {
+      "x-resolved-tenant-id": "platform",
+    });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/email-prompt");
+    expect(res.headers.get("set-cookie")).toMatch(/_ms_pending_next=[^;]*signup[^;]*complete/);
+  });
+
+  it("null-email + NO agency next: bounces to email-prompt and does NOT set _ms_pending_next", async () => {
+    mockExchange.mockResolvedValue({
+      data: {
+        session: {
+          access_token: "supabase-jwt",
+          user: { id: "auth-user-noemail-cust", email: null, app_metadata: { provider: "facebook" } },
+        },
+      },
+      error: null,
+    });
+    const res = await get("?code=abc", { "x-resolved-tenant-id": "platform" });
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/email-prompt");
+    expect(res.headers.get("set-cookie") ?? "").not.toMatch(/_ms_pending_next=/);
+  });
+
   it("fails loud: a DB error on the membership upsert throws instead of redirecting to success", async () => {
     mockUpsert.mockResolvedValue({
       data: null,
