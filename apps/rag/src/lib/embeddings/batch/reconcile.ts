@@ -20,6 +20,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
+import { bulkFlipPendingStatus } from "./bulk-flip";
 import { downloadBatchOutput, getBatchStatus } from "./openai-client";
 import type { BatchOutputLine, OpenAIBatchSummary } from "./types";
 
@@ -40,9 +41,6 @@ const EMBED_WRITE_CONCURRENCY = 25;
 // risk the function timeout; the remainder stays 'submitted' and is picked up
 // on the next (5-minute) reconcile.
 const MAX_ROWS_PER_RUN = 4_000;
-// Chunk the bulk-flip `.in()` id list so the PostgREST query string stays well
-// under URL-length limits even when a 2,000-row batch flips status at once.
-const STATUS_FLIP_CHUNK = 200;
 
 interface PendingMatch {
   id: string;
@@ -235,7 +233,7 @@ async function applyCompletedBatch(args: {
   // Bulk-flip statuses: chunked UPDATE … .in(id, …) for all successes, and one
   // group per distinct failure reason — instead of one round-trip per row.
   if (successes.length > 0) {
-    await bulkFlipStatus(
+    await bulkFlipPendingStatus(
       db,
       successes.map((s) => s.pendingId),
       { status: "done", output_file_id: status.output_file_id, completed_at: completedAt },
@@ -249,7 +247,7 @@ async function applyCompletedBatch(args: {
     failureIdsByDetail.set(f.detail, ids);
   }
   for (const [detail, ids] of failureIdsByDetail) {
-    await bulkFlipStatus(
+    await bulkFlipPendingStatus(
       db,
       ids,
       { status: "failed", output_file_id: status.output_file_id, error_detail: detail, completed_at: completedAt },
@@ -280,22 +278,6 @@ async function applyCompletedBatch(args: {
   }
 
   return { rows_succeeded: successes.length, rows_failed: failures.length };
-}
-
-// Apply a status flip to many pending_embedding rows by id, chunking the .in()
-// list so the query string can't exceed PostgREST's URL limit at 2,000 rows.
-async function bulkFlipStatus(
-  db: SupabaseClient,
-  ids: string[],
-  payload: Record<string, unknown>,
-  context: string,
-): Promise<void> {
-  for (let i = 0; i < ids.length; i += STATUS_FLIP_CHUNK) {
-    await safeAwait(
-      db.from("pending_embedding").update(payload).in("id", ids.slice(i, i + STATUS_FLIP_CHUNK)),
-      context,
-    );
-  }
 }
 
 // Flip every still-submitted row for `batchId` to failed and return the count
