@@ -67,18 +67,34 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // Membership upsert. On a tenant domain the resolved id is a UUID — use
-  // it directly. On the platform domain the resolved id is the "platform"
-  // sentinel; if PLATFORM_DEFAULT_TENANT_ID is configured, assign the user
-  // to that agency so platform-domain sign-ins result in a real membership
-  // row rather than a session with no tenant. Without the env var the upsert
-  // is skipped (legacy behaviour, #441).
+  // Resolve the post-login redirect first: we must know whether this sign-in is
+  // headed to agency provisioning (/signup/complete) BEFORE deciding whether to
+  // create a membership row. Parse-then-check-origin (see safe-redirect.ts) — the
+  // parser, not a startsWith chain, decides the host, so userinfo / fullwidth /
+  // encoded-slash tricks all fail the parsed.origin equality.
+  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
+  const isAgencyProvisioning = safe?.path === "/signup/complete";
+
+  // Membership upsert. On a tenant domain the resolved id is a UUID — use it
+  // directly. On the platform domain the resolved id is the "platform" sentinel;
+  // if PLATFORM_DEFAULT_TENANT_ID is configured, assign the user to that agency
+  // (the platform's own customer tenant) so platform-domain sign-ins get a real
+  // membership row. Without the env var the upsert is skipped (#441).
+  //
+  // Role is intentionally OMITTED so the column default ('viewer', least-priv —
+  // migration 20260628000002) applies on INSERT. An explicit role here would
+  // overwrite an existing owner/agent on the onConflict UPDATE (a real member
+  // re-logging-in on their tenant subdomain) — see #800.
+  //
+  // Agency provisioning is the exception: a user heading to /signup/complete must
+  // NOT get a membership row here, or that route's idempotency guard rejects them
+  // as already_provisioned and they can never create their own tenant.
   const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
   const effectiveTenantId =
     tenantId === "platform" || !tenantId
       ? (process.env.PLATFORM_DEFAULT_TENANT_ID ?? null)
       : tenantId;
-  if (effectiveTenantId) {
+  if (effectiveTenantId && !isAgencyProvisioning) {
     const svc = createServiceRoleClient();
     await safeAwait(
       svc.from("users").upsert(
@@ -94,10 +110,6 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // Parse-then-check-origin (see lib/auth/safe-redirect.ts). The parser
-  // — not a startsWith chain — decides the host, so userinfo / fullwidth /
-  // encoded-slash tricks all fail the parsed.origin equality.
-  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
   const target = safe
     ? new URL(safe.path, url.origin)
     : new URL("/", url.origin);

@@ -153,6 +153,20 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
 
+  it("on the platform domain heading to agency provisioning (next=/signup/complete): does NOT upsert so signup/complete can provision", async () => {
+    // The callback runs before /signup/complete. If it created a default-tenant
+    // membership row here, that route's idempotency guard would reject the user
+    // as already_provisioned and they could never create their own tenant (#800).
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    const res = await get("?code=abc&next=%2Fsignup%2Fcomplete", {
+      "x-resolved-tenant-id": "platform",
+    });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockApplyAuthCookies).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/complete");
+  });
+
   it("with no x-resolved-tenant-id header and PLATFORM_DEFAULT_TENANT_ID set: upserts into the default tenant", async () => {
     // Guards the !tenantId branch of effectiveTenantId: a request with no
     // header at all (e.g. a direct hit bypassing middleware) must still land
