@@ -5,7 +5,8 @@
 // requires `/` after the prefix so only true detail URLs survive.
 
 import { describe, expect, it } from "vitest";
-import { extractDetailUrls, extractDeckPlanLinks, extractFleetShipUrls } from "../../../src/lib/external/cruisemapper/discovery";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { extractDetailUrls, extractDeckPlanLinks, extractFleetShipUrls, loadInventoryByKind } from "../../../src/lib/external/cruisemapper/discovery";
 
 const BASE = "https://www.cruisemapper.com";
 
@@ -180,5 +181,96 @@ describe("extractFleetShipUrls — cruise-line fleet scoping", () => {
     // trips CodeQL js/incomplete-url-substring-sanitization — the same lazy
     // host check that extractFleetShipUrls deliberately avoids).
     expect(urls.some((u) => new URL(u).host === "example.com")).toBe(false);
+  });
+});
+
+describe("loadInventoryByKind — paginates past the 1000-row cap (#788)", () => {
+  type RangeResult = { data: { url: string }[] | null; error: { message: string } | null };
+  interface MockBuilder {
+    select(cols: string): MockBuilder;
+    eq(col: string, val: string): MockBuilder;
+    order(col: string, opts: { ascending: boolean }): MockBuilder;
+    range(from: number, to: number): Promise<RangeResult>;
+  }
+
+  function makeMockDb(
+    rowsByKind: Record<string, { url: string }[]>,
+    opts: { error?: string } = {},
+  ): { db: SupabaseClient; calls: Array<{ from: number; to: number }> } {
+    const calls: Array<{ from: number; to: number }> = [];
+    const db = {
+      from(): MockBuilder {
+        let kind = "";
+        const builder: MockBuilder = {
+          select: () => builder,
+          eq: (col, val) => {
+            if (col === "kind") kind = val;
+            return builder;
+          },
+          order: () => builder,
+          range: (from, to) => {
+            calls.push({ from, to });
+            if (opts.error) return Promise.resolve({ data: null, error: { message: opts.error } });
+            const rows = rowsByKind[kind] ?? [];
+            return Promise.resolve({ data: rows.slice(from, to + 1), error: null });
+          },
+        };
+        return builder;
+      },
+    };
+    return { db: db as unknown as SupabaseClient, calls };
+  }
+
+  it("returns every URL when a kind exceeds 1000 rows, walking .range() windows", async () => {
+    const ports = Array.from({ length: 2500 }, (_, i) => ({
+      url: `https://www.cruisemapper.com/ports/p-${String(i).padStart(5, "0")}`,
+    }));
+    const { db, calls } = makeMockDb({ port: ports });
+
+    const result = await loadInventoryByKind(db, "port");
+
+    expect(result).toHaveLength(2500);
+    expect(result[0]).toBe(ports[0]!.url);
+    expect(result[2499]).toBe(ports[2499]!.url);
+    // 0-999 then 1000-1999 each return a full 1000; 2000-2999 returns 500 (<1000) and the loop stops.
+    expect(calls).toEqual([
+      { from: 0, to: 999 },
+      { from: 1000, to: 1999 },
+      { from: 2000, to: 2999 },
+    ]);
+  });
+
+  it("issues a single window when a kind has fewer than 1000 rows", async () => {
+    const ships = Array.from({ length: 251 }, (_, i) => ({
+      url: `https://www.cruisemapper.com/ships/s-${i}`,
+    }));
+    const { db, calls } = makeMockDb({ ship: ships });
+
+    const result = await loadInventoryByKind(db, "ship");
+
+    expect(result).toHaveLength(251);
+    expect(calls).toEqual([{ from: 0, to: 999 }]);
+  });
+
+  it("makes one extra empty window when the row count is an exact multiple of 1000", async () => {
+    const ports = Array.from({ length: 1000 }, (_, i) => ({
+      url: `https://www.cruisemapper.com/ports/exact-${String(i).padStart(4, "0")}`,
+    }));
+    const { db, calls } = makeMockDb({ port: ports });
+
+    const result = await loadInventoryByKind(db, "port");
+
+    expect(result).toHaveLength(1000);
+    // The first window is full (1000), so the loop can't tell it's the last —
+    // it issues a second window that returns 0 rows, then stops.
+    expect(calls).toEqual([
+      { from: 0, to: 999 },
+      { from: 1000, to: 1999 },
+    ]);
+  });
+
+  it("throws on a DB error rather than masking it as an empty inventory", async () => {
+    const { db } = makeMockDb({}, { error: "connection reset" });
+    await expect(loadInventoryByKind(db, "port")).rejects.toThrow(/connection reset/);
   });
 });
