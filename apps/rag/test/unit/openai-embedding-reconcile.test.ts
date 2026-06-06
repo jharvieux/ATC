@@ -38,6 +38,7 @@ interface DbState {
   }>;
   chunkUpdates: Array<{ id: string; embedding: string }>;
   pendingUpdates: Array<{ id?: string; payload: Record<string, unknown> }>;
+  failChunkIds?: Set<string>;
 }
 
 function mockDb(state: DbState) {
@@ -86,7 +87,11 @@ function mockDb(state: DbState) {
                 k._id = id;
                 return k;
               },
-              then(resolve: (v: { data: null; error: null }) => void) {
+              then(resolve: (v: { data: null; error: { message: string } | null }) => void) {
+                if (k._id && state.failChunkIds?.has(k._id)) {
+                  resolve({ data: null, error: { message: "chunk write failed" } });
+                  return;
+                }
                 if (k._id && typeof payload.embedding === "string") {
                   state.chunkUpdates.push({ id: k._id, embedding: payload.embedding });
                 }
@@ -493,5 +498,39 @@ describe("reconcileEmbeddingBatches", () => {
     expect(state.pending.filter((p) => p.status === "failed")).toHaveLength(3);
     expect(state.pending.find((p) => p.id === "p500")?.status).toBe("failed");
     expect(state.pending.find((p) => p.id === "p501")?.status).toBe("done");
+  });
+
+  it("aborts before any status flip when a chunk write fails — rows stay submitted (#789)", async () => {
+    (getBatchStatus as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce({
+      id: "batch-werr",
+      status: "completed",
+      output_file_id: "out-werr",
+      error_file_id: null,
+      errors: null,
+    });
+    const outputLines = [
+      JSON.stringify({ custom_id: "cu1", response: { status_code: 200, body: { data: [{ embedding: [0.1], index: 0 }], model: "text-embedding-3-small" } }, error: null }),
+      JSON.stringify({ custom_id: "cu2", response: { status_code: 200, body: { data: [{ embedding: [0.2], index: 0 }], model: "text-embedding-3-small" } }, error: null }),
+    ].join("\n");
+    (downloadBatchOutput as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce(outputLines);
+
+    const state: DbState = {
+      pending: [
+        { id: "p1", chunk_id: "c1", custom_id: "cu1", status: "submitted", batch_id: "batch-werr", submitted_at: "2026-06-04T00:00:00Z" },
+        { id: "p2", chunk_id: "c2", custom_id: "cu2", status: "submitted", batch_id: "batch-werr", submitted_at: "2026-06-04T00:01:00Z" },
+      ],
+      chunkUpdates: [],
+      pendingUpdates: [],
+      failChunkIds: new Set(["c2"]),
+    };
+    const db = mockDb(state);
+
+    // The c2 chunk write fails → the wave rejects → reconcile throws before any
+    // status flip runs, so both rows stay 'submitted' for the next run to retry.
+    await expect(reconcileEmbeddingBatches({ db })).rejects.toThrow();
+    expect(state.pending.every((p) => p.status === "submitted")).toBe(true);
+    expect(
+      state.pendingUpdates.filter((u) => (u.payload as Record<string, unknown>).status === "done"),
+    ).toHaveLength(0);
   });
 });
