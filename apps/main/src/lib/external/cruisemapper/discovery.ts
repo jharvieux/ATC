@@ -43,12 +43,14 @@ const CRUISE_LINE_PAGES = [
 // follow so a misbehaving "next" can't loop unbounded.
 const MAX_FLEET_PAGES_PER_LINE = 8;
 
-// CruiseMapper region pages for the ocean cruising regions US-market lines sail.
-// Port discovery enumerates each region's ports (paginated) rather than the
-// paginated global /ports index. River regions (Amazon, Nile, Europe/Asia/
-// Russia/France/Canada-USA rivers) and pure-expedition regions (Arctic/
-// Antarctica, Galápagos) are excluded — consistent with excluding river cruise
-// lines. Slug-ids confirmed live 2026-06-05.
+// CruiseMapper region pages for every region our supported lines sail. The
+// mainstream lines cover the warm-weather / Europe / Alaska regions; the
+// premium/luxury + expedition arms (Silversea, Seabourn, Regent, Oceania,
+// Viking, Cunard, Celebrity's Galápagos ships) reach Antarctica, the Arctic,
+// Galápagos, Africa / Indian Ocean, and up the ocean-navigable Amazon. Only the
+// inland-river regions are excluded — no ocean ship sails the Rhine / Danube /
+// Mekong / Yangtze / Nile / Mississippi / Seine / Volga, which are river-cruise
+// territory (we don't cover river lines). Slug-ids confirmed live 2026-06-05.
 const PORT_REGION_PAGES = [
   "/ports-in-bahamas-and-caribbean-and-bermuda-8",
   "/ports-in-hawaii-and-mexico-and-panama-canal-7",
@@ -63,6 +65,10 @@ const PORT_REGION_PAGES = [
   "/ports-in-south-america-9",
   "/ports-in-australia-and-new-zealand-and-pacific-ocean-islands-13",
   "/ports-in-asia-11",
+  "/ports-in-africa-and-indian-ocean-islands-12",
+  "/ports-in-arctic-and-antarctica-10",
+  "/ports-in-galapagos-islands-21",
+  "/ports-in-amazon-river-18",
 ];
 
 // Regions hold more ports than a line holds ships — allow more fetch pages.
@@ -124,12 +130,10 @@ export function extractFleetShipUrls(html: string, base: string): string[] {
   return [...out];
 }
 
-// Discover ships by enumerating each covered cruise line's fleet (following the
-// line page's ?page=N fleet pagination) rather than the paginated global /ships
-// index. Falls back to existing inventory if every line page fails.
 // Walk a set of paginated index pages (cruise-line fleets or port regions),
 // following ?page=N until a page adds no new detail URLs. Returns the deduped
-// set of detail URLs extracted by `extract`.
+// set of detail URLs extracted by `extract`; callers own persistence and the
+// fall-back to existing inventory when nothing is discovered.
 async function discoverPaginated(
   sourcePaths: readonly string[],
   maxPages: number,
@@ -152,13 +156,15 @@ async function discoverPaginated(
   return [...found];
 }
 
+// Discover ships by enumerating each covered cruise line's fleet. Falls back to
+// existing inventory if discovery turns up nothing (e.g., every line page fails).
 export async function discoverShipUrls(db: SupabaseClient): Promise<string[]> {
   const fresh = await discoverPaginated(CRUISE_LINE_PAGES, MAX_FLEET_PAGES_PER_LINE, extractFleetShipUrls);
   if (fresh.length > 0) await upsertInventory(db, fresh, "ship");
   return await loadInventoryByKind(db, "ship");
 }
 
-// Discover ports by enumerating each covered ocean region's port list
+// Discover ports by enumerating each covered cruising region's port list
 // (following the region page's ?page=N pagination) rather than the paginated
 // global /ports index. Region pages list region-specific ports with no embedded
 // global browser, so the existing /ports detail-URL filter scopes correctly.
