@@ -19,6 +19,6 @@ as $$
   select id from auth.users where lower(email) = lower(trim(p_email)) limit 1;
 $$;
 
-revoke all on function public.admin_lookup_auth_user_by_email(text) from public;
-revoke all on function public.admin_lookup_auth_user_by_email(text) from anon, authenticated;
+revoke execute on function public.admin_lookup_auth_user_by_email(text) from public;
+revoke execute on function public.admin_lookup_auth_user_by_email(text) from anon, authenticated;
 grant execute on function public.admin_lookup_auth_user_by_email(text) to service_role;
