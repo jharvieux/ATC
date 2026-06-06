@@ -63,16 +63,27 @@ export async function flushPendingEmbeddings(args: {
 }): Promise<FlushResult> {
   const { db } = args;
 
-  const { data, error } = await db
-    .from("pending_embedding")
-    .select("id, chunk_id, content, custom_id, status, batch_id, openai_file_id, output_file_id, error_detail, queued_at, submitted_at, completed_at")
-    .eq("status", "pending")
-    .order("queued_at", { ascending: true })
-    .limit(MAX_REQUESTS_PER_BATCH);
-  if (error) {
-    throw new Error(`flushPendingEmbeddings: pending lookup failed: ${error.message}`);
+  // Pull up to MAX_REQUESTS_PER_BATCH pending rows, FIFO. PostgREST caps any
+  // single response at ~1,000 rows (db-max-rows) regardless of .limit(), so page
+  // in 1,000-row windows (#788/#808) to assemble a full batch. The rows aren't
+  // flipped until below, so offset-based paging over status='pending' is stable.
+  const PAGE = 1_000;
+  const pending: PendingEmbeddingRow[] = [];
+  while (pending.length < MAX_REQUESTS_PER_BATCH) {
+    const want = Math.min(PAGE, MAX_REQUESTS_PER_BATCH - pending.length);
+    const { data, error } = await db
+      .from("pending_embedding")
+      .select("id, chunk_id, content, custom_id, status, batch_id, openai_file_id, output_file_id, error_detail, queued_at, submitted_at, completed_at")
+      .eq("status", "pending")
+      .order("queued_at", { ascending: true })
+      .range(pending.length, pending.length + want - 1);
+    if (error) {
+      throw new Error(`flushPendingEmbeddings: pending lookup failed: ${error.message}`);
+    }
+    const rows = (data ?? []) as PendingEmbeddingRow[];
+    pending.push(...rows);
+    if (rows.length < want) break;
   }
-  const pending = (data ?? []) as PendingEmbeddingRow[];
   if (pending.length === 0) {
     return { flushed: 0, remaining: 0 };
   }
