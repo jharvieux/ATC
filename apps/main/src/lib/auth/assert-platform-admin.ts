@@ -115,3 +115,21 @@ export async function assertPlatformAdmin(req: Request): Promise<PlatformAdminCo
   const typed = adminRow as { auth_user_id: string; role: string };
   return { admin_user_id: typed.auth_user_id, role: typed.role, via: "session" };
 }
+
+/**
+ * Asserts the caller is a platform admin AND has the `superadmin` role. Gates
+ * platform-admin MANAGEMENT (add / change role / remove other admins) — the
+ * first per-role check on the platform side. The service-to-service bearer
+ * (role "service") is not a superadmin, so it is rejected here by design.
+ */
+export async function assertSuperadmin(req: Request): Promise<PlatformAdminContext> {
+  const ctx = await assertPlatformAdmin(req);
+  if (ctx.role !== "superadmin") {
+    throw new PlatformAdminError(
+      403,
+      "not_a_superadmin",
+      "Only superadmins can manage platform admins.",
+    );
+  }
+  return ctx;
+}

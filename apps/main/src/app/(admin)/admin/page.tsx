@@ -11,6 +11,7 @@ const SECTIONS = [
       { href: "/admin/tenants/review-queue", label: "Tenant Review Queue",      desc: "Approve, reject, or investigate pending tenant onboarding applications." },
       { href: "/admin/abuse-monitoring",     label: "Abuse Monitoring",         desc: "Platform-wide abuse dashboard, dimension scores, and override requests." },
       { href: "/admin/denylist",             label: "Content Deny-list",        desc: "Add or remove globally-blocked terms (hashed — terms never returned by API)." },
+      { href: "/admin/admins",               label: "Platform Admins",          desc: "Manage who has admin-console access and at what role (add/remove is superadmin-only)." },
     ],
   },
   {
