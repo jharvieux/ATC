@@ -9,22 +9,29 @@
 //      create — never reads email from the form (the form only carries the
 //      code), so a forged form can't redirect the binding to a different
 //      address.
-//   3. Tenant-domain only: net-new tenant provisioning is deferred to #441,
-//      so on the "platform" sentinel the route skips the upsert but still
-//      completes (session is already established).
+//   3. Platform domain mirrors the OAuth callback (#441): a viewer membership is
+//      upserted into PLATFORM_DEFAULT_TENANT_ID when set; the agency flow (next
+//      cookie = /signup/complete) skips the upsert so /signup/complete can
+//      provision a fresh tenant.
+//   4. The OTP-verified email is persisted onto the auth user (admin API) so
+//      /signup/complete can read it; a persist failure fails loud (/auth/error).
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockGetUser = vi.fn();
 const mockUpsert = vi.fn();
 const mockFrom = vi.fn(() => ({ upsert: mockUpsert }));
+const mockUpdateUserById = vi.fn();
 
 vi.mock("@/lib/auth/ssr-client", () => ({
   createRequestScopedClient: () => ({ auth: { getUser: mockGetUser } }),
 }));
 vi.mock("@/lib/db/service-role-client", () => ({
-  createServiceRoleClient: () => ({ from: mockFrom }),
+  createServiceRoleClient: () => ({
+    from: mockFrom,
+    auth: { admin: { updateUserById: mockUpdateUserById } },
+  }),
 }));
 
 import { POST, _resetIpAttemptsForTests } from "@/app/api/auth/microsoft-email-verify/route";
@@ -36,22 +43,31 @@ beforeEach(() => {
   vi.clearAllMocks();
   OTP_STORE.clear();
   _resetIpAttemptsForTests();
+  delete process.env.PLATFORM_DEFAULT_TENANT_ID;
   mockGetUser.mockResolvedValue({
     data: { user: { id: "auth-user-1" } },
     error: null,
   });
   mockUpsert.mockResolvedValue({ data: null, error: null });
+  mockUpdateUserById.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+});
+
+afterEach(() => {
+  delete process.env.PLATFORM_DEFAULT_TENANT_ID;
 });
 
 function postReq(
   code: string,
-  opts: { email?: string; tenant?: string; ip?: string } = {},
+  opts: { email?: string; tenant?: string; ip?: string; next?: string } = {},
 ): NextRequest {
   const form = new URLSearchParams();
   form.set("code", code);
   const cookieParts: string[] = [];
   if (opts.email !== undefined) {
     cookieParts.push(`_ms_pending_email=${encodeURIComponent(opts.email)}`);
+  }
+  if (opts.next !== undefined) {
+    cookieParts.push(`_ms_pending_next=${encodeURIComponent(opts.next)}`);
   }
   const headers: Record<string, string> = {
     "content-type": "application/x-www-form-urlencoded",
@@ -158,7 +174,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
   });
 
-  it("on the platform domain: does NOT upsert (provisioning deferred #441), still lands on /", async () => {
+  it("on the platform domain with no default tenant configured: does NOT upsert, still lands on /", async () => {
     OTP_STORE.set("alice@example.com", {
       code: "123456",
       expires: Date.now() + 60_000,
@@ -168,6 +184,53 @@ describe("POST /api/auth/microsoft-email-verify", () => {
       postReq("123456", { email: "alice@example.com", tenant: "platform" }),
     );
     expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+  });
+
+  it("persists the OTP-verified email onto the auth user so /signup/complete can read it (#441)", async () => {
+    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    await POST(postReq("123456", { email: "alice@example.com" }));
+    expect(mockUpdateUserById).toHaveBeenCalledWith("auth-user-1", {
+      email: "alice@example.com",
+      email_confirm: true,
+    });
+  });
+
+  it("fails loud (/auth/error, no upsert) when the auth email update errors — e.g. email already linked", async () => {
+    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    mockUpdateUserById.mockResolvedValue({ data: null, error: { message: "email exists" } });
+    const res = await POST(postReq("123456", { email: "alice@example.com" }));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+  });
+
+  it("on the agency flow (next cookie = /signup/complete): persists email, SKIPS the upsert, returns to /signup/complete (#441)", async () => {
+    process.env.PLATFORM_DEFAULT_TENANT_ID = "f5665f08-3ebb-40e0-ad6b-000000000001";
+    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    const res = await POST(
+      postReq("123456", { email: "alice@example.com", tenant: "platform", next: "/signup/complete" }),
+    );
+    // Email persisted (so /signup/complete can read it) but NO membership row —
+    // the idempotency guard there would otherwise reject as already_provisioned.
+    expect(mockUpdateUserById).toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/complete");
+    expect(res.headers.get("set-cookie")).toMatch(/_ms_pending_next=;.*Max-Age=0/);
+  });
+
+  it("on the platform domain WITH a default tenant (customer flow): upserts a viewer membership into it (#441)", async () => {
+    process.env.PLATFORM_DEFAULT_TENANT_ID = "f5665f08-3ebb-40e0-ad6b-000000000001";
+    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    const res = await POST(
+      postReq("123456", { email: "alice@example.com", tenant: "platform" }),
+    );
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert.mock.calls[0]?.[0]).toEqual({
+      auth_user_id: "auth-user-1",
+      tenant_id: "f5665f08-3ebb-40e0-ad6b-000000000001",
+      email: "alice@example.com",
+      status: "active",
+    });
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
 

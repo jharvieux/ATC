@@ -5,9 +5,11 @@
 //   → looks up the OTP via OTP_STORE keyed by that email
 //   → validates code matches + not expired + under the attempt cap
 //   → resolves auth_user_id from the cookie session set by /api/auth/callback
-//   → upserts public.users row on tenant domains (platform provisioning is
-//     deferred to #441)
-//   → clears _ms_pending_email and lands the user on "/"
+//   → persists the verified email onto the auth user (admin API) so
+//     /signup/complete + other auth.email readers see it (#441)
+//   → upserts public.users (viewer) into the tenant / default tenant, EXCEPT on
+//     the agency flow — that's left to /signup/complete to provision
+//   → clears the OTP cookies and returns to the carried next (/signup/complete) or "/"
 //
 // Provider-neutral despite the route name: the same recovery handles MS
 // when Graph turns up nothing AND any other provider (Facebook, future) that
@@ -19,9 +21,13 @@ import { OTP_STORE, MAX_OTP_ATTEMPTS } from "@/lib/auth/otp-store";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeNextFor } from "@/lib/auth/safe-redirect";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
 const PENDING_EMAIL_COOKIE = "_ms_pending_email";
+// Set by the OAuth callback on the null-email bounce; carries the agency
+// destination (/signup/complete) across the OTP round-trip (#441).
+const PENDING_NEXT_COOKIE = "_ms_pending_next";
 
 // In-process IP rate limiter — 10 attempts per IP per 15 minutes.
 // Per-instance only (no Redis); acceptable for the low-concurrency §17.2 OTP
@@ -114,17 +120,42 @@ export async function POST(req: NextRequest): Promise<Response> {
     return errorRedirect(url, "Session expired. Please sign in again.");
   }
 
-  // Membership upsert — tenant domains only. The "platform" sentinel means
-  // net-new tenant provisioning, which is deferred to #441; the session is
-  // already established so the user lands authenticated either way.
+  // Persist the OTP-verified email onto the auth user. Until now auth.users.email
+  // is null (that's why we ran the OTP), so /signup/complete and every other
+  // auth.email reader would still see null — and the user would re-OTP on every
+  // future login. admin.updateUserById + email_confirm sets it directly (no
+  // confirmation round-trip) because we already proved ownership via the OTP.
+  const svc = createServiceRoleClient();
+  const { error: emailErr } = await svc.auth.admin.updateUserById(
+    authData.user.id,
+    { email: pendingEmail, email_confirm: true },
+  );
+  if (emailErr) {
+    return errorRedirect(
+      url,
+      "We couldn't finish verifying that email — it may already be linked to another account.",
+    );
+  }
+
+  // Membership upsert — mirrors the OAuth callback (#441): on a tenant domain use
+  // the UUID; on the platform domain use PLATFORM_DEFAULT_TENANT_ID when set.
+  // Role is omitted so the column default ('viewer') applies on INSERT. The
+  // agency flow (next=/signup/complete) skips the upsert so /signup/complete's
+  // idempotency guard can provision a fresh tenant (#800).
+  const next = safeNextFor(req.cookies.get(PENDING_NEXT_COOKIE)?.value, url.origin);
+  const isAgencyProvisioning =
+    next !== null && new URL(next.path, url.origin).pathname === "/signup/complete";
   const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
-  if (tenantId && tenantId !== "platform") {
-    const svc = createServiceRoleClient();
+  const effectiveTenantId =
+    tenantId === "platform" || !tenantId
+      ? (process.env.PLATFORM_DEFAULT_TENANT_ID ?? null)
+      : tenantId;
+  if (effectiveTenantId && !isAgencyProvisioning) {
     await safeAwait(
       svc.from("users").upsert(
         {
           auth_user_id: authData.user.id,
-          tenant_id: tenantId,
+          tenant_id: effectiveTenantId,
           email: pendingEmail,
           status: "active",
         },
@@ -134,13 +165,12 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
-  const res = NextResponse.redirect(new URL("/", url.origin), 302);
-  res.cookies.set({
-    name: PENDING_EMAIL_COOKIE,
-    value: "",
-    path: "/",
-    maxAge: 0,
-  });
+  // Return to the carried agency destination (/signup/complete) when present,
+  // else home. Clear both OTP cookies.
+  const target = next ? new URL(next.path, url.origin) : new URL("/", url.origin);
+  const res = NextResponse.redirect(target, 302);
+  res.cookies.set({ name: PENDING_EMAIL_COOKIE, value: "", path: "/", maxAge: 0 });
+  res.cookies.set({ name: PENDING_NEXT_COOKIE, value: "", path: "/", maxAge: 0 });
   return res;
 }
 

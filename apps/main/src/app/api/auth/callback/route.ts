@@ -24,6 +24,11 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 import { safeNextFor } from "@/lib/auth/safe-redirect";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
+// Carries the agency-provisioning destination across the no-email OTP round-trip
+// (callback → email-prompt → verify). The verify route reads it to return the
+// user to /signup/complete (#441). Same cookie attrs as _ms_pending_email.
+const PENDING_NEXT_COOKIE = "_ms_pending_next";
+
 export async function GET(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
@@ -47,6 +52,15 @@ export async function GET(req: NextRequest): Promise<Response> {
   const provider = authUser.app_metadata?.provider as string | undefined;
   let email: string | null = authUser.email ?? null;
 
+  // Resolve the post-login redirect once, up front: the null-email OTP bounce,
+  // the membership-skip decision, and the final redirect all key off it. Compare
+  // the PATHNAME, not safe.path (which is pathname + search + hash), so
+  // next=/signup/complete?x=… still counts as the agency flow — otherwise the
+  // membership upsert below would re-create the default-tenant row (#800).
+  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
+  const isAgencyProvisioning =
+    safe !== null && new URL(safe.path, url.origin).pathname === "/signup/complete";
+
   // §17.2 — Microsoft no-email recovery chain. The Graph calls need the
   // provider token (Microsoft's), not the Supabase JWT; fall back defensively.
   if (provider === "azure") {
@@ -62,23 +76,24 @@ export async function GET(req: NextRequest): Promise<Response> {
   // already on the response (applyAuthCookies); the verify route reads it
   // back to identify the auth user.
   if (!email) {
-    return applyAuthCookies(
+    const res = applyAuthCookies(
       NextResponse.redirect(new URL("/signup/email-prompt", url.origin), 302),
     );
+    // Carry the agency destination across the OTP round-trip so the verify step
+    // returns the user to /signup/complete (#441). Without this the next= is lost
+    // at the bounce and OTP users can never reach provisioning.
+    if (safe) {
+      res.cookies.set({
+        name: PENDING_NEXT_COOKIE,
+        value: safe.path,
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: 600,
+      });
+    }
+    return res;
   }
-
-  // Resolve the post-login redirect first: we must know whether this sign-in is
-  // headed to agency provisioning (/signup/complete) BEFORE deciding whether to
-  // create a membership row. Parse-then-check-origin (see safe-redirect.ts) — the
-  // parser, not a startsWith chain, decides the host, so userinfo / fullwidth /
-  // encoded-slash tricks all fail the parsed.origin equality.
-  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
-  // Compare the PATHNAME, not safe.path (which is pathname + search + hash). A
-  // caller passing next=/signup/complete?x=… must still count as the agency
-  // flow, or the upsert below would re-create the default-tenant row and
-  // reintroduce #800. safe is same-origin-validated, so the URL parse is safe.
-  const isAgencyProvisioning =
-    safe !== null && new URL(safe.path, url.origin).pathname === "/signup/complete";
 
   // Membership upsert. On a tenant domain the resolved id is a UUID — use it
   // directly. On the platform domain the resolved id is the "platform" sentinel;
