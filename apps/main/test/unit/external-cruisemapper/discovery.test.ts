@@ -5,7 +5,7 @@
 // requires `/` after the prefix so only true detail URLs survive.
 
 import { describe, expect, it } from "vitest";
-import { extractDetailUrls, extractDeckPlanLinks } from "../../../src/lib/external/cruisemapper/discovery";
+import { extractDetailUrls, extractDeckPlanLinks, extractFleetShipUrls } from "../../../src/lib/external/cruisemapper/discovery";
 
 const BASE = "https://www.cruisemapper.com";
 
@@ -129,5 +129,53 @@ describe("extractDeckPlanLinks — combined gallery URL filter (#768)", () => {
   it("returns nothing when the ship page has no deck-plans link", () => {
     const html = `<html><body><a href="/ships/Carnival-Horizon-1355">Ship</a></body></html>`;
     expect(extractDeckPlanLinks(html, SHIP_URL)).toEqual([]);
+  });
+});
+
+// Captured-shape fixture from a real cruise-line page (/cruise-lines/...): the
+// fleet is in `.shipListItem` cards inside `.shipList.lineItemRelationsList`,
+// while the page also embeds a global ship browser whose links must NOT leak
+// into the line's fleet (the original 38-ship coverage bug).
+const LINE_PAGE = `
+<!doctype html><html><body>
+<h2>Carnival Cruise Line fleet</h2>
+<ul class="shipList lineItemRelationsList">
+  <li class="col-sm-6"><div class="shipListItem">
+    <a href="https://www.cruisemapper.com/ships/Carnival-Breeze-703">Carnival Breeze</a>
+    <div class="shipListItemButtons shipListItemButtons-4">
+      <a class="btnOrange shipListItemButton" href="/ships/Carnival-Breeze-703?tab=review#review">Review</a>
+      <a class="btnBlue shipListItemButton" href="/ships/Carnival-Breeze-703?#itinerary">Itinerary</a>
+    </div>
+  </div></li>
+  <li class="col-sm-6"><div class="shipListItem">
+    <a href="/ships/Carnival-Celebration-2106">Carnival Celebration</a>
+  </div></li>
+</ul>
+<div class="otherShipsBrowser">
+  <a href="/ships/Adora-Mediterranea-719">Adora (global browser — exclude)</a>
+  <a href="https://example.com/ships/Spoof-1">off-host (exclude)</a>
+</div>
+</body></html>
+`;
+
+describe("extractFleetShipUrls — cruise-line fleet scoping", () => {
+  it("extracts only the line's fleet (.shipListItem cards), not the global browser", () => {
+    expect(extractFleetShipUrls(LINE_PAGE, BASE)).toEqual([
+      "https://www.cruisemapper.com/ships/Carnival-Breeze-703",
+      "https://www.cruisemapper.com/ships/Carnival-Celebration-2106",
+    ]);
+  });
+
+  it("dedups a ship's main + button links to one canonical URL, stripping query/fragment", () => {
+    const urls = extractFleetShipUrls(LINE_PAGE, BASE);
+    // Carnival Breeze appears 3x (main + review + itinerary) — one entry.
+    expect(urls.filter((u) => u.includes("Carnival-Breeze"))).toHaveLength(1);
+    expect(urls.every((u) => !u.includes("?") && !u.includes("#"))).toBe(true);
+  });
+
+  it("excludes global-browser links (outside .shipListItem) and off-host links", () => {
+    const urls = extractFleetShipUrls(LINE_PAGE, BASE);
+    expect(urls.some((u) => u.includes("Adora"))).toBe(false);
+    expect(urls.some((u) => u.includes("example.com"))).toBe(false);
   });
 });
