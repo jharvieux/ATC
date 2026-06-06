@@ -53,12 +53,12 @@ function mockDb(state: DbState) {
         order() {
           return this;
         },
-        limit(n: number) {
-          if (this._count) {
-            return Promise.resolve({ count: state.pending.filter((p) => p.status === "pending").length, error: null });
-          }
-          const rows = state.pending.filter((p) => p.status === (this._eqStatus ?? "pending")).slice(0, n);
-          return Promise.resolve({ data: rows, error: null });
+        range(from: number, to: number) {
+          // Simulate PostgREST's ~1,000-row response cap (db-max-rows) so the
+          // flush's #808 pagination loop is actually exercised.
+          const all = state.pending.filter((p) => p.status === (this._eqStatus ?? "pending"));
+          const end = Math.min(to + 1, from + 1000);
+          return Promise.resolve({ data: all.slice(from, end), error: null });
         },
         update(payload: Record<string, unknown>) {
           return {
@@ -158,6 +158,26 @@ describe("flushPendingEmbeddings", () => {
     expect(state.updates).toHaveLength(3);
     expect(state.updates.every((u) => u.ids.length <= 200)).toBe(true);
     expect(state.updates.flatMap((u) => u.ids)).toHaveLength(450);
+    expect(state.pending.every((p) => p.status === "submitted")).toBe(true);
+  });
+
+  it("paginates the SELECT past PostgREST's ~1,000-row cap to assemble a full batch (#808)", async () => {
+    const pending = Array.from({ length: 1500 }, (_, i) => ({
+      id: `p${i}`, chunk_id: `c${i}`, content: `t${i}`, custom_id: `cu${i}`,
+      status: "pending", batch_id: null, openai_file_id: null, output_file_id: null,
+      error_detail: null, queued_at: "2026-06-04T00:00:00Z", submitted_at: null, completed_at: null,
+    }));
+    const state: DbState = { pending, updates: [] };
+    const db = mockDb(state);
+
+    const out = await flushPendingEmbeddings({ db });
+
+    // The mock caps each range() at 1,000; pagination must assemble all 1,500 into
+    // ONE batch (without the #808 loop a single capped SELECT yields only 1,000).
+    expect(out.flushed).toBe(1500);
+    expect(uploadBatchInputFile).toHaveBeenCalledOnce();
+    const jsonl = (uploadBatchInputFile as unknown as { mock: { calls: [string][] } }).mock.calls[0]?.[0];
+    expect((jsonl as string).split("\n")).toHaveLength(1500);
     expect(state.pending.every((p) => p.status === "submitted")).toBe(true);
   });
 });
