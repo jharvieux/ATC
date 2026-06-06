@@ -1,21 +1,22 @@
-# Session state — last updated 2026-06-05 18:45 UTC
+# Session state — last updated 2026-06-05 21:15 UTC
 
 ## Just completed
-- PR #759 (rag-security-day2) merged: 1 MB extraction cap, OTP IP rate limiter (10 req/IP/15 min), PII pipeline on reviewer edits (fail-closed 422)
-- `release/beta040` pushed from pre-security-fix tag — production pipeline triggered; awaiting human approval at GitHub `production` environment gate
-- MEMORY.md updated: D-155, D-156, D-157
+- Verified live atc-rag Redis via fast `/api/feedback` probe (401 = Redis up) — #766 Redis blocker confirmed cleared at the infra layer, no code fix needed
+- Saved the reusable Redis-probe technique to auto-memory (`reference_rag_redis_probe.md`)
+- Cut **beta042** from `origin/dev` HEAD (1ff1f844) + pushed `release/beta042` → production pipeline running (run 27050609248), awaiting the prod approval gate
+- Created cruise-line DB plan issues: **#780** (Phase 1 — canonical `cruise_lines` + `cruise_ships` tables + platform-admin add/disable screen + scraper cutover) and **#781** (Phase 2 — normalize free-text columns; explicitly covers quotes + group bookings)
+- MEMORY.md: added D-160 (beta042 release) and D-161 (cruise-line DB decision)
 
 ## In flight
-- `release/beta040` production deploy — needs manual approval in GitHub Actions
+- **release/beta042 production deploy** — needs manual approval at the GitHub `production` environment gate: https://github.com/jharvieux/ATC/actions/runs/27050609248
+- Working tree clean apart from untracked scratch files (release was cut from origin/dev; nothing uncommitted)
 
 ## Next step
-- Day-3 security PR: f001 (#715) + f028 (#741)
-  - f001: `apps/main/src/app/api/trip-resources/route.ts` (or equivalent) — add `.eq('tenant_id', tenantId)` filter to the service-role query before the booking-ownership check
-  - f028: quote acceptance public route — add `.eq('status', 'pending')` CAS guard and `safeAwaitRowCount(1)` assertion
+- After beta042 is approved + deploys: re-trigger `refresh-cruisemapper-static` and verify `cruisemapper_url_inventory.last_error` clears — the end-to-end ingest test that also exercises verifyServiceJwt Step 5 (the tenant_registry_shadow service_role lookup fixed by #779)
 
 ## Blocked on user
-- GitHub `production` environment approval to complete beta040 deploy
+- GitHub `production` approval to complete the beta042 deploy
 
 ## Open questions
-- PR #758 security fixes (JWT key name, HMAC, SHA-256, fail-closed Inngest) are on dev but NOT in beta040 — user elected to ship tag as-is; fixes go out in next release
-- 27 open security issues remain (#715–#752) after PRs #758 + #759
+- Phase 1/2 schema scope DECIDED: ships INCLUDED (essential — the booking→knowledge join is ship-level), plus `aliases` / `tier` / `is_active` / `cruisemapper_slug`. A canonical `ports` table was DEFERRED — confirm if you want ports folded into Phase 1 too.
+- Open security issues (#715–#752) + Day-3 PRs (f001/f028) still backlogged — intentionally not in beta042
