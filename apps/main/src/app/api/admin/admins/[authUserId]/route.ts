@@ -136,10 +136,13 @@ export async function DELETE(
           return { kind: "last_superadmin" };
         }
         recordQuery({ op: "delete", table: "platform_admins" });
-        await safeAwait(
-          db.from("platform_admins").delete().eq("auth_user_id", authUserId),
+        // .select() confirms a row was actually removed — guards the narrow
+        // window where the row was deleted between the fetch above and here.
+        const removed = await safeAwait(
+          db.from("platform_admins").delete().eq("auth_user_id", authUserId).select("auth_user_id"),
           "platform_admins.delete",
         );
+        if (!Array.isArray(removed) || removed.length === 0) return { kind: "not_found" };
         return { kind: "ok" };
       },
     );

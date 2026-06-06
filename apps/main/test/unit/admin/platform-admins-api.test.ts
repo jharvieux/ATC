@@ -60,7 +60,7 @@ function makeDb(cfg: DbConfig) {
     function resolve(): unknown {
       if (state.op === "insert") return { data: cfg.insertRow ?? { auth_user_id: "new", role: "reviewer" }, error: null };
       if (state.op === "update") return { data: cfg.updateRow ?? { auth_user_id: "t", role: "reviewer" }, error: null };
-      if (state.op === "delete") return { data: null, error: null };
+      if (state.op === "delete") return { data: [{ auth_user_id: "removed" }], error: null };
       if (state.count) return { count: cfg.superadminCount ?? 2, error: null };
       if (state.selectCols.includes("role")) return { data: cfg.targetRole ? { role: cfg.targetRole } : null, error: null };
       if (state.selectCols.trim() === "auth_user_id") return { data: cfg.existing ? { auth_user_id: "x" } : null, error: null };
