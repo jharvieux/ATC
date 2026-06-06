@@ -4,6 +4,42 @@ Newest entries on top.
 
 ---
 
+## D-162 — 2026-06-05 — Add structured `ship_class` to cruise_ships (revises D-161's "specs out")
+
+D-161 deferred ship class/tonnage/etc. as "no feature needs it yet." User named the feature: customers sometimes want to pick a particular ship class — which needs a queryable column — so `ship_class` (text, nullable) is added to the Phase 1 `cruise_ships` table (#780).
+
+**Key finding:** we ALREADY scrape it. `cruisemapper/parsers/ship-parser.ts` extracts the full spec set (`shipClass`, yearBuilt, builder, grossTonnage, passengerCapacity, crew, decks, cabins) — but only its `.text` prose is RAG-ingested; the structured fields are computed and discarded (`shipClass` appears in no file but the parser). So today you can ASK chat a ship's class but can't FILTER by it. Phase 1 persists `parseShipPage().shipClass` into the new column — near-zero added work since the seed already calls the parser.
+
+**Scope held:** only `ship_class` now (matches the stated feature). The rest of the spec set is available from the same parser at marginal cost if a future feature wants numeric filters ("ships > 4000 pax", "built after 2018") — not added speculatively.
+
+---
+
+## D-161 — 2026-06-05 — Track supported cruise lines + ships in canonical DB tables (Phase 1 #780 / Phase 2 #781)
+
+Decided to replace the hardcoded supported-line list (`CRUISE_LINE_PAGES` in `cruisemapper/discovery.ts`) + the free-text `cruise_line` columns (string, ~50+ files: quotes, bookings, quote_options, price_watches, imports, RAG, reports) with canonical `cruise_lines` + `cruise_ships` tables. No such table exists today; the only canonical list is the scraper's hardcoded array.
+
+**Why it's justified (not premature abstraction):** three things hold at once — many consumers (not single-use), a real data-quality problem (free-text drift: "Royal Caribbean"/"RCI"/"royal caribbean" don't match), and scraped knowledge keyed by **ship** (deck plans `/deckplans/<ship>`, itineraries) that can't be joined to customer records while one side is free text.
+
+**Ships are in scope — essential, not optional:** the booking→knowledge join is ship-level, not line-level. Seed ships from existing `cruisemapper_url_inventory` (kind="ship", ~215). Also including `aliases` text[] (the key that makes Phase 2 normalization work), `tier` (mainstream/premium/luxury), `is_active` toggle, `cruisemapper_slug`.
+
+**Phased:** Phase 1 (#780) = additive tables + seed + **platform-admin add/disable screen** (user-requested) + scraper reads its list from the DB. Phase 2 (#781) = normalize free-text columns to FK via expand-migrate-contract (explicitly covers quotes + group bookings per user).
+
+**What was rejected:** (a) keep it hardcoded — fails the moment >1 consumer needs it + the free-text join need; (b) one big-bang migration — 50+ files, so additive Phase 1 is split from the risky free-text contraction (Phase 2, BP38). **Deferred:** a canonical `ports` table (ports are also scraped; parallel future work, not blocking).
+
+---
+
+## D-160 — 2026-06-05 — beta042 cut to prod (cruisemapper ingest fixes + PKCE)
+
+Cut `beta042` from `origin/dev` HEAD (1ff1f844) and pushed `release/beta042` to trigger the production pipeline — 8 commits over beta041: the 7 CruiseMapper ingest PRs (#768/#771/#773/#775/#777/#778/#779) + the PKCE `getUser` fix (#764). Awaiting the GitHub `production` environment approval gate (user approves → pipeline deploys Vercel prod, creates `vbeta042`, back-merges to dev).
+
+**Why now:** user needs the cruisemapper code fixes live to test the full ingest path end-to-end (RAG Redis #766 + service_role grants #779 are already-live infra/DB fixes; the remaining work was pure code on dev). Follows D-157's "verify the tag includes dev HEAD" — it does.
+
+**Migration safety:** the only migration in `beta041..dev` is `0025_grant_service_role_public_schema.sql` (#779), already applied to the prod RAG DB via psql this session with the snapshot regenerated → the release grants:check passes. No manual prod-migration step needed (deploy.yml still has prod auto-migrate disabled — TODO #534).
+
+**Not included:** the open security issues (#715–#752) and Day-3 PRs (f001/f028) remain on the backlog, consistent with shipping the cruisemapper batch independently.
+
+---
+
 ## D-159 — 2026-06-05 — CruiseMapper ship discovery per-cruise-line (38 → ~215 ships); per-URL steps → BATCHED steps (revises D-158's rejected-chunking)
 
 Ship discovery (#777) was scraping only page 1 of CruiseMapper's paginated global `/ships` index (~38 ships). Reworked to enumerate ~17 covered cruise lines' fleets (major US-market + premium/luxury US customers book; Costa + Viking-river excluded) from `/cruise-lines/<line>` pages, scoped to the `.shipListItem` fleet cards (the line pages also embed a global ship browser whose links must NOT leak in), following each line page's `?page=N` fleet pagination. Result: **~215 ships**.
