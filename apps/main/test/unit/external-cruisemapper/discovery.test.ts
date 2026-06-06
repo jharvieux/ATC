@@ -175,7 +175,10 @@ describe("extractFleetShipUrls — cruise-line fleet scoping", () => {
 
   it("excludes global-browser links (outside .shipListItem) and off-host links", () => {
     const urls = extractFleetShipUrls(LINE_PAGE, BASE);
-    expect(urls.some((u) => u.includes("Adora"))).toBe(false);
-    expect(urls.some((u) => u.includes("example.com"))).toBe(false);
+    expect(urls.some((u) => u.includes("/ships/Adora"))).toBe(false);
+    // Compare the parsed host, not a substring (a bare `.includes("example.com")`
+    // trips CodeQL js/incomplete-url-substring-sanitization — the same lazy
+    // host check that extractFleetShipUrls deliberately avoids).
+    expect(urls.some((u) => new URL(u).host === "example.com")).toBe(false);
   });
 });
