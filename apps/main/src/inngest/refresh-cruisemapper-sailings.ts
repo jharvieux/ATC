@@ -129,7 +129,7 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       if (reason) {
         halted = true;
         haltReasonStr = reason;
-        await step.run(`halt-${stepNum}`, () => alertSailingHalt(attempted, parseFailures, reason));
+        await step.run(`halt-${stepNum - 1}`, () => alertSailingHalt(attempted, parseFailures, reason));
         break;
       }
     }
