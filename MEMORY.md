@@ -4,6 +4,80 @@ Newest entries on top.
 
 ---
 
+## D-170 — 2026-06-06 — #813 shipped; #811 (per-role admin enforcement) scoped + QUEUED; process-improvement issues filed
+
+- **#813 (last-superadmin TOCTOU) shipped** — PR #814, merged. Advisory-locked SECURITY DEFINER RPCs (`admin_change_platform_role` / `admin_remove_platform_admin`); migration `20260628000004`.
+- **#811 (per-role platform-admin enforcement) scoped + QUEUED for a focused session** (user's call — it's a ~50-file all-or-nothing security rollout, not safe to one-shot at the tail of a long session). Tasks #35–38. **Confirmed policy (area → roles), the load-bearing decision for the next session:**
+  - **superadmin-only:** admins, legal-docs, platform-settings, ai-kill-switch, ai-pricing, integrations
+  - **reviewer:** abuse/*, tenants/* (review/terminate/queue), denylist, personas/*, persona-safety, rag/*, retrieval-weights, chunks, travel-news/*
+  - **finance:** resource-utilization, reconciliation/*, vendor-status
+  - **support:** help/*, email-samples, supervisor
+  - Un-tabled routes default to **superadmin** (least-priv; broaden later). Plan: a `platform-admin-grants` module (area→roles) + `assertPlatformAdminArea(req, area)` helper, applied to the ~44 human-admin `/api/admin` routes (`assertPlatformAdmin`→`assertPlatformAdminArea`) + the 4 server-rendered admin pages + a role-filtered sidebar/hub.
+  - NOTE: `api/admin/tenants/route.ts` + `api/admin/platform-settings/route.ts` are SERVICE-TO-SERVICE (`MAIN_APP_ADMIN_API_KEY` bearer, constant-time) — NOT human-admin; they stay bearer-gated and are EXCLUDED from the per-role rollout. (Corrects an in-session mis-flag that they were "ungated.")
+- **Process-improvement issues filed** (from the open + past-week-closed retrospective): **#815** (mechanical CI lints for the recurring D-091 patterns — service-role tenant filter, CAS row-count, non-constant-time compare, PostgREST 1000-row cap, Zod-on-event), **#816** (close the `pnpm verify` vs CI gap — add `lint:migrations`; RAG tests #792), **#817** (strengthen d091-reviewer: when a shared constant/limit changes, enumerate every dependent path — would've caught the #789→#805/#808 cascade).
+
+---
+
+## D-169 — 2026-06-06 — Role-management UI shipped (tenant + platform); platform roles still NOT per-page-enforced (PR #812)
+
+Built the deferred "role-assignment UI" (PR #812, merged to dev):
+- **Tenant side already existed** (`/settings/users` — owners change member roles via the `team_members:update_role`-gated API). Polished: GET now returns `caller_role` so non-owners see read-only roles instead of an optimistic dropdown that 403s on click.
+- **Platform side is new** — manage `platform_admins` (roles superadmin/reviewer/finance/support, previously SQL-seed only). `(admin)/admin/admins` page + `api/admin/admins` (+`[authUserId]`). **`assertSuperadmin`** (role==='superadmin') gates add/change/remove — the FIRST per-role check on the platform side. Listing is open to any platform admin (read-only). Guardrails: no self-change/remove, no demote/remove of the last superadmin, add-by-email (resolved via a locked-down SECURITY DEFINER RPC `admin_lookup_auth_user_by_email`).
+
+**Load-bearing facts for future role work:**
+- Tenant roles (`users.role`) and platform roles (`platform_admins.role`) are INDEPENDENT tables keyed on the same `auth_user_id` — one person can be both a tenant owner AND a platform admin.
+- **Platform roles are NOT enforced per-page.** `assertPlatformAdmin` admits ANY platform_admin to the entire `/admin` surface regardless of role; the four roles are labels, only management is role-gated. So SCOPED platform access (e.g. "reviewer = RAG-approval only") is NOT possible yet — that's #811.
+
+**Deploy:** migration `20260628000003` (the RPC) needs prod-apply at the next atc-main beta (backs add-by-email; the rest works without it). Not auto-applied (#534).
+
+**Process gotcha:** `pnpm verify` does NOT run `lint:migrations` (separate CI step) — run `pnpm lint:migrations` locally for migration PRs. §5.1.1 requires the literal `REVOKE EXECUTE ... FROM public` on SECURITY DEFINER functions (not `REVOKE ALL`).
+
+**Follow-ups:** #811 (per-role platform enforcement), #813 (last-superadmin TOCTOU hardening).
+
+---
+
+## D-168 — 2026-06-06 — Embedding-flush follow-ups resolved (#807, #808); #809 was transient (corrects D-167)
+
+PR #810 (merged + atc-rag deployed):
+- **#808** — the flush's pending SELECT was silently capped at ~1,000/run by PostgREST's `db-max-rows` (`.limit(2000)` is ignored). Now paginates in 1,000-row windows (the #788 pattern) to bundle up to 2,000. So both the read (#808) AND the status-flip write (#806/#805) on the flush path needed PostgREST-cap handling.
+- **#807** — added `bulk-flip.test.ts` (chunking + fail-loud abort: a failing chunk throws, later chunks stay pending for idempotent re-submit).
+
+**#809 correction to D-167:** the residual atc-rag `/api/inngest` 500s were NOT an ongoing cron failure. They were the pre-deploy flush-failure **retry backlog** clearing after #806 deployed (stopped 19:06, clean since). D-167 named `promo-state-reconcile` as the suspect — but the promo crons CANNOT 500: they catch their rpc errors and `return {ok:false}`. Closed #809, no code.
+
+**Watch:** post-fix the flush drains fine (~1,000→2,000/run) but `done` lagged `submitted` for >40 min (OpenAI Batch API async completion latency — the early small batches happened to finish in ~5 min; not a code bug). reconcile (every 5 min, error-free) completes them as OpenAI finishes.
+
+---
+
+## D-167 — 2026-06-06 — First full CruiseMapper ingest succeeded (13.9k itineraries); embedding flush 500-looped, fixed (#805)
+
+The first full CruiseMapper itinerary ingest ran (after beta043 deployed #788/#796): discovery populated the full inventory (1,569 ports / 251 ships / 254 deck plans — #788's pagination held, no 1,000-row truncation), and the sailing cron loaded **13,862 itineraries + 17,042 knowledge_chunks** without timing out (#796's time-budgeted stepping held). **beta043 DID deploy** — its pipeline run reads "failure" only because the final back-merge PR step errored (`No commits between dev and release/beta043`); the Vercel build+deploy+alias succeeded. (Corrects an in-session mis-statement that beta043 was "pending the gate.")
+
+**Live incident — embedding flush 500-loop (#805, PR #806).** The RAG embedding flush flipped up to `MAX_REQUESTS_PER_BATCH` rows to `submitted` in a single PostgREST `.in()`. #789 raised that cap 200→2,000; ~2,000 UUIDs exceed the URL limit so the UPDATE threw — AFTER the OpenAI batch was created — a 500-loop that re-billed batches every 10 min and stalled ~15k chunks (the first full ingest's burst at 17:14 triggered it; it worked while ingest trickled at ~173/flush). #789 had chunked the *reconciler's* identical flip but missed the flush's. Fix: shared `bulkFlipPendingStatus` helper (chunked, `STATUS_FLIP_CHUNK=200`) used by both flush + reconcile; kept the 2,000 cap. Merged + atc-rag deployed; recovery confirmed (pending 15,176→14,176, submitted 0→1,000).
+
+**Follow-ups filed:** #807 (partial-flip-on-error test), #808 (the flush SELECT is itself effectively capped at ~1,000/run by PostgREST's default response cap — the 2,000 constant is never actually reached; #788-class), #809 (residual atc-rag `/api/inngest` 500s = a SEPARATE hourly cron, likely `promo-state-reconcile`, NOT the embedding pipeline — Vercel logs too generic; needs Inngest-dashboard attribution).
+
+**Reusable lesson:** when raising a batch/bulk cap, audit EVERY `.in(id-list)` on that path for the PostgREST URL limit — both the status-flip writes AND the `.limit()` reads (the read silently caps at 1,000; #788/#808).
+
+---
+
+## D-166 — 2026-06-06 — Auth/tenancy: platform logins became Booking OWNERS (#800); fixed role default + unbroke agency signup + MS/FB OTP provisioning
+
+Two PRs (PR #803, PR #804) fixed a chain of auth/tenancy bugs, all rooted in `PLATFORM_DEFAULT_TENANT_ID` being set to the Booking tenant.
+
+**Tenancy model (user-confirmed):** Booking IS the platform's customer tenant by design — platform-domain customers (the "/signup → I'm booking travel" flow) are members of Booking. There is NO dedicated "customer" role: `public.users.role` is only `tenant_owner | agent | viewer`, and `viewer` IS the customer-facing role (`resolve-post-login` routes viewer / no-membership users to the customer chat). So `PLATFORM_DEFAULT_TENANT_ID=Booking` is INTENTIONAL — **do not unset it** (I proposed unsetting it; user corrected the premise).
+
+**#800 (PR #803):** the OAuth callback upserts platform-domain logins into Booking WITHOUT a role, so the column default (`tenant_owner`, a documented stopgap from `20260625000001`) made every customer a tenant OWNER. Fix: migration `20260628000002` flips the `users.role` default to `viewer` (least-priv; defense-in-depth for any role-less insert); `signup/complete` now sets `role:'tenant_owner'` EXPLICITLY (it relied on the old default); the callback upsert still OMITS role so the default applies on INSERT — an explicit role would clobber existing owners/agents on the `onConflict` UPDATE (a real member re-logging-in on their subdomain).
+
+**Agency self-signup was ALSO broken (PR #803):** with the env set, the callback pre-created a Booking row for EVERY platform login — including someone en route to `/signup/complete` — tripping that route's idempotency guard → `already_provisioned`, so NOBODY could self-serve create an agency. Fix: the callback skips the membership upsert on the agency flow (`next` pathname `=== /signup/complete`). Match the parsed PATHNAME, not `safe.path` (which includes `?search`) — else `next=/signup/complete?x=` re-introduces #800.
+
+**MS/FB OTP-path provisioning (PR #804):** #441 (the `/signup/complete` route) was already implemented + CLOSED, but the §17.2 no-email OTP recovery path never reached it: after OTP, `auth.users.email` stayed null (only a cookie + `public.users` row were set), so `/signup/complete` (reads `authData.user.email`) 400'd and users re-OTP'd every login. Fix: callback carries the agency `next` in a `_ms_pending_next` cookie across the OTP round-trip; `microsoft-email-verify` PERSISTS the verified email onto the auth user (`admin.updateUserById(..., {email, email_confirm:true})`, fail-loud), mirrors the callback's membership logic (no-email customers also get the Booking viewer membership), and redirects to `/signup/complete`.
+
+**Deploy sequencing (CRITICAL):** migration `20260628000002` does NOT auto-apply (pipeline auto-migrate disabled, TODO #534). Apply it AFTER the code is live, NEVER before — old `signup/complete` code relies on the `tenant_owner` default, so the viewer-default migration landing first would create agency owners as viewers. Next-beta order: deploy code → then `apply_migration` for `20260628000002`.
+
+**Still open:** existing bad Booking owner rows (`john@ai-travelconcierge.com` + `harvieux@bigfoot.com`, created pre-fix) need cleanup AFTER deploy (else re-created on login); end-to-end test-agency provisioning to verify.
+
+---
+
 ## D-165 — 2026-06-06 — Sailing cron: adaptive time-budgeted Inngest stepping (#796); reusable for #774
 
 The monthly sailing cron's fixed `SAILING_CHUNK=5` batch with **serial** per-ship RAG POSTs could exceed the 300s function maxDuration on high-sailing-count ships (`parseSailingList` doesn't cap N). Fixed (PR #797): (a) parallelize each ship's upcoming-sailing POSTs in bounded-concurrency waves (8); (b) replace the fixed-chunk loop with a **time-budgeted cursor** — each `step.run` processes ships until a ~180s wall-clock budget is spent (always ≥1 ship), returns `nextIndex`, and the orchestrator resumes from there. Each Inngest step is its own invocation, so bounding the per-step callback to <300s bounds the whole job; the step count adapts to actual work. The windowing loop is extracted as `runSailingWindow(urls, start, budgetMs, processOne, now)` for unit testing (injected clock).
