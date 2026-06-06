@@ -54,12 +54,13 @@ async function main(): Promise<void> {
       ON CONFLICT (id) DO NOTHING
     `;
 
-    // 4. public.users tied to tenant.
+    // 4. public.users tied to tenant. role is explicit — the column default is
+    // now 'viewer' (migration 20260628000002); the e2e operator needs owner.
     await sql`
-      INSERT INTO public.users (id, auth_user_id, tenant_id, email, first_name, last_name, status)
+      INSERT INTO public.users (id, auth_user_id, tenant_id, email, first_name, last_name, status, role)
       VALUES (
         ${PUBLIC_USER_ID}, ${AUTH_USER_ID}, ${TENANT_ID},
-        'e2e-test@local', 'E2E', 'Tester', 'active'
+        'e2e-test@local', 'E2E', 'Tester', 'active', 'tenant_owner'
       )
       ON CONFLICT (id) DO NOTHING
     `;

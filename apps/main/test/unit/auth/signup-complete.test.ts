@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   getUser:                      vi.fn(),
   usersIdempotencyQuery:        vi.fn(),
   tenantsInsertSingle:          vi.fn(),
+  usersInsert:                  vi.fn(),
   usersInsertSingle:            vi.fn(),
   publishTenantEvent:           vi.fn(),
   bindContactOnIdentification:  vi.fn(),
@@ -49,9 +50,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
               limit: () => ({ maybeSingle: mocks.usersIdempotencyQuery }),
             }),
           }),
-          insert: () => ({
-            select: () => ({ single: mocks.usersInsertSingle }),
-          }),
+          insert: (...args: unknown[]) => {
+            mocks.usersInsert(...args);
+            return { select: () => ({ single: mocks.usersInsertSingle }) };
+          },
         };
       }
       if (table === "tenants") {
@@ -231,6 +233,21 @@ describe("POST /api/auth/signup/complete", () => {
         status:           "onboarding",
         onboarding_stage: "legal",
       });
+    });
+
+    it("creates the operator as an explicit tenant_owner (not the viewer column default)", async () => {
+      // The users.role default is 'viewer' (least-priv, migration 20260628000002).
+      // Provisioning must set role explicitly or the operator would be a viewer of
+      // their own agency (#800).
+      await POST(platformReq(VALID_BODY));
+      expect(mocks.usersInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auth_user_id: AUTH_ID,
+          tenant_id:    TENANT_ID,
+          status:       "active",
+          role:         "tenant_owner",
+        }),
+      );
     });
 
     it("advances stage through profile then legal", async () => {
