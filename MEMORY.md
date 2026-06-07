@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-174 — 2026-06-07 — Sailing-cron ports backfill timed out (FUNCTION_INVOCATION_TIMEOUT); bound the detail-fetch loop by the step deadline (#842/#843, beta047)
+
+**What happened.** The #827 ports backfill run for `refresh-cruisemapper-sailings` kept failing in Inngest as "unknown error from the app." That string is Inngest's label for a 5xx it can't parse into a structured step error; the **real** cause was in the Inngest step output: `FUNCTION_INVOCATION_TIMEOUT` (a Vercel function timeout — a `step.run` exceeded the 300s `maxDuration`). The run still crept forward (116/251 ships) because per-ship DB writes commit before the timeout, then Inngest retried the long ship and eventually failed the run.
+
+**Root cause.** `STEP_BUDGET_MS` (180s) was checked only BETWEEN ships in `runSailingWindow`, but the dominant cost — per-sailing `cruise.json` detail fetches at ~1 req/sec — happens WITHIN a ship (`processSailingHtml`). A high-sailing-count ship (200+ upcoming sailings ⇒ 200s+ of serialized detail fetches) pushed one step past 300s. Latent until `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true` went live in the #827 prod rollout (before that the loop was cheap).
+
+**Fix.** Thread ONE shared step deadline (`now + STEP_BUDGET_MS`) into `processSailingHtml`'s detail loop; when reached, defer the remaining sailings (`list_details_deferred`) and break. A deferred ship is NOT stamped complete (`landedInRag && !deferred` ⇒ `content_hash` withheld ⇒ next run resumes it; already-enriched sailings skip via the `sailing_detail` gate). Raised `STEP_BUDGET_MS` 180→240s (overshoot is now ~one in-flight wave). Per-ship try/catch in `runSailingWindow` kept as defense-in-depth (a JS catch can't catch a platform timeout — it's secondary, not the fix).
+
+**Reusable lesson.** A per-step time budget must bound the loop that ACTUALLY spends the wall-clock — an inner rate-limited loop (1 req/sec) nested in an outer-budgeted loop is the trap; checking the budget only between outer iterations lets a single inner iteration blow `maxDuration`. Also: the Vercel runtime-logs MCP truncates these to the generic "Inngest function error" (no `FUNCTION_INVOCATION_*` marker surfaced) — the authoritative error is the **Inngest step output**, not the searchable Vercel log.
+
+**Rejected.** Raising `maxDuration` alone (plan-uncertain ceiling; doesn't bound an ever-larger ship). A fixed per-ship detail-fetch cap (too slow — a 250-sailing ship would need ~6 runs; the shared deadline uses the whole step instead). My own first commit on the branch guessed a per-ship JS throw — corrected once the user pasted the `FUNCTION_INVOCATION_TIMEOUT` marker.
+
+**Rollout.** beta047 → atc-main prod: Vercel deploy + smoke test green (the active prod deployment carries the fix); the `Auto-merge release branch back to dev` step failed benignly as usual (dev already had the fix via PR #843). The #835 Inngest-sync step reported "success" but **skipped on its `INNGEST_API_KEY` guard (key still unset) — it did NOT actually sync** (so the `derive-general-price-ranges` registration gap and the "add `INNGEST_API_KEY`" action both still stand). Re-trigger `refresh-cruisemapper-sailings` to finish the backfill; expect `list_details_deferred` > 0 on big-ship runs and `ships_remaining` → 0 across runs.
+
+**Artifacts.** PR #843, issue #842 (closed). `apps/main/src/inngest/refresh-cruisemapper-sailings.ts`, `apps/main/src/lib/external/cruisemapper/sailing-ingest.ts`.
+
+---
+
 ## D-173 — 2026-06-07 — Prod rollout of #826/#827/#828, the sailing-halt fix, + 4 process improvements
 
 Continuation of D-172. Everything below is merged to dev + (where noted) live on prod.
