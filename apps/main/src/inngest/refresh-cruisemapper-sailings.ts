@@ -40,12 +40,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20;
-// Per-step wall-clock budget (#796). A step processes ships until this is spent
-// (always finishing the current ship + at least one), then the orchestrator
-// resumes from the returned cursor — so no single Inngest step exceeds
-// maxDuration regardless of any ship's sailing count. Kept well under the 300s
-// function limit to leave headroom for the in-progress ship to finish.
-const STEP_BUDGET_MS = 180_000;
+// Per-step wall-clock budget (#796/#842). The SAME deadline bounds two loops:
+// the inter-ship loop here (stop starting new ships) AND each ship's detail-fetch
+// loop in processSailingHtml (stop enriching, defer the rest). Before #842 only
+// the inter-ship loop respected it, so a single high-sailing-count ship's 1-req/
+// sec detail fetches could run one step past Vercel's 300s maxDuration →
+// FUNCTION_INVOCATION_TIMEOUT. Bounding the detail loop too caps the overshoot at
+// roughly one in-flight wave (~10-15s), so 240s stays comfortably under 300s.
+const STEP_BUDGET_MS = 240_000;
 
 const AUDIT_META = {
   admin_user_id: "system-cron",
@@ -227,7 +229,7 @@ export const refreshCruisemapperSailings = inngest.createFunction(
 // orchestrator resumes from the returned nextIndex.
 async function processSailingWindow(urls: string[], start: number): Promise<SailingWindowResult> {
   const db = createServiceRoleClient();
-  return runSailingWindow(urls, start, STEP_BUDGET_MS, (url) => processOneSailingUrl(db, url));
+  return runSailingWindow(urls, start, STEP_BUDGET_MS, (url, deadlineMs) => processOneSailingUrl(db, url, deadlineMs));
 }
 
 // Core windowing loop, separated from the service-role wiring so it's unit-
@@ -238,7 +240,7 @@ export async function runSailingWindow(
   urls: string[],
   start: number,
   budgetMs: number,
-  processOne: (url: string) => Promise<SailingUrlResult>,
+  processOne: (url: string, deadlineMs: number) => Promise<SailingUrlResult>,
   now: () => number = Date.now,
 ): Promise<SailingWindowResult> {
   const sailing = emptySailingResult();
@@ -251,7 +253,7 @@ export async function runSailingWindow(
   while (i < urls.length) {
     let r: SailingUrlResult;
     try {
-      r = await processOne(urls[i]!);
+      r = await processOne(urls[i]!, deadline);
     } catch (err) {
       // #842 — a SINGLE ship's unexpected throw (e.g. a transient Supabase
       // pooler/connection error on its inventory read/write) must NOT fail the
@@ -297,7 +299,7 @@ async function priorShipHash(db: SupabaseClient, url: string): Promise<string | 
 // Process ONE ship page's sailing data: conditional GET → parse current sailing
 // + upcoming list → RAG + pricing cache via processSailingHtml. Returns the
 // single-URL counters the batch aggregates.
-async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<SailingUrlResult> {
+async function processOneSailingUrl(db: SupabaseClient, url: string, deadlineMs: number = Number.POSITIVE_INFINITY): Promise<SailingUrlResult> {
   const sailing = emptySailingResult();
 
   const previousBodyHash = await priorShipHash(db, url);
@@ -333,8 +335,9 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
     list_ingested: sailing.list_ingested,
     list_details_skipped_enriched: sailing.list_details_skipped_enriched,
     list_items: sailing.list_items,
+    list_details_deferred: sailing.list_details_deferred,
   };
-  await processSailingHtml(db, fetched.body, url, sailing);
+  await processSailingHtml(db, fetched.body, url, sailing, deadlineMs);
   // Compute the outcome from this page's counter deltas (see sailingPageOutcomeInputs:
   // valid-ship + landed-in-RAG, the content_hash-stamping / parse-failure-halt surface).
   const { validShipPage, landedInRag } = sailingPageOutcomeInputs({
@@ -346,7 +349,12 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
     listHadItems: sailing.list_items > before.list_items,
   });
 
-  const { update, parse_failed } = sailingIngestOutcome(validShipPage, landedInRag, fetched.bodyHash);
+  // #842 — if the detail-fetch deadline left sailings un-enriched, the page did
+  // NOT fully land: withhold the content_hash so the next run resumes the ship
+  // (already-enriched sailings skip via the gate). Still a valid ship and not a
+  // parse failure — only the "fully landed" signal is suppressed.
+  const deferred = sailing.list_details_deferred > before.list_details_deferred;
+  const { update, parse_failed } = sailingIngestOutcome(validShipPage, landedInRag && !deferred, fetched.bodyHash);
   await safeAwait(
     db.from("cruisemapper_url_inventory").update(update).eq("url", url).eq("kind", "ship"),
     "cruisemapper_url_inventory.update.sailing",

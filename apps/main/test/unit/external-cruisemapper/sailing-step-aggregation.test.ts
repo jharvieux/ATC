@@ -113,6 +113,24 @@ describe("runSailingWindow — time-budgeted stepping (#796)", () => {
     expect(r.sailing.list_ingested).toBe(10);
   });
 
+  it("passes ONE shared step deadline (now + budget) through to every ship's processOne (#842)", async () => {
+    // The detail-fetch loop inside a ship needs the step deadline so a single
+    // high-sailing-count ship can't run the Vercel function past maxDuration. The
+    // deadline is per-STEP (shared across ships), not per-ship.
+    const seen: number[] = [];
+    await runSailingWindow(
+      ["a", "b"],
+      0,
+      5_000,
+      async (_url, deadlineMs) => {
+        seen.push(deadlineMs);
+        return fakeResult();
+      },
+      () => 1000,
+    );
+    expect(seen).toEqual([6000, 6000]); // now(1000) + budget(5000), identical for both ships
+  });
+
   it("continues past a ship whose processing THROWS, counting it as a fetch_error (#842)", async () => {
     const processed: string[] = [];
     const r = await runSailingWindow(
