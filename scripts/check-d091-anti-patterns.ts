@@ -23,8 +23,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAN_DIRS = ["apps/main/src", "apps/rag/src"];
 const BASELINE_FILE = path.join(ROOT, "scripts/d091-baseline.txt");
 
