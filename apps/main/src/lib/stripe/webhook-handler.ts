@@ -25,6 +25,7 @@
 
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { STALE_WEBHOOK_PROCESSING_MS } from "./webhook-constants";
 
 export type WebhookEndpoint = "platform" | "connect";
 
@@ -89,7 +90,7 @@ export async function handleStripeWebhook(
     if (insertErr.code === "23505") {
       const { data: existingEvent, error: lookupErr } = await db
         .from("stripe_webhook_events")
-        .select("processing_completed_at, processing_outcome")
+        .select("processing_completed_at, processing_outcome, processing_started_at")
         .eq("stripe_event_id", event.id)
         .maybeSingle();
       if (lookupErr) {
@@ -102,6 +103,23 @@ export async function handleStripeWebhook(
       if (completedAt && outcome !== "error") {
         console.log("[stripe-webhook] Duplicate event %s — returning 200", event.id);
         return new Response("Duplicate", { status: 200 });
+      }
+
+      // [review gap-fill for #719] Age guard before clearing. The original PR
+      // deleted ANY incomplete duplicate, but an incomplete row that started only
+      // moments ago is most likely a CONCURRENT delivery still in-flight on
+      // another invocation — Stripe is at-least-once and can overlap. Deleting it
+      // would orphan that run (its completion UPDATE matches 0 rows, silently), and
+      // a later retry would re-insert + reprocess → double-processing for handlers
+      // that aren't independently idempotent. So only the prior run ERRORED, or an
+      // incomplete row older than the stale threshold (crashed), is safe to clear.
+      // A still-fresh in-flight row: ask Stripe to retry later WITHOUT deleting —
+      // by the next delivery it's either completed (→200 above) or stale (→cleared).
+      const startedAt = (existingEvent as { processing_started_at?: string | null } | null)?.processing_started_at;
+      const startedMsAgo = startedAt ? Date.now() - Date.parse(startedAt) : Number.POSITIVE_INFINITY;
+      if (outcome !== "error" && startedMsAgo < STALE_WEBHOOK_PROCESSING_MS) {
+        console.warn("[stripe-webhook] Duplicate event %s still in-flight (started %dms ago) — 500 to retry later, not clearing", event.id, startedMsAgo);
+        return new Response("In-flight, retry later", { status: 500 });
       }
 
       try {
