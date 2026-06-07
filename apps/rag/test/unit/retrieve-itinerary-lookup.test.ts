@@ -19,7 +19,7 @@ function makeDb(byTable: Record<string, Result>) {
   function builder(table: string) {
     const result = byTable[table] ?? { data: [], error: null };
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "ilike", "gte", "lte", "not", "order", "limit", "in", "eq", "or"]) {
+    for (const m of ["select", "ilike", "gte", "lte", "not", "is", "order", "limit", "in", "eq", "or"]) {
       b[m] = () => b;
     }
     b.then = (resolve: (v: Result) => void) => resolve(result);
@@ -50,10 +50,22 @@ describe("fetchItineraryLookupChunks (#826)", () => {
   it("prefers authority_manual_override for the synthetic authority score", async () => {
     const db = makeDb({
       itineraries: { data: [{ related_chunk_id: "c2" }], error: null },
-      knowledge_chunks: { data: [{ id: "c2", authority_auto: 0.2, authority_manual_override: 0.9 }], error: null },
+      knowledge_chunks: { data: [{ id: "c2", scope: "global", authority_auto: 0.2, authority_manual_override: 0.9 }], error: null },
     });
     const out = await fetchItineraryLookupChunks(db, "tenant-1", LOOKUP);
     expect(out[0]).toMatchObject({ authority_score: 0.9 });
+  });
+
+  it("drops a chunk resolving to another tenant's scope (second isolation layer)", async () => {
+    const db = makeDb({
+      itineraries: { data: [{ related_chunk_id: "g1" }, { related_chunk_id: "t-other" }], error: null },
+      knowledge_chunks: { data: [
+        { id: "g1", scope: "global" },
+        { id: "t-other", scope: "tenant", tenant_id: "tenant-2" },
+      ], error: null },
+    });
+    const out = await fetchItineraryLookupChunks(db, "tenant-1", LOOKUP);
+    expect(out.map((c) => (c as { id: string }).id)).toEqual(["g1"]);
   });
 
   it("returns [] when no sailing matches the ship+date", async () => {

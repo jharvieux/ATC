@@ -255,18 +255,32 @@ export async function fetchItineraryLookupChunks(
     )
     .in("id", chunkIds)
     .eq("status", "approved")
+    // #826 audit — mirror the freshness gates match_knowledge_chunks applies so
+    // the boost can't surface stale content: skip superseded chunks, require an
+    // embedding, and never boost a promo chunk (any sell_by_at) — promo chunks
+    // fall through to the vector path, which runs the full promo-lifecycle gate.
+    .is("superseded_by_chunk_id", null)
+    .not("embedding", "is", null)
+    .is("sell_by_at", null)
     .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
   if (chunkErr) throw new Error(`itinerary chunk fetch failed: ${chunkErr.message}`);
 
-  return (rows ?? []).map((c) => {
-    const row = c as Record<string, unknown>;
-    return {
-      ...row,
-      // Exact structured match → rank ahead of vector hits.
-      match_score: 1,
-      authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
-      recency_score: 1,
-      composite_confidence: 1,
-    };
-  });
+  return (rows ?? [])
+    .filter((c) => {
+      // Second tenant-isolation layer (D-091): the .or() above is layer one;
+      // never return another tenant's chunk even if related_chunk_id pointed at it.
+      const row = c as { scope?: string | null; tenant_id?: string | null };
+      return row.scope === "global" || row.tenant_id === tenantId;
+    })
+    .map((c) => {
+      const row = c as Record<string, unknown>;
+      return {
+        ...row,
+        // Exact structured match → rank ahead of vector hits.
+        match_score: 1,
+        authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
+        recency_score: 1,
+        composite_confidence: 1,
+      };
+    });
 }
