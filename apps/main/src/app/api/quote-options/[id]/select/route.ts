@@ -43,21 +43,24 @@ export async function POST(
     await safeAwait(svc
       .from("quote_options")
       .update({ customer_selected: false, customer_selected_at: null })
-      .eq("quote_id", quote_id), "quote_options.update");
+      .eq("quote_id", quote_id)
+      .eq("tenant_id", ctx.tenant_id), "quote_options.update");
 
     // Select this one.
     const now = new Date().toISOString();
     const { error: updErr } = await svc
       .from("quote_options")
       .update({ customer_selected: true, customer_selected_at: now })
-      .eq("id", optionId);
+      .eq("id", optionId)
+      .eq("tenant_id", ctx.tenant_id);
     if (updErr) return Response.json({ error: updErr.message }, { status: 500 });
 
     // Transition the quote container.
     await safeAwait(svc
       .from("quotes")
       .update({ status: "accepted", accepted_at: now })
-      .eq("id", quote_id), "quotes.update");
+      .eq("id", quote_id)
+      .eq("tenant_id", ctx.tenant_id), "quotes.update");
 
     return Response.json({ ok: true, quote_id, option_id: optionId });
   } catch (err) {

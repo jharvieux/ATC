@@ -67,6 +67,7 @@ export const taskSequenceStepFire = inngest.createFunction(
         .from("contacts")
         .select("first_name, last_name, pipeline_stage_key")
         .eq("id", run.contact_id)
+        .eq("tenant_id", run.tenant_id)
         .maybeSingle();
       if (data) {
         const c = data as { first_name: string | null; last_name: string | null; pipeline_stage_key: string | null };
@@ -106,6 +107,7 @@ export const taskSequenceStepFire = inngest.createFunction(
           .from("contacts")
           .select("first_name, last_name")
           .eq("id", q.contact_id)
+          .eq("tenant_id", run.tenant_id)
           .maybeSingle();
         if (c) ctx.contact = c as { first_name: string | null; last_name: string | null };
       }
@@ -114,6 +116,7 @@ export const taskSequenceStepFire = inngest.createFunction(
         .from("bookings")
         .select("status, cruise_line, sailing_date, primary_contact_id")
         .eq("id", run.booking_id)
+        .eq("tenant_id", run.tenant_id)
         .maybeSingle();
       if (data) {
         const b = data as { status: string; cruise_line: string | null; sailing_date: string | null; primary_contact_id: string | null };
@@ -128,6 +131,7 @@ export const taskSequenceStepFire = inngest.createFunction(
             .from("contacts")
             .select("first_name, last_name")
             .eq("id", b.primary_contact_id)
+            .eq("tenant_id", run.tenant_id)
             .maybeSingle();
           if (c) ctx.contact = c as { first_name: string | null; last_name: string | null };
         }
