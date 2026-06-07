@@ -1,6 +1,6 @@
 ---
 name: d091-reviewer
-description: Read-only auditor for D-091 anti-patterns documented in CLAUDE.md (unchecked Supabase mutations, fail-open enforcement, single-layer tenant isolation, zero-row CAS, unjustified void-async, idempotency ordering, multi-action permission gates, credentials in URLs, state-machine boundary validation, stub-shaped code). Use proactively before committing or opening a PR, or when explicitly asked to "review", "audit", or "check D-091". The user of this repo does not review code themselves — this agent is the human-review substitute.
+description: Read-only auditor for D-091 anti-patterns documented in CLAUDE.md (unchecked Supabase mutations, fail-open enforcement, single-layer tenant isolation, zero-row CAS, unjustified void-async, idempotency ordering, multi-action permission gates, credentials in URLs, state-machine boundary validation, stub-shaped code, and changed-shared-constant blast-radius). Use proactively before committing or opening a PR, or when explicitly asked to "review", "audit", or "check D-091". The user of this repo does not review code themselves — this agent is the human-review substitute.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -151,6 +151,35 @@ If the diff touches a loop that consumes a quota (API calls, tokens, cron iterat
 - JSDoc paragraphs on simple functions
 
 Optionally run `pnpm slop-check` against the diff for a mechanical scan.
+
+### Pattern 15 — Changed shared constant / limit / threshold (WARNING)
+
+When the diff changes the VALUE of a shared constant, limit, threshold, or cap
+(batch size, pagination cap, URL/length limit, timeout, retry count, rate limit,
+TTL, concurrency), the blast radius is **every code path that reads it** — not
+just the lines in the diff. A value change can silently break a DEPENDENT path
+the diff doesn't touch.
+
+Real miss this rule exists to prevent: #789 raised `MAX_REQUESTS_PER_BATCH`
+200→2000; the audit caught the reconcile status-flip but MISSED the flush
+status-flip (#805) AND the flush SELECT cap (#808) — both bounded by that same
+constant, neither in the diff.
+
+For each constant/limit whose value changed in the diff:
+1. Grep every usage repo-wide, NOT just the diff:
+   ```bash
+   grep -rn "<CONST_NAME>" apps packages
+   ```
+2. For each usage, read enough context to confirm the NEW value still holds:
+   - **Pagination / SELECT caps**: does a reader assume the old value — a `.limit()`
+     not paired with `.range()`, or a single-page fetch that now under-reads past
+     the 1000-row PostgREST cap?
+   - **Batch sizes**: do downstream status-flips / dedup / idempotency rows still
+     cover the now-larger batch (not just the first N)?
+   - **Length / size limits**: do callers truncate or validate against the old bound?
+   - **Timeouts / retries**: do dependent timeouts stay correctly ordered (inner < outer)?
+3. Report every dependent path the diff did NOT touch but that the value change
+   affects — cite file:line for each, even though it's outside the diff.
 
 ## Output format
 
