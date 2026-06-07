@@ -51,6 +51,7 @@ export async function POST(
     const { data: agentRow } = await svc
       .from("users")
       .select("first_name, last_name, email, phone")
+      .eq("tenant_id", ctx.tenant_id)
       .eq("id", user.id)
       .maybeSingle();
     const agent_contact = agentRow
