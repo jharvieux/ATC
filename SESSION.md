@@ -1,24 +1,21 @@
-# Session state — last updated 2026-06-07 ~07:45 UTC
+# Session state — last updated 2026-06-07 ~10:30 UTC
 
 ## Just completed
-- **Shipped + merged to dev:** PR #829 (#826 chat itinerary lookup + #828a price-deferral scope), PR #830 (#827 future-sailing ports via cruise.json), PR #832 (#828b ballpark general_pricing_ranges). Follow-up #831 filed. MEMORY D-172 logged.
-- **ROLLOUT TO PROD executed:**
-  - `release/beta045` cut → atc-main prod deployed (Vercel deploy + smoke test passed; benign "auto-merge back to dev" step failure only). Active prod deployment redeployed to `atc-main-6hdaseqip…` so it carries the new env flag.
-  - **atc-rag deployed to prod** (manual `vercel deploy --prod`; health 200) — required for #826's RAG-side `fetchItineraryLookupChunks`.
-  - **Main migrations applied to prod + verified:** `20260628000005` (inventory kind `sailing_detail`), `20260628000006` (general_pricing_ranges source `estimated`).
-  - **`CRUISEMAPPER_DETAIL_FETCH_ENABLED=true`** set on atc-main prod (verified live in the active deployment).
-  - **Cleared 250 ship `content_hash`es** (all 251 ships now null) → forces full re-process for the ports backfill.
+- **#826/#827/#828 shipped + ROLLED OUT to prod** (D-172/D-173): chat itinerary lookup, future-sailing ports via cruise.json, ballpark prices. beta045 + atc-rag deployed; migrations `…0005`/`…0006` applied; detail-fetch flag on; price derivation produced 12,645 `estimated` rows.
+- **Sailing-halt fix** (PR #834, deployed in **beta046**): future/river ships (no current sailing) no longer trip the 5% parse-failure halt; their upcoming lists are now ingested. `parseShipIdentity` + count-aware `sailingPageOutcomeInputs`.
+- **4 process improvements** (all merged to dev): #817 (PR #836, d091 Pattern 15), #816 (PR #837, verify runs lint:migrations + test:rag; RAG tests in CI), #835 (PR #838, Inngest sync in deploy.yml), #815 (PR #839, 5 mechanical `check:d091` gates + count-based baseline).
+- Issues filed: #831 (port backfill automation), #835 (Inngest sync gap — fixed), #840 (event.data Zod-validation debt). MEMORY D-173 added.
 
 ## In flight
-- Nothing in flight from my side. The ports backfill + price derivation run when the user triggers the crons.
+- Nothing in flight from my side — clean checkpoint on dev.
 
 ## Next step
-- **User triggers two Inngest crons:** `refresh-cruisemapper-sailings` (ports backfill — verify `list_details_fetched > 0` in the run summary to confirm the flag is live; long stepped run, ~10k cruise.json fetches at 1/sec, resumable) and `derive-general-price-ranges` (ballpark prices).
-- After the backfill: spot-check RAG itineraries now carry `ports_of_call` for future sailings, and chat answers an exact-date itinerary question (e.g. NCL Bliss 2026-10-03).
+- (User) re-trigger `refresh-cruisemapper-sailings` in Inngest to finish the ~160 ships the halt left unprocessed (beta046 has the fix; no hash re-clear needed). Verify the run summary: `halted: false`, `no_current_sailing` > 0, `list_details_fetched` climbing.
 
 ## Blocked on user
-- Trigger the two Inngest crons (cron-only functions — can't be invoked from the CLI/MCP here; use the Inngest dashboard).
+- **Add the `INNGEST_API_KEY` repo secret** (Inngest dashboard → Settings → API keys) so #835's deploy-time Inngest sync runs (until then it safely skips). If the REST app id isn't `atc-main`, the step warns and you resync once manually.
+- Re-trigger the sailing cron (above) — cron-only, can't invoke from CLI.
 
 ## Open questions
-- Untracked security-scan artifacts in the working tree (`.agents/`, `.claude/skills/`, `.triage-state/`, `apps/main/src/THREAT_MODEL.md`, `VULN-FINDINGS.*`, `skills-lock.json`, `specs/...copy.txt`) — left untouched; decide whether to commit, gitignore, or discard.
-- #831 — automate the port backfill (replace the manual hash-clear) + the residual RAG-chunk-prose price freeze for already-enriched sailings.
+- Untracked security-scan artifacts in the tree (`.agents/`, `.claude/skills/`, `.triage-state/`, `apps/main/src/THREAT_MODEL.md`, `VULN-FINDINGS.*`, `skills-lock.json`, `specs/…copy.txt`) — commit, gitignore, or discard? Left untouched all session.
+- The 224 `check:d091` baselined hits are pre-existing debt (security backlog #726/#730/#740/#743/#748/#752, #736/#737/#741/#744/#746/#747, #742/#753→#840, #788/#776/#808). Prune `scripts/d091-baseline.txt` as those close.
