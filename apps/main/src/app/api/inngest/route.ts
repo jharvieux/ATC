@@ -113,6 +113,8 @@ import { helpSubmissionDailyReset } from "@/inngest/help-submission-daily-reset"
 import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static";
 // #485 follow-up §33.4 — CruiseMapper sailing monthly refresh
 import { refreshCruisemapperSailings } from "@/inngest/refresh-cruisemapper-sailings";
+// #828b §33.4 — derive ballpark general_pricing_ranges from interior lead-ins
+import { deriveGeneralPriceRanges } from "@/inngest/derive-general-price-ranges";
 // BP40 §33.8 — Price-watch daily evaluator
 import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
 // BP37 §37 — Tasks: sequence step firing + reminder cron
@@ -243,6 +245,8 @@ export const { GET, POST, PUT } = serve({
     refreshCruisemapperStatic,
     // #485 follow-up: CruiseMapper sailing monthly refresh
     refreshCruisemapperSailings,
+    // #828b: derive ballpark general_pricing_ranges from interior lead-ins
+    deriveGeneralPriceRanges,
     // BP40: Price-watch daily evaluator (§33.8)
     evaluatePriceWatches,
     // BP37: Tasks & follow-up (§37)
