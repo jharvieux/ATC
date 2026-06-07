@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-173 — 2026-06-07 — Prod rollout of #826/#827/#828, the sailing-halt fix, + 4 process improvements
+
+Continuation of D-172. Everything below is merged to dev + (where noted) live on prod.
+
+**ROLLOUT (executed):** cut `release/beta045` → atc-main prod (redeployed to capture the new env flag); deployed **atc-rag** manually (needed for #826's `fetchItineraryLookupChunks`); applied main migrations `20260628000005` (inventory `sailing_detail`) + `20260628000006` (general_pricing_ranges `estimated`); set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true`; cleared 250 ship content_hashes. Triggered the backfill — derive-general-price-ranges produced **2,529 ship/duration groups × 5 cabins = 12,645 estimated rows**; the sailing cron enriched ~9,208 sailings then **HALTED on the 5% parse-failure breaker**.
+
+**Halt fix (PR #834, beta046):** future/unlaunched/river ships have no current-sailing table → `parseSailingPage` returns null → the cron counted them as parse failures (and early-returned, skipping their upcoming list). Fix: `parseShipIdentity` recognizes a ship page by its `<h1>`; a no-current-but-valid ship is `no_current_sailing` (NOT a failure) and its upcoming list IS ingested. Only an unrecognizable page (no h1) feeds the halt. content_hash stamping for no-current ships is count-aware (extracted `sailingPageOutcomeInputs`, unit-tested) so it doesn't re-fetch enriched ships forever (audit catch). Deployed in **beta046**.
+
+**Inngest sync gap (discovered + fixed, #835/PR #838):** Vercel CLI deploys DON'T fire the Vercel→Inngest integration, so a newly-added Inngest function silently never registers until a manual dashboard resync — this is why `derive-general-price-ranges` (#832) didn't appear after beta045. Existing functions update on deploy (only NEW function ids need a sync). Fix: a REST API sync step (`POST api.inngest.com/v2/apps/atc-main/syncs`) in deploy.yml's prod job, guarded + non-fatal. **REQUIRES a new `INNGEST_API_KEY` repo secret** (Inngest dashboard → API keys) — until added, the step safely skips.
+
+**Process improvements (user: "all four in order"):**
+- **#817 (PR #836):** d091-reviewer Pattern 15 — when a diff changes a shared constant/limit, grep every dependent path (the #805/#808 miss).
+- **#816 (PR #837):** `pnpm verify` now runs `lint:migrations` + `test:rag`; `apps/rag` unit suite added to CI (`ci.yml`) — was excluded from the root vitest config (#792).
+- **#815 (PR #839):** `check:d091` — 5 mechanical D-091 gates (secret-eq, cas-rowcount, unbounded-limit, event-data-cast, service-role-tenant), each with an inline `d091-allow:<id>` escape hatch. **Count-based baseline** (`scripts/d091-baseline.txt`, 224 existing hits = tracked debt; gate fails on NEW only; regen via `pnpm check:d091 --update-baseline`). Wired into verify + ci.yml. The existing debt maps to the security backlog; **#840** filed for the event.data-cast casts the tightened detector surfaced.
+
+**OUTSTANDING USER ACTIONS:** (1) add the `INNGEST_API_KEY` repo secret for #835's sync; (2) re-trigger `refresh-cruisemapper-sailings` (post-beta046) to finish the ~160 ships the halt left unprocessed — no hash re-clear needed; (3) decide on the untracked security-scan artifacts (`.agents/`, `.triage-state/`, `VULN-FINDINGS.*`).
+
+---
+
 ## D-172 — 2026-06-07 — Chat itinerary lookup + future-sailing ports (cruise.json) + ballpark prices (#826/#827/#828)
 
 Three issues from "the NCL Bliss agent didn't know the 10/3/26 itinerary," shipped as 3 PRs (all merged to dev, audits clean):
