@@ -1,27 +1,24 @@
-# Session state — last updated 2026-06-07 ~07:00 UTC
+# Session state — last updated 2026-06-07 ~07:45 UTC
 
 ## Just completed
-- **PR #829 (#826 + #828a)** merged — chat structured ship+date itinerary lookup (`/api/retrieve` `itinerary_lookup`) + scoped the price-deferral to PRICE-only.
-- **PR #830 (#827)** merged — accurate future-sailing ports via `GET /ships/cruise.json?id=<row>` (needs `X-Requested-With`); shared parser helpers + `cruise-expand-parser`; gated by `CRUISEMAPPER_DETAIL_FETCH_ENABLED` (off); incremental via `cruisemapper_url_inventory` kind='sailing_detail' (migration `20260628000005`).
-- **PR #832 (#828b, closes #820)** merged — weekly `derive-general-price-ranges` cron deriving ballpark `general_pricing_ranges` from interior lead-ins × multipliers, `source='estimated'` (migration `20260628000006`).
-- Follow-up #831 filed (automate the port backfill).
-- MEMORY D-172 added (this checkpoint).
+- **Shipped + merged to dev:** PR #829 (#826 chat itinerary lookup + #828a price-deferral scope), PR #830 (#827 future-sailing ports via cruise.json), PR #832 (#828b ballpark general_pricing_ranges). Follow-up #831 filed. MEMORY D-172 logged.
+- **ROLLOUT TO PROD executed:**
+  - `release/beta045` cut → atc-main prod deployed (Vercel deploy + smoke test passed; benign "auto-merge back to dev" step failure only). Active prod deployment redeployed to `atc-main-6hdaseqip…` so it carries the new env flag.
+  - **atc-rag deployed to prod** (manual `vercel deploy --prod`; health 200) — required for #826's RAG-side `fetchItineraryLookupChunks`.
+  - **Main migrations applied to prod + verified:** `20260628000005` (inventory kind `sailing_detail`), `20260628000006` (general_pricing_ranges source `estimated`).
+  - **`CRUISEMAPPER_DETAIL_FETCH_ENABLED=true`** set on atc-main prod (verified live in the active deployment).
+  - **Cleared 250 ship `content_hash`es** (all 251 ships now null) → forces full re-process for the ports backfill.
 
 ## In flight
-- **ROLLOUT (user asked to ship to prod):** cutting `release/beta045` off dev to deploy PR1(main-side)/#830/#832. Then prod gate → migrations → enable sailings backfill.
-- Doc checkpoint PR (MEMORY D-172 incl. orphaned D-171 + this SESSION) on branch `chore/session-checkpoint-cruisemapper-ports-prices`.
+- Nothing in flight from my side. The ports backfill + price derivation run when the user triggers the crons.
 
 ## Next step
-1. Cut `release/beta045` (push dev → release/beta045).
-2. User approves the production environment gate in GitHub Actions → prod deploys + smoke test.
-3. Apply prod main migrations (code-first, post-deploy): `20260628000005` (inventory kind sailing_detail) + `20260628000006` (general_pricing_ranges source estimated) via `mcp__supabase-main__apply_migration`.
-4. Enable + backfill: set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true` (atc-main prod env); `UPDATE cruisemapper_url_inventory SET content_hash=NULL WHERE kind='ship';` (forces re-process); trigger `refresh-cruisemapper-sailings` (Inngest) → ports backfill; trigger `derive-general-price-ranges`.
+- **User triggers two Inngest crons:** `refresh-cruisemapper-sailings` (ports backfill — verify `list_details_fetched > 0` in the run summary to confirm the flag is live; long stepped run, ~10k cruise.json fetches at 1/sec, resumable) and `derive-general-price-ranges` (ballpark prices).
+- After the backfill: spot-check RAG itineraries now carry `ports_of_call` for future sailings, and chat answers an exact-date itinerary question (e.g. NCL Bliss 2026-10-03).
 
 ## Blocked on user
-- Approve the production environment gate for `release/beta045`.
-- Set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true` on the atc-main PROD Vercel env (no MCP env tool; needs Vercel dashboard/CLI) — then the deploy/runtime picks it up.
-- Trigger the Inngest crons (`refresh-cruisemapper-sailings`, `derive-general-price-ranges`) from the Inngest dashboard (cron-only functions; no manual event trigger).
+- Trigger the two Inngest crons (cron-only functions — can't be invoked from the CLI/MCP here; use the Inngest dashboard).
 
 ## Open questions
-- Untracked security-scan artifacts in the tree (`.agents/`, `.claude/skills/`, `.triage-state/`, `apps/main/src/THREAT_MODEL.md`, `VULN-FINDINGS.*`, `skills-lock.json`, `specs/...copy.txt`) — commit, gitignore, or discard? Left untouched.
-- PR #829's RAG-side `/api/retrieve` change needs a MANUAL `cd apps/rag && vercel deploy --prod` to take effect (the beta pipeline only deploys atc-main).
+- Untracked security-scan artifacts in the working tree (`.agents/`, `.claude/skills/`, `.triage-state/`, `apps/main/src/THREAT_MODEL.md`, `VULN-FINDINGS.*`, `skills-lock.json`, `specs/...copy.txt`) — left untouched; decide whether to commit, gitignore, or discard.
+- #831 — automate the port backfill (replace the manual hash-clear) + the residual RAG-chunk-prose price freeze for already-enriched sailings.
