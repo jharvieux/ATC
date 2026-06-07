@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-176 — 2026-06-07 — Fork PRs can't satisfy this repo's required checks → re-home to an origin branch (#790 → #848, fixes #719)
+
+**Reusable lesson (the important part).** A contributor's **fork PR cannot pass this repo's branch protection**, so it can never merge as-is:
+- The required status checks (`Test`, `Contract Tests`, `Cross-Tenant Probe`, `CVE Scan`, `RLS Snapshot Diff`, `Secret Scan`, `Lint`, `Typecheck`) come from secret-gated workflow jobs that are **skipped on fork PRs** → they never report → required contexts stay unsatisfied. On a fork PR only `ci.yml`'s `Lint, Typecheck, Build` job, GitGuardian, and `pr-audit-section-check` run. Branch protection is `enforce_admins: true` + `strict: true`, so there's **no admin bypass**.
+- Fork-PR workflow runs are also held `action_required` (need maintainer approval just to run), and **`gh pr update-branch` fails** ("OAuth App … without `workflow` scope") when the dev merge touches `ci.yml` — do the branch-update **locally** (`git merge origin/dev` + `git push`; the local git credential has workflow scope, the gh OAuth app doesn't).
+
+**The fix: re-home.** `maintainerCanModify:true` lets you push commits to the fork branch first (to add gap-fills), then push the **exact commits to an ORIGIN branch** and open a fresh PR → dev where all checks run normally. Squash-merge carries the original author's commits as co-authors (credit preserved). Close the fork PR via `Closes #N` in the new PR body + a credit comment. Did exactly this: #790 (@sravan27, fork) → **#848 (origin, merged to dev)**.
+
+**`pr-audit-section-check` gotchas re-confirmed.** It snapshots the PR **body** at trigger time but reads the marker **comments** live. Two traps hit this round: (1) it ran on PR-open *before* the audit agents posted markers → failed → re-trigger with a body edit; (2) approving **two** runs of it (a stale pre-Audit-section one + the good one) let the **failing** run win "latest" by ~1 second → the required context stayed red → fixed by `gh run rerun`-ing only the good run. Lesson: keep exactly ONE audit-section run per head.
+
+**What shipped (the #719 fix itself).** Stripe webhook dedup row was inserted before dispatch → a crash stranded the event (retry hit the unique constraint → 200 → never reprocessed). Now: only completed-successful rows are true duplicates; incomplete/errored rows are cleared so Stripe retries; an **age guard** keeps a concurrent in-flight delivery from being deleted (returns "In-flight, retry later"); the `stripe-webhook-incomplete-reconcile` cron deletes stalled rows (was alert-only); shared `STALE_WEBHOOK_PROCESSING_MS`. On **dev only** — rides to prod with the next beta (beta048) alongside the #845 cross-tenant cluster.
+
+**Artifacts.** PR #848 (merged), #790 (closed/superseded), issue #719 (closed). `apps/main/src/lib/stripe/webhook-handler.ts`, `apps/main/src/inngest/stripe-webhook-incomplete-reconcile.ts`, `apps/main/src/lib/stripe/webhook-constants.ts`.
+
+---
+
 ## D-175 — 2026-06-07 — Closed the open cross-tenant service-role cluster from the 2026-06-05 scan (#845); deploy HELD
 
 **Context — the scan was already triaged.** The untracked `apps/main/src/VULN-FINDINGS.{md,json}` + `THREAT_MODEL.md` are output of a 2026-06-05 security scan. All 44 findings (F-001..F-044) were ALREADY filed as issues **#715–#757** (contiguous, one per finding; F-007+F-008 merged into #724). As of today: **25 open, 19 fixed.** So "triage the findings" was already done — don't re-file. The raw artifacts + scan scaffolding (`.agents/`, `.triage-state/`, `.claude/skills/`, `skills-lock.json`) are now gitignored (kept local; they enumerate unfixed-vuln detail).
