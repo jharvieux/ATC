@@ -474,6 +474,29 @@ jobs:
           sleep 30
           curl -f https://ai-travelconcierge.com/api/health
 
+      - name: Sync Inngest app (#835)
+        # Vercel CLI deploys don't fire the Vercel→Inngest integration, so a newly
+        # ADDED Inngest function isn't registered (can't be triggered / won't run
+        # on its cron) until someone manually resyncs the app. Sync via the Inngest
+        # REST API (https://www.inngest.com/docs/apps/cloud) now that the new code
+        # is live + smoke-tested. App id = the Inngest client id (`new Inngest({ id })`
+        # in apps/main/src/inngest/client.ts). Requires the INNGEST_API_KEY repo
+        # secret (Inngest dashboard → Settings → API keys). Non-fatal: a missing key
+        # or a sync error warns but never blocks an already-live deploy — consistent
+        # with the auto-merge-back step below.
+        env:
+          INNGEST_API_KEY: ${{ secrets.INNGEST_API_KEY }}
+        run: |
+          if [ -z "$INNGEST_API_KEY" ]; then
+            echo "::warning::INNGEST_API_KEY not set — skipping Inngest sync; new functions won't register until a manual resync (#835)."
+            exit 0
+          fi
+          curl -fsS -X POST "https://api.inngest.com/v2/apps/atc-main/syncs" \
+            -H "Authorization: Bearer $INNGEST_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"url": "https://ai-travelconcierge.com/api/inngest"}' \
+            || echo "::warning::Inngest sync failed (#835) — verify INNGEST_API_KEY + app id 'atc-main', then resync manually in the Inngest dashboard."
+
       - name: Create release tag
         run: |
           VERSION="${GITHUB_REF_NAME#release/}"
