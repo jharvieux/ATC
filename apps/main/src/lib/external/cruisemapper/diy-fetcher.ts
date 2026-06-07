@@ -37,6 +37,10 @@ export interface FetchOptions {
   previousBodyHash?: string;
   /** Total request timeout in ms. Default 20s. */
   timeoutMs?: number;
+  /** Extra request headers, merged over the defaults (can override Accept).
+   *  #827: /ships/cruise.json needs X-Requested-With: XMLHttpRequest, else it
+   *  returns 200 with an empty body. */
+  headers?: Record<string, string>;
 }
 
 const MAX_RETRIES = 3;
@@ -71,7 +75,7 @@ export async function fetchCruiseMapperPage(url: string, options: FetchOptions =
     try {
       const res = await fetch(url, {
         method: "GET",
-        headers: { "User-Agent": ua, Accept: "text/html" },
+        headers: { "User-Agent": ua, Accept: "text/html", ...options.headers },
         signal: controller.signal,
       });
       const latencyMs = Date.now() - start;

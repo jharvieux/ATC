@@ -208,16 +208,22 @@ export function mapSailing(s: ParsedSailing): MappedItinerary | null {
 
 /**
  * Map one upcoming-sailing list item (from parseSailingList) to MappedItinerary.
- * List items have no per-day detail, so dayByDay is null. Useful for pricing
- * cache updates and RAG text ingest for future sailings.
+ * The list row carries no ports; #827 optionally enriches it with ports +
+ * day-by-day fetched from the per-sailing /ships/cruise.json detail. When
+ * `detail` is omitted the sailing maps with no ports (dayByDay null), exactly
+ * as before.
  */
 export function mapSailingListItem(
   item: SailingListItem,
   shipName: string,
   cruiseLine: string,
+  detail?: { portsOfCall: string[]; dayByDay: ParsedSailingDay[] | null },
 ): MappedItinerary | null {
   const line = normalizeLineCode(cruiseLine);
   if (!line) return null;
+
+  const ports = detail?.portsOfCall ?? [];
+  const dayByDay = detail?.dayByDay ?? null;
 
   const key: SailingKey = {
     line,
@@ -230,7 +236,7 @@ export function mapSailingListItem(
   const text = renderText(
     line, cruiseLine, shipName,
     item.departure_date, item.departure_port,
-    item.duration_nights, [], item.region, item.starting_price_usd,
+    item.duration_nights, ports, item.region, item.starting_price_usd,
   );
 
   const cacheQuote = item.starting_price_usd != null && item.starting_price_usd > 0
@@ -247,10 +253,10 @@ export function mapSailingListItem(
     cacheQuote,
     text,
     region: item.region,
-    portsOfCall: [],
+    portsOfCall: ports,
     startingPriceUsd: item.starting_price_usd,
     sourceUrl: null,
-    dayByDay: null,
+    dayByDay,
   };
 }
 
