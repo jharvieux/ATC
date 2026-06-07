@@ -144,6 +144,12 @@ export const LINE_ROUTES: Readonly<Record<CruiseLineCode, LineRoute | null>> = O
   HAL: { cruiseLine: "HAL", actorId: "sercul/hal-cruises-scraper",      marketCode: "US",  inputBuilder: buildSerculInputFor("US"),  outputMapper: (i) => mapSerculItem(i, "HAL") },
   MSC: { cruiseLine: "MSC", actorId: "sercul/msc-cruises-scraper",      marketCode: "US",  inputBuilder: buildSerculInputFor("US"),  outputMapper: (i) => mapSerculItem(i, "MSC") },
   DSY: { cruiseLine: "DSY", actorId: "sercul/disney-cruises-scraper",   marketCode: "US",  inputBuilder: buildSerculInputFor("US"),  outputMapper: (i) => mapSerculItem(i, "DSY") },
+  // Premium/luxury/specialty lines — itinerary + RAG coverage only. No sercul
+  // actor, so the route is null (routeFor → null → no Apify spend). Itinerary
+  // ingest doesn't need a route; pricing for these lines, if ever wired, goes
+  // through the BCK aggregator.
+  VIK: null, OCE: null, WST: null, SIL: null, RSS: null,
+  SBN: null, AZA: null, CUN: null, VVY: null, PNO: null,
   // Aggregator fallback — NOT auto-routed. Operator opts in by writing a
   // dedicated LineRoute when ready.
   BCK: null,

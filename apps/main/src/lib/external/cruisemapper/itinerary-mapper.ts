@@ -50,33 +50,53 @@ function asStringArray(v: unknown): string[] {
   return v.filter((x): x is string => typeof x === "string" && x.length > 0);
 }
 
-const ALLOWED_LINES = new Set([
-  "RCL", "NCL", "PCL", "CEL", "COS", "CCL", "HAL", "MSC", "DSY", "BCK",
+// Short codes that may arrive already-normalized (internal callers).
+const KNOWN_CODES = new Set<string>([
+  "RCL", "NCL", "PCL", "CEL", "COS", "CCL", "HAL", "MSC", "DSY",
+  "VIK", "OCE", "WST", "SIL", "RSS", "SBN", "AZA", "CUN", "VVY", "PNO", "BCK",
 ]);
 
-/** Best-effort actor-line-name → SailingKey.line code. */
-function normalizeLineCode(raw: string): SailingKey["line"] | null {
+// Substring rules, first match wins — list more specific fragments first. These
+// match the cruise-line labels CruiseMapper emits, including parenthetical
+// sub-brands ("Galapagos (Celebrity Cruises)", "MSC Explora Journeys",
+// "Viking Ocean (Viking Cruises)", "Avora Residences (Regent Seven Seas...)").
+// Substring matching is safe here: the input is always a cruise-line label,
+// never a ship or port name.
+const LINE_RULES: ReadonlyArray<readonly [string, SailingKey["line"]]> = [
+  ["ROYAL CARIBBEAN", "RCL"],
+  ["CELEBRITY", "CEL"],
+  ["CARNIVAL", "CCL"],
+  ["NORWEGIAN", "NCL"],
+  ["PRINCESS", "PCL"],
+  ["HOLLAND AMERICA", "HAL"],
+  ["DISNEY", "DSY"],
+  ["COSTA", "COS"],
+  ["MSC", "MSC"],
+  ["VIKING", "VIK"],
+  ["OCEANIA", "OCE"],
+  ["WINDSTAR", "WST"],
+  ["SILVERSEA", "SIL"],
+  ["REGENT", "RSS"],
+  ["SEABOURN", "SBN"],
+  ["AZAMARA", "AZA"],
+  ["CUNARD", "CUN"],
+  ["VIRGIN", "VVY"],
+  ["P&O", "PNO"],
+];
+
+// Normalize a cruise-line label to a SailingKey.line code. Returns null ONLY for
+// an empty label; any other unrecognized line falls back to BCK (the aggregator
+// code) so its itinerary is never silently dropped. The 2026-06-06 gap was ~117
+// ships on lines the old hard allow-list returned null for — mapSailing dropped
+// them and the content_hash masking bug hid it.
+export function normalizeLineCode(raw: string): SailingKey["line"] | null {
   const upper = raw.toUpperCase().trim();
-  if (ALLOWED_LINES.has(upper)) return upper as SailingKey["line"];
-  // Common long-form mappings.
-  const map: Record<string, SailingKey["line"]> = {
-    "ROYAL CARIBBEAN": "RCL",
-    "NORWEGIAN": "NCL",
-    "NORWEGIAN CRUISE LINE": "NCL",
-    "PRINCESS": "PCL",
-    "PRINCESS CRUISES": "PCL",
-    "CELEBRITY": "CEL",
-    "CELEBRITY CRUISES": "CEL",
-    "COSTA": "COS",
-    "COSTA CRUISES": "COS",
-    "CARNIVAL": "CCL",
-    "HOLLAND AMERICA": "HAL",
-    "MSC": "MSC",
-    "MSC CRUISES": "MSC",
-    "DISNEY": "DSY",
-    "DISNEY CRUISE LINE": "DSY",
-  };
-  return map[upper] ?? null;
+  if (upper.length === 0) return null;
+  if (KNOWN_CODES.has(upper)) return upper as SailingKey["line"];
+  for (const [needle, code] of LINE_RULES) {
+    if (upper.includes(needle)) return code;
+  }
+  return "BCK";
 }
 
 /**
@@ -149,8 +169,9 @@ export function mapItinerary(item: CruiseMapperItineraryItem): MappedItinerary |
 }
 
 /**
- * Map a DIY-parsed current sailing to MappedItinerary. Returns null when the
- * cruise line cannot be normalized to a known SailingKey.line code.
+ * Map a DIY-parsed current sailing to MappedItinerary. Returns null only when
+ * the cruise line is empty; an unrecognized (non-empty) line falls back to BCK
+ * via normalizeLineCode rather than being dropped.
  */
 export function mapSailing(s: ParsedSailing): MappedItinerary | null {
   const line = normalizeLineCode(s.cruise_line ?? "");
