@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-175 — 2026-06-07 — Closed the open cross-tenant service-role cluster from the 2026-06-05 scan (#845); deploy HELD
+
+**Context — the scan was already triaged.** The untracked `apps/main/src/VULN-FINDINGS.{md,json}` + `THREAT_MODEL.md` are output of a 2026-06-05 security scan. All 44 findings (F-001..F-044) were ALREADY filed as issues **#715–#757** (contiguous, one per finding; F-007+F-008 merged into #724). As of today: **25 open, 19 fixed.** So "triage the findings" was already done — don't re-file. The raw artifacts + scan scaffolding (`.agents/`, `.triage-state/`, `.claude/skills/`, `skills-lock.json`) are now gitignored (kept local; they enumerate unfixed-vuln detail).
+
+**What was fixed (#845).** The OPEN cross-tenant read/write cluster — service-role queries (RLS bypassed) on tenant-scoped tables filtered only by PK/FK. Added explicit `.eq("tenant_id", ...)` to each:
+- **#715 / F-001 (HIGH, the only real exploit):** `bookings/[id]/resources` POST idempotency read on `trip_resources`. The GET handler was already tenant-scoped; the POST was missed — so POSTing another tenant's booking UUID returned its `trip_resources` (agent PII + PDF tokens).
+- #726/F-015 (4 reads in `task-sequence-step-fire`), #730/F-018 (`payout_records` read+update + `writeClawbackFields` commissions.update in `cancel`), #740/F-027 (quote_options×2 + quotes in option-select), #752/F-039 (forums lookup), and #754/F-041 (sibling `users` read, folded in after the d091 audit flagged it).
+
+**Audit surfaced a second, pre-existing bug → #846.** The cancel `payout_records` CAS update uses `safeAwait` not `safeAwaitRowCount`; a zero-row status race still writes the clawback + waives the commission. Out of scope for #845; filed #846.
+
+**Decision: deploy HELD.** User chose NOT to cut beta048 yet, so **#715 remains live/exploitable in prod** until the next atc-main deploy. The fix is on `dev` only. Re-surface beta048 when the user is ready.
+
+**Reusable.** For tenant-isolation fixes: the `tenant-filter-cluster.test.ts` recording-mock pattern (a chainable+thenable stub recording `.eq(col)` per table, asserting `<table>.tenant_id` is applied) tests the filter's presence without real DB/RLS fixtures — useful until #708's two-tenant probe fixtures exist. The remaining ~20 open scan findings (#717–#750) are future batches.
+
+**Artifacts.** PR #845, issues #846 (new), #715/#726/#730/#740/#752/#754. `tenant-filter-cluster.test.ts`.
+
+---
+
 ## D-174 — 2026-06-07 — Sailing-cron ports backfill timed out (FUNCTION_INVOCATION_TIMEOUT); bound the detail-fetch loop by the step deadline (#842/#843, beta047)
 
 **What happened.** The #827 ports backfill run for `refresh-cruisemapper-sailings` kept failing in Inngest as "unknown error from the app." That string is Inngest's label for a 5xx it can't parse into a structured step error; the **real** cause was in the Inngest step output: `FUNCTION_INVOCATION_TIMEOUT` (a Vercel function timeout — a `step.run` exceeded the 300s `maxDuration`). The run still crept forward (116/251 ships) because per-ship DB writes commit before the timeout, then Inngest retried the long ship and eventually failed the run.
