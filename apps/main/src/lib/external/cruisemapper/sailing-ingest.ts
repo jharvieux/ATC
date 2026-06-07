@@ -6,7 +6,7 @@
 // to MappedItinerary, and ingests to RAG + pricing cache.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseSailingPage, type ParsedSailingDay } from "./parsers/sailing-parser";
+import { parseSailingPage, parseShipIdentity, type ParsedSailingDay } from "./parsers/sailing-parser";
 import { parseSailingList, type SailingListItem } from "./parsers/sailing-list-parser";
 import { parseCruiseExpand } from "./parsers/cruise-expand-parser";
 import { mapSailing, mapSailingListItem } from "./itinerary-mapper";
@@ -24,6 +24,9 @@ export interface SailingRunResult {
   current_parsed: number;
   current_ingested: number;
   current_errors: number;
+  // Valid ship page that has NO current sailing yet (future/unlaunched, river,
+  // retired). NOT a parse failure — the upcoming-sailings list is still ingested.
+  no_current_sailing: number;
   list_items: number;
   list_price_cache_written: number;
   list_price_cache_errors: number;
@@ -40,6 +43,7 @@ export function emptySailingResult(): SailingRunResult {
     current_parsed: 0,
     current_ingested: 0,
     current_errors: 0,
+    no_current_sailing: 0,
     list_items: 0,
     list_price_cache_written: 0,
     list_price_cache_errors: 0,
@@ -58,6 +62,7 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
   into.current_parsed += one.current_parsed;
   into.current_ingested += one.current_ingested;
   into.current_errors += one.current_errors;
+  into.no_current_sailing += one.no_current_sailing;
   into.list_items += one.list_items;
   into.list_price_cache_written += one.list_price_cache_written;
   into.list_price_cache_errors += one.list_price_cache_errors;
@@ -151,24 +156,39 @@ export async function processSailingHtml(
   shipUrl: string,
   result: SailingRunResult,
 ): Promise<void> {
-  // Current sailing (with full day_by_day).
+  // Current sailing (with full day_by_day) — may be ABSENT for a future/
+  // unlaunched, river, or retired ship. That is NOT a parse failure as long as
+  // the page is a recognizable ship page (has an <h1>): we still ingest its
+  // upcoming-sailings list (which carries the future itineraries + ports). Only a
+  // page with no identity is a genuine break that should feed the parse-failure
+  // halt (#827 follow-up — these no-current ships were tripping the 5% halt).
   const sailing = parseSailingPage(html, shipUrl);
-  if (!sailing) {
-    result.current_errors += 1;
-    return;
-  }
-  result.current_parsed += 1;
-
-  const mapped = mapSailing(sailing);
-  if (mapped) {
-    const outcome = await ingestItineraryToRag(mapped);
-    if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {
-      result.current_ingested += 1;
+  let shipName: string;
+  let cruiseLine: string;
+  if (sailing) {
+    result.current_parsed += 1;
+    const mapped = mapSailing(sailing);
+    if (mapped) {
+      const outcome = await ingestItineraryToRag(mapped);
+      if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {
+        result.current_ingested += 1;
+      } else {
+        result.current_errors += 1;
+      }
     } else {
       result.current_errors += 1;
     }
+    shipName = sailing.ship_name;
+    cruiseLine = sailing.cruise_line ?? "";
   } else {
-    result.current_errors += 1;
+    const identity = parseShipIdentity(html);
+    if (!identity) {
+      result.current_errors += 1;
+      return;
+    }
+    result.no_current_sailing += 1;
+    shipName = identity.ship_name;
+    cruiseLine = identity.cruise_line ?? "";
   }
 
   // Upcoming sailings list — prices + RAG text, no day_by_day. Independent +
@@ -184,7 +204,7 @@ export async function processSailingHtml(
         // Price cache refreshes EVERY run, independent of port enrichment — it's
         // the lead-in source the pricing anchors (#828) read, and the price
         // drifts as a sailing fills. Build the base (no-ports) mapping for it.
-        const baseMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "");
+        const baseMapped = mapSailingListItem(item, shipName, cruiseLine);
         if (baseMapped?.cacheQuote) {
           try {
             await upsertPriceQuote(db, baseMapped.cacheQuote);
@@ -228,7 +248,7 @@ export async function processSailingHtml(
         // Re-map WITH ports when we fetched detail this run; otherwise the base
         // (no-ports) mapping is what lands.
         const listMapped = detail
-          ? mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "", detail)
+          ? mapSailingListItem(item, shipName, cruiseLine, detail)
           : baseMapped;
         if (!listMapped) return;
 

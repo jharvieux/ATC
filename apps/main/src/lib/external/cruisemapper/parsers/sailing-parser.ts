@@ -255,6 +255,23 @@ export function assembleItinerary(
   return { departure_date, return_date, duration_nights: span, departure_port, ports_of_call, itinerary };
 }
 
+// Lightweight ship-page identity (name + line) that works even when the page has
+// no current-sailing table — i.e. a future/unlaunched, river, or retired ship.
+// Returns null ONLY when there is no <h1>, meaning the page isn't a recognizable
+// ship page (a genuine parser break / non-ship URL) as opposed to a valid ship
+// that simply has no current sailing yet. Lets the caller treat "no current
+// sailing" as not-a-parse-failure while still flagging a real break (#827 f/u).
+export function parseShipIdentity(html: string): { ship_name: string; cruise_line: string | null } | null {
+  const $ = cheerio.load(html);
+  const shipName = collapse($("h1").first().text());
+  if (!shipName) return null;
+  const cruise_line =
+    collapse($('a[href*="/cruise-lines/"]').first().find('[itemprop="name"]').text()) ||
+    collapse($('a[href*="/cruise-lines/"]').first().text()) ||
+    null;
+  return { ship_name: shipName, cruise_line };
+}
+
 export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing | null {
   const $ = cheerio.load(html);
 
