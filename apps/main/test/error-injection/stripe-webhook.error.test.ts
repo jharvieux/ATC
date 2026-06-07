@@ -25,6 +25,9 @@ let mockConstructEventThrows = false;
 let mockInsertCallCount = 0;
 let mockDeleteCallCount = 0;
 let mockArraySelectResult: { data: unknown[]; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
+// [review gap-fill #719] result of the transfer.paid `.update(...).in(...).select("id")`
+// chain — lets a test drive the handler into outcome='error' to exercise Step 5's clear.
+let mockUpdateSelectResult: { data: unknown[] | null; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
   data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
   error: null,
@@ -60,6 +63,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const u: Record<string, unknown> = {
             eq() { return u; },
             in() { return u; },
+            select() {
+              return {
+                then(resolve: (v: { data: unknown[] | null; error: { message: string } | null }) => unknown) {
+                  return resolve(mockUpdateSelectResult);
+                },
+              };
+            },
             then(resolve: (v: { data: null; error: null }) => unknown) {
               return resolve({ data: null, error: null });
             },
@@ -126,6 +136,7 @@ beforeEach(() => {
   mockInsertCallCount = 0;
   mockDeleteCallCount = 0;
   mockArraySelectResult = { data: [{ id: "p-1" }], error: null };
+  mockUpdateSelectResult = { data: [{ id: "p-1" }], error: null };
   mockMaybeSingleResult = {
     data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
     error: null,
@@ -206,6 +217,19 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("In-flight, retry later");
     expect(mockDeleteCallCount).toBe(0); // row preserved for the in-flight run
+  });
+
+  it("[review gap-fill #719] clears the dedup row when the handler errors mid-dispatch (Step 5), so Stripe retries", async () => {
+    // Fresh delivery (insert OK), but the transfer.paid update fails → outcome
+    // 'error' → Step 5 must DELETE the row + 500 so the next delivery reprocesses
+    // instead of the row sticking around and short-circuiting to a duplicate 200.
+    // Regression guard: dropping clearStripeWebhookEventRow in Step 5 fails this.
+    mockInsertResult = { error: null };
+    mockUpdateSelectResult = { data: null, error: { message: "synthetic update failure" } };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("Handler error");
+    expect(mockDeleteCallCount).toBe(1);
   });
 
   it("[review gap-fill #719] parallel deliveries: first succeeds (200 'OK'), second sees it in-flight → 500 retry-later, does NOT clear", async () => {

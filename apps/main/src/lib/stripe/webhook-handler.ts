@@ -388,6 +388,10 @@ export async function handleStripeWebhook(
     try {
       await clearStripeWebhookEventRow(db, event.id);
     } catch (err) {
+      // [review note #719] Swallow on purpose (unlike the duplicate-path clear,
+      // which propagates): we're already returning 500 so Stripe retries, and the
+      // next delivery's duplicate-path clears this still-incomplete/errored row.
+      // Re-throwing would only mask the real handler error with a cleanup error.
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[stripe-webhook] Failed to clear errored row for %s: %s", event.id, msg);
     }
