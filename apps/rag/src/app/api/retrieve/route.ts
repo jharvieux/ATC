@@ -74,7 +74,23 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
     // BP38 §33.6.4 — hydrate related_asset_ids per chunk (the RPC does not
     // return that column). One additional SELECT keyed by chunk IDs.
-    const chunkRows = (chunks ?? []) as Array<Record<string, unknown>>;
+    const vectorRows = (chunks ?? []) as Array<Record<string, unknown>>;
+
+    // #826 — structured exact-date itinerary match. Vector search can't reliably
+    // surface an exact-date sailing among many near-identical chunks, so when the
+    // caller passes ship+date we resolve the matching itineraries' REAL chunks and
+    // boost them to the top. Best-effort: a lookup failure degrades to vector-only
+    // (this is a retrieval enhancement, not an enforcement path — never break chat).
+    let structuredRows: Array<Record<string, unknown>> = [];
+    if (body.itinerary_lookup) {
+      try {
+        structuredRows = await fetchItineraryLookupChunks(db, ctx.tenant_id, body.itinerary_lookup);
+      } catch (e) {
+        console.warn(`[retrieve] itinerary_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    const structuredIds = new Set(structuredRows.map((c) => c.id as string));
+    const chunkRows = [...structuredRows, ...vectorRows.filter((c) => !structuredIds.has(c.id as string))];
     const chunkIds = chunkRows.map((c) => c.id as string);
     const assetIdsByChunk = new Map<string, string[]>();
     if (chunkIds.length > 0) {
@@ -197,3 +213,60 @@ export const POST = withServiceAuth(async (req, ctx) => {
     );
   }
 });
+
+// #826 — resolve an exact ship+date lookup to the REAL knowledge chunks for the
+// matching sailings (via itineraries.related_chunk_id), shaped like the
+// match_knowledge_chunks RPC output with a top-rank synthetic score. Using real
+// chunk ids keeps the §6.10 feedback loop intact. Two-layer tenant isolation:
+// the .or() restricts to global OR this tenant's chunks (defense-in-depth — the
+// itineraries rows are global, but never trust that alone).
+export async function fetchItineraryLookupChunks(
+  db: ReturnType<typeof getRagDb>,
+  tenantId: string,
+  lookup: { ship: string; sail_date_from: string; sail_date_to?: string | undefined },
+): Promise<Array<Record<string, unknown>>> {
+  const from = lookup.sail_date_from;
+  const to = lookup.sail_date_to ?? lookup.sail_date_from;
+
+  const { data: itins, error: itinErr } = await db
+    .from("itineraries")
+    .select("related_chunk_id")
+    .ilike("ship", `%${lookup.ship}%`)
+    .gte("departure_date", from)
+    .lte("departure_date", to)
+    .not("related_chunk_id", "is", null)
+    .order("departure_date", { ascending: true })
+    .limit(6);
+  if (itinErr) throw new Error(`itineraries lookup failed: ${itinErr.message}`);
+
+  const chunkIds = [
+    ...new Set(
+      (itins ?? [])
+        .map((r) => (r as { related_chunk_id: string | null }).related_chunk_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  if (chunkIds.length === 0) return [];
+
+  const { data: rows, error: chunkErr } = await db
+    .from("knowledge_chunks")
+    .select(
+      "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override",
+    )
+    .in("id", chunkIds)
+    .eq("status", "approved")
+    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
+  if (chunkErr) throw new Error(`itinerary chunk fetch failed: ${chunkErr.message}`);
+
+  return (rows ?? []).map((c) => {
+    const row = c as Record<string, unknown>;
+    return {
+      ...row,
+      // Exact structured match → rank ahead of vector hits.
+      match_score: 1,
+      authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
+      recency_score: 1,
+      composite_confidence: 1,
+    };
+  });
+}

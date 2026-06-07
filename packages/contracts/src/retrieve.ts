@@ -31,6 +31,19 @@ export const RetrieveRequestSchema = z.object({
     .default({}),
   top_k: z.number().int().min(1).max(20).default(10),
   include_closed_promos_for_contact: UUID.nullable().optional().default(null),
+  // #826 — when the message names a ship + a specific sail date, the caller
+  // passes this so the rag service runs a STRUCTURED itineraries lookup. Vector
+  // search can't reliably surface an exact-date sailing among many near-identical
+  // chunks; the matched sailings' REAL chunks are returned boosted to the top.
+  itinerary_lookup: z
+    .object({
+      ship: z.string().min(1),
+      sail_date_from: z.string(), // ISO YYYY-MM-DD
+      sail_date_to: z.string().optional(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
 });
 export type RetrieveRequest = z.infer<typeof RetrieveRequestSchema>;
 
