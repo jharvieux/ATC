@@ -139,3 +139,47 @@ describe("processSailingHtml — #827 detail enrichment", () => {
     expect(mocks.upsertPrice).toHaveBeenCalled();
   });
 });
+
+// #827 follow-up — a future/unlaunched/river ship has a valid page (h1 + line)
+// but NO current-sailing table. parseSailingPage returns null for it. The old
+// code early-returned (skipping its upcoming list) AND counted it as a parse
+// failure, which tripped the 5% halt. Now: not a failure (no_current_sailing),
+// and its upcoming list is still ingested.
+const FUTURE_SHIP_HTML = `<!doctype html><html><body>
+<ol class="breadcrumb"><li><a href="https://www.cruisemapper.com/cruise-lines/Royal-Caribbean-2"><span itemprop="name">Royal Caribbean</span></a></li></ol>
+<h1>Hero Of The Seas</h1>
+<table class="shipTableCruise"><tbody>
+<tr data-row="9999001"><td class="cruiseDatetime">2027 Jan 15</td><td class="cruiseTitle">7 days, round-trip Caribbean Round-trip Miami</td><td class="cruiseDeparture"><i class="flag-icon"></i> Miami </td><td class="cruisePrice">$1199</td></tr>
+</tbody></table>
+</body></html>`;
+
+// No <h1> → not a recognizable ship page → a genuine parser break.
+const UNRECOGNIZABLE_HTML = `<!doctype html><html><body><p>maintenance</p></body></html>`;
+
+describe("processSailingHtml — no current sailing (future/river ship)", () => {
+  it("treats a valid no-current-sailing ship as NOT a parse failure and still ingests its upcoming list", async () => {
+    const { db } = makeDb(null);
+    const result = emptySailingResult();
+    await processSailingHtml(db, FUTURE_SHIP_HTML, "https://www.cruisemapper.com/ships/Hero-Of-The-Seas-2333", result);
+
+    expect(result.no_current_sailing).toBe(1); // counted as valid, not a failure
+    expect(result.current_parsed).toBe(0); // there is no current sailing
+    expect(result.current_errors).toBe(0); // and that is NOT an error
+    expect(result.list_items).toBe(1); // the upcoming list is still processed
+    // The future sailing reaches RAG via the list path (identity = RCL).
+    const ing = mocks.ingest.mock.calls.map((c) => c[0]).find((m) => m.key.sailDate === "2027-01-15");
+    expect(ing).toBeDefined();
+    expect(ing!.key.ship).toBe("Hero Of The Seas");
+    expect(ing!.key.line).toBe("RCL");
+  });
+
+  it("still counts a page with no recognizable ship identity as a real parse failure", async () => {
+    const { db } = makeDb(null);
+    const result = emptySailingResult();
+    await processSailingHtml(db, UNRECOGNIZABLE_HTML, "https://www.cruisemapper.com/ships/Broken-1", result);
+
+    expect(result.current_errors).toBe(1); // genuine break — feeds the halt
+    expect(result.no_current_sailing).toBe(0);
+    expect(result.list_items).toBe(0);
+  });
+});

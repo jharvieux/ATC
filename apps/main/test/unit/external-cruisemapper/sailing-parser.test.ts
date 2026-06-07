@@ -7,7 +7,7 @@
 // year + price). Sea days are NOT rows — they are gaps the parser fills.
 
 import { describe, expect, it } from "vitest";
-import { parseSailingPage } from "../../../src/lib/external/cruisemapper/parsers/sailing-parser";
+import { parseSailingPage, parseShipIdentity } from "../../../src/lib/external/cruisemapper/parsers/sailing-parser";
 
 // Assert the parse succeeded first, so a fixture regression surfaces as a
 // named "expected null" failure rather than an opaque null-deref later.
@@ -160,5 +160,32 @@ describe("parseSailingPage", () => {
     const a = parse(FIXTURE_ALASKA, "https://x.test/y").text;
     const b = parse(FIXTURE_ALASKA, "https://x.test/y").text;
     expect(a).toBe(b);
+  });
+});
+
+describe("parseShipIdentity (#827 f/u — recognize a ship page even with no current sailing)", () => {
+  it("extracts ship name + line from a full ship page", () => {
+    expect(parseShipIdentity(FIXTURE_ALASKA)).toEqual({
+      ship_name: "Norwegian Bliss",
+      cruise_line: "Norwegian Cruise Line",
+    });
+  });
+
+  it("works when there is NO current-itinerary table (future/river ship), as long as h1 + line exist", () => {
+    const noCurrent = `<html><body>
+      <ol class="breadcrumb"><li><a href="https://www.cruisemapper.com/cruise-lines/Royal-Caribbean-2"><span itemprop="name">Royal Caribbean</span></a></li></ol>
+      <h1>Hero Of The Seas</h1></body></html>`;
+    expect(parseShipIdentity(noCurrent)).toEqual({ ship_name: "Hero Of The Seas", cruise_line: "Royal Caribbean" });
+  });
+
+  it("returns a null cruise_line when no cruise-lines link is present", () => {
+    expect(parseShipIdentity("<html><body><h1>Mystery Ship</h1></body></html>")).toEqual({
+      ship_name: "Mystery Ship",
+      cruise_line: null,
+    });
+  });
+
+  it("returns null when the page has no h1 (unrecognizable / real parser break)", () => {
+    expect(parseShipIdentity("<html><body><p>nope</p></body></html>")).toBeNull();
   });
 });

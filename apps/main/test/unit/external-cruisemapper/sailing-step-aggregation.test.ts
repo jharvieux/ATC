@@ -12,8 +12,9 @@ describe("sailing refresh — per-step aggregation", () => {
   it("mergeSailing sums every counter across ships", () => {
     const total = emptySailingResult();
     mergeSailing(total, { ...emptySailingResult(), current_parsed: 1, list_items: 40, list_ingested: 38, list_price_cache_written: 35 });
-    mergeSailing(total, { ...emptySailingResult(), current_parsed: 1, list_items: 10, list_errors: 10 });
+    mergeSailing(total, { ...emptySailingResult(), current_parsed: 1, no_current_sailing: 1, list_items: 10, list_errors: 10 });
     expect(total.current_parsed).toBe(2);
+    expect(total.no_current_sailing).toBe(1);
     expect(total.list_items).toBe(50);
     expect(total.list_ingested).toBe(38);
     expect(total.list_errors).toBe(10);

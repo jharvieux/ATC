@@ -282,16 +282,30 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
   }
 
   const beforeParsed = sailing.current_parsed;
+  const beforeNoCurrent = sailing.no_current_sailing;
   const beforeIngested = sailing.current_ingested;
+  const beforeListIngested = sailing.list_ingested;
+  const beforeListItems = sailing.list_items;
   await processSailingHtml(db, fetched.body, url, sailing);
-  const parseSucceeded = sailing.current_parsed > beforeParsed;
-  // processSailingHtml never throws on a failed RAG POST — it only bumps
-  // current_errors — so "landed in RAG" is current_ingested advancing, not the
-  // local parse. (sailing-ingest.ts increments current_ingested only on a
-  // confirmed ingested/updated/unchanged RAG outcome.) Gate content_hash on that.
-  const landedInRag = sailing.current_ingested > beforeIngested;
+  const hadCurrent = sailing.current_parsed > beforeParsed;
+  const noCurrentButValidShip = sailing.no_current_sailing > beforeNoCurrent;
+  // A valid ship page — a current sailing OR a recognizable ship with no current
+  // sailing yet (future/river/retired) — is NOT a parse failure. Only an
+  // unrecognizable page leaves both counters flat, so validShipPage stays false
+  // and feeds the parse-failure halt. This keeps no-current ships off the halt
+  // (#827 f/u — they were tripping the 5% breaker).
+  const validShipPage = hadCurrent || noCurrentButValidShip;
+  // "Landed in RAG": when there IS a current sailing, gate on it reaching RAG
+  // (preserves the #770 RAG-outage retry — processSailingHtml never throws on a
+  // failed POST, it bumps current_errors). When there is NO current sailing, the
+  // page is fully processed once its upcoming list lands — or trivially when it
+  // has no upcoming sailings to ingest (a valid empty future ship), so we still
+  // stamp the hash and don't re-fetch it every run.
+  const landedInRag = hadCurrent
+    ? sailing.current_ingested > beforeIngested
+    : sailing.list_ingested > beforeListIngested || sailing.list_items === beforeListItems;
 
-  const { update, parse_failed } = sailingIngestOutcome(parseSucceeded, landedInRag, fetched.bodyHash);
+  const { update, parse_failed } = sailingIngestOutcome(validShipPage, landedInRag, fetched.bodyHash);
   await safeAwait(
     db.from("cruisemapper_url_inventory").update(update).eq("url", url).eq("kind", "ship"),
     "cruisemapper_url_inventory.update.sailing",
