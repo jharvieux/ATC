@@ -169,8 +169,9 @@ export function mapItinerary(item: CruiseMapperItineraryItem): MappedItinerary |
 }
 
 /**
- * Map a DIY-parsed current sailing to MappedItinerary. Returns null when the
- * cruise line cannot be normalized to a known SailingKey.line code.
+ * Map a DIY-parsed current sailing to MappedItinerary. Returns null only when
+ * the cruise line is empty; an unrecognized (non-empty) line falls back to BCK
+ * via normalizeLineCode rather than being dropped.
  */
 export function mapSailing(s: ParsedSailing): MappedItinerary | null {
   const line = normalizeLineCode(s.cruise_line ?? "");

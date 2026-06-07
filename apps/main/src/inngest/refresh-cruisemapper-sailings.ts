@@ -106,7 +106,7 @@ export function sailingIngestOutcome(
   }
   update.last_ingest_status = "ingested";
   update.last_error = null;
-  update.content_hash = bodyHash;
+  update.content_hash = bodyHash; // stamped ONLY here — a parse or RAG failure must leave no hash
   return { update, parse_failed: 0 };
 }
 
@@ -274,7 +274,8 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
   const parseSucceeded = sailing.current_parsed > beforeParsed;
   // processSailingHtml never throws on a failed RAG POST — it only bumps
   // current_errors — so "landed in RAG" is current_ingested advancing, not the
-  // local parse. Gate content_hash on that (see sailingIngestOutcome).
+  // local parse. (sailing-ingest.ts increments current_ingested only on a
+  // confirmed ingested/updated/unchanged RAG outcome.) Gate content_hash on that.
   const landedInRag = sailing.current_ingested > beforeIngested;
 
   const { update, parse_failed } = sailingIngestOutcome(parseSucceeded, landedInRag, fetched.bodyHash);
