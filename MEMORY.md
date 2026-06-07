@@ -4,6 +4,47 @@ Newest entries on top.
 
 ---
 
+## D-172 — 2026-06-07 — Chat itinerary lookup + future-sailing ports (cruise.json) + ballpark prices (#826/#827/#828)
+
+Three issues from "the NCL Bliss agent didn't know the 10/3/26 itinerary," shipped as 3 PRs (all merged to dev, audits clean):
+
+**PR #829 (#826 + #828a) — chat retrieval.** Vector top-k can't surface an exact-date sailing among near-identical chunks. Added optional `itinerary_lookup {ship, sail_date_from, sail_date_to?}` to the RAG `/api/retrieve` contract; the route resolves matching `itineraries` rows → their REAL chunks (via `related_chunk_id`) and boosts them to the top (real ids keep §6.10 feedback intact). Audit-hardened: mirror the `match_knowledge_chunks` freshness gates (superseded/embedding/sell_by) + a 2nd JS-layer tenant filter. **#828a:** the pricing-guidance "check the booking system" line now governs PRICE ONLY — it was firing on every turn (anchors always empty) and bleeding into itinerary answers.
+
+**PR #830 (#827) — accurate future-sailing ports. USER CHOSE the detail-scrape over title-parsing.** Verified the upcoming-sailings LIST title can't yield reliable ports (multi-word names + inconsistent spacing merge ports, e.g. "Port Canaveral Great Stirrup Cay"). The real source: each row's `data-row` cruise id → `GET /ships/cruise.json?id=<row>` (**requires `X-Requested-With: XMLHttpRequest`** — without it, 200 + empty body), returning the same `td.date`/`td.text`/`/ports/` table the ship page uses. Shared `classifyItineraryRows`+`assembleItinerary` out of sailing-parser; new `cruise-expand-parser` (year anchored on the known list departure_date). Gated by `CRUISEMAPPER_DETAIL_FETCH_ENABLED` (default OFF — scraping-volume op). Incremental: each sailing fetched ONCE, recorded `kind='sailing_detail'` in `cruisemapper_url_inventory` (migration `20260628000005` widens the kind CHECK) so later runs skip it; price-cache refresh stays decoupled (runs every run — the lead-in #828 reads drifts even though ports don't).
+
+**PR #832 (#828b, closes #820) — ballpark prices.** CruiseMapper removed per-cabin widgets, so the only free price is the per-sailing interior "from $X" lead-in. Weekly cron `derive-general-price-ranges` aggregates interior lead-ins (in `pricing_cache`) per (line, ship, duration) into a min/max range, scales each tier by multipliers (interior 1.0 / oceanview 1.3 / balcony 1.6 / mini_suite 2.2 / suite 3.0, per #828), upserts `general_pricing_ranges` with **`source='estimated'`** (migration `20260628000006`; honest provenance — NOT scraped). Exposure stays gated by the existing `AI_PRICE_ROUNDING_ENABLED`.
+
+**PENDING ROLLOUT (next beta + user action; nothing on prod yet):** apply main migrations `20260628000005` + `20260628000006`; set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true`; to backfill ~10k existing sailings' ports, `UPDATE cruisemapper_url_inventory SET content_hash=NULL WHERE kind='ship'` then trigger `refresh-cruisemapper-sailings` (the monthly cron skips unchanged ships, so the hash-clear forces re-process; runs are stepped + resumable, skipping already-enriched sailings); trigger `derive-general-price-ranges`. **Follow-up #831** = automate the backfill (replace the manual hash-clear) + the residual RAG-chunk-prose price freeze.
+
+**RAG-side note:** PR #829's `/api/retrieve` change is in atc-rag → needs a MANUAL `cd apps/rag && vercel deploy --prod` to take effect; the main-side caller ships with the next beta (landed after beta044 was cut, so NOT in beta044).
+
+---
+
+## D-171 — 2026-06-06 — CruiseMapper itinerary coverage: masking + mapper-allow-list bugs fixed; RLS on RAG tables; beta044 cut
+
+**The gap:** only ~49% of cruise ships (123/251 ships, 7 of ~30 lines) had itineraries in RAG. TWO compounding bugs:
+1. **content_hash masking** (both `refresh-cruisemapper-sailings` + `refresh-cruisemapper-static`): inventory `content_hash` was stamped on LOCAL parse success, ignoring whether the RAG ingest POST landed (`processSailingHtml`/`ingestReferenceToRag` never throw on failure). A failed/dropped ingest was marked "ingested" with a hash → next conditional GET skipped it forever. Fixed (PR #823): stamp only on confirmed RAG landing (`sailingIngestOutcome`→`ingest_failed`; `referenceIngestOutcome`→no hash on server_error). Audit confirmed the masking pattern exists ONLY in these 2 crons (the only RAG-ingest-helper callers).
+2. **mapper line allow-list (ROOT CAUSE):** `normalizeLineCode` (itinerary-mapper.ts) returned null for any line outside ~10 hardcoded codes → `mapSailing` dropped the itinerary BEFORE POSTing to RAG. Only RCL/MSC/NCL/PCL/CEL/HAL/DSY landed; Carnival ("Carnival Cruise Line" long-form was never mapped → 31 ships) + every luxury/specialty line silently dropped. The masking bug HID this. Fixed (PR #823): substring rules + explicit codes VIK/OCE/WST/SIL/RSS/SBN/AZA/CUN/VVY/PNO + **BCK fallback** for unrecognized lines (null only for empty) — never silently dropped again.
+
+**Decision — EXPAND ALL LINES** (user's call, over "Carnival only"). #781 (canonical cruise-line DB) is the strategic replacement for the hardcoded map.
+
+**#819 ("parser gaps") — NOT bugs:** the parse_failures are ferries/river boats + future not-yet-sailing ships; `parseSailingPage` correctly returns null. Added `isNonCruiseSailingUrl` (`/-ferry-/i`) to skip ferries (5.2%→3.6%, off the 5% halt threshold) + `ferries_skipped` in the run summary (PR #824). 1 deck stub (Pacific-Princess, likely retired) + future ships left (expected; self-resolve on launch).
+
+**#820 (DIY price ranges) — DEFERRED to a product decision:** live-fetch confirmed CruiseMapper REMOVED per-cabin price-range widgets (`table.prices`/`ul.pricing` gone); only per-sailing `.cruisePrice` remains (already ingested via the sailing list). `general_pricing_ranges` is empty BY DESIGN now. Options (in #820): derive approximate ranges from sailing prices, or deprecate `general_pricing_ranges`. Did NOT guess-implement.
+
+**#821 (RLS) — DONE + LIVE:** enabled RLS (deny-all, no policies) on the 8 advisor-flagged RAG tables. Safe: service_role has BYPASSRLS + full grants (0025); anon/authenticated have no grants (already blocked at the grant layer — RLS is defense-in-depth). Migration 0026 + regenerated snapshot recorded (PR #825).
+
+**KEY LEARNINGS:**
+- The **supabase-rag MCP is READ-ONLY** (`apply_migration`/mutating `execute_sql` fail). Apply RAG migrations via `psql "$SUPABASE_RAG_DB_URL"` (from .env.local, don't echo). Main MCP IS read-write. (Saved to auto-memory.)
+- `rls-snapshot-diff` compares `db/rls-snapshot-rag.sql` against the TEST RAG DB → a RAG RLS migration CANNOT pass a dev-PR until the DB is migrated. Workflow: apply via psql first → regenerate the snapshot → commit (then the diff matches). The local `SUPABASE_RAG_DB_URL` == the CI test RAG DB == the MCP's DB (single beta RAG project).
+- My initial diagnosis (RAG outage during the run) was WRONG — the real cause was the mapper allow-list. The re-run + deeper investigation corrected it before declaring victory; the masking fix made the true cause visible.
+
+**Recovery (#822, post-deploy):** 117 ships missing from RAG had their content_hash cleared this session. After beta044 deploys the line-coverage fix, re-run `refresh-cruisemapper-sailings` → all lines land (~242/251). Issues filed: #819, #820, #821, #822.
+
+**Beta044 cut:** `release/beta044` deploys #823/#824/#825 + the dev-only #800(#803)/#441(#804)/#812(role-mgmt)/#813(#814). Prod gated on user approval. Pending MAIN migrations to apply AFTER the prod code deploys: **20260628000002 (users.role default → viewer — CODE-FIRST, D-166), 20260628000003, 20260628000004** (admin RPCs). RAG RLS (0026) already live.
+
+---
+
 ## D-170 — 2026-06-06 — #813 shipped; #811 (per-role admin enforcement) scoped + QUEUED; process-improvement issues filed
 
 - **#813 (last-superadmin TOCTOU) shipped** — PR #814, merged. Advisory-locked SECURITY DEFINER RPCs (`admin_change_platform_role` / `admin_remove_platform_admin`); migration `20260628000004`.
