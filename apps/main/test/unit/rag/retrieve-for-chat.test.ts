@@ -24,7 +24,7 @@ vi.mock("@/lib/rag-auth/sign-service-jwt", () => ({
   signServiceJwt: mocks.sign,
 }));
 vi.mock("@/lib/rag/entity-extraction", () => ({
-  extractEntities: async () => ({ destinations: [], cruise_lines: [], ships: [], categories_hint: [] }),
+  extractEntities: async () => ({ destinations: [], cruise_lines: [], ships: [], travel_dates: { earliest: null, latest: null }, passenger_composition: "", intent: "research", categories_hint: [] }),
 }));
 
 const ORIG_URL = process.env.RAG_SERVICE_URL;
@@ -91,5 +91,37 @@ describe("retrieveForChat — operator alert on RAG degradation (#393)", () => {
     const res = await run();
     expect(res.retrieved_chunk_ids).toEqual([]);
     expect(signalsAlerted()).toContain("rag_retrieve_unreachable");
+  });
+});
+
+describe("buildItineraryLookup (#826) — ship+date → structured lookup params", () => {
+  type Ents = Parameters<typeof import("@/lib/rag/retrieve-for-chat")["buildItineraryLookup"]>[0];
+  function entities(over: Partial<Ents> = {}): Ents {
+    return {
+      destinations: [], cruise_lines: [], ships: [],
+      travel_dates: { earliest: null, latest: null },
+      passenger_composition: "", intent: "research", categories_hint: [],
+      ...over,
+    } as Ents;
+  }
+
+  it("returns a lookup when a ship + a start date are present", async () => {
+    const { buildItineraryLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(
+      buildItineraryLookup(entities({ ships: ["Norwegian Bliss"], travel_dates: { earliest: "2026-10-03", latest: null } })),
+    ).toEqual({ ship: "Norwegian Bliss", sail_date_from: "2026-10-03" });
+  });
+
+  it("includes sail_date_to when the message gives a range", async () => {
+    const { buildItineraryLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(
+      buildItineraryLookup(entities({ ships: ["Icon of the Seas"], travel_dates: { earliest: "2026-10-01", latest: "2026-10-31" } })),
+    ).toEqual({ ship: "Icon of the Seas", sail_date_from: "2026-10-01", sail_date_to: "2026-10-31" });
+  });
+
+  it("returns null without a ship OR without a date (stays vector-only)", async () => {
+    const { buildItineraryLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(buildItineraryLookup(entities({ ships: [], travel_dates: { earliest: "2026-10-03", latest: null } }))).toBeNull();
+    expect(buildItineraryLookup(entities({ ships: ["Wonder of the Seas"], travel_dates: { earliest: null, latest: null } }))).toBeNull();
   });
 });

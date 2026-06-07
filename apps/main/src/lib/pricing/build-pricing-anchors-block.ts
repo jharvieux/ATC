@@ -52,10 +52,12 @@ When you reference a price in prose:
 5. This rounding rule does NOT apply when you're echoing back a price
    the customer just stated, or when reading from a confirmed-quote
    price (§21.10.1) that you can cite by quote_id.
-6. If no PRICING ANCHORS appear below, do NOT invent ballpark prices.
-   Tell the customer "I don't have a current price anchor for that
-   sailing on hand — let me check with the booking system for live
-   availability."
+6. This rule governs PRICE ONLY. If the customer asked about a price and no
+   PRICING ANCHORS appear below, do NOT invent ballpark prices — say
+   "I don't have a current price anchor for that sailing on hand — I can
+   check the booking system for live pricing." For NON-price questions
+   (itinerary, ports, sail dates, ships, destinations, policies), answer from
+   the knowledge provided and do NOT deflect to the booking system.
 `.trim();
 
 /** Build the PRICING ANCHORS block. Returns the empty string when there
