@@ -49,6 +49,12 @@ jobs:
       - name: Duplication guard (jscpd)
         run: pnpm check:duplication
 
+      - name: D-091 anti-pattern gates (#815)
+        # Deterministic backstops for the recurring D-091 anti-patterns the
+        # probabilistic d091-reviewer subagent has missed. Fails on NEW hits;
+        # existing debt is baselined in scripts/d091-baseline.txt.
+        run: pnpm check:d091
+
       - name: Typecheck
         run: pnpm -r typecheck
 

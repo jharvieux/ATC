@@ -1,0 +1,158 @@
+# d091 anti-pattern baseline — existing hits accepted as tracked debt.
+# Regenerate: pnpm check:d091 --update-baseline. The gate fails on NEW hits only.
+# Each line: <file>\t<id>\t<snippet>. Prefer fixing or an inline d091-allow over growing this.
+apps/main/src/app/(admin)/supervisor/page.tsx	service-role-tenant	.from("ai_kill_switch_state")
+apps/main/src/app/(admin)/supervisor/page.tsx	service-role-tenant	.from("messages")
+apps/main/src/app/api/admin/abuse/override-requests/[id]/route.ts	cas-rowcount	.update({
+apps/main/src/app/api/admin/abuse/overrides/route.ts	cas-rowcount	.update({
+apps/main/src/app/api/admin/reconciliation/upload/route.ts	service-role-tenant	.from("commissions")
+apps/main/src/app/api/auth/transfer-session/preview/route.ts	service-role-tenant	.from("messages")
+apps/main/src/app/api/bookings/[id]/cancel/route.ts	cas-rowcount	.update({ status: "cancelled", amount_cents: 0 })
+apps/main/src/app/api/bookings/[id]/cancel/route.ts	service-role-tenant	.from("bookings")
+apps/main/src/app/api/bookings/[id]/cancel/route.ts	service-role-tenant	.from("commissions")
+apps/main/src/app/api/bookings/[id]/cancel/route.ts	service-role-tenant	.from("payout_records")
+apps/main/src/app/api/bookings/[id]/itinerary/route.ts	service-role-tenant	.from("trip_itineraries")
+apps/main/src/app/api/bookings/[id]/line-items/route.ts	service-role-tenant	.from("booking_line_items")
+apps/main/src/app/api/bookings/[id]/resources/route.ts	service-role-tenant	.from("trip_resources")
+apps/main/src/app/api/bookings/[id]/resources/route.ts	service-role-tenant	.from("users")
+apps/main/src/app/api/bookings/[id]/submit/route.ts	cas-rowcount	.update({ status: "draft", updated_at: new Date().toISOString() })
+apps/main/src/app/api/bookings/[id]/submit/route.ts	service-role-tenant	.from("bookings")
+apps/main/src/app/api/bookings/[id]/submit/route.ts	service-role-tenant	.from("quotes")
+apps/main/src/app/api/bookings/[id]/submit/route.ts	service-role-tenant	.from("tenant_host_fee_overrides")
+apps/main/src/app/api/chat/route.ts	service-role-tenant	.from("conversations")
+apps/main/src/app/api/chat/route.ts	service-role-tenant	.from("messages")
+apps/main/src/app/api/chat/route.ts	service-role-tenant	await safeAwait(svc.from("messages").update({ content: candidate }).eq("id", assistantMessageId!), "messages.update");
+apps/main/src/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts	service-role-tenant	.from("forum_user_state")
+apps/main/src/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts	service-role-tenant	.from("groups")
+apps/main/src/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts	service-role-tenant	.from("invitations")
+apps/main/src/app/api/forums/messages/[id]/route.ts	service-role-tenant	.from("forums")
+apps/main/src/app/api/groups/[id]/invitations/route.ts	service-role-tenant	.from("invitations")
+apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	.from("groups")
+apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	.from("invitations")
+apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	await safeAwait(svc.from("invitations").update({
+apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	const { error } = await svc.from("invitations").update(updates).eq("id", invitation_id).is("token_revoked_at", null);
+apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	svc.from("invitations")
+apps/main/src/app/api/groups/invite/[token]/rsvp/route.ts	service-role-tenant	.from("invitations")
+apps/main/src/app/api/help/sessions/[id]/message/route.ts	service-role-tenant	.from("help_sessions")
+apps/main/src/app/api/help/sessions/[id]/message/route.ts	service-role-tenant	db.from("help_sessions")
+apps/main/src/app/api/imports/review/[id]/accept/route.ts	service-role-tenant	.from("commissions")
+apps/main/src/app/api/imports/review/[id]/accept/route.ts	service-role-tenant	.from("import_queue")
+apps/main/src/app/api/imports/review/[id]/merge/route.ts	service-role-tenant	.from("contacts")
+apps/main/src/app/api/imports/review/[id]/merge/route.ts	service-role-tenant	.from("import_queue")
+apps/main/src/app/api/imports/review/[id]/reject/route.ts	service-role-tenant	.from("import_queue")
+apps/main/src/app/api/itineraries/[id]/route.ts	service-role-tenant	.from("booking_line_items")
+apps/main/src/app/api/itineraries/[id]/route.ts	service-role-tenant	.from("contacts")
+apps/main/src/app/api/itineraries/[id]/route.ts	service-role-tenant	.from("trip_itineraries")
+apps/main/src/app/api/itineraries/[id]/route.ts	service-role-tenant	.from("users")
+apps/main/src/app/api/onboarding/ica/route.ts	service-role-tenant	.from("legal_documents")
+apps/main/src/app/api/onboarding/legal/route.ts	service-role-tenant	.from("legal_documents")
+apps/main/src/app/api/public/quote/[token]/select/route.ts	service-role-tenant	.from("quote_options")
+apps/main/src/app/api/public/quote/[token]/select/route.ts	service-role-tenant	.from("quotes")
+apps/main/src/app/api/quote-options/[id]/select/route.ts	service-role-tenant	.from("quote_options")
+apps/main/src/app/api/quote-options/[id]/select/route.ts	service-role-tenant	.from("quotes")
+apps/main/src/app/api/quotes/[id]/accept/route.ts	service-role-tenant	.from("quote_options")
+apps/main/src/app/api/quotes/[id]/accept/route.ts	service-role-tenant	.from("quotes")
+apps/main/src/app/api/quotes/[id]/options/route.ts	service-role-tenant	.from("quote_options")
+apps/main/src/app/api/quotes/[id]/send/route.ts	service-role-tenant	.from("quotes")
+apps/main/src/app/api/resources/[id]/route.ts	service-role-tenant	.from("trip_resources")
+apps/main/src/app/api/travel-news/route.ts	service-role-tenant	.from("news_articles")
+apps/main/src/app/api/user/consent/pending/route.ts	service-role-tenant	.from("legal_documents")
+apps/main/src/app/api/user/consent/pending/route.ts	service-role-tenant	.from("user_consent_pending")
+apps/main/src/app/api/user/consent/route.ts	service-role-tenant	.from("legal_documents")
+apps/main/src/app/api/user/consent/route.ts	service-role-tenant	.from("user_consent_pending")
+apps/main/src/app/api/user/data/export-request/route.ts	service-role-tenant	.from("user_data_export_requests")
+apps/main/src/app/api/webhooks/gmailpubsub/route.ts	secret-eq	if (typeof accessToken !== "string") {
+apps/main/src/app/companion/[token]/page.tsx	service-role-tenant	.from("pre_cruise_email_content")
+apps/main/src/app/i/[token]/page.tsx	service-role-tenant	.from("booking_line_items")
+apps/main/src/app/legal/ai-disclaimer/page.tsx	service-role-tenant	.from("legal_documents")
+apps/main/src/app/q/[token]/page.tsx	cas-rowcount	.update({ status: "viewed", viewed_at: new Date().toISOString() })
+apps/main/src/app/q/[token]/page.tsx	service-role-tenant	.from("quotes")
+apps/main/src/inngest/abuse-recompute-nightly.ts	unbounded-limit	.limit(5000);
+apps/main/src/inngest/abuse-recompute-nightly.ts	unbounded-limit	.limit(50000);
+apps/main/src/inngest/abuse-signal-consumers.ts	event-data-cast	const tenant_id = String((event.data as { tenant_id?: string }).tenant_id ?? "");
+apps/main/src/inngest/abuse-signal-consumers.ts	event-data-cast	detail: event.data as Record<string, unknown>,
+apps/main/src/inngest/abuse-state-transition-notify.ts	event-data-cast	const data = event.data as {
+apps/main/src/inngest/auth-failure-monitor.ts	service-role-tenant	.from("auth_attempts")
+apps/main/src/inngest/auth-failure-monitor.ts	unbounded-limit	.limit(10000);
+apps/main/src/inngest/billing-period-rollover.ts	unbounded-limit	.limit(5000);
+apps/main/src/inngest/booking-commission-retention-purge.ts	service-role-tenant	.from("bookings")
+apps/main/src/inngest/booking-commission-retention-purge.ts	service-role-tenant	.from("commissions")
+apps/main/src/inngest/booking-commission-retention-purge.ts	service-role-tenant	await safeAwait(svc.from("commissions").delete().in("booking_id", deletable), "commissions.delete");
+apps/main/src/inngest/booking-commission-retention-purge.ts	unbounded-limit	.limit(2000);
+apps/main/src/inngest/bookings-stuck-submitting-reconcile.ts	service-role-tenant	.from("bookings")
+apps/main/src/inngest/compliance-nightly.ts	service-role-tenant	.from("legal_documents")
+apps/main/src/inngest/custom-domain-cleanup-on-lifecycle.ts	event-data-cast	const { tenant_id } = event.data as LifecyclePayload;
+apps/main/src/inngest/custom-domain-cleanup-on-lifecycle.ts	event-data-cast	const { tenant_id, reason } = event.data as LifecyclePayload;
+apps/main/src/inngest/customer-chat-counter-recompute.ts	unbounded-limit	.limit(5000);
+apps/main/src/inngest/dob-estimate-reprompt-eligible.ts	service-role-tenant	.from("customer_memories")
+apps/main/src/inngest/dob-estimate-reprompt-eligible.ts	service-role-tenant	.from("messages")
+apps/main/src/inngest/duplicate-high-rate-signal.ts	unbounded-limit	.limit(50000);
+apps/main/src/inngest/email-bounce-rate-monitor.ts	unbounded-limit	.limit(50000);
+apps/main/src/inngest/email-soft-bounce-retry.ts	event-data-cast	const { email_log_id, tenant_id, attempt } = event.data as {
+apps/main/src/inngest/extract-memory.ts	service-role-tenant	.from("conversations")
+apps/main/src/inngest/extract-memory.ts	service-role-tenant	.from("customer_memories")
+apps/main/src/inngest/extract-memory.ts	service-role-tenant	.from("messages")
+apps/main/src/inngest/extract-memory.ts	service-role-tenant	.from("users")
+apps/main/src/inngest/forensics-log-purge-cron.ts	service-role-tenant	.from("forensics_log")
+apps/main/src/inngest/forum-moderation-retry.ts	service-role-tenant	.from("forum_messages")
+apps/main/src/inngest/forum-moderation-timeout-sweep.ts	service-role-tenant	.from("forum_messages")
+apps/main/src/inngest/github-issue-retry.ts	event-data-cast	const data = event.data as SubmissionRetryPayload;
+apps/main/src/inngest/group-reminder-cadence.ts	service-role-tenant	.from("invitations")
+apps/main/src/inngest/group-reminder-cadence.ts	service-role-tenant	svc.from("invitations").update({ last_email_sent_at: now.toISOString() }).eq("id", inv.id),
+apps/main/src/inngest/groups-mark-sailed.ts	service-role-tenant	.from("groups")
+apps/main/src/inngest/help-docs-docx-generate.ts	event-data-cast	const data = event.data as ExportPayload;
+apps/main/src/inngest/help-docs-pdf-generate.ts	event-data-cast	const data = event.data as ExportPayload;
+apps/main/src/inngest/import-pipeline.ts	service-role-tenant	.from("import_queue")
+apps/main/src/inngest/invitation-tokens-natural-expiry-sweep.ts	service-role-tenant	.from("invitations")
+apps/main/src/inngest/payouts-execute-transfer.ts	service-role-tenant	.from("payout_records")
+apps/main/src/inngest/payouts-mark-available.ts	service-role-tenant	.from("payout_records")
+apps/main/src/inngest/payouts-reconcile-processing.ts	service-role-tenant	.from("payout_records")
+apps/main/src/inngest/permission-denied-monitor.ts	unbounded-limit	.limit(10000);
+apps/main/src/inngest/persona-addendum-rescreen-nightly.ts	event-data-cast	const { tenant_id, result_text, caller_metadata } = event.data as {
+apps/main/src/inngest/persona-addendum-rescreen-nightly.ts	service-role-tenant	.from("persona_addendums")
+apps/main/src/inngest/persona-addendum-screen.ts	service-role-tenant	.from("persona_addendums")
+apps/main/src/inngest/pre-cruise-email-scheduler.ts	service-role-tenant	.from("pre_cruise_email_content")
+apps/main/src/inngest/precruise-generate-and-send.ts	service-role-tenant	.from("pre_cruise_email_content")
+apps/main/src/inngest/precruise-generate-and-send.ts	service-role-tenant	const byCode = await svc.from("port_info_chunks").select(PORT_COLS).eq("port_code", dp).maybeSingle();
+apps/main/src/inngest/precruise-generate-and-send.ts	service-role-tenant	const byName = await svc.from("port_info_chunks").select(PORT_COLS).eq("port_name", dp).maybeSingle();
+apps/main/src/inngest/purge-parsed-documents.ts	service-role-tenant	const { error: delErr } = await svc.from("import_queue").delete().in("id", ids);
+apps/main/src/inngest/quality-low-approval-signal.ts	unbounded-limit	.limit(50000);
+apps/main/src/inngest/quote-estimate-expiry-sweep.ts	service-role-tenant	.from("quotes")
+apps/main/src/inngest/rag-extract-content.ts	service-role-tenant	.from("rag_submissions")
+apps/main/src/inngest/rag-normalize.ts	service-role-tenant	.from("rag_submissions")
+apps/main/src/inngest/rag-pii-redact.ts	event-data-cast	const { tenant_id, error_detail, caller_metadata } = event.data as {
+apps/main/src/inngest/rag-pii-redact.ts	event-data-cast	const { tenant_id, result_text, caller_metadata } = event.data as {
+apps/main/src/inngest/rag-pii-redact.ts	service-role-tenant	.from("rag_submissions")
+apps/main/src/inngest/rag-rejected-items-purge.ts	service-role-tenant	.from("rag_submissions")
+apps/main/src/inngest/re-encrypt-old-records.ts	service-role-tenant	.from("tenant_host_configs")
+apps/main/src/inngest/task-reminders-fire.ts	service-role-tenant	.from("task_reminders")
+apps/main/src/inngest/task-sequence-step-fire.ts	service-role-tenant	.from("bookings")
+apps/main/src/inngest/task-sequence-step-fire.ts	service-role-tenant	.from("contacts")
+apps/main/src/inngest/tenant-on-terminated.ts	event-data-cast	const { tenant_id, kind } = event.data as { tenant_id: string; kind: string };
+apps/main/src/inngest/tenant-on-terminated.ts	event-data-cast	const { tenant_id, kind, terminate_at } = event.data as TenantTerminationScheduledPayload;
+apps/main/src/inngest/threshold-recompute-on-subscription-change.ts	event-data-cast	const tenant_id = (event.data as { tenant_id?: string })?.tenant_id;
+apps/main/src/inngest/transfer-finalize.ts	service-role-tenant	.from("anonymous_sessions")
+apps/main/src/inngest/transfer-finalize.ts	service-role-tenant	.from("conversations")
+apps/main/src/inngest/travel-news-refresh.ts	service-role-tenant	db.from("news_feeds").select("id, url, name").eq("is_active", true),
+apps/main/src/inngest/travel-news-refresh.ts	service-role-tenant	db.from("news_feeds").update({ last_fetched_at: new Date().toISOString() }).eq("id", feed.id),
+apps/main/src/inngest/user-data-export-build.ts	event-data-cast	const { auth_user_id, export_request_id } = event.data as ExportPayload;
+apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	.from("bookings")
+apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	.from("conversations")
+apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	.from("legal_consents")
+apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	.from("users")
+apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	await safeAwait(db.from("user_data_export_requests").update({
+apps/main/src/inngest/user-data-purge-after-grace.ts	event-data-cast	const { auth_user_id, user_id, deleted_at, purge_at } = event.data as PurgePayload;
+apps/main/src/inngest/user-data-purge-after-grace.ts	service-role-tenant	.from("users")
+apps/main/src/lib/agents/fetch-customer-bio.ts	service-role-tenant	.from("personas")
+apps/main/src/lib/ai/stream-wrapper.ts	service-role-tenant	.from("tenant_usage_metrics")
+apps/main/src/lib/booking/dob-gate.ts	service-role-tenant	.from("booking_passengers")
+apps/main/src/lib/commissions/state-machine.ts	service-role-tenant	.from("commissions")
+apps/main/src/lib/consent/pending.ts	service-role-tenant	.from("user_consent_pending")
+apps/main/src/lib/groups/hero-image.ts	service-role-tenant	.from("destination_images")
+apps/main/src/lib/groups/hero-image.ts	service-role-tenant	.from("destination_images_cache")
+apps/main/src/lib/http/idempotency.ts	service-role-tenant	.from("request_idempotency")
+apps/main/src/lib/import/promote.ts	service-role-tenant	.from("import_queue")
+apps/main/src/lib/stripe/webhook-handler.ts	service-role-tenant	.from("payout_records")
+apps/main/src/lib/weather/open-meteo.ts	service-role-tenant	.from("weather_forecast_cache")
+apps/main/src/lib/weather/open-meteo.ts	service-role-tenant	.from("weather_usage_metrics")
+apps/main/src/proxy.ts	secret-eq	if (token && serviceKey && token === serviceKey) return true;

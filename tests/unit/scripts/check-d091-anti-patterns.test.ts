@@ -1,0 +1,85 @@
+// #815 — unit tests for the mechanical D-091 anti-pattern detectors.
+//
+// Each test pins WHY the detector exists: it must catch the real anti-pattern,
+// must NOT fire on the safe form, and must honor the inline `d091-allow:<id>`
+// escape hatch. These are the deterministic backstops for what the probabilistic
+// d091-reviewer subagent misses.
+
+import { describe, it, expect } from "vitest";
+import {
+  detectSecretEq,
+  detectUnboundedLimit,
+  detectEventDataCast,
+  detectCasRowcount,
+  detectServiceRoleTenant,
+} from "../../../scripts/check-d091-anti-patterns";
+
+const L = (s: string) => s.split("\n");
+
+describe("detectSecretEq (3)", () => {
+  it("flags === on a secret/token-shaped var", () => {
+    const v = detectSecretEq("f.ts", L(`if (providedToken === expected) ok();`));
+    expect(v.map((x) => x.id)).toEqual(["secret-eq"]);
+  });
+  it("does NOT flag a null/undefined existence check", () => {
+    expect(detectSecretEq("f.ts", L(`if (apiKey === null) throw new Error("missing");`))).toEqual([]);
+  });
+  it("honors the inline escape hatch", () => {
+    expect(detectSecretEq("f.ts", L(`if (token === other) ok(); // d091-allow:secret-eq not a secret, a route token id`))).toEqual([]);
+  });
+});
+
+describe("detectUnboundedLimit (4)", () => {
+  it("flags .limit() above the 1000-row PostgREST cap", () => {
+    expect(detectUnboundedLimit("f.ts", L(`q.limit(2000)`)).map((x) => x.id)).toEqual(["unbounded-limit"]);
+  });
+  it("does NOT flag a bounded limit", () => {
+    expect(detectUnboundedLimit("f.ts", L(`q.limit(500)`))).toEqual([]);
+  });
+});
+
+describe("detectEventDataCast (5)", () => {
+  it("flags an Inngest event.data cast with no Zod parse in the file", () => {
+    const v = detectEventDataCast("apps/main/src/inngest/x.ts", L(`const p = event.data as Payload;\nawait run(p);`));
+    expect(v.map((x) => x.id)).toEqual(["event-data-cast"]);
+  });
+  it("does NOT flag when the file Zod-parses event.data", () => {
+    expect(detectEventDataCast("apps/main/src/inngest/x.ts", L(`const p = Schema.parse(event.data);\nconst q = event.data as Payload;`))).toEqual([]);
+  });
+  it("only applies to inngest files", () => {
+    expect(detectEventDataCast("apps/main/src/lib/x.ts", L(`const p = event.data as Payload;`))).toEqual([]);
+  });
+});
+
+describe("detectCasRowcount (2)", () => {
+  it("flags a status-guarded update with no row-count check", () => {
+    const v = detectCasRowcount("f.ts", L(`await db.from("quotes").update({ status: "accepted" }).eq("id", id).eq("status", "pending");`));
+    expect(v.map((x) => x.id)).toEqual(["cas-rowcount"]);
+  });
+  it("does NOT flag when the update verifies the affected rows (.select)", () => {
+    expect(detectCasRowcount("f.ts", L(`const { data } = await db.from("quotes").update({ status: "accepted" }).eq("id", id).eq("status", "pending").select("id");`))).toEqual([]);
+  });
+  it("does NOT flag a plain (non-status) update", () => {
+    expect(detectCasRowcount("f.ts", L(`await db.from("quotes").update({ title: t }).eq("id", id);`))).toEqual([]);
+  });
+});
+
+describe("detectServiceRoleTenant (1)", () => {
+  const svc = (q: string) => L(`const db = createServiceRoleClient();\n${q}`);
+  it("flags a filtered service-role query on a tenant table with no tenant_id", () => {
+    const v = detectServiceRoleTenant("f.ts", svc(`await db.from("bookings").select("*").eq("id", id);`));
+    expect(v.map((x) => x.id)).toEqual(["service-role-tenant"]);
+  });
+  it("does NOT flag when tenant_id is in the chain", () => {
+    expect(detectServiceRoleTenant("f.ts", svc(`await db.from("bookings").select("*").eq("id", id).eq("tenant_id", t);`))).toEqual([]);
+  });
+  it("does NOT flag a platform-scoped table", () => {
+    expect(detectServiceRoleTenant("f.ts", svc(`await db.from("platform_settings").select("*").eq("id", id);`))).toEqual([]);
+  });
+  it("does NOT fire outside service-role files", () => {
+    expect(detectServiceRoleTenant("f.ts", L(`await db.from("bookings").select("*").eq("id", id);`))).toEqual([]);
+  });
+  it("honors the inline escape hatch", () => {
+    expect(detectServiceRoleTenant("f.ts", svc(`// d091-allow:service-role-tenant platform-scoped read, no tenant column\nawait db.from("bookings").select("*").eq("id", id);`))).toEqual([]);
+  });
+});
