@@ -23,7 +23,11 @@ let mockEventType = "transfer.paid";
 let mockEventData: Record<string, unknown> = { id: "tr_1" };
 let mockConstructEventThrows = false;
 let mockInsertCallCount = 0;
+let mockDeleteCallCount = 0;
 let mockArraySelectResult: { data: unknown[]; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
+// [review gap-fill #719] result of the transfer.paid `.update(...).in(...).select("id")`
+// chain — lets a test drive the handler into outcome='error' to exercise Step 5's clear.
+let mockUpdateSelectResult: { data: unknown[] | null; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
   data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
   error: null,
@@ -59,11 +63,31 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const u: Record<string, unknown> = {
             eq() { return u; },
             in() { return u; },
+            select() {
+              return {
+                then(resolve: (v: { data: unknown[] | null; error: { message: string } | null }) => unknown) {
+                  return resolve(mockUpdateSelectResult);
+                },
+              };
+            },
             then(resolve: (v: { data: null; error: null }) => unknown) {
               return resolve({ data: null, error: null });
             },
           };
           return u;
+        },
+        delete() {
+          const d: Record<string, unknown> = {
+            eq() {
+              mockDeleteCallCount += 1;
+              return {
+                then(resolve: (v: { data: null; error: null }) => unknown) {
+                  return resolve({ data: null, error: null });
+                },
+              };
+            },
+          };
+          return d;
         },
       };
     },
@@ -110,7 +134,9 @@ beforeEach(() => {
   mockInsertResult = { error: null };
   mockConstructEventThrows = false;
   mockInsertCallCount = 0;
+  mockDeleteCallCount = 0;
   mockArraySelectResult = { data: [{ id: "p-1" }], error: null };
+  mockUpdateSelectResult = { data: [{ id: "p-1" }], error: null };
   mockMaybeSingleResult = {
     data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
     error: null,
@@ -144,15 +170,69 @@ describe("Stripe webhook — resource-unavailable injection (Pattern 2)", () => 
 describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
   it("returns 200 ('Duplicate') when stripe_webhook_events insert hits 23505 unique-violation", async () => {
     // Stripe re-delivers a webhook → second insert hits the unique constraint
-    // on stripe_event_id. Handler must short-circuit to 200 so Stripe stops
-    // retrying without processing the side-effect twice.
+    // on stripe_event_id. If the prior attempt completed, the handler must
+    // short-circuit to 200 so Stripe stops retrying without processing twice.
     mockInsertResult = { error: { code: "23505", message: "duplicate key value" } };
+    mockMaybeSingleResult = {
+      data: { processing_completed_at: "2026-06-06T10:00:00Z", processing_outcome: "success" },
+      error: null,
+    };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("Duplicate");
+    expect(mockDeleteCallCount).toBe(0);
   });
 
-  it("parallel webhook deliveries: first call succeeds (200 'OK'), second hits 23505 (200 'Duplicate')", async () => {
+  it("returns 500 and clears the row when a duplicate is incomplete AND stale (crashed run)", async () => {
+    mockInsertResult = { error: { code: "23505", message: "duplicate key value" } };
+    mockMaybeSingleResult = {
+      data: {
+        processing_completed_at: null,
+        processing_outcome: null,
+        // [review gap-fill #719] older than the stale threshold → crashed, safe to clear
+        processing_started_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+      },
+      error: null,
+    };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("Retry incomplete webhook");
+    expect(mockDeleteCallCount).toBe(1);
+  });
+
+  it("[review gap-fill #719] does NOT clear an incomplete duplicate still in-flight (recent start) — 500 retry-later", async () => {
+    // A concurrent re-delivery arriving while the first run is still processing
+    // must NOT delete that row — doing so would orphan the in-flight run (its
+    // completion UPDATE would match 0 rows) and let a later retry reprocess.
+    mockInsertResult = { error: { code: "23505", message: "duplicate key value" } };
+    mockMaybeSingleResult = {
+      data: {
+        processing_completed_at: null,
+        processing_outcome: null,
+        processing_started_at: new Date().toISOString(), // just started → in-flight
+      },
+      error: null,
+    };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("In-flight, retry later");
+    expect(mockDeleteCallCount).toBe(0); // row preserved for the in-flight run
+  });
+
+  it("[review gap-fill #719] clears the dedup row when the handler errors mid-dispatch (Step 5), so Stripe retries", async () => {
+    // Fresh delivery (insert OK), but the transfer.paid update fails → outcome
+    // 'error' → Step 5 must DELETE the row + 500 so the next delivery reprocesses
+    // instead of the row sticking around and short-circuiting to a duplicate 200.
+    // Regression guard: dropping clearStripeWebhookEventRow in Step 5 fails this.
+    mockInsertResult = { error: null };
+    mockUpdateSelectResult = { data: null, error: { message: "synthetic update failure" } };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("Handler error");
+    expect(mockDeleteCallCount).toBe(1);
+  });
+
+  it("[review gap-fill #719] parallel deliveries: first succeeds (200 'OK'), second sees it in-flight → 500 retry-later, does NOT clear", async () => {
     // Greptile review fix: the prior version drove insert behavior via the
     // module-scoped mockInsertResult, which two concurrent IIFEs could
     // overwrite before either insert call fired — so both calls could see
@@ -184,8 +264,15 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
                 eq() { return chain; },
                 in() { return chain; },
                 async maybeSingle() {
+                  // [review gap-fill #719] the second (duplicate) delivery's dup
+                  // lookup sees the first delivery's row still in-flight: recent
+                  // processing_started_at, not yet completed.
                   return {
-                    data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
+                    data: {
+                      processing_completed_at: null,
+                      processing_outcome: null,
+                      processing_started_at: new Date().toISOString(),
+                    },
                     error: null,
                   };
                 },
@@ -213,6 +300,18 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
               };
               return u;
             },
+            delete() {
+              const d: Record<string, unknown> = {
+                eq() {
+                  return {
+                    then(resolve: (v: { data: null; error: null }) => unknown) {
+                      return resolve({ data: null, error: null });
+                    },
+                  };
+                },
+              };
+              return d;
+            },
           };
         },
       } as never),
@@ -224,9 +323,11 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
     ]);
     expect(sequencedInsertCount).toBe(2);
     expect(a.status).toBe(200);
-    expect(b.status).toBe(200);
+    expect(b.status).toBe(500);
     const bodies = [await a.text(), await b.text()];
     expect(bodies).toContain("OK");
-    expect(bodies).toContain("Duplicate");
+    // The in-flight duplicate is asked to retry later, NOT cleared (clearing
+    // would orphan the first run). "In-flight, retry later" ≠ "Retry incomplete webhook".
+    expect(bodies).toContain("In-flight, retry later");
   });
 });

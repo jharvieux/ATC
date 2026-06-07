@@ -11,6 +11,7 @@
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "./client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
+import { STALE_WEBHOOK_PROCESSING_MS } from "@/lib/stripe/webhook-constants";
 
 export const stripeWebhookIncompleteReconcile = inngest.createFunction(
   { id: "stripe-webhook-incomplete-reconcile", triggers: [{ cron: "*/15 * * * *" }] },
@@ -22,7 +23,7 @@ export const stripeWebhookIncompleteReconcile = inngest.createFunction(
       .select("id, stripe_event_id, event_type, processing_started_at")
       .lt(
         "processing_started_at",
-        new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+        new Date(Date.now() - STALE_WEBHOOK_PROCESSING_MS).toISOString(),
       )
       .is("processing_completed_at", null);
 
@@ -51,6 +52,23 @@ export const stripeWebhookIncompleteReconcile = inngest.createFunction(
       },
     });
 
-    return { stalled: stalled.length };
+    // [review gap-fill for #719] Was alert-only — now also CLEAR the stalled rows.
+    // These are incomplete past the stale threshold (handler crashed and Stripe's
+    // retries, if any, are exhausted). Deleting them (a) stops the table filling
+    // with zombie dedup rows, and (b) lets a Stripe re-delivery (manual replay, or
+    // a still-in-window retry) re-insert + reprocess instead of hitting the zombie
+    // row and short-circuiting to 200. Same staleness threshold as the handler so
+    // the two never disagree on "stale" (STALE_WEBHOOK_PROCESSING_MS).
+    const staleIds = stalled.map((r) => r.id);
+    const { error: deleteErr } = await db
+      .from("stripe_webhook_events")
+      .delete()
+      .in("id", staleIds);
+    if (deleteErr) {
+      console.error("[reconcile] Failed to clear stalled rows:", deleteErr.message);
+      throw deleteErr;
+    }
+
+    return { stalled: stalled.length, cleared: staleIds.length };
   },
 );
