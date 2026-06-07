@@ -6,11 +6,14 @@
 // to MappedItinerary, and ingests to RAG + pricing cache.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseSailingPage } from "./parsers/sailing-parser";
-import { parseSailingList } from "./parsers/sailing-list-parser";
+import { parseSailingPage, type ParsedSailingDay } from "./parsers/sailing-parser";
+import { parseSailingList, type SailingListItem } from "./parsers/sailing-list-parser";
+import { parseCruiseExpand } from "./parsers/cruise-expand-parser";
 import { mapSailing, mapSailingListItem } from "./itinerary-mapper";
 import { ingestItineraryToRag } from "./rag-itinerary-ingest";
+import { fetchCruiseMapperPage } from "./diy-fetcher";
 import { upsertPriceQuote } from "@/lib/pricing/pricing-cache";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 // Per-ship upcoming-sailing ingests run in bounded-concurrency waves (#796) so a
 // high-sailing-count ship doesn't serialize hundreds of RAG POSTs into the cron
@@ -26,6 +29,10 @@ export interface SailingRunResult {
   list_price_cache_errors: number;
   list_ingested: number;
   list_errors: number;
+  // #827 per-sailing detail (cruise.json) enrichment counters.
+  list_details_fetched: number;          // detail fetched + parsed this run
+  list_details_skipped_enriched: number; // already had ports — no fetch
+  list_details_errors: number;           // detail fetch/parse failed
 }
 
 export function emptySailingResult(): SailingRunResult {
@@ -38,6 +45,9 @@ export function emptySailingResult(): SailingRunResult {
     list_price_cache_errors: 0,
     list_ingested: 0,
     list_errors: 0,
+    list_details_fetched: 0,
+    list_details_skipped_enriched: 0,
+    list_details_errors: 0,
   };
 }
 
@@ -53,6 +63,78 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
   into.list_price_cache_errors += one.list_price_cache_errors;
   into.list_ingested += one.list_ingested;
   into.list_errors += one.list_errors;
+  into.list_details_fetched += one.list_details_fetched;
+  into.list_details_skipped_enriched += one.list_details_skipped_enriched;
+  into.list_details_errors += one.list_details_errors;
+}
+
+// #827 — per-sailing detail (cruise.json) enrichment.
+//
+// Each upcoming sailing's ports live behind /ships/cruise.json?id=<row>, loaded
+// lazily by the page JS. We fetch + parse it ONCE per sailing, then record it in
+// cruisemapper_url_inventory (kind="sailing_detail") so later runs skip the
+// fetch — ports are immutable once a sailing is scheduled. Gated by
+// CRUISEMAPPER_DETAIL_FETCH_ENABLED; when off, list items map with no ports
+// exactly as before (the gate defaults closed — this is a scraping-volume op).
+
+export function sailingDetailUrl(dataRowId: string): string {
+  const base = (process.env.CRUISEMAPPER_DIY_BASE_URL ?? "https://www.cruisemapper.com").replace(/\/$/, "");
+  return `${base}/ships/cruise.json?id=${encodeURIComponent(dataRowId)}`;
+}
+
+// True when this sailing's ports were already fetched + ingested — skip re-fetch.
+async function sailingDetailEnriched(db: SupabaseClient, detailUrl: string): Promise<boolean> {
+  const { data, error } = await db
+    .from("cruisemapper_url_inventory")
+    .select("last_ingest_status")
+    .eq("url", detailUrl)
+    .eq("kind", "sailing_detail")
+    .maybeSingle();
+  if (error) throw new Error(`cruisemapper_url_inventory.select(sailing_detail) failed: ${error.message}`);
+  return (data as { last_ingest_status: string | null } | null)?.last_ingest_status === "ingested";
+}
+
+// Fetch + parse one sailing's day-by-day. Returns null on any fetch/parse miss,
+// so the caller proceeds without ports and retries next run (never marks it
+// enriched). The XHR header is REQUIRED — without it cruise.json 200s with an
+// empty body.
+async function fetchSailingDetail(
+  item: SailingListItem,
+): Promise<{ portsOfCall: string[]; dayByDay: ParsedSailingDay[] } | null> {
+  const fetched = await fetchCruiseMapperPage(sailingDetailUrl(item.data_row_id), {
+    headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json" },
+  });
+  if (fetched.status !== "ok") return null;
+  let fragment: unknown;
+  try {
+    fragment = (JSON.parse(fetched.body) as { result?: unknown }).result;
+  } catch {
+    return null;
+  }
+  if (typeof fragment !== "string" || fragment.length === 0) return null;
+  const parsed = parseCruiseExpand(fragment, {
+    departureDate: item.departure_date,
+    durationNights: item.duration_nights,
+  });
+  if (!parsed) return null;
+  return { portsOfCall: parsed.ports_of_call, dayByDay: parsed.itinerary };
+}
+
+// Record a sailing's detail as enriched so later runs skip the fetch.
+async function markSailingDetailEnriched(db: SupabaseClient, detailUrl: string): Promise<void> {
+  await safeAwait(
+    db.from("cruisemapper_url_inventory").upsert(
+      {
+        url: detailUrl,
+        kind: "sailing_detail",
+        last_seen_at: new Date().toISOString(),
+        last_ingest_status: "ingested",
+        last_error: null,
+      },
+      { onConflict: "url" },
+    ),
+    "cruisemapper_url_inventory.upsert.sailing_detail",
+  );
 }
 
 /**
@@ -94,16 +176,18 @@ export async function processSailingHtml(
   // instead of one serial await per sailing.
   const listItems = parseSailingList(html);
   result.list_items += listItems.length;
+  const detailEnabled = process.env.CRUISEMAPPER_DETAIL_FETCH_ENABLED === "true";
 
   for (let i = 0; i < listItems.length; i += SAILING_POST_CONCURRENCY) {
     await Promise.all(
       listItems.slice(i, i + SAILING_POST_CONCURRENCY).map(async (item) => {
-        const listMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "");
-        if (!listMapped) return;
-
-        if (listMapped.cacheQuote) {
+        // Price cache refreshes EVERY run, independent of port enrichment — it's
+        // the lead-in source the pricing anchors (#828) read, and the price
+        // drifts as a sailing fills. Build the base (no-ports) mapping for it.
+        const baseMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "");
+        if (baseMapped?.cacheQuote) {
           try {
-            await upsertPriceQuote(db, listMapped.cacheQuote);
+            await upsertPriceQuote(db, baseMapped.cacheQuote);
             result.list_price_cache_written += 1;
           } catch (err) {
             // Best-effort — price cache is a convenience mirror; RAG ingest proceeds.
@@ -113,9 +197,54 @@ export async function processSailingHtml(
           }
         }
 
+        // #827 — port enrichment (gated). An already-enriched sailing keeps its
+        // RAG ports as-is: skip BOTH the detail re-fetch AND the RAG re-ingest,
+        // since re-ingesting without the ports (which we don't hold locally)
+        // would clobber them. Its price was already refreshed above.
+        let detail: { portsOfCall: string[]; dayByDay: ParsedSailingDay[] } | undefined;
+        let detailUrl: string | undefined;
+        if (detailEnabled) {
+          detailUrl = sailingDetailUrl(item.data_row_id);
+          let alreadyEnriched = false;
+          try {
+            alreadyEnriched = await sailingDetailEnriched(db, detailUrl);
+          } catch (err) {
+            console.warn("[sailing-ingest] detail enriched-check failed (treating as not enriched)",
+              { shipUrl, data_row_id: item.data_row_id, err });
+          }
+          if (alreadyEnriched) {
+            result.list_details_skipped_enriched += 1;
+            return;
+          }
+          const parsed = await fetchSailingDetail(item);
+          if (parsed) {
+            detail = parsed;
+            result.list_details_fetched += 1;
+          } else {
+            result.list_details_errors += 1;
+          }
+        }
+
+        // Re-map WITH ports when we fetched detail this run; otherwise the base
+        // (no-ports) mapping is what lands.
+        const listMapped = detail
+          ? mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "", detail)
+          : baseMapped;
+        if (!listMapped) return;
+
         const outcome = await ingestItineraryToRag(listMapped);
         if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {
           result.list_ingested += 1;
+          // Mark enriched ONLY after the ports actually landed in RAG, so a
+          // failed ingest is re-fetched next run instead of permanently skipped.
+          if (detail && detailUrl) {
+            try {
+              await markSailingDetailEnriched(db, detailUrl);
+            } catch (err) {
+              console.warn("[sailing-ingest] mark-enriched failed (will re-fetch next run)",
+                { shipUrl, data_row_id: item.data_row_id, err });
+            }
+          }
         } else {
           result.list_errors += 1;
         }
