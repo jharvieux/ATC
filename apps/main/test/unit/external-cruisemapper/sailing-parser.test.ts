@@ -178,6 +178,13 @@ describe("parseShipIdentity (#827 f/u — recognize a ship page even with no cur
     expect(parseShipIdentity(noCurrent)).toEqual({ ship_name: "Hero Of The Seas", cruise_line: "Royal Caribbean" });
   });
 
+  it("falls back to the cruise-lines link TEXT when there's no itemprop=name span", () => {
+    const linkTextOnly = `<html><body>
+      <a href="https://www.cruisemapper.com/cruise-lines/Viking-Cruises-50">Viking Cruises</a>
+      <h1>Viking Yi Dun</h1></body></html>`;
+    expect(parseShipIdentity(linkTextOnly)).toEqual({ ship_name: "Viking Yi Dun", cruise_line: "Viking Cruises" });
+  });
+
   it("returns a null cruise_line when no cruise-lines link is present", () => {
     expect(parseShipIdentity("<html><body><h1>Mystery Ship</h1></body></html>")).toEqual({
       ship_name: "Mystery Ship",

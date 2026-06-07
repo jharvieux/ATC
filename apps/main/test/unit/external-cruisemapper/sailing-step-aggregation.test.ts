@@ -5,8 +5,8 @@
 
 import { describe, expect, it } from "vitest";
 import { emptySailingResult, mergeSailing } from "../../../src/lib/external/cruisemapper/sailing-ingest";
-import { sailingHaltReason, runSailingWindow, sailingIngestOutcome, isNonCruiseSailingUrl } from "../../../src/inngest/refresh-cruisemapper-sailings";
-import type { SailingUrlResult } from "../../../src/inngest/refresh-cruisemapper-sailings";
+import { sailingHaltReason, runSailingWindow, sailingIngestOutcome, sailingPageOutcomeInputs, isNonCruiseSailingUrl } from "../../../src/inngest/refresh-cruisemapper-sailings";
+import type { SailingUrlResult, SailingPageDeltas } from "../../../src/inngest/refresh-cruisemapper-sailings";
 
 describe("sailing refresh — per-step aggregation", () => {
   it("mergeSailing sums every counter across ships", () => {
@@ -137,6 +137,55 @@ describe("sailing refresh — sailingIngestOutcome (content_hash only when the i
     expect(update.content_hash).toBeUndefined();
     expect(update.last_ingest_status).toBe("parse_failed");
     expect(parse_failed).toBe(1);
+  });
+});
+
+describe("sailingPageOutcomeInputs — valid-ship + landed gating (#827 f/u)", () => {
+  function deltas(over: Partial<SailingPageDeltas> = {}): SailingPageDeltas {
+    return {
+      hadCurrent: false,
+      noCurrentButValidShip: false,
+      currentLanded: false,
+      listLanded: false,
+      listSkippedEnriched: false,
+      listHadItems: false,
+      ...over,
+    };
+  }
+
+  it("current sailing that landed → valid + landed (stamp hash)", () => {
+    expect(sailingPageOutcomeInputs(deltas({ hadCurrent: true, currentLanded: true, listLanded: true })))
+      .toEqual({ validShipPage: true, landedInRag: true });
+  });
+
+  it("current sailing that did NOT land → valid but not landed (RAG-outage retry preserved)", () => {
+    // Even if the list landed, a current sailing that missed RAG must not stamp.
+    expect(sailingPageOutcomeInputs(deltas({ hadCurrent: true, currentLanded: false, listLanded: true })))
+      .toEqual({ validShipPage: true, landedInRag: false });
+  });
+
+  it("no current sailing + list landed → valid + landed", () => {
+    expect(sailingPageOutcomeInputs(deltas({ noCurrentButValidShip: true, listHadItems: true, listLanded: true })))
+      .toEqual({ validShipPage: true, landedInRag: true });
+  });
+
+  it("no current sailing + ALL list items already-enriched (skipped) → valid + landed (the audit fix: don't re-fetch forever)", () => {
+    expect(sailingPageOutcomeInputs(deltas({ noCurrentButValidShip: true, listHadItems: true, listSkippedEnriched: true, listLanded: false })))
+      .toEqual({ validShipPage: true, landedInRag: true });
+  });
+
+  it("no current sailing + no upcoming list at all → valid + landed (valid empty future ship, stamp + skip next run)", () => {
+    expect(sailingPageOutcomeInputs(deltas({ noCurrentButValidShip: true, listHadItems: false })))
+      .toEqual({ validShipPage: true, landedInRag: true });
+  });
+
+  it("no current sailing + list items that all FAILED to land → valid but not landed (retry, never a false unchanged)", () => {
+    expect(sailingPageOutcomeInputs(deltas({ noCurrentButValidShip: true, listHadItems: true, listLanded: false, listSkippedEnriched: false })))
+      .toEqual({ validShipPage: true, landedInRag: false });
+  });
+
+  it("unrecognizable page (no current, not a valid ship) → not valid (→ parse_failed, feeds the halt)", () => {
+    expect(sailingPageOutcomeInputs(deltas({})).validShipPage).toBe(false);
   });
 });
 

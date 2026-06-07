@@ -110,6 +110,39 @@ export function sailingIngestOutcome(
   return { update, parse_failed: 0 };
 }
 
+export interface SailingPageDeltas {
+  /** A current sailing parsed this page. */
+  hadCurrent: boolean;
+  /** No current sailing, but a recognizable ship page (future/river/retired). */
+  noCurrentButValidShip: boolean;
+  /** The current sailing reached RAG. */
+  currentLanded: boolean;
+  /** At least one upcoming-list item reached RAG this run. */
+  listLanded: boolean;
+  /** At least one upcoming-list item was skipped because already-enriched. */
+  listSkippedEnriched: boolean;
+  /** The page had any upcoming-list items at all. */
+  listHadItems: boolean;
+}
+
+// Derive the (validShipPage, landedInRag) inputs to sailingIngestOutcome from one
+// ship page's counter deltas. Split out so the content_hash-stamping decision —
+// the D-171 masking-bug surface — is unit-tested directly (#827 f/u).
+//   • validShipPage: a current sailing OR a recognizable no-current ship; only an
+//     unrecognizable page is a parse failure that feeds the halt.
+//   • landedInRag: with a current sailing, gate on it reaching RAG (preserves the
+//     #770 RAG-outage retry). With NO current sailing, the page is fully handled
+//     when its list landed, was ALREADY enriched (skipped), or had no items — but
+//     NOT when it had items that all failed to land (→ retry, never a false
+//     "unchanged" stamp).
+export function sailingPageOutcomeInputs(d: SailingPageDeltas): { validShipPage: boolean; landedInRag: boolean } {
+  const validShipPage = d.hadCurrent || d.noCurrentButValidShip;
+  const landedInRag = d.hadCurrent
+    ? d.currentLanded
+    : d.listLanded || d.listSkippedEnriched || !d.listHadItems;
+  return { validShipPage, landedInRag };
+}
+
 // Ferries CruiseMapper lists alongside cruise ships have no ocean-cruise sailing
 // to parse, so they always "parse_failed" and inflate the parse-failure halt
 // rate without signalling a real parser break (#819). Their URL slug carries a
@@ -281,29 +314,25 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
     return { sailing, fetch_unchanged: 0, fetch_errors: 1, parse_failed: 0 };
   }
 
-  const beforeParsed = sailing.current_parsed;
-  const beforeNoCurrent = sailing.no_current_sailing;
-  const beforeIngested = sailing.current_ingested;
-  const beforeListIngested = sailing.list_ingested;
-  const beforeListItems = sailing.list_items;
+  const before = {
+    current_parsed: sailing.current_parsed,
+    no_current_sailing: sailing.no_current_sailing,
+    current_ingested: sailing.current_ingested,
+    list_ingested: sailing.list_ingested,
+    list_details_skipped_enriched: sailing.list_details_skipped_enriched,
+    list_items: sailing.list_items,
+  };
   await processSailingHtml(db, fetched.body, url, sailing);
-  const hadCurrent = sailing.current_parsed > beforeParsed;
-  const noCurrentButValidShip = sailing.no_current_sailing > beforeNoCurrent;
-  // A valid ship page — a current sailing OR a recognizable ship with no current
-  // sailing yet (future/river/retired) — is NOT a parse failure. Only an
-  // unrecognizable page leaves both counters flat, so validShipPage stays false
-  // and feeds the parse-failure halt. This keeps no-current ships off the halt
-  // (#827 f/u — they were tripping the 5% breaker).
-  const validShipPage = hadCurrent || noCurrentButValidShip;
-  // "Landed in RAG": when there IS a current sailing, gate on it reaching RAG
-  // (preserves the #770 RAG-outage retry — processSailingHtml never throws on a
-  // failed POST, it bumps current_errors). When there is NO current sailing, the
-  // page is fully processed once its upcoming list lands — or trivially when it
-  // has no upcoming sailings to ingest (a valid empty future ship), so we still
-  // stamp the hash and don't re-fetch it every run.
-  const landedInRag = hadCurrent
-    ? sailing.current_ingested > beforeIngested
-    : sailing.list_ingested > beforeListIngested || sailing.list_items === beforeListItems;
+  // Compute the outcome from this page's counter deltas (see sailingPageOutcomeInputs:
+  // valid-ship + landed-in-RAG, the content_hash-stamping / parse-failure-halt surface).
+  const { validShipPage, landedInRag } = sailingPageOutcomeInputs({
+    hadCurrent: sailing.current_parsed > before.current_parsed,
+    noCurrentButValidShip: sailing.no_current_sailing > before.no_current_sailing,
+    currentLanded: sailing.current_ingested > before.current_ingested,
+    listLanded: sailing.list_ingested > before.list_ingested,
+    listSkippedEnriched: sailing.list_details_skipped_enriched > before.list_details_skipped_enriched,
+    listHadItems: sailing.list_items > before.list_items,
+  });
 
   const { update, parse_failed } = sailingIngestOutcome(validShipPage, landedInRag, fetched.bodyHash);
   await safeAwait(
