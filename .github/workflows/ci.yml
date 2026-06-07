@@ -62,6 +62,12 @@ jobs:
         # docs/runbooks/error-injection-probe-design.md.
         run: pnpm test:error-injection
 
+      - name: RAG unit tests (#792)
+        # The root vitest config (vitest.config.ts) only includes apps/main +
+        # tests/, so apps/rag's unit suite never ran in CI — RAG bugs (#805/#807/
+        # #808) merged with zero CI coverage. Run apps/rag's own vitest here.
+        run: pnpm test:rag
+
       - name: Build
         run: pnpm -r build
         env:
