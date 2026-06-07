@@ -16,7 +16,7 @@ export interface GeneralPriceRange {
   low_amount: number;
   high_amount: number;
   currency: "USD";
-  source: "diy_cruisemapper" | "manual";
+  source: "diy_cruisemapper" | "manual" | "estimated";
   source_url: string | null;
   fetched_at: Date;
 }
@@ -29,7 +29,7 @@ export interface UpsertInput {
   low_amount: number;
   high_amount: number;
   source_url?: string;
-  source?: "diy_cruisemapper" | "manual";
+  source?: "diy_cruisemapper" | "manual" | "estimated";
 }
 
 /** Upsert one range row. Idempotent on the composite UNIQUE constraint. */
@@ -85,7 +85,7 @@ export async function readShipPriceRanges(
       low_amount: lo,
       high_amount: hi,
       currency: "USD" as const,
-      source: r.source as "diy_cruisemapper" | "manual",
+      source: r.source as "diy_cruisemapper" | "manual" | "estimated",
       source_url: (r.source_url as string | null) ?? null,
       fetched_at: new Date(r.fetched_at as string),
     };
@@ -127,7 +127,7 @@ export async function readPriceRange(
     low_amount: lo,
     high_amount: hi,
     currency: "USD" as const,
-    source: r.source as "diy_cruisemapper" | "manual",
+    source: r.source as "diy_cruisemapper" | "manual" | "estimated",
     source_url: (r.source_url as string | null) ?? null,
     fetched_at: new Date(r.fetched_at as string),
   };
