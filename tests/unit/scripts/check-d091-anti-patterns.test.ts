@@ -28,6 +28,9 @@ describe("detectSecretEq (3)", () => {
   it("honors the inline escape hatch", () => {
     expect(detectSecretEq("f.ts", L(`if (token === other) ok(); // d091-allow:secret-eq not a secret, a route token id`))).toEqual([]);
   });
+  it("catches the secret on the RIGHT side too", () => {
+    expect(detectSecretEq("f.ts", L(`if (provided === expectedToken) ok();`)).map((x) => x.id)).toEqual(["secret-eq"]);
+  });
 });
 
 describe("detectUnboundedLimit (4)", () => {
@@ -36,6 +39,9 @@ describe("detectUnboundedLimit (4)", () => {
   });
   it("does NOT flag a bounded limit", () => {
     expect(detectUnboundedLimit("f.ts", L(`q.limit(500)`))).toEqual([]);
+  });
+  it("does NOT flag exactly the 1000 cap (boundary)", () => {
+    expect(detectUnboundedLimit("f.ts", L(`q.limit(1000)`))).toEqual([]);
   });
 });
 
@@ -46,6 +52,10 @@ describe("detectEventDataCast (5)", () => {
   });
   it("does NOT flag when the file Zod-parses event.data", () => {
     expect(detectEventDataCast("apps/main/src/inngest/x.ts", L(`const p = Schema.parse(event.data);\nconst q = event.data as Payload;`))).toEqual([]);
+  });
+  it("STILL flags when an UNRELATED .parse() is present — only a parse OF event.data validates it", () => {
+    const v = detectEventDataCast("apps/main/src/inngest/x.ts", L(`const r = LlmSchema.parse(llmOutput);\nconst p = event.data as Payload;`));
+    expect(v.map((x) => x.id)).toEqual(["event-data-cast"]);
   });
   it("only applies to inngest files", () => {
     expect(detectEventDataCast("apps/main/src/lib/x.ts", L(`const p = event.data as Payload;`))).toEqual([]);

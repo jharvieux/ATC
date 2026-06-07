@@ -91,18 +91,24 @@ const PLATFORM_TABLES = platformTables();
 // --- Detector (3): ===/!== on a secret-shaped variable ---------------------
 export function detectSecretEq(file: string, lines: string[]): Violation[] {
   const out: Violation[] = [];
-  // An operand whose identifier ends in secret/token/hmac/signature/apiKey/api_key.
-  const re = /\b([A-Za-z0-9_.]*(?:secret|token|hmac|signature|apikey|api_key))\s*(===|!==)/i;
+  // An operand whose identifier ends in secret/token/hmac/signature/apiKey/api_key,
+  // on EITHER side of the comparison (`token === x` or `x === token`).
+  const name = "[A-Za-z0-9_.]*(?:secret|token|hmac|signature|apikey|api_key)";
+  const left = new RegExp(`\\b(${name})\\s*(===|!==)`, "i");
+  const right = new RegExp(`(===|!==)\\s*(${name})\\b`, "i");
   lines.forEach((ln, i) => {
-    const m = re.exec(ln);
-    if (!m) return;
+    const lm = left.exec(ln);
+    const rm = right.exec(ln);
+    if (!lm && !rm) return;
     // Skip non-secret comparisons: existence checks and `typeof x === "string"`
     // primitive-type guards (the operand isn't a secret value being matched).
     if (/(===|!==)\s*(null|undefined)\b/.test(ln)) return;
     if (/\btypeof\b/.test(ln)) return;
     if (/(===|!==)\s*["'](string|number|boolean|object|undefined|function|symbol|bigint)["']/.test(ln)) return;
     if (isInlineAllowed(lines, i, "secret-eq")) return;
-    out.push({ id: "secret-eq", file, line: i + 1, snippet: ln.trim(), why: `'${m[1]}' compared with ${m[2]} — use timingSafeEqual/constantTimeEqual for secrets` });
+    const varName = lm ? lm[1] : rm![2];
+    const op = lm ? lm[2] : rm![1];
+    out.push({ id: "secret-eq", file, line: i + 1, snippet: ln.trim(), why: `'${varName}' compared with ${op} — use timingSafeEqual/constantTimeEqual for secrets` });
   });
   return out;
 }
