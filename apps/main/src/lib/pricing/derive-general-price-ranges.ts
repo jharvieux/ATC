@@ -11,7 +11,7 @@
 // and applies the §33.7 +10%/nearest-$100 buffer at display time.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { CabinClass } from "./types";
+import { ALL_CABIN_CLASSES, type CabinClass } from "./types";
 
 // Interior is the base (the lead-in itself, multiplier 1.0). The other tiers are
 // rough industry multiples over the interior lead-in — ESTIMATES, not scraped.
@@ -67,7 +67,7 @@ export function deriveRangesFromLeadIns(rows: InteriorLeadIn[]): DerivedRangeRow
 
   const out: DerivedRangeRow[] = [];
   for (const g of groups.values()) {
-    for (const cabin of Object.keys(CABIN_MULTIPLIERS) as CabinClass[]) {
+    for (const cabin of ALL_CABIN_CLASSES) {
       const mult = CABIN_MULTIPLIERS[cabin];
       out.push({
         cruise_line: g.cruise_line,
