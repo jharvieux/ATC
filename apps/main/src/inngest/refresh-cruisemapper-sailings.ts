@@ -110,6 +110,17 @@ export function sailingIngestOutcome(
   return { update, parse_failed: 0 };
 }
 
+// Ferries CruiseMapper lists alongside cruise ships have no ocean-cruise sailing
+// to parse, so they always "parse_failed" and inflate the parse-failure halt
+// rate without signalling a real parser break (#819). Their URL slug carries a
+// hyphen-delimited "-ferry-" token (e.g. .../ships/Stena-Estrid-ferry-2159) — a
+// substring like "Ferryland" is NOT matched. Ship intel for them still lands via
+// the quarterly static cron; only sailing-itinerary ingest skips them. The run
+// summary reports `ferries_skipped` so the filter is auditable in prod.
+export function isNonCruiseSailingUrl(url: string): boolean {
+  return /-ferry-/i.test(url);
+}
+
 export const refreshCruisemapperSailings = inngest.createFunction(
   {
     id: "refresh-cruisemapper-sailings",
@@ -133,7 +144,8 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       }),
     );
 
-    const shipUrls = await step.run("load-ships", () => loadInventoryByKind(createServiceRoleClient(), "ship"));
+    const allShipUrls = await step.run("load-ships", () => loadInventoryByKind(createServiceRoleClient(), "ship"));
+    const shipUrls = allShipUrls.filter((u) => !isNonCruiseSailingUrl(u));
 
     const sailing = emptySailingResult();
     let fetchUnchanged = 0;
@@ -167,6 +179,7 @@ export const refreshCruisemapperSailings = inngest.createFunction(
 
     return {
       ship_pages_attempted: shipUrls.length,
+      ferries_skipped: allShipUrls.length - shipUrls.length,
       ...sailing,
       fetch_unchanged: fetchUnchanged,
       fetch_errors: fetchErrors,

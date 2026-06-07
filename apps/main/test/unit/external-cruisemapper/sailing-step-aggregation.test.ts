@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { emptySailingResult, mergeSailing } from "../../../src/lib/external/cruisemapper/sailing-ingest";
-import { sailingHaltReason, runSailingWindow, sailingIngestOutcome } from "../../../src/inngest/refresh-cruisemapper-sailings";
+import { sailingHaltReason, runSailingWindow, sailingIngestOutcome, isNonCruiseSailingUrl } from "../../../src/inngest/refresh-cruisemapper-sailings";
 import type { SailingUrlResult } from "../../../src/inngest/refresh-cruisemapper-sailings";
 
 describe("sailing refresh — per-step aggregation", () => {
@@ -136,5 +136,21 @@ describe("sailing refresh — sailingIngestOutcome (content_hash only when the i
     expect(update.content_hash).toBeUndefined();
     expect(update.last_ingest_status).toBe("parse_failed");
     expect(parse_failed).toBe(1);
+  });
+});
+
+describe("isNonCruiseSailingUrl — skip ferries from sailing ingest (#819)", () => {
+  it("flags ferry pages CruiseMapper lists alongside cruise ships", () => {
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Stena-Estrid-ferry-2159")).toBe(true);
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Superfast-XI-ferry-2066")).toBe(true);
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Havila-Pollux-ferry-2176")).toBe(true);
+  });
+
+  it("does not flag ocean cruise ships, nor a non-delimited 'ferry' substring", () => {
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Carnival-Vista-1039")).toBe(false);
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Symphony-Of-The-Seas-1730")).toBe(false);
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Viking-Star-974")).toBe(false);
+    // Boundary: only the hyphen-delimited "-ferry-" token matches, not a substring.
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Ferryland-Explorer-9999")).toBe(false);
   });
 });
