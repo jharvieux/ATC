@@ -16,7 +16,7 @@
 //   event-data-cast     (5) — Inngest `event.data as` without a Zod parse
 //   service-role-tenant (1) — service-role .from(tenant-table) filtered but
 //                             missing .eq("tenant_id",…). Baseline-allowlisted
-//                             (scripts/d091-service-role-baseline.txt) because
+//                             (scripts/d091-baseline.txt) because
 //                             the existing debt is tracked in the security
 //                             backlog (#726/#730/#740/#743/#748/#752); the gate
 //                             fails on NEW occurrences only.
@@ -96,8 +96,11 @@ export function detectSecretEq(file: string, lines: string[]): Violation[] {
   lines.forEach((ln, i) => {
     const m = re.exec(ln);
     if (!m) return;
-    // Skip obvious non-secret comparisons (null/undefined existence checks).
+    // Skip non-secret comparisons: existence checks and `typeof x === "string"`
+    // primitive-type guards (the operand isn't a secret value being matched).
     if (/(===|!==)\s*(null|undefined)\b/.test(ln)) return;
+    if (/\btypeof\b/.test(ln)) return;
+    if (/(===|!==)\s*["'](string|number|boolean|object|undefined|function|symbol|bigint)["']/.test(ln)) return;
     if (isInlineAllowed(lines, i, "secret-eq")) return;
     out.push({ id: "secret-eq", file, line: i + 1, snippet: ln.trim(), why: `'${m[1]}' compared with ${m[2]} — use timingSafeEqual/constantTimeEqual for secrets` });
   });
@@ -123,11 +126,12 @@ export function detectEventDataCast(file: string, lines: string[]): Violation[] 
   if (!file.includes("/inngest/")) return [];
   const out: Violation[] = [];
   const text = lines.join("\n");
-  const usesZodOnData = /(\.parse\(|\.safeParse\()/.test(text) && /event\.data/.test(text);
+  // Only a parse OF event.data validates it — a `.parse()` on unrelated data
+  // (e.g. an LLM response) elsewhere in the file must NOT suppress the cast.
+  const usesZodOnData = /\b(?:parse|safeParse)\(\s*event\.data\b/.test(text);
   lines.forEach((ln, i) => {
     if (!/event\.data\s+as\s+/.test(ln)) return;
     if (isInlineAllowed(lines, i, "event-data-cast")) return;
-    // If the file Zod-parses event.data somewhere, treat the cast as validated.
     if (usesZodOnData) return;
     out.push({ id: "event-data-cast", file, line: i + 1, snippet: ln.trim(), why: "Inngest `event.data as` cast without a Zod parse — validate before use" });
   });
@@ -190,11 +194,41 @@ function violationKey(v: Violation): string {
   return `${v.file}\t${v.id}\t${v.snippet}`;
 }
 
-function loadBaseline(): Set<string> {
-  if (!fs.existsSync(BASELINE_FILE)) return new Set();
-  return new Set(
-    fs.readFileSync(BASELINE_FILE, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")),
-  );
+// Baseline maps a violation key (file+id+snippet) → the COUNT of accepted
+// (existing) occurrences. Line format: <count>\t<file>\t<id>\t<snippet>. Storing
+// the count (not just presence) is what lets the gate catch a NEW duplicate of
+// an already-baselined line.
+function loadBaseline(): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!fs.existsSync(BASELINE_FILE)) return map;
+  for (const raw of fs.readFileSync(BASELINE_FILE, "utf8").split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line || line.startsWith("#")) continue;
+    const parts = line.split("\t");
+    if (parts.length < 4) continue;
+    const count = Number(parts[0]);
+    const key = parts.slice(1).join("\t"); // file\tid\tsnippet
+    if (Number.isFinite(count)) map.set(key, count);
+  }
+  return map;
+}
+
+// Group hits by key and return those in EXCESS of the baselined count — the
+// genuinely NEW occurrences (a new duplicate of a baselined line counts).
+export function computeNewViolations(all: Violation[], baseline: Map<string, number>): Violation[] {
+  const byKey = new Map<string, Violation[]>();
+  for (const v of all) {
+    const k = violationKey(v);
+    const list = byKey.get(k) ?? [];
+    list.push(v);
+    byKey.set(k, list);
+  }
+  const out: Violation[] = [];
+  for (const [key, vs] of byKey) {
+    const allowed = baseline.get(key) ?? 0;
+    if (vs.length > allowed) out.push(...vs.slice(allowed));
+  }
+  return out;
 }
 
 function main(): void {
@@ -214,21 +248,27 @@ function main(): void {
   // as a reflex to silence a fresh violation (fix it or add an inline
   // `d091-allow:<id> <reason>` instead).
   if (process.argv.includes("--update-baseline")) {
-    const header = "# d091 anti-pattern baseline — existing hits accepted as tracked debt.\n# Regenerate: pnpm check:d091 --update-baseline. The gate fails on NEW hits only.\n# Each line: <file>\\t<id>\\t<snippet>. Prefer fixing or an inline d091-allow over growing this.\n";
-    const body = [...new Set(all.map(violationKey))].sort().join("\n");
+    const counts = new Map<string, number>();
+    for (const v of all) counts.set(violationKey(v), (counts.get(violationKey(v)) ?? 0) + 1);
+    const header =
+      "# d091 anti-pattern baseline — existing hits accepted as tracked debt.\n" +
+      "# Regenerate: pnpm check:d091 --update-baseline. The gate fails on NEW hits\n" +
+      "# only — including a NEW occurrence beyond the recorded count for a line.\n" +
+      "# Line format: <count>\\t<file>\\t<id>\\t<snippet>. Prefer fixing or an inline\n" +
+      "# `d091-allow:<id> <reason>` over growing this.\n";
+    const body = [...counts.entries()].map(([k, c]) => `${c}\t${k}`).sort().join("\n");
     fs.writeFileSync(BASELINE_FILE, `${header}${body}\n`);
-    console.log(`Wrote ${new Set(all.map(violationKey)).size} baseline entr(ies) to ${path.relative(ROOT, BASELINE_FILE)}.`);
+    console.log(`Wrote ${counts.size} baseline entr(ies) (${all.length} occurrences) to ${path.relative(ROOT, BASELINE_FILE)}.`);
     return;
   }
 
   // The existing debt is snapshotted in the baseline (the real bugs are tracked
-  // in the security backlog), so the gate fails only on NEW occurrences.
-  const baseline = loadBaseline();
-  const failures = all.filter((v) => !baseline.has(violationKey(v)));
+  // in the security backlog), so the gate fails only on NEW occurrences — count-
+  // aware, so a new duplicate of a baselined line is still caught.
+  const failures = computeNewViolations(all, loadBaseline());
 
   if (failures.length === 0) {
-    const baselined = all.length - failures.length;
-    console.log(`✔ d091-anti-patterns: ${files.length} files scanned, 0 new violations${baselined ? ` (${baselined} baselined)` : ""}.`);
+    console.log(`✔ d091-anti-patterns: ${files.length} files scanned, 0 new violations (${all.length} baselined).`);
     return;
   }
 

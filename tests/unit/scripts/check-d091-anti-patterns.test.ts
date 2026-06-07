@@ -12,6 +12,7 @@ import {
   detectEventDataCast,
   detectCasRowcount,
   detectServiceRoleTenant,
+  computeNewViolations,
 } from "../../../scripts/check-d091-anti-patterns";
 
 const L = (s: string) => s.split("\n");
@@ -81,5 +82,25 @@ describe("detectServiceRoleTenant (1)", () => {
   });
   it("honors the inline escape hatch", () => {
     expect(detectServiceRoleTenant("f.ts", svc(`// d091-allow:service-role-tenant platform-scoped read, no tenant column\nawait db.from("bookings").select("*").eq("id", id);`))).toEqual([]);
+  });
+});
+
+describe("computeNewViolations — count-based baseline", () => {
+  const V = (snippet: string, line = 1) => ({ id: "secret-eq", file: "f.ts", line, snippet, why: "" });
+  const KEY = "f.ts\tsecret-eq\ttok === x";
+
+  it("allows occurrences up to the baselined count", () => {
+    const baseline = new Map([[KEY, 2]]);
+    expect(computeNewViolations([V("tok === x", 1), V("tok === x", 2)], baseline)).toEqual([]);
+  });
+
+  it("flags a NEW duplicate of a baselined line beyond its count (the WARNING-1 fix)", () => {
+    const baseline = new Map([[KEY, 1]]);
+    const out = computeNewViolations([V("tok === x", 1), V("tok === x", 2)], baseline);
+    expect(out).toHaveLength(1); // the 2nd occurrence is new
+  });
+
+  it("flags an entirely unbaselined hit", () => {
+    expect(computeNewViolations([V("brand new")], new Map())).toHaveLength(1);
   });
 });
