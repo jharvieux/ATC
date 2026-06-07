@@ -54,3 +54,14 @@ next-env.d.ts
 
 # tesseract.js language data — downloaded at first OCR call, not source
 *.traineddata
+
+# Local security-scan tool output + scaffolding (2026-06-05 scan). The findings
+# are tracked as issues #715–#757; the raw artifacts are kept local, not in git
+# (they enumerate unfixed-vuln detail). Re-generate with the scan tool, not VCS.
+/.agents/
+/.triage-state/
+/.claude/skills/
+/skills-lock.json
+/apps/main/src/THREAT_MODEL.md
+/apps/main/src/VULN-FINDINGS.json
+/apps/main/src/VULN-FINDINGS.md

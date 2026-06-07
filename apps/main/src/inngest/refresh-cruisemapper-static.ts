@@ -232,8 +232,46 @@ async function markInventory(db: SupabaseClient, url: string, status: string, er
   }).eq("url", url), "cruisemapper_url_inventory.update");
 }
 
+// Decide the inventory row update from a RAG reference-ingest outcome.
+// content_hash is stamped ONLY when the content is in RAG (ingested/updated/
+// unchanged) or was definitively rejected (quarantined) — never on a transient
+// server_error, so a failed ingest is retried by the next run's unconditional
+// GET instead of being masked as "unchanged" (the 2026-06-06 sailing gap, same
+// root cause: stamping the change-detection hash before the write is confirmed).
+export function referenceIngestOutcome(
+  outcome: { status: string; chunk_id?: string | null; reason?: string; httpStatus?: number },
+  bodyHash: string,
+): { update: Record<string, unknown>; delta: Partial<KindRunResult> } {
+  const update: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+  switch (outcome.status) {
+    case "ingested":
+      update.last_ingest_status = "ingested";
+      update.content_hash = bodyHash;
+      if (outcome.chunk_id) update.related_chunk_id = outcome.chunk_id;
+      return { update, delta: { ingested: 1 } };
+    case "updated":
+      update.last_ingest_status = "updated";
+      update.content_hash = bodyHash;
+      if (outcome.chunk_id) update.related_chunk_id = outcome.chunk_id;
+      return { update, delta: { updated: 1 } };
+    case "unchanged":
+      update.last_ingest_status = "unchanged";
+      update.content_hash = bodyHash;
+      return { update, delta: { unchanged_rag: 1 } };
+    case "quarantined":
+      update.last_ingest_status = "quarantined";
+      update.last_error = outcome.reason ?? "quarantined_by_rag";
+      update.content_hash = bodyHash;
+      return { update, delta: { injection_quarantined: 1 } };
+    default:
+      update.last_ingest_status = "server_error";
+      update.last_error = outcome.reason ?? `HTTP ${outcome.httpStatus ?? "?"}`;
+      return { update, delta: { errors: 1 } };
+  }
+}
+
 // Apply a RAG reference-ingest outcome to the per-URL result counters and the
-// inventory row (records content_hash so the next run can change-detect).
+// inventory row.
 async function finalizeIngest(
   result: KindRunResult,
   outcome: Awaited<ReturnType<typeof ingestReferenceToRag>>,
@@ -241,33 +279,9 @@ async function finalizeIngest(
   url: string,
   bodyHash: string,
 ): Promise<void> {
-  const updateRow: Record<string, unknown> = { last_seen_at: new Date().toISOString(), content_hash: bodyHash };
-  switch (outcome.status) {
-    case "ingested":
-      result.ingested = 1;
-      updateRow.last_ingest_status = "ingested";
-      if (outcome.chunk_id) updateRow.related_chunk_id = outcome.chunk_id;
-      break;
-    case "updated":
-      result.updated = 1;
-      updateRow.last_ingest_status = "updated";
-      if (outcome.chunk_id) updateRow.related_chunk_id = outcome.chunk_id;
-      break;
-    case "unchanged":
-      result.unchanged_rag = 1;
-      updateRow.last_ingest_status = "unchanged";
-      break;
-    case "quarantined":
-      result.injection_quarantined = 1;
-      updateRow.last_ingest_status = "quarantined";
-      updateRow.last_error = outcome.reason ?? "quarantined_by_rag";
-      break;
-    default:
-      result.errors = 1;
-      updateRow.last_ingest_status = "server_error";
-      updateRow.last_error = outcome.reason ?? `HTTP ${outcome.httpStatus ?? "?"}`;
-  }
-  await safeAwait(db.from("cruisemapper_url_inventory").update(updateRow).eq("url", url), "cruisemapper_url_inventory.update");
+  const { update, delta } = referenceIngestOutcome(outcome, bodyHash);
+  Object.assign(result, delta);
+  await safeAwait(db.from("cruisemapper_url_inventory").update(update).eq("url", url), "cruisemapper_url_inventory.update");
 }
 
 // Process ONE port or deck-plan URL: fetch → parse → screen → RAG ingest.

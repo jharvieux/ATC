@@ -53,12 +53,12 @@ function mockDb(state: DbState) {
         order() {
           return this;
         },
-        limit() {
-          if (this._count) {
-            return Promise.resolve({ count: state.pending.filter((p) => p.status === "pending").length, error: null });
-          }
-          const rows = state.pending.filter((p) => p.status === (this._eqStatus ?? "pending")).slice(0, 200);
-          return Promise.resolve({ data: rows, error: null });
+        range(from: number, to: number) {
+          // Simulate PostgREST's ~1,000-row response cap (db-max-rows) so the
+          // flush's #808 pagination loop is actually exercised.
+          const all = state.pending.filter((p) => p.status === (this._eqStatus ?? "pending"));
+          const end = Math.min(to + 1, from + 1000);
+          return Promise.resolve({ data: all.slice(from, end), error: null });
         },
         update(payload: Record<string, unknown>) {
           return {
@@ -134,6 +134,50 @@ describe("flushPendingEmbeddings", () => {
     expect(state.updates).toHaveLength(1);
     expect(state.updates[0]?.ids).toEqual(["p1", "p2"]);
     expect(state.updates[0]?.payload.status).toBe("submitted");
+    expect(state.pending.every((p) => p.status === "submitted")).toBe(true);
+  });
+
+  it("chunks the status-flip into ≤200-id updates for a large batch — one OpenAI batch (#805)", async () => {
+    // Regression guard for #805: an un-chunked .in() with up to 2,000 ids exceeds
+    // PostgREST's URL limit; the flip must be chunked while still creating ONE
+    // OpenAI batch per flush. 450 ids → 3 chunks (200, 200, 50).
+    const pending = Array.from({ length: 450 }, (_, i) => ({
+      id: `p${i}`, chunk_id: `c${i}`, content: `t${i}`, custom_id: `cu${i}`,
+      status: "pending", batch_id: null, openai_file_id: null, output_file_id: null,
+      error_detail: null, queued_at: `2026-06-04T00:00:00.${String(i).padStart(3, "0")}Z`,
+      submitted_at: null, completed_at: null,
+    }));
+    const state: DbState = { pending, updates: [] };
+    const db = mockDb(state);
+
+    const out = await flushPendingEmbeddings({ db });
+
+    expect(out.flushed).toBe(450);
+    expect(uploadBatchInputFile).toHaveBeenCalledOnce();
+    expect(createEmbeddingBatch).toHaveBeenCalledOnce();
+    expect(state.updates).toHaveLength(3);
+    expect(state.updates.every((u) => u.ids.length <= 200)).toBe(true);
+    expect(state.updates.flatMap((u) => u.ids)).toHaveLength(450);
+    expect(state.pending.every((p) => p.status === "submitted")).toBe(true);
+  });
+
+  it("paginates the SELECT past PostgREST's ~1,000-row cap to assemble a full batch (#808)", async () => {
+    const pending = Array.from({ length: 1500 }, (_, i) => ({
+      id: `p${i}`, chunk_id: `c${i}`, content: `t${i}`, custom_id: `cu${i}`,
+      status: "pending", batch_id: null, openai_file_id: null, output_file_id: null,
+      error_detail: null, queued_at: "2026-06-04T00:00:00Z", submitted_at: null, completed_at: null,
+    }));
+    const state: DbState = { pending, updates: [] };
+    const db = mockDb(state);
+
+    const out = await flushPendingEmbeddings({ db });
+
+    // The mock caps each range() at 1,000; pagination must assemble all 1,500 into
+    // ONE batch (without the #808 loop a single capped SELECT yields only 1,000).
+    expect(out.flushed).toBe(1500);
+    expect(uploadBatchInputFile).toHaveBeenCalledOnce();
+    const jsonl = (uploadBatchInputFile as unknown as { mock: { calls: [string][] } }).mock.calls[0]?.[0];
+    expect((jsonl as string).split("\n")).toHaveLength(1500);
     expect(state.pending.every((p) => p.status === "submitted")).toBe(true);
   });
 });

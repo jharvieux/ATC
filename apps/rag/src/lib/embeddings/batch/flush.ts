@@ -17,7 +17,7 @@
 // matter for retrieval correctness.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { bulkFlipPendingStatus } from "./bulk-flip";
 import {
   uploadBatchInputFile,
   createEmbeddingBatch,
@@ -31,14 +31,18 @@ export interface FlushResult {
   remaining: number;
 }
 
-// OpenAI Batch API caps each batch at 50,000 requests / 200 MB. We bundle up
-// to 200 embeddings per flush — comfortably below both ceilings, large enough
-// that the 10-minute flush cadence keeps backlog bounded under heavy ingest
-// (~1,200 chunks/hour throughput at steady state), and small enough that a
-// single failed batch only forces re-embedding ≤200 rows. Anthropic's neighbour
-// (apps/main/src/lib/ai/batch/flush.ts) uses 50 because message-batch payloads
-// are 10–20× larger per row than embedding inputs.
-const MAX_REQUESTS_PER_BATCH = 200;
+// OpenAI Batch API caps each batch at 50,000 requests / 200 MB. We bundle up to
+// 2,000 embeddings per flush — comfortably below both ceilings (a 2,000-row
+// input is ~1 MB; chunk content averages ~400 bytes), giving ~12,000 chunks/hour
+// at the 10-minute cadence so bulk backfills drain quickly. Safe at 2,000 on both
+// sides of the round-trip: the flush flips status via bulkFlipPendingStatus
+// (chunked .in() — an un-chunked 2,000-id flip exceeds PostgREST's URL limit and
+// 500-loops, #805) and the reconciler (#789) applies completed batches via
+// bounded-concurrency writes + bulked flips + a per-run row budget. A single
+// failed batch re-embeds ≤2,000 rows (~$0.04 — negligible). The Anthropic
+// neighbour (apps/main/src/lib/ai/batch/flush.ts) uses 50 because message-batch
+// payloads are 10–20× larger per row than embedding inputs.
+const MAX_REQUESTS_PER_BATCH = 2_000;
 
 function embeddingModel(): string {
   return process.env.OPENAI_EMBEDDING_MODEL ?? "text-embedding-3-small";
@@ -59,16 +63,27 @@ export async function flushPendingEmbeddings(args: {
 }): Promise<FlushResult> {
   const { db } = args;
 
-  const { data, error } = await db
-    .from("pending_embedding")
-    .select("id, chunk_id, content, custom_id, status, batch_id, openai_file_id, output_file_id, error_detail, queued_at, submitted_at, completed_at")
-    .eq("status", "pending")
-    .order("queued_at", { ascending: true })
-    .limit(MAX_REQUESTS_PER_BATCH);
-  if (error) {
-    throw new Error(`flushPendingEmbeddings: pending lookup failed: ${error.message}`);
+  // Pull up to MAX_REQUESTS_PER_BATCH pending rows, FIFO. PostgREST caps any
+  // single response at ~1,000 rows (db-max-rows) regardless of .limit(), so page
+  // in 1,000-row windows (#788/#808) to assemble a full batch. The rows aren't
+  // flipped until below, so offset-based paging over status='pending' is stable.
+  const PAGE = 1_000;
+  const pending: PendingEmbeddingRow[] = [];
+  while (pending.length < MAX_REQUESTS_PER_BATCH) {
+    const want = Math.min(PAGE, MAX_REQUESTS_PER_BATCH - pending.length);
+    const { data, error } = await db
+      .from("pending_embedding")
+      .select("id, chunk_id, content, custom_id, status, batch_id, openai_file_id, output_file_id, error_detail, queued_at, submitted_at, completed_at")
+      .eq("status", "pending")
+      .order("queued_at", { ascending: true })
+      .range(pending.length, pending.length + want - 1);
+    if (error) {
+      throw new Error(`flushPendingEmbeddings: pending lookup failed: ${error.message}`);
+    }
+    const rows = (data ?? []) as PendingEmbeddingRow[];
+    pending.push(...rows);
+    if (rows.length < want) break;
   }
-  const pending = (data ?? []) as PendingEmbeddingRow[];
   if (pending.length === 0) {
     return { flushed: 0, remaining: 0 };
   }
@@ -97,19 +112,18 @@ export async function flushPendingEmbeddings(args: {
   const fileId = await uploadBatchInputFile(jsonl);
   const batchId = await createEmbeddingBatch(fileId);
 
-  await safeAwait(
-    db
-      .from("pending_embedding")
-      .update({
-        status: "submitted",
-        batch_id: batchId,
-        openai_file_id: fileId,
-        submitted_at: new Date().toISOString(),
-      })
-      .in(
-        "id",
-        pending.map((p) => p.id),
-      ),
+  // Flip to 'submitted' in ≤200-id chunks. The OpenAI batch is already created
+  // above, so an un-chunked .in() with up to 2,000 ids would exceed PostgREST's
+  // URL limit, throw, and 500-loop while re-billing batches (#805).
+  await bulkFlipPendingStatus(
+    db,
+    pending.map((p) => p.id),
+    {
+      status: "submitted",
+      batch_id: batchId,
+      openai_file_id: fileId,
+      submitted_at: new Date().toISOString(),
+    },
     "pending_embedding.update.submitted",
   );
 

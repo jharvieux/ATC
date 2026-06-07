@@ -58,6 +58,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
       .from("forums")
       .select("*")
       .eq("id", msg.forum_id)
+      .eq("tenant_id", ctx.tenant_id)
       .single();
 
     const userPerms = {

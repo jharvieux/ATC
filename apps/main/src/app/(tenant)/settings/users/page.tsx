@@ -2,9 +2,10 @@
 
 // §26.2 — Tenant team management page.
 //
-// Lists all active members of the current tenant. Tenant owners get an
-// inline role-selection dropdown for each member; agents and viewers see
-// the list read-only.
+// Lists all active members of the current tenant. Tenant owners get an inline
+// role-selection dropdown per member; agents and viewers see roles read-only.
+// The caller's role comes from the list response, so non-owners never see a
+// dropdown that 403s on click.
 
 import { useEffect, useState } from "react";
 import {
@@ -46,11 +47,11 @@ const ROLES: Role[] = ["tenant_owner", "agent", "viewer"];
 
 export default function TeamMembersPage(): JSX.Element {
   const [members, setMembers] = useState<Member[]>([]);
+  const [callerRole, setCallerRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const [canEdit, setCanEdit] = useState<boolean | null>(null); // null = unknown
 
   useEffect(() => {
     void load();
@@ -65,8 +66,9 @@ export default function TeamMembersPage(): JSX.Element {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      const data = (await res.json()) as { members: Member[] };
+      const data = (await res.json()) as { members: Member[]; caller_role: Role };
       setMembers(data.members ?? []);
+      setCallerRole(data.caller_role ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -86,13 +88,6 @@ export default function TeamMembersPage(): JSX.Element {
       });
       const body = (await res.json()) as { ok?: boolean; error?: string; detail?: string };
       if (!res.ok) {
-        if (res.status === 403) {
-          setCanEdit(false);
-          throw new Error(
-            body.detail ??
-              "You don't have permission to change roles. Only owners can.",
-          );
-        }
         throw new Error(body.detail ?? body.error ?? `HTTP ${res.status}`);
       }
       setStatusMsg(`Updated role to ${ROLE_LABELS[newRole]}.`);
@@ -106,13 +101,9 @@ export default function TeamMembersPage(): JSX.Element {
     }
   }
 
-  // Try to detect whether the current user can edit by probing the role
-  // endpoint with a no-op (we don't actually know our own role from the
-  // members list — the page is rendered before we know which row is "me").
-  // For now, attempt an edit and react to 403. The dropdown is visible
-  // optimistically; clicking it surfaces the 403 if the current user is
-  // not an owner.
-  const showRoleSelectors = canEdit !== false;
+  // Only owners can change roles (team_members:update_role). Derived from the
+  // caller's role in the list response — no optimistic dropdown + 403 probe.
+  const canEdit = callerRole === "tenant_owner";
 
   return (
     <main className="p-8 max-w-[960px]">
@@ -161,7 +152,7 @@ export default function TeamMembersPage(): JSX.Element {
                     <td className="px-4 py-3 text-sm">{name}</td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{m.email}</td>
                     <td className="px-4 py-3 text-sm">
-                      {showRoleSelectors ? (
+                      {canEdit ? (
                         <Select
                           value={m.role}
                           onValueChange={(v) => void changeRole(m.id, v as Role)}
@@ -177,7 +168,7 @@ export default function TeamMembersPage(): JSX.Element {
                           </SelectContent>
                         </Select>
                       ) : (
-                        <span>{ROLE_LABELS[m.role]}</span>
+                        <span title={ROLE_DESCRIPTIONS[m.role]}>{ROLE_LABELS[m.role]}</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">

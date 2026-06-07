@@ -49,6 +49,12 @@ jobs:
       - name: Duplication guard (jscpd)
         run: pnpm check:duplication
 
+      - name: D-091 anti-pattern gates (#815)
+        # Deterministic backstops for the recurring D-091 anti-patterns the
+        # probabilistic d091-reviewer subagent has missed. Fails on NEW hits;
+        # existing debt is baselined in scripts/d091-baseline.txt.
+        run: pnpm check:d091
+
       - name: Typecheck
         run: pnpm -r typecheck
 
@@ -61,6 +67,12 @@ jobs:
         # apps/main/test/error-injection/README.md and
         # docs/runbooks/error-injection-probe-design.md.
         run: pnpm test:error-injection
+
+      - name: RAG unit tests (#792)
+        # The root vitest config (vitest.config.ts) only includes apps/main +
+        # tests/, so apps/rag's unit suite never ran in CI — RAG bugs (#805/#807/
+        # #808) merged with zero CI coverage. Run apps/rag's own vitest here.
+        run: pnpm test:rag
 
       - name: Build
         run: pnpm -r build

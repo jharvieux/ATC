@@ -33,15 +33,21 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
+import { loadInventoryByKind } from "@/lib/external/cruisemapper/discovery";
 import { processSailingHtml, emptySailingResult, mergeSailing, type SailingRunResult } from "@/lib/external/cruisemapper/sailing-ingest";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PARSE_FAILURE_HALT_RATIO = 0.05;
 const MIN_SAMPLES_BEFORE_HALT = 20;
-// Ship pages per step. Smaller than the static job's batches because sailing
-// ingest does many serial RAG itinerary POSTs per ship.
-const SAILING_CHUNK = 5;
+// Per-step wall-clock budget (#796/#842). The SAME deadline bounds two loops:
+// the inter-ship loop here (stop starting new ships) AND each ship's detail-fetch
+// loop in processSailingHtml (stop enriching, defer the rest). Before #842 only
+// the inter-ship loop respected it, so a single high-sailing-count ship's 1-req/
+// sec detail fetches could run one step past Vercel's 300s maxDuration →
+// FUNCTION_INVOCATION_TIMEOUT. Bounding the detail loop too caps the overshoot at
+// roughly one in-flight wave (~10-15s), so 240s stays comfortably under 300s.
+const STEP_BUDGET_MS = 240_000;
 
 const AUDIT_META = {
   admin_user_id: "system-cron",
@@ -56,7 +62,8 @@ export interface SailingUrlResult {
   parse_failed: number; // 0 | 1
 }
 
-interface SailingBatchResult {
+interface SailingWindowResult {
+  nextIndex: number;
   attempted: number;
   sailing: SailingRunResult;
   fetch_unchanged: number;
@@ -72,6 +79,81 @@ export function sailingHaltReason(attempted: number, parseFailures: number): str
   const ratio = parseFailures / attempted;
   if (ratio <= PARSE_FAILURE_HALT_RATIO) return null;
   return `sailing parse_failure_rate ${(ratio * 100).toFixed(1)}% > ${(PARSE_FAILURE_HALT_RATIO * 100).toFixed(0)}% after ${attempted} pages`;
+}
+
+// Decide the inventory row update for one ship from its parse + RAG-ingest
+// result. content_hash is stamped ONLY when the current itinerary actually
+// reached RAG (parsed AND landed) — never on a parse failure or a RAG outage —
+// so a failed ingest is retried by the next run's unconditional GET instead of
+// being masked as "unchanged". Root cause of the 2026-06-06 gap: the stamp was
+// keyed on the local parse alone, so 117 ships whose RAG POST failed during a
+// RAG outage were marked "ingested" with a hash and then skipped forever.
+export function sailingIngestOutcome(
+  parseSucceeded: boolean,
+  landedInRag: boolean,
+  bodyHash: string,
+): { update: Record<string, unknown>; parse_failed: 0 | 1 } {
+  const update: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+  if (!parseSucceeded) {
+    update.last_ingest_status = "parse_failed";
+    update.last_error = "sailing_parser_returned_null";
+    return { update, parse_failed: 1 };
+  }
+  if (!landedInRag) {
+    // Parsed fine but the RAG POST didn't land — a transient/outage failure, not
+    // a parser problem, so it must NOT count toward the parse-failure halt.
+    update.last_ingest_status = "ingest_failed";
+    update.last_error = "rag_itinerary_ingest_failed";
+    return { update, parse_failed: 0 };
+  }
+  update.last_ingest_status = "ingested";
+  update.last_error = null;
+  update.content_hash = bodyHash; // stamped ONLY here — a parse or RAG failure must leave no hash
+  return { update, parse_failed: 0 };
+}
+
+export interface SailingPageDeltas {
+  /** A current sailing parsed this page. */
+  hadCurrent: boolean;
+  /** No current sailing, but a recognizable ship page (future/river/retired). */
+  noCurrentButValidShip: boolean;
+  /** The current sailing reached RAG. */
+  currentLanded: boolean;
+  /** At least one upcoming-list item reached RAG this run. */
+  listLanded: boolean;
+  /** At least one upcoming-list item was skipped because already-enriched. */
+  listSkippedEnriched: boolean;
+  /** The page had any upcoming-list items at all. */
+  listHadItems: boolean;
+}
+
+// Derive the (validShipPage, landedInRag) inputs to sailingIngestOutcome from one
+// ship page's counter deltas. Split out so the content_hash-stamping decision —
+// the D-171 masking-bug surface — is unit-tested directly (#827 f/u).
+//   • validShipPage: a current sailing OR a recognizable no-current ship; only an
+//     unrecognizable page is a parse failure that feeds the halt.
+//   • landedInRag: with a current sailing, gate on it reaching RAG (preserves the
+//     #770 RAG-outage retry). With NO current sailing, the page is fully handled
+//     when its list landed, was ALREADY enriched (skipped), or had no items — but
+//     NOT when it had items that all failed to land (→ retry, never a false
+//     "unchanged" stamp).
+export function sailingPageOutcomeInputs(d: SailingPageDeltas): { validShipPage: boolean; landedInRag: boolean } {
+  const validShipPage = d.hadCurrent || d.noCurrentButValidShip;
+  const landedInRag = d.hadCurrent
+    ? d.currentLanded
+    : d.listLanded || d.listSkippedEnriched || !d.listHadItems;
+  return { validShipPage, landedInRag };
+}
+
+// Ferries CruiseMapper lists alongside cruise ships have no ocean-cruise sailing
+// to parse, so they always "parse_failed" and inflate the parse-failure halt
+// rate without signalling a real parser break (#819). Their URL slug carries a
+// hyphen-delimited "-ferry-" token (e.g. .../ships/Stena-Estrid-ferry-2159) — a
+// substring like "Ferryland" is NOT matched. Ship intel for them still lands via
+// the quarterly static cron; only sailing-itinerary ingest skips them. The run
+// summary reports `ferries_skipped` so the filter is auditable in prod.
+export function isNonCruiseSailingUrl(url: string): boolean {
+  return /-ferry-/i.test(url);
 }
 
 export const refreshCruisemapperSailings = inngest.createFunction(
@@ -97,7 +179,8 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       }),
     );
 
-    const shipUrls = await step.run("load-ships", () => loadShipUrls(createServiceRoleClient()));
+    const allShipUrls = await step.run("load-ships", () => loadInventoryByKind(createServiceRoleClient(), "ship"));
+    const shipUrls = allShipUrls.filter((u) => !isNonCruiseSailingUrl(u));
 
     const sailing = emptySailingResult();
     let fetchUnchanged = 0;
@@ -107,26 +190,31 @@ export const refreshCruisemapperSailings = inngest.createFunction(
     let halted = false;
     let haltReasonStr: string | undefined;
 
-    for (let i = 0; i < shipUrls.length; i += SAILING_CHUNK) {
-      const batch = shipUrls.slice(i, i + SAILING_CHUNK);
-      const r = await step.run(`sailing-${i / SAILING_CHUNK}`, () => processSailingBatch(batch));
+    let cursor = 0;
+    let stepNum = 0;
+    while (cursor < shipUrls.length) {
+      const start = cursor;
+      const r = await step.run(`sailing-${stepNum}`, () => processSailingWindow(shipUrls, start));
       attempted += r.attempted;
       mergeSailing(sailing, r.sailing);
       fetchUnchanged += r.fetch_unchanged;
       fetchErrors += r.fetch_errors;
       parseFailures += r.parse_failed;
+      cursor = r.nextIndex;
+      stepNum += 1;
 
       const reason = sailingHaltReason(attempted, parseFailures);
       if (reason) {
         halted = true;
         haltReasonStr = reason;
-        await step.run(`halt-${i / SAILING_CHUNK}`, () => alertSailingHalt(attempted, parseFailures, reason));
+        await step.run(`halt-${stepNum - 1}`, () => alertSailingHalt(attempted, parseFailures, reason));
         break;
       }
     }
 
     return {
       ship_pages_attempted: shipUrls.length,
+      ferries_skipped: allShipUrls.length - shipUrls.length,
       ...sailing,
       fetch_unchanged: fetchUnchanged,
       fetch_errors: fetchErrors,
@@ -136,21 +224,55 @@ export const refreshCruisemapperSailings = inngest.createFunction(
   },
 );
 
-// Process a batch of ship pages in one step, aggregating the per-URL results.
-async function processSailingBatch(urls: string[]): Promise<SailingBatchResult> {
+// Process ship pages starting at `start` in one step, stopping once the wall-
+// clock budget is spent so the step can't exceed maxDuration (#796). The
+// orchestrator resumes from the returned nextIndex.
+async function processSailingWindow(urls: string[], start: number): Promise<SailingWindowResult> {
   const db = createServiceRoleClient();
+  return runSailingWindow(urls, start, STEP_BUDGET_MS, (url, deadlineMs) => processOneSailingUrl(db, url, deadlineMs));
+}
+
+// Core windowing loop, separated from the service-role wiring so it's unit-
+// testable: process `urls` from `start` via `processOne`, stopping once `now()`
+// passes the deadline. Always advances at least one ship per call so the run
+// makes progress even if a single ship alone exceeds the budget.
+export async function runSailingWindow(
+  urls: string[],
+  start: number,
+  budgetMs: number,
+  processOne: (url: string, deadlineMs: number) => Promise<SailingUrlResult>,
+  now: () => number = Date.now,
+): Promise<SailingWindowResult> {
   const sailing = emptySailingResult();
   let fetch_unchanged = 0;
   let fetch_errors = 0;
   let parse_failed = 0;
-  for (const url of urls) {
-    const r = await processOneSailingUrl(db, url);
+  let attempted = 0;
+  const deadline = now() + budgetMs;
+  let i = start;
+  while (i < urls.length) {
+    let r: SailingUrlResult;
+    try {
+      r = await processOne(urls[i]!, deadline);
+    } catch (err) {
+      // #842 — a SINGLE ship's unexpected throw (e.g. a transient Supabase
+      // pooler/connection error on its inventory read/write) must NOT fail the
+      // whole step + run. Count it as a fetch error and continue; the ship keeps
+      // a null content_hash and is retried next run. Without this, Inngest re-runs
+      // the step, re-hits the same ship, and eventually marks the run failed
+      // ("unknown error from the app"). NOT counted toward the parse-failure halt.
+      console.error(`[sailing-cron] ship processing threw — counting as fetch_error + continuing: ${urls[i]}`, err);
+      r = { sailing: emptySailingResult(), fetch_unchanged: 0, fetch_errors: 1, parse_failed: 0 };
+    }
     mergeSailing(sailing, r.sailing);
     fetch_unchanged += r.fetch_unchanged;
     fetch_errors += r.fetch_errors;
     parse_failed += r.parse_failed;
+    attempted += 1;
+    i += 1;
+    if (now() >= deadline) break;
   }
-  return { attempted: urls.length, sailing, fetch_unchanged, fetch_errors, parse_failed };
+  return { nextIndex: i, attempted, sailing, fetch_unchanged, fetch_errors, parse_failed };
 }
 
 async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
@@ -161,15 +283,6 @@ async function alertSailingHalt(attempted: number, parseFailures: number, reason
     payload: { attempted, failures: parseFailures },
   });
   return { alerted: true };
-}
-
-async function loadShipUrls(db: SupabaseClient): Promise<string[]> {
-  const { data, error } = await db
-    .from("cruisemapper_url_inventory")
-    .select("url")
-    .eq("kind", "ship");
-  if (error) throw new Error(`cruisemapper_url_inventory.select failed: ${error.message}`);
-  return ((data ?? []) as Array<{ url: string }>).map((r) => r.url);
 }
 
 async function priorShipHash(db: SupabaseClient, url: string): Promise<string | undefined> {
@@ -186,7 +299,7 @@ async function priorShipHash(db: SupabaseClient, url: string): Promise<string | 
 // Process ONE ship page's sailing data: conditional GET → parse current sailing
 // + upcoming list → RAG + pricing cache via processSailingHtml. Returns the
 // single-URL counters the batch aggregates.
-async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<SailingUrlResult> {
+async function processOneSailingUrl(db: SupabaseClient, url: string, deadlineMs: number = Number.POSITIVE_INFINITY): Promise<SailingUrlResult> {
   const sailing = emptySailingResult();
 
   const previousBodyHash = await priorShipHash(db, url);
@@ -215,23 +328,37 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
     return { sailing, fetch_unchanged: 0, fetch_errors: 1, parse_failed: 0 };
   }
 
-  const beforeParsed = sailing.current_parsed;
-  await processSailingHtml(db, fetched.body, url, sailing);
-  const parseSucceeded = sailing.current_parsed > beforeParsed;
+  const before = {
+    current_parsed: sailing.current_parsed,
+    no_current_sailing: sailing.no_current_sailing,
+    current_ingested: sailing.current_ingested,
+    list_ingested: sailing.list_ingested,
+    list_details_skipped_enriched: sailing.list_details_skipped_enriched,
+    list_items: sailing.list_items,
+    list_details_deferred: sailing.list_details_deferred,
+  };
+  await processSailingHtml(db, fetched.body, url, sailing, deadlineMs);
+  // Compute the outcome from this page's counter deltas (see sailingPageOutcomeInputs:
+  // valid-ship + landed-in-RAG, the content_hash-stamping / parse-failure-halt surface).
+  const { validShipPage, landedInRag } = sailingPageOutcomeInputs({
+    hadCurrent: sailing.current_parsed > before.current_parsed,
+    noCurrentButValidShip: sailing.no_current_sailing > before.no_current_sailing,
+    currentLanded: sailing.current_ingested > before.current_ingested,
+    listLanded: sailing.list_ingested > before.list_ingested,
+    listSkippedEnriched: sailing.list_details_skipped_enriched > before.list_details_skipped_enriched,
+    listHadItems: sailing.list_items > before.list_items,
+  });
 
-  // Stamp the body hash so next month's conditional GET skips unchanged pages.
+  // #842 — if the detail-fetch deadline left sailings un-enriched, the page did
+  // NOT fully land: withhold the content_hash so the next run resumes the ship
+  // (already-enriched sailings skip via the gate). Still a valid ship and not a
+  // parse failure — only the "fully landed" signal is suppressed.
+  const deferred = sailing.list_details_deferred > before.list_details_deferred;
+  const { update, parse_failed } = sailingIngestOutcome(validShipPage, landedInRag && !deferred, fetched.bodyHash);
   await safeAwait(
-    db.from("cruisemapper_url_inventory")
-      .update({
-        last_seen_at: new Date().toISOString(),
-        content_hash: fetched.bodyHash,
-        last_ingest_status: parseSucceeded ? "ingested" : "parse_failed",
-        last_error: parseSucceeded ? null : "sailing_parser_returned_null",
-      })
-      .eq("url", url)
-      .eq("kind", "ship"),
+    db.from("cruisemapper_url_inventory").update(update).eq("url", url).eq("kind", "ship"),
     "cruisemapper_url_inventory.update.sailing",
   );
 
-  return { sailing, fetch_unchanged: 0, fetch_errors: 0, parse_failed: parseSucceeded ? 0 : 1 };
+  return { sailing, fetch_unchanged: 0, fetch_errors: 0, parse_failed };
 }

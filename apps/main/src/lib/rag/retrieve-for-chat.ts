@@ -44,6 +44,22 @@ export interface RetrieveForChatResult {
   assets: RetrievedAsset[];
 }
 
+// #826 — derive structured itinerary-lookup params from extracted entities.
+// Fires only when the message names BOTH a ship and a start date; otherwise
+// returns null and retrieval stays vector-only.
+export function buildItineraryLookup(
+  entities: EntitySet,
+): { ship: string; sail_date_from: string; sail_date_to?: string } | null {
+  const ship = entities.ships[0];
+  const from = entities.travel_dates.earliest;
+  if (!ship || !from) return null;
+  return {
+    ship,
+    sail_date_from: from,
+    ...(entities.travel_dates.latest ? { sail_date_to: entities.travel_dates.latest } : {}),
+  };
+}
+
 export async function retrieveForChat(
   input: RetrieveForChatInput,
 ): Promise<RetrieveForChatResult> {
@@ -65,6 +81,10 @@ export async function retrieveForChat(
   ];
   const query = queryParts.filter((s) => s && s.length > 0).join(" ").trim();
 
+  // #826 — if the message names a ship + a specific date, ask for a STRUCTURED
+  // exact-date itinerary match (vector search can't reliably surface it).
+  const itinerary_lookup = buildItineraryLookup(entities);
+
   // Step 3: call the RAG service /retrieve.
   const ragChunks = await callRagRetrieve({
     query,
@@ -74,6 +94,7 @@ export async function retrieveForChat(
     persona_id: input.persona_id,
     top_k: 10,
     include_closed_promos_for_contact: input.contact_id ?? null,
+    itinerary_lookup,
   });
 
   // Step 4: filter.
@@ -116,6 +137,7 @@ interface RagRetrieveCallInput {
   persona_id: string;
   top_k: number;
   include_closed_promos_for_contact: string | null;
+  itinerary_lookup: { ship: string; sail_date_from: string; sail_date_to?: string } | null;
 }
 
 interface RagRetrieveCallResult {

@@ -1,10 +1,12 @@
 // #485 §33.4 — CruiseMapper sailing/itinerary parser.
 //
 // Reality (verified against a live ship page, 2026-05-30): per-day itinerary
-// data lives on the SHIP page, not a separate /cruises/<slug> page. The
-// "Current itinerary of <ship>" block holds one fully-detailed day-by-day
-// table (div.cruiseItinerariesCurrent > table). This parser extracts that
-// sailing.
+// data for the CURRENT sailing lives on the SHIP page (div.cruiseItinerariesCurrent
+// > table). #827 (verified 2026-06-07): each UPCOMING sailing's day-by-day is
+// also fetchable via the /ships/cruise.json?id=<row-id> AJAX endpoint, whose
+// fragment uses the same td.date / td.text row shape — so the row-classify
+// (classifyItineraryRows) and sea-day assembly (assembleItinerary) are shared
+// with cruise-expand-parser.ts rather than duplicated.
 //
 // Two structural facts that drive the logic:
 //   1. SEA DAYS ARE IMPLICIT. The table lists only port days + embark/
@@ -63,7 +65,7 @@ const REGION_TOKENS = [
   "Asia", "Antarctica", "Greek Isles", "Bermuda", "Canada", "New England",
 ];
 
-function collapse(s: string): string {
+export function collapse(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
@@ -79,12 +81,12 @@ function daysBetween(startIso: string, endIso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-function addDays(iso: string, n: number): string {
+export function addDays(iso: string, n: number): string {
   const t = Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000;
   return new Date(t).toISOString().slice(0, 10);
 }
 
-interface RawRow {
+export interface ClassifiedItineraryRow {
   day: number;
   monthIdx: number;
   times: string[];
@@ -95,7 +97,7 @@ interface RawRow {
 
 // "01 Jun 10:00 - 18:00" → { day:1, monthIdx:5, times:["10:00","18:00"] }
 // "02 Jun" → { day:2, monthIdx:5, times:[] }
-function parseDateCell(raw: string): { day: number; monthIdx: number; times: string[] } | null {
+export function parseDateCell(raw: string): { day: number; monthIdx: number; times: string[] } | null {
   const m = /^\s*(\d{1,2})\s+([A-Za-z]{3,})\s*(.*)$/.exec(collapse(raw));
   if (!m) return null;
   const day = parseInt(m[1] ?? "", 10);
@@ -130,32 +132,15 @@ export function regionFromTitle(title: string): string | null {
   return null;
 }
 
-export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing | null {
-  const $ = cheerio.load(html);
-
-  const shipName = collapse($("h1").first().text());
-  if (!shipName) return null;
-
-  const table = $(".cruiseItinerariesCurrent table").first();
-  if (table.length === 0) return null;
-
-  // Current-cruise prose paragraph: "<title strong>. Prices start from USD
-  // 919 ... begins on May 30, 2026 and ends on June 6, 2026." Scope to this
-  // <p> so the price/title don't bleed in from the all-itineraries list.
-  const proseEl = $("#current_cruise").nextAll("p").first();
-  const prose = collapse(proseEl.text()) || collapse($("body").text());
-  const beginMatch = /begins on\s+([a-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
-  const endMatch = /ends on\s+([a-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
-  const begin = beginMatch ? parseLongDate(beginMatch[1] ?? "") : null;
-  if (!begin) return null;
-  const end = endMatch ? parseLongDate(endMatch[1] ?? "") : null;
-
-  const title = collapse(proseEl.find("strong").first().text())
-    || collapse($(".cruiseTitle").first().text());
-  const region = title ? regionFromTitle(title) : null;
-  const starting_price_usd = parsePriceUsd(prose);
-
-  const rows: RawRow[] = [];
+// Classify the rows of an itinerary <table> (td.date + td.text), shared by the
+// ship-page current-sailing parser and the cruise.json fragment parser (#827).
+// A "hotels" link in the cell (a.itineraryHotelsText) must NOT be read as the
+// port — it's excluded so the port name stays clean.
+export function classifyItineraryRows(
+  $: cheerio.CheerioAPI,
+  table: ReturnType<cheerio.CheerioAPI>,
+): ClassifiedItineraryRow[] {
+  const rows: ClassifiedItineraryRow[] = [];
   table.find("tr").each((_, tr) => {
     const dateText = collapse($(tr).find("td.date").first().text());
     if (!dateText) return; // header / spacer row
@@ -177,8 +162,28 @@ export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing
       isDisembark: /Arriving/i.test(cellText),
     });
   });
-  if (rows.length === 0) return null;
+  return rows;
+}
 
+export interface AssembledItinerary {
+  departure_date: string;
+  return_date: string;
+  duration_nights: number;
+  departure_port: string;
+  ports_of_call: string[];
+  itinerary: ParsedSailingDay[];
+}
+
+// Anchor classified rows to a calendar (begin year, rolling forward on a
+// Dec→Jan month wrap), fill the implicit sea days between embark and disembark,
+// and extract the ordered ports of call (excluding the turnaround port). Shared
+// by parseSailingPage and parseCruiseExpand (#827). `rows` must be non-empty —
+// callers return null/[] when the table yields no dated rows.
+export function assembleItinerary(
+  rows: ClassifiedItineraryRow[],
+  begin: { year: number; monthIdx: number; day: number },
+  end: { year: number; monthIdx: number; day: number } | null,
+): AssembledItinerary {
   // Assign a calendar year to each row: anchor on the begin year, roll
   // forward whenever the month index drops (Dec → Jan).
   let year = begin.year;
@@ -247,13 +252,63 @@ export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing
     .filter((d) => !d.isEmbark && !d.isDisembark && d.portName)
     .map((d) => d.portName as string);
 
+  return { departure_date, return_date, duration_nights: span, departure_port, ports_of_call, itinerary };
+}
+
+// Lightweight ship-page identity (name + line) that works even when the page has
+// no current-sailing table — i.e. a future/unlaunched, river, or retired ship.
+// Returns null ONLY when there is no <h1>, meaning the page isn't a recognizable
+// ship page (a genuine parser break / non-ship URL) as opposed to a valid ship
+// that simply has no current sailing yet. Lets the caller treat "no current
+// sailing" as not-a-parse-failure while still flagging a real break (#827 f/u).
+export function parseShipIdentity(html: string): { ship_name: string; cruise_line: string | null } | null {
+  const $ = cheerio.load(html);
+  const shipName = collapse($("h1").first().text());
+  if (!shipName) return null;
+  const cruise_line =
+    collapse($('a[href*="/cruise-lines/"]').first().find('[itemprop="name"]').text()) ||
+    collapse($('a[href*="/cruise-lines/"]').first().text()) ||
+    null;
+  return { ship_name: shipName, cruise_line };
+}
+
+export function parseSailingPage(html: string, sourceUrl: string): ParsedSailing | null {
+  const $ = cheerio.load(html);
+
+  const shipName = collapse($("h1").first().text());
+  if (!shipName) return null;
+
+  const table = $(".cruiseItinerariesCurrent table").first();
+  if (table.length === 0) return null;
+
+  // Current-cruise prose paragraph: "<title strong>. Prices start from USD
+  // 919 ... begins on May 30, 2026 and ends on June 6, 2026." Scope to this
+  // <p> so the price/title don't bleed in from the all-itineraries list.
+  const proseEl = $("#current_cruise").nextAll("p").first();
+  const prose = collapse(proseEl.text()) || collapse($("body").text());
+  const beginMatch = /begins on\s+([a-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
+  const endMatch = /ends on\s+([a-z]{3,}\s+\d{1,2},\s*\d{4})/i.exec(prose);
+  const begin = beginMatch ? parseLongDate(beginMatch[1] ?? "") : null;
+  if (!begin) return null;
+  const end = endMatch ? parseLongDate(endMatch[1] ?? "") : null;
+
+  const title = collapse(proseEl.find("strong").first().text())
+    || collapse($(".cruiseTitle").first().text());
+  const region = title ? regionFromTitle(title) : null;
+  const starting_price_usd = parsePriceUsd(prose);
+
+  const rows = classifyItineraryRows($, table);
+  if (rows.length === 0) return null;
+
+  const { departure_date, return_date, duration_nights, departure_port, ports_of_call, itinerary } =
+    assembleItinerary(rows, begin, end);
+
   const cruise_line =
     collapse($('a[href*="/cruise-lines/"]').first().find('[itemprop="name"]').text()) ||
     collapse($('a[href*="/cruise-lines/"]').first().text()) ||
     null;
 
   const ship_slug = shipSlugFromUrl(sourceUrl);
-  const duration_nights = span;
   const sailing_slug = `${ship_slug}__${departure_date}`;
 
   const text = renderSailingText({

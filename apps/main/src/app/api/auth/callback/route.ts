@@ -24,6 +24,11 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 import { safeNextFor } from "@/lib/auth/safe-redirect";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
+// Carries the agency-provisioning destination across the no-email OTP round-trip
+// (callback → email-prompt → verify). The verify route reads it to return the
+// user to /signup/complete (#441). Same cookie attrs as _ms_pending_email.
+const PENDING_NEXT_COOKIE = "_ms_pending_next";
+
 export async function GET(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
@@ -47,6 +52,15 @@ export async function GET(req: NextRequest): Promise<Response> {
   const provider = authUser.app_metadata?.provider as string | undefined;
   let email: string | null = authUser.email ?? null;
 
+  // Resolve the post-login redirect once, up front: the null-email OTP bounce,
+  // the membership-skip decision, and the final redirect all key off it. Compare
+  // the PATHNAME, not safe.path (which is pathname + search + hash), so
+  // next=/signup/complete?x=… still counts as the agency flow — otherwise the
+  // membership upsert below would re-create the default-tenant row (#800).
+  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
+  const isAgencyProvisioning =
+    safe !== null && new URL(safe.path, url.origin).pathname === "/signup/complete";
+
   // §17.2 — Microsoft no-email recovery chain. The Graph calls need the
   // provider token (Microsoft's), not the Supabase JWT; fall back defensively.
   if (provider === "azure") {
@@ -62,23 +76,45 @@ export async function GET(req: NextRequest): Promise<Response> {
   // already on the response (applyAuthCookies); the verify route reads it
   // back to identify the auth user.
   if (!email) {
-    return applyAuthCookies(
+    const res = applyAuthCookies(
       NextResponse.redirect(new URL("/signup/email-prompt", url.origin), 302),
     );
+    // Carry the agency destination across the OTP round-trip so the verify step
+    // returns the user to /signup/complete (#441). Without this the next= is lost
+    // at the bounce and OTP users can never reach provisioning.
+    if (safe) {
+      res.cookies.set({
+        name: PENDING_NEXT_COOKIE,
+        value: safe.path,
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: 600,
+      });
+    }
+    return res;
   }
 
-  // Membership upsert. On a tenant domain the resolved id is a UUID — use
-  // it directly. On the platform domain the resolved id is the "platform"
-  // sentinel; if PLATFORM_DEFAULT_TENANT_ID is configured, assign the user
-  // to that agency so platform-domain sign-ins result in a real membership
-  // row rather than a session with no tenant. Without the env var the upsert
-  // is skipped (legacy behaviour, #441).
+  // Membership upsert. On a tenant domain the resolved id is a UUID — use it
+  // directly. On the platform domain the resolved id is the "platform" sentinel;
+  // if PLATFORM_DEFAULT_TENANT_ID is configured, assign the user to that agency
+  // (the platform's own customer tenant) so platform-domain sign-ins get a real
+  // membership row. Without the env var the upsert is skipped (#441).
+  //
+  // Role is intentionally OMITTED so the column default ('viewer', least-priv —
+  // migration 20260628000002) applies on INSERT. An explicit role here would
+  // overwrite an existing owner/agent on the onConflict UPDATE (a real member
+  // re-logging-in on their tenant subdomain) — see #800.
+  //
+  // Agency provisioning is the exception: a user heading to /signup/complete must
+  // NOT get a membership row here, or that route's idempotency guard rejects them
+  // as already_provisioned and they can never create their own tenant.
   const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
   const effectiveTenantId =
     tenantId === "platform" || !tenantId
       ? (process.env.PLATFORM_DEFAULT_TENANT_ID ?? null)
       : tenantId;
-  if (effectiveTenantId) {
+  if (effectiveTenantId && !isAgencyProvisioning) {
     const svc = createServiceRoleClient();
     await safeAwait(
       svc.from("users").upsert(
@@ -94,10 +130,6 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
-  // Parse-then-check-origin (see lib/auth/safe-redirect.ts). The parser
-  // — not a startsWith chain — decides the host, so userinfo / fullwidth /
-  // encoded-slash tricks all fail the parsed.origin equality.
-  const safe = safeNextFor(url.searchParams.get("next"), url.origin);
   const target = safe
     ? new URL(safe.path, url.origin)
     : new URL("/", url.origin);

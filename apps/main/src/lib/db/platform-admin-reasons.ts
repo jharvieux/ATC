@@ -85,6 +85,10 @@ export const PLATFORM_ADMIN_REASONS = [
   // Deny-list quarterly review / additions / removals (per §24.5 / §26.11).
   "denylist_management",
 
+  // §26 — Platform-admin (platform_admins) management: list, add, change role,
+  // remove. Superadmin-gated (assertSuperadmin).
+  "platform_admin_management",
+
   // SaaS abuse override workflow (§27.11 / §27.14).
   "abuse_override_create",
   "abuse_override_revoke",

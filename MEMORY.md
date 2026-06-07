@@ -4,6 +4,200 @@ Newest entries on top.
 
 ---
 
+## D-175 — 2026-06-07 — Closed the open cross-tenant service-role cluster from the 2026-06-05 scan (#845); deploy HELD
+
+**Context — the scan was already triaged.** The untracked `apps/main/src/VULN-FINDINGS.{md,json}` + `THREAT_MODEL.md` are output of a 2026-06-05 security scan. All 44 findings (F-001..F-044) were ALREADY filed as issues **#715–#757** (contiguous, one per finding; F-007+F-008 merged into #724). As of today: **25 open, 19 fixed.** So "triage the findings" was already done — don't re-file. The raw artifacts + scan scaffolding (`.agents/`, `.triage-state/`, `.claude/skills/`, `skills-lock.json`) are now gitignored (kept local; they enumerate unfixed-vuln detail).
+
+**What was fixed (#845).** The OPEN cross-tenant read/write cluster — service-role queries (RLS bypassed) on tenant-scoped tables filtered only by PK/FK. Added explicit `.eq("tenant_id", ...)` to each:
+- **#715 / F-001 (HIGH, the only real exploit):** `bookings/[id]/resources` POST idempotency read on `trip_resources`. The GET handler was already tenant-scoped; the POST was missed — so POSTing another tenant's booking UUID returned its `trip_resources` (agent PII + PDF tokens).
+- #726/F-015 (4 reads in `task-sequence-step-fire`), #730/F-018 (`payout_records` read+update + `writeClawbackFields` commissions.update in `cancel`), #740/F-027 (quote_options×2 + quotes in option-select), #752/F-039 (forums lookup), and #754/F-041 (sibling `users` read, folded in after the d091 audit flagged it).
+
+**Audit surfaced a second, pre-existing bug → #846.** The cancel `payout_records` CAS update uses `safeAwait` not `safeAwaitRowCount`; a zero-row status race still writes the clawback + waives the commission. Out of scope for #845; filed #846.
+
+**Decision: deploy HELD.** User chose NOT to cut beta048 yet, so **#715 remains live/exploitable in prod** until the next atc-main deploy. The fix is on `dev` only. Re-surface beta048 when the user is ready.
+
+**Reusable.** For tenant-isolation fixes: the `tenant-filter-cluster.test.ts` recording-mock pattern (a chainable+thenable stub recording `.eq(col)` per table, asserting `<table>.tenant_id` is applied) tests the filter's presence without real DB/RLS fixtures — useful until #708's two-tenant probe fixtures exist. The remaining ~20 open scan findings (#717–#750) are future batches.
+
+**Artifacts.** PR #845, issues #846 (new), #715/#726/#730/#740/#752/#754. `tenant-filter-cluster.test.ts`.
+
+---
+
+## D-174 — 2026-06-07 — Sailing-cron ports backfill timed out (FUNCTION_INVOCATION_TIMEOUT); bound the detail-fetch loop by the step deadline (#842/#843, beta047)
+
+**What happened.** The #827 ports backfill run for `refresh-cruisemapper-sailings` kept failing in Inngest as "unknown error from the app." That string is Inngest's label for a 5xx it can't parse into a structured step error; the **real** cause was in the Inngest step output: `FUNCTION_INVOCATION_TIMEOUT` (a Vercel function timeout — a `step.run` exceeded the 300s `maxDuration`). The run still crept forward (116/251 ships) because per-ship DB writes commit before the timeout, then Inngest retried the long ship and eventually failed the run.
+
+**Root cause.** `STEP_BUDGET_MS` (180s) was checked only BETWEEN ships in `runSailingWindow`, but the dominant cost — per-sailing `cruise.json` detail fetches at ~1 req/sec — happens WITHIN a ship (`processSailingHtml`). A high-sailing-count ship (200+ upcoming sailings ⇒ 200s+ of serialized detail fetches) pushed one step past 300s. Latent until `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true` went live in the #827 prod rollout (before that the loop was cheap).
+
+**Fix.** Thread ONE shared step deadline (`now + STEP_BUDGET_MS`) into `processSailingHtml`'s detail loop; when reached, defer the remaining sailings (`list_details_deferred`) and break. A deferred ship is NOT stamped complete (`landedInRag && !deferred` ⇒ `content_hash` withheld ⇒ next run resumes it; already-enriched sailings skip via the `sailing_detail` gate). Raised `STEP_BUDGET_MS` 180→240s (overshoot is now ~one in-flight wave). Per-ship try/catch in `runSailingWindow` kept as defense-in-depth (a JS catch can't catch a platform timeout — it's secondary, not the fix).
+
+**Reusable lesson.** A per-step time budget must bound the loop that ACTUALLY spends the wall-clock — an inner rate-limited loop (1 req/sec) nested in an outer-budgeted loop is the trap; checking the budget only between outer iterations lets a single inner iteration blow `maxDuration`. Also: the Vercel runtime-logs MCP truncates these to the generic "Inngest function error" (no `FUNCTION_INVOCATION_*` marker surfaced) — the authoritative error is the **Inngest step output**, not the searchable Vercel log.
+
+**Rejected.** Raising `maxDuration` alone (plan-uncertain ceiling; doesn't bound an ever-larger ship). A fixed per-ship detail-fetch cap (too slow — a 250-sailing ship would need ~6 runs; the shared deadline uses the whole step instead). My own first commit on the branch guessed a per-ship JS throw — corrected once the user pasted the `FUNCTION_INVOCATION_TIMEOUT` marker.
+
+**Rollout.** beta047 → atc-main prod: Vercel deploy + smoke test green (the active prod deployment carries the fix); the `Auto-merge release branch back to dev` step failed benignly as usual (dev already had the fix via PR #843). The #835 Inngest-sync step reported "success" but **skipped on its `INNGEST_API_KEY` guard (key still unset) — it did NOT actually sync** (so the `derive-general-price-ranges` registration gap and the "add `INNGEST_API_KEY`" action both still stand). Re-trigger `refresh-cruisemapper-sailings` to finish the backfill; expect `list_details_deferred` > 0 on big-ship runs and `ships_remaining` → 0 across runs.
+
+**Artifacts.** PR #843, issue #842 (closed). `apps/main/src/inngest/refresh-cruisemapper-sailings.ts`, `apps/main/src/lib/external/cruisemapper/sailing-ingest.ts`.
+
+---
+
+## D-173 — 2026-06-07 — Prod rollout of #826/#827/#828, the sailing-halt fix, + 4 process improvements
+
+Continuation of D-172. Everything below is merged to dev + (where noted) live on prod.
+
+**ROLLOUT (executed):** cut `release/beta045` → atc-main prod (redeployed to capture the new env flag); deployed **atc-rag** manually (needed for #826's `fetchItineraryLookupChunks`); applied main migrations `20260628000005` (inventory `sailing_detail`) + `20260628000006` (general_pricing_ranges `estimated`); set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true`; cleared 250 ship content_hashes. Triggered the backfill — derive-general-price-ranges produced **2,529 ship/duration groups × 5 cabins = 12,645 estimated rows**; the sailing cron enriched ~9,208 sailings then **HALTED on the 5% parse-failure breaker**.
+
+**Halt fix (PR #834, beta046):** future/unlaunched/river ships have no current-sailing table → `parseSailingPage` returns null → the cron counted them as parse failures (and early-returned, skipping their upcoming list). Fix: `parseShipIdentity` recognizes a ship page by its `<h1>`; a no-current-but-valid ship is `no_current_sailing` (NOT a failure) and its upcoming list IS ingested. Only an unrecognizable page (no h1) feeds the halt. content_hash stamping for no-current ships is count-aware (extracted `sailingPageOutcomeInputs`, unit-tested) so it doesn't re-fetch enriched ships forever (audit catch). Deployed in **beta046**.
+
+**Inngest sync gap (discovered + fixed, #835/PR #838):** Vercel CLI deploys DON'T fire the Vercel→Inngest integration, so a newly-added Inngest function silently never registers until a manual dashboard resync — this is why `derive-general-price-ranges` (#832) didn't appear after beta045. Existing functions update on deploy (only NEW function ids need a sync). Fix: a REST API sync step (`POST api.inngest.com/v2/apps/atc-main/syncs`) in deploy.yml's prod job, guarded + non-fatal. **REQUIRES a new `INNGEST_API_KEY` repo secret** (Inngest dashboard → API keys) — until added, the step safely skips.
+
+**Process improvements (user: "all four in order"):**
+- **#817 (PR #836):** d091-reviewer Pattern 15 — when a diff changes a shared constant/limit, grep every dependent path (the #805/#808 miss).
+- **#816 (PR #837):** `pnpm verify` now runs `lint:migrations` + `test:rag`; `apps/rag` unit suite added to CI (`ci.yml`) — was excluded from the root vitest config (#792).
+- **#815 (PR #839):** `check:d091` — 5 mechanical D-091 gates (secret-eq, cas-rowcount, unbounded-limit, event-data-cast, service-role-tenant), each with an inline `d091-allow:<id>` escape hatch. **Count-based baseline** (`scripts/d091-baseline.txt`, 224 existing hits = tracked debt; gate fails on NEW only; regen via `pnpm check:d091 --update-baseline`). Wired into verify + ci.yml. The existing debt maps to the security backlog; **#840** filed for the event.data-cast casts the tightened detector surfaced.
+
+**OUTSTANDING USER ACTIONS:** (1) add the `INNGEST_API_KEY` repo secret for #835's sync; (2) re-trigger `refresh-cruisemapper-sailings` (post-beta046) to finish the ~160 ships the halt left unprocessed — no hash re-clear needed; (3) decide on the untracked security-scan artifacts (`.agents/`, `.triage-state/`, `VULN-FINDINGS.*`).
+
+---
+
+## D-172 — 2026-06-07 — Chat itinerary lookup + future-sailing ports (cruise.json) + ballpark prices (#826/#827/#828)
+
+Three issues from "the NCL Bliss agent didn't know the 10/3/26 itinerary," shipped as 3 PRs (all merged to dev, audits clean):
+
+**PR #829 (#826 + #828a) — chat retrieval.** Vector top-k can't surface an exact-date sailing among near-identical chunks. Added optional `itinerary_lookup {ship, sail_date_from, sail_date_to?}` to the RAG `/api/retrieve` contract; the route resolves matching `itineraries` rows → their REAL chunks (via `related_chunk_id`) and boosts them to the top (real ids keep §6.10 feedback intact). Audit-hardened: mirror the `match_knowledge_chunks` freshness gates (superseded/embedding/sell_by) + a 2nd JS-layer tenant filter. **#828a:** the pricing-guidance "check the booking system" line now governs PRICE ONLY — it was firing on every turn (anchors always empty) and bleeding into itinerary answers.
+
+**PR #830 (#827) — accurate future-sailing ports. USER CHOSE the detail-scrape over title-parsing.** Verified the upcoming-sailings LIST title can't yield reliable ports (multi-word names + inconsistent spacing merge ports, e.g. "Port Canaveral Great Stirrup Cay"). The real source: each row's `data-row` cruise id → `GET /ships/cruise.json?id=<row>` (**requires `X-Requested-With: XMLHttpRequest`** — without it, 200 + empty body), returning the same `td.date`/`td.text`/`/ports/` table the ship page uses. Shared `classifyItineraryRows`+`assembleItinerary` out of sailing-parser; new `cruise-expand-parser` (year anchored on the known list departure_date). Gated by `CRUISEMAPPER_DETAIL_FETCH_ENABLED` (default OFF — scraping-volume op). Incremental: each sailing fetched ONCE, recorded `kind='sailing_detail'` in `cruisemapper_url_inventory` (migration `20260628000005` widens the kind CHECK) so later runs skip it; price-cache refresh stays decoupled (runs every run — the lead-in #828 reads drifts even though ports don't).
+
+**PR #832 (#828b, closes #820) — ballpark prices.** CruiseMapper removed per-cabin widgets, so the only free price is the per-sailing interior "from $X" lead-in. Weekly cron `derive-general-price-ranges` aggregates interior lead-ins (in `pricing_cache`) per (line, ship, duration) into a min/max range, scales each tier by multipliers (interior 1.0 / oceanview 1.3 / balcony 1.6 / mini_suite 2.2 / suite 3.0, per #828), upserts `general_pricing_ranges` with **`source='estimated'`** (migration `20260628000006`; honest provenance — NOT scraped). Exposure stays gated by the existing `AI_PRICE_ROUNDING_ENABLED`.
+
+**PENDING ROLLOUT (next beta + user action; nothing on prod yet):** apply main migrations `20260628000005` + `20260628000006`; set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true`; to backfill ~10k existing sailings' ports, `UPDATE cruisemapper_url_inventory SET content_hash=NULL WHERE kind='ship'` then trigger `refresh-cruisemapper-sailings` (the monthly cron skips unchanged ships, so the hash-clear forces re-process; runs are stepped + resumable, skipping already-enriched sailings); trigger `derive-general-price-ranges`. **Follow-up #831** = automate the backfill (replace the manual hash-clear) + the residual RAG-chunk-prose price freeze.
+
+**RAG-side note:** PR #829's `/api/retrieve` change is in atc-rag → needs a MANUAL `cd apps/rag && vercel deploy --prod` to take effect; the main-side caller ships with the next beta (landed after beta044 was cut, so NOT in beta044).
+
+---
+
+## D-171 — 2026-06-06 — CruiseMapper itinerary coverage: masking + mapper-allow-list bugs fixed; RLS on RAG tables; beta044 cut
+
+**The gap:** only ~49% of cruise ships (123/251 ships, 7 of ~30 lines) had itineraries in RAG. TWO compounding bugs:
+1. **content_hash masking** (both `refresh-cruisemapper-sailings` + `refresh-cruisemapper-static`): inventory `content_hash` was stamped on LOCAL parse success, ignoring whether the RAG ingest POST landed (`processSailingHtml`/`ingestReferenceToRag` never throw on failure). A failed/dropped ingest was marked "ingested" with a hash → next conditional GET skipped it forever. Fixed (PR #823): stamp only on confirmed RAG landing (`sailingIngestOutcome`→`ingest_failed`; `referenceIngestOutcome`→no hash on server_error). Audit confirmed the masking pattern exists ONLY in these 2 crons (the only RAG-ingest-helper callers).
+2. **mapper line allow-list (ROOT CAUSE):** `normalizeLineCode` (itinerary-mapper.ts) returned null for any line outside ~10 hardcoded codes → `mapSailing` dropped the itinerary BEFORE POSTing to RAG. Only RCL/MSC/NCL/PCL/CEL/HAL/DSY landed; Carnival ("Carnival Cruise Line" long-form was never mapped → 31 ships) + every luxury/specialty line silently dropped. The masking bug HID this. Fixed (PR #823): substring rules + explicit codes VIK/OCE/WST/SIL/RSS/SBN/AZA/CUN/VVY/PNO + **BCK fallback** for unrecognized lines (null only for empty) — never silently dropped again.
+
+**Decision — EXPAND ALL LINES** (user's call, over "Carnival only"). #781 (canonical cruise-line DB) is the strategic replacement for the hardcoded map.
+
+**#819 ("parser gaps") — NOT bugs:** the parse_failures are ferries/river boats + future not-yet-sailing ships; `parseSailingPage` correctly returns null. Added `isNonCruiseSailingUrl` (`/-ferry-/i`) to skip ferries (5.2%→3.6%, off the 5% halt threshold) + `ferries_skipped` in the run summary (PR #824). 1 deck stub (Pacific-Princess, likely retired) + future ships left (expected; self-resolve on launch).
+
+**#820 (DIY price ranges) — DEFERRED to a product decision:** live-fetch confirmed CruiseMapper REMOVED per-cabin price-range widgets (`table.prices`/`ul.pricing` gone); only per-sailing `.cruisePrice` remains (already ingested via the sailing list). `general_pricing_ranges` is empty BY DESIGN now. Options (in #820): derive approximate ranges from sailing prices, or deprecate `general_pricing_ranges`. Did NOT guess-implement.
+
+**#821 (RLS) — DONE + LIVE:** enabled RLS (deny-all, no policies) on the 8 advisor-flagged RAG tables. Safe: service_role has BYPASSRLS + full grants (0025); anon/authenticated have no grants (already blocked at the grant layer — RLS is defense-in-depth). Migration 0026 + regenerated snapshot recorded (PR #825).
+
+**KEY LEARNINGS:**
+- The **supabase-rag MCP is READ-ONLY** (`apply_migration`/mutating `execute_sql` fail). Apply RAG migrations via `psql "$SUPABASE_RAG_DB_URL"` (from .env.local, don't echo). Main MCP IS read-write. (Saved to auto-memory.)
+- `rls-snapshot-diff` compares `db/rls-snapshot-rag.sql` against the TEST RAG DB → a RAG RLS migration CANNOT pass a dev-PR until the DB is migrated. Workflow: apply via psql first → regenerate the snapshot → commit (then the diff matches). The local `SUPABASE_RAG_DB_URL` == the CI test RAG DB == the MCP's DB (single beta RAG project).
+- My initial diagnosis (RAG outage during the run) was WRONG — the real cause was the mapper allow-list. The re-run + deeper investigation corrected it before declaring victory; the masking fix made the true cause visible.
+
+**Recovery (#822, post-deploy):** 117 ships missing from RAG had their content_hash cleared this session. After beta044 deploys the line-coverage fix, re-run `refresh-cruisemapper-sailings` → all lines land (~242/251). Issues filed: #819, #820, #821, #822.
+
+**Beta044 cut:** `release/beta044` deploys #823/#824/#825 + the dev-only #800(#803)/#441(#804)/#812(role-mgmt)/#813(#814). Prod gated on user approval. Pending MAIN migrations to apply AFTER the prod code deploys: **20260628000002 (users.role default → viewer — CODE-FIRST, D-166), 20260628000003, 20260628000004** (admin RPCs). RAG RLS (0026) already live.
+
+---
+
+## D-170 — 2026-06-06 — #813 shipped; #811 (per-role admin enforcement) scoped + QUEUED; process-improvement issues filed
+
+- **#813 (last-superadmin TOCTOU) shipped** — PR #814, merged. Advisory-locked SECURITY DEFINER RPCs (`admin_change_platform_role` / `admin_remove_platform_admin`); migration `20260628000004`.
+- **#811 (per-role platform-admin enforcement) scoped + QUEUED for a focused session** (user's call — it's a ~50-file all-or-nothing security rollout, not safe to one-shot at the tail of a long session). Tasks #35–38. **Confirmed policy (area → roles), the load-bearing decision for the next session:**
+  - **superadmin-only:** admins, legal-docs, platform-settings, ai-kill-switch, ai-pricing, integrations
+  - **reviewer:** abuse/*, tenants/* (review/terminate/queue), denylist, personas/*, persona-safety, rag/*, retrieval-weights, chunks, travel-news/*
+  - **finance:** resource-utilization, reconciliation/*, vendor-status
+  - **support:** help/*, email-samples, supervisor
+  - Un-tabled routes default to **superadmin** (least-priv; broaden later). Plan: a `platform-admin-grants` module (area→roles) + `assertPlatformAdminArea(req, area)` helper, applied to the ~44 human-admin `/api/admin` routes (`assertPlatformAdmin`→`assertPlatformAdminArea`) + the 4 server-rendered admin pages + a role-filtered sidebar/hub.
+  - NOTE: `api/admin/tenants/route.ts` + `api/admin/platform-settings/route.ts` are SERVICE-TO-SERVICE (`MAIN_APP_ADMIN_API_KEY` bearer, constant-time) — NOT human-admin; they stay bearer-gated and are EXCLUDED from the per-role rollout. (Corrects an in-session mis-flag that they were "ungated.")
+- **Process-improvement issues filed** (from the open + past-week-closed retrospective): **#815** (mechanical CI lints for the recurring D-091 patterns — service-role tenant filter, CAS row-count, non-constant-time compare, PostgREST 1000-row cap, Zod-on-event), **#816** (close the `pnpm verify` vs CI gap — add `lint:migrations`; RAG tests #792), **#817** (strengthen d091-reviewer: when a shared constant/limit changes, enumerate every dependent path — would've caught the #789→#805/#808 cascade).
+
+---
+
+## D-169 — 2026-06-06 — Role-management UI shipped (tenant + platform); platform roles still NOT per-page-enforced (PR #812)
+
+Built the deferred "role-assignment UI" (PR #812, merged to dev):
+- **Tenant side already existed** (`/settings/users` — owners change member roles via the `team_members:update_role`-gated API). Polished: GET now returns `caller_role` so non-owners see read-only roles instead of an optimistic dropdown that 403s on click.
+- **Platform side is new** — manage `platform_admins` (roles superadmin/reviewer/finance/support, previously SQL-seed only). `(admin)/admin/admins` page + `api/admin/admins` (+`[authUserId]`). **`assertSuperadmin`** (role==='superadmin') gates add/change/remove — the FIRST per-role check on the platform side. Listing is open to any platform admin (read-only). Guardrails: no self-change/remove, no demote/remove of the last superadmin, add-by-email (resolved via a locked-down SECURITY DEFINER RPC `admin_lookup_auth_user_by_email`).
+
+**Load-bearing facts for future role work:**
+- Tenant roles (`users.role`) and platform roles (`platform_admins.role`) are INDEPENDENT tables keyed on the same `auth_user_id` — one person can be both a tenant owner AND a platform admin.
+- **Platform roles are NOT enforced per-page.** `assertPlatformAdmin` admits ANY platform_admin to the entire `/admin` surface regardless of role; the four roles are labels, only management is role-gated. So SCOPED platform access (e.g. "reviewer = RAG-approval only") is NOT possible yet — that's #811.
+
+**Deploy:** migration `20260628000003` (the RPC) needs prod-apply at the next atc-main beta (backs add-by-email; the rest works without it). Not auto-applied (#534).
+
+**Process gotcha:** `pnpm verify` does NOT run `lint:migrations` (separate CI step) — run `pnpm lint:migrations` locally for migration PRs. §5.1.1 requires the literal `REVOKE EXECUTE ... FROM public` on SECURITY DEFINER functions (not `REVOKE ALL`).
+
+**Follow-ups:** #811 (per-role platform enforcement), #813 (last-superadmin TOCTOU hardening).
+
+---
+
+## D-168 — 2026-06-06 — Embedding-flush follow-ups resolved (#807, #808); #809 was transient (corrects D-167)
+
+PR #810 (merged + atc-rag deployed):
+- **#808** — the flush's pending SELECT was silently capped at ~1,000/run by PostgREST's `db-max-rows` (`.limit(2000)` is ignored). Now paginates in 1,000-row windows (the #788 pattern) to bundle up to 2,000. So both the read (#808) AND the status-flip write (#806/#805) on the flush path needed PostgREST-cap handling.
+- **#807** — added `bulk-flip.test.ts` (chunking + fail-loud abort: a failing chunk throws, later chunks stay pending for idempotent re-submit).
+
+**#809 correction to D-167:** the residual atc-rag `/api/inngest` 500s were NOT an ongoing cron failure. They were the pre-deploy flush-failure **retry backlog** clearing after #806 deployed (stopped 19:06, clean since). D-167 named `promo-state-reconcile` as the suspect — but the promo crons CANNOT 500: they catch their rpc errors and `return {ok:false}`. Closed #809, no code.
+
+**Watch:** post-fix the flush drains fine (~1,000→2,000/run) but `done` lagged `submitted` for >40 min (OpenAI Batch API async completion latency — the early small batches happened to finish in ~5 min; not a code bug). reconcile (every 5 min, error-free) completes them as OpenAI finishes.
+
+---
+
+## D-167 — 2026-06-06 — First full CruiseMapper ingest succeeded (13.9k itineraries); embedding flush 500-looped, fixed (#805)
+
+The first full CruiseMapper itinerary ingest ran (after beta043 deployed #788/#796): discovery populated the full inventory (1,569 ports / 251 ships / 254 deck plans — #788's pagination held, no 1,000-row truncation), and the sailing cron loaded **13,862 itineraries + 17,042 knowledge_chunks** without timing out (#796's time-budgeted stepping held). **beta043 DID deploy** — its pipeline run reads "failure" only because the final back-merge PR step errored (`No commits between dev and release/beta043`); the Vercel build+deploy+alias succeeded. (Corrects an in-session mis-statement that beta043 was "pending the gate.")
+
+**Live incident — embedding flush 500-loop (#805, PR #806).** The RAG embedding flush flipped up to `MAX_REQUESTS_PER_BATCH` rows to `submitted` in a single PostgREST `.in()`. #789 raised that cap 200→2,000; ~2,000 UUIDs exceed the URL limit so the UPDATE threw — AFTER the OpenAI batch was created — a 500-loop that re-billed batches every 10 min and stalled ~15k chunks (the first full ingest's burst at 17:14 triggered it; it worked while ingest trickled at ~173/flush). #789 had chunked the *reconciler's* identical flip but missed the flush's. Fix: shared `bulkFlipPendingStatus` helper (chunked, `STATUS_FLIP_CHUNK=200`) used by both flush + reconcile; kept the 2,000 cap. Merged + atc-rag deployed; recovery confirmed (pending 15,176→14,176, submitted 0→1,000).
+
+**Follow-ups filed:** #807 (partial-flip-on-error test), #808 (the flush SELECT is itself effectively capped at ~1,000/run by PostgREST's default response cap — the 2,000 constant is never actually reached; #788-class), #809 (residual atc-rag `/api/inngest` 500s = a SEPARATE hourly cron, likely `promo-state-reconcile`, NOT the embedding pipeline — Vercel logs too generic; needs Inngest-dashboard attribution).
+
+**Reusable lesson:** when raising a batch/bulk cap, audit EVERY `.in(id-list)` on that path for the PostgREST URL limit — both the status-flip writes AND the `.limit()` reads (the read silently caps at 1,000; #788/#808).
+
+---
+
+## D-166 — 2026-06-06 — Auth/tenancy: platform logins became Booking OWNERS (#800); fixed role default + unbroke agency signup + MS/FB OTP provisioning
+
+Two PRs (PR #803, PR #804) fixed a chain of auth/tenancy bugs, all rooted in `PLATFORM_DEFAULT_TENANT_ID` being set to the Booking tenant.
+
+**Tenancy model (user-confirmed):** Booking IS the platform's customer tenant by design — platform-domain customers (the "/signup → I'm booking travel" flow) are members of Booking. There is NO dedicated "customer" role: `public.users.role` is only `tenant_owner | agent | viewer`, and `viewer` IS the customer-facing role (`resolve-post-login` routes viewer / no-membership users to the customer chat). So `PLATFORM_DEFAULT_TENANT_ID=Booking` is INTENTIONAL — **do not unset it** (I proposed unsetting it; user corrected the premise).
+
+**#800 (PR #803):** the OAuth callback upserts platform-domain logins into Booking WITHOUT a role, so the column default (`tenant_owner`, a documented stopgap from `20260625000001`) made every customer a tenant OWNER. Fix: migration `20260628000002` flips the `users.role` default to `viewer` (least-priv; defense-in-depth for any role-less insert); `signup/complete` now sets `role:'tenant_owner'` EXPLICITLY (it relied on the old default); the callback upsert still OMITS role so the default applies on INSERT — an explicit role would clobber existing owners/agents on the `onConflict` UPDATE (a real member re-logging-in on their subdomain).
+
+**Agency self-signup was ALSO broken (PR #803):** with the env set, the callback pre-created a Booking row for EVERY platform login — including someone en route to `/signup/complete` — tripping that route's idempotency guard → `already_provisioned`, so NOBODY could self-serve create an agency. Fix: the callback skips the membership upsert on the agency flow (`next` pathname `=== /signup/complete`). Match the parsed PATHNAME, not `safe.path` (which includes `?search`) — else `next=/signup/complete?x=` re-introduces #800.
+
+**MS/FB OTP-path provisioning (PR #804):** #441 (the `/signup/complete` route) was already implemented + CLOSED, but the §17.2 no-email OTP recovery path never reached it: after OTP, `auth.users.email` stayed null (only a cookie + `public.users` row were set), so `/signup/complete` (reads `authData.user.email`) 400'd and users re-OTP'd every login. Fix: callback carries the agency `next` in a `_ms_pending_next` cookie across the OTP round-trip; `microsoft-email-verify` PERSISTS the verified email onto the auth user (`admin.updateUserById(..., {email, email_confirm:true})`, fail-loud), mirrors the callback's membership logic (no-email customers also get the Booking viewer membership), and redirects to `/signup/complete`.
+
+**Deploy sequencing (CRITICAL):** migration `20260628000002` does NOT auto-apply (pipeline auto-migrate disabled, TODO #534). Apply it AFTER the code is live, NEVER before — old `signup/complete` code relies on the `tenant_owner` default, so the viewer-default migration landing first would create agency owners as viewers. Next-beta order: deploy code → then `apply_migration` for `20260628000002`.
+
+**Still open:** existing bad Booking owner rows (`john@ai-travelconcierge.com` + `harvieux@bigfoot.com`, created pre-fix) need cleanup AFTER deploy (else re-created on login); end-to-end test-agency provisioning to verify.
+
+---
+
+## D-165 — 2026-06-06 — Sailing cron: adaptive time-budgeted Inngest stepping (#796); reusable for #774
+
+The monthly sailing cron's fixed `SAILING_CHUNK=5` batch with **serial** per-ship RAG POSTs could exceed the 300s function maxDuration on high-sailing-count ships (`parseSailingList` doesn't cap N). Fixed (PR #797): (a) parallelize each ship's upcoming-sailing POSTs in bounded-concurrency waves (8); (b) replace the fixed-chunk loop with a **time-budgeted cursor** — each `step.run` processes ships until a ~180s wall-clock budget is spent (always ≥1 ship), returns `nextIndex`, and the orchestrator resumes from there. Each Inngest step is its own invocation, so bounding the per-step callback to <300s bounds the whole job; the step count adapts to actual work. The windowing loop is extracted as `runSailingWindow(urls, start, budgetMs, processOne, now)` for unit testing (injected clock).
+
+**Reusable pattern.** This time-budgeted-cursor shape is the general fix for the #774 Tier-2 single-invocation crons (`custom-domain-reverify`, `payouts-execute-transfer`, `quote-estimate-expiry-sweep`, `rag-tenant-scoped-purge`): bound each step by a wall-clock budget + durable cursor rather than a fixed item count, so unbounded working sets can't time out.
+
+**Why it was latent:** the `itineraries` table is empty — the sailing job hasn't run at scale (only the static job has). This bounds it before the first full run, whose load is ~15× the static job's (~251 ships × (1+N) POSTs).
+
+---
+
+## D-164 — 2026-06-06 — Shipped #787/#788/#789 (RAG ingest + embedding hardening); found RAG-tests-not-in-CI gap (#792)
+
+Three fixes surfaced while tracking the first post-#766 CruiseMapper bulk ingest:
+
+**#788 — inventory load 1000-row cap (PR #791).** `loadInventoryByKind` selected without `.range()`, so PostgREST's default 1000-row response cap silently truncated port ingest to 1000/1569 (566 ports dropped). Fixed with 1000-row `.range()` pagination; the sailing cron now shares the one loader (dropped duplicate `loadShipUrls`); throws on DB error instead of masking as empty inventory.
+
+**#787 — RAG Redis client resilience (PR #793).** verifyServiceJwt fail-closes to `redis_unreachable` (503) on any Redis error, so the default `maxRetriesPerRequest:1` dropped ~9% of ingest auth checks at cold-start. Raised to 3 + bounded reconnect backoff (200ms→2s cap). **Decision: reconnect count is intentionally UNBOUNDED (not `null` after N)** — a null-returning bound would make a warm serverless instance give up and then fail-closed on EVERY auth check until it recycles (worse than reconnecting every 2s); matches ioredis's default; fail-closed still holds via maxRetriesPerRequest. Accepted tradeoff: a retried SET NX whose OK was lost can report a rare spurious `replay` (self-heals next run with a fresh jti).
+
+**#789 — embedding reconcile bulk-write + batch 200→2000 (PR #794).** Reconcile applied a completed batch one row at a time (~3 sequential round-trips/row) + parsed output twice → timeout + ~10× memory risk at 2000 rows. Refactor: single-pass parse; bounded-concurrency writes (`EMBED_WRITE_CONCURRENCY=25`, write-before-flip so abort-on-error leaves rows `submitted` → idempotent retry); chunked bulk status flips (`STATUS_FLIP_CHUNK=200`, to stay under the PostgREST URL limit); cost aggregated per (tenant,model); per-run budget `MAX_ROWS_PER_RUN=4000`. Then `MAX_REQUESTS_PER_BATCH` 200→2000. **Rejected: a Postgres RPC for single-statement bulk embedding UPDATE** — needs a migration + manual prod-apply (pipeline auto-migrate is disabled, TODO #534); chose app-only parallelism (no migration/prod-apply dependency). RPC remains a future option if DB write load (not wall-time) becomes the constraint.
+
+**Finding — #792 (RAG unit tests not in CI).** Root `vitest.config.ts` includes only `apps/main/test` + `tests/`; no workflow runs `pnpm -r test` / `pnpm --dir apps/rag test` (only error-injection + e2e touch RAG). So `apps/rag/test/unit/*` run locally only — a broken RAG unit test merges undetected. **How to apply: until #792 is fixed, verify RAG changes with `pnpm --dir apps/rag test` in addition to `pnpm verify` (which does NOT run them).**
+
+---
+
 ## D-163 — 2026-06-05 — Cruise data scope: ports folded into Phase 1; Phase 3 (#783) connected group-booking flow created
 
 Two scope expansions to the cruise-data initiative (D-161), both at user request after beta042 shipped:

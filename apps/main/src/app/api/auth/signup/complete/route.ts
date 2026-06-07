@@ -137,16 +137,18 @@ export async function POST(req: NextRequest): Promise<Response> {
     return Response.json({ error: "internal_error" }, { status: 500 });
   }
 
-  // role defaults to "tenant_owner" per migration 20260625000001.
-  // Wrapped in try/catch: if this fails the tenant row above is already committed.
-  // The hard-delete trigger (prevent_tenant_hard_delete) blocks programmatic
-  // rollback, so we log the orphaned tenant_id for ops to manually clean up.
+  // Agency operator = explicit tenant_owner. The column default is 'viewer'
+  // (least-priv, migration 20260628000002), so this MUST set the role
+  // explicitly — relying on the default would make the operator a viewer of
+  // their own agency. Wrapped in try/catch: if this fails the tenant row above
+  // is already committed. The hard-delete trigger (prevent_tenant_hard_delete)
+  // blocks programmatic rollback, so we log the orphaned tenant_id for ops.
   let userId: string;
   try {
     const userRow = await safeAwaitRequired(
       svc
         .from("users")
-        .insert({ auth_user_id: authUserId, tenant_id: tenantId, email, status: "active" })
+        .insert({ auth_user_id: authUserId, tenant_id: tenantId, email, status: "active", role: "tenant_owner" })
         .select("id")
         .single(),
       "users.insert.signup_complete",
