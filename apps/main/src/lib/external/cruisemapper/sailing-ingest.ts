@@ -77,10 +77,6 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
 // CRUISEMAPPER_DETAIL_FETCH_ENABLED; when off, list items map with no ports
 // exactly as before (the gate defaults closed — this is a scraping-volume op).
 
-function detailFetchEnabled(): boolean {
-  return process.env.CRUISEMAPPER_DETAIL_FETCH_ENABLED === "true";
-}
-
 export function sailingDetailUrl(dataRowId: string): string {
   const base = (process.env.CRUISEMAPPER_DIY_BASE_URL ?? "https://www.cruisemapper.com").replace(/\/$/, "");
   return `${base}/ships/cruise.json?id=${encodeURIComponent(dataRowId)}`;
@@ -180,14 +176,31 @@ export async function processSailingHtml(
   // instead of one serial await per sailing.
   const listItems = parseSailingList(html);
   result.list_items += listItems.length;
-  const detailEnabled = detailFetchEnabled();
+  const detailEnabled = process.env.CRUISEMAPPER_DETAIL_FETCH_ENABLED === "true";
 
   for (let i = 0; i < listItems.length; i += SAILING_POST_CONCURRENCY) {
     await Promise.all(
       listItems.slice(i, i + SAILING_POST_CONCURRENCY).map(async (item) => {
-        // #827 — enrich with real ports from the per-sailing detail when enabled.
-        // An already-enriched sailing is skipped entirely: ports are immutable
-        // once scheduled, so there's nothing to re-fetch or re-ingest.
+        // Price cache refreshes EVERY run, independent of port enrichment — it's
+        // the lead-in source the pricing anchors (#828) read, and the price
+        // drifts as a sailing fills. Build the base (no-ports) mapping for it.
+        const baseMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "");
+        if (baseMapped?.cacheQuote) {
+          try {
+            await upsertPriceQuote(db, baseMapped.cacheQuote);
+            result.list_price_cache_written += 1;
+          } catch (err) {
+            // Best-effort — price cache is a convenience mirror; RAG ingest proceeds.
+            console.warn("[sailing-ingest] price-cache upsert failed (non-fatal)",
+              { shipUrl, data_row_id: item.data_row_id, err });
+            result.list_price_cache_errors += 1;
+          }
+        }
+
+        // #827 — port enrichment (gated). An already-enriched sailing keeps its
+        // RAG ports as-is: skip BOTH the detail re-fetch AND the RAG re-ingest,
+        // since re-ingesting without the ports (which we don't hold locally)
+        // would clobber them. Its price was already refreshed above.
         let detail: { portsOfCall: string[]; dayByDay: ParsedSailingDay[] } | undefined;
         let detailUrl: string | undefined;
         if (detailEnabled) {
@@ -212,20 +225,12 @@ export async function processSailingHtml(
           }
         }
 
-        const listMapped = mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "", detail);
+        // Re-map WITH ports when we fetched detail this run; otherwise the base
+        // (no-ports) mapping is what lands.
+        const listMapped = detail
+          ? mapSailingListItem(item, sailing.ship_name, sailing.cruise_line ?? "", detail)
+          : baseMapped;
         if (!listMapped) return;
-
-        if (listMapped.cacheQuote) {
-          try {
-            await upsertPriceQuote(db, listMapped.cacheQuote);
-            result.list_price_cache_written += 1;
-          } catch (err) {
-            // Best-effort — price cache is a convenience mirror; RAG ingest proceeds.
-            console.warn("[sailing-ingest] price-cache upsert failed (non-fatal)",
-              { shipUrl, data_row_id: item.data_row_id, err });
-            result.list_price_cache_errors += 1;
-          }
-        }
 
         const outcome = await ingestItineraryToRag(listMapped);
         if (outcome.status === "ingested" || outcome.status === "updated" || outcome.status === "unchanged") {

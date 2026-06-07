@@ -36,8 +36,8 @@ const FRAGMENT = (JSON.parse(
 // the current sailing (05-30) so we can target the list item's ingest call.
 const SHIP_HTML = `<!doctype html><html><body>
 <ol class="breadcrumb"><li><a href="https://www.cruisemapper.com/cruise-lines/Norwegian-Cruise-Line-10"><span itemprop="name">Norwegian Cruise Line</span></a></li></ol>
-<h1>Norwegian Bliss</h1>
-<h3 id="current_cruise">Current itinerary of Norwegian Bliss</h3>
+<h1>Norwegian Prima</h1>
+<h3 id="current_cruise">Current itinerary of Norwegian Prima</h3>
 <p> <strong>7 days, round-trip Alaska</strong>. Prices start from USD 919. The itinerary begins on <strong>May 30, 2026</strong> and ends on <strong>June 6, 2026</strong>. </p>
 <div class="cruiseItineraries cruiseItinerariesCurrent"><table>
 <tr><td class="date">30 May 16:00</td><td class="text"><strong>Departing</strong> from <a href="https://www.cruisemapper.com/ports/seattle-port-6">Seattle, Washington</a></td></tr>
@@ -48,7 +48,7 @@ const SHIP_HTML = `<!doctype html><html><body>
 </tbody></table>
 </body></html>`;
 
-const SHIP_URL = "https://www.cruisemapper.com/ships/Norwegian-Bliss-1454";
+const SHIP_URL = "https://www.cruisemapper.com/ships/Norwegian-Prima-2216";
 
 // Inventory db mock: select(...).eq.eq.maybeSingle resolves the enriched status;
 // upsert records the mark-enriched calls.
@@ -134,5 +134,8 @@ describe("processSailingHtml — #827 detail enrichment", () => {
     expect(result.list_details_skipped_enriched).toBe(1);
     // The current sailing still ingests; the (enriched) list item does not.
     expect(listItemIngest()).toBeUndefined();
+    // But the price cache STILL refreshes for enriched sailings — the lead-in
+    // price the pricing anchors read drifts even though ports don't.
+    expect(mocks.upsertPrice).toHaveBeenCalled();
   });
 });
