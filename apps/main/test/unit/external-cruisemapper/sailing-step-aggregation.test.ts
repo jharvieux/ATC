@@ -146,9 +146,11 @@ describe("isNonCruiseSailingUrl — skip ferries from sailing ingest (#819)", ()
     expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Havila-Pollux-ferry-2176")).toBe(true);
   });
 
-  it("does not flag ocean cruise ships", () => {
+  it("does not flag ocean cruise ships, nor a non-delimited 'ferry' substring", () => {
     expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Carnival-Vista-1039")).toBe(false);
     expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Symphony-Of-The-Seas-1730")).toBe(false);
     expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Viking-Star-974")).toBe(false);
+    // Boundary: only the hyphen-delimited "-ferry-" token matches, not a substring.
+    expect(isNonCruiseSailingUrl("https://www.cruisemapper.com/ships/Ferryland-Explorer-9999")).toBe(false);
   });
 });
