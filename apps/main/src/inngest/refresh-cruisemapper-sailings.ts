@@ -249,7 +249,19 @@ export async function runSailingWindow(
   const deadline = now() + budgetMs;
   let i = start;
   while (i < urls.length) {
-    const r = await processOne(urls[i]!);
+    let r: SailingUrlResult;
+    try {
+      r = await processOne(urls[i]!);
+    } catch (err) {
+      // #842 — a SINGLE ship's unexpected throw (e.g. a transient Supabase
+      // pooler/connection error on its inventory read/write) must NOT fail the
+      // whole step + run. Count it as a fetch error and continue; the ship keeps
+      // a null content_hash and is retried next run. Without this, Inngest re-runs
+      // the step, re-hits the same ship, and eventually marks the run failed
+      // ("unknown error from the app"). NOT counted toward the parse-failure halt.
+      console.error(`[sailing-cron] ship processing threw — counting as fetch_error + continuing: ${urls[i]}`, err);
+      r = { sailing: emptySailingResult(), fetch_unchanged: 0, fetch_errors: 1, parse_failed: 0 };
+    }
     mergeSailing(sailing, r.sailing);
     fetch_unchanged += r.fetch_unchanged;
     fetch_errors += r.fetch_errors;
