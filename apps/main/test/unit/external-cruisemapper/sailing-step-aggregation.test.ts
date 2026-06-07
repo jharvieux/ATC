@@ -112,6 +112,45 @@ describe("runSailingWindow — time-budgeted stepping (#796)", () => {
     expect(r.parse_failed).toBe(2);
     expect(r.sailing.list_ingested).toBe(10);
   });
+
+  it("passes ONE shared step deadline (now + budget) through to every ship's processOne (#842)", async () => {
+    // The detail-fetch loop inside a ship needs the step deadline so a single
+    // high-sailing-count ship can't run the Vercel function past maxDuration. The
+    // deadline is per-STEP (shared across ships), not per-ship.
+    const seen: number[] = [];
+    await runSailingWindow(
+      ["a", "b"],
+      0,
+      5_000,
+      async (_url, deadlineMs) => {
+        seen.push(deadlineMs);
+        return fakeResult();
+      },
+      () => 1000,
+    );
+    expect(seen).toEqual([6000, 6000]); // now(1000) + budget(5000), identical for both ships
+  });
+
+  it("continues past a ship whose processing THROWS, counting it as a fetch_error (#842)", async () => {
+    const processed: string[] = [];
+    const r = await runSailingWindow(
+      ["a", "b", "c"],
+      0,
+      10_000,
+      async (url) => {
+        processed.push(url);
+        if (url === "b") throw new Error("transient pooler error");
+        return fakeResult({ sailing: { ...emptySailingResult(), current_ingested: 1 } });
+      },
+      () => 0,
+    );
+    expect(processed).toEqual(["a", "b", "c"]); // did NOT stop at the throw
+    expect(r.attempted).toBe(3);
+    expect(r.fetch_errors).toBe(1); // the throwing ship is counted, not fatal
+    expect(r.parse_failed).toBe(0); // a transient throw is not a parse failure
+    expect(r.sailing.current_ingested).toBe(2); // a + c still succeeded
+    expect(r.nextIndex).toBe(3);
+  });
 });
 
 describe("sailing refresh — sailingIngestOutcome (content_hash only when the itinerary reaches RAG)", () => {

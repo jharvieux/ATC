@@ -36,6 +36,10 @@ export interface SailingRunResult {
   list_details_fetched: number;          // detail fetched + parsed this run
   list_details_skipped_enriched: number; // already had ports — no fetch
   list_details_errors: number;           // detail fetch/parse failed
+  // #842 — sailings left un-enriched because the step's detail-fetch deadline was
+  // reached (1 req/sec would push the Vercel function past maxDuration). The ship
+  // is NOT stamped complete; the next run resumes it (already-enriched ones skip).
+  list_details_deferred: number;
 }
 
 export function emptySailingResult(): SailingRunResult {
@@ -52,6 +56,7 @@ export function emptySailingResult(): SailingRunResult {
     list_details_fetched: 0,
     list_details_skipped_enriched: 0,
     list_details_errors: 0,
+    list_details_deferred: 0,
   };
 }
 
@@ -71,6 +76,7 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
   into.list_details_fetched += one.list_details_fetched;
   into.list_details_skipped_enriched += one.list_details_skipped_enriched;
   into.list_details_errors += one.list_details_errors;
+  into.list_details_deferred += one.list_details_deferred;
 }
 
 // #827 — per-sailing detail (cruise.json) enrichment.
@@ -155,6 +161,12 @@ export async function processSailingHtml(
   html: string,
   shipUrl: string,
   result: SailingRunResult,
+  // #842 — absolute wall-clock deadline (ms) for this ship's detail-fetch work.
+  // The detail loop runs at ~1 req/sec, so a high-sailing-count ship can push a
+  // single Inngest step past Vercel's 300s maxDuration (→ FUNCTION_INVOCATION_TIMEOUT).
+  // Once reached, remaining sailings are deferred to the next run. Defaults to no
+  // deadline (the static-page path / tests don't fetch details under time pressure).
+  deadlineMs: number = Number.POSITIVE_INFINITY,
 ): Promise<void> {
   // Current sailing (with full day_by_day) — may be ABSENT for a future/
   // unlaunched, river, or retired ship. That is NOT a parse failure as long as
@@ -199,6 +211,15 @@ export async function processSailingHtml(
   const detailEnabled = process.env.CRUISEMAPPER_DETAIL_FETCH_ENABLED === "true";
 
   for (let i = 0; i < listItems.length; i += SAILING_POST_CONCURRENCY) {
+    // #842 — stop enriching once the step deadline is reached so a single ship's
+    // 1-req/sec detail fetches can't run the Vercel function past maxDuration.
+    // The remaining sailings are deferred (ship not stamped complete → resumed
+    // next run, where already-enriched ones skip via the sailing_detail gate).
+    // Only detail-fetching is time-bounded; without it the loop is cheap.
+    if (detailEnabled && Date.now() >= deadlineMs) {
+      result.list_details_deferred += listItems.length - i;
+      break;
+    }
     await Promise.all(
       listItems.slice(i, i + SAILING_POST_CONCURRENCY).map(async (item) => {
         // Price cache refreshes EVERY run, independent of port enrichment — it's

@@ -124,6 +124,20 @@ describe("processSailingHtml — #827 detail enrichment", () => {
     expect(upserts.some((u) => u.kind === "sailing_detail" && u.last_ingest_status === "ingested")).toBe(true);
   });
 
+  it("defers remaining sailings (no detail fetch) once the step deadline is reached (#842)", async () => {
+    process.env.CRUISEMAPPER_DETAIL_FETCH_ENABLED = "true";
+    const { db } = makeDb(null);
+    const result = emptySailingResult();
+    // Deadline already in the past → the detail loop must stop BEFORE the 1-req/sec
+    // fetch so the Inngest step can't run past Vercel's maxDuration.
+    await processSailingHtml(db, SHIP_HTML, SHIP_URL, result, Date.now() - 1000);
+
+    expect(mocks.fetchPage).not.toHaveBeenCalled(); // no detail fetch under the deadline
+    expect(result.list_details_fetched).toBe(0);
+    expect(result.list_details_deferred).toBe(1); // the one upcoming sailing is deferred
+    expect(listItemIngest()).toBeUndefined(); // and its list item did not ingest this run
+  });
+
   it("skips fetch AND re-ingest for an already-enriched sailing", async () => {
     process.env.CRUISEMAPPER_DETAIL_FETCH_ENABLED = "true";
     const { db } = makeDb("ingested");
