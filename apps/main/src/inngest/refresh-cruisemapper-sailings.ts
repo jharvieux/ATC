@@ -79,6 +79,37 @@ export function sailingHaltReason(attempted: number, parseFailures: number): str
   return `sailing parse_failure_rate ${(ratio * 100).toFixed(1)}% > ${(PARSE_FAILURE_HALT_RATIO * 100).toFixed(0)}% after ${attempted} pages`;
 }
 
+// Decide the inventory row update for one ship from its parse + RAG-ingest
+// result. content_hash is stamped ONLY when the current itinerary actually
+// reached RAG (parsed AND landed) — never on a parse failure or a RAG outage —
+// so a failed ingest is retried by the next run's unconditional GET instead of
+// being masked as "unchanged". Root cause of the 2026-06-06 gap: the stamp was
+// keyed on the local parse alone, so 117 ships whose RAG POST failed during a
+// RAG outage were marked "ingested" with a hash and then skipped forever.
+export function sailingIngestOutcome(
+  parseSucceeded: boolean,
+  landedInRag: boolean,
+  bodyHash: string,
+): { update: Record<string, unknown>; parse_failed: 0 | 1 } {
+  const update: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+  if (!parseSucceeded) {
+    update.last_ingest_status = "parse_failed";
+    update.last_error = "sailing_parser_returned_null";
+    return { update, parse_failed: 1 };
+  }
+  if (!landedInRag) {
+    // Parsed fine but the RAG POST didn't land — a transient/outage failure, not
+    // a parser problem, so it must NOT count toward the parse-failure halt.
+    update.last_ingest_status = "ingest_failed";
+    update.last_error = "rag_itinerary_ingest_failed";
+    return { update, parse_failed: 0 };
+  }
+  update.last_ingest_status = "ingested";
+  update.last_error = null;
+  update.content_hash = bodyHash;
+  return { update, parse_failed: 0 };
+}
+
 export const refreshCruisemapperSailings = inngest.createFunction(
   {
     id: "refresh-cruisemapper-sailings",
@@ -238,22 +269,19 @@ async function processOneSailingUrl(db: SupabaseClient, url: string): Promise<Sa
   }
 
   const beforeParsed = sailing.current_parsed;
+  const beforeIngested = sailing.current_ingested;
   await processSailingHtml(db, fetched.body, url, sailing);
   const parseSucceeded = sailing.current_parsed > beforeParsed;
+  // processSailingHtml never throws on a failed RAG POST — it only bumps
+  // current_errors — so "landed in RAG" is current_ingested advancing, not the
+  // local parse. Gate content_hash on that (see sailingIngestOutcome).
+  const landedInRag = sailing.current_ingested > beforeIngested;
 
-  // Stamp the body hash so next month's conditional GET skips unchanged pages.
+  const { update, parse_failed } = sailingIngestOutcome(parseSucceeded, landedInRag, fetched.bodyHash);
   await safeAwait(
-    db.from("cruisemapper_url_inventory")
-      .update({
-        last_seen_at: new Date().toISOString(),
-        content_hash: fetched.bodyHash,
-        last_ingest_status: parseSucceeded ? "ingested" : "parse_failed",
-        last_error: parseSucceeded ? null : "sailing_parser_returned_null",
-      })
-      .eq("url", url)
-      .eq("kind", "ship"),
+    db.from("cruisemapper_url_inventory").update(update).eq("url", url).eq("kind", "ship"),
     "cruisemapper_url_inventory.update.sailing",
   );
 
-  return { sailing, fetch_unchanged: 0, fetch_errors: 0, parse_failed: parseSucceeded ? 0 : 1 };
+  return { sailing, fetch_unchanged: 0, fetch_errors: 0, parse_failed };
 }

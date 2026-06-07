@@ -8,6 +8,7 @@ import {
   emptyKindResult,
   mergeKind,
   haltReason,
+  referenceIngestOutcome,
   type KindRunResult,
 } from "../../../src/inngest/refresh-cruisemapper-static";
 
@@ -56,5 +57,34 @@ describe("static refresh — parse-failure halt", () => {
     expect(reason).not.toBeNull();
     expect(reason).toContain("parse_failure_rate");
     expect(reason).toContain("20 ships");
+  });
+});
+
+describe("static refresh — referenceIngestOutcome (content_hash only on a confirmed write)", () => {
+  it("stamps content_hash + records the chunk on a successful ingest", () => {
+    const { update, delta } = referenceIngestOutcome({ status: "ingested", chunk_id: "c1" }, "HASH");
+    expect(update.content_hash).toBe("HASH");
+    expect(update.last_ingest_status).toBe("ingested");
+    expect(update.related_chunk_id).toBe("c1");
+    expect(delta).toEqual({ ingested: 1 });
+  });
+
+  it("stamps content_hash on 'unchanged' — the content is already in RAG", () => {
+    const { update, delta } = referenceIngestOutcome({ status: "unchanged" }, "HASH");
+    expect(update.content_hash).toBe("HASH");
+    expect(delta).toEqual({ unchanged_rag: 1 });
+  });
+
+  it("stamps content_hash on quarantined — definitive, don't re-submit the same bad content", () => {
+    const { update, delta } = referenceIngestOutcome({ status: "quarantined", reason: "injection" }, "HASH");
+    expect(update.content_hash).toBe("HASH");
+    expect(delta).toEqual({ injection_quarantined: 1 });
+  });
+
+  it("does NOT stamp content_hash on a server_error — so the next run retries instead of masking the failure", () => {
+    const { update, delta } = referenceIngestOutcome({ status: "error", httpStatus: 503 }, "HASH");
+    expect(update.content_hash).toBeUndefined();
+    expect(update.last_ingest_status).toBe("server_error");
+    expect(delta).toEqual({ errors: 1 });
   });
 });

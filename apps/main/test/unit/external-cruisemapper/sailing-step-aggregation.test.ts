@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { emptySailingResult, mergeSailing } from "../../../src/lib/external/cruisemapper/sailing-ingest";
-import { sailingHaltReason, runSailingWindow } from "../../../src/inngest/refresh-cruisemapper-sailings";
+import { sailingHaltReason, runSailingWindow, sailingIngestOutcome } from "../../../src/inngest/refresh-cruisemapper-sailings";
 import type { SailingUrlResult } from "../../../src/inngest/refresh-cruisemapper-sailings";
 
 describe("sailing refresh — per-step aggregation", () => {
@@ -110,5 +110,31 @@ describe("runSailingWindow — time-budgeted stepping (#796)", () => {
     expect(r.fetch_unchanged).toBe(2);
     expect(r.parse_failed).toBe(2);
     expect(r.sailing.list_ingested).toBe(10);
+  });
+});
+
+describe("sailing refresh — sailingIngestOutcome (content_hash only when the itinerary reaches RAG)", () => {
+  it("stamps content_hash when the page parsed AND landed in RAG", () => {
+    const { update, parse_failed } = sailingIngestOutcome(true, true, "HASH");
+    expect(update.content_hash).toBe("HASH");
+    expect(update.last_ingest_status).toBe("ingested");
+    expect(parse_failed).toBe(0);
+  });
+
+  it("does NOT stamp content_hash when parsed but the RAG ingest failed — the 2026-06-06 gap that masked 117 ships", () => {
+    // The bug: a RAG outage left the page parsed-but-not-in-RAG, yet the old
+    // code stamped the hash anyway, so the conditional GET skipped it forever.
+    const { update, parse_failed } = sailingIngestOutcome(true, false, "HASH");
+    expect(update.content_hash).toBeUndefined();
+    expect(update.last_ingest_status).toBe("ingest_failed");
+    // A RAG outage is not a parser failure, so it must not feed the parse-failure halt.
+    expect(parse_failed).toBe(0);
+  });
+
+  it("marks parse_failed without a content_hash when the page didn't parse", () => {
+    const { update, parse_failed } = sailingIngestOutcome(false, false, "HASH");
+    expect(update.content_hash).toBeUndefined();
+    expect(update.last_ingest_status).toBe("parse_failed");
+    expect(parse_failed).toBe(1);
   });
 });
