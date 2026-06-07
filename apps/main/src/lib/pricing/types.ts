@@ -17,6 +17,10 @@ export const ALL_CABIN_CLASSES: readonly CabinClass[] = [
 export type CruiseLineCode =
   | "RCL" | "NCL" | "PCL" | "CEL" | "COS"
   | "CCL" | "HAL" | "MSC" | "DSY"
+  // Premium / luxury / specialty lines — itinerary + RAG coverage only. No
+  // sercul pricing actor (LINE_ROUTES = null); price refresh, if ever wired,
+  // routes via the BCK aggregator fallback.
+  | "VIK" | "OCE" | "WST" | "SIL" | "RSS" | "SBN" | "AZA" | "CUN" | "VVY" | "PNO"
   // Aggregator fallback (booking.com cruises) for uncovered lines.
   | "BCK";
 

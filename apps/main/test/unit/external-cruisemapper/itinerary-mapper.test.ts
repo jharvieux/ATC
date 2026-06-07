@@ -45,8 +45,15 @@ describe("mapItinerary", () => {
     expect(mapItinerary({ ...BASE, departureDate: "08/15/2026" })).toBeNull();
   });
 
-  it("returns null when cruise line can't be normalized to a known code", () => {
-    expect(mapItinerary({ ...BASE, cruiseLine: "Some Made-Up Cruise Line" })).toBeNull();
+  it("falls back to BCK (never dropped) when the cruise line is unrecognized", () => {
+    // The 2026-06-06 gap: unknown lines used to return null and get silently
+    // dropped. They must now ingest under the aggregator code instead.
+    expect(mapItinerary({ ...BASE, cruiseLine: "Some Made-Up Cruise Line" })!.key.line).toBe("BCK");
+  });
+
+  it("returns null only when the cruise line is empty/missing", () => {
+    expect(mapItinerary({ ...BASE, cruiseLine: "" })).toBeNull();
+    expect(mapItinerary({ ...BASE, cruiseLine: undefined })).toBeNull();
   });
 
   it("omits cache quote when no starting price provided", () => {
@@ -68,11 +75,26 @@ describe("mapItinerary", () => {
     expect(a).not.toBe(b);
   });
 
-  it("normalizes various long-form line names to short codes", () => {
+  it("normalizes mainstream + luxury long-form line names to short codes", () => {
     expect(mapItinerary({ ...BASE, cruiseLine: "Norwegian" })!.key.line).toBe("NCL");
-    expect(mapItinerary({ ...BASE, cruiseLine: "Carnival" })!.key.line).toBe("CCL");
+    // Regression: "Carnival Cruise Line" is the actual CruiseMapper label and
+    // used to miss the exact-match map (only "Carnival" was listed) -> 31 ships dropped.
+    expect(mapItinerary({ ...BASE, cruiseLine: "Carnival Cruise Line" })!.key.line).toBe("CCL");
     expect(mapItinerary({ ...BASE, cruiseLine: "Princess Cruises" })!.key.line).toBe("PCL");
     expect(mapItinerary({ ...BASE, cruiseLine: "MSC" })!.key.line).toBe("MSC");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Viking Ocean (Viking Cruises)" })!.key.line).toBe("VIK");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Oceania Cruises" })!.key.line).toBe("OCE");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Silversea Expeditions (Silversea Cruises)" })!.key.line).toBe("SIL");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Regent Seven Seas Cruises" })!.key.line).toBe("RSS");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Seabourn Cruises" })!.key.line).toBe("SBN");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Windstar Cruises" })!.key.line).toBe("WST");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Azamara Cruises" })!.key.line).toBe("AZA");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Cunard" })!.key.line).toBe("CUN");
+    expect(mapItinerary({ ...BASE, cruiseLine: "Virgin Voyages" })!.key.line).toBe("VVY");
+    expect(mapItinerary({ ...BASE, cruiseLine: "P&O UK (P&O Cruises)" })!.key.line).toBe("PNO");
+    // Sub-brands resolve to their parent line.
+    expect(mapItinerary({ ...BASE, cruiseLine: "Galapagos (Celebrity Cruises)" })!.key.line).toBe("CEL");
+    expect(mapItinerary({ ...BASE, cruiseLine: "MSC Explora Journeys" })!.key.line).toBe("MSC");
   });
 
   it("labels cache quote source as 'apify' (Apify actor path, not DIY)", () => {
@@ -118,8 +140,9 @@ describe("mapSailing", () => {
     expect(out!.portsOfCall).toEqual(["Juneau", "Ketchikan", "Victoria"]);
   });
 
-  it("returns null when cruise line cannot be normalized", () => {
-    expect(mapSailing({ ...BASE_PARSED_SAILING, cruise_line: "Unknown Cruises" })).toBeNull();
+  it("falls back to BCK (never dropped) for an unrecognized line; null only when empty", () => {
+    expect(mapSailing({ ...BASE_PARSED_SAILING, cruise_line: "Unknown Cruises" })!.key.line).toBe("BCK");
+    expect(mapSailing({ ...BASE_PARSED_SAILING, cruise_line: null })).toBeNull();
   });
 
   it("omits cache quote when no starting price", () => {
@@ -162,8 +185,9 @@ describe("mapSailingListItem", () => {
     expect(out!.cacheQuote!.cabinPrices.interior?.amount).toBe(789);
   });
 
-  it("returns null when cruise line can't be normalized", () => {
-    expect(mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Unknown Cruises")).toBeNull();
+  it("falls back to BCK (never dropped) for an unrecognized line; null only when empty", () => {
+    expect(mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "Unknown Cruises")!.key.line).toBe("BCK");
+    expect(mapSailingListItem(BASE_LIST_ITEM, "Norwegian Bliss", "")).toBeNull();
   });
 
   it("omits cache quote when no starting price", () => {
