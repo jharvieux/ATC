@@ -1,26 +1,27 @@
-# Session state — last updated 2026-06-06 21:10 UTC
+# Session state — last updated 2026-06-07 ~07:00 UTC
 
 ## Just completed
-- **#813 (last-superadmin TOCTOU)** — PR #814 merged. Advisory-locked SECURITY DEFINER RPCs; migration `20260628000004`.
-- **Process retrospective** (open + past-week-closed issues) → filed **#815** (mechanical D-091 CI lints), **#816** (close `pnpm verify` vs CI gap — add `lint:migrations`; RAG tests #792), **#817** (strengthen d091-reviewer: changed-constant → enumerate dependents).
-- **#811 (per-role admin enforcement)** — scoped + **QUEUED for a focused session** (your call; ~50-file all-or-nothing security rollout). Plan + confirmed area→role policy in **MEMORY D-170**; tasks #35–38. (The 2 "ungated" routes were a false alarm — they're service-to-service `MAIN_APP_ADMIN_API_KEY` bearer-gated.)
-- Whole session, all merged to dev: #799, #800/#803, #441/#804, RAG flush #805/#806/#807/#808/#810, #809, role-mgmt #812, #813. atc-rag deployed twice (RAG flush fixes live).
+- **PR #829 (#826 + #828a)** merged — chat structured ship+date itinerary lookup (`/api/retrieve` `itinerary_lookup`) + scoped the price-deferral to PRICE-only.
+- **PR #830 (#827)** merged — accurate future-sailing ports via `GET /ships/cruise.json?id=<row>` (needs `X-Requested-With`); shared parser helpers + `cruise-expand-parser`; gated by `CRUISEMAPPER_DETAIL_FETCH_ENABLED` (off); incremental via `cruisemapper_url_inventory` kind='sailing_detail' (migration `20260628000005`).
+- **PR #832 (#828b, closes #820)** merged — weekly `derive-general-price-ranges` cron deriving ballpark `general_pricing_ranges` from interior lead-ins × multipliers, `source='estimated'` (migration `20260628000006`).
+- Follow-up #831 filed (automate the port backfill).
+- MEMORY D-172 added (this checkpoint).
 
 ## In flight
-- Nothing in flight — clean checkpoint, on dev. (#811 is planned only — no code yet.)
+- **ROLLOUT (user asked to ship to prod):** cutting `release/beta045` off dev to deploy PR1(main-side)/#830/#832. Then prod gate → migrations → enable sailings backfill.
+- Doc checkpoint PR (MEMORY D-172 incl. orphaned D-171 + this SESSION) on branch `chore/session-checkpoint-cruisemapper-ports-prices`.
 
 ## Next step
-- **#811** — implement per-role admin enforcement (tasks #35–38; policy = D-170 area map). ~50 files, all-or-nothing; do as a focused session.
-- **Cut an atc-main beta** to ship the dev-only main-app work to prod: **#803 (#800), #804 (#441), #812 (role mgmt), #814 (#813)**. Migration order at deploy:
-  1. Deploy the code (beta gate).
-  2. `20260628000002` (users.role default → viewer) — **CODE-FIRST** (D-166).
-  3. `20260628000003` + `20260628000004` (admin RPCs) — additive, anytime.
-- After deploy: **#1** Booking cleanup; **#3** test agency.
+1. Cut `release/beta045` (push dev → release/beta045).
+2. User approves the production environment gate in GitHub Actions → prod deploys + smoke test.
+3. Apply prod main migrations (code-first, post-deploy): `20260628000005` (inventory kind sailing_detail) + `20260628000006` (general_pricing_ranges source estimated) via `mcp__supabase-main__apply_migration`.
+4. Enable + backfill: set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true` (atc-main prod env); `UPDATE cruisemapper_url_inventory SET content_hash=NULL WHERE kind='ship';` (forces re-process); trigger `refresh-cruisemapper-sailings` (Inngest) → ports backfill; trigger `derive-general-price-ranges`.
 
 ## Blocked on user
-- **beta cut** (atc-main → prod) — your call.
-- **#1 Booking cleanup** (delete vs deactivate the bad owner rows) — confirm before the prod data change.
+- Approve the production environment gate for `release/beta045`.
+- Set `CRUISEMAPPER_DETAIL_FETCH_ENABLED=true` on the atc-main PROD Vercel env (no MCP env tool; needs Vercel dashboard/CLI) — then the deploy/runtime picks it up.
+- Trigger the Inngest crons (`refresh-cruisemapper-sailings`, `derive-general-price-ranges`) from the Inngest dashboard (cron-only functions; no manual event trigger).
 
-## Open questions / follow-ups
-- Queued: #811 (per-role enforcement). Process: #815/#816/#817. Other: #807 (bulk-flip test), #785/#786 (vendor health), #780/#781/#783 (cruise-line DB), #774, #792, #715–#752 (security backlog).
-- Watch: RAG embedding queue draining (OpenAI Batch API latency, D-168).
+## Open questions
+- Untracked security-scan artifacts in the tree (`.agents/`, `.claude/skills/`, `.triage-state/`, `apps/main/src/THREAT_MODEL.md`, `VULN-FINDINGS.*`, `skills-lock.json`, `specs/...copy.txt`) — commit, gitignore, or discard? Left untouched.
+- PR #829's RAG-side `/api/retrieve` change needs a MANUAL `cd apps/rag && vercel deploy --prod` to take effect (the beta pipeline only deploys atc-main).
