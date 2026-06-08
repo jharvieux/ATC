@@ -4,6 +4,41 @@ Newest entries on top.
 
 ---
 
+## D-183 — 2026-06-07 — #868: the concierge has NEVER had RAG grounding — 3 stacked bugs (tenant 403 + contract 400), NOT the persona prompts
+
+Investigating why the concierge hallucinates ship+date itineraries (says "Bliss runs Caribbean" when the RAG chunk clearly says Seattle→Alaska). **`rag_retrieval_log` is EMPTY for ALL tenants → chat→RAG retrieval has never succeeded in prod.** The data is perfect (RAG itinerary chunk for Bliss 2026-10-03 is approved/global/embedded) and the persona is fine — it just gets an empty knowledge block and improvises.
+
+**The full stack (peeled in order):**
+1. **#850** entity-extraction FK — fixed + live (entity_extraction now logs in prod).
+2. **RAG `tenant_inactive` 403** — `verifyServiceJwt` (RAG) requires `tenant_registry_shadow.status='active'`; booking was stale `"onboarding"` there while atc-main says `active`. Band-aided via psql (`update tenant_registry_shadow set status='active'`). Durable fix owed: the atc-main→RAG status sync never propagated (`last_reconcile_sync_at` null — reconcile never ran).
+3. **RAG request-contract 400** (CURRENT blocker, unfixed) — `RetrieveRequestSchema` (`packages/contracts/src/retrieve.ts`) requires `persona_id` + `user_id` as **UUIDs**, but `callRagRetrieve` sends `persona_id="marcus-cole"` (a SLUG) and (anon, post-#850) `user_id=null`. Always 400. Masked until now because the 403 (auth) is checked before body-parse.
+
+**Red herring:** `RAG_SERVICE_URL=atc-rag.vercel.app` 307-redirects to the canonical `rag.ai-travelconcierge.com` (auth-loss theory). I changed it to the canonical host (cleaner, kept) but it was NOT the cause — the 403/400 happen at the RAG regardless.
+
+**Fix path (#868, next):** relax the contract (`persona_id`→`z.string()`, `user_id`→nullable — RAG filters personas via `filters.agent_slug`, only logs `persona_id`) + a contract round-trip test (main's body MUST satisfy `RetrieveRequestSchema`) + **redeploy atc-rag** (deploys manually/separately, ~22h stale) + durable shadow-sync fix. **Prod state:** beta050 live (#850+#860); RAG shadow booking=active (manual); `RAG_SERVICE_URL`=canonical host.
+
+---
+
+## D-182 — 2026-06-07 — #862 verifyEnvAtBoot() at the chat route 500'd PROD chat — reverted; whole-app env validation must never run in a request handler
+
+#862 (call `verifyEnvAtBoot()` at the top of `/api/chat` POST, PR #864) took **prod chat fully DOWN (HTTP 500)** in beta049. Root cause: `verifyEnvAtBoot()` validates the ENTIRE app env schema, so **unrelated** misconfigs throw uncaught → 500. **Reverted (#867).** Incident handling: `vercel rollback` → beta048, then beta050 (= #850+#860, no #862).
+
+**The 4 vars that actually fail prod env validation** (from beta049 runtime logs — definitive): `RESEND_API_KEY` (must start `re_`), `OPENAI_API_KEY` (`sk-`), `MICROSOFT_GRAPH_CLIENT_ID`/`_SECRET` (required because `OAUTH_MICROSOFT_ENABLED` defaults true). **None used by chat.** Caveat (operator was rightly skeptical): `verifyEnvAtBoot` checks FORMAT not function — could be schema-too-strict OR genuinely misconfigured (MS sign-in is the likely real breakage). `vercel env pull` masks Sensitive vars to empty, so it can't be used to repro — read the runtime logs instead. (#862 reopened: proper fix = `detectBugIntent` reads `process.env.PHASE_2_...` directly; don't whole-app-validate at a route.)
+
+**Lessons:** (a) the app has NEVER passed full env validation in serving runtimes (Next instrumentation `register()` doesn't reliably cover them — which is why `env()` throws "called before verifyEnvAtBoot"). (b) **Deploy ops:** `vercel rollback` PINS the alias — a subsequent pipeline deploy does NOT auto-re-promote over it (had to `vercel promote` beta050 manually); and `vercel redeploy` may reuse the old env snapshot (use a fresh `vercel deploy`/pipeline to pick up env changes).
+
+---
+
+## D-181 — 2026-06-07 — #860: /api/chat recognizes the session cookie + platform-admin bypass; resolve users.id (NOT the auth id) for the FK columns (#865)
+
+`/api/chat` `isAuthenticated` was **Bearer-only**, but no web client sends a Bearer post-§17.x cookie migration → every user treated anonymous → the entire authenticated customer-tier quota system was **dead in prod (0 authenticated chats ever)**. Fixed: recognize the Supabase **session cookie** (presence-check sync; validate async via `tenantContextFromRequest`).
+
+**The id trap (key insight):** `tenantContextFromRequest` returns `source.user_id = auth.users.id`, but `conversations`/`ai_call_log`/`customer_chat_counters`/`customer_memories` all FK **`public.users(id)`** (a different id). So the route resolves `public.users.id` for those writes + `enforceCustomerLimit`, and keeps the **auth id** only for the `platform_admins` lookup + tools/RLS (`ctx`). Writing the auth id into those columns would FK-500 the authed path (#850-class).
+
+**Staff bypass:** platform admins skip both rate limiters (unmetered testing) but costs are still logged under their `users.id` (operator decision: platform-admins-only, cost-tracked). Invalid/expired session → degrade to anonymous (no hard error). Merged #865 (Opus d091 clean). Surfaced #866 (`instrumentedClaudeStream` lacks the §27.6 AI-cost hard-state guard `instrumentedClaudeCall` has). NOTE: #860 doesn't make the concierge work end-to-end — RAG grounding is separately broken (see [[D-183]]).
+
+---
+
 ## D-180 — 2026-06-07 — #850 root cause = anon session id written into ai_call_log.user_id (FK violation), NOT a model/key/data problem (#861)
 
 The concierge "ignores ship+date itinerary data" bug ([[D-177]]) was finally root-caused with a **live prod reproduction** + the actual runtime error. It was NOT entity extraction being model/key/data-broken (all of those are fine — running `extractEntities` directly with the prod key+DB returns perfect entities).

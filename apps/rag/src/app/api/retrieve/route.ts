@@ -11,6 +11,8 @@ import { getRagDb } from "@/lib/db/supabase";
 import { embed } from "@/lib/embeddings/openai";
 import { RetrieveRequestSchema } from "@/lib/schemas/retrieve";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const POST = withServiceAuth(async (req, ctx) => {
   const retrieval_id = randomUUID();
 
@@ -61,7 +63,8 @@ export const POST = withServiceAuth(async (req, ctx) => {
         tenant_id: ctx.tenant_id,
         user_id: ctx.user_id,
         conversation_id: body.conversation_id,
-        persona_id: body.persona_id,
+        // persona_id column is UUID; callers may send a slug — null it when not a UUID.
+        persona_id: UUID_RE.test(body.persona_id) ? body.persona_id : null,
         query_text: body.query,
         filters_applied: body.filters,
         chunks_returned: (chunks as Array<{ id: string }>)?.map((c) => c.id) ?? [],

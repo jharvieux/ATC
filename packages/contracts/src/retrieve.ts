@@ -16,9 +16,14 @@ const UUID = z.string().uuid();
 export const RetrieveRequestSchema = z.object({
   query: z.string().min(1),
   tenant_id: UUID,
-  user_id: UUID,
+  // Anon chat turns have no authenticated user — allow null.
+  user_id: UUID.nullable().optional().default(null),
   conversation_id: UUID,
-  persona_id: UUID,
+  // Personas are identified by slug at the call site (e.g. "marcus-cole").
+  // The RAG route logs persona_id to rag_retrieval_log.persona_id (UUID column)
+  // but guards slugs with a UUID regex and inserts null instead — so slugs and
+  // UUIDs both pass this schema but only UUIDs are preserved in the log.
+  persona_id: z.string().min(1),
   filters: z
     .object({
       category: z.string().optional(),
