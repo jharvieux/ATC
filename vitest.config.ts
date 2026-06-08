@@ -7,6 +7,9 @@ export default defineConfig({
       // Mirror the apps/main tsconfig path alias so test files that import
       // src code via @/ work without needing Next.js's own resolver.
       "@": path.resolve(__dirname, "apps/main/src"),
+      // Resolve the local contracts workspace package (not symlinked into
+      // root node_modules — pnpm keeps it in packages/).
+      "@atc/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
     },
   },
   test: {

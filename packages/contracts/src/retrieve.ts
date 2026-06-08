@@ -16,9 +16,12 @@ const UUID = z.string().uuid();
 export const RetrieveRequestSchema = z.object({
   query: z.string().min(1),
   tenant_id: UUID,
-  user_id: UUID,
+  // Anon chat turns have no authenticated user — allow null.
+  user_id: UUID.nullable().optional().default(null),
   conversation_id: UUID,
-  persona_id: UUID,
+  // Personas are identified by slug at the call site; the DB column is UUID but
+  // only used for best-effort logging (void async), so we accept either form here.
+  persona_id: z.string().min(1),
   filters: z
     .object({
       category: z.string().optional(),
