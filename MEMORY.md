@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-179 — 2026-06-07 — Adopted claude-opus-4-8 (first real use of #851's attempt-latest machinery) (#858/#857)
+
+Operator said "adopt opus 4.8." Done as a code-only bump riding [[D-178]]'s resilience chain — the opus tier is now `[claude-opus-4-8 (latest) → claude-opus-4-7 (fallback)]`. This is the **first deliberate generation bump** through the new policy: a 4-8 availability hiccup auto-degrades to 4-7 via the circuit breaker instead of failing.
+
+**Zero caller changes.** Both opus ids map to the `opus` tier in `MODEL_TIER`, so the ~30 sites still hardcoding `claude-opus-4-7` resolve to the 4-8-first chain automatically. `DOWNGRADE_MAP` now downgrades both opus ids → `HAIKU_PINNED` under soft cost-state.
+
+**Pricing is a deliberate placeholder.** `claude-opus-4-8` is priced = 4-7 (150000/750000¢/M) with `TODO(#857)` — chosen so `getCostEstimate` doesn't silently bill $0 on the new id (same call made for the haiku alias in [[D-178]]). The REAL list price is unverified; confirming it + running a 4-8-vs-4-7 quality/cost eval are the operator follow-ups in **#857** (the bump is availability-gated by the chain, but quality/cost are NOT auto-detected — evals own that).
+
+**Rollout.** Merged to dev (#858); NOT in beta048 (cut just before) — rides the next beta (beta049). Both audits clean (Sonnet ×2: small config change to an already-audited path).
+
+**Artifacts.** #858 (merged), #857 (operator follow-ups: opus-4-8 price + eval, plus the pending `INNGEST_API_KEY`/CI `ANTHROPIC_API_KEY` activation deps from [[D-178]]). `apps/main/src/lib/ai/{models,call-wrapper,pricing}.ts`.
+
+---
+
 ## D-178 — 2026-06-07 — #851 model-resilience COMPLETE (3 layers: loud + attempt-latest fallback + canary); opus-4-8 available
 
 Built out the #851 design from [[D-177]] (operator policy: "attempt latest, fall back on issues"). All three layers merged to dev:
