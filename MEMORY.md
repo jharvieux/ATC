@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-190 — 2026-06-08 — display-asset lightbox refinements: descriptive labels + mobile-safe modal
+
+**Decision:** Two refinements to the [[D-189]] lightbox.
+
+1. **Descriptive trigger labels from the asset caption.** Instead of "View deck plan", the link now reads e.g. "Norwegian Bliss Deck 17". `assetLinkLabel()` takes the part of `caption` before " - " (captions are stored as `"Norwegian Bliss Deck 17 - Cabins-The Haven Lower-Sundeck-Teens"`), falling back to "View {kind}" when an asset has no caption. The full caption is shown as the modal title.
+
+2. **Mobile-safe modal.** Operator reported the modal didn't scroll/resize and the ✕ was off-screen on mobile. Root cause: the shared `components/ui/dialog.tsx` panel had no max-height and was centered, so tall content (a deck-plan image) overflowed the viewport and pushed the absolutely-positioned ✕ above the screen. Fixes: (a) the shared dialog panel is now `max-h-[90vh] overflow-y-auto` with `p-4` on the wrapper, so it never exceeds the viewport; (b) the lightbox image is capped at `max-h-[75vh] max-w-full` so it scales to fit. Blast radius of the shared change is one other consumer (the ai-mode settings dialog) — a strict improvement for it too.
+
+**Why a shared-dialog change vs lightbox-only:** the overflow/off-screen-✕ problem is inherent to the generic dialog for any tall content; fixing it at the primitive helps every dialog. Only 2 consumers exist, both reviewed.
+
+**Artifacts:** PR (TBD), `AssetLightbox.tsx` (`assetLinkLabel`), `dialog.tsx`. Related: [[D-189]], [[D-075]]. Follow-up #885 (open-state Playwright) still open.
+
+---
+
 ## D-189 — 2026-06-08 — #884: display assets open in an on-page lightbox (partial reversal of D-075's new-tab hyperlink)
 
 **Decision:** Render each `[[display_asset:<uuid>]]` marker as an `<AssetLightbox>` that opens the image in a dismissible on-page modal, instead of [[D-075]]'s `<a href target="_blank">` that navigated the customer away to cruisemapper.com.
