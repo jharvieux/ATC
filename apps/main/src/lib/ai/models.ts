@@ -40,6 +40,14 @@ export function resolveModelChain(desiredModel: string): string[] {
   return tier ? [...TIER_CHAINS[tier]] : [desiredModel];
 }
 
+// Every distinct model id the app may call (across all tier chains). The canary
+// (#851 PR3) pings each of these so a retired/unavailable model surfaces before a
+// customer hits it. Note: undated aliases (HAIKU_LATEST) are NOT listed by
+// GET /v1/models, so the canary verifies by a real 1-token call, not list membership.
+export function allConfiguredModels(): string[] {
+  return [...new Set(Object.values(TIER_CHAINS).flat())];
+}
+
 // ── Circuit-breaker: once a model errors, skip it for a cooldown so we don't
 // hammer a broken/retired model every request — but keep re-probing so we
 // return to it automatically once it's healthy ("sticky but self-healing").

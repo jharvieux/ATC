@@ -83,6 +83,8 @@ import { auditLogRetentionPurge } from "@/inngest/audit-log-retention-purge";
 import { requestIdempotencyPurge } from "@/inngest/request-idempotency-purge";
 // BP26: Vendor health probe (§26.9)
 import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
+// #851: daily model canary — pings configured models so a retired one alerts early
+import { modelCanary } from "@/inngest/model-canary";
 // BP26: §26.6 monitoring crons
 import { authFailureMonitor } from "@/inngest/auth-failure-monitor";
 import { permissionDeniedMonitor } from "@/inngest/permission-denied-monitor";
@@ -213,6 +215,8 @@ export const { GET, POST, PUT } = serve({
     requestIdempotencyPurge,
     // BP26: Vendor health probe (§26.9)
     vendorHealthProbe,
+    // #851: daily model canary
+    modelCanary,
     // BP26: §26.6 monitoring crons
     authFailureMonitor,
     permissionDeniedMonitor,
