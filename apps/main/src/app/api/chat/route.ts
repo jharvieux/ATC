@@ -140,7 +140,7 @@ export async function POST(req: Request): Promise<Response> {
   // instrumentation register() hook doesn't reliably cover serverless route
   // runtimes (same reason the forums route + inngest fns call it at their
   // entrypoints), so detectBugIntent's env() read died on every chat turn.
-  verifyEnvAtBoot();
+  verifyEnvAtBoot(); // side-effect only: primes the env cache; downstream code reads via env()
   let body: {
     message?: string;
     conversation_id?: string | null;

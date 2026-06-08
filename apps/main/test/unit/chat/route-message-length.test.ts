@@ -101,6 +101,8 @@ describe("POST /api/chat — env boot init (#862)", () => {
     // detectBugIntent's env() read died on every chat turn. The call sits at the
     // top of POST, so it runs even on the early length-cap return.
     await POST(chatReq("a".repeat(8001)));
-    expect(verifyEnvAtBoot).toHaveBeenCalled();
+    // Over-length req returns at the length cap; the call still fires → it must
+    // sit ABOVE the cap. (Moving it below the cap would make this 0 calls.)
+    expect(verifyEnvAtBoot).toHaveBeenCalledTimes(1);
   });
 });
