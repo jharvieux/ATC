@@ -33,7 +33,7 @@ describe("renderMessageContent", () => {
   it("renders a known asset marker as an on-page lightbox trigger (no navigation away)", () => {
     const out = html(renderMessageContent(`See: [[display_asset:${A_ID}]]`, [A]));
     // Trigger + inline attribution render in the closed state…
-    expect(out).toContain("View deck plan");
+    expect(out).toContain("Deck 9");
     expect(out).toContain("Image: CruiseMapper");
     expect(out).toContain("<button");
     expect(out).not.toContain("display_asset:");
@@ -45,14 +45,14 @@ describe("renderMessageContent", () => {
   it("renders unknown UUIDs literally (defense-in-depth past asset validation)", () => {
     const out = html(renderMessageContent(`See: [[display_asset:${B_ID}]]`, [A]));
     expect(out).toContain(`[[display_asset:${B_ID}]]`);
-    expect(out).not.toContain("View deck plan");
+    expect(out).not.toContain("<button");
   });
 
   it("renders multiple markers in one message", () => {
     const B: DisplayAsset = { ...A, asset_id: B_ID, image_url: "https://www.cruisemapper.com/y.jpg" };
     const out = html(renderMessageContent(`A [[display_asset:${A_ID}]] then B [[display_asset:${B_ID}]]`, [A, B]));
     // Two lightbox triggers (one per asset).
-    expect(out.match(/View deck plan/g)?.length).toBe(2);
+    expect(out.match(/<button/g)?.length).toBe(2);
   });
 
   it("escapes attribution text (no innerHTML injection)", () => {
@@ -76,7 +76,7 @@ describe("renderMessageContent", () => {
 
   it("case-insensitive UUID matching", () => {
     const out = html(renderMessageContent(`X [[display_asset:${A_ID.toUpperCase()}]]`, [A]));
-    expect(out).toContain("View deck plan");
+    expect(out).toContain("Deck 9");
   });
 
   it("strips all markup when showAssetLinks is false (source-display toggle off)", () => {
@@ -89,7 +89,7 @@ describe("renderMessageContent", () => {
     );
     expect(out).not.toContain("href");
     expect(out).not.toContain("display_asset");
-    expect(out).not.toContain("View deck plan");
+    expect(out).not.toContain("<button");
     expect(out).toContain("Look at this");
     expect(out).toContain("it&#x27;s great");
     expect(out).not.toMatch(/  /);
@@ -104,14 +104,14 @@ describe("renderMessageContent", () => {
 
   it("showAssetLinks=true is the default", () => {
     const out = html(renderMessageContent(`X [[display_asset:${A_ID}]]`, [A]));
-    expect(out).toContain("View deck plan");
+    expect(out).toContain("Deck 9");
   });
 
   it("does NOT render a trigger for a non-http(s) asset url (javascript:/data: defense-in-depth)", () => {
     const evil: DisplayAsset = { ...A, image_url: "javascript:alert(1)" };
     const out = html(renderMessageContent(`X [[display_asset:${A_ID}]]`, [evil]));
     expect(out).not.toContain("javascript:");
-    expect(out).not.toContain("View deck plan");
+    expect(out).not.toContain("<button");
     // Falls through to literal rendering so the bad asset is visible.
     expect(out).toContain(`[[display_asset:${A_ID}]]`);
   });
@@ -135,7 +135,7 @@ describe("renderMessageContent", () => {
     const content = ids.map((id) => `[[display_asset:${id}]]`).join(" ");
     const out = html(renderMessageContent(content, allAssets));
     // Exactly 3 triggers render; the 4th/5th are dropped silently (not literal).
-    expect(out.match(/View deck plan/g)?.length).toBe(3);
+    expect(out.match(/<button/g)?.length).toBe(3);
     expect(out).not.toContain(`[[display_asset:${ids[3]}]]`);
     expect(out).not.toContain(`[[display_asset:${ids[4]}]]`);
   });
@@ -160,7 +160,7 @@ describe("renderMessageContent", () => {
       ids.map((id) => `[[display_asset:${id}]]`).join(" ");
     const out = html(renderMessageContent(content, knownAssets));
     // All 3 known assets still render (unknown didn't eat the budget)…
-    expect(out.match(/View deck plan/g)?.length).toBe(3);
+    expect(out.match(/<button/g)?.length).toBe(3);
     // …and the unknown id renders literally.
     expect(out).toContain(`[[display_asset:${UNKNOWN_ID}]]`);
   });

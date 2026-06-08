@@ -64,16 +64,18 @@ function DialogContent({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/50"
         onClick={() => setOpen(false)}
         aria-hidden="true"
       />
-      {/* Panel */}
+      {/* Panel — capped at the viewport (minus the wrapper's p-4) and scrollable
+          so tall content (e.g. a deck-plan image) never overflows the screen and
+          pushes the close button out of reach on mobile. */}
       <div
-        className={`relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6 ${className}`}
+        className={`relative bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 ${className}`}
         role="dialog"
         aria-modal="true"
       >
