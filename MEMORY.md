@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-184 — 2026-06-07 — #868: RetrieveRequestSchema contract fix (persona slug + null user_id) — merged + atc-rag redeployed
+
+**Decision**: Relax `RetrieveRequestSchema.persona_id` from `UUID` to `z.string().min(1)` and `user_id` from required UUID to `UUID.nullable().optional().default(null)`.
+
+**Why**: `callRagRetrieve` sends the persona SLUG (e.g. `marcus-cole`, not a UUID) and `user_id=null` for anon turns. The stricter schema caused a 400 on every RAG retrieve call. The error was silently swallowed by the try/catch → `{ chunks: [] }` → empty knowledge block → hallucinations. RAG has never produced a grounded answer in prod since #826 shipped. Also guarded `body.persona_id` in the RAG route's log insert — the `rag_retrieval_log.persona_id` column is UUID type; inserting a slug would fail the insert (void async, silent, but still wrong).
+
+**What was rejected**: Changing the chat route to look up and send the persona UUID. Requires an extra DB query on every chat turn (resolveActivePersonaSlug only returns slug). Low value — `persona_id` in the log is best-effort analytics. Deferred.
+
+**Artifacts**: PR #870 (merged), atc-rag redeployed 2026-06-07. Next: verify a `rag_retrieval_log` row appears for a Bliss/10-03 query.
+
+---
+
 ## D-183 — 2026-06-07 — #868: the concierge has NEVER had RAG grounding — 3 stacked bugs (tenant 403 + contract 400), NOT the persona prompts
 
 Investigating why the concierge hallucinates ship+date itineraries (says "Bliss runs Caribbean" when the RAG chunk clearly says Seattle→Alaska). **`rag_retrieval_log` is EMPTY for ALL tenants → chat→RAG retrieval has never succeeded in prod.** The data is perfect (RAG itinerary chunk for Bliss 2026-10-03 is approved/global/embedded) and the persona is fine — it just gets an empty knowledge block and improvises.
