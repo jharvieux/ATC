@@ -125,3 +125,65 @@ describe("buildItineraryLookup (#826) — ship+date → structured lookup params
     expect(buildItineraryLookup(entities({ ships: ["Wonder of the Seas"], travel_dates: { earliest: null, latest: null } }))).toBeNull();
   });
 });
+
+describe("buildShipLookup — ship name → deck_intel/ship_intel structured fetch", () => {
+  type Ents = Parameters<typeof import("@/lib/rag/retrieve-for-chat")["buildShipLookup"]>[0];
+  function entities(over: Partial<Ents> = {}): Ents {
+    return {
+      destinations: [], departure_ports: [], cruise_lines: [], ships: [],
+      travel_dates: { earliest: null, latest: null },
+      passenger_composition: "", intent: "research", categories_hint: [],
+      ...over,
+    } as Ents;
+  }
+
+  it("returns a lookup when a ship is named (enables deck plan + amenity answers)", async () => {
+    const { buildShipLookup } = await import("@/lib/rag/retrieve-for-chat");
+    // WHY: "Where is The Haven on the Bliss?" returns the correct chunk only when
+    // ship_lookup fires — vector search misses it because the question uses
+    // amenity vocabulary, not itinerary vocabulary.
+    expect(buildShipLookup(entities({ ships: ["Norwegian Bliss"] }))).toEqual({ ship: "Norwegian Bliss" });
+  });
+
+  it("returns null when no ship is mentioned (stays vector-only)", async () => {
+    const { buildShipLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(buildShipLookup(entities())).toBeNull();
+  });
+});
+
+describe("buildPortLookup — departure port + date → port-departure structured fetch", () => {
+  type Ents = Parameters<typeof import("@/lib/rag/retrieve-for-chat")["buildPortLookup"]>[0];
+  function entities(over: Partial<Ents> = {}): Ents {
+    return {
+      destinations: [], departure_ports: [], cruise_lines: [], ships: [],
+      travel_dates: { earliest: null, latest: null },
+      passenger_composition: "", intent: "research", categories_hint: [],
+      ...over,
+    } as Ents;
+  }
+
+  it("returns a lookup when a departure port + date are present", async () => {
+    const { buildPortLookup } = await import("@/lib/rag/retrieve-for-chat");
+    // WHY: "What ships leave Port Canaveral on 10/23/26?" returns Disney Wish,
+    // Utopia, Fantasy only when port_lookup fires — ANN returns unrelated
+    // European itinerary chunks instead.
+    expect(buildPortLookup(entities({
+      departure_ports: ["Port Canaveral"],
+      travel_dates: { earliest: "2026-10-23", latest: null },
+    }))).toEqual({ departure_port: "Port Canaveral", date_from: "2026-10-23" });
+  });
+
+  it("includes date_to when a range is given", async () => {
+    const { buildPortLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(buildPortLookup(entities({
+      departure_ports: ["Miami"],
+      travel_dates: { earliest: "2026-06-01", latest: "2026-06-07" },
+    }))).toEqual({ departure_port: "Miami", date_from: "2026-06-01", date_to: "2026-06-07" });
+  });
+
+  it("returns null without a departure port OR without a date (stays vector-only)", async () => {
+    const { buildPortLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(buildPortLookup(entities({ departure_ports: ["Miami"] }))).toBeNull(); // no date
+    expect(buildPortLookup(entities({ travel_dates: { earliest: "2026-06-01", latest: null } }))).toBeNull(); // no port
+  });
+});

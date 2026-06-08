@@ -322,6 +322,9 @@ export async function fetchShipLookupChunks(
     .eq("status", "approved")
     .is("superseded_by_chunk_id", null)
     .not("embedding", "is", null)
+    // Mirror the freshness gate from fetchItineraryLookupChunks: promo chunks
+    // fall through to the vector path where the full lifecycle gate applies.
+    .is("sell_by_at", null)
     .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
   if (error) throw new Error(`ship lookup failed: ${error.message}`);
 
@@ -380,6 +383,8 @@ export async function fetchPortLookupChunks(
     .eq("status", "approved")
     .is("superseded_by_chunk_id", null)
     .not("embedding", "is", null)
+    // Mirror the freshness gate: promo chunks fall through to the vector path.
+    .is("sell_by_at", null)
     .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
   if (chunkErr) throw new Error(`port chunk fetch failed: ${chunkErr.message}`);
 
