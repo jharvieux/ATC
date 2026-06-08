@@ -10,7 +10,8 @@ import {
   HAIKU_LATEST,
   HAIKU_PINNED,
   SONNET,
-  OPUS,
+  OPUS_LATEST,
+  OPUS_PINNED,
 } from "@/lib/ai/models";
 
 describe("resolveModelChain", () => {
@@ -18,9 +19,12 @@ describe("resolveModelChain", () => {
     expect(resolveModelChain(HAIKU_PINNED)).toEqual([HAIKU_LATEST, HAIKU_PINNED]);
     expect(resolveModelChain(HAIKU_LATEST)).toEqual([HAIKU_LATEST, HAIKU_PINNED]);
   });
-  it("sonnet/opus → single-entry chains (undated = latest, can't retire-fail)", () => {
+  it("opus → [4.8 latest, 4.7 fallback]; a caller still passing 4-7 also gets the 4.8-first chain", () => {
+    expect(resolveModelChain(OPUS_LATEST)).toEqual([OPUS_LATEST, OPUS_PINNED]);
+    expect(resolveModelChain(OPUS_PINNED)).toEqual([OPUS_LATEST, OPUS_PINNED]);
+  });
+  it("sonnet → single-entry chain (undated = latest, can't retire-fail)", () => {
     expect(resolveModelChain(SONNET)).toEqual([SONNET]);
-    expect(resolveModelChain(OPUS)).toEqual([OPUS]);
   });
   it("unknown id → itself (still callable, just no in-tier fallback)", () => {
     expect(resolveModelChain("claude-future-9")).toEqual(["claude-future-9"]);

@@ -23,6 +23,9 @@ export interface ModelPricing {
 }
 
 export const AI_PRICING_DEFAULTS: Record<string, ModelPricing> = {
+  // TODO(#857): confirm claude-opus-4-8 list price; mirrors 4-7 for now so cost
+  // tracking doesn't zero out (#851 adopt-opus-4.8).
+  "claude-opus-4-8":           { input_per_million_cents: 150000, output_per_million_cents: 750000 },
   "claude-opus-4-7":           { input_per_million_cents: 150000, output_per_million_cents: 750000 },
   "claude-sonnet-4-6":         { input_per_million_cents:  30000, output_per_million_cents: 150000 },
   "claude-haiku-4-5-20251001": { input_per_million_cents:   8000, output_per_million_cents:  40000 },
