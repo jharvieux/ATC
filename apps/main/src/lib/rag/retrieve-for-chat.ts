@@ -62,6 +62,33 @@ export function buildItineraryLookup(
   };
 }
 
+// When the message names a ship, always include that ship's deck_intel and
+// ship_intel chunks. Vector search misses these when the question is about a
+// venue or amenity (e.g. "Where is The Haven?", "Can you send the deck plan?").
+export function buildShipLookup(
+  entities: EntitySet,
+): { ship: string } | null {
+  const ship = entities.ships[0];
+  if (!ship) return null;
+  return { ship };
+}
+
+// When the message asks what ships depart FROM a port on a date, run a
+// structured departure-port lookup. Vector search can't reliably surface
+// port-specific sailings among 28K itinerary chunks.
+export function buildPortLookup(
+  entities: EntitySet,
+): { departure_port: string; date_from: string; date_to?: string } | null {
+  const port = entities.departure_ports[0];
+  const from = entities.travel_dates.earliest;
+  if (!port || !from) return null;
+  return {
+    departure_port: port,
+    date_from: from,
+    ...(entities.travel_dates.latest ? { date_to: entities.travel_dates.latest } : {}),
+  };
+}
+
 export async function retrieveForChat(
   input: RetrieveForChatInput,
 ): Promise<RetrieveForChatResult> {
@@ -83,9 +110,11 @@ export async function retrieveForChat(
   ];
   const query = queryParts.filter((s) => s && s.length > 0).join(" ").trim();
 
-  // #826 — if the message names a ship + a specific date, ask for a STRUCTURED
-  // exact-date itinerary match (vector search can't reliably surface it).
-  const itinerary_lookup = buildItineraryLookup(entities);
+  // Structured lookups — bypass vector search for queries where semantic
+  // similarity alone is unreliable:
+  const itinerary_lookup = buildItineraryLookup(entities); // ship + date
+  const ship_lookup = buildShipLookup(entities);           // ship deck/spec chunks
+  const port_lookup = buildPortLookup(entities);           // port + date departures
 
   // Step 3: call the RAG service /retrieve.
   const ragChunks = await callRagRetrieve({
@@ -97,6 +126,8 @@ export async function retrieveForChat(
     top_k: 10,
     include_closed_promos_for_contact: input.contact_id ?? null,
     itinerary_lookup,
+    ship_lookup,
+    port_lookup,
   });
 
   // Step 4: filter.
@@ -140,6 +171,8 @@ interface RagRetrieveCallInput {
   top_k: number;
   include_closed_promos_for_contact: string | null;
   itinerary_lookup: { ship: string; sail_date_from: string; sail_date_to?: string } | null;
+  ship_lookup: { ship: string } | null;
+  port_lookup: { departure_port: string; date_from: string; date_to?: string } | null;
 }
 
 interface RagRetrieveCallResult {

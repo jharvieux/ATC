@@ -24,7 +24,7 @@ vi.mock("@/lib/rag-auth/sign-service-jwt", () => ({
   signServiceJwt: mocks.sign,
 }));
 vi.mock("@/lib/rag/entity-extraction", () => ({
-  extractEntities: async () => ({ destinations: [], cruise_lines: [], ships: [], travel_dates: { earliest: null, latest: null }, passenger_composition: "", intent: "research", categories_hint: [] }),
+  extractEntities: async () => ({ destinations: [], departure_ports: [], cruise_lines: [], ships: [], travel_dates: { earliest: null, latest: null }, passenger_composition: "", intent: "research", categories_hint: [] }),
 }));
 
 const ORIG_URL = process.env.RAG_SERVICE_URL;
@@ -98,7 +98,7 @@ describe("buildItineraryLookup (#826) — ship+date → structured lookup params
   type Ents = Parameters<typeof import("@/lib/rag/retrieve-for-chat")["buildItineraryLookup"]>[0];
   function entities(over: Partial<Ents> = {}): Ents {
     return {
-      destinations: [], cruise_lines: [], ships: [],
+      destinations: [], departure_ports: [], cruise_lines: [], ships: [],
       travel_dates: { earliest: null, latest: null },
       passenger_composition: "", intent: "research", categories_hint: [],
       ...over,

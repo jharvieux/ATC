@@ -15,6 +15,7 @@ export type EntityIntent = "research" | "compare" | "book" | "support";
 
 export interface EntitySet {
   destinations: string[];
+  departure_ports: string[];
   cruise_lines: string[];
   ships: string[];
   travel_dates: {
@@ -28,6 +29,7 @@ export interface EntitySet {
 
 const EMPTY_ENTITY_SET: EntitySet = {
   destinations: [],
+  departure_ports: [],
   cruise_lines: [],
   ships: [],
   travel_dates: { earliest: null, latest: null },
@@ -40,14 +42,18 @@ const EXTRACTION_PROMPT = `You extract structured travel-search entities from a 
 Return JSON ONLY, no prose. Schema:
 
 {
-  "destinations": string[],       // free-text place names mentioned ("Greek Isles", "Barcelona")
+  "destinations": string[],       // WHERE the cruise goes ("Greek Isles", "Caribbean", "Barcelona")
+  "departure_ports": string[],    // WHERE the cruise DEPARTS FROM ("Port Canaveral", "Miami", "Barcelona") — only when the user explicitly asks about departures/sailings FROM a port
   "cruise_lines": string[],       // explicit cruise line names ("Royal Caribbean", "Viking")
-  "ships": string[],              // ship names ("Wonder of the Seas")
+  "ships": string[],              // ship names ("Wonder of the Seas", "Norwegian Bliss")
   "travel_dates": { "earliest": string|null, "latest": string|null }, // ISO YYYY-MM-DD or null
   "passenger_composition": string, // free-text ("couple", "family of 4 with toddler", "solo")
   "intent": "research" | "compare" | "book" | "support",
   "categories_hint": string[]     // helpful retrieval categories ("pricing","schedule","policy","promo")
 }
+
+departure_ports vs destinations: "What ships leave Miami on June 5?" → departure_ports: ["Miami"]. "I want to cruise to Barcelona" → destinations: ["Barcelona"].
+A port can appear in both if the user is both departing from and visiting it.
 
 If a field is not mentioned, return an empty array, empty string, or null.
 Do not invent specifics that are not in the message.
@@ -132,6 +138,7 @@ function parseEntities(raw: string): EntitySet {
     const obj = JSON.parse(cleaned) as Partial<EntitySet>;
     return {
       destinations: Array.isArray(obj.destinations) ? obj.destinations.filter((s) => typeof s === "string") : [],
+      departure_ports: Array.isArray(obj.departure_ports) ? obj.departure_ports.filter((s) => typeof s === "string") : [],
       cruise_lines: Array.isArray(obj.cruise_lines) ? obj.cruise_lines.filter((s) => typeof s === "string") : [],
       ships: Array.isArray(obj.ships) ? obj.ships.filter((s) => typeof s === "string") : [],
       travel_dates: {

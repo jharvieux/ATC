@@ -49,6 +49,26 @@ export const RetrieveRequestSchema = z.object({
     .nullable()
     .optional()
     .default(null),
+  // When the message names a specific ship, always include that ship's
+  // deck_intel and ship_intel chunks (deck plans, vessel specs). Vector search
+  // can miss these when the question is about a venue or amenity rather than
+  // an itinerary keyword.
+  ship_lookup: z
+    .object({ ship: z.string().min(1) })
+    .nullable()
+    .optional()
+    .default(null),
+  // When the message asks what ships depart FROM a specific port on a date,
+  // run a structured departure-port lookup against the itineraries table.
+  port_lookup: z
+    .object({
+      departure_port: z.string().min(1),
+      date_from: z.string(), // ISO YYYY-MM-DD
+      date_to: z.string().optional(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
 });
 export type RetrieveRequest = z.infer<typeof RetrieveRequestSchema>;
 

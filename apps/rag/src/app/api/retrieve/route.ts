@@ -79,19 +79,37 @@ export const POST = withServiceAuth(async (req, ctx) => {
     // return that column). One additional SELECT keyed by chunk IDs.
     const vectorRows = (chunks ?? []) as Array<Record<string, unknown>>;
 
-    // #826 — structured exact-date itinerary match. Vector search can't reliably
-    // surface an exact-date sailing among many near-identical chunks, so when the
-    // caller passes ship+date we resolve the matching itineraries' REAL chunks and
-    // boost them to the top. Best-effort: a lookup failure degrades to vector-only
-    // (this is a retrieval enhancement, not an enforcement path — never break chat).
+    // Structured lookups — each is best-effort; a failure degrades to vector-only.
     let structuredRows: Array<Record<string, unknown>> = [];
+
+    // #826 — ship + exact date → itinerary chunks.
     if (body.itinerary_lookup) {
       try {
-        structuredRows = await fetchItineraryLookupChunks(db, ctx.tenant_id, body.itinerary_lookup);
+        structuredRows.push(...await fetchItineraryLookupChunks(db, ctx.tenant_id, body.itinerary_lookup));
       } catch (e) {
         console.warn(`[retrieve] itinerary_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+
+    // ship_lookup — always include deck_intel + ship_intel for the named ship.
+    // Vector search misses these when the question is about a venue or amenity.
+    if (body.ship_lookup) {
+      try {
+        structuredRows.push(...await fetchShipLookupChunks(db, ctx.tenant_id, body.ship_lookup));
+      } catch (e) {
+        console.warn(`[retrieve] ship_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // port_lookup — departure-port + date → itinerary chunks.
+    if (body.port_lookup) {
+      try {
+        structuredRows.push(...await fetchPortLookupChunks(db, ctx.tenant_id, body.port_lookup));
+      } catch (e) {
+        console.warn(`[retrieve] port_lookup failed (degrading to vector-only): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     const structuredIds = new Set(structuredRows.map((c) => c.id as string));
     const chunkRows = [...structuredRows, ...vectorRows.filter((c) => !structuredIds.has(c.id as string))];
     const chunkIds = chunkRows.map((c) => c.id as string);
@@ -279,7 +297,101 @@ export async function fetchItineraryLookupChunks(
       const row = c as Record<string, unknown>;
       return {
         ...row,
-        // Exact structured match → rank ahead of vector hits.
+        match_score: 1,
+        authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
+        recency_score: 1,
+        composite_confidence: 1,
+      };
+    });
+}
+
+// ship_lookup — fetch deck_intel and ship_intel chunks for the named ship.
+// Two-layer tenant isolation matches the pattern in fetchItineraryLookupChunks.
+export async function fetchShipLookupChunks(
+  db: ReturnType<typeof getRagDb>,
+  tenantId: string,
+  lookup: { ship: string },
+): Promise<Array<Record<string, unknown>>> {
+  const { data: rows, error } = await db
+    .from("knowledge_chunks")
+    .select(
+      "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override",
+    )
+    .ilike("ship_or_property", `%${lookup.ship}%`)
+    .in("category", ["deck_intel", "ship_intel"])
+    .eq("status", "approved")
+    .is("superseded_by_chunk_id", null)
+    .not("embedding", "is", null)
+    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
+  if (error) throw new Error(`ship lookup failed: ${error.message}`);
+
+  return (rows ?? [])
+    .filter((c) => {
+      const row = c as { scope?: string | null; tenant_id?: string | null };
+      return row.scope === "global" || row.tenant_id === tenantId;
+    })
+    .map((c) => {
+      const row = c as Record<string, unknown>;
+      return {
+        ...row,
+        match_score: 0.95,
+        authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
+        recency_score: 0.95,
+        composite_confidence: 0.95,
+      };
+    });
+}
+
+// port_lookup — fetch itinerary chunks for sailings departing FROM the named
+// port on/near the given date. Two-layer tenant isolation.
+export async function fetchPortLookupChunks(
+  db: ReturnType<typeof getRagDb>,
+  tenantId: string,
+  lookup: { departure_port: string; date_from: string; date_to?: string | undefined },
+): Promise<Array<Record<string, unknown>>> {
+  const to = lookup.date_to ?? lookup.date_from;
+
+  const { data: itins, error: itinErr } = await db
+    .from("itineraries")
+    .select("related_chunk_id")
+    .ilike("departure_port", `%${lookup.departure_port}%`)
+    .gte("departure_date", lookup.date_from)
+    .lte("departure_date", to)
+    .not("related_chunk_id", "is", null)
+    .order("departure_date", { ascending: true })
+    .limit(10);
+  if (itinErr) throw new Error(`port lookup failed: ${itinErr.message}`);
+
+  const chunkIds = [
+    ...new Set(
+      (itins ?? [])
+        .map((r) => (r as { related_chunk_id: string | null }).related_chunk_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  if (chunkIds.length === 0) return [];
+
+  const { data: rows, error: chunkErr } = await db
+    .from("knowledge_chunks")
+    .select(
+      "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override",
+    )
+    .in("id", chunkIds)
+    .eq("status", "approved")
+    .is("superseded_by_chunk_id", null)
+    .not("embedding", "is", null)
+    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
+  if (chunkErr) throw new Error(`port chunk fetch failed: ${chunkErr.message}`);
+
+  return (rows ?? [])
+    .filter((c) => {
+      const row = c as { scope?: string | null; tenant_id?: string | null };
+      return row.scope === "global" || row.tenant_id === tenantId;
+    })
+    .map((c) => {
+      const row = c as Record<string, unknown>;
+      return {
+        ...row,
         match_score: 1,
         authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
         recency_score: 1,
