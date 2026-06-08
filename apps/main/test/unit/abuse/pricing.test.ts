@@ -16,6 +16,16 @@ describe("getCostEstimate", () => {
     expect(cost).toBe(48000n);
   });
 
+  it("#851 — Haiku undated alias is priced (same as the pinned snapshot, no $0 zero-out)", () => {
+    // When the chain serves via the alias, cost-tracking must not silently bill $0.
+    const cost = getCostEstimate({
+      model: "claude-haiku-4-5",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+    });
+    expect(cost).toBe(48000n); // identical to claude-haiku-4-5-20251001
+  });
+
   it("Sonnet 100k tokens input only → 3000¢", () => {
     const cost = getCostEstimate({
       model: "claude-sonnet-4-6",

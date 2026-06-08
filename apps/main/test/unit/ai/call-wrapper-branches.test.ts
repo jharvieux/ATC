@@ -218,11 +218,14 @@ import {
   instrumentedOpenAIEmbedding,
   PLATFORM_TENANT_ID,
 } from "@/lib/ai/call-wrapper";
+import { _resetModelBreakerForTests } from "@/lib/ai/models";
 
 const ORIG_ANTHROPIC = process.env.ANTHROPIC_API_KEY;
 const ORIG_OPENAI = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
+  _resetModelBreakerForTests(); // #851 — clear the module-level chain breaker so a
+  // failing-call test's 60s cooldown can't bleed into later tests (order-independence).
   dbCalls = [];
   rpcCalls = [];
   vendorSuccessCalls = [];
