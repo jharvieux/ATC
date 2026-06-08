@@ -20,7 +20,9 @@ import { sendOperatorAlert, type OperatorAlertSeverity } from "@/lib/monitoring/
 export interface RetrieveForChatInput {
   message: string;
   tenant_id: string;
-  user_id: string;
+  // Authenticated users.id, or null for anonymous turns. NEVER the anon session
+  // id — this flows to ai_call_log.user_id (FK to users) via entity extraction (#850).
+  user_id: string | null;
   conversation_id: string;
   persona_id: string;
   // Persona specialty keywords from the persona base block (§9.1).
@@ -132,7 +134,7 @@ export async function retrieveForChat(
 interface RagRetrieveCallInput {
   query: string;
   tenant_id: string;
-  user_id: string;
+  user_id: string | null;
   conversation_id: string;
   persona_id: string;
   top_k: number;
