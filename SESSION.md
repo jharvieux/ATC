@@ -1,23 +1,24 @@
-# Session state — last updated 2026-06-07 (post-#870 merge + rag redeploy)
+# Session state — last updated 2026-06-08 (post-#872 merge — all three layers of #868 fixed)
 
 ## Just completed
-- **#868 contract fix — merged + live.** `RetrieveRequestSchema` now accepts persona slugs + null user_id. PR #870 merged to dev. atc-rag redeployed to prod (`rag.ai-travelconcierge.com`). MEMORY D-184.
+- **#868 layer 2 — DB function fixed + live.** `match_knowledge_chunks` had two bugs: `SET search_path=''` broke pgvector `<=>` operator, and `EXTRACT(EPOCH…)` returns `numeric` in PG14+ (mismatch with `DOUBLE PRECISION` RETURNS TABLE). Both fixed in migration 0027, applied directly to prod RAG DB. PR #872 merged. MEMORY D-185.
+- **#868 layer 1 — Contract fix (#870)** merged + atc-rag redeployed. MEMORY D-184.
 
 ## In flight
-- Nothing in flight — clean checkpoint.
+- Nothing in flight — clean checkpoint. dev is clean.
 
 ## Next step
-- **Verify the fix works end-to-end**: ask the Bliss 10/3/26 itinerary query in prod chat, confirm:
-  1. A row appears in `rag_retrieval_log` (previously always empty)
-  2. The answer is grounded (Seattle → 7-night Alaska, not "Caribbean year-round")
-  3. The `itinerary_lookup` structured path fires (check RAG logs for the structured rows)
+- **Verify end-to-end**: ask the Norwegian Bliss 10/3/26 itinerary query in prod chat. Expect:
+  1. A row appears in `rag_retrieval_log` (db query: `SELECT query_text, chunks_returned, outcome FROM rag_retrieval_log ORDER BY occurred_at DESC LIMIT 5`)
+  2. Grounded Seattle → Alaska answer (not "Caribbean year-round" hallucination)
+  3. If still deflecting despite a log row: check that `itinerary_lookup` structured path fires (the chunk should appear in `chunks_returned`) and that `filterChunks` + `formatKnowledgeBlock` don't drop it
 
 ## Blocked on user
-- **Verify the 4 prod env vars** (#862): `RESEND_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_GRAPH_CLIENT_ID`/`_SECRET` — are they genuinely misconfigured (MS sign-in likely broken in prod) or schema-too-strict?
-- **#857** operator actions (unchanged): opus-4-8 price verify + eval; `INNGEST_API_KEY` repo secret; `ANTHROPIC_API_KEY` in CI.
-- Durable **RAG tenant-status sync** fix (booking's `active` is band-aided; a sync could overwrite it).
+- **Verify the 4 prod env vars** (#862): `RESEND_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_GRAPH_CLIENT_ID`/`_SECRET`
+- **#857** operator actions (unchanged): opus-4-8 price verify + eval; `INNGEST_API_KEY` repo secret; `ANTHROPIC_API_KEY` in CI
+- Durable **RAG tenant-status sync** fix
 
 ## Open questions
-- If RAG retrieval now works (rag_retrieval_log rows appear), the next question is whether the `itinerary_lookup` structured path actually returns the right chunk for Bliss 2026-10-03. If it does — #868 is fully closed. If `rag_retrieval_log` rows appear but the answer is still wrong, the bug moved downstream (knowledge_block injection into the prompt, or persona deflection).
-- The chat route passes `persona_id: personaSlug` (never the UUID). As cleanup, `resolveActivePersonaSlug` could return both to populate the log correctly. Low priority; tracked in #868.
-- Untracked working-tree security-scan artifacts (`THREAT_MODEL.md`, `VULN-FINDINGS.*`, `.triage-state/`, `.agents/`, `skills-lock.json`, a stray `specs/...copy.txt`) — surface before any cleanup.
+- If the answer is still wrong despite a `rag_retrieval_log` row: the bug moved downstream (knowledge_block injection or persona deflection) — that's a different investigation
+- The integration test suite for the RAG scope-isolation test (mentioned in pre-pr audit) may not run against PG14+ in CI; worth confirming
+- Untracked working-tree security-scan artifacts (`THREAT_MODEL.md`, `VULN-FINDINGS.*`, `.triage-state/`, `.agents/`, `skills-lock.json`, stray `specs/...copy.txt`) — surface before cleanup
