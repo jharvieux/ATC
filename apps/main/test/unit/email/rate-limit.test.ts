@@ -6,8 +6,8 @@ import { describe, it, expect, vi } from "vitest";
 import { checkRateLimit } from "@/lib/email/rate-limit";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// marketing/travel_news chains: select → eq(tenant) → eq(to_email) → eq(category) → gte → not
-function mockDb(count: number) {
+// marketing/travel_news/concierge chains: select → eq(tenant) → eq(to_email) → eq(category) → gte → not
+function mockDb(count: number, dbError?: object) {
   return {
     from: () => ({
       select: () => ({
@@ -15,7 +15,10 @@ function mockDb(count: number) {
           eq: () => ({
             eq: () => ({
               gte: () => ({
-                not: vi.fn().mockResolvedValue({ data: Array(count).fill({ id: "x" }), error: null }),
+                not: vi.fn().mockResolvedValue({
+                  data: dbError ? null : Array(count).fill({ id: "x" }),
+                  error: dbError ?? null,
+                }),
               }),
             }),
           }),
@@ -137,6 +140,17 @@ describe("checkRateLimit — §23.6", () => {
     });
     expect(result.allowed).toBe(false);
     expect(result.reason).toBe("concierge_daily_limit_reached");
+  });
+
+  it("concierge: DB error → blocked (fail-closed)", async () => {
+    const result = await checkRateLimit({
+      db: mockDb(0, { message: "db down" }),
+      tenant_id: "t1",
+      to_email: "test@example.com",
+      category: "concierge",
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("rate_limit_query_failed");
   });
 
   describe("admin_sample — global 50/day cap (not per-recipient)", () => {
