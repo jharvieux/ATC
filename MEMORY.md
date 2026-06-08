@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-185 — 2026-06-08 — #868: match_knowledge_chunks search_path + PG14 EXTRACT fix — merged, applied to prod DB, fix live
+
+**Decision**: Recreate `match_knowledge_chunks` with `SET search_path = 'public'` (was `''`) and explicit `::DOUBLE PRECISION` cast on `EXTRACT(EPOCH FROM …)`.
+
+**Why**: Two compounding bugs prevented the function from ever running. (1) `SET search_path = ''` made the pgvector `<=>` operator unreachable — it's registered in `public`. (2) PG14+ changed `EXTRACT(EPOCH…)` return type from `double precision` to `numeric`; `EXP(numeric)` also returns `numeric`, mismatching the `DOUBLE PRECISION` column declared in `RETURNS TABLE`. Both have been broken since the function was first deployed. These bugs were hidden by the contract 400 (#870); once that was fixed, the 500s surfaced.
+
+**What was rejected**: Using `OPERATOR(public.<=>)` explicit operator qualification inside the body (more invasive, harder to read). The `search_path = 'public'` approach is the standard Supabase/pgvector recommendation.
+
+**Artifacts**: PR #872 (merged), migration 0027 applied to prod RAG DB via psql. No redeploy needed. Verified: `match_knowledge_chunks` returns rows; Norwegian Bliss chunk `match_score=1.0`.
+
+---
+
 ## D-184 — 2026-06-07 — #868: RetrieveRequestSchema contract fix (persona slug + null user_id) — merged + atc-rag redeployed
 
 **Decision**: Relax `RetrieveRequestSchema.persona_id` from `UUID` to `z.string().min(1)` and `user_id` from required UUID to `UUID.nullable().optional().default(null)`.
