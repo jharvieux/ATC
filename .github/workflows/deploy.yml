@@ -463,6 +463,15 @@ jobs:
         run: |
           npx supabase db push --db-url "$DB_URL"
 
+      # #851 — model canary gate. Refuses to ship a config that references a
+      # retired/unavailable Anthropic model. Self-guards: skips (non-fatal) when
+      # ANTHROPIC_API_KEY isn't provisioned in CI; once the secret exists it FAILS
+      # the deploy on a bad model id, before the Vercel deploy below.
+      - name: Verify configured models are live (#851)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: pnpm tsx scripts/check-models-live.ts
+
       - name: Install Vercel CLI
         run: npm install -g vercel@54
 
