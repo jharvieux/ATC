@@ -118,6 +118,27 @@ describe("checkRateLimit — §23.6", () => {
     expect(result.reason).toBe("travel_news_weekly_limit_reached");
   });
 
+  it("concierge: 9 sent today → allowed", async () => {
+    const result = await checkRateLimit({
+      db: mockDb(9),
+      tenant_id: "t1",
+      to_email: "test@example.com",
+      category: "concierge",
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("concierge: 10 sent today → blocked (bounds AI fan-out)", async () => {
+    const result = await checkRateLimit({
+      db: mockDb(10),
+      tenant_id: "t1",
+      to_email: "test@example.com",
+      category: "concierge",
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("concierge_daily_limit_reached");
+  });
+
   describe("admin_sample — global 50/day cap (not per-recipient)", () => {
     it("49 sends today → allowed", async () => {
       const result = await checkRateLimit({

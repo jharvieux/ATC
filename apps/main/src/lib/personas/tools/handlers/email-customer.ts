@@ -127,7 +127,9 @@ export async function emailCustomer(
     to: customerEmail,
     subject,
     template_id: "concierge_message",
-    category: "transactional",
+    // Rate-limited category (10/24h per recipient) — bounds an abused/looping
+    // chat session from fan-out sending to the customer's own inbox.
+    category: "concierge",
     html,
     ...(tenant.support_email ? { reply_to: tenant.support_email } : {}),
     ...(dispatchCtx.contact_id ? { contact_id: dispatchCtx.contact_id } : {}),

@@ -111,7 +111,7 @@ describe("email_customer handler", () => {
     expect(arg.tenant.email_from_address).toBe("marcus@ai-travelconcierge.com");
     expect(arg.tenant.email_from_name).toBe("Marcus Cole");
     expect(arg.tenant.email_send_pattern).toBe("platform_resend");
-    expect(arg.category).toBe("transactional");
+    expect(arg.category).toBe("concierge"); // rate-limited, not unbounded transactional
     expect(arg.subject).toBe("Norwegian Bliss deck plans");
     expect(arg.html).toContain("https://x.com/deck17");
     expect(arg.reply_to).toBe("support@ai-travelconcierge.com");
