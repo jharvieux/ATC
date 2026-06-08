@@ -96,8 +96,6 @@ export async function retrieveForChat(
   input: RetrieveForChatInput,
 ): Promise<RetrieveForChatResult> {
   // Step 1: entity extraction (best-effort).
-  // context_messages lets the model infer entities implied by the conversation
-  // (e.g. "send the deck plan" when the last few turns discussed Norwegian Bliss).
   const entities = await extractEntities({
     message: input.message,
     tenant_id: input.tenant_id,

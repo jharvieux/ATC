@@ -76,4 +76,44 @@ describe("extractEntities — §21.2", () => {
     expect(out.ships).toEqual([]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining("could not parse model output"));
   });
+
+  it("passes context_messages to the model and uses the result (follow-up query resolution)", async () => {
+    // WHY: "Can you send me the deck plan?" after discussing Norwegian Bliss
+    // previously returned zero ships because entity extraction only saw the
+    // current message. Passing context lets the model infer the ship.
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    mocks.call.mockResolvedValue({
+      text: JSON.stringify({ destinations: [], departure_ports: [], cruise_lines: [], ships: ["Norwegian Bliss"], travel_dates: { earliest: null, latest: null }, passenger_composition: "", intent: "research", categories_hint: [] }),
+      raw: {},
+    });
+
+    const out = await extractEntities({
+      message: "Can you send me the deck plan?",
+      tenant_id: "t1",
+      context_messages: [
+        { role: "user", text: "What is the itinerary for Norwegian Bliss on October 3 2026?" },
+        { role: "assistant", text: "Norwegian Bliss departs Seattle on Oct 3 2026 for a 7-night Alaska cruise." },
+      ],
+    });
+
+    expect(out.ships).toEqual(["Norwegian Bliss"]);
+    // Verify the context was included in the extraction call
+    const callArg = mocks.call.mock.calls[0]?.[0];
+    const userContent = (callArg?.messages?.[0]?.content ?? "") as string;
+    expect(userContent).toContain("context_turn");
+    expect(userContent).toContain("Norwegian Bliss");
+  });
+
+  it("same message with different context produces a cache miss (not the same object)", async () => {
+    // WHY: cache key must include context so "send the deck plan" about
+    // Norwegian Bliss and "send the deck plan" about Disney Wish don't collide.
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    mocks.call.mockResolvedValue({ text: '{"destinations":[],"departure_ports":[],"cruise_lines":[],"ships":[],"travel_dates":{"earliest":null,"latest":null},"passenger_composition":"","intent":"research","categories_hint":[]}', raw: {} });
+
+    const a = await extractEntities({ message: "send the deck plan", tenant_id: "t1", context_messages: [{ role: "user", text: "Tell me about Norwegian Bliss" }] });
+    const b = await extractEntities({ message: "send the deck plan", tenant_id: "t1", context_messages: [{ role: "user", text: "Tell me about Disney Wish" }] });
+
+    expect(a).not.toBe(b); // different cache entries
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+  });
 });

@@ -605,9 +605,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   // ── 6. RAG retrieve.
-  // Build conversation context for entity extraction: last 4 turns (2 user + 2
-  // assistant), trimmed so follow-up questions like "send the deck plan" can
-  // resolve back to the ship being discussed without re-mentioning it.
+  // Build conversation context for entity extraction: last 4 history entries,
+  // trimmed so follow-up questions like "send the deck plan" can resolve back
+  // to the ship being discussed without re-mentioning it.
   const contextMessages = chatHistory
     .slice(-4)
     .map((m) => {
