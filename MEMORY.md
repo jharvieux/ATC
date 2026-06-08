@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-188 — 2026-06-08 — #882: display-asset markers never rendered in customer chat (D-075 wiring finally landed)
+
+**Decision:** Wire the `assets` SSE event into `ChatExperience.tsx` so `[[display_asset:<uuid>]]` markers resolve to hyperlinks instead of printing as literal text.
+
+**Why:** The concierge emits asset markers (deck plans, ship images) backed by an `assets` SSE event the server has always sent. But the client SSE consumer never had the event in its `SseEvent` union, no `case "assets"`, and the `done` handler never attached assets to the finalized message — so `renderMessageContent` always received `undefined` assets and every marker rendered literally. The renderer + its tests were correct all along; only the client wiring was missing. This is the wiring MEMORY D-075 explicitly deferred.
+
+**What was rejected:** Fixing `CustomerContextChatPanel.tsx` (the embeddable booking/quote/itinerary panel) in the same PR — it has the same gap AND renders content raw with no `renderMessageContent` at all, a larger change. Deferred to issue #881 to keep the PR surgical.
+
+**Also (defense-in-depth):** `renderMessageContent` now only hyperlinks http(s) asset urls; this PR was the first to activate the link path, so a `javascript:`/`data:` href guard was added (urls are DB/scraper-sourced, low risk, but an href must never be that surface).
+
+**Artifacts:** PR #882 (merged, eee1c517), helper `finalize-assistant-message.ts` + tests. atc-main deployed 2026-06-08. Related: [[D-187]], [[D-186]] (#868 retrieval), issue #881 (panel follow-up).
+
+---
+
 ## D-187 — 2026-06-08 — #878: conversation context for follow-up entity extraction
 
 **Decision**: Pass the last 4 chat turns to entity extraction as CONVERSATION CONTEXT so follow-up questions like "Can you send me the deck plan?" resolve the implied ship from prior turns.

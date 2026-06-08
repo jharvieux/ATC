@@ -1,22 +1,18 @@
-# Session state — last updated 2026-06-08 (post-#878 merge + deploy)
+# Session state — last updated 2026-06-08
 
 ## Just completed
-- **#878: Conversation context for entity extraction.** "Can you send me the deck plan?" after discussing Norwegian Bliss now extracts the ship from context and fires ship_lookup. PR #878 merged, atc-main deployed. MEMORY D-187.
-- **#876: ship_lookup + port_lookup.** Haven restaurant (decks 17-19), deck plan link, Port Canaveral departures now grounded. Both apps deployed.
-- **#874, #872, #870: match_knowledge_chunks perf + DB fixes.** 32s→2s query, search_path/PG14 fixes, contract 400 fix. All live.
+- **#882 — display-asset rendering fixed + deployed.** The concierge's deck-plan / image markers (`[[display_asset:<uuid>]]`) now render as "View deck plan ↗" hyperlinks in the customer chat instead of raw unusable text. Root cause: `ChatExperience.tsx` never consumed the server's `assets` SSE event (missing from union, no case, never attached at `done`). Fixed + extracted `finalizeAssistantMessage()` for testability + added an http(s)-only href guard (defense-in-depth). MEMORY D-188. atc-main deployed (dpl bpce0gass).
+- Earlier this session: #868 retrieval stack (ship_lookup/port_lookup, conversation context D-187), and the AI-cost-gate exemption for `is_platform_internal` tenants (#880, fixed the "AI temporarily unavailable" outage on Booking).
 
 ## In flight
-- **"AI is temporarily unavailable"** error: appeared around 11:39-11:41 UTC (entity extraction + possibly main Anthropic calls failing). Cleared without intervention by ~11:42. Cause unknown — likely transient Anthropic API hiccup or rate limit. No errors in last 30+ min. Monitor.
+- Nothing in flight — clean checkpoint, dev = eee1c517.
 
 ## Next step
-- **Verify follow-up queries in prod**: ask about Norwegian Bliss itinerary, then follow up "Can you send me the deck plan?" → should now return Bliss deck plan link without re-mentioning ship name.
-- Watch for recurrence of "AI is temporarily unavailable" error.
+- **Browser-verify #882 in prod:** ask Norwegian Bliss itinerary → follow up "Can you send me the deck plan?" → confirm the markers resolve to clickable "View deck plan ↗" links (not raw `[[display_asset:...]]`). This was the open verification item.
 
 ## Blocked on user
-- **Verify the 4 prod env vars** (#862): RESEND_API_KEY, OPENAI_API_KEY, MICROSOFT_GRAPH_CLIENT_ID/_SECRET
-- **#857**: opus-4-8 price verify + eval; INNGEST_API_KEY repo secret; ANTHROPIC_API_KEY in CI
-- Durable RAG tenant-status sync (#875 feedback_signal_count trigger)
+- Confirm whether the deck-plan render now looks right in the browser (only the user can see the live UI).
 
 ## Open questions
-- "AI is temporarily unavailable" at 11:39-11:41 — entity extraction was hitting `[entity-extraction] failed (degrading to empty entities)`. Entity extraction calls `instrumentedClaudeCall` which calls `loadTenantSnapshot` (DB) then Anthropic. Could be DB hiccup or Anthropic transient. Watch for recurrence.
-- Untracked working-tree security-scan artifacts (THREAT_MODEL.md, VULN-FINDINGS.*, etc.) — surface before any cleanup.
+- **#881** — `CustomerContextChatPanel.tsx` (booking-flow / quote / itinerary embeddable panel) has the same display-asset gap AND renders content raw (no `renderMessageContent`). Deferred follow-up; not yet scheduled.
+- The "AI temporarily unavailable" root cause was the Booking tenant hitting the AI hard-cost gate; #880 now exempts `is_platform_internal` tenants. Watch that it doesn't recur on other internal tenants.
