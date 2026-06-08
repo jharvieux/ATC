@@ -19,16 +19,7 @@ const base = {
 };
 
 describe("RetrieveRequestSchema — main→rag call contract", () => {
-  it("accepts a persona slug (the shape callRagRetrieve sends)", () => {
-    const result = RetrieveRequestSchema.safeParse({
-      ...base,
-      persona_id: "marcus-cole",
-      user_id: null,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts null user_id for anon chat turns", () => {
+  it("accepts a persona slug and null user_id (the shape callRagRetrieve sends for anon turns)", () => {
     const result = RetrieveRequestSchema.safeParse({
       ...base,
       persona_id: "marcus-cole",
@@ -36,6 +27,7 @@ describe("RetrieveRequestSchema — main→rag call contract", () => {
     });
     expect(result.success).toBe(true);
     expect(result.data?.user_id).toBeNull();
+    expect(result.data?.persona_id).toBe("marcus-cole");
   });
 
   it("still accepts a UUID for persona_id when the caller has one", () => {
@@ -45,6 +37,7 @@ describe("RetrieveRequestSchema — main→rag call contract", () => {
       user_id: null,
     });
     expect(result.success).toBe(true);
+    expect(result.data?.persona_id).toBe(PERSONA_UUID);
   });
 
   it("defaults user_id to null when omitted", () => {
