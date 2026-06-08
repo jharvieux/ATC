@@ -100,6 +100,9 @@ describe("POST /api/chat — env boot init (#862)", () => {
     // (instrumentation register() doesn't reliably cover them). Without this call
     // detectBugIntent's env() read died on every chat turn. The call sits at the
     // top of POST, so it runs even on the early length-cap return.
+    // Isolate this assertion from the other POST calls in this file (no global
+    // beforeEach clears mocks here).
+    vi.mocked(verifyEnvAtBoot).mockClear();
     await POST(chatReq("a".repeat(8001)));
     // Over-length req returns at the length cap; the call still fires → it must
     // sit ABOVE the cap. (Moving it below the cap would make this 0 calls.)
