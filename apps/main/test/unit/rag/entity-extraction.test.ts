@@ -97,7 +97,6 @@ describe("extractEntities — §21.2", () => {
     });
 
     expect(out.ships).toEqual(["Norwegian Bliss"]);
-    // Verify the context was included in the extraction call
     const callArg = mocks.call.mock.calls[0]?.[0];
     const userContent = (callArg?.messages?.[0]?.content ?? "") as string;
     expect(userContent).toContain("context_turn");
