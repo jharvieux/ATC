@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-189 — 2026-06-08 — #884: display assets open in an on-page lightbox (partial reversal of D-075's new-tab hyperlink)
+
+**Decision:** Render each `[[display_asset:<uuid>]]` marker as an `<AssetLightbox>` that opens the image in a dismissible on-page modal, instead of [[D-075]]'s `<a href target="_blank">` that navigated the customer away to cruisemapper.com.
+
+**Why:** Operator feedback on [[D-188]] — taking the customer off the page to view a deck plan is bad UX. The lightbox keeps them on the page.
+
+**What this does NOT reverse from D-075 (posture preserved):** We still HOT-LINK, not host — the modal `<img src>` is CruiseMapper's url, and attribution shows both inline (next to the trigger) and in the modal. D-075's three stated reasons for the hyperlink were UI-surface size, the cross-domain/CSP image surface, and the "their image, not ours" honesty. All three still hold: the trigger keeps the bubble small, the image loads lazily only on modal-open, CSP already permits `https` image loads (`img-src 'self' data: blob: https:` — no policy change), and attribution is unchanged. Only the open-target changed (new tab → on-page modal).
+
+**What was rejected:** Inline `<img>` in the bubble (re-loads cross-domain on every render, hotlink-block → broken images, strongest "present their image as ours"); hosting the images ourselves (flips the hot-link posture, needs ingestion+storage). Operator chose the lightbox among these.
+
+**Implementation note:** `AssetImage` (modal body) is exported from `AssetLightbox.tsx` purely for unit-testability — `DialogContent` (the hand-rolled `components/ui/dialog.tsx`) renders `null` while closed, so the `<img>` is absent from a closed-state static render; testing the body in isolation is the only way to cover the image-url wiring without a browser. Open-state interaction (image loads on click, Esc/backdrop closes) is browser-verified; Playwright coverage tracked in #885.
+
+**Artifacts:** PR #884, `AssetLightbox.tsx` + `asset-lightbox.test.tsx`. Follow-up: #885 (open-state Playwright test). Related: [[D-188]], [[D-075]].
+
+---
+
 ## D-188 — 2026-06-08 — #882: display-asset markers never rendered in customer chat (D-075 wiring finally landed)
 
 **Decision:** Wire the `assets` SSE event into `ChatExperience.tsx` so `[[display_asset:<uuid>]]` markers resolve to hyperlinks instead of printing as literal text.

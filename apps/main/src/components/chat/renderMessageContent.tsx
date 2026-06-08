@@ -83,8 +83,6 @@ export function renderMessageContent(
     const safeUrl = asset !== undefined && /^https?:\/\//i.test(asset.image_url);
     if (asset && safeUrl && renderedAssetCount < MAX_RENDERED_ASSETS) {
       renderedAssetCount += 1;
-      // In-page lightbox (D-188 follow-up): clicking opens the image in a
-      // modal on this page rather than navigating to cruisemapper.com.
       out.push(<AssetLightbox key={`asset-${key++}`} asset={asset} />);
     } else if (asset && safeUrl) {
       // §33.7.2 #5 — beyond the cap. Drop the markup silently; the model
