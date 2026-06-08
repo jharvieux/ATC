@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-180 — 2026-06-07 — #850 root cause = anon session id written into ai_call_log.user_id (FK violation), NOT a model/key/data problem (#861)
+
+The concierge "ignores ship+date itinerary data" bug ([[D-177]]) was finally root-caused with a **live prod reproduction** + the actual runtime error. It was NOT entity extraction being model/key/data-broken (all of those are fine — running `extractEntities` directly with the prod key+DB returns perfect entities).
+
+**Mechanism.** `ai_call_log.user_id` has a FK to `users(id)`. Entity extraction writes an `ai_call_log` row mid-retrieval via `instrumentedClaudeCall`→`logAndIncrement`. The chat route passed `user_id: userId ?? anonSessionId ?? "anonymous"` into `retrieveForChat`, so on every **anonymous** turn the anon session id (not a real user) violated the FK → `safeAwait` threw → `extractEntities` caught → empty entities → no `buildItineraryLookup` → no #826 lookup → "I don't have access to itineraries." The streaming `chat_main` path (stream-wrapper) survived because it passes `user_id: userId` (null for anon, FK-allowed). That asymmetry is why 30d of `ai_call_log` had 11 `chat_main` + 0 `entity_extraction`.
+
+**Why it took so long / lessons.** (1) The earlier [[D-177]] "silently dead" framing was right about the symptom but the cause was downstream of the model call, not the call itself. (2) Vercel's MCP `get_runtime_logs` is **lossy/sampled** — it kept hiding the `[entity-extraction] failed` line; the `vercel logs <url> --follow` CLI (background-tailed while firing a turn) surfaced it. Trust DB tables (authoritative) over the log-search tool. (3) `instrumentedClaudeCall` (non-streaming, used by entity_extraction/memory/etc.) vs `instrumentedClaudeStream` (chat_main/supervisor) are SEPARATE paths — "chat works" never proved the non-streaming path works.
+
+**Fix (#861, merged to dev).** Pass `userId` (null for anon); anon attribution is carried by `conversation_id`→`conversations.anonymous_session_id`, never `user_id`. Widened `RetrieveForChatInput`/`RagRetrieveCallInput` `user_id` to `string|null` + route-level regression test. **Invariant to keep:** never write a non-`users.id` value into `ai_call_log.user_id`.
+
+**Entangled but separate from #860** (Bearer-only chat auth → everyone is anonymous → triggers this FK path for all users; but genuine anon visitors hit it regardless). Also surfaced #862 (`env() called before verifyEnvAtBoot()` throws in the chat path → customer bug-flow feature dead). #850 stays OPEN until the next beta deploys and the Bliss query shows an `entity_extraction` row.
+
+**Artifacts.** #861 (merged), #850 (open, awaits prod verify), #860 + #862 (open). `apps/main/src/app/api/chat/route.ts`, `apps/main/src/lib/rag/retrieve-for-chat.ts`.
+
+---
+
 ## D-179 — 2026-06-07 — Adopted claude-opus-4-8 (first real use of #851's attempt-latest machinery) (#858/#857)
 
 Operator said "adopt opus 4.8." Done as a code-only bump riding [[D-178]]'s resilience chain — the opus tier is now `[claude-opus-4-8 (latest) → claude-opus-4-7 (fallback)]`. This is the **first deliberate generation bump** through the new policy: a 4-8 availability hiccup auto-degrades to 4-7 via the circuit breaker instead of failing.
