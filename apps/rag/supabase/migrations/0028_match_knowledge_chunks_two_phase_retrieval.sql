@@ -87,17 +87,19 @@ BEGIN
   RETURN QUERY
   WITH ann AS (
     -- Phase 1: IVFFlat ANN — ORDER BY <=> LIMIT uses the vector index.
-    -- Over-fetch so business-logic filters in phase 2 don't under-deliver.
-    -- Compute cosine distance once here and carry it forward.
+    -- Scope filter included so a high-volume tenant can't crowd out another
+    -- tenant's candidates before the outer WHERE applies.
+    -- Capped at 500 to bound cost regardless of p_top_k.
     SELECT
       kc.id                                  AS ann_id,
       (kc.embedding <=> p_query_embedding)   AS cosine_dist
     FROM public.knowledge_chunks kc
-    WHERE kc.status             = 'approved'
-      AND kc.embedding          IS NOT NULL
-      AND kc.superseded_by_chunk_id IS NULL
+    WHERE kc.status                  = 'approved'
+      AND kc.embedding               IS NOT NULL
+      AND kc.superseded_by_chunk_id  IS NULL
+      AND (kc.scope = 'global' OR kc.tenant_id = p_tenant_id)
     ORDER BY kc.embedding <=> p_query_embedding
-    LIMIT GREATEST(p_top_k * 20, 200)
+    LIMIT LEAST(GREATEST(p_top_k * 20, 200), 500)
   )
   SELECT
     kc.id,
@@ -127,22 +129,26 @@ BEGIN
     (1.0 - ann.cosine_dist)::DOUBLE PRECISION                                  AS match_score,
     COALESCE(kc.authority_manual_override, kc.authority_auto)::DOUBLE PRECISION AS authority_score,
     EXP((-EXTRACT(EPOCH FROM (NOW() - kc.ingested_at)))::DOUBLE PRECISION / 86400.0 / 90.0) AS recency_score,
-    -- Gate: skip the 5-query feedback function when the pre-computed signal
-    -- count is 0. With an empty feedback table this eliminates ~400 sub-queries.
-    CASE WHEN kc.feedback_signal_count > 0
-         THEN public.compute_feedback_factor(kc.id)
-         ELSE 0::NUMERIC
-    END                                                                         AS feedback_factor,
+    -- Compute feedback factor once via LATERAL to avoid the double-call penalty
+    -- when feedback data eventually exists. Gate on feedback_signal_count > 0
+    -- short-circuits the 5-query compute_feedback_factor when no signals exist.
+    -- NOTE: feedback_signal_count is a denormalized column that needs a trigger
+    -- to stay in sync when feedback events are inserted — tracked in #875.
+    fb.ff                                                                       AS feedback_factor,
     (
       POWER(GREATEST((1.0 - ann.cosine_dist)::DOUBLE PRECISION, 0.0), w_match)
       * POWER(GREATEST(COALESCE(kc.authority_manual_override, kc.authority_auto)::DOUBLE PRECISION, 0.0), w_authority)
       * POWER(GREATEST(EXP((-EXTRACT(EPOCH FROM (NOW() - kc.ingested_at)))::DOUBLE PRECISION / 86400.0 / 90.0), 0.0), w_recency)
-    ) + (w_feedback * CASE WHEN kc.feedback_signal_count > 0
-                           THEN public.compute_feedback_factor(kc.id)::DOUBLE PRECISION
-                           ELSE 0::DOUBLE PRECISION
-                      END)                                                      AS composite_confidence
+    ) + (w_feedback * fb.ff::DOUBLE PRECISION)                                 AS composite_confidence
   FROM public.knowledge_chunks kc
   JOIN ann ON ann.ann_id = kc.id
+  -- Compute feedback factor once per candidate row (not twice as before).
+  CROSS JOIN LATERAL (
+    SELECT CASE WHEN kc.feedback_signal_count > 0
+                THEN public.compute_feedback_factor(kc.id)
+                ELSE 0::NUMERIC
+           END AS ff
+  ) fb
   WHERE
     (kc.scope = 'global' OR (kc.scope = 'tenant' AND kc.tenant_id = p_tenant_id))
     AND (
