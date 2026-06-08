@@ -1,17 +1,19 @@
 // BP39 §33.7.2 — render assistant message content with display-asset markup.
 //
-// HYPERLINK approach (operator override of the spec's inline image
-// rendering — see MEMORY D-075). Parses `[[display_asset:<uuid>]]`
-// markers and replaces them with an `<a>` link to the asset's image_url
-// plus an attribution sub-line. Unknown UUIDs (shouldn't appear after
-// the BP39 asset-id-validation hallucination layer, but defense-in-depth
-// here too) render as literal text — the customer sees the noise so
-// telemetry has a signal.
+// Parses `[[display_asset:<uuid>]]` markers and replaces each with an
+// <AssetLightbox> — a trigger + attribution that opens the image in an
+// on-page modal (D-188 follow-up; the original D-075 design used a new-tab
+// hyperlink, which navigated customers away to cruisemapper.com). We still
+// hot-link the image rather than host it. Unknown UUIDs (shouldn't appear
+// after the BP39 asset-id-validation layer, but defense-in-depth here too)
+// and non-http(s) urls render as literal text — the customer sees the noise
+// so telemetry has a signal.
 //
 // All asset-derived text is HTML-escaped by React's interpolation —
 // caption, attribution, kind are placed as text nodes, not innerHTML.
 
 import React from "react";
+import { AssetLightbox } from "./AssetLightbox";
 
 export interface DisplayAsset {
   asset_id: string;
@@ -81,23 +83,9 @@ export function renderMessageContent(
     const safeUrl = asset !== undefined && /^https?:\/\//i.test(asset.image_url);
     if (asset && safeUrl && renderedAssetCount < MAX_RENDERED_ASSETS) {
       renderedAssetCount += 1;
-      out.push(
-        <span key={`asset-${key++}`} className="inline-block my-0.5">
-          <a
-            href={asset.image_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline"
-          >
-            View {asset.kind.replace(/_/g, " ")} ↗
-          </a>
-          {asset.attribution ? (
-            <span className="ml-1.5 text-muted-foreground text-[12px]">
-              ({asset.attribution})
-            </span>
-          ) : null}
-        </span>,
-      );
+      // In-page lightbox (D-188 follow-up): clicking opens the image in a
+      // modal on this page rather than navigating to cruisemapper.com.
+      out.push(<AssetLightbox key={`asset-${key++}`} asset={asset} />);
     } else if (asset && safeUrl) {
       // §33.7.2 #5 — beyond the cap. Drop the markup silently; the model
       // already had a ≤3 instruction in the prompt block.
