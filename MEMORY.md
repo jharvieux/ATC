@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-178 — 2026-06-07 — #851 model-resilience COMPLETE (3 layers: loud + attempt-latest fallback + canary); opus-4-8 available
+
+Built out the #851 design from [[D-177]] (operator policy: "attempt latest, fall back on issues"). All three layers merged to dev:
+- **PR1 #852 — loud:** AI-call failures log (entity-extraction catch + parse + `instrumentedClaudeCall`), no more silent swallow.
+- **PR2 #854 — runtime fallback:** central `lib/ai/models.ts` (per-tier ordered chains `[latest undated alias → pinned snapshot]`, `resolveModelChain`, `attemptModelChain` with a sticky-but-self-healing circuit breaker). `instrumentedClaudeCall` tries the chain latest-first, falls back on any model error, bills the served model. Alias added to `pricing.ts`.
+- **PR3 #855 — proactive canary:** `lib/ai/model-canary.ts` (`runModelCanary` 1-token-pings every configured model), daily `model-canary` cron (alerts), + `scripts/check-models-live.ts` deploy-gate (guarded skip without the key).
+
+**Canary-build findings (verified live, root key).** `GET /v1/models` does NOT list undated aliases (e.g. `claude-haiku-4-5`) even though they're callable — so the canary must PING, not membership-check. And **`claude-opus-4-8` is now available** (newer than our pinned `claude-opus-4-7`; this session runs on it) — adopting it is a deliberate eval-gated bump (policy), surfaced to the operator, NOT auto-done.
+
+**Activation deps (operator).** `INNGEST_API_KEY` → registers the new `model-canary` cron (same pending gap as `derive-general-price-ranges`). `ANTHROPIC_API_KEY` in CI → the deploy-gate pings for real (else skips). Both pending; the code degrades gracefully.
+
+**Still on dev, awaiting beta048.** #850's actual entity-extraction cause is STILL unknown (key + Haiku model both verified fine via the ROOT `.env.local` key — my earlier "gateway key" + "model access" guesses were from testing the wrong, stale `apps/main/.env.local` key). The loud-fix (#852) will surface it once beta048 deploys. beta048 batches #845 + #848 + #852 + #854 + #855.
+
+**Artifacts.** #851 (complete), #850 (open, awaiting deploy-surfaced error). `apps/main/src/lib/ai/{models,model-canary,call-wrapper,pricing}.ts`, `apps/main/src/inngest/model-canary.ts`, `scripts/check-models-live.ts`.
+
+---
+
 ## D-177 — 2026-06-07 — Concierge ignores ship+date itinerary data: entity extraction silently dead in prod → loud-fix shipped (#850/#852) + model-resilience initiative (#851)
 
 **Symptom.** Customer asked the concierge "itinerary for the bliss on 10/3/26"; it asked for departure port/nights/region — info we already have. The data is **perfect**: `itineraries` (RAG) has Norwegian Bliss 2026-10-03, Seattle, 7-night Alaska, 5 ports, $929, day_by_day + an embedded chunk; 0 unembedded chunks RAG-wide.
