@@ -558,7 +558,13 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   const retrieval = await retrieveForChat({
     message: userMessage,
     tenant_id: tenantId,
-    user_id: userId ?? anonSessionId ?? "anonymous",
+    // #850 — user_id MUST be a real users.id or null. ai_call_log.user_id has an
+    // FK to users(id), and entity_extraction's wrapper writes that row mid-retrieval.
+    // Passing the anon session id here FK-violated the insert → extraction threw →
+    // empty entities → the concierge ignored ship+date itinerary data on every
+    // anonymous turn. Anon attribution is carried by conversation_id
+    // (conversations.anonymous_session_id), never user_id.
+    user_id: userId,
     conversation_id: conversationId,
     persona_id: personaSlug,
     customer_has_booking: false,
