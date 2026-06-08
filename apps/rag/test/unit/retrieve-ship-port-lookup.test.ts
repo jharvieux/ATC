@@ -132,4 +132,14 @@ describe("fetchPortLookupChunks", () => {
       fetchPortLookupChunks(db, "tenant-1", { departure_port: "Miami", date_from: "2026-06-01" }),
     ).rejects.toThrow(/port lookup failed/);
   });
+
+  it("throws on chunk-fetch DB error (second error path) so caller degrades to vector-only", async () => {
+    const db = makeDb({
+      itineraries: { data: [{ related_chunk_id: "c1" }], error: null },
+      knowledge_chunks: { data: null, error: { message: "timeout" } },
+    });
+    await expect(
+      fetchPortLookupChunks(db, "tenant-1", { departure_port: "Miami", date_from: "2026-06-01" }),
+    ).rejects.toThrow(/port chunk fetch failed/);
+  });
 });
