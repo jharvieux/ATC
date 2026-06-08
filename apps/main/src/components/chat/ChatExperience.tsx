@@ -15,6 +15,8 @@ import { AIDisclosureBanner } from "@/components/chat/AIDisclosureBanner";
 import { NewsTickerBanner } from "@/components/chat/NewsTickerBanner";
 import { StreamingArea } from "@/components/chat/StreamingArea";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
+import type { DisplayAsset } from "@/components/chat/renderMessageContent";
+import { finalizeAssistantMessage } from "@/components/chat/finalize-assistant-message";
 import { SignupWall } from "@/components/chat/SignupWall";
 import { HardLimitMessage } from "@/components/chat/HardLimitMessage";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
@@ -35,6 +37,7 @@ type SseEvent =
   | { type: "message_revised"; content: string }
   | { type: "message_id"; message_id: string; conversation_id: string }
   | { type: "sources"; citations: unknown[] }
+  | { type: "assets"; assets: DisplayAsset[] }
   | { type: "persona"; slug: string; display_name: string }
   | { type: "hard_limit"; body: string; reset_at: string }
   | { type: "signup_wall"; body: string }
@@ -109,6 +112,7 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
       let assistantContent = "";
       let assistantId: string | null = null;
       let citations: unknown[] = [];
+      let assets: DisplayAsset[] = [];
       let personaName = "Assistant";
 
       while (true) {
@@ -126,6 +130,11 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
               break;
             case "sources":
               citations = ev.citations;
+              break;
+            case "assets":
+              // BP39 — assets back the [[display_asset:<id>]] markers in the
+              // final message. Captured here, attached at `done`.
+              assets = ev.assets;
               break;
             case "message_id":
               assistantId = ev.message_id;
@@ -173,16 +182,13 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
             case "done": {
               if (assistantContent) {
                 type MsgCitation = NonNullable<ChatMessage["citations"]>[number];
-                const baseMsg: ChatMessage = {
-                  id: assistantId ?? `local-a-${Date.now()}`,
-                  role: "assistant",
+                const finalMsg = finalizeAssistantMessage({
                   content: assistantContent,
-                  persona_display_name: personaName,
-                  created_at: new Date().toISOString(),
-                };
-                const finalMsg: ChatMessage = citations.length > 0
-                  ? { ...baseMsg, citations: citations as MsgCitation[] }
-                  : baseMsg;
+                  assistantId,
+                  personaName,
+                  citations: citations as MsgCitation[],
+                  assets,
+                });
                 setMessages((prev) => [...prev, finalMsg]);
               }
               setStreaming(null);
