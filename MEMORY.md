@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-191 — 2026-06-08 — #889: email_customer tool — concierge can email signed-in customers (recipient is server-resolved, never model-chosen)
+
+**Decision:** Add an `email_customer` persona tool so the chat AI can email a customer the info they ask for (deck-plan links, itinerary, quote) via the existing `sendEmail`/Resend path, from the persona's address (e.g. `marcus@ai-travelconcierge.com`).
+
+**Key security decision (operator chose "signed-in users only"):** The recipient is NEVER chosen by the model. The tool schema has no recipient field; the `to:` is the signed-in customer's account email, resolved server-side in the chat route from `public.users.email` and passed via `dispatchCtx.customer_email`. Anonymous turns return "ask them to sign in" and never send. This eliminates the open-relay/spam-phishing vector. Rejected alternatives: "any address the user types" (works logged-out but the model controls `to:` — abuse surface) and a hybrid. A unit test feeds a malicious `input.to`/`input.recipient` and asserts the send still goes to the account email.
+
+**From-address:** `personaFromIdentity(slug)` derives `{firstSegment}@ai-travelconcierge.com` + title-cased display name ("marcus-cole" → Marcus Cole <marcus@ai-travelconcierge.com>). `ai-travelconcierge.com` is already the verified platform sending domain (platform default is `noreply@ai-travelconcierge.com`), so `resolveFromAddress` honors the full address verbatim under `platform_resend` — no DNS work.
+
+**Rate limiting:** Added a dedicated `concierge` EmailCategory (10/24h per recipient, fail-closed on DB error) instead of the unbounded `transactional` category — bounds an abused/looping chat session from fan-out emailing the account holder. `email_log.email_category` is free text, so no migration.
+
+**Body safety:** `emails/ConciergeMessage.tsx` renders the AI body as escaped React text nodes with only http(s) URLs auto-linked — no markup injection. reply-to = tenant support_email.
+
+**Artifacts:** PR #889 (Opus-audited, both agents clean). Follow-up #890 (inbound replies to the persona address aren't handled). atc-main deployed 2026-06-08.
+
+---
+
 ## D-190 — 2026-06-08 — display-asset lightbox refinements: descriptive labels + mobile-safe modal
 
 **Decision:** Two refinements to the [[D-189]] lightbox.
