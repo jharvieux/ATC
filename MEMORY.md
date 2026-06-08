@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-177 — 2026-06-07 — Concierge ignores ship+date itinerary data: entity extraction silently dead in prod → loud-fix shipped (#850/#852) + model-resilience initiative (#851)
+
+**Symptom.** Customer asked the concierge "itinerary for the bliss on 10/3/26"; it asked for departure port/nights/region — info we already have. The data is **perfect**: `itineraries` (RAG) has Norwegian Bliss 2026-10-03, Seattle, 7-night Alaska, 5 ports, $929, day_by_day + an embedded chunk; 0 unembedded chunks RAG-wide.
+
+**Root cause (confirmed at the impact level).** #826's structured ship+date lookup only fires if `extractEntities` returns a ship + date, and **entity extraction produces ZERO successful calls in prod** (`ai_call_log` 48h: `chat_main`/`chat_supervisor` healthy, no `entity_extraction`) even though it runs every turn. It fails and is **silently swallowed** (`catch { return EMPTY }`, no log; `instrumentedClaudeCall` only recorded failures to an in-memory Map; logging was success-only). So empty entities → `buildItineraryLookup` null → vector-only → can't pin an exact sail date → the bot asks blind.
+
+**Mis-diagnoses I made (corrected — important).** (1) "Gateway key" — WRONG: I tested `apps/main/.env.local`'s key, which is a DIFFERENT, stale key than the root `.env.local` (the prod-equivalent). **The root key is valid.** (2) "Haiku model not accessible" — WRONG: direct Anthropic calls with the root key return 200 for `claude-haiku-4-5-20251001` AND the undated alias `claude-haiku-4-5` AND `claude-sonnet-4-6`/`claude-opus-4-7`. So **neither key nor model is the cause** — the real call-failure is still hidden and only surfaces once the loud-fix is in prod. Lesson: the root + apps/main `.env.local` keys differ; test with the right one.
+
+**Shipped — PR1 (#852, merged to dev).** Made AI-call failures LOUD: `extractEntities` catch + the no-key guard now `console.error`; `parseEntities` `console.warn`s on unparseable output; `instrumentedClaudeCall` `console.error`s the failure (purpose+model+message) before re-throw. Retrieval still degrades gracefully. This unblocks diagnosing the real cause after deploy.
+
+**Initiative — #851 (model resilience), operator policy: "attempt latest, fall back on issues."** PR2 = central model-config module (ids are in ~30 files today: each helper's default, `lib/env.ts`, `lib/ai/pricing.ts`, `call-wrapper.ts` `DOWNGRADE_MAP`/`selectModelForPurpose`) + per-purpose **ordered chain `[latest-alias → pinned-fallback]`** + circuit-breaker auto-fallback in the wrapper + undated aliases for internal helpers. PR3 = proactive **canary** (deploy-gate + daily cron + CI) validating the chain against Anthropic's live `GET /v1/models`. Verified the alias `claude-haiku-4-5` works (200), so attempt-latest-via-alias is real. Defaults: "latest" = newest snapshot WITHIN a generation (alias auto-rolls); new generation = deliberate eval-gated bump; auto-fallback on availability errors only (quality regressions stay on evals). Pricing map needs alias entries so cost-tracking doesn't zero out.
+
+**Deploy.** Holding **beta048** to batch #845 (cross-tenant) + #848 (webhook) + #852 (loud) + the rest of #851 in one prod push (operator can request sooner). After it deploys: re-run the Bliss query → read the now-visible entity-extraction error → fix the actual cause (#850).
+
+**Artifacts.** #850 (the bug, open), #851 (resilience initiative, open), #852 (loud-fix, merged). `apps/main/src/lib/rag/entity-extraction.ts`, `apps/main/src/lib/ai/call-wrapper.ts`.
+
+---
+
 ## D-176 — 2026-06-07 — Fork PRs can't satisfy this repo's required checks → re-home to an origin branch (#790 → #848, fixes #719)
 
 **Reusable lesson (the important part).** A contributor's **fork PR cannot pass this repo's branch protection**, so it can never merge as-is:
