@@ -605,6 +605,22 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   // ── 6. RAG retrieve.
+  // Build conversation context for entity extraction: last 4 turns (2 user + 2
+  // assistant), trimmed so follow-up questions like "send the deck plan" can
+  // resolve back to the ship being discussed without re-mentioning it.
+  const contextMessages = chatHistory
+    .slice(-4)
+    .map((m) => {
+      const text = typeof m.content === "string"
+        ? m.content
+        : (m.content as Array<{ type?: string; text?: string }>)
+            .filter((b) => b.type === "text")
+            .map((b) => b.text ?? "")
+            .join(" ");
+      return { role: m.role as "user" | "assistant", text: text.slice(0, 250) };
+    })
+    .filter((m) => m.text.trim().length > 0);
+
   const retrieval = await retrieveForChat({
     message: userMessage,
     tenant_id: tenantId,
@@ -618,6 +634,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     conversation_id: conversationId,
     persona_id: personaSlug,
     customer_has_booking: false,
+    context_messages: contextMessages,
   });
 
   await send({ type: "persona", slug: personaSlug, display_name: personaSlug });
