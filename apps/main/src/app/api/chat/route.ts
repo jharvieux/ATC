@@ -189,21 +189,30 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const isAuthenticated = req.headers.get("authorization")?.startsWith("Bearer ");
+  // #860 — a request carries an auth credential if it has a Bearer token OR a
+  // Supabase session cookie (sb-<ref>-auth-token, possibly chunked). The cookie
+  // is the authoritative session source post-§17.x; the old Bearer-only check
+  // treated every logged-in customer as anonymous. We only PRESENCE-check here
+  // (synchronous); the cookie is validated async inside handleChat.
+  const cookies = parseCookies(req.headers.get("cookie"));
+  const hasBearer = req.headers.get("authorization")?.startsWith("Bearer ") ?? false;
+  const hasAuthCookie = Object.keys(cookies).some((n) => /^sb-.*-auth-token/.test(n));
+  const hasCredential = hasBearer || hasAuthCookie;
 
-  // ── Resolve anonymous session before returning the response so we can
-  //    include Set-Cookie in the response headers.
+  // ── Resolve an anonymous session id for the anon (or invalid-session) path.
+  //    Only SET the anon cookie when there's no credential — an authenticated
+  //    turn must not be issued an anon session cookie.
   let resolvedAnonSessionId: string | null = null;
   let anonCookieHeader: string | null = null;
-  if (!isAuthenticated) {
-    const rawCookie = parseCookies(req.headers.get("cookie"))[ANON_SESSION_COOKIE] ?? null;
-    const verifiedId = rawCookie ? verifyAnonSession(rawCookie) : null;
+  {
+    const rawAnon = cookies[ANON_SESSION_COOKIE] ?? null;
+    const verifiedId = rawAnon ? verifyAnonSession(rawAnon) : null;
     if (verifiedId) {
       resolvedAnonSessionId = verifiedId;
     } else {
       const fresh = freshAnonSession();
       resolvedAnonSessionId = fresh.id;
-      anonCookieHeader = buildAnonCookieHeader(fresh.cookieValue);
+      if (!hasCredential) anonCookieHeader = buildAnonCookieHeader(fresh.cookieValue);
     }
   }
 
@@ -226,7 +235,7 @@ export async function POST(req: Request): Promise<Response> {
   void handleChat({
     req,
     tenantId,
-    isAuthenticated: Boolean(isAuthenticated),
+    hasCredential,
     resolvedAnonSessionId,
     userMessage,
     conversationIdInput: body.conversation_id ?? null,
@@ -256,7 +265,7 @@ export async function POST(req: Request): Promise<Response> {
 type HandleChatArgs = {
   req: Request;
   tenantId: string;
-  isAuthenticated: boolean;
+  hasCredential: boolean;
   resolvedAnonSessionId: string | null;
   userMessage: string;
   conversationIdInput: string | null;
@@ -279,30 +288,73 @@ function parseCustomerContextRef(raw: unknown): CustomerContextRef | null {
 
 async function handleChat(args: HandleChatArgs): Promise<void> {
   const svc = createServiceRoleClient();
-  const { tenantId, isAuthenticated, userMessage, customerContextRef, send, close } = args;
+  const { tenantId, hasCredential, userMessage, customerContextRef, send, close } = args;
 
-  // ── 1. Identify caller (anonymous OR authenticated)
+  // ── 1. Identify caller. #860: recognize the Supabase session COOKIE (not just
+  // a Bearer header) so logged-in customers hit the §24.9 customer tiers instead
+  // of the anon caps. Two distinct ids matter and must NOT be conflated:
+  //   • ctx.source.user_id = the AUTH id (auth.users.id) — tools/RLS need auth.uid().
+  //   • userId             = public.users.id — conversations / ai_call_log /
+  //     customer_* all FK users(id); writing the auth id there 500s (#850-class).
   let ctx: TenantContext | null = null;
-  let userId: string | null = null;
-  let anonSessionId: string | null = null;
+  let userId: string | null = null;     // public.users.id (FK target) or null
+  let authUserId: string | null = null; // auth.users.id (platform_admins key)
 
-  if (isAuthenticated) {
+  if (hasCredential) {
     try {
       ctx = await tenantContextFromRequest(args.req);
-      userId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
-    } catch (err) {
-      await send({ type: "error", message: `auth_failed: ${err instanceof Error ? err.message : String(err)}` });
-      await close();
-      return;
+      authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
+      if (authUserId) {
+        const { data: urow, error: uerr } = await svc
+          .from("users")
+          .select("id")
+          .eq("auth_user_id", authUserId)
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+        // Fail-safe (treat as anon) but observable: a valid session that can't
+        // resolve a users.id is unexpected (tenantContextFromRequest already
+        // verified membership), so surface it rather than silently degrading.
+        if (uerr) console.error(`[chat] users.id lookup failed (tenant=${tenantId}): ${uerr.message}`);
+        userId = (urow as { id: string } | null)?.id ?? null;
+      }
+    } catch {
+      // #860: an invalid/expired session, or an authenticated user who isn't a
+      // member of this tenant → DEGRADE to anonymous. Never hard-error the turn.
+      ctx = null;
+      userId = null;
+      authUserId = null;
     }
-  } else {
-    anonSessionId = args.resolvedAnonSessionId;
+  }
+
+  // Anonymous when no resolved member user (no credential / invalid / non-member).
+  // Anon attribution rides conversation_id, not user_id.
+  const anonSessionId: string | null = userId ? null : args.resolvedAnonSessionId;
+  if (!userId) {
     // Forge a minimal ctx for downstream helpers that only need tenant_id.
     ctx = { tenant_id: tenantId, source: { kind: "http_request", user_id: anonSessionId! } };
   }
 
-  // ── 2. Rate limit
-  if (isAuthenticated && userId) {
+  // #860 staff bypass: platform admins (keyed by the auth id) chat unmetered —
+  // costs are still logged downstream. Fail-closed: a lookup error → no bypass.
+  let isPlatformAdmin = false;
+  if (authUserId) {
+    const { data: adminRow, error: adminErr } = await svc
+      .from("platform_admins")
+      .select("auth_user_id")
+      .eq("auth_user_id", authUserId)
+      .maybeSingle();
+    // Fail-closed (no bypass on error) but observable — matches assertPlatformAdmin.
+    if (adminErr) console.error(`[chat] platform_admins lookup failed (tenant=${tenantId}): ${adminErr.message}`);
+    isPlatformAdmin = Boolean(adminRow);
+  }
+
+  // ── 2. Rate limit. #860: platform admins bypass entirely (unmetered; costs are
+  // still logged). Authenticated members → §24.9 customer tiers. Else → anon caps.
+  let personaAugmentation: string | null = null;
+  let customerCurrentCount = 0;
+  if (isPlatformAdmin) {
+    // Staff bypass — no rate limiting for internal testers.
+  } else if (userId) {
     const decision = await enforceCustomerLimit(svc, { user_id: userId, tenant_id: tenantId });
     if (decision.tier === "hard") {
       // §24.9 system-spoken hard-limit message — NOT in-character.
@@ -342,11 +394,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       return;
     }
     // Soft1 / Soft2 → persona augmentation feeds the prompt; below tier just proceeds.
-    var personaAugmentation: string | null =
+    personaAugmentation =
       decision.tier === "soft1" || decision.tier === "soft2"
         ? decision.persona_augmentation
         : null;
-    var customerCurrentCount: number = decision.current_count;
+    customerCurrentCount = decision.current_count;
   } else {
     // Anonymous path
     const ip = extractClientIp(args.req);
@@ -382,12 +434,10 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       ip,
       fingerprint,
     });
-    var personaAugmentation: string | null = null;
-    var customerCurrentCount: number = 0;
   }
 
   // ── 3. Detect customer tone-change (authenticated only — anon has no memory).
-  if (isAuthenticated && userId) {
+  if (userId) {
     const override = detectToneOverride(userMessage);
     if (override) {
       // Load tenant max tone to clamp the override.
