@@ -72,7 +72,7 @@ import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
 
 const EMPTY_ENTITIES = {
-  destinations: [], cruise_lines: [], ships: [],
+  destinations: [], departure_ports: [], cruise_lines: [], ships: [],
   travel_dates: { earliest: null, latest: null },
   passenger_composition: "", intent: "research" as const, categories_hint: [],
 };
