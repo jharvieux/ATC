@@ -292,6 +292,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   let ctx: TenantContext | null = null;
   let userId: string | null = null;     // public.users.id (FK target) or null
   let authUserId: string | null = null; // auth.users.id (platform_admins key)
+  // Signed-in customer's account email — the ONLY address email_customer can
+  // send to. Resolved here server-side; never supplied by the model.
+  let customerEmail: string | null = null;
 
   if (hasCredential) {
     try {
@@ -300,7 +303,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       if (authUserId) {
         const { data: urow, error: uerr } = await svc
           .from("users")
-          .select("id")
+          .select("id, email")
           .eq("auth_user_id", authUserId)
           .eq("tenant_id", tenantId)
           .maybeSingle();
@@ -308,7 +311,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         // resolve a users.id is unexpected (tenantContextFromRequest already
         // verified membership), so surface it rather than silently degrading.
         if (uerr) console.error(`[chat] users.id lookup failed (tenant=${tenantId}): ${uerr.message}`);
-        userId = (urow as { id: string } | null)?.id ?? null;
+        const urowTyped = urow as { id: string; email: string | null } | null;
+        userId = urowTyped?.id ?? null;
+        customerEmail = urowTyped?.email ?? null;
       }
     } catch {
       // #860: an invalid/expired session, or an authenticated user who isn't a
@@ -316,6 +321,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       ctx = null;
       userId = null;
       authUserId = null;
+      customerEmail = null;
     }
   }
 
@@ -902,6 +908,8 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
               db: svc,
               conversation_id: conversationId,
               contact_id: conversationContactId,
+              customer_email: customerEmail,
+              persona_slug: personaSlug,
             },
           });
           if (loopOut) {
@@ -972,6 +980,8 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
               db: svc,
               conversation_id: conversationId,
               contact_id: conversationContactId,
+              customer_email: customerEmail,
+              persona_slug: personaSlug,
             },
           });
           if (loopOut) {

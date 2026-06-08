@@ -6,6 +6,7 @@
 //   group_invitation — 3 / 24h per invitee (enforced in group-reminder-cadence.ts)
 //   marketing        — 4 / month per contact
 //   travel_news      — weekly digest (1 / 7 days per contact)
+//   concierge        — AI-driven send (email_customer tool): 10 / 24h per recipient
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -15,7 +16,13 @@ export type EmailCategory =
   | "group_invitation"
   | "marketing"
   | "travel_news"
-  | "admin_sample";
+  | "admin_sample"
+  | "concierge";
+
+// AI-driven concierge sends are bounded per recipient per 24h. The recipient is
+// always the signed-in account holder, so this caps an abused/looping chat
+// session from fan-out spamming the customer's own inbox.
+const CONCIERGE_DAILY_LIMIT = 10;
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -87,6 +94,23 @@ export async function checkRateLimit(opts: {
     if (error) return { allowed: false, reason: "rate_limit_query_failed" };
     if ((data?.length ?? 0) >= 1) {
       return { allowed: false, reason: "travel_news_weekly_limit_reached" };
+    }
+    return { allowed: true };
+  }
+
+  if (category === "concierge") {
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await db
+      .from("email_log")
+      .select("id")
+      .eq("tenant_id", tenant_id)
+      .eq("to_email", to_email)
+      .eq("email_category", "concierge")
+      .gte("sent_at", dayAgo)
+      .not("status", "eq", "suppressed");
+    if (error) return { allowed: false, reason: "rate_limit_query_failed" };
+    if ((data?.length ?? 0) >= CONCIERGE_DAILY_LIMIT) {
+      return { allowed: false, reason: "concierge_daily_limit_reached" };
     }
     return { allowed: true };
   }
