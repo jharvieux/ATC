@@ -305,12 +305,16 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       ctx = await tenantContextFromRequest(args.req);
       authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
       if (authUserId) {
-        const { data: urow } = await svc
+        const { data: urow, error: uerr } = await svc
           .from("users")
           .select("id")
           .eq("auth_user_id", authUserId)
           .eq("tenant_id", tenantId)
           .maybeSingle();
+        // Fail-safe (treat as anon) but observable: a valid session that can't
+        // resolve a users.id is unexpected (tenantContextFromRequest already
+        // verified membership), so surface it rather than silently degrading.
+        if (uerr) console.error(`[chat] users.id lookup failed (tenant=${tenantId}): ${uerr.message}`);
         userId = (urow as { id: string } | null)?.id ?? null;
       }
     } catch {
@@ -334,11 +338,13 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // costs are still logged downstream. Fail-closed: a lookup error → no bypass.
   let isPlatformAdmin = false;
   if (authUserId) {
-    const { data: adminRow } = await svc
+    const { data: adminRow, error: adminErr } = await svc
       .from("platform_admins")
       .select("auth_user_id")
       .eq("auth_user_id", authUserId)
       .maybeSingle();
+    // Fail-closed (no bypass on error) but observable — matches assertPlatformAdmin.
+    if (adminErr) console.error(`[chat] platform_admins lookup failed (tenant=${tenantId}): ${adminErr.message}`);
     isPlatformAdmin = Boolean(adminRow);
   }
 
