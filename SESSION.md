@@ -1,24 +1,29 @@
-# Session state — last updated 2026-06-08 (post-#872 merge — all three layers of #868 fixed)
+# Session state — last updated 2026-06-08 (post-#876 merge + both apps redeployed)
 
 ## Just completed
-- **#868 layer 2 — DB function fixed + live.** `match_knowledge_chunks` had two bugs: `SET search_path=''` broke pgvector `<=>` operator, and `EXTRACT(EPOCH…)` returns `numeric` in PG14+ (mismatch with `DOUBLE PRECISION` RETURNS TABLE). Both fixed in migration 0027, applied directly to prod RAG DB. PR #872 merged. MEMORY D-185.
-- **#868 layer 1 — Contract fix (#870)** merged + atc-rag redeployed. MEMORY D-184.
+- **#868 complete pipeline fixed.** Three layers of bugs, three PRs:
+  - #870: RetrieveRequestSchema accepted slugs + null user_id (fixed 400 on every call)
+  - #872 + #874: match_knowledge_chunks search_path (pgvector) + PG14 EXTRACT cast + 32s→2s two-phase ANN performance (fixed 500 timeout)
+  - #876: ship_lookup + port_lookup structured retrieval paths (fixed wrong chunks for Haven, deck plan, Port Canaveral queries)
+- **MEMORY D-186** recorded.
+- **Both apps deployed**: atc-rag (new route handlers) + atc-main (entity extraction + retrieve-for-chat changes).
 
 ## In flight
-- Nothing in flight — clean checkpoint. dev is clean.
+- Nothing in flight — clean checkpoint.
 
 ## Next step
-- **Verify end-to-end**: ask the Norwegian Bliss 10/3/26 itinerary query in prod chat. Expect:
-  1. A row appears in `rag_retrieval_log` (db query: `SELECT query_text, chunks_returned, outcome FROM rag_retrieval_log ORDER BY occurred_at DESC LIMIT 5`)
-  2. Grounded Seattle → Alaska answer (not "Caribbean year-round" hallucination)
-  3. If still deflecting despite a log row: check that `itinerary_lookup` structured path fires (the chunk should appear in `chunks_returned`) and that `filterChunks` + `formatKnowledgeBlock` don't drop it
+- **Verify the three originally-failing queries in prod chat:**
+  1. "Where is The Haven restaurant on the Norwegian Bliss?" → expect decks 17-19 answer
+  2. "Can you send me the deck plan for the Bliss?" → expect cruisemapper.com link
+  3. "What ships leave Port Canaveral on 10/23/26?" → expect Disney Wish, Utopia of the Seas, Disney Fantasy
+- If any still deflect: check `rag_retrieval_log` for the query — confirm ship_lookup/port_lookup fired (chunks_returned should include the structured chunks)
 
 ## Blocked on user
-- **Verify the 4 prod env vars** (#862): `RESEND_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_GRAPH_CLIENT_ID`/`_SECRET`
-- **#857** operator actions (unchanged): opus-4-8 price verify + eval; `INNGEST_API_KEY` repo secret; `ANTHROPIC_API_KEY` in CI
-- Durable **RAG tenant-status sync** fix
+- **Verify the 4 prod env vars** (#862): RESEND_API_KEY, OPENAI_API_KEY, MICROSOFT_GRAPH_CLIENT_ID/_SECRET
+- **#857**: opus-4-8 price verify + eval; INNGEST_API_KEY repo secret; ANTHROPIC_API_KEY in CI
+- Durable RAG tenant-status sync fix (#875 trigger for feedback_signal_count is also outstanding)
 
 ## Open questions
-- If the answer is still wrong despite a `rag_retrieval_log` row: the bug moved downstream (knowledge_block injection or persona deflection) — that's a different investigation
-- The integration test suite for the RAG scope-isolation test (mentioned in pre-pr audit) may not run against PG14+ in CI; worth confirming
-- Untracked working-tree security-scan artifacts (`THREAT_MODEL.md`, `VULN-FINDINGS.*`, `.triage-state/`, `.agents/`, `skills-lock.json`, stray `specs/...copy.txt`) — surface before cleanup
+- **Haven**: The deck_intel chunk says "The Haven Lower" on deck 17 and "The Haven Upper" on decks 18-19, but no mention of a specific "restaurant." If the concierge is asked about "The Haven restaurant," the answer will be about the deck location, not a menu or reservation link. This may still feel like a partial deflection if the user wanted booking info.
+- The "deck plan" follow-up query ("Can you send a link to the deck plan") requires the ship name in the current message to trigger ship_lookup — a conversational follow-up without re-mentioning the ship won't benefit. This is a known limitation; tracked as a potential follow-up.
+- Untracked working-tree security-scan artifacts (THREAT_MODEL.md, VULN-FINDINGS.*, etc.) — surface before any cleanup.

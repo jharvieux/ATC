@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-186 — 2026-06-08 — #868: ship_lookup + port_lookup structured retrieval paths
+
+**Decision**: Add two new structured lookup paths that bypass vector search when semantic similarity is unreliable: `ship_lookup` (always includes deck_intel + ship_intel for the named ship) and `port_lookup` (queries itineraries by departure_port + date).
+
+**Why**: Vector search over 28K chunks was failing for two query types: (1) ship amenity/spec questions ("Where is The Haven?") because question vocabulary ≠ chunk vocabulary; (2) port-departure queries ("What ships leave Port Canaveral on 10/23/26?") because the ANN top-200 returned unrelated European itineraries. Root cause: no semantic anchor between "Where is the restaurant?" and the deck plan chunk. Data was present but unreachable via ANN.
+
+**What was rejected**: Adding ship/category filters to the vector search (would narrow the result set too aggressively for general queries). Passing conversation context to entity extraction (larger change, out of scope for this bug).
+
+**Artifacts**: PR #876 (merged), atc-rag + atc-main both deployed 2026-06-08. Haven restaurant query now routes to the Bliss deck_intel chunk which contains "The Haven Lower/Upper on Decks 17-19" + the deck plan source_url (cruisemapper.com). Port Canaveral 10/23/26 routes to Disney Wish, Utopia of the Seas, Disney Fantasy chunks.
+
+---
+
 ## D-185 — 2026-06-08 — #868: match_knowledge_chunks search_path + PG14 EXTRACT fix — merged, applied to prod DB, fix live
 
 **Decision**: Recreate `match_knowledge_chunks` with `SET search_path = 'public'` (was `''`) and explicit `::DOUBLE PRECISION` cast on `EXTRACT(EPOCH FROM …)`.
