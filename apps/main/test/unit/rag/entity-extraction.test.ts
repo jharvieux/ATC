@@ -65,4 +65,15 @@ describe("extractEntities — §21.2", () => {
     );
     expect(mocks.call).toHaveBeenCalledTimes(1); // it DID attempt the call (key present)
   });
+
+  it("[#851] warns + degrades to empty when the model returns unparseable output", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    mocks.call.mockResolvedValue({ text: "sorry, I can't help with that", raw: {} });
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const out = await extractEntities({ message: "the bliss on 10/3/26", tenant_id: "t1" });
+
+    expect(out.ships).toEqual([]);
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("could not parse model output"));
+  });
 });

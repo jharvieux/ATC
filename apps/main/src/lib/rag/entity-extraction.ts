@@ -144,7 +144,14 @@ function parseEntities(raw: string): EntitySet {
         : "research",
       categories_hint: Array.isArray(obj.categories_hint) ? obj.categories_hint.filter((s) => typeof s === "string") : [],
     };
-  } catch {
+  } catch (err) {
+    // #851 — warn (not silent): a malformed model response is an expected edge,
+    // but a SUSTAINED parse failure (e.g. the model's output format drifted)
+    // would silently empty entities — so it must still be visible. Lower severity
+    // than the call-failure path above.
+    console.warn(
+      `[entity-extraction] could not parse model output (degrading to empty entities): ${err instanceof Error ? err.message : String(err)} | raw="${raw.slice(0, 120)}"`,
+    );
     return EMPTY_ENTITY_SET;
   }
 }
