@@ -79,11 +79,6 @@ BEGIN
   SELECT COALESCE((value)::DOUBLE PRECISION, 1.0) INTO w_feedback
     FROM public.platform_settings WHERE key = 'retrieval_weight_feedback';
 
-  w_match     := COALESCE(w_match,     1.0);
-  w_authority := COALESCE(w_authority, 1.0);
-  w_recency   := COALESCE(w_recency,   1.0);
-  w_feedback  := COALESCE(w_feedback,  1.0);
-
   RETURN QUERY
   WITH ann AS (
     -- Phase 1: IVFFlat ANN — ORDER BY <=> LIMIT uses the vector index.
@@ -142,7 +137,6 @@ BEGIN
     ) + (w_feedback * fb.ff::DOUBLE PRECISION)                                 AS composite_confidence
   FROM public.knowledge_chunks kc
   JOIN ann ON ann.ann_id = kc.id
-  -- Compute feedback factor once per candidate row (not twice as before).
   CROSS JOIN LATERAL (
     SELECT CASE WHEN kc.feedback_signal_count > 0
                 THEN public.compute_feedback_factor(kc.id)
