@@ -105,6 +105,15 @@ describe("renderMessageContent", () => {
     expect(out).toContain("href=");
   });
 
+  it("does NOT hyperlink a non-http(s) asset url (javascript:/data: defense-in-depth)", () => {
+    const evil: DisplayAsset = { ...A, image_url: "javascript:alert(1)" };
+    const out = html(renderMessageContent(`X [[display_asset:${A_ID}]]`, [evil]));
+    expect(out).not.toContain("href");
+    expect(out).not.toContain("javascript:");
+    // Falls through to literal rendering so the bad asset is visible.
+    expect(out).toContain(`[[display_asset:${A_ID}]]`);
+  });
+
   it("caps rendered assets at 3 per response (§33.7.2 #5)", () => {
     const ids = [
       "11111111-1111-4111-8111-111111111111",

@@ -74,7 +74,12 @@ export function renderMessageContent(
     }
     const id = (match[1] ?? "").toLowerCase();
     const asset = UUID_RE.test(id) ? byId.get(id) : undefined;
-    if (asset && renderedAssetCount < MAX_RENDERED_ASSETS) {
+    // Defense-in-depth: only hyperlink http(s) URLs. Assets come from the DB
+    // scraper pipeline, not users, but an href is one place a stray
+    // javascript:/data: URL must never reach. A non-http(s) url falls through
+    // to literal rendering so the bad asset is visible, not clickable.
+    const safeUrl = asset !== undefined && /^https?:\/\//i.test(asset.image_url);
+    if (asset && safeUrl && renderedAssetCount < MAX_RENDERED_ASSETS) {
       renderedAssetCount += 1;
       out.push(
         <span key={`asset-${key++}`} className="inline-block my-0.5">
@@ -93,11 +98,12 @@ export function renderMessageContent(
           ) : null}
         </span>,
       );
-    } else if (asset) {
+    } else if (asset && safeUrl) {
       // §33.7.2 #5 — beyond the cap. Drop the markup silently; the model
       // already had a ≤3 instruction in the prompt block.
     } else {
-      // Unknown ID — render markup literally so the issue is visible.
+      // Unknown ID, or an asset whose url isn't a safe http(s) link —
+      // render markup literally so the issue is visible.
       out.push(match[0]);
     }
     lastIndex = match.index + match[0].length;
