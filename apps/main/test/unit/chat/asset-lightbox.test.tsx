@@ -10,6 +10,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AssetImage, AssetLightbox, assetLinkLabel } from "../../../src/components/chat/AssetLightbox";
+import { Dialog, DialogContent } from "../../../src/components/ui/dialog";
 import type { DisplayAsset } from "../../../src/components/chat/renderMessageContent";
 
 const A: DisplayAsset = {
@@ -64,6 +65,22 @@ describe("AssetImage (modal body)", () => {
     expect(out).not.toContain("<script>");
     expect(out).toContain("&lt;script&gt;");
     expect(out).not.toContain("<img onerror");
+  });
+});
+
+describe("DialogContent (mobile cap — keeps the close ✕ on-screen)", () => {
+  it("caps the panel at the viewport and scrolls so tall content can't push ✕ off-screen", () => {
+    // Force the dialog open via the controlled `open` prop so the panel renders.
+    const out = renderToStaticMarkup(
+      <Dialog open={true}>
+        <DialogContent>
+          <div>tall content</div>
+        </DialogContent>
+      </Dialog>,
+    );
+    expect(out).toContain("max-h-[90vh]");
+    expect(out).toContain("overflow-y-auto");
+    expect(out).toContain('aria-label="Close dialog"'); // ✕ present
   });
 });
 

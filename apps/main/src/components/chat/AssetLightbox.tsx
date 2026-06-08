@@ -23,6 +23,7 @@ import type { DisplayAsset } from "./renderMessageContent";
 // to "View {kind}" when an asset has no caption.
 export function assetLinkLabel(asset: DisplayAsset): string {
   const caption = asset.caption?.trim();
+  // `?.` required: tsconfig noUncheckedIndexedAccess types split()[0] as string|undefined.
   if (caption) return caption.split(" - ")[0]?.trim() || caption;
   return `View ${asset.kind.replace(/_/g, " ")}`;
 }
