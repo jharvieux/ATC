@@ -329,7 +329,9 @@ describe("instrumentedClaudeCall — happy path", () => {
       max_tokens: 100,
       messages: [{ role: "user", content: "hi" }],
     });
-    expect((anthropicCreateArgs as { model: string }).model).toBe("claude-opus-4-7");
+    // #857 — no haiku downgrade for customer-facing on soft1; the opus chain leads
+    // with the adopted 4-8 (4-7 is the in-tier fallback), so the SDK call is 4-8.
+    expect((anthropicCreateArgs as { model: string }).model).toBe("claude-opus-4-8");
   });
 
   it("returns the concatenated text + raw response", async () => {

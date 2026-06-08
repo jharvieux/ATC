@@ -14,7 +14,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import { resolveModelChain, attemptModelChain, HAIKU_PINNED, SONNET, OPUS } from "./models";
+import { resolveModelChain, attemptModelChain, HAIKU_PINNED, SONNET, OPUS_LATEST, OPUS_PINNED } from "./models";
 
 // Re-export the Anthropic types tool-use callers need, so they don't
 // have to import the SDK directly (the lint rule forbids it outside
@@ -145,7 +145,8 @@ export function buildSystemArg(system: string | undefined): SystemArg {
 // ─────────────────────────────────────────────────────────────────────
 
 const DOWNGRADE_MAP: Record<string, string> = {
-  [OPUS]: HAIKU_PINNED,
+  [OPUS_LATEST]: HAIKU_PINNED,
+  [OPUS_PINNED]: HAIKU_PINNED,
   [SONNET]: HAIKU_PINNED,
 };
 

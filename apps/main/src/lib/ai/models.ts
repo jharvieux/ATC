@@ -14,7 +14,10 @@
 export const HAIKU_LATEST = "claude-haiku-4-5"; // undated alias → newest Haiku 4.5 snapshot
 export const HAIKU_PINNED = "claude-haiku-4-5-20251001"; // pinned fallback
 export const SONNET = "claude-sonnet-4-6"; // undated (latest within 4.6)
-export const OPUS = "claude-opus-4-7"; // undated (latest within 4.7)
+// Opus: adopted 4.8 (deliberate, operator-approved bump from 4.7); 4.7 kept as the
+// in-tier fallback so a 4.8 hiccup degrades to the prior model rather than failing.
+export const OPUS_LATEST = "claude-opus-4-8";
+export const OPUS_PINNED = "claude-opus-4-7";
 
 type Tier = "haiku" | "sonnet" | "opus";
 
@@ -22,15 +25,17 @@ type Tier = "haiku" | "sonnet" | "opus";
 const TIER_CHAINS: Record<Tier, string[]> = {
   haiku: [HAIKU_LATEST, HAIKU_PINNED],
   sonnet: [SONNET],
-  opus: [OPUS],
+  opus: [OPUS_LATEST, OPUS_PINNED],
 };
 
-// Any model id a caller might pass → its tier.
+// Any model id a caller might pass → its tier. Both opus snapshots map to "opus"
+// so a caller still hardcoding 4-7 resolves to the 4-8-first chain.
 const MODEL_TIER: Record<string, Tier> = {
   [HAIKU_LATEST]: "haiku",
   [HAIKU_PINNED]: "haiku",
   [SONNET]: "sonnet",
-  [OPUS]: "opus",
+  [OPUS_LATEST]: "opus",
+  [OPUS_PINNED]: "opus",
 };
 
 // The attempt-latest chain for a desired model. Unknown ids → [desiredModel]

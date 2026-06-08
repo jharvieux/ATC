@@ -26,6 +26,15 @@ describe("getCostEstimate", () => {
     expect(cost).toBe(48000n); // identical to claude-haiku-4-5-20251001
   });
 
+  it("#857 — claude-opus-4-8 is priced (mirrors 4-7 placeholder; no $0 zero-out until verified)", () => {
+    const cost = getCostEstimate({
+      model: "claude-opus-4-8",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+    });
+    expect(cost).toBe(900000n); // 150000 + 750000 — same as claude-opus-4-7 for now
+  });
+
   it("Sonnet 100k tokens input only → 3000¢", () => {
     const cost = getCostEstimate({
       model: "claude-sonnet-4-6",
