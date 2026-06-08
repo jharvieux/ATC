@@ -10,7 +10,7 @@
 // (apps/rag/src/lib/auth/verify-service-jwt.ts) checks signature + replay
 // guard + tenant_registry_shadow before allowing the retrieval.
 
-import { extractEntities, type EntitySet } from "./entity-extraction";
+import { extractEntities, type EntitySet, type ConversationContextMessage } from "./entity-extraction";
 import { filterChunks } from "./filter-chunks";
 import { formatKnowledgeBlock, type FormattedBlock } from "./format-block";
 import { RetrieveResponseSchema, type RetrievedChunk, type RetrievedAsset } from "@atc/contracts";
@@ -33,6 +33,9 @@ export interface RetrieveForChatInput {
   contact_id?: string | null;
   // Half-lives from platform_settings.category_halflives_days (caller fetches).
   categoryHalflives?: Record<string, number>;
+  // Recent conversation turns so entity extraction can infer context.
+  // E.g. "Can you send the deck plan?" → extracts the ship from prior turns.
+  context_messages?: ConversationContextMessage[];
 }
 
 export interface RetrieveForChatResult {
@@ -98,6 +101,7 @@ export async function retrieveForChat(
     tenant_id: input.tenant_id,
     user_id: input.user_id,
     conversation_id: input.conversation_id,
+    context_messages: input.context_messages,
   });
 
   // Step 2: construct the retrieval query.
