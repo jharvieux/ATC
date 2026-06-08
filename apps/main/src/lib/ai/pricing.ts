@@ -26,6 +26,10 @@ export const AI_PRICING_DEFAULTS: Record<string, ModelPricing> = {
   "claude-opus-4-7":           { input_per_million_cents: 150000, output_per_million_cents: 750000 },
   "claude-sonnet-4-6":         { input_per_million_cents:  30000, output_per_million_cents: 150000 },
   "claude-haiku-4-5-20251001": { input_per_million_cents:   8000, output_per_million_cents:  40000 },
+  // #851 — undated "latest" alias resolves to the same Haiku 4.5 snapshot; keep
+  // its pricing in lockstep with the pinned entry so cost-tracking never zeroes
+  // out when the alias serves a call.
+  "claude-haiku-4-5":          { input_per_million_cents:   8000, output_per_million_cents:  40000 },
   "text-embedding-3-small":    { input_per_million_cents:    200, output_per_million_cents:      0 },
   "text-embedding-3-large":    { input_per_million_cents:   1300, output_per_million_cents:      0 },
   "gpt-4o-mini":               { input_per_million_cents:  15000, output_per_million_cents:  60000 },

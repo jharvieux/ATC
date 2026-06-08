@@ -14,6 +14,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { resolveModelChain, attemptModelChain, HAIKU_PINNED, SONNET, OPUS } from "./models";
 
 // Re-export the Anthropic types tool-use callers need, so they don't
 // have to import the SDK directly (the lint rule forbids it outside
@@ -144,8 +145,8 @@ export function buildSystemArg(system: string | undefined): SystemArg {
 // ─────────────────────────────────────────────────────────────────────
 
 const DOWNGRADE_MAP: Record<string, string> = {
-  "claude-opus-4-7":   "claude-haiku-4-5-20251001",
-  "claude-sonnet-4-6": "claude-haiku-4-5-20251001",
+  [OPUS]: HAIKU_PINNED,
+  [SONNET]: HAIKU_PINNED,
 };
 
 export interface ModelSelectionInput {
@@ -301,40 +302,48 @@ export async function instrumentedClaudeCall(
   });
 
   const anthropic = new Anthropic({ apiKey });
+  const cachedSystem = buildSystemArg(args.system);
   const start = Date.now();
-  let resp: Anthropic.Messages.Message;
-  try {
-    const cachedSystem = buildSystemArg(args.system);
-    resp = await anthropic.messages.create({
-      model,
-      max_tokens: args.max_tokens,
-      ...(cachedSystem ? { system: cachedSystem } : {}),
-      messages: args.messages as Anthropic.Messages.MessageParam[],
-      ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
-    });
-    recordVendorSuccess("anthropic");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // #851 — surface every model-call failure in logs, not just the in-memory
-    // vendor registry. A deprecated/failing model (e.g. not_found_error) must be
-    // immediately visible; callers that swallow the throw (entity extraction)
-    // otherwise hide it entirely.
-    console.error(`[call-wrapper] anthropic call failed (purpose=${args.purpose}, model=${model}): ${msg}`);
-    recordVendorFailure("anthropic", msg);
-    throw err;
-  }
+
+  // #851 — "attempt latest, fall back on issues". `model` selects the tier; the
+  // chain tries the undated "latest" alias first, then the pinned snapshot, with
+  // a circuit-breaker so a retired/failing snapshot degrades gracefully instead
+  // of failing the call. `usedModel` (what actually served) drives cost + logging.
+  // Throws only if EVERY model in the chain fails — onError logs each loudly so
+  // the failure is never silent (the root of #850).
+  const { result: resp, model: usedModel } = await attemptModelChain(
+    resolveModelChain(model),
+    (candidate) =>
+      anthropic.messages.create({
+        model: candidate,
+        max_tokens: args.max_tokens,
+        ...(cachedSystem ? { system: cachedSystem } : {}),
+        messages: args.messages as Anthropic.Messages.MessageParam[],
+        ...(args.tools && args.tools.length > 0 ? { tools: args.tools } : {}),
+      }),
+    {
+      onError: (m, err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[call-wrapper] anthropic call failed (purpose=${args.purpose}, model=${m}): ${msg}`);
+        recordVendorFailure("anthropic", msg);
+      },
+      onFallback: (preferred, used) =>
+        console.warn(`[call-wrapper] ${args.purpose}: "${preferred}" unavailable — fell back to "${used}"`),
+    },
+  );
+  recordVendorSuccess("anthropic");
 
   const latency_ms = Date.now() - start;
   const input_tokens = resp.usage?.input_tokens ?? 0;
   const output_tokens = resp.usage?.output_tokens ?? 0;
-  const cost = getCostEstimate({ model, input_tokens, output_tokens });
+  const cost = getCostEstimate({ model: usedModel, input_tokens, output_tokens });
 
   await logAndIncrement({
     db,
     tenant_id: args.tenant_id,
     conversation_id: args.conversation_id ?? null,
     user_id: args.user_id ?? null,
-    model,
+    model: usedModel,
     vendor: "anthropic",
     purpose: args.purpose,
     input_tokens,
