@@ -154,4 +154,24 @@ export const PERSONA_TOOLS: ToolDefinition[] = [
       required: ["memory_type", "content"],
     },
   },
+  {
+    name: "email_customer",
+    description:
+      "Email the SIGNED-IN customer the information they asked to receive (e.g. deck-plan links, an itinerary, a quote summary). Use ONLY when the customer explicitly asks you to email or send them something. You do NOT choose the recipient — the email always goes to the signed-in customer's own account address. If the customer is not signed in, this returns an error telling you to ask them to sign in first. Do not include any recipient address in your input.",
+    input_schema: {
+      type: "object",
+      properties: {
+        subject: {
+          type: "string",
+          description: "A concise, specific subject line, e.g. 'Norwegian Bliss deck plans'.",
+        },
+        body_markdown: {
+          type: "string",
+          description:
+            "The email body as plain text. Include the links or details the customer asked for, one item per line. Do NOT include the recipient address or a greeting with their email.",
+        },
+      },
+      required: ["subject", "body_markdown"],
+    },
+  },
 ];

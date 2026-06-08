@@ -19,6 +19,7 @@ import { updateMemory } from "./handlers/update-memory";
 import { searchHostInventory } from "./handlers/search-host-inventory";
 import { generateQuote } from "./handlers/generate-quote";
 import { collectBookingDetails } from "./handlers/collect-booking-details";
+import { emailCustomer } from "./handlers/email-customer";
 import { recordToolCall } from "./record-tool-call";
 
 export interface ToolDispatchContext {
@@ -29,6 +30,14 @@ export interface ToolDispatchContext {
   conversation_id: string;
   /** Optional contact id for the current customer (from CRM lookup). */
   contact_id?: string | null;
+  /**
+   * The SIGNED-IN customer's account email, resolved server-side in the chat
+   * route (never from the model). null for anonymous turns. email_customer
+   * sends here and ONLY here — the model cannot supply a recipient.
+   */
+  customer_email?: string | null;
+  /** Active persona slug — drives the email_customer from-address/name. */
+  persona_slug?: string;
   /**
    * Anthropic's tool_use.id from the source content block. Passed
    * through so the audit row can correlate with the LLM response.
@@ -54,6 +63,7 @@ const HANDLERS = new Map<
   ["search_host_inventory", searchHostInventory],
   ["generate_quote", generateQuote],
   ["collect_booking_details", collectBookingDetails],
+  ["email_customer", emailCustomer],
 ]);
 
 export async function dispatchTool(

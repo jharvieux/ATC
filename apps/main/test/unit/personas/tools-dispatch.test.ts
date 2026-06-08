@@ -67,7 +67,7 @@ function makeDb(routes: Record<string, { rows?: unknown[]; row?: unknown | null;
 }
 
 describe("tool dispatcher", () => {
-  it("listKnownTools returns the 6 spec tools", () => {
+  it("listKnownTools returns the registered tools", () => {
     const tools = listKnownTools();
     expect(tools).toEqual(
       expect.arrayContaining([
@@ -77,9 +77,10 @@ describe("tool dispatcher", () => {
         "search_host_inventory",
         "generate_quote",
         "collect_booking_details",
+        "email_customer",
       ]),
     );
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(7);
   });
 
   it("returns unknown_tool error for unregistered name", async () => {
