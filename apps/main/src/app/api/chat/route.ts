@@ -31,6 +31,7 @@ import {
   verifyAnonSession,
 } from "@/lib/chat/anon-session-cookie";
 import { redactPii } from "@/lib/pii/redact";
+import { verifyEnvAtBoot } from "@/lib/env";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { PERSONA_TOOLS } from "@/lib/personas/tools";
 import { runToolUseLoop } from "@/lib/personas/tools/run-tool-use-loop";
@@ -134,6 +135,12 @@ function parseCookies(header: string | null): Record<string, string> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  // #862 — initialize the validated env cache for this request lifecycle.
+  // Without it, env() throws "called before verifyEnvAtBoot()": Next.js's
+  // instrumentation register() hook doesn't reliably cover serverless route
+  // runtimes (same reason the forums route + inngest fns call it at their
+  // entrypoints), so detectBugIntent's env() read died on every chat turn.
+  verifyEnvAtBoot();
   let body: {
     message?: string;
     conversation_id?: string | null;

@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from "vitest";
 // Mock heavy imports — the test exercises the early-return path before any
 // of these are used. We mock them so the module loads cleanly without
 // real DB/Redis/API connections.
+vi.mock("@/lib/env", () => ({ verifyEnvAtBoot: vi.fn() }));
 vi.mock("@/lib/db/service-role-client", () => ({ createServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/db/factories", () => ({ tenantContextFromRequest: vi.fn(), tenantContextForId: vi.fn() }));
 vi.mock("@/lib/db/tenant-context", () => ({}));
@@ -60,6 +61,7 @@ vi.mock("@/lib/chat/fingerprint", () => ({ deriveFingerprint: vi.fn(), extractCl
 vi.mock("@/lib/db/safe-mutation", () => ({ safeAwait: vi.fn() }));
 
 import { POST } from "@/app/api/chat/route";
+import { verifyEnvAtBoot } from "@/lib/env";
 
 function chatReq(message: string): Request {
   return new Request("https://tenant.example.com/api/chat", {
@@ -89,5 +91,16 @@ describe("POST /api/chat — message length cap", () => {
     const res = await POST(chatReq(exactMessage));
     const body = await res.json() as { error: string };
     expect(body.error).not.toBe("message_too_long");
+  });
+});
+
+describe("POST /api/chat — env boot init (#862)", () => {
+  it("calls verifyEnvAtBoot at request entry so env() works for the lifecycle", async () => {
+    // env() throws "called before verifyEnvAtBoot()" in serverless route runtimes
+    // (instrumentation register() doesn't reliably cover them). Without this call
+    // detectBugIntent's env() read died on every chat turn. The call sits at the
+    // top of POST, so it runs even on the early length-cap return.
+    await POST(chatReq("a".repeat(8001)));
+    expect(verifyEnvAtBoot).toHaveBeenCalled();
   });
 });
