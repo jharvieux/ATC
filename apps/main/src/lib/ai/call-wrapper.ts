@@ -314,7 +314,13 @@ export async function instrumentedClaudeCall(
     });
     recordVendorSuccess("anthropic");
   } catch (err) {
-    recordVendorFailure("anthropic", err instanceof Error ? err.message : String(err));
+    const msg = err instanceof Error ? err.message : String(err);
+    // #851 — surface every model-call failure in logs, not just the in-memory
+    // vendor registry. A deprecated/failing model (e.g. not_found_error) must be
+    // immediately visible; callers that swallow the throw (entity extraction)
+    // otherwise hide it entirely.
+    console.error(`[call-wrapper] anthropic call failed (purpose=${args.purpose}, model=${model}): ${msg}`);
+    recordVendorFailure("anthropic", msg);
     throw err;
   }
 
