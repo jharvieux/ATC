@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-187 — 2026-06-08 — #878: conversation context for follow-up entity extraction
+
+**Decision**: Pass the last 4 chat turns to entity extraction as CONVERSATION CONTEXT so follow-up questions like "Can you send me the deck plan?" resolve the implied ship from prior turns.
+
+**Why**: Entity extraction only sees the current message. "Can you send me the deck plan?" after discussing Norwegian Bliss extracted no ship → ship_lookup never fired → Disney Dream deck plan returned. The fix passes `context_messages` (last 4 turns, 250-char trim) through the extraction pipeline. Security: context wrapped in `<context_turn>` tags with explicit UNTRUSTED DATA labels; angle brackets stripped from content; tenant_id added to cache key to prevent cross-tenant/cross-conversation collisions.
+
+**What was rejected**: Storing "active ship" in conversation metadata (extra DB write per turn, schema change). Re-running entity extraction on full history (too expensive). The context window approach (minimal extra cost, uses existing extraction call).
+
+**Artifacts**: PR #878 (merged), atc-main deployed 2026-06-08.
+
+---
+
 ## D-186 — 2026-06-08 — #868: ship_lookup + port_lookup structured retrieval paths
 
 **Decision**: Add two new structured lookup paths that bypass vector search when semantic similarity is unreliable: `ship_lookup` (always includes deck_intel + ship_intel for the named ship) and `port_lookup` (queries itineraries by departure_port + date).
