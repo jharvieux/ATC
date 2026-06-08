@@ -59,7 +59,7 @@
     "mutate:commissions": "stryker run --mutate \"apps/main/src/lib/commissions/**/*.ts\""
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.100.1",
+    "@anthropic-ai/sdk": "^0.102.0",
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.60.0",
     "@stryker-mutator/core": "^9.6.1",
