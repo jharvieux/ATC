@@ -218,11 +218,14 @@ import {
   instrumentedOpenAIEmbedding,
   PLATFORM_TENANT_ID,
 } from "@/lib/ai/call-wrapper";
+import { _resetModelBreakerForTests } from "@/lib/ai/models";
 
 const ORIG_ANTHROPIC = process.env.ANTHROPIC_API_KEY;
 const ORIG_OPENAI = process.env.OPENAI_API_KEY;
 
 beforeEach(() => {
+  _resetModelBreakerForTests(); // #851 — clear the module-level chain breaker so a
+  // failing-call test's 60s cooldown can't bleed into later tests (order-independence).
   dbCalls = [];
   rpcCalls = [];
   vendorSuccessCalls = [];
@@ -267,8 +270,10 @@ describe("instrumentedClaudeCall — happy path", () => {
       max_tokens: 256,
       messages: [{ role: "user", content: "hi" }],
     });
+    // #851 — the chain tries the undated "latest" alias first; the pinned id the
+    // caller passed is the in-tier fallback, so the SDK call uses the alias.
     expect(anthropicCreateArgs).toMatchObject({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-4-5",
       max_tokens: 256,
       messages: [{ role: "user", content: "hi" }],
     });
@@ -310,7 +315,9 @@ describe("instrumentedClaudeCall — happy path", () => {
       max_tokens: 100,
       messages: [{ role: "user", content: "hi" }],
     });
-    expect((anthropicCreateArgs as { model: string }).model).toBe("claude-haiku-4-5-20251001");
+    // #851 — soft1 downgrades opus → haiku tier; the chain then tries the haiku
+    // "latest" alias first, so the SDK call uses claude-haiku-4-5.
+    expect((anthropicCreateArgs as { model: string }).model).toBe("claude-haiku-4-5");
   });
 
   it("does NOT downgrade the SDK-call model for customer-facing 'chat_main' on soft1", async () => {
@@ -360,7 +367,12 @@ describe("instrumentedClaudeCall — happy path", () => {
         messages: [{ role: "user", content: "hi" }],
       }),
     ).rejects.toThrow("anthropic api down");
-    expect(vendorFailureCalls).toEqual([{ vendor: "anthropic", msg: "anthropic api down" }]);
+    // #851 — the chain tries every model (alias then pinned) before re-throwing,
+    // recording a vendor failure per attempt. Both haiku entries failed here.
+    expect(vendorFailureCalls).toEqual([
+      { vendor: "anthropic", msg: "anthropic api down" },
+      { vendor: "anthropic", msg: "anthropic api down" },
+    ]);
     expect(vendorSuccessCalls).toHaveLength(0);
   });
 
