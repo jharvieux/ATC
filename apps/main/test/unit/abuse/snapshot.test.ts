@@ -72,4 +72,30 @@ describe("loadTenantSnapshot — fail-closed on read error (#393)", () => {
     expect(snap.tenant.billing_period).toBe("annual");
     expect(snap.ai_cost_state).toBe("soft2");
   });
+
+  it("is_platform_internal=true → ai_cost_state is always 'ok', tier_code resolved from real tier", async () => {
+    // WHY: platform-internal tenants (Booking) must never see "temporarily
+    // unavailable" due to AI spend limits. The exemption must use the real
+    // tier_code so model selection and caps are correct.
+    const db = snapshotDb({
+      tenants: { data: { id: "tn-1", tier_id: "tier-1", seat_count: 2, billing_period: "monthly", is_platform_internal: true }, error: null },
+      tier_definitions: { data: { code: "sub_pro" }, error: null },
+      // tenant_usage_metrics intentionally absent — the early return must
+      // fire before this table is queried; if it is queried, safeAwait throws.
+    });
+    const snap = await loadTenantSnapshot(db, "tn-1");
+    expect(snap.ai_cost_state).toBe("ok");
+    expect(snap.tenant.tier_code).toBe("sub_pro"); // real tier, not byo_research stub
+    expect(snap.tenant.seat_count).toBe(2);
+  });
+
+  it("is_platform_internal=false → normal cost-state path runs (regression guard)", async () => {
+    const db = snapshotDb({
+      tenants: { data: { id: "tn-1", tier_id: "tier-1", seat_count: 1, billing_period: "monthly", is_platform_internal: false }, error: null },
+      tier_definitions: { data: { code: "sub_pro" }, error: null },
+      tenant_usage_metrics: { data: { ai_cost_limit_state: "hard" }, error: null },
+    });
+    const snap = await loadTenantSnapshot(db, "tn-1");
+    expect(snap.ai_cost_state).toBe("hard"); // gate still active for non-internal tenants
+  });
 });

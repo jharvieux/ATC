@@ -74,18 +74,6 @@ export async function loadTenantSnapshot(
   }
   const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual"; is_platform_internal?: boolean };
 
-  // Platform-internal tenants (Booking, future ATC-owned lines) are exempt from
-  // AI cost gates — they should never see "temporarily unavailable" due to spend limits.
-  if (tr.is_platform_internal) {
-    const fresh: CachedTenantSnapshot = {
-      tenant: { tenant_id, tier_code: "byo_research", seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
-      ai_cost_state: "ok",
-      fetched_at: Date.now(),
-    };
-    cache.set(tenant_id, fresh);
-    return fresh;
-  }
-
   let tier_code: TenantRevenueSnapshot["tier_code"] = "byo_research";
   if (tr.tier_id) {
     const tierRow = await safeAwait(
@@ -96,6 +84,19 @@ export async function loadTenantSnapshot(
     if (code && VALID_TIER_CODES.has(code as TenantRevenueSnapshot["tier_code"])) {
       tier_code = code as TenantRevenueSnapshot["tier_code"];
     }
+  }
+
+  // Platform-internal tenants (Booking, future ATC-owned lines) are exempt from
+  // AI cost gates — they should never see "temporarily unavailable" due to spend limits.
+  // Tier identity is still resolved above so model selection and caps use the real tier.
+  if (tr.is_platform_internal) {
+    const fresh: CachedTenantSnapshot = {
+      tenant: { tenant_id, tier_code, seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
+      ai_cost_state: "ok",
+      fetched_at: Date.now(),
+    };
+    cache.set(tenant_id, fresh);
+    return fresh;
   }
 
   const metricsRow = await safeAwait(
