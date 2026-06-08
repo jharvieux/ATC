@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
+vi.mock("@/lib/env", () => ({ verifyEnvAtBoot: vi.fn() }));
 // Self-contained fluent service-role mock: every builder method chains, and the
 // terminal reads resolve enough for handleChat to reach retrieveForChat.
 vi.mock("@/lib/db/service-role-client", () => ({
