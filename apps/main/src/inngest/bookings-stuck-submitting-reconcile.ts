@@ -29,6 +29,9 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
   reverted: number;
   total_stuck: number;
 }> {
+  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+    return { reverted: 0, total_stuck: 0 };
+  }
   const db = createServiceRoleClient();
   const cutoffIso = new Date(Date.now() - STUCK_THRESHOLD_MINUTES * 60 * 1000).toISOString();
 

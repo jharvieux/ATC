@@ -61,6 +61,9 @@ export async function tryAcquirePayoutLock(
 // D-091 / error-injection probe — inner body extracted for direct test
 // invocation. Mirrors the tryAcquirePayoutLock precedent.
 export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; failed: number; total: number }> {
+  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+    return { processed: 0, failed: 0, total: 0 };
+  }
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
   const stripe = new Stripe(stripeKey);

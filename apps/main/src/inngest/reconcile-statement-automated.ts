@@ -58,6 +58,9 @@ export const reconcileStatementAutomated = inngest.createFunction(
     triggers: [{ cron: "0 4 * * *" }],
   },
   async () => {
+    if (process.env.BOOKING_CRONS_DISABLED === "true") {
+      return { skipped: true, reason: "BOOKING_CRONS_DISABLED=true" };
+    }
     const db = createServiceRoleClient();
 
     const yesterday = new Date();

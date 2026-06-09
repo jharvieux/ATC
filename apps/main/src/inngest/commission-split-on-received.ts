@@ -35,6 +35,9 @@ export const commissionSplitOnReceived = inngest.createFunction(
     triggers: [{ event: "commission/state_received" }],
   },
   async ({ event }: { event: { data: { commission_id: string; received_at?: string } } }) => {
+    if (process.env.BOOKING_CRONS_DISABLED === "true") {
+      return { skipped: true, reason: "BOOKING_CRONS_DISABLED=true" };
+    }
     const { commission_id, received_at } = event.data;
     const receivedAt = received_at ?? new Date().toISOString();
     const db = createServiceRoleClient();

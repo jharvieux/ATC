@@ -13,6 +13,9 @@ export const payoutsMarkAvailable = inngest.createFunction(
     triggers: [{ cron: "0 2 * * *" }],
   },
   async () => {
+    if (process.env.BOOKING_CRONS_DISABLED === "true") {
+      return { skipped: true, reason: "BOOKING_CRONS_DISABLED=true" };
+    }
     const db = createServiceRoleClient();
 
     const { data: rows, error } = await db

@@ -260,6 +260,8 @@ const envSchema = z.object({
   FORENSICS_ENCRYPTION_KEY_PRIOR_2: z.string().optional(),
   // §25.10 staging real-PII risk acceptance — outbound isolation envs.
   STAGING_MODE: z.enum(["true", "false"]).optional().default("false"),
+  // Kill switch: disable booking/payout/commission crons until prongs 1+3 live (issue #895).
+  BOOKING_CRONS_DISABLED: z.enum(["true", "false"]).optional().default("false"),
   TEST_OVERRIDE_EMAIL: z.string().email().optional(),
   TEST_OVERRIDE_PHONE: z.string().optional(),
   // SaaS abuse monitoring + cost controls — §27
