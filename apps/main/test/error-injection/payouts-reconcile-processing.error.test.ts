@@ -103,6 +103,7 @@ vi.mock("stripe", () => {
 import { runPayoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
 
 const ORIG = process.env.STRIPE_SECRET_KEY;
+const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;
 
 beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
@@ -125,7 +126,17 @@ beforeEach(() => {
 afterEach(() => {
   if (ORIG === undefined) delete process.env.STRIPE_SECRET_KEY;
   else process.env.STRIPE_SECRET_KEY = ORIG;
+  if (ORIG_BOOKING_CRONS === undefined) delete process.env.BOOKING_CRONS_DISABLED;
+  else process.env.BOOKING_CRONS_DISABLED = ORIG_BOOKING_CRONS;
   vi.restoreAllMocks();
+});
+
+describe("runPayoutsReconcileProcessing — BOOKING_CRONS_DISABLED kill switch", () => {
+  it("returns zero counts without touching Stripe when flag is true", async () => {
+    process.env.BOOKING_CRONS_DISABLED = "true";
+    const result = await runPayoutsReconcileProcessing();
+    expect(result).toEqual({ recovered: 0, total_processing: 0 });
+  });
 });
 
 describe("runPayoutsReconcileProcessing — Pattern 1 (initial fetch DB-fail)", () => {

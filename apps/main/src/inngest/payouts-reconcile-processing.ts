@@ -28,6 +28,9 @@ type TenantRow = { stripe_connect_account_id: string | null };
 // D-091 / error-injection probe — inner body extracted for direct test
 // invocation.
 export async function runPayoutsReconcileProcessing(): Promise<{ recovered: number; total_processing: number }> {
+  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+    return { recovered: 0, total_processing: 0 };
+  }
   const stripeKey = process.env.STRIPE_SECRET_KEY;
     if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
     const stripe = new Stripe(stripeKey);

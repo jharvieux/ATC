@@ -25,7 +25,9 @@ function nextBackoffMs(attemptCount: number): number {
 }
 
 export const ragSyncRetry = inngest.createFunction(
-  { id: "rag-sync-retry", triggers: [{ cron: "*/5 * * * *" }] },
+  // 15-min cadence (#894 Inngest cost): the 1- and 5-min backoff tiers
+  // effectively become ~15 min; later tiers (15/30/60/...) are unaffected.
+  { id: "rag-sync-retry", triggers: [{ cron: "*/15 * * * *" }] },
   async () => {
     const db = createServiceRoleClient();
 

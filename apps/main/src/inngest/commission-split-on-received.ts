@@ -29,13 +29,11 @@ type TenantTierRow = {
   tier_definitions: { hold_period_days: number; platform_split_rate: number } | null;
 };
 
-export const commissionSplitOnReceived = inngest.createFunction(
-  {
-    id: "commission-split-on-received",
-    triggers: [{ event: "commission/state_received" }],
-  },
-  async ({ event }: { event: { data: { commission_id: string; received_at?: string } } }) => {
-    const { commission_id, received_at } = event.data;
+export async function runCommissionSplitOnReceived(event: { data: { commission_id: string; received_at?: string } }): Promise<{ skipped: true } | { skipped: true; reason: string } | { ok: true; payout_intent: string }> {
+  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+    return { skipped: true };
+  }
+  const { commission_id, received_at } = event.data;
     const receivedAt = received_at ?? new Date().toISOString();
     const db = createServiceRoleClient();
 
@@ -109,5 +107,13 @@ export const commissionSplitOnReceived = inngest.createFunction(
     }), "platform_revenue.insert");
 
     return { ok: true, payout_intent: payoutIntent };
+}
+
+export const commissionSplitOnReceived = inngest.createFunction(
+  {
+    id: "commission-split-on-received",
+    triggers: [{ event: "commission/state_received" }],
   },
+  ({ event }: { event: { data: { commission_id: string; received_at?: string } } }) =>
+    runCommissionSplitOnReceived(event),
 );

@@ -137,6 +137,15 @@ import { precruiseSendFromBatchResult } from "@/inngest/precruise-generate-and-s
 // §TN: Travel news feed refresh
 import { travelNewsRefresh } from "@/inngest/travel-news-refresh";
 
+// When a kill switch is set, the cron-triggered functions of the deferred
+// feature are excluded from registration entirely — Inngest archives them on
+// the next sync, so their schedules stop firing (and stop billing executions).
+// An in-handler guard alone is NOT enough: the cron would still run and bill.
+// Event-driven functions of those features stay registered — idle triggers
+// cost nothing, and their in-handler guards still apply.
+const bookingCronsDisabled = process.env.BOOKING_CRONS_DISABLED === "true";
+const subhostingCronsDisabled = process.env.SUBHOSTING_CRONS_DISABLED === "true";
+
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
@@ -150,11 +159,18 @@ export const { GET, POST, PUT } = serve({
     reEncryptOldRecords,
     backupVerificationReminder,
     commissionSplitOnReceived,
-    payoutsMarkAvailable,
     payoutsExecuteTransfer,
-    payoutsReconcileProcessing,
-    bookingsStuckSubmittingReconcile,
-    reconcileStatementAutomated,
+    ...(bookingCronsDisabled
+      ? []
+      : [
+          payoutsMarkAvailable,
+          payoutsReconcileProcessing,
+          bookingsStuckSubmittingReconcile,
+          reconcileStatementAutomated,
+          preCruiseEmailSchedulerT1,
+          preCruiseEmailSchedulerMultiphase,
+          bookingCommissionRetentionPurge,
+        ]),
     complianceNightly,
     tenantTerminationScheduled,
     tenantOnTerminatedSideEffects,
@@ -163,8 +179,7 @@ export const { GET, POST, PUT } = serve({
     userDataExportBuild,
     userDataPurgeAfterGrace,
     ccpaStagingPropagationMonitor,
-    customDomainReverify,
-    customDomainTxtGraceSweep,
+    ...(subhostingCronsDisabled ? [] : [customDomainReverify, customDomainTxtGraceSweep]),
     customDomainCleanupOnSuspend,
     customDomainCleanupOnTerminated,
     customDomainCleanupOnDowngrade,
@@ -194,8 +209,7 @@ export const { GET, POST, PUT } = serve({
     ragNormalize,
     ragTenantApprovalRateNightly,
     // BP23: Email infrastructure + in-app notifications (§23)
-    preCruiseEmailSchedulerT1,
-    preCruiseEmailSchedulerMultiphase,
+    // (pre-cruise schedulers registered above under the booking kill switch)
     precruiseGenerateAndSend,
     emailSoftBounceRetry,
     // BP24: Chat UI maintenance crons (§24)
@@ -205,7 +219,6 @@ export const { GET, POST, PUT } = serve({
     // BP25: Retention crons (§25.2)
     anonymousSessionCleanup,
     ragRejectedItemsPurge,
-    bookingCommissionRetentionPurge,
     subprocessorsAnnualReview,
     // BP26: Forensics retention (§26.5a)
     forensicsLogPurgeCron,

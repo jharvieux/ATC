@@ -7,13 +7,11 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
-export const payoutsMarkAvailable = inngest.createFunction(
-  {
-    id: "payouts-mark-available",
-    triggers: [{ cron: "0 2 * * *" }],
-  },
-  async () => {
-    const db = createServiceRoleClient();
+export async function runPayoutsMarkAvailable(): Promise<{ transitioned: number }> {
+  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+    return { transitioned: 0 };
+  }
+  const db = createServiceRoleClient();
 
     const { data: rows, error } = await db
       .from("payout_records")
@@ -57,5 +55,12 @@ export const payoutsMarkAvailable = inngest.createFunction(
       console.info(`payouts-mark-available: transitioned ${transitioned} records to 'available'`);
     }
     return { transitioned };
+}
+
+export const payoutsMarkAvailable = inngest.createFunction(
+  {
+    id: "payouts-mark-available",
+    triggers: [{ cron: "0 2 * * *" }],
   },
+  runPayoutsMarkAvailable,
 );

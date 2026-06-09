@@ -52,13 +52,11 @@ type CommissionRow = {
   status: string;
 };
 
-export const reconcileStatementAutomated = inngest.createFunction(
-  {
-    id: "reconcile-statement-automated",
-    triggers: [{ cron: "0 4 * * *" }],
-  },
-  async () => {
-    const db = createServiceRoleClient();
+export async function runReconcileStatementAutomated(): Promise<{ ok: boolean; processed: number; auto_accepted?: number; queued?: number; orphans?: number }> {
+  if (process.env.BOOKING_CRONS_DISABLED === "true") {
+    return { ok: true, processed: 0 };
+  }
+  const db = createServiceRoleClient();
 
     const yesterday = new Date();
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
@@ -238,5 +236,12 @@ export const reconcileStatementAutomated = inngest.createFunction(
       queued: totalQueued,
       orphans: totalOrphans,
     };
+}
+
+export const reconcileStatementAutomated = inngest.createFunction(
+  {
+    id: "reconcile-statement-automated",
+    triggers: [{ cron: "0 4 * * *" }],
   },
+  runReconcileStatementAutomated,
 );

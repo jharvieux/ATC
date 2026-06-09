@@ -1,6 +1,6 @@
 // §26.6 — Cross-tenant RLS bypass attempt monitor.
 //
-// Every 5 minutes, scan audit_log for rows where the RLS error handler
+// Every 15 minutes, scan audit_log for rows where the RLS error handler
 // has recorded a structured `rls_bypass_attempt: true` indicator in
 // changes. Any single hit is critical-severity (immediate alert).
 //
@@ -13,14 +13,16 @@ import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 export const crossTenantRlsBypassMonitor = inngest.createFunction(
   {
     id: "cross-tenant-rls-bypass-monitor",
-    triggers: [{ cron: "*/5 * * * *" }],
+    // 15-min cadence (#894 Inngest cost): any hit still alerts at critical
+    // severity; worst-case detection latency moves from ≤5 to ≤15 minutes.
+    triggers: [{ cron: "*/15 * * * *" }],
   },
   async () => {
     const svc = createServiceRoleClient();
-    const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
     // GIN partial index makes this lookup cheap for admin rows; for system
-    // rows we don't have an index, accept the seq scan over the last 5
+    // rows we don't have an index, accept the seq scan over the last 15
     // minutes — small window keeps it bounded.
     const { data } = await svc
       .from("audit_log")
