@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-193 — 2026-06-09 — Strategic focus: BYO agents; personas become dual-role (customer concierge + TA support/drafting assistant)
+
+**Context:** Booking flow and sub-hosting are indefinitely deferred (operator, June 9 — see [[D-192]] kill switches, re-enable tracked in #895). The platform's focus is now **BYO travel agents** (TAs bringing their own book of business). Future sessions should stop proposing booking-flow work and prioritize this track.
+
+**Decision:** Each AI persona fills a dual role: (1) the existing customer-facing concierge, and (2) a TA-facing agent that supports the TA directly AND helps them answer customer inquiries **in the TA's own voice**, learned from samples of the TA's sent emails.
+
+**Product decisions (operator, 2026-06-09):**
+1. **Draft-only v1** — the AI never sends customer replies; the TA edits + copies into their own mail client. Rejected: send-via-platform (needs reply-routing/abuse controls now) and autopilot (highest risk to the TA's client relationships). Sending reopens only with inbound email (#890).
+2. **Voice scope: per-user with tenant house-style default** — each member can have their own samples/style card; tenant owner sets an inherited house style. Rejected: per-tenant-only (wrong for multi-agent shops), per-user-only (no inheritance for new members).
+3. **TA chat covers travel expertise AND platform how-to** in one chat (help docs `apps/main/content/help/` go into RAG, retrieval scoped to tenant_member audience only). Rejected: expertise-only (TAs will ask the chat anyway).
+4. **Persona selection for drafts: TA picks, system suggests** via cheap classification. Rejected: fully automatic (silent mis-route degrades drafts invisibly).
+5. **Phase 3 intake is drag-and-drop first** (.eml from mail apps; text/html selections from webmail; paste fallback; Outlook .msg out of scope v1), and the parsed From display-name drives the draft's greeting (never silently guessed — `[name]` placeholder when unknown).
+
+**Build phasing (each issue carries a recommended design model):** Phase 1 #902 TA-mode chat (audience dimension in prompt assembly + dashboard surface + help-docs RAG; design on Opus — auth boundary). Phase 2 #903 voice profiles (samples + style-card extraction, event-driven not cron per [[D-192]]; design on Sonnet). Phase 3 #904 draft composer (drag-and-drop ingestion + suggestion + voice drafting; design on Opus — most novel surface; flags a runtime-dep decision, likely `postal-mime`, needing operator approval).
+
+**Artifacts:** Issues #902, #903, #904. Related: [[D-191]] (email_customer tool — the existing outbound path), #890 (inbound), #895 (booking re-enable).
+
+---
+
 ## D-192 — 2026-06-09 — Inngest cost containment: registration-level kill switches + cron schedule stretch (PR #896)
 
 **Context:** Inngest dashboard (June 9) showed 57,858 executions against the 50k/month plan — overage by day 9, ~11.5k/day pace (~330k/month). Analysis: ~95% of usage is cron heartbeat, not traffic or event-driven work. The plan bills **executions** (runs and steps are unlimited); each cron run bills ~2 executions.
