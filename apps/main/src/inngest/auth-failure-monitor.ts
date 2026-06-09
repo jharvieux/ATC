@@ -2,8 +2,9 @@
 //
 // Every 15 minutes, count auth failures per IP in the last 15 minutes.
 // Any IP with ≥ 50 failures → medium-severity operator alert.
-// (Was 5-min/5-min; stretched per #894 Inngest cost. Threshold kept at 50 —
-// the wider window is strictly more sensitive, never less.)
+// (Was 5-min/5-min; stretched per #894 Inngest cost. Threshold kept at 50:
+// slow attacks now trip sooner, but worst-case detection latency for a fast
+// burst grows from ~5 to ~15 min.)
 
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";

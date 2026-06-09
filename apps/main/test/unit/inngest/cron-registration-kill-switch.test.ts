@@ -26,6 +26,14 @@ const SUBHOSTING_CRON_IDS = ["custom-domain-reverify", "custom-domain-txt-grace-
 // Event-driven booking functions stay registered regardless of the flag —
 // idle triggers cost nothing and their in-handler guards still apply.
 const EVENT_DRIVEN_BOOKING_IDS = ["payouts-execute-transfer", "commission-split-on-received"];
+// Unrelated functions that must stay registered no matter which flags are set —
+// guards against a refactor of the conditional spreads swallowing neighbors.
+const ALWAYS_REGISTERED_IDS = [
+  "stripe-webhook-incomplete-reconcile",
+  "vendor-health-probe",
+  "task-reminders-fire",
+  "compliance-nightly",
+];
 
 async function loadRegisteredIds(): Promise<string[]> {
   vi.resetModules();
@@ -61,6 +69,7 @@ describe("cron registration kill switches", () => {
     for (const id of BOOKING_CRON_IDS) expect(ids).not.toContain(id);
     for (const id of EVENT_DRIVEN_BOOKING_IDS) expect(ids).toContain(id);
     for (const id of SUBHOSTING_CRON_IDS) expect(ids).toContain(id);
+    for (const id of ALWAYS_REGISTERED_IDS) expect(ids).toContain(id);
   });
 
   it("SUBHOSTING_CRONS_DISABLED=true unregisters custom-domain crons only", async () => {
@@ -69,5 +78,6 @@ describe("cron registration kill switches", () => {
     const ids = await loadRegisteredIds();
     for (const id of SUBHOSTING_CRON_IDS) expect(ids).not.toContain(id);
     for (const id of BOOKING_CRON_IDS) expect(ids).toContain(id);
+    for (const id of ALWAYS_REGISTERED_IDS) expect(ids).toContain(id);
   });
 });
