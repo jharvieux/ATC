@@ -4,6 +4,34 @@ Newest entries on top.
 
 ---
 
+## D-195 — 2026-06-09 — #902 TA-mode chat design approved (no RAG ingestion; audience in Layer 2; existing cost breaker + 200/day backstop; own-only visibility)
+
+**Decision:** Design for Phase 1 of [[D-193]] approved (docs/byo-agents/902-ta-mode-chat-design.md). Key calls:
+
+1. **No RAG ingestion for help docs** — deviation from #902's original assumption. The 12 `content/help/*.md` docs are already loaded in-process with fuzzy search (`lib/help-ai/docs-loader.ts`); TA turns inject matching doc content via a new `buildHelpContextBlock()`. Rejected: vector ingestion into apps/rag (second service hop + ingestion pipeline + manual rag deploys, for corpus size 12). Customer isolation becomes structural: the block is only built on the TA branch.
+2. **Audience is a Layer-2 (platform-constraints) variant**, server-derived from member role (`tenant_owner`/`agent`; customers are `viewer` members per the Booking-tenant model). Client requests `mode:"ta"`, server verifies, **403 fail-closed** — no silent downgrade. Persona Layer-1 bodies untouched; customer prompts byte-identical (snapshot-equality tested). Tenant addendum skipped in TA mode (it's customer positioning).
+3. **Spend control (operator):** TA chat inherits the existing tenant AI-cost state machine via the instrumented wrappers (purpose `ta_chat_main`) + a **200/day/member backstop** so one member can't drain the monthly allowance early. Flag: #866 (streaming bypasses `hard` state) gains priority — the daily cap is the effective stop until it's fixed.
+4. **Visibility (operator):** own-only — every member incl. tenant_owner sees only their own TA threads.
+5. **Found bug → #906:** the existing Help AI prompt claims doc grounding but the message route never injects doc content (answers from priors). Retrofit rides on `buildHelpContextBlock` after #902 PR A.
+
+**Sequencing:** PR A = API-complete TA mode (audience + prompts + help context + migration `conversations.audience` + limits; Opus first-audit). PR B = dashboard surface. Designed on fable-5 per operator.
+
+**Artifacts:** docs/byo-agents/902-ta-mode-chat-design.md, #902, #906, #866. Related: [[D-193]], [[D-181]].
+
+---
+
+## D-194 — 2026-06-09 — Outlook desktop .msg intake is IN scope for the Phase 3 draft composer (amends [[D-193]] point 5)
+
+**Decision:** Operator reversed the [[D-193]] scope cut: the #904 drop zone must also accept Outlook desktop `.msg` files (OLE2/CFB + MAPI), not just `.eml`/webmail-selection/paste. Sender name + email, subject, and body extract the same way, feeding the greeting-name flow.
+
+**Why:** Outlook desktop is common among TAs; "drag the text instead" was a real friction point for the feature's core audience.
+
+**Implications:** a second client-side parser candidate (`@kenjiuno/msgreader`, possibly + RTF decompression for compressed-RTF bodies — verify against real Outlook fixtures at design time) joins `postal-mime` in the #904 runtime-dep decision, which still requires operator approval before install. Graceful fallback if a body can't be extracted: populate From/Subject, ask the TA to paste the body.
+
+**Artifacts:** #904 (body updated). Related: [[D-193]].
+
+---
+
 ## D-193 — 2026-06-09 — Strategic focus: BYO agents; personas become dual-role (customer concierge + TA support/drafting assistant)
 
 **Context:** Booking flow and sub-hosting are indefinitely deferred (operator, June 9 — see [[D-192]] kill switches, re-enable tracked in #895). The platform's focus is now **BYO travel agents** (TAs bringing their own book of business). Future sessions should stop proposing booking-flow work and prioritize this track.
