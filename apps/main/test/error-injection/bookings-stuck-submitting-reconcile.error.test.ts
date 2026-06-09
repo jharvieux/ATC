@@ -63,8 +63,20 @@ beforeEach(() => {
   mocks.casRowsPerRow = 1;
 });
 
+const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;
+
 afterEach(() => {
   vi.restoreAllMocks();
+  if (ORIG_BOOKING_CRONS === undefined) delete process.env.BOOKING_CRONS_DISABLED;
+  else process.env.BOOKING_CRONS_DISABLED = ORIG_BOOKING_CRONS;
+});
+
+describe("runBookingsStuckSubmittingReconcile — BOOKING_CRONS_DISABLED kill switch", () => {
+  it("returns zero counts without touching the DB when flag is true", async () => {
+    process.env.BOOKING_CRONS_DISABLED = "true";
+    const result = await runBookingsStuckSubmittingReconcile();
+    expect(result).toEqual({ reverted: 0, total_stuck: 0 });
+  });
 });
 
 describe("runBookingsStuckSubmittingReconcile — Pattern 1 (fetch error)", () => {

@@ -117,6 +117,7 @@ vi.mock("stripe", () => {
 import { runPayoutsExecuteTransfer } from "@/inngest/payouts-execute-transfer";
 
 const ORIG = process.env.STRIPE_SECRET_KEY;
+const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;
 
 beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
@@ -139,7 +140,17 @@ beforeEach(() => {
 afterEach(() => {
   if (ORIG === undefined) delete process.env.STRIPE_SECRET_KEY;
   else process.env.STRIPE_SECRET_KEY = ORIG;
+  if (ORIG_BOOKING_CRONS === undefined) delete process.env.BOOKING_CRONS_DISABLED;
+  else process.env.BOOKING_CRONS_DISABLED = ORIG_BOOKING_CRONS;
   vi.restoreAllMocks();
+});
+
+describe("runPayoutsExecuteTransfer — BOOKING_CRONS_DISABLED kill switch", () => {
+  it("returns zero counts without touching Stripe when flag is true", async () => {
+    process.env.BOOKING_CRONS_DISABLED = "true";
+    const result = await runPayoutsExecuteTransfer();
+    expect(result).toEqual({ processed: 0, failed: 0, total: 0 });
+  });
 });
 
 describe("runPayoutsExecuteTransfer — Pattern 1 (DB-fail on stripe_transfer_id write)", () => {
