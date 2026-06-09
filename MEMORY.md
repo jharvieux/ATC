@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-192 — 2026-06-09 — Inngest cost containment: registration-level kill switches + cron schedule stretch (PR #896)
+
+**Context:** Inngest dashboard (June 9) showed 57,858 executions against the 50k/month plan — overage by day 9, ~11.5k/day pace (~330k/month). Analysis: ~95% of usage is cron heartbeat, not traffic or event-driven work. The plan bills **executions** (runs and steps are unlimited); each cron run bills ~2 executions.
+
+**Decisions:**
+1. **Kill switches must unregister, not just guard.** An in-handler early-return still bills an execution every tick. `BOOKING_CRONS_DISABLED=true` now excludes the cron-triggered booking functions from `serve()` in `app/api/inngest/route.ts` — Inngest archives them on sync and the schedules stop. Scope: the original 6 + pre-cruise schedulers (query `bookings`) + `booking-commission-retention-purge`. New `SUBHOSTING_CRONS_DISABLED` does the same for `custom-domain-reverify` + `custom-domain-txt-grace-sweep`. Event-driven booking functions stay registered (idle = free) with handler guards. Both flags set `true` in Vercel prod (booking + sub-hosting indefinitely deferred per operator).
+2. **Schedule stretch** for what stays on Inngest until the #894 Vercel-cron migration: `task-reminders-fire` 1m→5m, `vendor-health-probe` 1m→15m, six 5m→15m (`ai-batch-reconcile`, `auth-failure-monitor`, `permission-denied-monitor`, `cross-tenant-rls-bypass-monitor`, `rag-sync-retry`, rag `openai-embedding-reconcile`). Monitor lookback windows widened 5→15 min to match cadence; thresholds kept (trade-off: slow attacks trip sooner, fast-burst detection latency ≤15 min instead of ≤5).
+3. **Rejected:** paying Inngest overage (fixes symptom); disabling handler-guard-only (saves nothing); raising `task-reminders-fire` BATCH_LIMIT naively (serial Resend sends risk timeout — drain loop tracked in #900).
+
+**Projected billing:** ~3,200 execs/day (~95k/month pace) — down ~72% but still ~2× plan until #894 (migrate the simple sweeps to Vercel crons; blocked on #899 Vercel Pro upgrade) lands, which brings it to ~40-45k/month, inside plan. #894 also restores 1-min task reminders via a Vercel per-minute cron.
+
+**Artifacts:** PR #896 (Opus-audited, both agents clean), issues #894 (updated with corrected execution math), #899 (Vercel Pro blocker), #900 (BATCH_LIMIT drain loop). atc-main + atc-rag deployed 2026-06-09.
+
+---
+
 ## D-191 — 2026-06-08 — #889: email_customer tool — concierge can email signed-in customers (recipient is server-resolved, never model-chosen)
 
 **Decision:** Add an `email_customer` persona tool so the chat AI can email a customer the info they ask for (deck-plan links, itinerary, quote) via the existing `sendEmail`/Resend path, from the persona's address (e.g. `marcus@ai-travelconcierge.com`).
