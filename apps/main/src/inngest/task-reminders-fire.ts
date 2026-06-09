@@ -1,6 +1,6 @@
 // BP37 §37.3 — Reminder fire-up cron.
 //
-// Runs every minute; sweeps task_reminders WHERE remind_at <= NOW AND
+// Runs every 5 minutes; sweeps task_reminders WHERE remind_at <= NOW AND
 // fired_at IS NULL. For 'in_app' reminders, just stamps fired (the CRM
 // nav badge queries task_reminders for unread+unfired). For 'email',
 // sends a templated email via Resend (assumes existing helper present).
@@ -19,7 +19,9 @@ const BATCH_LIMIT = 200;
 export const taskRemindersFire = inngest.createFunction(
   {
     id: "task-reminders-fire",
-    triggers: [{ cron: "* * * * *" }], // every minute
+    // 5-min cadence (#894 Inngest cost): the sweep is windowless
+    // (remind_at <= NOW, unfired), so reminders land at most ~5 min late.
+    triggers: [{ cron: "*/5 * * * *" }],
   },
   async () => {
     if (process.env.BP37_REMINDERS_DISABLED === "true") {

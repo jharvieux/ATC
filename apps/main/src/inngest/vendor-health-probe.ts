@@ -1,6 +1,6 @@
 // §26.9 — Vendor health probe.
 //
-// Runs every minute. Pings a lightweight read endpoint on each vendor we
+// Runs every 15 minutes. Pings a lightweight read endpoint on each vendor we
 // depend on. Per-instance — each Vercel function instance maintains its
 // own view of vendor health.
 //
@@ -36,7 +36,9 @@ async function ping(name: string, url: string, headers: Record<string, string> =
 export const vendorHealthProbe = inngest.createFunction(
   {
     id: "vendor-health-probe",
-    triggers: [{ cron: "* * * * *" }], // every minute
+    // 15-min cadence (#894 Inngest cost): real traffic also records vendor
+    // health via recordVendorSuccess/Failure, so the probe is a backstop.
+    triggers: [{ cron: "*/15 * * * *" }],
   },
   async () => {
     if (process.env.STAGING_MODE === "true") {
