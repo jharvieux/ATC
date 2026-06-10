@@ -6,6 +6,7 @@
 // More info: review_decision=more_info_requested, onboarding_stage reverted to chosen stage.
 
 import Stripe from "stripe";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
@@ -13,6 +14,50 @@ import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platf
 
 function escapeReviewHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Best-effort decision notification to the tenant's active users (#960).
+// A send failure must not roll back the review decision, so errors are
+// logged and swallowed. Callers invoke this BEFORE emitting lifecycle
+// events whose handlers may deactivate the users rows (tenant.terminated).
+async function notifyTenantUsers(
+  db: SupabaseClient,
+  tenantId: string,
+  email: {
+    subject: string;
+    html: string;
+    template_id: string;
+    template_variables: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    const { data: users } = await db
+      .from("users")
+      .select("email")
+      .eq("tenant_id", tenantId)
+      .eq("status", "active");
+    const recipients = ((users ?? []) as Array<{ email: string }>).map((u) => u.email);
+    if (recipients.length === 0) return;
+    const { sendTenantNotification } = await import("@/lib/email/notifications");
+    for (const to of recipients) {
+      await sendTenantNotification({
+        db,
+        tenant_id: tenantId,
+        to,
+        subject: email.subject,
+        html: email.html,
+        category: "transactional",
+        template_id: email.template_id,
+        template_variables: email.template_variables,
+      });
+    }
+  } catch (notifyErr) {
+    console.warn(
+      "[admin/tenants/review] %s notification failed: %s",
+      email.template_id,
+      notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+    );
+  }
 }
 
 interface ReviewBody {
@@ -62,7 +107,7 @@ export async function POST(
         recordQuery({ op: "select", table: "tenants" });
         const { data: tenant, error: fetchErr } = await db
           .from("tenants")
-          .select("id, stripe_subscription_id, stripe_customer_id, review_decision")
+          .select("id, legal_name, slug, stripe_subscription_id, stripe_customer_id, review_decision")
           .eq("id", tenantId)
           .single();
 
@@ -95,6 +140,23 @@ export async function POST(
             });
           }
 
+          const portalUrl = process.env.PLATFORM_PRIMARY_DOMAIN
+            ? `https://${tenant.slug}.${process.env.PLATFORM_PRIMARY_DOMAIN}/`
+            : null;
+          await notifyTenantUsers(db, tenantId, {
+            subject: "Your AI Travel Concierge account is approved",
+            html: `<h2>Your account has been approved</h2>
+              <p><strong>${escapeReviewHtml(tenant.legal_name ?? "Your agency")}</strong> has passed platform review and is now active.</p>
+              ${
+                portalUrl
+                  ? `<p><a href="${portalUrl}">Sign in to your agency portal</a> to get started — your 30-day trial starts today.</p>`
+                  : "<p>Sign in at your agency subdomain to get started — your 30-day trial starts today.</p>"
+              }
+              <p>If you skipped branding during onboarding, you can finish it any time from your settings.</p>`,
+            template_id: "tenant_review_approved",
+            template_variables: { portal_url: portalUrl ?? "" },
+          });
+
           await inngest.send({
             name: "tenant.activated",
             data: { tenant_id: tenantId, admin_user_id: adminUserId },
@@ -120,6 +182,18 @@ export async function POST(
           if (tenant.stripe_subscription_id) {
             await stripe.subscriptions.cancel(tenant.stripe_subscription_id, { prorate: false });
           }
+
+          // Notify before tenant.terminated — its handler deactivates the
+          // users rows the recipient query depends on.
+          await notifyTenantUsers(db, tenantId, {
+            subject: "Update on your AI Travel Concierge application",
+            html: `<h2>Your application was not approved</h2>
+              <p>After review, we are unable to approve <strong>${escapeReviewHtml(tenant.legal_name ?? "your agency")}</strong> at this time.</p>
+              <p><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the review team.")}</p>
+              <p>If you believe this decision is in error, contact us at support@ai-travelconcierge.com.</p>`,
+            template_id: "tenant_review_rejected",
+            template_variables: { reason: body.reason ?? "" },
+          });
 
           // §15.14.2 — run termination side-effects for the rejected applicant
           // (domain unbind, host-credential deletion, RAG chunk marking). This
@@ -149,39 +223,15 @@ export async function POST(
 
           await revertTo(tenantId, body.revert_to_stage);
 
-          // Notify tenant owners. Best-effort.
-          try {
-            const { data: owners } = await db
-              .from("users")
-              .select("email")
-              .eq("tenant_id", tenantId)
-              .eq("status", "active");
-            const recipients = ((owners ?? []) as Array<{ email: string }>).map((u) => u.email);
-            if (recipients.length > 0) {
-              const { sendTenantNotification } = await import("@/lib/email/notifications");
-              const html = `<h2>More information needed for your application</h2>
-                <p>Our review team needs more information before approving your account.</p>
-                <p><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the reviewer.")}</p>
-                <p>Please sign in and update the requested information in your onboarding flow.</p>`;
-              for (const to of recipients) {
-                await sendTenantNotification({
-                  db,
-                  tenant_id: tenantId,
-                  to,
-                  subject: "Action required: more information needed",
-                  html,
-                  category: "transactional",
-                  template_id: "tenant_review_more_info",
-                  template_variables: { reason: body.reason ?? "" },
-                });
-              }
-            }
-          } catch (notifyErr) {
-            console.warn(
-              "[admin/tenants/review] more-info notification failed: %s",
-              notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
-            );
-          }
+          await notifyTenantUsers(db, tenantId, {
+            subject: "Action required: more information needed",
+            html: `<h2>More information needed for your application</h2>
+              <p>Our review team needs more information before approving your account.</p>
+              <p><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the reviewer.")}</p>
+              <p>Please sign in and update the requested information in your onboarding flow.</p>`,
+            template_id: "tenant_review_more_info",
+            template_variables: { reason: body.reason ?? "" },
+          });
         }
       },
     );
