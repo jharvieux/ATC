@@ -18,6 +18,33 @@ export function buildWorkspaceUrl(
 
 type TenantType = "byo_host" | "sub_host";
 
+// Mirrors the required-field checks in /api/auth/signup/complete (timezone and
+// country always carry a value in the UI, so they're not checked here). Keys are
+// inserted in on-page order — callers focus Object.keys(result)[0].
+export function validateSignupForm(form: {
+  display_name: string;
+  legal_name: string;
+  support_email: string;
+  line1: string;
+  city: string;
+  state: string;
+  zip: string;
+}): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!form.display_name.trim()) errors.display_name = "Agency display name is required.";
+  if (!form.legal_name.trim()) errors.legal_name = "Legal business name is required.";
+  if (!form.support_email.trim()) {
+    errors.support_email = "Support email is required.";
+  } else if (!/^\S+@\S+\.\S+$/.test(form.support_email.trim())) {
+    errors.support_email = "Enter a valid email address.";
+  }
+  if (!form.line1.trim()) errors.line1 = "Street address is required.";
+  if (!form.city.trim()) errors.city = "City is required.";
+  if (!form.state.trim()) errors.state = "State is required.";
+  if (!form.zip.trim()) errors.zip = "ZIP is required.";
+  return errors;
+}
+
 export default function SignupCompletePage(): React.ReactElement {
   const [form, setForm] = useState({
     display_name: "",
@@ -36,6 +63,7 @@ export default function SignupCompletePage(): React.ReactElement {
   const [slug, setSlug] = useState("");
   const [slugChecking, setSlugChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [workspaceUrl, setWorkspaceUrl] = useState<string | null>(null);
   const suffixRef = useRef(0);
@@ -74,14 +102,45 @@ export default function SignupCompletePage(): React.ReactElement {
   }, [form.display_name]);
 
   const set = (field: keyof typeof form) =>
-    (e: React.ChangeEvent<HTMLInputElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement>) => {
       setForm((f) => ({ ...f, [field]: e.target.value }));
+      setFieldErrors((errs) => {
+        if (!(field in errs)) return errs;
+        const { [field]: _cleared, ...rest } = errs;
+        return rest;
+      });
+    };
+
+  // Red border + matching id so the first invalid field can be focused on submit.
+  const errorProps = (field: keyof typeof form) => ({
+    id: field,
+    "aria-invalid": fieldErrors[field] ? true : undefined,
+    className: fieldErrors[field] ? "border-red-600 dark:border-red-400" : undefined,
+  });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (slugChecking || !slug) return;
-    setSubmitting(true);
     setError(null);
+
+    const errors = validateSignupForm(form);
+    const firstInvalid = Object.keys(errors)[0];
+    if (firstInvalid) {
+      setFieldErrors(errors);
+      document.getElementById(firstInvalid)?.focus();
+      return;
+    }
+    setFieldErrors({});
+
+    if (slugChecking || !slug) {
+      setError(
+        slugChecking
+          ? "Still checking workspace URL availability — please try again in a moment."
+          : "We couldn't generate a workspace URL from your agency name. Please adjust the display name and try again.",
+      );
+      return;
+    }
+
+    setSubmitting(true);
 
     try {
       const res = await fetch("/api/auth/signup/complete", {
@@ -149,16 +208,6 @@ export default function SignupCompletePage(): React.ReactElement {
     );
   }
 
-  const canSubmit =
-    form.display_name.trim() &&
-    form.legal_name.trim() &&
-    slug &&
-    !slugChecking &&
-    form.support_email.trim() &&
-    form.timezone &&
-    form.line1.trim() && form.city.trim() && form.state.trim() && form.zip.trim() &&
-    !submitting;
-
   return (
     <main className="py-10 px-4">
       <div className="w-full max-w-lg mx-auto">
@@ -167,13 +216,14 @@ export default function SignupCompletePage(): React.ReactElement {
           Fill this in once — your workspace will be ready to use immediately after.
         </p>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+        {/* noValidate: required-field feedback is rendered inline (red border + message) instead of native bubbles. */}
+        <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
           <Section title="Agency">
-            <Field label="Agency display name *">
-              <Input value={form.display_name} onChange={set("display_name")} required placeholder="Acme Travel" />
+            <Field label="Agency display name *" error={fieldErrors.display_name}>
+              <Input value={form.display_name} onChange={set("display_name")} required placeholder="Acme Travel" {...errorProps("display_name")} />
             </Field>
-            <Field label="Legal business name *">
-              <Input value={form.legal_name} onChange={set("legal_name")} required placeholder="Acme Travel LLC" />
+            <Field label="Legal business name *" error={fieldErrors.legal_name}>
+              <Input value={form.legal_name} onChange={set("legal_name")} required placeholder="Acme Travel LLC" {...errorProps("legal_name")} />
             </Field>
             <Field
               label="Workspace URL"
@@ -192,21 +242,18 @@ export default function SignupCompletePage(): React.ReactElement {
             </Field>
             <Field label="Account type *">
               <div className="flex flex-col gap-2.5">
+                {/* sub_host option hidden for now (#961) — type + server handling stay; default remains byo_host. */}
                 <RadioOption value="byo_host" checked={form.tenant_type === "byo_host"}
                   onChange={() => setForm((f) => ({ ...f, tenant_type: "byo_host" }))}
                   label="Independent agency (BYO host)"
                   description="I work with my own host agency or am a direct seller." />
-                <RadioOption value="sub_host" checked={form.tenant_type === "sub_host"}
-                  onChange={() => setForm((f) => ({ ...f, tenant_type: "sub_host" }))}
-                  label="Sub-agency under a host"
-                  description="I operate under a host agency that also uses this platform." />
               </div>
             </Field>
           </Section>
 
           <Section title="Contact & Support">
-            <Field label="Support email *">
-              <Input type="email" value={form.support_email} onChange={set("support_email")} required placeholder="support@acmetravel.com" />
+            <Field label="Support email *" error={fieldErrors.support_email}>
+              <Input type="email" value={form.support_email} onChange={set("support_email")} required placeholder="support@acmetravel.com" {...errorProps("support_email")} />
             </Field>
             <Field label="Support phone">
               <Input value={form.support_phone} onChange={set("support_phone")} placeholder="+1 555 000 0000" />
@@ -226,28 +273,28 @@ export default function SignupCompletePage(): React.ReactElement {
           </Section>
 
           <Section title="Mailing Address">
-            <Field label="Street address *">
-              <Input value={form.line1} onChange={set("line1")} required placeholder="123 Main St" />
+            <Field label="Street address *" error={fieldErrors.line1}>
+              <Input value={form.line1} onChange={set("line1")} required placeholder="123 Main St" {...errorProps("line1")} />
             </Field>
             <Field label="Apt, suite, etc.">
               <Input value={form.line2} onChange={set("line2")} placeholder="Suite 100" />
             </Field>
             <div className="grid gap-2.5 [grid-template-columns:1fr_80px_100px]">
-              <Field label="City *">
-                <Input value={form.city} onChange={set("city")} required />
+              <Field label="City *" error={fieldErrors.city}>
+                <Input value={form.city} onChange={set("city")} required {...errorProps("city")} />
               </Field>
-              <Field label="State *">
-                <Input value={form.state} onChange={set("state")} required maxLength={2} />
+              <Field label="State *" error={fieldErrors.state}>
+                <Input value={form.state} onChange={set("state")} required maxLength={2} {...errorProps("state")} />
               </Field>
-              <Field label="ZIP *">
-                <Input value={form.zip} onChange={set("zip")} required />
+              <Field label="ZIP *" error={fieldErrors.zip}>
+                <Input value={form.zip} onChange={set("zip")} required {...errorProps("zip")} />
               </Field>
             </div>
           </Section>
 
           {error && <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>}
 
-          <Button type="submit" disabled={!canSubmit}>
+          <Button type="submit" disabled={submitting}>
             {submitting ? "Creating workspace…" : "Create workspace"}
           </Button>
         </form>
@@ -265,13 +312,14 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Field({ label, hint, hintVariant = "default", children }: {
-  label: string; hint?: string; hintVariant?: "default" | "success"; children: React.ReactNode;
+function Field({ label, hint, hintVariant = "default", error, children }: {
+  label: string; hint?: string; hintVariant?: "default" | "success"; error?: string | undefined; children: React.ReactNode;
 }): React.ReactElement {
   return (
     <div>
       <label className="block text-sm font-medium mb-1.5">{label}</label>
       {children}
+      {error && <p className="text-xs mt-1 text-red-600 dark:text-red-400">{error}</p>}
       {hint && (
         <p className={`text-xs mt-1 ${hintVariant === "success" ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
           {hint}

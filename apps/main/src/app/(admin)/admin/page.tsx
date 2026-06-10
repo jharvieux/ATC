@@ -22,6 +22,7 @@ const SECTIONS = [
       { href: "/admin/retrieval-weights",    label: "Retrieval Weights",        desc: "Tune platform-wide composite retrieval knobs (match / authority / recency / feedback)." },
       { href: "/admin/chunks/post-termination", label: "Post-termination Chunks", desc: "Review globally-promoted chunks from terminated tenants: retain, demote, or hard-delete." },
       { href: "/admin/travel-news",             label: "Travel News Feeds",        desc: "Manage travel RSS feeds, trigger refreshes, and hide or promote articles to the RAG pipeline." },
+      { href: "/admin/cruise-catalog",          label: "Cruise Catalog",           desc: "Manage canonical cruise lines, ships, and ports — add, disable, set tier and CruiseMapper slug." },
     ],
   },
   {

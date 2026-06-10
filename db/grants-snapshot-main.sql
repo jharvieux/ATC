@@ -70,6 +70,9 @@ GRANT INSERT, SELECT, UPDATE ON public.bug_submissions TO service_role;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.campaigns TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.campaigns TO service_role;
 
+-- TABLE: public.canonical_match_reviews
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.canonical_match_reviews TO service_role;
+
 -- TABLE: public.ccpa_deletion_executions
 GRANT SELECT ON public.ccpa_deletion_executions TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.ccpa_deletion_executions TO service_role;
@@ -97,6 +100,22 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.contacts TO service_role;
 -- TABLE: public.conversations
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.conversations TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.conversations TO service_role;
+
+-- TABLE: public.cruise_line_aliases
+GRANT SELECT ON public.cruise_line_aliases TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_line_aliases TO service_role;
+
+-- TABLE: public.cruise_lines
+GRANT SELECT ON public.cruise_lines TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_lines TO service_role;
+
+-- TABLE: public.cruise_ship_aliases
+GRANT SELECT ON public.cruise_ship_aliases TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_ship_aliases TO service_role;
+
+-- TABLE: public.cruise_ships
+GRANT SELECT ON public.cruise_ships TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_ships TO service_role;
 
 -- TABLE: public.cruisemapper_url_inventory
 GRANT INSERT, SELECT, UPDATE ON public.cruisemapper_url_inventory TO service_role;
@@ -265,9 +284,17 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.platform_revenue TO service_role;
 GRANT SELECT ON public.platform_settings TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.platform_settings TO service_role;
 
+-- TABLE: public.port_aliases
+GRANT SELECT ON public.port_aliases TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.port_aliases TO service_role;
+
 -- TABLE: public.port_info_chunks
 GRANT SELECT ON public.port_info_chunks TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.port_info_chunks TO service_role;
+
+-- TABLE: public.ports
+GRANT SELECT ON public.ports TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.ports TO service_role;
 
 -- TABLE: public.pre_cruise_email_content
 GRANT SELECT ON public.pre_cruise_email_content TO authenticated;
