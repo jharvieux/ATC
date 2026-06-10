@@ -14,6 +14,10 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertSafeStripeAmount, type Cents } from "@/lib/money";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
+// Drain loop cap — processed rows move to 'processing' so they don't reappear.
+const BATCH_LIMIT = 100;
+const TIME_BUDGET_MS = 55_000;
+
 type PayoutRow = {
   id: string;
   tenant_id: string;
@@ -60,31 +64,41 @@ export async function tryAcquirePayoutLock(
 
 // D-091 / error-injection probe — inner body extracted for direct test
 // invocation. Mirrors the tryAcquirePayoutLock precedent.
-export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; failed: number; total: number }> {
+export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; failed: number; total: number; batches: number }> {
   if (process.env.BOOKING_CRONS_DISABLED === "true") {
-    return { processed: 0, failed: 0, total: 0 };
+    return { processed: 0, failed: 0, total: 0, batches: 0 };
   }
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
   const stripe = new Stripe(stripeKey);
+  const db = createServiceRoleClient();
 
-    const db = createServiceRoleClient();
+  let processed = 0;
+  let failed = 0;
+  let total = 0;
+  let batches = 0;
+  const start = Date.now();
+  // Cursor prevents busy-spin when rows are skipped (e.g. missing stripe_connect_account_id).
+  // Skipped rows stay 'available' and would re-appear at the front of every un-cursored query.
+  let lastId = "";
 
+  while (Date.now() - start < TIME_BUDGET_MS) {
     const { data: rows, error } = await db
       .from("payout_records")
       .select("id, tenant_id, amount_cents, attempt_generation, currency, commission_id")
       .eq("status", "available")
-      .gt("amount_cents", 0);
+      .gt("amount_cents", 0)
+      .gt("id", lastId)
+      .order("id", { ascending: true })
+      .limit(BATCH_LIMIT);
 
     if (error) throw new Error(`payouts-execute-transfer: fetch failed: ${error.message}`);
 
-    const available = rows ?? [];
-    let processed = 0;
-    let failed = 0;
+    const available = (rows ?? []) as PayoutRow[];
+    batches++;
+    total += available.length;
 
-    for (const rawRow of available) {
-      const row = rawRow as PayoutRow;
-
+    for (const row of available) {
       // Load the tenant's Stripe Connect account
       const { data: tenantData } = await db
         .from("tenants")
@@ -182,7 +196,11 @@ export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; 
       }
     }
 
-  return { processed, failed, total: available.length };
+    lastId = available[available.length - 1]?.id ?? lastId;
+    if (available.length < BATCH_LIMIT) break;
+  }
+
+  return { processed, failed, total, batches };
 }
 
 export const payoutsExecuteTransfer = inngest.createFunction(

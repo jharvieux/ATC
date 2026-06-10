@@ -25,6 +25,10 @@ import { QuoteEstimateExpiredEmail } from "@/emails/QuoteEstimateExpiredEmail";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 const DEFAULT_VALIDITY_DAYS = 7;
+// Cap per-run so the function can't time-out as quote volume grows. Oldest estimates
+// processed first; any overflow is picked up on subsequent daily runs.
+const BATCH_LIMIT = 200;
+const TIME_BUDGET_MS = 55_000;
 
 export const quoteEstimateExpirySweep = inngest.createFunction(
   {
@@ -34,6 +38,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
   async () => {
     const validityDays = Number(process.env.QUOTE_ESTIMATE_VALIDITY_DAYS ?? DEFAULT_VALIDITY_DAYS);
     const cutoff = new Date(Date.now() - validityDays * 24 * 60 * 60 * 1000);
+    const sweepStart = Date.now();
 
     const db = createServiceRoleClient();
     const { data: stale, error } = await db
@@ -42,7 +47,9 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       .eq("price_kind", "estimate")
       .eq("status", "sent")
       .is("customer_accepted_at", null)
-      .lt("priced_at", cutoff.toISOString());
+      .lt("priced_at", cutoff.toISOString())
+      .order("priced_at", { ascending: true })
+      .limit(BATCH_LIMIT);
 
     if (error) {
       console.error("[quote-estimate-expiry-sweep] query failed:", error.message);
@@ -145,6 +152,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     let emailed = 0;
     let expired = 0;
     for (const r of rows) {
+      if (Date.now() - sweepStart >= TIME_BUDGET_MS) break;
       const contact = r.contact_id ? contactMap.get(r.contact_id) : null;
       if (!contact?.email) {
         console.info(
