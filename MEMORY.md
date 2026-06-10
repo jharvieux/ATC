@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-196 — 2026-06-09 — #902 PR A shipped (TA-mode chat API); found conversations RLS is tenant-level only (#908)
+
+**Shipped:** PR #909 (merged 630da4bf, Opus-audited clean ×2) — the [[D-195]] design, API-complete: `mode:"ta"` gate (403 fail-closed, role boundary `tenant_owner|agent` since customers are viewer members), `TA_MEMBER_RULES` Layer-2 swap with customer prompts byte-identical (equality-tested), `buildHelpContextBlock`, `ta_chat_main` purpose, 200/day fail-closed cap, `conversations.audience` migration (applied to prod DB via MCP before merge — additive, safe ahead of deploy).
+
+**Implementation decisions beyond the design doc:**
+1. **Help-doc matching qualifies on TITLE-token hits only** (body hits refine rank, never qualify). `searchDocs()` was unusable for conversational messages (whole-query substring), and body-token thresholds false-positived on generic words ("some good… group" matched Getting started). Platform questions name the feature; travel turns don't.
+2. **TA-thread own-only visibility is enforced at the app layer** (`guardTaThread`, 404 not 403) because of the finding below.
+
+**Security finding → #908:** `conversations_select_policy` is `auth_user_in_tenant(tenant_id)` ONLY — no member-level condition. Any member (customers included) can read any conversation + transcript in their tenant by id via the by-id route. Pre-existing; PR A guards TA threads only. RLS tightening + customer-thread fix is #908 (needs its own reader-enumeration pass).
+
+**Test-harness learning:** SSE route tests must DRAIN the response body before asserting on late-pipeline mocks — TransformStream backpressure stalls the handler when nobody reads, so `vi.waitFor` times out before `buildSystemPrompt` is ever reached.
+
+**Artifacts:** PR #909, #908, design doc updated (token-scorer note). Next: PR B (dashboard surface). Related: [[D-195]], [[D-193]].
+
+---
+
 ## D-195 — 2026-06-09 — #902 TA-mode chat design approved (no RAG ingestion; audience in Layer 2; existing cost breaker + 200/day backstop; own-only visibility)
 
 **Decision:** Design for Phase 1 of [[D-193]] approved (docs/byo-agents/902-ta-mode-chat-design.md). Key calls:
