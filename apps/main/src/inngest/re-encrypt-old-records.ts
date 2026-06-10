@@ -2,15 +2,22 @@
 //
 // Triggered:
 //   - Manually: event 'admin/reencrypt_credentials_started'
+//   - Manually: event 'admin/bind_aad_credentials_started' (#935)
 //   - Daily cron '0 6 * * *' — only runs if APP_ENCRYPTION_KEY_PREVIOUS is set
 //     (indicating a key rotation is mid-flight).
 //
-// Job logic:
+// Job logic (key-rotation sweep):
 //   1. Find all tenant_host_configs rows where credentials->>'key_id' = APP_ENCRYPTION_KEY_ID_PREVIOUS
 //   2. Decrypt each with the previous key, re-encrypt with the current key, update the row.
 //   3. Emit metric: credentials_at_previous_key_count (logged; alert infra §26).
 //
-// The job is idempotent: records already at the current key_id are skipped.
+// Job logic (AAD-bind sweep, #935):
+//   1. Triggered by 'admin/bind_aad_credentials_started'.
+//   2. Find all rows where credentials->>'key_id' = APP_ENCRYPTION_KEY_ID_CURRENT.
+//   3. Re-encrypt each (decrypt → encryptCredential) so all ciphertexts carry AAD binding.
+//   4. One-shot: run after PR #934 deploys, then no longer needed once all rows are AAD-bound.
+//
+// The key-rotation sweep is idempotent: records already at the current key_id are skipped.
 // §13.5.3: if this metric is non-zero for more than 7 days post-rotation, log a warning.
 
 import { inngest } from "./client";
@@ -25,11 +32,63 @@ export const reEncryptOldRecords = inngest.createFunction(
     id: "re-encrypt-old-records",
     triggers: [
       { event: "admin/reencrypt_credentials_started" },
+      { event: "admin/bind_aad_credentials_started" },
       { cron: "0 6 * * *" },
     ],
   },
-  async () => {
+  async (ctx?: { event?: { name?: string } }) => {
     const e = env();
+    const db = createServiceRoleClient();
+    const eventName = (ctx as { event?: { name?: string } } | undefined)?.event?.name;
+
+    // #935: AAD-bind sweep. Re-encrypts current-key rows to bind key_id into AAD.
+    // Pre-#934 ciphertexts lacked AAD binding; this sweep closes that gap.
+    // Only runs on explicit trigger — not cron, not the key-rotation event.
+    if (eventName === "admin/bind_aad_credentials_started") {
+      const currentKeyId = e.APP_ENCRYPTION_KEY_ID_CURRENT;
+      const { data: aadRows, error: aadFetchError } = await db
+        // d091-allow:service-role-tenant — platform-level AAD-bind sweep; intentionally cross-tenant.
+        .from("tenant_host_configs")
+        .select("id, credentials")
+        .filter("credentials->>'key_id'", "eq", currentKeyId);
+
+      if (aadFetchError) {
+        throw new Error(`bind-aad-sweep: failed to fetch rows: ${aadFetchError.message}`);
+      }
+
+      const aadPending = aadRows ?? [];
+      let aadBound = 0;
+      let aadFailed = 0;
+
+      for (const row of aadPending as { id: string; credentials: { ciphertext: string; key_id: string } }[]) {
+        const decrypted = decryptCredential(row.credentials);
+        if (!decrypted.ok) {
+          console.warn(`bind-aad-sweep: failed to decrypt ${row.id}: ${decrypted.error.code}`);
+          aadFailed++;
+          continue;
+        }
+        const newEncrypted = encryptCredential(decrypted.value);
+        const { data: updated, error: updateError } = await db
+          // d091-allow:service-role-tenant — platform-level AAD-bind sweep; intentionally cross-tenant.
+          .from("tenant_host_configs")
+          .update({ credentials: newEncrypted })
+          .eq("id", row.id)
+          .filter("credentials->>'key_id'", "eq", currentKeyId)
+          .select("id");
+        if (updateError) {
+          console.warn(`bind-aad-sweep: failed to update ${row.id}: ${updateError.message}`);
+          aadFailed++;
+        } else if (!updated || updated.length === 0) {
+          console.info(`bind-aad-sweep: ${row.id} key changed concurrently, skipping.`);
+        } else {
+          aadBound++;
+        }
+      }
+      console.info(`bind-aad-sweep: bound=${aadBound}, failed=${aadFailed}, total=${aadPending.length}`);
+      return { aad_bound_count: aadBound, aad_bind_failed_count: aadFailed };
+    }
+
+    // Key-rotation sweep (existing logic, unchanged).
 
     if (!e.APP_ENCRYPTION_KEY_PREVIOUS || !e.APP_ENCRYPTION_KEY_ID_PREVIOUS) {
       console.info("re-encrypt-old-records: APP_ENCRYPTION_KEY_PREVIOUS not set — nothing to do.");
@@ -37,9 +96,9 @@ export const reEncryptOldRecords = inngest.createFunction(
     }
 
     const previousKeyId = e.APP_ENCRYPTION_KEY_ID_PREVIOUS;
-    const db = createServiceRoleClient();
 
     const { data: rows, error } = await db
+      // d091-allow:service-role-tenant — platform-level key-rotation sweep; intentionally cross-tenant.
       .from("tenant_host_configs")
       .select("id, credentials")
       .filter("credentials->>'key_id'", "eq", previousKeyId);
@@ -70,6 +129,7 @@ export const reEncryptOldRecords = inngest.createFunction(
       // #737: verify row count so a concurrent re-encrypt run doesn't inflate
       // reencryptedCount when 0 rows actually matched the key_id guard.
       const { data: updated, error: updateError } = await db
+        // d091-allow:service-role-tenant — platform-level key-rotation sweep; intentionally cross-tenant.
         .from("tenant_host_configs")
         .update({ credentials: newEncrypted })
         .eq("id", row.id)
