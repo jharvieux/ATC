@@ -1,0 +1,55 @@
+name: dependabot-update-branch
+
+# Branch protection on dev requires up-to-date branches, so a Dependabot PR
+# with auto-merge armed can stall forever once dev advances past it —
+# Dependabot does not self-rebase merely-behind (non-conflicting) PRs
+# (observed: #957 sat BEHIND until manually rebased, 2026-06-10). This cron
+# updates eligible branches so auto-merge can fire.
+#
+# Token: a GitHub App installation token, NOT GITHUB_TOKEN. Pushes made with
+# GITHUB_TOKEN do not trigger pull_request workflows (recursion guard), so an
+# update-branch would leave the new head with no CI and auto-merge would never
+# fire — strictly worse than the stall. App-authored pushes trigger CI
+# normally. Reuses the platform's existing GitHub App (GH_APP_ID /
+# GH_APP_PRIVATE_KEY secrets mirror the runtime credentials).
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  update-branches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint GitHub App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - name: Update eligible Dependabot PRs
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --author 'app/dependabot' --state open \
+            --json number,mergeStateStatus,autoMergeRequest \
+            --jq '.[] | select(.autoMergeRequest != null and .mergeStateStatus == "BEHIND") | .number')
+          if [ -z "$prs" ]; then
+            echo "No BEHIND Dependabot PRs with auto-merge armed — nothing to do."
+            exit 0
+          fi
+          for n in $prs; do
+            # PRs with failing checks belong to dependabot-retry-ci; updating
+            # them just burns CI minutes on a branch that can't merge anyway.
+            if gh pr checks "$n" --repo "$GITHUB_REPOSITORY" 2>/dev/null | cut -f2 | grep -qx "fail"; then
+              echo "PR #$n has failing checks — skipping (dependabot-retry-ci owns failures)."
+              continue
+            fi
+            echo "Updating branch for PR #$n"
+            gh pr update-branch "$n" --repo "$GITHUB_REPOSITORY"
+          done
