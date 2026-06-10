@@ -4,6 +4,7 @@
 // Retries at +6h, +12h, +24h (attempt 1, 2, 3). On the 4th soft bounce
 // the email is marked hard_bounced and the address is suppressed.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
@@ -11,14 +12,21 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 
 const RETRY_DELAYS_HOURS = [6, 12, 24];
 
+const SoftBounceRetryPayloadSchema = z.object({
+  email_log_id: z.string(),
+  tenant_id: z.string(),
+  attempt: z.number(),
+});
+
 export const emailSoftBounceRetry = inngest.createFunction(
   { id: "email-soft-bounce-retry", triggers: [{ event: "email/soft.bounce.retry" }] },
   async ({ event, step }) => {
-    const { email_log_id, tenant_id, attempt } = event.data as {
-      email_log_id: string;
-      tenant_id: string;
-      attempt: number;
-    };
+    const parsed = SoftBounceRetryPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[email-soft-bounce-retry] invalid event payload: %s", parsed.error.message);
+      return;
+    }
+    const { email_log_id, tenant_id, attempt } = parsed.data;
 
     // §15.16 — Don't keep retrying email sends for a past-grace tenant.
     {

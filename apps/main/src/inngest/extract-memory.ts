@@ -18,6 +18,16 @@
 
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+const BatchResultPayloadSchema = z.object({
+  tenant_id: z.string(),
+  result_text: z.string(),
+  caller_metadata: z.object({
+    tenant_id: z.string(),
+    conversation_id: z.string(),
+    user_id: z.string(),
+  }).nullable(),
+});
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
@@ -452,11 +462,12 @@ export const extractMemoryFromBatchResult = inngest.createFunction(
     retries: 3,
   },
   async ({ event, step }) => {
-    const { tenant_id, result_text, caller_metadata } = event.data as {
-      tenant_id: string;
-      result_text: string;
-      caller_metadata: { tenant_id: string; conversation_id: string; user_id: string } | null;
-    };
+    const parsed = BatchResultPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[extract-memory:consumer] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { tenant_id, result_text, caller_metadata } = parsed.data;
     if (!caller_metadata) {
       console.error("[extract-memory:consumer] missing caller_metadata");
       return { status: "ok" as const, extracted_fields: [] };

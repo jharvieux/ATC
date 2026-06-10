@@ -8,6 +8,7 @@
 // fully async (the tenant UI already says "screening in progress") so
 // the additional latency from batching is invisible to the user.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
@@ -16,6 +17,21 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
 
 export const HAIKU_MODEL = process.env.PERSONA_ADDENDUM_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
+
+const ScreenPayloadSchema = z.object({
+  tenant_id: z.string(),
+  persona_slug: z.string(),
+  addendum_id: z.string(),
+});
+
+const BatchResultPayloadSchema = z.object({
+  tenant_id: z.string(),
+  result_text: z.string(),
+  caller_metadata: z.object({
+    tenant_id: z.string(),
+    addendum_id: z.string(),
+  }).nullable(),
+});
 
 export const SCREENING_SYSTEM_PROMPT = `You are a platform safety screener for an AI travel concierge.
 
@@ -42,19 +58,18 @@ Respond with JSON ONLY:
 OR
 { "pass": false, "findings": [{ "category": "...", "evidence": "..." }] }`;
 
-interface ScreenPayload {
-  tenant_id: string;
-  persona_slug: string;
-  addendum_id: string;
-}
-
 export const personaAddendumScreen = inngest.createFunction(
   {
     id: "persona-addendum-screen",
     triggers: [{ event: "persona_addendum.submitted" }],
   },
   async ({ event }) => {
-    const { addendum_id } = event.data as ScreenPayload;
+    const parsed = ScreenPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[persona-addendum-screen] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { addendum_id } = parsed.data;
     const db = createServiceRoleClient();
 
     const { data: row, error } = await db
@@ -160,11 +175,12 @@ export const personaAddendumScreenFromBatchResult = inngest.createFunction(
     triggers: [{ event: "ai.batch_request.completed.persona_addendum_screen" }],
   },
   async ({ event }) => {
-    const { tenant_id, result_text, caller_metadata } = event.data as {
-      tenant_id: string;
-      result_text: string;
-      caller_metadata: { tenant_id: string; addendum_id: string } | null;
-    };
+    const parsed = BatchResultPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[persona-addendum-screen:consumer] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { tenant_id, result_text, caller_metadata } = parsed.data;
     if (!caller_metadata) {
       console.error("[persona-addendum-screen:consumer] missing caller_metadata");
       return { error: "missing_caller_metadata" };

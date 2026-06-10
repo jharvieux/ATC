@@ -15,6 +15,7 @@
 //   action is to suspend (or no-op on pass). Different downstream
 //   behavior = different purpose, separate consumer + flush cron.
 
+import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -22,6 +23,16 @@ import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
 import { HAIKU_MODEL, SCREENING_SYSTEM_PROMPT, parseScreenResult } from "./persona-addendum-screen";
+
+const RescreenBatchResultPayloadSchema = z.object({
+  tenant_id: z.string(),
+  result_text: z.string(),
+  caller_metadata: z.object({
+    tenant_id: z.string(),
+    addendum_id: z.string(),
+    persona_slug: z.string(),
+  }).nullable(),
+});
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -208,11 +219,12 @@ export const personaAddendumRescreenFromBatchResult = inngest.createFunction(
     triggers: [{ event: "ai.batch_request.completed.persona_addendum_rescreen" }],
   },
   async ({ event }) => {
-    const { tenant_id, result_text, caller_metadata } = event.data as {
-      tenant_id: string;
-      result_text: string;
-      caller_metadata: { tenant_id: string; addendum_id: string; persona_slug: string } | null;
-    };
+    const parsed = RescreenBatchResultPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[persona-addendum-rescreen:consumer] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { tenant_id, result_text, caller_metadata } = parsed.data;
     if (!caller_metadata) {
       console.error("[persona-addendum-rescreen:consumer] missing caller_metadata");
       return { error: "missing_caller_metadata" };
