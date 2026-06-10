@@ -53,8 +53,31 @@ vi.mock("@/lib/db/tenant-client", () => ({
         // Awaited by safeAwait — resolve to a { data, error } shape.
         return { insert: mocks.messagesInsert };
       }
-      // conversations: .update(payload).eq("id", ...) resolves to { error }.
-      // update() is captured so a test can assert the active_persona_id payload.
+      // #908 — the route now loads the conversation row + caller's users row
+      // before the persona lookup. Serve the caller AS the owner so the
+      // pre-existing contracts (persona scoping, fail-loud mutations) stay
+      // exercised on the allowed path.
+      if (table === "users") {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: async () => ({ data: { id: "users-owner", role: "viewer" }, error: null }),
+        };
+        return builder;
+      }
+      if (table === "conversations") {
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          // Literal id (vi.mock factories are hoisted above the consts).
+          maybeSingle: async () => ({
+            data: { id: "99999999-8888-7777-6666-555555555555", audience: "customer", user_id: "users-owner" },
+            error: null,
+          }),
+          update: mocks.conversationsUpdate,
+        };
+        return builder;
+      }
       return { update: mocks.conversationsUpdate };
     },
   }),
