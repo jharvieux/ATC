@@ -33,11 +33,11 @@ export async function GET(req: Request): Promise<Response> {
       const role = (urow as { role?: string } | null)?.role ?? "";
 
       // Load the caller's own samples.
-      const { data: own, error: ownErr } = await db
-        .from("voice_samples")
-        .select("id, body, source_label, created_at")
-        .is("user_id", publicUserId)
-        .order("created_at", { ascending: true });
+      // .is() only works for null/boolean — use .eq() for non-null user_id.
+      const ownBase = db.from("voice_samples").select("id, body, source_label, created_at").order("created_at", { ascending: true });
+      const { data: own, error: ownErr } = await (
+        publicUserId ? ownBase.eq("user_id", publicUserId) : ownBase.is("user_id", null)
+      );
       if (ownErr) return Response.json({ error: ownErr.message }, { status: 500 });
 
       // Owners also see the house-style samples.
@@ -53,19 +53,16 @@ export async function GET(req: Request): Promise<Response> {
       }
 
       // Load the extracted card (own, then house fallback).
-      const { data: card } = await db
-        .from("voice_profiles")
-        .select("style_card, card_override, extracted_at, samples_hash")
-        .is("user_id", publicUserId)
-        .maybeSingle();
+      const cardBase = db.from("voice_profiles").select("style_card, card_override, extracted_at, samples_hash");
+      const { data: card } = await (
+        publicUserId ? cardBase.eq("user_id", publicUserId) : cardBase.is("user_id", null)
+      ).maybeSingle();
 
       let houseCard = null;
       if (!card && role === "tenant_owner") {
         const { data: hc } = await db
-          .from("voice_profiles")
-          .select("style_card, card_override, extracted_at")
-          .is("user_id", null)
-          .maybeSingle();
+          .from("voice_profiles").select("style_card, card_override, extracted_at")
+          .is("user_id", null).maybeSingle();
         houseCard = hc;
       }
 

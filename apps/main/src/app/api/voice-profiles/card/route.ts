@@ -1,11 +1,7 @@
 // #903 — Save a TA's manual override of their extracted voice card.
 //
-// The card_override field lets the TA write their own style description
-// instead of (or alongside) the auto-extracted card. Phase 3 drafting
-// will prefer card_override when it exists.
-//
-// Upserts the voice_profiles row — if extraction hasn't run yet, this
-// creates a profile row with an empty style_card and the override text.
+// PATCH updates only card_override — does NOT touch style_card or samples_hash.
+// If no profile row exists yet (extraction hasn't run), inserts a minimal row.
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
@@ -44,19 +40,36 @@ export async function PATCH(req: Request): Promise<Response> {
 
     const targetUserId = isHouseStyle ? null : publicUserId;
 
-    await safeAwait(
-      db.from("voice_profiles").upsert(
-        {
+    // Load the existing row to decide insert vs update.
+    // .is() only works for null/boolean — use .eq() for non-null user_id.
+    const existingBase = db.from("voice_profiles").select("id");
+    const { data: existing, error: existErr } = await (
+      targetUserId === null
+        ? existingBase.is("user_id", null)
+        : existingBase.eq("user_id", targetUserId)
+    ).maybeSingle();
+    if (existErr) return Response.json({ error: existErr.message }, { status: 500 });
+
+    const existingId = (existing as { id: string } | null)?.id ?? null;
+
+    if (existingId) {
+      // Only update card_override — preserve the extracted style_card.
+      await safeAwait(
+        db.from("voice_profiles").update({ card_override: override }).eq("id", existingId),
+        "voice_profiles.update.card_override",
+      );
+    } else {
+      await safeAwait(
+        db.from("voice_profiles").insert({
           tenant_id: ctx.tenant_id,
           user_id: targetUserId,
           style_card: {},
           samples_hash: "",
           card_override: override,
-        },
-        { onConflict: "tenant_id,user_id" },
-      ),
-      "voice_profiles.upsert.card_override",
-    );
+        }),
+        "voice_profiles.insert.card_override",
+      );
+    }
 
     return Response.json({ ok: true });
   } catch (err) {

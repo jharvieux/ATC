@@ -61,11 +61,9 @@ export const extractVoiceProfile = inngest.createFunction(
     }
 
     // Load the samples for this (tenant, user_id) pair.
-    const samplesQ = db
-      .from("voice_samples")
-      .select("body")
-      .is("user_id", user_id)
-      .order("created_at", { ascending: true });
+    // .is() only works for null/boolean — use .eq() for non-null user_id.
+    const samplesBase = db.from("voice_samples").select("body").order("created_at", { ascending: true });
+    const samplesQ = user_id === null ? samplesBase.is("user_id", null) : samplesBase.eq("user_id", user_id);
     const { data: rows, error: samplesErr } = await samplesQ;
     if (samplesErr) throw new Error(`voice_samples fetch failed: ${samplesErr.message}`);
 
@@ -85,18 +83,17 @@ export const extractVoiceProfile = inngest.createFunction(
     const sorted = [...samples].sort();
     const hash = createHash("sha256").update(sorted.join("\n---\n")).digest("hex");
 
-    const { data: existing, error: existErr } = await svc
-      .from("voice_profiles")
-      .select("samples_hash")
-      .eq("tenant_id", tenant_id)
-      .is("user_id", user_id)
-      .maybeSingle();
+    const existingBase = svc.from("voice_profiles").select("id, samples_hash").eq("tenant_id", tenant_id);
+    const { data: existing, error: existErr } = await (
+      user_id === null ? existingBase.is("user_id", null) : existingBase.eq("user_id", user_id)
+    ).maybeSingle();
     if (existErr) throw new Error(`voice_profiles fetch failed: ${existErr.message}`);
 
     const existingHash = (existing as { samples_hash: string } | null)?.samples_hash ?? "";
     if (hash === existingHash) {
       return { status: "unchanged" };
     }
+    const existingId = (existing as { id: string } | null)?.id ?? null;
 
     // Extract style card via Haiku — cheap classification task.
     const userContent = `Here are ${samples.length} email sample(s) from this travel agent:\n\n${
@@ -118,25 +115,29 @@ export const extractVoiceProfile = inngest.createFunction(
       const clean = result.text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
       style_card = JSON.parse(clean) as Record<string, unknown>;
     } catch {
-      // Non-JSON response is unexpected but shouldn't crash the job.
-      // Store as raw text so the TA can see something.
       style_card = { raw: result.text };
     }
 
-    // Upsert the profile row.
-    await safeAwait(
-      svc.from("voice_profiles").upsert(
-        {
-          tenant_id,
-          user_id,
-          style_card,
-          samples_hash: hash,
-          extracted_at: new Date().toISOString(),
-        },
-        { onConflict: "tenant_id,user_id" },
-      ),
-      "voice_profiles.upsert",
-    );
+    // Insert-or-update the profile row. We avoid upsert with onConflict because
+    // voice_profiles uniqueness is enforced by partial indexes (not a standard
+    // column-list unique constraint), which PostgREST's onConflict can't target.
+    const now = new Date().toISOString();
+    if (existingId) {
+      // d091-allow:service-role-tenant — update is scoped to .eq("id", existingId) which
+      // was loaded with .eq("tenant_id", tenant_id) from event.data above (event scope contract).
+      await safeAwait(
+        svc.from("voice_profiles")
+          .update({ style_card, samples_hash: hash, extracted_at: now })
+          .eq("id", existingId).eq("tenant_id", tenant_id),
+        "voice_profiles.update",
+      );
+    } else {
+      await safeAwait(
+        svc.from("voice_profiles")
+          .insert({ tenant_id, user_id, style_card, samples_hash: hash, extracted_at: now }),
+        "voice_profiles.insert",
+      );
+    }
 
     return { status: "extracted", samples: samples.length };
   },

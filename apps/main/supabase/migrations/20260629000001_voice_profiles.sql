@@ -11,16 +11,15 @@
 --     content_hash covers the sample bodies; unchanged samples never re-bill.
 --     user_id=NULL = house style card (mirrors voice_samples scope).
 --
--- Deletions: service-role only (RLS DELETE=false). The API deletes via the
--- service-role client after asserting ownership in app code (D-091 two-layer).
+-- Uniqueness for voice_profiles: two partial unique indexes (one per scope)
+-- rather than an expression PK, so app code can use explicit insert-or-update
+-- without hitting PostgREST's onConflict expression-index limitations.
 
 -- ─── voice_samples ───────────────────────────────────────────────────────────
 
 CREATE TABLE public.voice_samples (
   id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id    TEXT        NOT NULL,
-  -- NULL = tenant house-style sample set by the owner.
-  -- Non-null = individual TA's personal sample.
   user_id      TEXT        NULL,
   body         TEXT        NOT NULL CHECK (char_length(body) BETWEEN 50 AND 8000),
   source_label TEXT        NOT NULL DEFAULT '',
@@ -37,7 +36,6 @@ CREATE POLICY "voice_samples_insert_policy" ON public.voice_samples
   FOR INSERT TO PUBLIC
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
--- Deletes go through the API which uses service-role after app-layer ownership check.
 CREATE POLICY "voice_samples_delete_policy" ON public.voice_samples
   FOR DELETE TO PUBLIC
   USING (false);
@@ -52,28 +50,32 @@ CREATE INDEX voice_samples_tenant_user_idx
 
 COMMENT ON TABLE public.voice_samples IS
   'Email excerpts pasted by TAs for voice-profile extraction (#903). '
-  'user_id=NULL = tenant house-style (set by owner). Populated via the '
-  'settings UI; deletion is service-role only.';
+  'user_id=NULL = tenant house-style (set by owner). Deletion is service-role only.';
 
 -- ─── voice_profiles ──────────────────────────────────────────────────────────
 
 CREATE TABLE public.voice_profiles (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id     TEXT        NOT NULL,
-  -- NULL = tenant house-style profile. Non-null = individual TA's card.
   user_id       TEXT        NULL,
-  -- Compact style card produced by the extraction job (JSONB for flexibility).
-  -- Shape: { greeting, signoff, formality, rhythm, signature_phrases, emoji_habits, bad_news }
   style_card    JSONB       NOT NULL DEFAULT '{}',
-  -- SHA-256 hex of the sorted sample bodies at extraction time. If the samples
-  -- haven't changed, the extraction job skips the Anthropic call.
   samples_hash  TEXT        NOT NULL DEFAULT '',
   extracted_at  TIMESTAMPTZ NULL,
-  -- Allows the TA to override the extracted card with a free-text summary.
-  card_override TEXT        NULL,
-  PRIMARY KEY (tenant_id, COALESCE(user_id, ''))
+  card_override TEXT        NULL
 );
 
 ALTER TABLE public.voice_profiles ENABLE ROW LEVEL SECURITY;
+
+-- Two partial unique indexes enforce one-per-scope:
+--   Per-user rows: unique (tenant_id, user_id) where user_id IS NOT NULL
+--   House-style:   unique (tenant_id) where user_id IS NULL
+CREATE UNIQUE INDEX voice_profiles_per_user_ux
+  ON public.voice_profiles (tenant_id, user_id)
+  WHERE user_id IS NOT NULL;
+
+CREATE UNIQUE INDEX voice_profiles_house_ux
+  ON public.voice_profiles (tenant_id)
+  WHERE user_id IS NULL;
 
 CREATE POLICY "voice_profiles_select_policy" ON public.voice_profiles
   FOR SELECT TO PUBLIC
@@ -94,10 +96,9 @@ CREATE POLICY "voice_profiles_delete_policy" ON public.voice_profiles
 
 COMMENT ON TABLE public.voice_profiles IS
   'Extracted writing-style card for a TA or tenant house style (#903). '
-  'Keyed by (tenant_id, user_id) — user_id=NULL means house style. '
-  'The extraction Inngest job populates style_card + samples_hash. '
-  'card_override lets the TA correct the auto-extracted card.';
+  'user_id=NULL = house style. Extraction Inngest job populates style_card + '
+  'samples_hash. card_override lets the TA correct the auto-extracted card.';
 
 COMMENT ON COLUMN public.voice_profiles.samples_hash IS
   'SHA-256 hex of sorted sample body text at last extraction. '
-  'Used by the extraction job to skip unchanged sample sets.';
+  'Used to skip re-extraction when samples are unchanged.';
