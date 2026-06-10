@@ -115,19 +115,26 @@ export const POST = withServiceAuth(async (req, ctx) => {
     const chunkIds = chunkRows.map((c) => c.id as string);
     const assetIdsByChunk = new Map<string, string[]>();
     if (chunkIds.length > 0) {
-      const { data: assetLinks } = await db
+      // #743: two-layer tenant isolation — the .or() is layer 1; the JS filter
+      // below is layer 2 (defense-in-depth matching the pattern used in
+      // fetchItineraryLookupChunks / fetchShipLookupChunks).
+      // ctx.tenant_id is a validated UUID (RetrieveRequestSchema), safe to interpolate.
+      const { data: assetLinks, error: assetLinksErr } = await db
         .from("knowledge_chunks")
-        .select("id, related_asset_ids, scope")
-        .in("id", chunkIds);
-      for (const row of (assetLinks ?? []) as Array<{ id: string; related_asset_ids: string[] | null; scope: "global" | "tenant" }>) {
+        .select("id, related_asset_ids, scope, tenant_id")
+        .in("id", chunkIds)
+        .or(`scope.eq.global,tenant_id.eq.${ctx.tenant_id}`);
+      if (assetLinksErr) throw new Error(`knowledge_chunks re-query failed: ${assetLinksErr.message}`);
+      for (const row of (assetLinks ?? []) as Array<{ id: string; related_asset_ids: string[] | null; scope: "global" | "tenant"; tenant_id: string | null }>) {
+        if (row.scope === "tenant" && row.tenant_id !== ctx.tenant_id) continue;
         assetIdsByChunk.set(row.id, row.related_asset_ids ?? []);
       }
     }
 
     // Collect union of all asset IDs across chunks and batch-fetch metadata.
     // Scope filter at retrieve time: a global chunk surfaces only global assets,
-    // a tenant chunk only its own tenant's assets (matches ingest invariant —
-    // defense-in-depth in case a row got upserted out of band).
+    // a tenant chunk only its own tenant's assets. Both the .or() DB filter and
+    // the JS continue above enforce this — see #743.
     const allAssetIds = new Set<string>();
     for (const ids of assetIdsByChunk.values()) for (const id of ids) allAssetIds.add(id);
 

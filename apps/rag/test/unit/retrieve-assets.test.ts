@@ -31,7 +31,7 @@ vi.mock("@/lib/embeddings/openai", () => ({
 
 // Mock DB — pluggable per test via these module-level variables.
 interface ChunkRpcRow { id: string; content: string; content_hash: string; scope: string; tenant_id: string | null; category: string; cruise_line_or_supplier: string | null; ship_or_property: string | null; destination: string | null; agent_scope: unknown; tags: unknown; source_type: string; source_url: string | null; source_domain: string | null; ingested_at: string; expires_at: string | null; contains_pricing: boolean; sell_by_at: string | null; match_score: number; authority_score: number; recency_score: number; composite_confidence: number; authority_auto: number; authority_manual_override: number | null; }
-interface AssetLinkRow { id: string; related_asset_ids: string[]; scope: "global" | "tenant" }
+interface AssetLinkRow { id: string; related_asset_ids: string[]; scope: "global" | "tenant"; tenant_id: string | null }
 interface AssetRow { asset_id: string; kind: string; entity_type: string; entity_id: string; scope: "global" | "tenant"; tenant_id: string | null; image_url: string; source_page_url: string; attribution: string; caption: string | null; width_px: number | null; height_px: number | null; }
 
 let rpcChunks: ChunkRpcRow[] = [];
@@ -40,6 +40,8 @@ let assetRows: AssetRow[] = [];
 // Captures the .or() filter the rag_media_assets query applies, so a test can
 // assert the DB-layer tenant predicate is present (D-091 #395).
 let capturedAssetOrFilter: string | null = null;
+// #743: captures the .or() filter the knowledge_chunks re-query applies.
+let capturedChunkOrFilter: string | null = null;
 
 vi.mock("@/lib/db/supabase", () => ({
   getRagDb: () => ({
@@ -57,6 +59,7 @@ vi.mock("@/lib/db/supabase", () => ({
             in: () => builder,
             or: (filter: string) => {
               if (table === "rag_media_assets") capturedAssetOrFilter = filter;
+              if (table === "knowledge_chunks") capturedChunkOrFilter = filter;
               return builder;
             },
             then: (resolve: (v: typeof result) => unknown) => resolve(result),
@@ -121,6 +124,7 @@ beforeEach(() => {
   assetLinks = [];
   assetRows = [];
   capturedAssetOrFilter = null;
+  capturedChunkOrFilter = null;
   currentCtx = { scope: "read", service_identifier: "tenant-app", user_id: USER_ID, tenant_id: TENANT_ID };
 });
 afterEach(() => { vi.clearAllMocks(); });
@@ -128,7 +132,7 @@ afterEach(() => { vi.clearAllMocks(); });
 describe("POST /api/retrieve — asset hydration (BP38)", () => {
   it("scenario 1: chunks without assets → empty assets + empty related_asset_ids", async () => {
     rpcChunks = [rpcChunk({ id: "c1" })];
-    assetLinks = [{ id: "c1", related_asset_ids: [], scope: "global" }];
+    assetLinks = [{ id: "c1", related_asset_ids: [], scope: "global", tenant_id: null }];
 
     const res = await POST(makeReq(), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
@@ -141,8 +145,8 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
   it("scenario 2: one asset per chunk → assets array has one entry per unique asset", async () => {
     rpcChunks = [rpcChunk({ id: "c1" }), rpcChunk({ id: "c2" })];
     assetLinks = [
-      { id: "c1", related_asset_ids: ["a-1111-1111-1111-111111111111"], scope: "global" },
-      { id: "c2", related_asset_ids: ["a-2222-2222-2222-222222222222"], scope: "global" },
+      { id: "c1", related_asset_ids: ["a-1111-1111-1111-111111111111"], scope: "global", tenant_id: null },
+      { id: "c2", related_asset_ids: ["a-2222-2222-2222-222222222222"], scope: "global", tenant_id: null },
     ];
     assetRows = [
       { asset_id: "a-1111-1111-1111-111111111111", kind: "deck_plan", entity_type: "deck", entity_id: "e1", scope: "global", tenant_id: null, image_url: "https://www.cruisemapper.com/x.jpg", source_page_url: "https://www.cruisemapper.com/p1", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
@@ -160,8 +164,8 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     rpcChunks = [rpcChunk({ id: "c1" }), rpcChunk({ id: "c2" })];
     const shared = "a-9999-9999-9999-999999999999";
     assetLinks = [
-      { id: "c1", related_asset_ids: [shared], scope: "global" },
-      { id: "c2", related_asset_ids: [shared], scope: "global" },
+      { id: "c1", related_asset_ids: [shared], scope: "global", tenant_id: null },
+      { id: "c2", related_asset_ids: [shared], scope: "global", tenant_id: null },
     ];
     assetRows = [
       { asset_id: shared, kind: "deck_plan", entity_type: "deck", entity_id: "e9", scope: "global", tenant_id: null, image_url: "https://www.cruisemapper.com/shared.jpg", source_page_url: "https://www.cruisemapper.com/p", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
@@ -178,7 +182,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
   it("scenario 4: chunk references a missing asset → chunk returned, ID dropped", async () => {
     rpcChunks = [rpcChunk({ id: "c1" })];
     assetLinks = [
-      { id: "c1", related_asset_ids: ["a-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "a-bbbb-bbbb-bbbb-bbbbbbbbbbbb"], scope: "global" },
+      { id: "c1", related_asset_ids: ["a-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "a-bbbb-bbbb-bbbb-bbbbbbbbbbbb"], scope: "global", tenant_id: null },
     ];
     assetRows = [
       // Only the first asset exists; the second was deleted between ingest and retrieve.
@@ -202,7 +206,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
   it("scope filter: tenant-scope asset belonging to another tenant is dropped", async () => {
     rpcChunks = [rpcChunk({ id: "c1" })];
     const offlimits = "a-7777-7777-7777-777777777777";
-    assetLinks = [{ id: "c1", related_asset_ids: [offlimits], scope: "global" }];
+    assetLinks = [{ id: "c1", related_asset_ids: [offlimits], scope: "global", tenant_id: null }];
     assetRows = [
       { asset_id: offlimits, kind: "deck_plan", entity_type: "deck", entity_id: "x", scope: "tenant", tenant_id: "11111111-1111-1111-1111-111111111111", image_url: "https://www.cruisemapper.com/z.jpg", source_page_url: "https://www.cruisemapper.com/p", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
     ];
@@ -219,7 +223,7 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     // check (the exact single-layer pattern D-091 #395 flags) fails here.
     rpcChunks = [rpcChunk({ id: "c1" })];
     const assetId = "a-1111-1111-1111-111111111111";
-    assetLinks = [{ id: "c1", related_asset_ids: [assetId], scope: "global" }];
+    assetLinks = [{ id: "c1", related_asset_ids: [assetId], scope: "global", tenant_id: null }];
     assetRows = [
       { asset_id: assetId, kind: "deck_plan", entity_type: "deck", entity_id: "e1", scope: "global", tenant_id: null, image_url: "https://www.cruisemapper.com/x.jpg", source_page_url: "https://www.cruisemapper.com/p", attribution: "Image: CruiseMapper", caption: null, width_px: 800, height_px: 600 },
     ];
@@ -227,5 +231,37 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     const res = await POST(makeReq(), { params: Promise.resolve({}) });
     expect(res.status).toBe(200);
     expect(capturedAssetOrFilter).toBe(`scope.eq.global,tenant_id.eq.${TENANT_ID}`);
+  });
+
+  it("#743 DB-layer isolation: knowledge_chunks re-query carries scope/tenant .or() predicate", async () => {
+    // Layer 1 of the two-layer isolation fix for #743: the DB query must include
+    // the scope/tenant filter so another tenant's chunks can't be returned by the
+    // service-role re-query even if they share a chunk ID.
+    rpcChunks = [rpcChunk({ id: "c1" })];
+    assetLinks = [{ id: "c1", related_asset_ids: [], scope: "global", tenant_id: null }];
+
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+    expect(capturedChunkOrFilter).toBe(`scope.eq.global,tenant_id.eq.${TENANT_ID}`);
+  });
+
+  it("#743 JS-layer isolation: tenant-scope chunk belonging to another tenant is excluded from assetIdsByChunk", async () => {
+    // Layer 2: even if the .or() were somehow absent, the JS continue guard
+    // keeps another tenant's chunk data out of the response.
+    rpcChunks = [rpcChunk({ id: "c1" })];
+    const otherTenant = "22222222-2222-2222-2222-222222222222";
+    const crossTenantAsset = "a-cccc-cccc-cccc-cccccccccccc";
+    assetLinks = [{
+      id: "c1",
+      related_asset_ids: [crossTenantAsset],
+      scope: "tenant",
+      tenant_id: otherTenant,
+    }];
+    assetRows = [];
+
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
+    const json = (await res.json()) as { chunks: Array<{ related_asset_ids: string[] }>; assets: Array<unknown> };
+    expect(json.chunks[0]!.related_asset_ids).toEqual([]);
+    expect(json.assets).toEqual([]);
   });
 });
