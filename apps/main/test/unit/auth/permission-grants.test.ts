@@ -173,6 +173,8 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["help_session", "update"],
   ["notifications", "write"],
   ["rag_submissions", "create"],
+  // #902 — TA-mode conversation list (agent + owner; viewer denied by this matrix)
+  ["ta_chat", "list"],
 ];
 
 const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
