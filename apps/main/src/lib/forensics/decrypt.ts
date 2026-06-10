@@ -96,9 +96,23 @@ export async function decryptForensicsSnapshot(snapshot_id: string): Promise<{
   if (tag.length !== TAG_BYTES) {
     throw new Error(`forensics_decrypt_invalid_tag_length: expected ${TAG_BYTES} bytes, got ${tag.length}`);
   }
-  const decipher = createDecipheriv(ALGORITHM, Buffer.from(keyBase64, "base64"), iv, { authTagLength: TAG_BYTES });
-  decipher.setAuthTag(tag);
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  const keyBuf = Buffer.from(keyBase64, "base64");
+
+  // #739: try AAD-bound path first (snapshots captured after the AAD fix).
+  // Fall back to legacy no-AAD for snapshots captured before this change.
+  let rawPlaintext: Buffer;
+  try {
+    const d = createDecipheriv(ALGORITHM, keyBuf, iv, { authTagLength: TAG_BYTES });
+    d.setAAD(Buffer.from(row.encryption_key_id, "utf8"));
+    d.setAuthTag(tag);
+    rawPlaintext = Buffer.concat([d.update(ciphertext), d.final()]);
+  } catch {
+    // Legacy path: snapshot was captured without AAD binding.
+    const d = createDecipheriv(ALGORITHM, keyBuf, iv, { authTagLength: TAG_BYTES });
+    d.setAuthTag(tag);
+    rawPlaintext = Buffer.concat([d.update(ciphertext), d.final()]);
+  }
+  const plaintext = rawPlaintext.toString("utf8");
   const payload = JSON.parse(plaintext);
 
   // Update access bookkeeping. last_accessed_at first, then read-then-write
