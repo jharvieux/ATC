@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-199 — 2026-06-10 — #904 Phase 3 draft composer shipped (PR #922): client-side parsing, code-based suggestion, draft-only contract
+
+**Decision/shipped:** D-193's payoff feature. Key design calls (docs/byo-agents/904-draft-composer-design.md):
+1. **All email parsing is client-side** — postal-mime (.eml) + @kenjiuno/msgreader + decompressrtf (.msg), operator-approved runtime deps, dynamically imported; raw emails never leave the browser; only parsed fields hit `/api/draft-reply`.
+2. **Persona suggestion is deterministic code** (quizTag scorer, ≥2 distinct hits, ambiguous → null), a documented deviation from #904's Haiku sketch — D-193 only requires "cheap classification with TA confirming"; code-over-model per CLAUDE.md. Upgrade path preserved.
+3. **Greeting names are derived, never guessed** — role accounts (info@/noreply@/bookings@), digit-bearing local-parts, and unparseable Froms all yield the literal `[name]` placeholder.
+4. **Draft-only is a pinned invariant** — a grep-level test asserts the route exports only POST and imports no send module.
+5. **Contract change:** `RetrieveRequest.conversation_id` now nullable (drafts persist no conversation; a synthetic UUID would FK-violate `ai_call_log` — #850-class). Until atc-rag is redeployed, draft turns degrade gracefully to ungrounded (contract_invalid alert); chat is unaffected (still sends real UUIDs). **Rag deploy = prod action → operator gate.**
+6. Spend: purpose `draft_reply` (soft-tier downgradeable), fail-closed 100/day/member cap counted from ai_call_log.
+
+**Artifacts:** PR #922 (Opus-audited clean ×2), genuine Outlook .msg fixture (Apache-2.0, msgreader suite). Related: [[D-193]], [[D-194]], #890 (future send-on-behalf).
+
+---
+
+## D-198 — 2026-06-10 — #908 shipped (PR #921): conversation member-isolation; the real exposure was app-layer (tenantClient is service-role)
+
+**Pivotal finding:** `tenantClient` is the **service-role** client behind a tenant-filter proxy — RLS never evaluates on API routes. So #908's live exposure was app-layer-only, and **wider than the issue**: escalate and persona-switch accepted any conversation id in the tenant (any customer could escalate or persona-switch anyone's thread); the by-id route exposed every customer transcript tenant-wide.
+
+**Fix (two layers, one predicate):** owner OR (staff ∧ audience='customer'); TA threads own-only even for tenant_owner ([[D-195]]).
+- App: `guardConversationAccess` (supersedes #902's guardTaThread) on [id] GET/PATCH, escalate, persona-switch — 404 never 403, fail-closed, `status='active'` parity with the SQL helper.
+- DB: `auth_user_can_access_conversation` SECURITY DEFINER helper + full policy rewrite on conversations/messages; INSERT pins user_id to the caller. Applied to prod **with operator approval**; snapshots regenerated from live.
+
+**SQL trap caught in review:** a bare `tenant_id` inside a policy subquery binds to the inner alias (tautology) — outer refs must be table-qualified (`conversations.tenant_id`).
+
+**Ops lessons hardened this session:** (a) every merge makes queued PRs BEHIND → the "merge train" pattern (update-branch → settle → repost audit comments → rerun audit check → merge) is now the standard, scripted in a Monitor; (b) migration PRs must regenerate BOTH db snapshots, and snapshot regen requires the migration live on prod first → operator-gated mid-PR.
+
+**Artifacts:** PR #921, docs/security/908-conversation-member-isolation.md, migration 20260629000003. Related: [[D-196]], #913.
+
+---
+
 ## D-197 — 2026-06-10 — Sonnet build session: #913, #903, #881 built; #906 and #866 also shipped
 
 **Shipped (Sonnet build session, 2026-06-10):**
