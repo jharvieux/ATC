@@ -9,11 +9,14 @@
 // in state here (e.g., tier upgrade pushes "hard" back to "ok"). The
 // monotonic rule only applies inside a stable threshold regime.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { resolveThresholds, type AbuseDimension } from "@/lib/abuse/thresholds";
 import type { TenantRevenueSnapshot } from "@/lib/abuse/revenue";
 import { safeAwait } from "@/lib/db/safe-mutation";
+
+const SubscriptionChangedPayloadSchema = z.object({ tenant_id: z.string().optional() });
 
 const TIER_CODES = new Set([
   "byo_research", "byo_professional", "byo_agency",
@@ -47,7 +50,7 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
     triggers: [{ event: "tenant.subscription_changed" }],
   },
   async ({ event }) => {
-    const tenant_id = (event.data as { tenant_id?: string })?.tenant_id;
+    const { tenant_id } = SubscriptionChangedPayloadSchema.parse(event.data);
     if (!tenant_id) return { skipped: "missing-tenant-id" };
 
     return withPlatformAdminAudit(

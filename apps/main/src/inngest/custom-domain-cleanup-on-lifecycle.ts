@@ -2,15 +2,16 @@
 // tenant.terminated / tenant.downgraded_from_agency / tenant.custom_domain_removed_by_tenant.
 // Idempotent — if domain already unbound, exits cleanly.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { vercelRemoveDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-interface LifecyclePayload {
-  tenant_id: string;
-  reason?: string;
-}
+const LifecyclePayloadSchema = z.object({
+  tenant_id: z.string(),
+  reason: z.string().optional(),
+});
 
 async function unbindCustomDomain(tenantId: string, reason: string): Promise<{ status: string }> {
   const db = createServiceRoleClient();
@@ -58,24 +59,36 @@ async function unbindCustomDomain(tenantId: string, reason: string): Promise<{ s
 export const customDomainCleanupOnSuspend = inngest.createFunction(
   { id: "custom-domain-cleanup-on-suspend", triggers: [{ event: "tenant.suspended" }] },
   async ({ event }) => {
-    const { tenant_id } = event.data as LifecyclePayload;
-    return unbindCustomDomain(tenant_id, "suspended");
+    const parsed = LifecyclePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[custom-domain-cleanup-on-suspend] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    return unbindCustomDomain(parsed.data.tenant_id, "suspended");
   },
 );
 
 export const customDomainCleanupOnTerminated = inngest.createFunction(
   { id: "custom-domain-cleanup-on-terminated", triggers: [{ event: "tenant.terminated" }] },
   async ({ event }) => {
-    const { tenant_id } = event.data as LifecyclePayload;
-    return unbindCustomDomain(tenant_id, "terminated");
+    const parsed = LifecyclePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[custom-domain-cleanup-on-terminated] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    return unbindCustomDomain(parsed.data.tenant_id, "terminated");
   },
 );
 
 export const customDomainCleanupOnDowngrade = inngest.createFunction(
   { id: "custom-domain-cleanup-on-downgrade", triggers: [{ event: "tenant.downgraded_from_agency" }] },
   async ({ event }) => {
-    const { tenant_id } = event.data as LifecyclePayload;
-    return unbindCustomDomain(tenant_id, "downgraded_from_agency");
+    const parsed = LifecyclePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[custom-domain-cleanup-on-downgrade] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    return unbindCustomDomain(parsed.data.tenant_id, "downgraded_from_agency");
   },
 );
 
@@ -85,7 +98,11 @@ export const customDomainCleanupOnTenantRemoval = inngest.createFunction(
     triggers: [{ event: "tenant.custom_domain_removed_by_tenant" }, { event: "tenant.custom_domain_removed_by_lifecycle" }],
   },
   async ({ event }) => {
-    const { tenant_id, reason } = event.data as LifecyclePayload;
-    return unbindCustomDomain(tenant_id, reason ?? "tenant_initiated");
+    const parsed = LifecyclePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[custom-domain-cleanup-on-tenant-removal] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    return unbindCustomDomain(parsed.data.tenant_id, parsed.data.reason ?? "tenant_initiated");
   },
 );

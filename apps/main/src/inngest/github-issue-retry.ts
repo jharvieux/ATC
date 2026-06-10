@@ -26,6 +26,7 @@
  * event being scheduled.
  */
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
 import { tenantClient } from "@/lib/db/tenant-client";
@@ -50,13 +51,16 @@ const BACKOFF_DELAYS_MS = [
   24 * 60 * 60_000, // 24h
 ] as const;
 
-interface SubmissionRetryPayload {
-  tenant_id: string;
-  submission_id: string;            // bug_submissions.id or feature_requests.id
-  submission_kind: "bug" | "feature";
-  input: BugSubmissionInput | FeatureRequestInput;
-  attempt: number;                  // 0-indexed; this attempt's index in BACKOFF_DELAYS_MS
-}
+// input is z.unknown() — BugSubmissionInput/FeatureRequestInput are complex
+// nested types validated downstream in createBugIssue / createFeatureIssue.
+const SubmissionRetryPayloadSchema = z.object({
+  tenant_id: z.string(),
+  submission_id: z.string(),
+  submission_kind: z.enum(["bug", "feature"]),
+  input: z.unknown(),
+  attempt: z.number(),
+});
+type SubmissionRetryPayload = z.infer<typeof SubmissionRetryPayloadSchema>;
 
 async function setSubmissionState(
   ctx: Awaited<ReturnType<typeof tenantContextFromInngestEvent>>,
@@ -86,7 +90,12 @@ export const githubIssueRetry = inngest.createFunction(
     triggers: [{ event: "help.github_issue_creation_failed" }],
   },
   async ({ event, step }) => {
-    const data = event.data as SubmissionRetryPayload;
+    const parsed = SubmissionRetryPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[github-issue-retry] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const data: SubmissionRetryPayload = parsed.data;
     const ctx = tenantContextFromInngestEvent(event);
     const attempt = data.attempt ?? 0;
     if (attempt >= BACKOFF_DELAYS_MS.length) {

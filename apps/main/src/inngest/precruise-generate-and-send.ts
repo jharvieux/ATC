@@ -16,6 +16,7 @@
 // content.
 
 import * as React from "react";
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
@@ -41,6 +42,28 @@ const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
 type Phase = "t_90" | "t_30" | "t_7" | "t_1";
 
+const PhaseEnum = z.enum(["t_90", "t_30", "t_7", "t_1"]);
+
+const PrecruiseEmailDuePayloadSchema = z.object({
+  booking_id: z.string(),
+  tenant_id: z.string(),
+  phase: PhaseEnum,
+  via: z.enum(["direct", "batched"]).optional(),
+});
+
+const PrecruiseBatchResultPayloadSchema = z.object({
+  request_id: z.string(),
+  tenant_id: z.string(),
+  result_text: z.string(),
+  caller_metadata: z.object({
+    booking_id: z.string(),
+    tenant_id: z.string(),
+    phase: PhaseEnum,
+    email_ctx_id: z.string().nullable(),
+    companion_page_url: z.string(),
+  }).nullable(),
+});
+
 async function haikuGenerate(
   tenant_id: string,
   systemPrompt: string,
@@ -65,12 +88,12 @@ async function haikuGenerate(
 export const precruiseGenerateAndSend = inngest.createFunction(
   { id: "precruise-generate-and-send", triggers: [{ event: "precruise/email.due" }] },
   async ({ event }) => {
-    const { booking_id, tenant_id, phase, via } = event.data as {
-      booking_id: string;
-      tenant_id: string;
-      phase: Phase;
-      via?: "direct" | "batched";
-    };
+    const parsed = PrecruiseEmailDuePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[precruise-generate-and-send] invalid event payload: %s", parsed.error.message);
+      return;
+    }
+    const { booking_id, tenant_id, phase, via } = parsed.data;
 
     const svc = createServiceRoleClient();
 
@@ -172,18 +195,12 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     triggers: [{ event: "ai.batch_request.completed.precruise_generation" }],
   },
   async ({ event }) => {
-    const { request_id, tenant_id, result_text, caller_metadata } = event.data as {
-      request_id: string;
-      tenant_id: string;
-      result_text: string;
-      caller_metadata: {
-        booking_id: string;
-        tenant_id: string;
-        phase: Phase;
-        email_ctx_id: string | null;
-        companion_page_url: string;
-      } | null;
-    };
+    const parsed = PrecruiseBatchResultPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[precruise:batch-result] invalid event payload: %s", parsed.error.message);
+      return;
+    }
+    const { request_id, tenant_id, result_text, caller_metadata } = parsed.data;
     if (!caller_metadata) {
       console.error(`[precruise:batch-result] missing caller_metadata for request ${request_id}`);
       return;

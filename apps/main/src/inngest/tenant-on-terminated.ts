@@ -16,18 +16,26 @@
 //
 // The RAG-side update is performed via a privileged POST to the RAG service admin endpoint.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-interface TenantTerminationScheduledPayload {
-  tenant_id: string;
-  kind: "voluntary" | "involuntary_content" | "involuntary_other";
-  terminate_at: string;
-  admin_user_id: string;
-}
+const TerminationKindEnum = z.enum(["voluntary", "involuntary_content", "involuntary_other"]);
+
+const TenantTerminationScheduledPayloadSchema = z.object({
+  tenant_id: z.string(),
+  kind: TerminationKindEnum,
+  terminate_at: z.string(),
+  admin_user_id: z.string(),
+});
+
+const TenantTerminatedPayloadSchema = z.object({
+  tenant_id: z.string(),
+  kind: z.string(),
+});
 
 export const tenantTerminationScheduled = inngest.createFunction(
   {
@@ -35,7 +43,12 @@ export const tenantTerminationScheduled = inngest.createFunction(
     triggers: [{ event: "tenant.termination_scheduled" }],
   },
   async ({ event }) => {
-    const { tenant_id, kind, terminate_at } = event.data as TenantTerminationScheduledPayload;
+    const parsed = TenantTerminationScheduledPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[tenant-termination-scheduled] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { tenant_id, kind, terminate_at } = parsed.data;
     const db = createServiceRoleClient();
 
     // Wait until suspension_end_at before terminating.
@@ -58,7 +71,12 @@ export const tenantOnTerminatedSideEffects = inngest.createFunction(
     triggers: [{ event: "tenant.terminated" }],
   },
   async ({ event }) => {
-    const { tenant_id, kind } = event.data as { tenant_id: string; kind: string };
+    const parsed = TenantTerminatedPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[tenant-on-terminated-side-effects] invalid event payload: %s", parsed.error.message);
+      return;
+    }
+    const { tenant_id, kind } = parsed.data;
     const db = createServiceRoleClient();
     await onTerminated(db, tenant_id, kind as "voluntary" | "involuntary_content" | "involuntary_other");
   },
