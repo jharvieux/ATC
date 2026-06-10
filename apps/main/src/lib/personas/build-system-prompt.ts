@@ -4,7 +4,7 @@
 // Layer 3: tenant addendum (agency tier only) + tone calibration + customer context
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { assemblePlatformConstraints } from "./platform-constraints";
+import { assemblePlatformConstraints, TA_MEMBER_RULES } from "./platform-constraints";
 import {
   assemblePersonaPrompt,
   PERSONA_KIND_PLATFORM_HELP,
@@ -79,7 +79,19 @@ type BuildSystemPromptOpts = {
   // when anchors are present (avoids cache churn when the model needs no
   // price guidance for a turn).
   pricing_anchors_block?: string;
+  // #902 / D-195 — who the persona is speaking to. Defaults to "customer":
+  // every existing caller produces byte-identical output. "tenant_member"
+  // swaps Layer 2's editable safety block for TA_MEMBER_RULES (trade register)
+  // and skips the tenant addendum (it's customer positioning — in TA mode the
+  // tenant IS the audience, not the addendum's target).
+  audience?: ChatAudience;
+  // #902 — PLATFORM HELP CONTEXT block from buildHelpContextBlock(). TA-mode
+  // only by construction (the chat route builds it only on the TA branch);
+  // omitted/empty → section omitted.
+  help_context_block?: string;
 };
+
+export type ChatAudience = "customer" | "tenant_member";
 
 export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<SystemPromptResult> {
   const {
@@ -92,6 +104,8 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     knowledge_block,
     displayable_assets_block,
     pricing_anchors_block,
+    audience = "customer",
+    help_context_block,
   } = opts;
 
   // Layer 1: persona base block — DB-backed with code-default fallback (D-138).
@@ -110,8 +124,16 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // Layer 2: platform constraints — code-side LEGAL_KERNEL + DB-backed editable
   // safety block (D-138). assemblePlatformConstraints prepends the kernel, so the
   // legal floor holds even when the editable block falls back to its default.
-  const { editable_block, version: safetyVersion } = await getSafetyConfig(db);
-  layers.push(`\n\n${assemblePlatformConstraints(editable_block)}`);
+  // #902: in TA mode the editable block (customer-audience safety rules) is
+  // replaced by the code-side TA register; the kernel applies in both.
+  let safetyVersion = 0;
+  if (audience === "tenant_member") {
+    layers.push(`\n\n${assemblePlatformConstraints(TA_MEMBER_RULES)}`);
+  } else {
+    const safety = await getSafetyConfig(db);
+    safetyVersion = safety.version;
+    layers.push(`\n\n${assemblePlatformConstraints(safety.editable_block)}`);
+  }
 
   // Layer 3: tenant addendum — agency tier only per §16.5 / §16.6 (BP18).
   // Reads from persona_addendums (the BP18 table); only status='approved' rows
@@ -124,7 +146,11 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // NOT be applied. Falsy / missing `kind` means a regular travel-concierge
   // persona and addendum lookup runs as before.
   let addendumVersion = 0;
-  if (persona.kind !== PERSONA_KIND_PLATFORM_HELP && AGENCY_TIERS.has(tenant_tier)) {
+  if (
+    audience !== "tenant_member" &&
+    persona.kind !== PERSONA_KIND_PLATFORM_HELP &&
+    AGENCY_TIERS.has(tenant_tier)
+  ) {
     const { data } = await db
       .from("persona_addendums")
       .select("content, updated_at, status")
@@ -160,6 +186,12 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     layers.push(`\n\n${pricing_anchors_block}`);
   }
 
+  // #902 — PLATFORM HELP CONTEXT, last of the facts blocks. The block carries
+  // its own answer-only-from-this / say-the-docs-don't-cover-it instructions.
+  if (help_context_block) {
+    layers.push(`\n\n${help_context_block}`);
+  }
+
   // Tone calibration (already substituted in layer 1, also append as a reminder)
   layers.push(`\n\nTONE CALIBRATION: ${buildToneBlock(tone_level)}`);
 
@@ -173,7 +205,10 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
   // Cache key for Anthropic prompt caching — changes when any input changes.
   // The persona/safety version suffixes fold admin edits into the cache key: an
   // edit bumps the row version, which flips the key and invalidates the cache.
-  const cacheKey = `persona:${persona_slug}:${tenant_id}:${tone_level}:${addendumVersion}:p${personaVersion}:s${safetyVersion}`;
+  // #902: the TA-mode suffix is appended only for tenant_member so the
+  // customer-mode key (and Anthropic prompt cache) is untouched.
+  const audienceSuffix = audience === "tenant_member" ? ":aud=ta" : "";
+  const cacheKey = `persona:${persona_slug}:${tenant_id}:${tone_level}:${addendumVersion}:p${personaVersion}:s${safetyVersion}${audienceSuffix}`;
 
   return { prompt, cacheKey };
 }
