@@ -77,13 +77,18 @@ export const groupReminderCadence = inngest.createFunction(
     // (CAN-SPAM footer: legal name, address, unsubscribe link). The pre-#975
     // reminder shipped bare HTML with no footer at all.
     const tenantIds = [...new Set([...groupMap.values()].map((g) => g.tenant_id))];
-    const [{ data: tenantRows }, { data: brandingRows }] = await Promise.all([
+    const [{ data: tenantRows, error: tenantErr }, { data: brandingRows, error: brandingErr }] = await Promise.all([
       svc.from("tenants").select("id, legal_name, mailing_address").in("id", tenantIds),
       svc
         .from("tenant_branding")
         .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan")
         .in("tenant_id", tenantIds),
     ]);
+    // A failed read here would silently send every reminder with the placeholder
+    // legal name and an empty address — degrading the very CAN-SPAM footer this
+    // path exists to provide. Throw so the Inngest run retries instead.
+    if (tenantErr) throw new Error(`tenants.select failed: ${tenantErr.message}`);
+    if (brandingErr) throw new Error(`tenant_branding.select failed: ${brandingErr.message}`);
     type TenantRow = { id: string; legal_name: string | null; mailing_address: string | null };
     type BrandingRow = {
       tenant_id: string;
