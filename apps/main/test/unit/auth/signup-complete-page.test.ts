@@ -8,12 +8,8 @@
 //   /api/auth/signup/complete so an invalid submit is rejected client-side
 //   with per-field messages instead of a silent no-op or a server round-trip.
 //
-// Interactive paths (201 → success screen, 401 → router.push, hidden
-// sub_host option, red-border rendering) require a browser-like environment
-// (jsdom + RTL). They are not yet covered at any layer — E2E stubs in
-// tests/e2e/onboarding.spec.ts are all test.fixme() with no body. Unit
-// coverage deferred until @testing-library/react + jsdom are added to the
-// test stack.
+// Interactive path rendering tests are in signup-complete-rendering.test.tsx
+// (jsdom environment): sub_host option absence + empty-form per-field errors.
 
 import { describe, it, expect } from "vitest";
 import { buildWorkspaceUrl, validateSignupForm } from "@/app/signup/complete/page";
