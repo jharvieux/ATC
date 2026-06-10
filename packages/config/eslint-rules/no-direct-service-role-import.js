@@ -415,6 +415,10 @@ const ALLOWED_PATH_SUFFIXES = [
   // refresh above (cross-tenant system job, per-URL Inngest steps, one audit
   // row per run). §5.4.4.
   "/inngest/refresh-cruisemapper-sailings.ts",
+  // §831 — CruiseMapper port backfill: event-triggered cross-tenant job, same
+  // shape as refresh-cruisemapper-sailings (per-URL steps, service-role for
+  // inventory reads/writes). §5.4.4.
+  "/inngest/backfill-cruisemapper-ports.ts",
 ];
 
 function endsWithAllowed(filename) {

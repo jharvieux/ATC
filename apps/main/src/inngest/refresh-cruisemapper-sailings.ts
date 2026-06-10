@@ -47,7 +47,7 @@ const MIN_SAMPLES_BEFORE_HALT = 20;
 // sec detail fetches could run one step past Vercel's 300s maxDuration →
 // FUNCTION_INVOCATION_TIMEOUT. Bounding the detail loop too caps the overshoot at
 // roughly one in-flight wave (~10-15s), so 240s stays comfortably under 300s.
-const STEP_BUDGET_MS = 240_000;
+export const STEP_BUDGET_MS = 240_000;
 
 const AUDIT_META = {
   admin_user_id: "system-cron",
@@ -299,10 +299,14 @@ async function priorShipHash(db: SupabaseClient, url: string): Promise<string | 
 // Process ONE ship page's sailing data: conditional GET → parse current sailing
 // + upcoming list → RAG + pricing cache via processSailingHtml. Returns the
 // single-URL counters the batch aggregates.
-async function processOneSailingUrl(db: SupabaseClient, url: string, deadlineMs: number = Number.POSITIVE_INFINITY): Promise<SailingUrlResult> {
+// skipHashCheck=true forces a full page fetch regardless of content_hash — used by
+// the port backfill trigger (#831) to enrich already-scheduled sailings without a
+// manual SQL hash-clear. The existing sailingDetailEnriched gate still skips sailings
+// whose ports are already recorded.
+export async function processOneSailingUrl(db: SupabaseClient, url: string, deadlineMs: number = Number.POSITIVE_INFINITY, skipHashCheck = false): Promise<SailingUrlResult> {
   const sailing = emptySailingResult();
 
-  const previousBodyHash = await priorShipHash(db, url);
+  const previousBodyHash = skipHashCheck ? undefined : await priorShipHash(db, url);
   const fetched = await fetchCruiseMapperPage(url, previousBodyHash ? { previousBodyHash } : {});
 
   if (fetched.status === "unchanged") {
