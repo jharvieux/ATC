@@ -109,6 +109,10 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   "help.customer_bug_completed":       { kind: "tenant_scoped", payload_shape: tenantScopedShape },
   "help.issue_closed":                 { kind: "tenant_scoped", payload_shape: tenantScopedShape },
 
+  // #903 — Voice-profile extraction (D-193 Phase 2, BYO dual-role personas).
+  // Event-driven; no cron (idle = free, consistent with D-192 cost posture).
+  "voice_profile.extraction_requested": { kind: "tenant_scoped", payload_shape: tenantScopedShape },
+
   // §23.4 — Open-Meteo rate-limit gate. Emitted when today's request
   // counter is at-or-over the configured daily cap. Consumed by the
   // operator-alert function (PR B).
