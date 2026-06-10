@@ -1,26 +1,28 @@
-# Session state — last updated 2026-06-10 23:30 CT
+# Session state — last updated 2026-06-10 05:35 UTC
 
-## Standing rule (operator, 2026-06-10 — in auto-memory)
-**No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous. Two approvals were granted this session: #903 voice-table GRANTs, #908 RLS policy migration.
+## Standing rule (operator, permanent)
+**No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 
-## Just completed (fable/Opus-tier session)
-- **#908 CLOSED (PR #921, D-198).** Member-level conversation isolation: app guard on 4 routes (the live hole — escalate + persona-switch had NO ownership check), RLS rewrite applied to prod with approval, snapshots regenerated. Pivotal finding: tenantClient is service-role, RLS never ran on routes.
-- **#904 SHIPPED pending merge (PR #922, D-199).** Draft composer: client-side .eml/.msg parsing (3 operator-approved deps), deterministic persona suggestion, [name]-placeholder greeting contract, fail-closed 100/day cap, draft-only pinned by test. Both Opus audits clean. Merge train running.
-- Earlier today (D-197): #913/#906/#866/#903/#881 all merged; grants-fix #920; checkpoint #919.
+## Just completed
+- Implemented #924: diff-hash audit binding in `pr-audit-section-check` (PR #925, merged)
+- Verified already-fixed issues: #792 (RAG test), #800 (viewer role default), #850 (entity extraction active)
+- Fixed #802: `payout_records.insert` now explicitly sets `currency: commission.currency` (PR #927)
+- Fixed #846: cancel route CAS update uses `safeAwaitRowCount` with narrowed `try/catch` (ROW_COUNT_MISMATCH → 409, DB error → re-throw → 500) (PR #927)
+- Added tests: `cancel.test.ts` (CAS-miss → 409, DB error → 500), `commission-split-currency.test.ts` (GBP currency forwarded)
+- Merged PR #927 (payout fixes), PR #925 (diff-hash audit)
 
 ## In flight
-- **PR #922 (#904)** on the merge-train Monitor — merges itself when green.
-- **This checkpoint PR** (D-198 + D-199 + this SESSION) — merge after #922 (doc-only).
+- Nothing in flight — clean checkpoint
 
 ## Next step
-1. **Ask operator: manual atc-rag deploy** (prod action) so draft turns get RAG grounding — until then drafts work but ungrounded (graceful degrade, alert fires). `cd apps/rag && vercel deploy --prod --yes` per the reference memory.
-2. Close out #902/#903/#904 issues if not auto-closed; BYO Phases 1–3 are now ALL shipped.
-3. Remaining backlog: #890 (inbound persona replies — the future send-on-behalf on-ramp), #885 (Playwright lightbox), #857 (operator checklist), #851 (model resilience), #898 (dependabot), #869 (stale PR — close pending operator OK).
+- Continue issue backlog: #807 (bulkFlipPendingStatus partial-flip tests), #840 (Zod validation sweep in Inngest), #875 (feedback_signal_count trigger migration), #828 (chat pricing prompt scope fix)
 
 ## Blocked on user
-- atc-rag prod deploy approval (grounded drafts).
-- #899 Vercel Hobby → Pro — blocks #894.
-- PR #869 close approval.
+- atc-rag prod deploy (blocked on operator approval per memory)
+- Issue #869 (stale checkpoint PR, blocked on user approval to close)
 
 ## Open questions
-- pr-audit-section-check vs update-branch friction: the merge-train pattern handles it, but a workflow tweak (treat merge-commit-only synchronize events as non-staling) would remove ~3 CI cycles per queued PR. Needs its own PR if wanted.
+- Issue #807: test bulkFlipPendingStatus partial-flip-on-error semantics in apps/rag
+- Issue #840: 19+ baselined `event-data-cast` Inngest handlers need Zod validation sweep
+- Issue #875: feedback_signal_count trigger migration needs psql via SUPABASE_RAG_DB_URL
+- Issue #828: chat pricing prompt scope fix
