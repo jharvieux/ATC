@@ -320,6 +320,54 @@ describe("GET /api/auth/callback", () => {
     expect(res.headers.get("set-cookie") ?? "").not.toMatch(/_ms_pending_next=/);
   });
 
+  it("#729: azure login with absent provider_token — Supabase JWT is NOT passed to Graph, email falls through to authUser.email", async () => {
+    // When Microsoft doesn't return a provider_token (rare edge case), the fix
+    // must NOT fall back to session.access_token (the Supabase JWT) and send
+    // it to the Graph API. Instead, skip the Graph call entirely.
+    mockExchange.mockResolvedValue({
+      data: {
+        session: {
+          access_token: "supabase-jwt-must-not-be-sent-to-graph",
+          provider_token: undefined, // absent — the edge case fixed by #729
+          user: {
+            id: "auth-user-nopt",
+            email: "alice@corp.com", // email already available from OAuth claims
+            app_metadata: { provider: "azure" },
+          },
+        },
+      },
+      error: null,
+    });
+
+    const res = await get("?code=abc");
+    expect(mockRecover).not.toHaveBeenCalled(); // Graph call must NOT fire
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/"); // email present → normal redirect
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert.mock.calls[0]?.[0]).toMatchObject({ email: "alice@corp.com" });
+  });
+
+  it("#729: azure login with absent provider_token AND null email — bounces to email-prompt, Supabase JWT still not used", async () => {
+    mockExchange.mockResolvedValue({
+      data: {
+        session: {
+          access_token: "supabase-jwt-must-not-be-sent-to-graph",
+          provider_token: undefined,
+          user: {
+            id: "auth-user-nopt-noemail",
+            email: null, // no email from OAuth claims either
+            app_metadata: { provider: "azure" },
+          },
+        },
+      },
+      error: null,
+    });
+
+    const res = await get("?code=abc");
+    expect(mockRecover).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/signup/email-prompt");
+  });
+
   it("fails loud: a DB error on the membership upsert throws instead of redirecting to success", async () => {
     mockUpsert.mockResolvedValue({
       data: null,
