@@ -426,6 +426,14 @@ GRANT INSERT, SELECT, UPDATE ON public.user_data_export_requests TO service_role
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.users TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.users TO service_role;
 
+-- TABLE: public.voice_profiles
+GRANT INSERT, SELECT, UPDATE ON public.voice_profiles TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.voice_profiles TO service_role;
+
+-- TABLE: public.voice_samples
+GRANT INSERT, SELECT ON public.voice_samples TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.voice_samples TO service_role;
+
 -- TABLE: public.weather_forecast_cache
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.weather_forecast_cache TO service_role;
 
