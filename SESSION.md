@@ -1,30 +1,25 @@
-# Session state — last updated 2026-06-10 21:15 CT
+# Session state — last updated 2026-06-10 22:30 CT
 
-## Just completed (this Sonnet session)
-- **#913 merged (PR #916, 52ddd807)** — conversations list user_id filter fixed.
-- **#906 merged (PR #914)** — help_ai grounding retrofitted.
-- **#866 in-flight (PR #915)** — streaming hard-state enforcement; CI/audit stalled; see Blocked below.
-- **#903 in-flight (PR #917)** — voice profiles (samples, extraction, resolver, settings page); 4 audit rounds completed; pending final CI after no-op commit ce0a4034 to trigger audit-section-check.
-- **#881 in-flight (PR #918)** — CustomerContextChatPanel asset markers wired; both audits clean.
+## Standing rule (operator, 2026-06-10 — saved to auto-memory)
+**No prod DB changes (MCP migrations/DDL) or manual prod deploys without per-instance operator approval.** Dev-merge → pipeline deploys remain autonomous per CLAUDE.md.
 
-## In flight
-- `feature/903-voice-profiles` (PR #917) — no-op ce0a4034 pushed to trigger audit-section-check; CI running; merge when green.
-- `feature/881-panel-asset-markers` (PR #918) — both audits clean; awaiting CI.
-- `feature/866-stream-hard-limit` (PR #915) — CI status unclear; check on resume.
+## Just completed
+- **#913 merged** (PR #916) — conversations list auth_user_id→public.users.id filter fix.
+- **#917 merged** — #903 voice profiles (samples, Haiku style-card extraction w/ hash guard, resolver, settings page, CRUD routes). Migration applied to prod (pre-rule).
+- **#920 merged (grants fix)** — #917 shipped tables with RLS but NO DML grants → feature dead at the privilege layer + grants-drift CI blocked every PR. Grants migration (mirrors RLS, rag_submissions convention) applied to prod WITH operator approval; both snapshots regenerated from live via the real generators. Opus audits clean both ways (grants neither exceed nor fall short of RLS).
+- Lesson encoded: **a migration PR must regenerate db/rls-snapshot-main.sql AND db/grants-snapshot-main.sql in the same PR** — and new tables need explicit GRANTs; RLS alone leaves authenticated denied at the privilege layer.
 
-## Next step
-1. Merge #917 (voice profiles) once CI green.
-2. Merge #918 (#881) once CI green.
-3. Merge #915 (#866) once CI green.
-4. Apply the voice_profiles migration to prod DB via supabase-main MCP (same pattern as conversations_audience — apply before deploy).
-5. Checkpoint PR with MEMORY D-197 + SESSION.
-6. Next big item: #908 (conversations RLS tightening) — top-tier model design pass.
+## In flight — merge queue (in order)
+1. **PR #915** (#866 streaming hard-gate; also carries an RLS snapshot commit — content identical to #920's, merges clean). Update-branch → repost audit comments → `gh run rerun` failed audit check (comments fetched live on rerun; body already has ## Audit) → merge.
+2. **PR #914** (#906 help_ai grounding) — same dance. MUST merge before #919 (D-197 references it as merged).
+3. **PR #918** (#881 panel asset markers) — same dance.
+4. **PR #919** (checkpoint with D-197 + this SESSION; doc-only → audit-exempt) — merge last.
 
 ## Blocked on user
-- #899 Vercel Pro upgrade — blocks #894 cron migration.
-- PR #869 (stale checkpoint, DIRTY) — recommended close; awaiting OK.
-- #908 (security) needs top-tier design session.
+- #899 Vercel Hobby → Pro upgrade — blocks #894 cron migration.
+- PR #869 (stale June 8 checkpoint, DIRTY) — recommended close; awaiting OK.
+- #908 (security: conversations RLS tenant-level) — needs top-tier design session.
 
 ## Open questions
-- PR #915 (#866): update-branch may also need a no-op commit + audit repost if audit-section-check fires — check on resume.
-- Prior items: #890, #885, #857 (operator checklist), #851 (model resilience).
+- pr-audit-section-check repeatedly fails after update-branch (comments stale vs new head). Current procedure: repost latest marker comments, then rerun the failed check. If this keeps burning cycles, consider a workflow tweak — would need its own PR + operator awareness.
+- Prior items: #890, #885, #857, #851, #898 (dependabot retry).
