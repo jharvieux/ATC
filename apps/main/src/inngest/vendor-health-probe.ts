@@ -71,9 +71,9 @@ async function pingRagReadiness(): Promise<void> {
   }
   try {
     const res = await fetch(`${ragUrl}/api/health/ready`, { signal: AbortSignal.timeout(8000) });
-    // The endpoint being reachable proves "rag" is up regardless of dependency status.
-    recordVendorSuccess("rag");
     const body = (await res.json()) as { redis?: string; supabase_rag?: string };
+    // The endpoint being reachable (and returning parseable JSON) proves "rag" is up.
+    recordVendorSuccess("rag");
     if (body.redis === "ok") {
       recordVendorSuccess("upstash");
     } else {
