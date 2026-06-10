@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-204 — 2026-06-10 — Onboarding/UX sprint: 4 features built by parallel worker agents, all merged
+
+**Decision.** Operator's onboarding review produced 4 issues (#960–#963), built simultaneously by 4 worker agents in isolated worktrees, audited, and merged to dev same-session: PR #968 (onboarding post-submission guidance + approval/rejection emails), PR #964 (signup form: sub_host hidden "for now", red required-field validation), PR #967 (tenant subdomain landing shell), PR #971 (tenant-editable email templates; migration applied to dev, prod gated).
+
+**Product defaults chosen (operator may adjust):**
+- #967 shell: "support chat" = customer `/chat` experience for ALL roles incl. staff; hamburger Admin → `/settings`, owner-only; nav per role is grants-based mapping.
+- #971: a tenant body override REPLACES AI-generated pre-cruise content entirely (no AI-framing variables) — semantics flagged in #970.
+- Quote-expiry subject copy changed slightly (pinned by test; reword if wanted).
+
+**Process learnings:**
+- Audit-gate hash binding interacts badly with snapshot files: a worker branch based before a sibling merge that touches db/*-snapshot-*.sql gets a NEW effective diff after update-branch (the merge reconciles shared files) → audits must re-run. Sequence snapshot-touching PRs serially.
+- RLS Snapshot Diff can fail on transient Supabase CONNECT_TIMEOUT — read the job log before assuming drift; rerun-failed fixes it.
+- `Status:` line must live INSIDE the `## Audit` section (the check's awk stops at the next h2) — a `## Not in scope` heading between audit text and Status fails the gate.
+
+**Open follow-ups:** #965 (first-sign-in checklist), #966 (rendering-test stack), #969 (platform-tenant customers hold tenant_owner in dev data, design says viewer — operator call + prod check), #970 (email-template scope extension).
+
+---
+
 ## D-203 — 2026-06-10 — #780 Phase 1 shipped: canonical cruise catalog (PR #959)
 
 **Decision.** Canonical `cruise_lines` / `cruise_ships` / `ports` tables + per-entity alias tables landed on dev with the admin CRUD UI (`/admin/cruise-catalog`), scraper cutover, and `ship_class` persistence. Key calls made during the build:
