@@ -1,15 +1,9 @@
 "use client";
 
-// #902 PR B — TA-mode dashboard chat surface.
-//
-// Travel agents (tenant_owner/agent role) use this page to:
-//   1. Get cruise-domain expertise from any of the six personas.
-//   2. Ask platform how-to questions (grounded in help docs via PR A).
-//
-// Access is enforced server-side on every API call (403 → access-denied
-// UX here). Viewer-role users (customers) land on the access-denied state.
+// #902 PR B — TA-mode dashboard chat for travel agents (tenant_owner/agent).
+// Access enforcement is server-side on every API call; 403 → access-denied UX.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
@@ -44,24 +38,18 @@ export default function ConciergePage(): React.JSX.Element {
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [activeMessages, setActiveMessages] = useState<ChatMessage[]>([]);
   const [selectedPersona, setSelectedPersona] = useState<string>(AGENT_CATALOG[0]!.slug);
+  const [convLoadError, setConvLoadError] = useState<string | null>(null);
   const [loadingConv, setLoadingConv] = useState(false);
 
-  // chatKey forces ChatExperience to remount (reset state) when switching
-  // conversations or starting fresh.
-  const chatKey = useRef(0);
-  const [chatKeyState, setChatKeyState] = useState(0);
+  // Single counter that forces ChatExperience to remount when the active
+  // conversation or persona changes.
+  const [chatKey, setChatKey] = useState(0);
 
   const fetchConversations = useCallback(async () => {
     try {
       const res = await fetch("/api/chat/ta-conversations");
-      if (res.status === 403) {
-        setForbidden(true);
-        return;
-      }
-      if (!res.ok) {
-        setLoadError(`Could not load conversations (HTTP ${res.status})`);
-        return;
-      }
+      if (res.status === 403) { setForbidden(true); return; }
+      if (!res.ok) { setLoadError(`Could not load conversations (HTTP ${res.status})`); return; }
       const data = (await res.json()) as { conversations: TaConversation[] };
       setConversations(data.conversations ?? []);
     } catch (e) {
@@ -69,22 +57,23 @@ export default function ConciergePage(): React.JSX.Element {
     }
   }, []);
 
-  useEffect(() => {
-    void fetchConversations();
-  }, [fetchConversations]);
+  useEffect(() => { void fetchConversations(); }, [fetchConversations]);
 
   async function openConversation(convId: string): Promise<void> {
+    setConvLoadError(null);
     setLoadingConv(true);
     try {
       const res = await fetch(`/api/chat/conversations/${convId}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setConvLoadError(`Could not load conversation (HTTP ${res.status})`);
+        return;
+      }
       const data = (await res.json()) as ConvMessages;
       const persona = data.conversation.active_persona_id ?? selectedPersona;
       setActiveConvId(convId);
       setActiveMessages(data.messages ?? []);
       setSelectedPersona(persona);
-      chatKey.current += 1;
-      setChatKeyState(chatKey.current);
+      setChatKey((k) => k + 1);
     } finally {
       setLoadingConv(false);
     }
@@ -93,12 +82,15 @@ export default function ConciergePage(): React.JSX.Element {
   function startNew(): void {
     setActiveConvId(null);
     setActiveMessages([]);
-    chatKey.current += 1;
-    setChatKeyState(chatKey.current);
-    // Refresh the conversation list after a short delay so a just-created
-    // conversation shows up (it's created on the first message send).
-    setTimeout(() => { void fetchConversations(); }, 2000);
+    setConvLoadError(null);
+    setChatKey((k) => k + 1);
   }
+
+  // Called by ChatExperience when the first message_id SSE fires (new
+  // conversation assigned). Refreshes the sidebar so the new thread appears.
+  const handleConversationCreated = useCallback((_id: string) => {
+    void fetchConversations();
+  }, [fetchConversations]);
 
   if (forbidden) {
     return (
@@ -177,12 +169,11 @@ export default function ConciergePage(): React.JSX.Element {
             value={selectedPersona}
             onValueChange={(v) => {
               setSelectedPersona(v);
-              // Start a fresh conversation when the persona changes so the
-              // new persona's Layer-1 identity is applied from the first turn.
+              // Start a fresh conversation when the persona changes — the new
+              // persona's Layer-1 identity must apply from the first turn.
               setActiveConvId(null);
               setActiveMessages([]);
-              chatKey.current += 1;
-              setChatKeyState(chatKey.current);
+              setChatKey((k) => k + 1);
             }}
           >
             <SelectTrigger className="h-7 text-[12px] w-48">
@@ -201,14 +192,21 @@ export default function ConciergePage(): React.JSX.Element {
           </span>
         </div>
 
+        {convLoadError && (
+          <p className="text-[12px] text-red-700 dark:text-red-400 px-4 py-2 border-b border-border">
+            {convLoadError}
+          </p>
+        )}
+
         {/* Chat */}
         <div className="flex-1 overflow-hidden">
           <ChatExperience
-            key={chatKeyState}
+            key={chatKey}
             mode="ta"
             personaSlug={selectedPersona}
             initialConversationId={activeConvId ?? undefined}
             initialMessages={activeMessages}
+            onConversationCreated={handleConversationCreated}
           />
         </div>
       </div>

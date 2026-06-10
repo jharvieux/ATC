@@ -59,6 +59,10 @@ export interface ChatExperienceProps {
   // pre-populate the message list with the prior transcript.
   initialConversationId?: string | undefined;
   initialMessages?: ChatMessage[] | undefined;
+  // #902 — fires the first time a new conversation is assigned an id
+  // (i.e. the first message_id SSE event when conversationIdRef was null
+  // at turn start). The concierge sidebar uses this to refresh the list.
+  onConversationCreated?: ((id: string) => void) | undefined;
 }
 
 export function ChatExperience({
@@ -66,6 +70,7 @@ export function ChatExperience({
   mode,
   initialConversationId,
   initialMessages,
+  onConversationCreated,
 }: ChatExperienceProps): JSX.Element {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [streaming, setStreaming] = useState<string | null>(null);
@@ -152,6 +157,9 @@ export function ChatExperience({
               break;
             case "message_id":
               assistantId = ev.message_id;
+              if (!conversationIdRef.current && onConversationCreated) {
+                onConversationCreated(ev.conversation_id);
+              }
               conversationIdRef.current = ev.conversation_id;
               break;
             case "delta":
