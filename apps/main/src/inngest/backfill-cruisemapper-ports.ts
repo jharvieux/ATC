@@ -17,6 +17,8 @@ import {
   processOneSailingUrl,
   runSailingWindow,
   isNonCruiseSailingUrl,
+  sailingHaltReason,
+  alertSailingHalt,
   STEP_BUDGET_MS,
 } from "./refresh-cruisemapper-sailings";
 
@@ -47,6 +49,9 @@ export const backfillCruisemapperPorts = inngest.createFunction(
     const sailing = emptySailingResult();
     let fetchErrors = 0;
     let attempted = 0;
+    let parseFailures = 0;
+    let halted = false;
+    let haltReasonStr: string | undefined;
 
     let cursor = 0;
     let stepNum = 0;
@@ -64,14 +69,25 @@ export const backfillCruisemapperPorts = inngest.createFunction(
       attempted += r.attempted;
       mergeSailing(sailing, r.sailing);
       fetchErrors += r.fetch_errors;
+      parseFailures += r.parse_failed;
       cursor = r.nextIndex;
       stepNum += 1;
+
+      const reason = sailingHaltReason(attempted, parseFailures);
+      if (reason) {
+        halted = true;
+        haltReasonStr = reason;
+        await step.run(`halt-${stepNum - 1}`, () => alertSailingHalt(attempted, parseFailures, reason));
+        break;
+      }
     }
 
     return {
       ship_pages_attempted: attempted,
       ...sailing,
       fetch_errors: fetchErrors,
+      halted,
+      ...(haltReasonStr ? { halt_reason: haltReasonStr } : {}),
     };
   },
 );

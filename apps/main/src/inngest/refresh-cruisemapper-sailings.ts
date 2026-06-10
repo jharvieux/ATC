@@ -275,7 +275,7 @@ export async function runSailingWindow(
   return { nextIndex: i, attempted, sailing, fetch_unchanged, fetch_errors, parse_failed };
 }
 
-async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
+export async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
   await sendOperatorAlert({
     severity: "high",
     signal: "cruisemapper_sailing_parser_failure_rate",

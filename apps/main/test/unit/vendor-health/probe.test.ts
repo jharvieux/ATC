@@ -115,14 +115,14 @@ describe("pingRagReadiness — upstash + rag + supabase_rag routing", () => {
     expect(mockRecordSuccess).toHaveBeenCalledWith("supabase_rag");
   });
 
-  it("redis down: rag ok, upstash failure, supabase_rag ok", async () => {
+  it("redis down: rag failure (503), upstash failure, supabase_rag ok", async () => {
     process.env.RAG_SERVICE_URL = "https://rag.test";
     fetchResponses.set("https://rag.test/api/health/ready", {
       ok: false, status: 503,
       json: () => Promise.resolve({ redis: "down", supabase_rag: "ok" }),
     });
     await run();
-    expect(mockRecordSuccess).toHaveBeenCalledWith("rag");
+    expect(mockRecordFailure).toHaveBeenCalledWith("rag", "http_503");
     expect(mockRecordFailure).toHaveBeenCalledWith("upstash", "down");
     expect(mockRecordSuccess).toHaveBeenCalledWith("supabase_rag");
   });
