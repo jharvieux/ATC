@@ -373,14 +373,18 @@ describeIf("RLS integration", () => {
       expect(data).toEqual([]);
     });
 
-    it("conversations: suspended user CAN SELECT but CANNOT INSERT", async () => {
+    it("conversations: suspended user CANNOT SELECT or INSERT (auth_user_can_access_conversation requires active status)", async () => {
+      // Post-#908: auth_user_can_access_conversation checks u.status='active' in both
+      // owner + staff branches. A suspended user's status is not 'active', so they
+      // are blocked at the DB layer on both SELECT and INSERT. This is intentionally
+      // stricter than the users-table policy (which still permits read-only self-access).
       const client = await authedClient(fx.userSuspended.email, fx.userSuspended.password);
       const sel = await client
         .from("conversations")
         .select("id")
         .eq("id", convSuspId);
       expect(sel.error).toBeNull();
-      expect(sel.data?.length).toBe(1);
+      expect(sel.data?.length).toBe(0);
 
       const ins = await client
         .from("conversations")
