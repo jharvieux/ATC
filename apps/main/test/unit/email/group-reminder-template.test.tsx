@@ -58,4 +58,20 @@ describe("GroupReminder", () => {
     const html = render({ hero_image_url: "https://img.example/hero.jpg" });
     expect(html).toContain("https://img.example/hero.jpg");
   });
+
+  it("renders RSVP CTA when invite_url is provided", () => {
+    // Intent: the CTA is the primary action in the email; if invite_url is
+    // present and the link is missing, the invitee has no way to RSVP from
+    // this reminder.
+    const url = "https://example.ai-travelconcierge.com/group/invite/inv123.abc";
+    const html = render({ invite_url: url });
+    expect(html).toContain(url);
+  });
+
+  it("omits RSVP CTA when invite_url is not provided", () => {
+    // Intent: old reminders without a computed invite_url must still render
+    // without errors and without a broken empty href.
+    const html = render();
+    expect(html).not.toContain("/group/invite/");
+  });
 });
