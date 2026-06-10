@@ -467,6 +467,11 @@ async function buildAndSend(args: {
   // #963 — tenant subject/body override → platform default. A failed
   // override read or render throws (fail loud → Inngest retry); we never
   // silently fall back or send an empty body.
+  //
+  // #975 — ai_content carries the flattened AI sections so an override body
+  // can place {{ai_content}} instead of replacing the AI content entirely.
+  // Substitution happens before bodyTextToHtml, so the value is escaped
+  // like any tenant-typed text.
   const resolved = await resolveEmailContent({
     db: svc,
     tenant_id: emailCtx.tenant.id,
@@ -477,6 +482,7 @@ async function buildAndSend(args: {
       cruise_line: emailCtx.cruiseLine,
       sailing_date: emailCtx.sailingDate,
       companion_page_url: emailCtx.companionPageUrl,
+      ai_content: precruiseAiContentText(phase, generatedContent),
     },
   });
   const subject = resolved.subject;
@@ -606,6 +612,59 @@ function buildBatchedPrompt(
   }
 }
 
+// #975 — flatten the per-phase AI sections to plain text for the
+// {{ai_content}} variable in tenant body overrides. Blank lines separate
+// sections so bodyTextToHtml renders them as paragraphs; list items keep a
+// "• " prefix (escape-safe — bodyTextToHtml escapes markup, not bullets).
+// Exported for tests: every AI field the default email renders must appear
+// here, or an override using {{ai_content}} silently loses content.
+export function precruiseAiContentText(
+  phase: Phase,
+  c: Record<string, unknown>,
+): string {
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  const list = (v: unknown): string =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+          .map((x) => `• ${x.trim()}`)
+          .join("\n")
+      : "";
+
+  let sections: string[];
+  switch (phase) {
+    case "t_90":
+      sections = [
+        str(c.documentation_reminder),
+        str(c.destination_teaser),
+        list(c.must_do_experiences),
+        str(c.did_you_know),
+      ];
+      break;
+    case "t_30":
+      sections = [
+        list(c.reservation_reminders),
+        str(c.checkin_window),
+        str(c.final_payment_note),
+        list(c.personalized_recommendations),
+        str(c.pack_inspiration),
+      ];
+      break;
+    case "t_7":
+      sections = [
+        list(c.packing_checklist),
+        list(c.ship_highlights),
+        list(c.cruise_line_tips),
+        str(c.embarkation_advice),
+        str(c.first_day_inspiration),
+      ];
+      break;
+    case "t_1":
+      sections = [str(c.first_port_preview), str(c.day_of_expectations)];
+      break;
+  }
+  return sections.filter((s) => s.length > 0).join("\n\n");
+}
+
 function parseStructuredJson(text: string): Record<string, unknown> | null {
   // Tolerate ```json fences and leading/trailing prose Haiku
   // occasionally appends. Find the outermost { ... } substring.
@@ -727,6 +786,7 @@ async function buildEmail(
         did_you_know: (c.did_you_know as string) ?? "",
         suggested_reads: (c.suggested_reads as string[]) ?? [],
         destination_image: destinationImage,
+        companion_page_url: companionPageUrl,
       };
       return { html: renderToStaticMarkup(React.createElement(PreCruiseT90, props)) };
     }

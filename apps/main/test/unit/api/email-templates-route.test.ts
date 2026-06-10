@@ -84,6 +84,32 @@ describe("PUT /api/tenant/email-templates/[type]", () => {
     );
   });
 
+  // #975 — {{ai_content}} lets a pre-cruise override position the AI-generated
+  // sections instead of replacing them. It is body-only (the value is
+  // multi-paragraph text) and only valid on types that have AI content.
+  it("accepts {{ai_content}} in a pre-cruise BODY override", async () => {
+    const res = await PUT(
+      putReq({ body_template: "Welcome aboard!\n\n{{ai_content}}\n\nSee you soon." }),
+      props("pre_cruise_t_90"),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.upsert).toHaveBeenCalled();
+  });
+
+  it("rejects {{ai_content}} in a SUBJECT (multi-paragraph value can't be a subject line)", async () => {
+    const res = await PUT(putReq({ subject_template: "News: {{ai_content}}" }), props("pre_cruise_t_90"));
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { issues: { detail: string }[] };
+    expect(data.issues[0]!.detail).toContain("ai_content");
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects {{ai_content}} in the body of a type with no AI content", async () => {
+    const res = await PUT(putReq({ body_template: "Hi {{invitee_name}}, {{ai_content}}" }), props("group_reminder"));
+    expect(res.status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
   it("returns 404 for an email type not in the registry", async () => {
     const res = await PUT(putReq({ subject_template: "x" }), props("not_a_real_type"));
     expect(res.status).toBe(404);

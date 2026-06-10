@@ -8,7 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import { EMAIL_TEMPLATE_REGISTRY, isEmailTemplateType } from "@/lib/email/template-registry";
+import { EMAIL_TEMPLATE_REGISTRY, bodyVariableNames, isEmailTemplateType } from "@/lib/email/template-registry";
 import { validateTemplate, type TemplateValidationIssue } from "@/lib/email/template-engine";
 
 type RouteProps = { params: Promise<{ type: string }> };
@@ -61,10 +61,11 @@ export async function PUT(req: Request, props: RouteProps): Promise<Response> {
       return Response.json({ error: "body_too_long", max: BODY_MAX }, { status: 422 });
     }
 
-    const allowed = spec.variables.map((v) => v.name);
+    // #975 — {{ai_content}} is body-only: the substituted value is
+    // multi-paragraph text, never valid in a subject line.
     const issues: TemplateValidationIssue[] = [
-      ...(subjectTemplate ? validateTemplate(subjectTemplate, allowed) : []),
-      ...(bodyTemplate ? validateTemplate(bodyTemplate, allowed) : []),
+      ...(subjectTemplate ? validateTemplate(subjectTemplate, spec.variables.map((v) => v.name)) : []),
+      ...(bodyTemplate ? validateTemplate(bodyTemplate, bodyVariableNames(spec)) : []),
     ];
     if (issues.length > 0) {
       return Response.json({ error: "invalid_template", issues }, { status: 400 });

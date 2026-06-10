@@ -5,7 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { EMAIL_TEMPLATE_REGISTRY, EMAIL_TEMPLATE_TYPES } from "@/lib/email/template-registry";
+import { EMAIL_TEMPLATE_REGISTRY, EMAIL_TEMPLATE_TYPES, type EmailTemplateSpec } from "@/lib/email/template-registry";
 
 interface OverrideRow {
   email_type: string;
@@ -32,7 +32,9 @@ export async function GET(req: Request): Promise<Response> {
   const overrides = new Map(((data ?? []) as OverrideRow[]).map((r) => [r.email_type, r]));
 
   const templates = EMAIL_TEMPLATE_TYPES.map((type) => {
-    const spec = EMAIL_TEMPLATE_REGISTRY[type];
+    // Widen past the `as const` literal types so the optional ai_content
+    // field is accessible on entries that don't define it.
+    const spec: EmailTemplateSpec = EMAIL_TEMPLATE_REGISTRY[type];
     const row = overrides.get(type);
     return {
       type,
@@ -40,6 +42,7 @@ export async function GET(req: Request): Promise<Response> {
       description: spec.description,
       default_subject_template: spec.default_subject_template,
       variables: spec.variables,
+      ai_content: spec.ai_content ?? null,
       override: row
         ? {
             subject_template: row.subject_template,

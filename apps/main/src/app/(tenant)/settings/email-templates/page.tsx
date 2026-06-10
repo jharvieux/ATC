@@ -28,11 +28,26 @@ interface TemplateEntry {
   description: string;
   default_subject_template: string;
   variables: TemplateVariable[];
+  ai_content: { description: string } | null;
   override: {
     subject_template: string | null;
     body_template: string | null;
     updated_at: string;
   } | null;
+}
+
+const AI_CONTENT_TOKEN_RE = /\{\{\s*ai_content\s*\}\}/;
+
+/** Visually distinct, labeled placeholder for where the AI writes content. */
+function AiContentBlock(props: { description: string }) {
+  return (
+    <div className="border-2 border-dashed border-violet-400 bg-violet-50 rounded p-3 my-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700 mb-1">
+        ✦ AI-generated content
+      </p>
+      <p className="text-[12px] text-violet-900 italic">{props.description}</p>
+    </div>
+  );
 }
 
 export default function EmailTemplatesSettingsPage() {
@@ -82,6 +97,11 @@ export default function EmailTemplatesSettingsPage() {
   }, [selectedType, templates]);
 
   const allowedNames = useMemo(() => (selected ? selected.variables.map((v) => v.name) : []), [selected]);
+  // {{ai_content}} is body-only: its value is multi-paragraph text.
+  const bodyAllowedNames = useMemo(
+    () => (selected?.ai_content ? [...allowedNames, "ai_content"] : allowedNames),
+    [selected, allowedNames],
+  );
   const sampleValues = useMemo(() => {
     const vals: Record<string, string> = {};
     for (const v of selected?.variables ?? []) vals[v.name] = v.sample;
@@ -92,16 +112,26 @@ export default function EmailTemplatesSettingsPage() {
     if (!selected) return [];
     return [
       ...(subject.trim() ? validateTemplate(subject, allowedNames) : []),
-      ...(body.trim() ? validateTemplate(body, allowedNames) : []),
+      ...(body.trim() ? validateTemplate(body, bodyAllowedNames) : []),
     ];
-  }, [selected, subject, body, allowedNames]);
+  }, [selected, subject, body, allowedNames, bodyAllowedNames]);
 
+  const missingAiContent =
+    !!selected?.ai_content && body.trim().length > 0 && !AI_CONTENT_TOKEN_RE.test(body);
+
+  // Body preview as segments: text between {{ai_content}} tokens renders as
+  // escaped HTML; each token position renders as a labeled AI placeholder
+  // block so tenants see exactly where the AI content lands.
   const preview = useMemo(() => {
     if (!selected || issues.length > 0) return null;
     try {
       return {
         subject: renderTemplate(subject.trim() || selected.default_subject_template, sampleValues),
-        bodyHtml: body.trim() ? bodyTextToHtml(renderTemplate(body, sampleValues)) : null,
+        bodySegments: body.trim()
+          ? body
+              .split(new RegExp(AI_CONTENT_TOKEN_RE.source, "g"))
+              .map((segment) => bodyTextToHtml(renderTemplate(segment, sampleValues)))
+          : null,
       };
     } catch {
       return null;
@@ -238,8 +268,24 @@ export default function EmailTemplatesSettingsPage() {
                         <code className="bg-accent px-1 rounded">{`{{${v.name}}}`}</code> — {v.description}
                       </li>
                     ))}
+                    {selected.ai_content ? (
+                      <li>
+                        <code className="bg-violet-100 text-violet-800 px-1 rounded">{"{{ai_content}}"}</code>{" "}
+                        — <span className="text-violet-800">{selected.ai_content.description}</span>{" "}
+                        (body only)
+                      </li>
+                    ) : null}
                   </ul>
                 </div>
+
+                {missingAiContent ? (
+                  <p className="text-[13px] text-amber-700 bg-amber-50 border border-amber-300 rounded px-3 py-2">
+                    Your custom body doesn&apos;t include{" "}
+                    <code className="bg-amber-100 px-1 rounded">{"{{ai_content}}"}</code>, so this
+                    email will be sent without the AI-generated content. Add it where you want that
+                    content to appear, or leave it out on purpose.
+                  </p>
+                ) : null}
 
                 {issues.length > 0 ? (
                   <div className="text-[13px] text-red-600">
@@ -272,16 +318,25 @@ export default function EmailTemplatesSettingsPage() {
                     <p className="text-[13px]">
                       <span className="font-medium">Subject:</span> {preview.subject}
                     </p>
-                    {preview.bodyHtml ? (
-                      <div
-                        className="text-[13px] border border-border rounded p-3 [&_p]:mb-2"
-                        // bodyTextToHtml HTML-escapes all content; only <p>/<br> structure is injected.
-                        dangerouslySetInnerHTML={{ __html: preview.bodyHtml }}
-                      />
+                    {preview.bodySegments ? (
+                      <div className="text-[13px] border border-border rounded p-3 [&_p]:mb-2">
+                        {preview.bodySegments.map((segmentHtml, i) => (
+                          <React.Fragment key={i}>
+                            {i > 0 && selected.ai_content ? (
+                              <AiContentBlock description={selected.ai_content.description} />
+                            ) : null}
+                            {/* bodyTextToHtml HTML-escapes all content; only <p>/<br> structure is injected. */}
+                            <div dangerouslySetInnerHTML={{ __html: segmentHtml }} />
+                          </React.Fragment>
+                        ))}
+                      </div>
                     ) : (
-                      <p className="text-[13px] text-muted-foreground">
-                        Body: platform default {selected.type.startsWith("pre_cruise") ? "(AI-generated content per cruise)" : ""}
-                      </p>
+                      <div className="flex flex-col gap-1">
+                        <p className="text-[13px] text-muted-foreground">Body: platform default</p>
+                        {selected.ai_content ? (
+                          <AiContentBlock description={selected.ai_content.description} />
+                        ) : null}
+                      </div>
                     )}
                   </div>
                 ) : (
