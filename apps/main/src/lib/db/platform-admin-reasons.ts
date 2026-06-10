@@ -139,6 +139,14 @@ export const PLATFORM_ADMIN_REASONS = [
   "travel_news_article_hide",
   "travel_news_article_unhide",
   "travel_news_article_rag_submit",
+
+  // #780 — Cruise catalog management (lines, ships, ports).
+  "cruise_catalog_read",
+  "cruise_catalog_add_line",
+  "cruise_catalog_update_line",
+  "cruise_catalog_update_ship",
+  "cruise_catalog_add_port",
+  "cruise_catalog_update_port",
 ] as const;
 
 export type PlatformAdminReason = (typeof PLATFORM_ADMIN_REASONS)[number];

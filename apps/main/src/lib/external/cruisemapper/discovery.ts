@@ -156,12 +156,61 @@ async function discoverPaginated(
   return [...found];
 }
 
-// Discover ships by enumerating each covered cruise line's fleet. Falls back to
-// existing inventory if discovery turns up nothing (e.g., every line page fails).
+// Discover ships by enumerating each covered cruise line's fleet.
+//
+// Phase 1 (#780): reads active cruise lines from the cruise_lines DB table and
+// upserts discovered ships into cruise_ships with correct cruise_line_id.
+// Falls back to the hardcoded CRUISE_LINE_PAGES array when the table is empty
+// (first deploy before migration has run) — in that case ships are only written
+// to cruisemapper_url_inventory as before.
 export async function discoverShipUrls(db: SupabaseClient): Promise<string[]> {
+  const { data: catalogLines, error: linesErr } = await db
+    .from("cruise_lines")
+    .select("id, cruisemapper_slug")
+    .eq("is_active", true);
+
+  if (!linesErr && catalogLines && catalogLines.length > 0) {
+    const allShipUrls: string[] = [];
+    for (const line of catalogLines as Array<{ id: string; cruisemapper_slug: string }>) {
+      const lineShipUrls = await discoverPaginated(
+        [`/cruise-lines/${line.cruisemapper_slug}`],
+        MAX_FLEET_PAGES_PER_LINE,
+        extractFleetShipUrls,
+      );
+      if (lineShipUrls.length > 0) {
+        await upsertInventory(db, lineShipUrls, "ship");
+        for (const url of lineShipUrls) {
+          await upsertCruiseShipFromUrl(db, line.id, url);
+        }
+        allShipUrls.push(...lineShipUrls);
+      }
+    }
+    return allShipUrls.length > 0 ? await loadInventoryByKind(db, "ship") : await loadInventoryByKind(db, "ship");
+  }
+
+  // Fallback: hardcoded list (cruise_lines table not yet populated).
   const fresh = await discoverPaginated(CRUISE_LINE_PAGES, MAX_FLEET_PAGES_PER_LINE, extractFleetShipUrls);
   if (fresh.length > 0) await upsertInventory(db, fresh, "ship");
   return await loadInventoryByKind(db, "ship");
+}
+
+// Upsert a ship row derived from a CruiseMapper ship URL into cruise_ships.
+// cruisemapper_slug is the last URL path segment (e.g. "Symphony-of-the-Seas-1").
+// slug = lowercased full segment (unique on CruiseMapper by construction).
+// canonical_name = slug portion with hyphens → spaces, title-cased.
+async function upsertCruiseShipFromUrl(db: SupabaseClient, cruiseLineId: string, url: string): Promise<void> {
+  const cruisemapperSlug = url.split("/").pop();
+  if (!cruisemapperSlug) return;
+  const slug = cruisemapperSlug.toLowerCase();
+  const namePart = cruisemapperSlug.replace(/-\d+$/, "").replace(/-/g, " ");
+  const canonicalName = namePart.replace(/\b\w/g, (c) => c.toUpperCase());
+  await safeAwait(
+    db.from("cruise_ships").upsert(
+      { cruise_line_id: cruiseLineId, slug, canonical_name: canonicalName, cruisemapper_slug: cruisemapperSlug },
+      { onConflict: "cruisemapper_slug" },
+    ),
+    "cruise_ships.upsert",
+  );
 }
 
 // Discover ports by enumerating each covered cruising region's port list

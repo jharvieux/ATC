@@ -407,6 +407,21 @@ async function processOneShip(db: SupabaseClient, url: string): Promise<KindRunR
     return ship;
   }
 
+  // #780 — persist ship_class into cruise_ships when available (best-effort).
+  if (parsed.shipClass) {
+    const cruisemapperSlug = url.split("/").pop();
+    if (cruisemapperSlug) {
+      await safeAwait(
+        // d091-allow:service-role-tenant cruise_ships is a platform-wide reference table, no tenant_id column
+        db.from("cruise_ships")
+          .update({ ship_class: parsed.shipClass, updated_at: new Date().toISOString() })
+          .eq("cruisemapper_slug", cruisemapperSlug)
+          .is("ship_class", null),
+        "cruise_ships.update.ship_class",
+      );
+    }
+  }
+
   // D-088 — price ranges from the same HTML (best-effort, doesn't block ship intel).
   if (parsed.cruiseLine) {
     const ranges = parsePriceRanges(fetched.body, url);
