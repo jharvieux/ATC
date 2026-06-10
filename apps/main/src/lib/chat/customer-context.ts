@@ -199,7 +199,11 @@ export async function resolveCustomerContext(args: ResolveContextArgs): Promise<
       `- Sailing date: ${fmtStrOrDash(b.sailing_date)}`,
       `- Duration: ${fmtNumberOrDash(b.duration_nights ?? null)} nights`,
       `- Departure port: ${fmtStrOrDash(b.departure_port)}`,
-      it.agent_notes ? `- Agent notes: ${it.agent_notes}` : "- Agent notes: (none)",
+      // #732: delimiters prevent injected instructions in agent_notes from
+      // bleeding into the surrounding system-prompt structure.
+      it.agent_notes
+        ? `- Agent notes:\n  <<AGENT_NOTE_START>>\n  ${it.agent_notes.replace(/\n/g, "\n  ")}\n  <<AGENT_NOTE_END>>`
+        : "- Agent notes: (none)",
       "",
       "The trip is already booked. Help with packing tips, port info, and pre-cruise questions. For changes to the booking itself, refer them to their agent.",
     ].join("\n");
