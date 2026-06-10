@@ -21,6 +21,17 @@ import { haikuNormalize } from "@/lib/rag-ingest/haiku-normalize";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
+// #748: static pre-filter for prompt injection patterns. Module-scoped so
+// regexes are compiled once, not per-invocation. Each entry is [label, regex]
+// so the audit log records which pattern triggered the quarantine.
+const INJECTION_PATTERNS: Array<[string, RegExp]> = [
+  ["INSTRUCTIONS_BLOCK", /\bINSTRUCTIONS:\s*\n/i],
+  ["OVERRIDE_DIRECTIVE", /\bOVERRIDE:\s/i],
+  ["SYSTEM_BLOCK", /\bSYSTEM:\s*\n/i],
+  ["IGNORE_PREVIOUS", /IGNORE\s+PREVIOUS\s+INSTRUCTIONS/i],
+  ["SPOOFED_DELIMITER", /<<CHUNK_DATA_(START|END)>>/],
+];
+
 export const ragNormalize = inngest.createFunction(
   {
     id: "rag-normalize",
@@ -62,6 +73,24 @@ export const ragNormalize = inngest.createFunction(
     }
 
     const content_hash = createHash("sha256").update(content).digest("hex");
+
+    const injectionMatch = INJECTION_PATTERNS.find(([, re]) => re.test(content));
+    if (injectionMatch) {
+      console.warn("[rag-normalize] injection pattern detected in submission %s — pattern=%s — quarantining for manual review", submission_id, injectionMatch[0]);
+      await safeAwait(db
+        .from("rag_submissions")
+        .update({
+          normalization_status: "normalized",
+          normalization_result: { injection_detected: true, injection_pattern: injectionMatch[0], content_hash },
+          auto_flagged_for_global: false,
+          review_status: "ready_for_review",
+          content_hash,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", submission_id)
+        .eq("tenant_id", tenant_id), "rag_submissions.update");
+      return { ok: true, injection_quarantine: true };
+    }
 
     const norm = await haikuNormalize(content, { tenant_id });
     if (norm.status === "failed") {

@@ -111,7 +111,12 @@ export function formatKnowledgeBlock(
       lines.push(`  ⚠ may be outdated (age ${Math.floor(ageDays!)}d > ${halflife}d halflife)`);
     }
     lines.push(`  Content:`);
+    // #748: unambiguous delimiters prevent injected instructions in chunk content
+    // from bleeding into the surrounding system-prompt structure. The model sees
+    // <<CHUNK_DATA_START>> / <<CHUNK_DATA_END>> as content boundaries, not directives.
+    lines.push(`  <<CHUNK_DATA_START>>`);
     lines.push(`  ${c.content.replace(/\n/g, "\n  ")}`);
+    lines.push(`  <<CHUNK_DATA_END>>`);
     lines.push("");
 
     citations.push({
