@@ -147,11 +147,14 @@ export async function handleStripeWebhook(
       case "transfer.paid": {
         // §14.7 — Stripe transfer paid: transition payout_records 'processing' → 'paid'
         const transfer = (event as { data: { object: Stripe.Transfer } }).data.object;
-        const { data: payoutRows } = await db
+        // #717: surface DB errors so Stripe retries (non-200) instead of silently
+        // stranding a payout_record in 'processing' and acknowledging the event.
+        const { data: payoutRows, error: payoutSelectErr } = await db
           .from("payout_records")
           .select("id")
           .eq("stripe_transfer_id", transfer.id)
           .eq("status", "processing");
+        if (payoutSelectErr) throw new Error(`transfer.paid select failed: ${payoutSelectErr.message}`);
 
         if (payoutRows && payoutRows.length > 0) {
           const ids = payoutRows.map((r) => (r as { id: string }).id);
@@ -192,11 +195,12 @@ export async function handleStripeWebhook(
         if (session.subscription && session.customer) {
           const tenantId = session.metadata?.tenant_id;
           if (tenantId) {
-            const { data: tenant } = await db
+            const { data: tenant, error: tenantSelectErr } = await db
               .from("tenants")
               .select("onboarding_stage")
               .eq("id", tenantId)
               .maybeSingle();
+            if (tenantSelectErr) throw new Error(`checkout.session.completed tenant select failed: ${tenantSelectErr.message}`);
 
             const { error: updateErr } = await db.from("tenants").update({
               stripe_subscription_id: String(session.subscription),
@@ -220,11 +224,12 @@ export async function handleStripeWebhook(
       case "account.updated": {
         const account = event.data.object as Stripe.Account;
         // Find tenant by stripe_connect_account_id.
-        const { data: tenantRow } = await db
+        const { data: tenantRow, error: accountTenantErr } = await db
           .from("tenants")
           .select("id, onboarding_stage")
           .eq("stripe_connect_account_id", account.id)
           .maybeSingle();
+        if (accountTenantErr) throw new Error(`account.updated tenant select failed: ${accountTenantErr.message}`);
 
         if (tenantRow) {
           const updates: Record<string, unknown> = {};
@@ -266,11 +271,12 @@ export async function handleStripeWebhook(
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
-        const { data: tenantRow } = await db
+        const { data: tenantRow, error: subTenantErr } = await db
           .from("tenants")
           .select("id, non_paying_since")
           .eq("stripe_subscription_id", sub.id)
           .maybeSingle();
+        if (subTenantErr) throw new Error(`${event.type} tenant select failed: ${subTenantErr.message}`);
         if (!tenantRow) {
           break;
         }
@@ -309,11 +315,12 @@ export async function handleStripeWebhook(
         if (!subId) {
           break;
         }
-        const { data: tenantRow } = await db
+        const { data: tenantRow, error: paySuccessTenantErr } = await db
           .from("tenants")
           .select("id, subscription_status")
           .eq("stripe_subscription_id", subId)
           .maybeSingle();
+        if (paySuccessTenantErr) throw new Error(`invoice.payment_succeeded tenant select failed: ${paySuccessTenantErr.message}`);
         if (!tenantRow) {
           break;
         }
@@ -344,11 +351,12 @@ export async function handleStripeWebhook(
         if (!subId) {
           break;
         }
-        const { data: tenantRow } = await db
+        const { data: tenantRow, error: payFailedTenantErr } = await db
           .from("tenants")
           .select("id, non_paying_since")
           .eq("stripe_subscription_id", subId)
           .maybeSingle();
+        if (payFailedTenantErr) throw new Error(`invoice.payment_failed tenant select failed: ${payFailedTenantErr.message}`);
         if (!tenantRow) {
           break;
         }
