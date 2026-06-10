@@ -257,15 +257,9 @@ jobs:
           echo "Diff hash for PR #$PR_NUMBER: $DIFF_HASH"
 
           # check_marker: pass if we find a marker comment whose embedded
-          # diff hash matches DIFF_HASH (new-style). Transition fallback:
-          # for comments pre-dating hash binding, accept if the newest one
-          # was posted after HEAD_DATE (timestamp rule). Remove the fallback
-          # branch once all open PRs have rotated through a hash-bound audit
-          # (tracked in issue #926).
-          #
-          # `--paginate --slurp` + `.[][]` is the same flatten pattern used
-          # for PR files above; it avoids the "newest comment on first page"
-          # gotcha with unsorted pagination.
+          # diff hash matches DIFF_HASH. `--paginate --slurp` + `.[][]` is
+          # the same flatten pattern used for PR files above; it avoids the
+          # "newest comment on first page" gotcha with unsorted pagination.
           check_marker() {
             local marker_prefix="$1"   # e.g. "d091-audit:v1"
             local name="$2"
@@ -295,31 +289,10 @@ jobs:
               return 0
             fi
 
-            # Timestamp fallback: newest comment without a diff:<hash> marker
-            # field (pre-hash-binding era). Use a precise regex so "diff:"
-            # appearing in prose inside an audit report body doesn't
-            # misclassify the comment as new-style (issue #924).
-            local NEWEST_OLD
-            NEWEST_OLD=$(printf '%s' "$ALL_COMMENTS" \
-              | jq -r '[.[] | select(.body | test("<!-- [a-z0-9:-]+ diff:[0-9a-f]+") | not)] | sort_by(.created_at) | last | .created_at // empty')
-            if [ -n "$NEWEST_OLD" ] && ! [ "$NEWEST_OLD" \< "$HEAD_DATE" ]; then
-              echo "✓ $name audit comment posted $NEWEST_OLD (timestamp fallback — no diff hash)"
-              return 0
-            fi
-
-            # Both checks failed — report why.
-            if [ -n "$NEWEST_OLD" ]; then
-              echo "::error::$name audit comment is stale (timestamp fallback)."
-              echo ""
-              echo "Newest legacy comment at $NEWEST_OLD; effective code commit"
-              echo "($EFFECTIVE_SHA) at $HEAD_DATE."
-              echo "Re-run the $name subagent — it will embed the current diff hash."
-            else
-              echo "::error::$name audit comment diff hash mismatch."
-              echo ""
-              echo "Expected diff hash: $DIFF_HASH"
-              echo "No existing comment embeds this hash. Re-run the $name subagent."
-            fi
+            echo "::error::$name audit comment diff hash mismatch."
+            echo ""
+            echo "Expected diff hash: $DIFF_HASH"
+            echo "No existing comment embeds this hash. Re-run the $name subagent."
             return 1
           }
 
