@@ -55,3 +55,32 @@ describe("SYNC_EXPORT_MAX_ROWS", () => {
     expect(SYNC_EXPORT_MAX_ROWS).toBe(10_000);
   });
 });
+
+describe("csvCell — formula injection prevention (#727)", () => {
+  it("quotes cells starting with '='", () => {
+    const csv = rowsToCsv([{ utm_source: "=HYPERLINK(\"http://evil.com\",\"click\")" }]);
+    expect(csv).toContain(`"=HYPERLINK`);
+    expect(csv).not.toMatch(/^=HYPERLINK/m);
+  });
+
+  it("quotes cells starting with '+'", () => {
+    const csv = rowsToCsv([{ utm_source: "+cmd|'evil'" }]);
+    expect(csv).toContain(`"+cmd`);
+    expect(csv).not.toMatch(/^\+cmd/m);
+  });
+
+  it("quotes cells starting with '-'", () => {
+    const csv = rowsToCsv([{ field: "-2+3+cmd|'evil'" }]);
+    expect(csv).toContain(`"-2+3`);
+  });
+
+  it("quotes cells starting with '@'", () => {
+    const csv = rowsToCsv([{ field: "@SUM(1+1)*cmd|'evil'" }]);
+    expect(csv).toContain(`"@SUM`);
+  });
+
+  it("does not quote safe values without formula prefix", () => {
+    const csv = rowsToCsv([{ utm_source: "google", campaign: "summer2026" }]);
+    expect(csv).toBe("utm_source,campaign\ngoogle,summer2026\n");
+  });
+});

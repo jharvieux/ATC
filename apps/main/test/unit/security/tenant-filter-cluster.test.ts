@@ -79,18 +79,30 @@ function req(body: unknown = {}): Request {
 describe("F-001/#715 — trip_resources POST is tenant-scoped (the HIGH cross-tenant read)", () => {
   it("scopes the idempotency read by tenant_id, so another tenant's booking UUID can't return its row", async () => {
     const eqLog: string[] = [];
-    // RLS-bypassed service-role row that WOULD leak without the tenant filter.
-    mocks.serviceClient.mockReturnValue(recordingDb(eqLog, { trip_resources: { data: { id: "r1" } } }));
+    // #715: booking ownership check added — supply the booking row so the handler proceeds past it.
+    mocks.serviceClient.mockReturnValue(
+      recordingDb(eqLog, {
+        bookings: { data: { id: "victim-booking" } },
+        trip_resources: { data: { id: "r1" } },
+      }),
+    );
     const res = await resourcesPOST(req(), { params: Promise.resolve({ id: "victim-booking" }) });
     expect(res.status).toBe(200);
+    expect(eqLog).toContain("bookings.tenant_id"); // #715: ownership check is tenant-scoped
     expect(eqLog).toContain("trip_resources.tenant_id"); // the fix — without it, cross-tenant read
     expect(eqLog).toContain("trip_resources.booking_id");
   });
 
   it("also scopes the sibling agent users read by tenant_id (F-041 hardening, same handler)", async () => {
     const eqLog: string[] = [];
-    // No existing row → handler proceeds to the agent-snapshot users read + insert.
-    mocks.serviceClient.mockReturnValue(recordingDb(eqLog, { trip_resources: { data: null }, users: { data: null } }));
+    // #715: booking ownership check added — supply the booking row so handler proceeds.
+    mocks.serviceClient.mockReturnValue(
+      recordingDb(eqLog, {
+        bookings: { data: { id: "b1" } },
+        trip_resources: { data: null },
+        users: { data: null },
+      }),
+    );
     const res = await resourcesPOST(req(), { params: Promise.resolve({ id: "b1" }) });
     expect(res.status).toBe(201);
     expect(eqLog).toContain("users.tenant_id"); // the agent users read is tenant-scoped too

@@ -203,4 +203,29 @@ describe("Stripe webhook — D-091 P1 #1 error propagation", () => {
       expect(updateCallCount, `${type} should have attempted at least one update`).toBeGreaterThan(0);
     });
   }
+
+  // #717 — SELECT errors on tenant lookups must also propagate as 500.
+  // Pre-fix: error field was discarded; handler silently skipped the event.
+  const SELECT_ERROR_EVENTS: Array<{ type: string; data: Record<string, unknown> }> = [
+    {
+      type: "checkout.session.completed",
+      data: { id: "cs_1", subscription: "sub_1", customer: "cus_1", metadata: { tenant_id: "t-1" } },
+    },
+    { type: "account.updated", data: { id: "acct_1", details_submitted: true, payouts_enabled: false } },
+    { type: "customer.subscription.updated", data: { id: "sub_1", status: "active" } },
+    { type: "invoice.payment_succeeded", data: { parent: { subscription_details: { subscription: "sub_1" } } } },
+    { type: "invoice.payment_failed", data: { parent: { subscription_details: { subscription: "sub_1" } } } },
+  ];
+
+  for (const { type, data } of SELECT_ERROR_EVENTS) {
+    it(`#717: returns 500 when tenant SELECT fails on ${type}`, async () => {
+      setEvent(type, data);
+      dbBehavior.selectResult["maybeSingle"] = {
+        data: null,
+        error: { message: `synthetic SELECT error on ${type}` },
+      };
+      const res = await handleStripeWebhook(makeRequest(), "platform");
+      expect(res.status, `${type} SELECT error should return 500`).toBe(500);
+    });
+  }
 });

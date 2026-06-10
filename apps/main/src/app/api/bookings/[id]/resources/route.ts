@@ -39,6 +39,17 @@ export async function POST(
     const gate = await assertDeliverablesAvailable(ctx.tenant_id, svc);
     if (!gate.ok) return Response.json({ error: gate.reason }, { status: 403 });
 
+    // #715: verify booking ownership before creating resources — prevents cross-tenant
+    // resource creation where bookingId comes from an untrusted URL parameter.
+    const { data: booking, error: bookingErr } = await svc
+      .from("bookings")
+      .select("id")
+      .eq("id", bookingId)
+      .eq("tenant_id", ctx.tenant_id)
+      .maybeSingle();
+    if (bookingErr) return Response.json({ error: bookingErr.message }, { status: 500 });
+    if (!booking) return Response.json({ error: "not_found" }, { status: 404 });
+
     const { data: existing } = await svc
       .from("trip_resources")
       .select("*")

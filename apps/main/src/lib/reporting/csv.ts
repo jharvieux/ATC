@@ -75,7 +75,14 @@ function csvCell(v: unknown): string {
   } else {
     s = String(v);
   }
-  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+  // #727: =,+,-,@ prefix triggers formula execution in Excel/LibreOffice — always quote.
+  if (
+    /^[=+\-@]/.test(s) ||
+    s.includes('"') ||
+    s.includes(",") ||
+    s.includes("\n") ||
+    s.includes("\r")
+  ) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
