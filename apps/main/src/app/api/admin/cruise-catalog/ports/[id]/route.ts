@@ -16,8 +16,9 @@ interface PatchPortBody {
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const { id } = await params;
   let ctx: PlatformAdminContext;
   try {
     ctx = await assertPlatformAdmin(req);
@@ -49,7 +50,7 @@ export async function PATCH(
       async (db, recordQuery) => {
         recordQuery({ op: "update", table: "ports" });
         const rows = await safeAwait<unknown[]>(
-          db.from("ports").update(update).eq("id", params.id).select(PORT_COLS),
+          db.from("ports").update(update).eq("id", id).select(PORT_COLS),
           "ports.update",
         );
         return rows?.[0] ?? null;

@@ -17,8 +17,9 @@ interface PatchLineBody {
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const { id } = await params;
   let ctx: PlatformAdminContext;
   try {
     ctx = await assertPlatformAdmin(req);
@@ -55,7 +56,7 @@ export async function PATCH(
       async (db, recordQuery) => {
         recordQuery({ op: "update", table: "cruise_lines" });
         const rows = await safeAwait<unknown[]>(
-          db.from("cruise_lines").update(update).eq("id", params.id).select(LINE_COLS),
+          db.from("cruise_lines").update(update).eq("id", id).select(LINE_COLS),
           "cruise_lines.update",
         );
         return rows?.[0] ?? null;
