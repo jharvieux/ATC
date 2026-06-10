@@ -146,7 +146,7 @@ describe("POST /api/admin/tenants/[id]/review — decision notifications (#960)"
     expect(input.html).toContain("Acme Travel LLC");
   });
 
-  it("reject emails the reason, BEFORE tenant.terminated deactivates the recipients", async () => {
+  it("reject emails the reason BEFORE emitting tenant.terminated (defensive ordering)", async () => {
     const res = await postReview({ action: "reject", reason: "duplicate <application>" });
     expect(res.status).toBe(200);
 
@@ -156,9 +156,10 @@ describe("POST /api/admin/tenants/[id]/review — decision notifications (#960)"
     // Reason is rendered HTML-escaped.
     expect(input.html).toContain("duplicate &lt;application&gt;");
 
-    // Ordering: the recipients query reads users with status='active'; the
-    // tenant.terminated handler deactivates those rows, so the email must be
-    // dispatched before the event is emitted.
+    // Ordering: the recipients query reads users with status='active'. No
+    // tenant.terminated handler deactivates those rows today (verified
+    // 2026-06-10), but the email must stay ahead of the event so a future
+    // handler that does can never strand the applicant unnotified.
     const terminatedCall = mocks.send.mock.calls.findIndex((c) => c[0].name === "tenant.terminated");
     expect(terminatedCall).toBeGreaterThanOrEqual(0);
     expect(mocks.sendNotification.mock.invocationCallOrder[0]!).toBeLessThan(

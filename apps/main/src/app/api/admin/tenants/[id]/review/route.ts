@@ -19,7 +19,9 @@ function escapeReviewHtml(s: string): string {
 // Best-effort decision notification to the tenant's active users (#960).
 // A send failure must not roll back the review decision, so errors are
 // logged and swallowed. Callers invoke this BEFORE emitting lifecycle
-// events whose handlers may deactivate the users rows (tenant.terminated).
+// events as defensive ordering: no tenant.terminated handler mutates
+// users.status today (verified 2026-06-10), but if one ever does, the
+// recipient query here must already have run.
 async function notifyTenantUsers(
   db: SupabaseClient,
   tenantId: string,
@@ -31,11 +33,14 @@ async function notifyTenantUsers(
   },
 ): Promise<void> {
   try {
-    const { data: users } = await db
+    const { data: users, error: usersErr } = await db
       .from("users")
       .select("email")
       .eq("tenant_id", tenantId)
       .eq("status", "active");
+    // A failed read must be loggable, not indistinguishable from zero recipients —
+    // on the reject path this is the only chance to email the applicant.
+    if (usersErr) throw new Error(`users.select failed: ${usersErr.message}`);
     const recipients = ((users ?? []) as Array<{ email: string }>).map((u) => u.email);
     if (recipients.length === 0) return;
     const { sendTenantNotification } = await import("@/lib/email/notifications");
@@ -140,9 +145,12 @@ export async function POST(
             });
           }
 
-          const portalUrl = process.env.PLATFORM_PRIMARY_DOMAIN
-            ? `https://${tenant.slug}.${process.env.PLATFORM_PRIMARY_DOMAIN}/`
-            : null;
+          // Slug goes into an href unescaped — restrict to subdomain-safe chars
+          // (escapeReviewHtml doesn't cover quotes/attribute contexts).
+          const portalUrl =
+            process.env.PLATFORM_PRIMARY_DOMAIN && /^[a-z0-9-]+$/.test(tenant.slug ?? "")
+              ? `https://${tenant.slug}.${process.env.PLATFORM_PRIMARY_DOMAIN}/`
+              : null;
           await notifyTenantUsers(db, tenantId, {
             subject: "Your AI Travel Concierge account is approved",
             html: `<h2>Your account has been approved</h2>
@@ -183,8 +191,9 @@ export async function POST(
             await stripe.subscriptions.cancel(tenant.stripe_subscription_id, { prorate: false });
           }
 
-          // Notify before tenant.terminated — its handler deactivates the
-          // users rows the recipient query depends on.
+          // Notify before tenant.terminated — defensive ordering: no handler
+          // deactivates users rows today (verified 2026-06-10), but if one ever
+          // does, the recipient query must already have run.
           await notifyTenantUsers(db, tenantId, {
             subject: "Update on your AI Travel Concierge application",
             html: `<h2>Your application was not approved</h2>
