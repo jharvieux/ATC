@@ -31,10 +31,13 @@ export async function guardConversationAccess(
   const authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
   if (!authUserId) return notFound();
 
+  // status filter keeps this predicate identical to the RLS helper's —
+  // a deactivated member must not pass either layer.
   const { data: urow, error } = await db
     .from("users")
     .select("id, role")
     .eq("auth_user_id", authUserId)
+    .eq("status", "active")
     .maybeSingle();
   if (error || !urow) return notFound();
 

@@ -115,10 +115,18 @@ describe("POST /api/chat/conversations/[id]/persona ownership (#908)", () => {
     expect(h.conversationUpdates).toBe(0);
   });
 
-  it("staff (agent) may switch persona on a customer thread", async () => {
+  it("staff (agent) may switch persona on a customer thread — and the write fires", async () => {
     h.callerUsersId = "users-an-agent";
     h.callerRole = "agent";
     const res = await SWITCH_PERSONA(...personaArgs());
     expect(res.status).toBe(200);
+    expect(h.conversationUpdates).toBe(1);
+  });
+
+  it("unknown conversation id → 404 before any write", async () => {
+    h.conv = null;
+    const res = await SWITCH_PERSONA(...personaArgs());
+    expect(res.status).toBe(404);
+    expect(h.conversationUpdates).toBe(0);
   });
 });
