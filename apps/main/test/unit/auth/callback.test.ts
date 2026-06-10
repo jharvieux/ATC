@@ -153,6 +153,21 @@ describe("GET /api/auth/callback", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/");
   });
 
+  it("#969: platform-domain customer signup never sets a role — the 'viewer' column default must decide it", async () => {
+    // The rule: end customers on the platform default tenant are viewers;
+    // only agency provisioning (/signup/complete) creates a tenant_owner —
+    // see signup-complete.test.ts for that half. The upsert must OMIT role
+    // entirely: the DB default ('viewer', migration 20260628000002) applies
+    // on INSERT, and on the onConflict UPDATE an explicit role would rewrite
+    // an existing owner/agent re-logging-in on their tenant subdomain (#800).
+    // A role key appearing here means customers are being over- (or staff
+    // under-) granted — fail.
+    process.env.PLATFORM_DEFAULT_TENANT_ID = DEFAULT_TENANT_ID;
+    await get("?code=abc", { "x-resolved-tenant-id": "platform" });
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert.mock.calls[0]?.[0]).not.toHaveProperty("role");
+  });
+
   it("on the platform domain heading to agency provisioning (next=/signup/complete): does NOT upsert so signup/complete can provision", async () => {
     // The callback runs before /signup/complete. If it created a default-tenant
     // membership row here, that route's idempotency guard would reject the user

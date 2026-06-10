@@ -58,8 +58,9 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   // #963 — settings page shows current overrides to all roles.
   key("email_templates", "read"),
   // Customer self-service reads (§11.3 / §25.3 / §11.6). End customers
-  // default to role='tenant_owner' (per migration 20260625000001), and
-  // tenant staff may also use the same endpoints when acting as a user.
+  // default to role='viewer' (least-priv column default since migration
+  // 20260628000002 — #969), and tenant staff may also use the same
+  // endpoints when acting as a user.
   key("CustomerMemory", "read"),
   key("UserProfile", "read"),
   key("PendingTransfer", "read"),

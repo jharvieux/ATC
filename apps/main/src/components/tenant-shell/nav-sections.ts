@@ -4,8 +4,12 @@
 // the entries avoids dead links).
 //
 // Role rationale:
-//   - Workspace (Concierge + CRM) is staff-only: ta_chat/quotes/bookings
-//     grants exclude viewers (#902).
+//   - Home ("/") differs by role (#974 operator decision 2026-06-10):
+//     staff work in TA mode (trade topics, no customer guardrails), so
+//     their home IS the Concierge; viewers are end customers and keep
+//     the guardrailed support chat.
+//   - Workspace (CRM) is staff-only: ta_chat/quotes/bookings grants
+//     exclude viewers (#902).
 //   - My account is self-service (conversations, price watches, privacy)
 //     — READ_GRANTS territory, available to every role.
 //   - Administration maps to owner-only grants (tenant_branding write,
@@ -26,20 +30,25 @@ export interface TenantNavSection {
 }
 
 const ALL_ROLES = ["tenant_owner", "agent", "viewer"] as const;
-const STAFF = ["tenant_owner", "agent"] as const;
+const STAFF: readonly UserRole[] = ["tenant_owner", "agent"];
+const VIEWER_ONLY = ["viewer"] as const;
 const OWNER_ONLY = ["tenant_owner"] as const;
 
 export const TENANT_NAV_SECTIONS: readonly TenantNavSection[] = [
   {
     heading: null,
-    roles: ALL_ROLES,
+    roles: STAFF,
+    items: [{ href: "/", label: "Concierge" }],
+  },
+  {
+    heading: null,
+    roles: VIEWER_ONLY,
     items: [{ href: "/", label: "Support chat" }],
   },
   {
     heading: "Workspace",
     roles: STAFF,
     items: [
-      { href: "/concierge", label: "Concierge" },
       { href: "/crm/contacts", label: "Contacts" },
       { href: "/crm/quotes", label: "Quotes" },
       { href: "/crm/bookings", label: "Bookings" },
@@ -68,4 +77,13 @@ export const TENANT_NAV_SECTIONS: readonly TenantNavSection[] = [
 
 export function navSectionsForRole(role: UserRole): TenantNavSection[] {
   return TENANT_NAV_SECTIONS.filter((s) => s.roles.includes(role));
+}
+
+export type TenantDefaultPanel = "ta-concierge" | "customer-chat";
+
+// #974 — which experience renders at the subdomain root. Keyed off STAFF
+// membership (not `role !== "viewer"`) so a future role defaults to the
+// guardrailed customer chat, never the unguardrailed TA surface.
+export function defaultPanelForRole(role: UserRole): TenantDefaultPanel {
+  return STAFF.includes(role) ? "ta-concierge" : "customer-chat";
 }
