@@ -117,6 +117,10 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   // counter is at-or-over the configured daily cap. Consumed by the
   // operator-alert function (PR B).
   "platform.weather_rate_limit_hit":   { kind: "platform_admin", payload_shape: platformAdminShape },
+
+  // §831 — CruiseMapper port backfill (on-demand re-enrich trigger).
+  // Optional data.ship_urls narrows to a subset; defaults to full inventory.
+  "cruisemapper/port-backfill.requested": { kind: "platform_admin", payload_shape: platformAdminShape },
 };
 
 export class EventNotRegisteredError extends Error {
