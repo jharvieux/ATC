@@ -118,6 +118,23 @@ describe("task-reminders-fire — drain loop (#900)", () => {
     // First batch full (200) → re-queries; second batch empty (0) → breaks.
     expect(result.batches).toBe(2);
   });
+
+  it("time-budget: loop exits when TIME_BUDGET_MS is elapsed even if backlog remains", async () => {
+    // Seed 2 full batches; without the budget guard both would be fetched.
+    for (let i = 0; i < BATCH_LIMIT * 2; i++) pool.push(makeRow(`r-${i}`));
+    // Simulate elapsed time via Date.now(): start=0, first check passes (0ms),
+    // second check sees 60s elapsed → exits before the second batch.
+    let nowCalls = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      nowCalls++;
+      return nowCalls <= 2 ? 0 : 60_000; // call 1=start, call 2=first loop check, call 3+=budget exceeded
+    });
+    const result = await run();
+    nowSpy.mockRestore();
+    expect(result.processed).toBe(BATCH_LIMIT);
+    expect(result.batches).toBe(1);
+    expect(pool).toHaveLength(BATCH_LIMIT); // second batch untouched
+  });
 });
 
 describe("task-reminders-fire — per-row behaviors", () => {
