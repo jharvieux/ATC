@@ -1,35 +1,34 @@
-# Session state — last updated 2026-06-10 21:30 UTC
+# Session state — last updated 2026-06-10 23:55 UTC
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
+**Note (D-205):** there is currently ONE Supabase project (mfaknjyqiwcjojukcnea) serving production — MCP applies ARE prod applies. Gate accordingly until #386/#534 split environments.
 
 ## Just completed
-- PR #958 merged: #926 audit timestamp fallback removed, #948 rag 503 = failure, #951 backfill halt alert
-- **PR #959 merged — #780 canonical cruise catalog** (MEMORY D-203); 5 migrations applied to dev Supabase
-- **Onboarding/UX sprint — all 4 merged** (MEMORY D-204):
-  - PR #964 (#961): signup form — sub_host hidden, red required-field validation
-  - PR #968 (#960): onboarding post-submission guidance + approval/rejection emails
-  - PR #967 (#962): tenant subdomain landing shell (chat default, role nav, hamburger)
-  - PR #971 (#963): tenant-editable outgoing email templates; migration applied to dev
-- PR #972 merged: MEMORY D-203 + SESSION checkpoint
-- Issues closed: #780, #960, #961, #962, #963 (+ #926/#948/#951 earlier)
-- Issues opened: #965 (first-sign-in checklist), #966 (rendering-test stack), #969 (platform-tenant roles), #970 (email-template scope extension)
+- #780 cruise catalog (PR #959) + onboarding/UX sprint (PRs #964/#967/#968/#971) — see D-203/D-204
+- Operator directives round 2 (D-205), all merged:
+  - PR #977: staff land in TA-mode concierge at tenant root
+  - PR #978: viewer-role fix + backfill EXECUTED on live project (2 customers demoted, operator kept)
+  - PR #980: {{ai_content}} editor placeholders + marketing-grade default templates; group-reminder CAN-SPAM footer fix
+  - PR #981: dependabot-update-branch cron (GitHub App token; GH_APP_ID/GH_APP_PRIVATE_KEY secrets added)
+  - Dependabot labels created (dependencies, automerge-candidate); #957 superseded by #976 (merged)
+- All 6 migrations confirmed live on the production-serving project
+- Issues closed today: #780, #926, #948, #951, #960–#963, #969, #974, #975
 
 ## In flight
-- Nothing in flight — clean checkpoint. (Dependabot PR #957 open; its retry workflow owns it.)
-- 4 agent worktrees remain under .claude/worktrees/ (branches all merged; safe to clean, left for harness)
+- Nothing in flight — clean checkpoint. (This MEMORY/SESSION chore PR is the last item.)
+- Agent worktrees under .claude/worktrees/ from merged branches — safe to clean
 
 ## Next step
-- Operator review of D-204 product defaults (staff default chat panel; email override replaces AI content; quote-expiry subject copy)
-- #969 decision: intended role for platform-tenant customers + prod data check (operator-gated)
-- OPERATOR GATE: prod apply of the #780 migrations (×5) and #971 migration (×1)
+- Operator: pick the #966 testing approach (lean: add jsdom+RTL as dev-deps)
+- Then any of the Sonnet-suitable follow-ups: #965 (first-sign-in checklist), #970 (remaining email types), #979 (RSVP CTA — needs invite landing page first)
+- Optional sanity: trigger dependabot-update-branch via workflow_dispatch to confirm a clean no-op run
 
 ## Blocked on user
-- Prod migration applies (#780 ×5, #971 ×1) — dev is live with all of them
-- #969 prod data check + role decision
-- Test/staging Supabase project provisioning (#386)
+- #966 test-approach decision
 - #899 Vercel Pro upgrade (blocks #894)
+- Test/staging Supabase provisioning (#386) + deploy.yml prod-migration step (#534) — reconcile SUPABASE_PROD_DB_URL secret with the single-project reality (D-205)
 
 ## Open questions
-- #967 product defaults flagged in its PR body (support-chat choice, staff default, nav mapping, Admin → /settings)
 - Port seeding name-match join (ports ↔ port_info_chunks) unvalidated against runtime CruiseMapper name formats
+- Quote-expiry subject copy ("Your estimate for your cruise has expired") — operator may want a reword

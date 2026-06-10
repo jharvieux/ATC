@@ -15,6 +15,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
+import { generateToken } from "@/lib/groups/invitation-token";
 import { GroupReminder } from "@/emails/GroupReminder";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 
@@ -161,6 +162,7 @@ export const groupReminderCadence = inngest.createFunction(
       let subject: string;
       let html: string;
       try {
+        const inviteUrl = `${baseUrl}/group/invite/${generateToken(inv.id)}`;
         const resolved = await resolveEmailContent({
           db: svc,
           tenant_id: group.tenant_id,
@@ -171,6 +173,7 @@ export const groupReminderCadence = inngest.createFunction(
             ship_name: group.ship_name,
             sailing_date: group.sailing_date,
             coordinator_message: group.coordinator_message ?? "",
+            invite_url: inviteUrl,
           },
         });
         subject = resolved.subject;
@@ -186,6 +189,7 @@ export const groupReminderCadence = inngest.createFunction(
                   sailing_date: group.sailing_date,
                   coordinator_message: group.coordinator_message,
                   hero_image_url: group.hero_image_url,
+                  invite_url: inviteUrl,
                 }),
               );
       } catch (err) {

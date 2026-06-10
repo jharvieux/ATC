@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
-import { DEFAULT_PRIMARY, DEFAULT_ACCENT } from "./EmailParts";
+import { DEFAULT_PRIMARY, DEFAULT_ACCENT, CtaButton } from "./EmailParts";
 
 export interface GroupReminderProps {
   layout: Omit<BrandedLayoutProps, "children">;
@@ -17,6 +17,7 @@ export interface GroupReminderProps {
   sailing_date: string;
   coordinator_message: string | null;
   hero_image_url: string | null;
+  invite_url?: string;
 }
 
 export function GroupReminder(props: GroupReminderProps): React.ReactElement {
@@ -75,13 +76,18 @@ export function GroupReminder(props: GroupReminderProps): React.ReactElement {
         </tbody>
       </table>
 
+      {props.invite_url && (
+        <CtaButton href={props.invite_url} accent={accent}>
+          View trip &amp; RSVP
+        </CtaButton>
+      )}
+
       <p style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.7 }}>
-        Use the link from your original invitation email to view the trip and
-        RSVP, or reply to your group coordinator.
+        Questions? Reply to your group coordinator.
       </p>
 
       <p style={{ textAlign: "center", fontSize: 15, fontWeight: 600, color: primary, marginTop: 24 }}>
-        Cabins fill up — don&rsquo;t miss the boat! 🚢
+        Cabins fill up — don&rsquo;t miss the boat!
       </p>
     </BrandedLayout>
   );
