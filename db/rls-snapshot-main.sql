@@ -457,17 +457,19 @@ CREATE POLICY "contacts_update_policy" ON public.contacts
 -- TABLE: public.conversations
 CREATE POLICY "conversations_delete_policy" ON public.conversations
   FOR DELETE TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+  USING (auth_user_can_access_conversation(id, tenant_id) AND tenant_is_active(tenant_id));
 CREATE POLICY "conversations_insert_policy" ON public.conversations
   FOR INSERT TO PUBLIC
-  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id) AND user_id = (( SELECT u.id
+   FROM users u
+  WHERE u.auth_user_id = auth.uid() AND u.tenant_id = conversations.tenant_id AND u.status = 'active'::text)));
 CREATE POLICY "conversations_select_policy" ON public.conversations
   FOR SELECT TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id));
+  USING (auth_user_can_access_conversation(id, tenant_id));
 CREATE POLICY "conversations_update_policy" ON public.conversations
   FOR UPDATE TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id))
-  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+  USING (auth_user_can_access_conversation(id, tenant_id))
+  WITH CHECK (auth_user_can_access_conversation(id, tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.customer_bug_submission_counters
 CREATE POLICY "customer_bug_submission_counters_tenant_delete" ON public.customer_bug_submission_counters
@@ -867,17 +869,17 @@ CREATE POLICY "legal_documents_update" ON public.legal_documents
 -- TABLE: public.messages
 CREATE POLICY "messages_delete_policy" ON public.messages
   FOR DELETE TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+  USING (auth_user_can_access_conversation(conversation_id, tenant_id) AND tenant_is_active(tenant_id));
 CREATE POLICY "messages_insert_policy" ON public.messages
   FOR INSERT TO PUBLIC
-  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+  WITH CHECK (auth_user_can_access_conversation(conversation_id, tenant_id) AND tenant_is_active(tenant_id));
 CREATE POLICY "messages_select_policy" ON public.messages
   FOR SELECT TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id));
+  USING (auth_user_can_access_conversation(conversation_id, tenant_id));
 CREATE POLICY "messages_update_policy" ON public.messages
   FOR UPDATE TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id))
-  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+  USING (auth_user_can_access_conversation(conversation_id, tenant_id))
+  WITH CHECK (auth_user_can_access_conversation(conversation_id, tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.news_articles
 CREATE POLICY "no_access" ON public.news_articles
