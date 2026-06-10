@@ -33,6 +33,65 @@ async function ping(name: string, url: string, headers: Record<string, string> =
   }
 }
 
+// Inngest: statuspage returns 200 always; parse body for operational indicator.
+// Endpoint verified 2026-06-10: https://status.inngest.com/api/v2/status.json
+// returns { status: { indicator: "none" | "minor" | "major" | "critical" } }
+// "none" = all systems operational.
+async function pingInngest(): Promise<void> {
+  try {
+    const res = await fetch("https://status.inngest.com/api/v2/status.json", {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      recordVendorFailure("inngest", `http_${res.status}`);
+      return;
+    }
+    const body = (await res.json()) as { status?: { indicator?: string } };
+    const indicator = body?.status?.indicator ?? "unknown";
+    if (indicator === "none") {
+      recordVendorSuccess("inngest");
+    } else {
+      recordVendorFailure("inngest", `status_${indicator}`);
+    }
+  } catch (err) {
+    recordVendorFailure("inngest", err instanceof Error ? err.message : String(err));
+  }
+}
+
+// RAG readiness: hits /api/health/ready on the RAG service, which pings Redis
+// and RAG Supabase. Records "rag" down if the endpoint itself is unreachable;
+// parses the JSON body for "upstash" and "supabase_rag" status.
+async function pingRagReadiness(): Promise<void> {
+  const ragUrl = process.env.RAG_SERVICE_URL;
+  if (!ragUrl) {
+    recordVendorFailure("rag", "RAG_SERVICE_URL not configured");
+    recordVendorFailure("upstash", "RAG_SERVICE_URL not configured");
+    recordVendorFailure("supabase_rag", "RAG_SERVICE_URL not configured");
+    return;
+  }
+  try {
+    const res = await fetch(`${ragUrl}/api/health/ready`, { signal: AbortSignal.timeout(8000) });
+    const body = (await res.json()) as { redis?: string; supabase_rag?: string };
+    // The endpoint being reachable (and returning parseable JSON) proves "rag" is up.
+    recordVendorSuccess("rag");
+    if (body.redis === "ok") {
+      recordVendorSuccess("upstash");
+    } else {
+      recordVendorFailure("upstash", body.redis ?? "no_response");
+    }
+    if (body.supabase_rag === "ok") {
+      recordVendorSuccess("supabase_rag");
+    } else {
+      recordVendorFailure("supabase_rag", body.supabase_rag ?? "no_response");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    recordVendorFailure("rag", msg);
+    recordVendorFailure("upstash", `rag_unreachable: ${msg}`);
+    recordVendorFailure("supabase_rag", `rag_unreachable: ${msg}`);
+  }
+}
+
 export const vendorHealthProbe = inngest.createFunction(
   {
     id: "vendor-health-probe",
@@ -57,6 +116,8 @@ export const vendorHealthProbe = inngest.createFunction(
         Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ""}`,
       }),
       ping("supabase", `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/auth/v1/health`),
+      pingInngest(),
+      pingRagReadiness(),
     ]);
     return { ok: true };
   },
