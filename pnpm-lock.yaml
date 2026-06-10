@@ -46,8 +46,8 @@ importers:
         specifier: ^4.5.0
         version: 4.5.0(@opentelemetry/core@2.7.1(@opentelemetry/api@1.9.1))(express@4.22.2)(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@6.0.3)(zod@4.4.3)
       jscpd:
-        specifier: ^5.0.4
-        version: 5.0.4
+        specifier: ^5.0.5
+        version: 5.0.5
       knip:
         specifier: ^6.16.1
         version: 6.16.1
@@ -327,8 +327,8 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3(eslint@9.39.4(jiti@2.7.0))
       prettier:
-        specifier: ^3.4.2
-        version: 3.8.3
+        specifier: ^3.8.4
+        version: 3.8.4
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -4618,36 +4618,36 @@ packages:
   core-util-is@1.0.3:
     resolution: {integrity: sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==}
 
-  cpd-darwin-arm64@5.0.4:
-    resolution: {integrity: sha512-oqD0RVirv3QRuMjM1XdKfZR+b6qFWqR/J6Jia1wsiV+XJYLjeRLPvWwjhdPQzIY/lRMqDETWZ+8U5h7LXX5C/Q==}
+  cpd-darwin-arm64@5.0.5:
+    resolution: {integrity: sha512-Ebbdu8Pzqbpsf2r+tHcY1S5tx23iSYwUrpYb8eYqh6kFlPlPciHpd6rJNA2KrmsABmgiZt/NDcyIzpXhxElaKw==}
     cpu: [arm64]
     os: [darwin]
 
-  cpd-darwin-x64@5.0.4:
-    resolution: {integrity: sha512-I3wD3TrwK5vzqTO2ej+/t9Jugg6mGEx8jwIsqZXamxQoRW55UNI91wlrsThcp3mMp7ZLSsSnrFm6jcx3BPHafw==}
+  cpd-darwin-x64@5.0.5:
+    resolution: {integrity: sha512-7hZ8Rjr06933B/i1A7MSc5KpK47Lj5V7zxKMzd4iSMGchQLZtov9zJnaNOldHGmbkNM40O4cL/r7iJpWtlMxqg==}
     cpu: [x64]
     os: [darwin]
 
-  cpd-linux-arm64-gnu@5.0.4:
-    resolution: {integrity: sha512-KvRHvlx12cGYTHNe1bTFdk4l6ILtdfwPr0hCJuFB7Q340o7UlWA2GX4SxW/1hE9Ts1id1W0iKGKkkp5LP5Aagg==}
+  cpd-linux-arm64-gnu@5.0.5:
+    resolution: {integrity: sha512-2w8enNvAZTYq+qT5zn+a8GT0hcUjLa460xl75XWggM4Y/I9f+/hbpP/o7iA4BRxa/bVK7q//KtKSasIidHRDag==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  cpd-linux-x64-gnu@5.0.4:
-    resolution: {integrity: sha512-vF4OI+1BZDomxKN3rVu9NuhX5gj0F7NWtofN6A2ApGOtyM0CmhOTYcitqF9jExiXkknr6uETBs4avEopOfcHPQ==}
+  cpd-linux-x64-gnu@5.0.5:
+    resolution: {integrity: sha512-m3V4s0FvrmFHCexqsjr1YpNr1/x0HKRMxg301SJcDkAm2CHYmpv0hz4JP5i6FnwJLzpJvpCRaESyMJFJzr6atw==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  cpd-linux-x64-musl@5.0.4:
-    resolution: {integrity: sha512-dooVyen2ThTyNtpSIndo6SH/BDTM2Wazz6leJON244bZJ8JgCp8Suc54nK0RlWpHOZjYSqZu2k9bHFlBWrrAlg==}
+  cpd-linux-x64-musl@5.0.5:
+    resolution: {integrity: sha512-8Qvk7otkGNpkc8I0+ti8/KzXqU+0WLNg5Lhxl7FzauG5fDo4dAgsZmjUoSc/nQNvQE7pw5i0Ai7AtQ/QNh+xYw==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  cpd-windows-x64-msvc@5.0.4:
-    resolution: {integrity: sha512-J3k4x4MHjgtsr2vLWpuK3imi6tLlFU9UADrgoS0BFzQI8BJpXtXen7Q7IMuYcAnvGR7I+Rf//5bGFIfQ+2PqhA==}
+  cpd-windows-x64-msvc@5.0.5:
+    resolution: {integrity: sha512-dwu4CjxNXilMFXVKpPeBSeDApjqAYMj4Y5j3gNADuN5eNIhy/8wPEsF3gexOVdesExBVJR4q8irF3hnseJWJvg==}
     cpu: [x64]
     os: [win32]
 
@@ -5867,8 +5867,8 @@ packages:
     resolution: {integrity: sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==}
     hasBin: true
 
-  jscpd@5.0.4:
-    resolution: {integrity: sha512-I1skFSqn6gpLeA62konLjtfJgZZcam3scIXHAXM+/1VRpBHXauWF/x2VOgeGbizR7vrxA8qSxsHfNwbBOAHedw==}
+  jscpd@5.0.5:
+    resolution: {integrity: sha512-efwUuW4Uubf+uQ8z7c3rphFoO4Y1Uo4qtfEcqX945dwyuyaUKYmnFzLoNvW0T3y/0QSzn7iNvQxeqxHT4KMcrw==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -6778,8 +6778,8 @@ packages:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
     engines: {node: '>= 0.8.0'}
 
-  prettier@3.8.3:
-    resolution: {integrity: sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==}
+  prettier@3.8.4:
+    resolution: {integrity: sha512-N2MylSdi48+5N/6S5j+maeHbUSIzzZ5uOcX5Hm4QpV8Dkb1HFjfAKTKX6yNPJQD9AhcT3ifHNB66tWTTJDi11Q==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -12612,22 +12612,22 @@ snapshots:
 
   core-util-is@1.0.3: {}
 
-  cpd-darwin-arm64@5.0.4:
+  cpd-darwin-arm64@5.0.5:
     optional: true
 
-  cpd-darwin-x64@5.0.4:
+  cpd-darwin-x64@5.0.5:
     optional: true
 
-  cpd-linux-arm64-gnu@5.0.4:
+  cpd-linux-arm64-gnu@5.0.5:
     optional: true
 
-  cpd-linux-x64-gnu@5.0.4:
+  cpd-linux-x64-gnu@5.0.5:
     optional: true
 
-  cpd-linux-x64-musl@5.0.4:
+  cpd-linux-x64-musl@5.0.5:
     optional: true
 
-  cpd-windows-x64-msvc@5.0.4:
+  cpd-windows-x64-msvc@5.0.5:
     optional: true
 
   crc-32@1.2.2: {}
@@ -14323,14 +14323,14 @@ snapshots:
     dependencies:
       argparse: 2.0.1
 
-  jscpd@5.0.4:
+  jscpd@5.0.5:
     optionalDependencies:
-      cpd-darwin-arm64: 5.0.4
-      cpd-darwin-x64: 5.0.4
-      cpd-linux-arm64-gnu: 5.0.4
-      cpd-linux-x64-gnu: 5.0.4
-      cpd-linux-x64-musl: 5.0.4
-      cpd-windows-x64-msvc: 5.0.4
+      cpd-darwin-arm64: 5.0.5
+      cpd-darwin-x64: 5.0.5
+      cpd-linux-arm64-gnu: 5.0.5
+      cpd-linux-x64-gnu: 5.0.5
+      cpd-linux-x64-musl: 5.0.5
+      cpd-windows-x64-msvc: 5.0.5
 
   jsesc@3.1.0: {}
 
@@ -15399,7 +15399,7 @@ snapshots:
 
   prelude-ls@1.2.1: {}
 
-  prettier@3.8.3: {}
+  prettier@3.8.4: {}
 
   pretty-ms@9.3.0:
     dependencies:
