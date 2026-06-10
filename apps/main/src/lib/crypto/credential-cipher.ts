@@ -33,15 +33,18 @@ function getKeyBuffer(keyBase64: string): Buffer {
 
 export function encryptCredential(plaintext: string): { ciphertext: string; key_id: string } {
   const e = env();
+  const keyId = e.APP_ENCRYPTION_KEY_ID_CURRENT;
   const key = getKeyBuffer(e.APP_ENCRYPTION_KEY_CURRENT);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, iv);
+  // #738: bind key_id into AAD so mutating key_id in DB invalidates the auth tag.
+  cipher.setAAD(Buffer.from(keyId, "utf8"));
   const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   const bundle = Buffer.concat([iv, tag, encrypted]);
   return {
     ciphertext: bundle.toString("base64"),
-    key_id: e.APP_ENCRYPTION_KEY_ID_CURRENT,
+    key_id: keyId,
   };
 }
 
@@ -80,9 +83,24 @@ export function decryptCredential(payload: {
     }
 
     const key = getKeyBuffer(keyBase64);
+
+    // #738: try AAD-bound path first (ciphertexts encrypted after this fix).
+    // If auth tag fails, fall back to legacy no-AAD path for ciphertexts that
+    // predate this change. The fallback path is safe: a new ciphertext encrypted
+    // with AAD will also fail on no-AAD (the tag covers the AAD), so an attacker
+    // cannot strip AAD protection from new ciphertexts by triggering the fallback.
+    try {
+      const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
+      decipher.setAAD(Buffer.from(key_id, "utf8"));
+      decipher.setAuthTag(tag);
+      const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+      return { ok: true, value: plaintext.toString("utf8") };
+    } catch {
+      // AAD path failed — try legacy no-AAD path for pre-fix ciphertexts.
+    }
+
     const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
     decipher.setAuthTag(tag);
-
     const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]);
     return { ok: true, value: plaintext.toString("utf8") };
   } catch (err) {

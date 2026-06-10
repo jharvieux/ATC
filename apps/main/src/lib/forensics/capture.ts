@@ -40,10 +40,12 @@ export interface CaptureResult {
   snapshot_id: string;
 }
 
-function encryptToBundle(plaintext: string, keyBase64: string): Buffer {
+function encryptToBundle(plaintext: string, keyBase64: string, keyId: string): Buffer {
   const key = Buffer.from(keyBase64, "base64");
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, iv);
+  // #739: bind keyId into AAD so mutating encryption_key_id in DB invalidates the auth tag.
+  cipher.setAAD(Buffer.from(keyId, "utf8"));
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return Buffer.concat([iv, tag, ciphertext]);
@@ -71,7 +73,7 @@ export async function captureForensicsSnapshot(
   }
 
   const plaintext = JSON.stringify(input.payload ?? {});
-  const bundle = encryptToBundle(plaintext, keyBase64);
+  const bundle = encryptToBundle(plaintext, keyBase64, keyId);
 
   const purgeAfter = new Date(Date.now() + FORENSICS_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 

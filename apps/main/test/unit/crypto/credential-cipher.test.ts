@@ -154,6 +154,48 @@ describe("credential-cipher (§13.5)", () => {
       expect(result.error.code).toBe("unknown_key_id");
     }
   });
+
+  // #738 — AAD binding
+  it("#738: mutated key_id on a new ciphertext returns auth_tag_mismatch", () => {
+    // encryptCredential now binds key_id into AAD; changing key_id in the
+    // stored payload must invalidate the GCM auth tag.
+    const encrypted = encryptCredential("sensitive-value");
+    const tampered = { ...encrypted, key_id: "v-attacker" };
+    // Both 'v-attacker' and the real key_id must fail to resolve, so we
+    // set an env with 'v-attacker' pointing to the same key material —
+    // which tests that the TAG mismatch (not the key-lookup failure) is
+    // the actual rejection reason.
+    __setMockEnv(
+      makeEnv({
+        APP_ENCRYPTION_KEY_CURRENT: CURRENT_KEY_B64,
+        APP_ENCRYPTION_KEY_ID_CURRENT: "v-attacker",
+        APP_ENCRYPTION_KEY_PREVIOUS: CURRENT_KEY_B64,
+        APP_ENCRYPTION_KEY_ID_PREVIOUS: CURRENT_KEY_ID,
+      }),
+    );
+    const result = decryptCredential(tampered);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("auth_tag_mismatch");
+    }
+  });
+
+  it("#738: legacy ciphertext (no AAD) still decrypts via fallback", () => {
+    // Simulate a ciphertext that was encrypted before AAD was added.
+    // Build it directly using Node crypto without setAAD.
+    const key = Buffer.from(CURRENT_KEY_B64, "base64");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([cipher.update("legacy-secret", "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    const bundle = Buffer.concat([iv, tag, ciphertext]).toString("base64");
+
+    const result = decryptCredential({ ciphertext: bundle, key_id: CURRENT_KEY_ID });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toBe("legacy-secret");
+    }
+  });
 });
 
 // verifyEnvAtBoot key-length validation is tested in env-boot-validation.test.ts
