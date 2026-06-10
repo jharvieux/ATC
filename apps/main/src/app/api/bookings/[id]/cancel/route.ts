@@ -174,9 +174,8 @@ export async function POST(
       // to 'processing'/'available' (sub-host funds already on the way), the update
       // matches 0 rows → 409 so the caller retries with fresh state, rather than
       // writing a clawback against an un-cancelled transfer (D-091 R2 / #846).
-      let updated: { id: string }[] | null = null;
       try {
-        updated = await safeAwaitRowCount(
+        await safeAwaitRowCount(
           adminDb
             .from("payout_records")
             .update({ status: "cancelled", amount_cents: 0 })
@@ -196,7 +195,6 @@ export async function POST(
         }
         throw err;
       }
-      if (!updated) throw new Error("payout_records.cas_cancel: unexpected null result");
 
       // Negative platform_revenue row for clawback
       await safeAwait(adminDb.from("platform_revenue").insert({
