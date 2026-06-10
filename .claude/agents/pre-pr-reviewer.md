@@ -184,9 +184,10 @@ sits next to the PR on GitHub (durable record + the
    REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
    DIFF_HASH=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files" \
      | jq -r '[.[][]] | sort_by(.filename)[] | if .patch then (.filename + "\n" + .patch) else (.filename + "\n" + .sha + "\n" + .status) end' \
-     | shasum -a 256 | awk '{print $1}')
-   # shasum -a 256 = macOS equivalent of Linux sha256sum; both produce
-   # identical hex output and the workflow uses sha256sum on ubuntu-latest.
+     | (sha256sum 2>/dev/null || shasum -a 256) | awk '{print $1}')
+   # (sha256sum 2>/dev/null || shasum -a 256): sha256sum on Linux/CI,
+   # shasum on macOS — both produce identical hex. sha256sum fails fast
+   # (without consuming stdin) when absent, so shasum gets full input.
    ```
 
 3. Post the report. The marker on line 1 **must include the hash** —
@@ -194,13 +195,13 @@ sits next to the PR on GitHub (durable record + the
    of the report (which may contain backticks) stays literal:
    ```bash
    BODY_TMP=$(mktemp)
+   trap 'rm -f "$BODY_TMP"' EXIT
    printf '<!-- prepr-audit:v1 diff:%s -->\n' "$DIFF_HASH" > "$BODY_TMP"
    cat >> "$BODY_TMP" <<'EOF'
    ## Audit (pre-pr-reviewer)
    ...(your report verbatim)...
    EOF
    gh pr comment "$PR" --body "$(cat "$BODY_TMP")"
-   rm -f "$BODY_TMP"
    ```
 
 4. Report success back to the main agent: `"Posted as comment on PR #<N>."`

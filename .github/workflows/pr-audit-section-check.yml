@@ -295,11 +295,13 @@ jobs:
               return 0
             fi
 
-            # Timestamp fallback: newest comment without a diff: field
-            # (pre-hash-binding era). Accepted if posted after HEAD_DATE.
+            # Timestamp fallback: newest comment without a diff:<hash> marker
+            # field (pre-hash-binding era). Use a precise regex so "diff:"
+            # appearing in prose inside an audit report body doesn't
+            # misclassify the comment as new-style (issue #924).
             local NEWEST_OLD
             NEWEST_OLD=$(printf '%s' "$ALL_COMMENTS" \
-              | jq -r '[.[] | select(.body | contains("diff:") | not)] | sort_by(.created_at) | last | .created_at // empty')
+              | jq -r '[.[] | select(.body | test("<!-- [a-z0-9:-]+ diff:[0-9a-f]+") | not)] | sort_by(.created_at) | last | .created_at // empty')
             if [ -n "$NEWEST_OLD" ] && ! [ "$NEWEST_OLD" \< "$HEAD_DATE" ]; then
               echo "✓ $name audit comment posted $NEWEST_OLD (timestamp fallback — no diff hash)"
               return 0
