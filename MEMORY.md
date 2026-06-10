@@ -4,6 +4,19 @@ Newest entries on top.
 
 ---
 
+## D-205 — 2026-06-10 — Operator directives executed: prod = the MCP project; viewer backfill run; dependabot unstuck + cron
+
+**Decisions/facts established:**
+- **There is ONE Supabase project serving production** (`mfaknjyqiwcjojukcnea`) — the same project the supabase-main MCP applies to and CI diffs against. Verified via the live site's CSP headers. The "operator gate on prod apply" therefore means: MCP applies ARE prod applies. (SUPABASE_PROD_DB_URL secret exists but the deploy.yml prod-migration step is disabled pending #534; reconcile there.) All 6 of today's migrations are live in production.
+- **Platform-tenant customer role = viewer** (operator ruling). Signup was already correct (default flipped in 20260628000002); bad rows were 20260625000001's owner-backfill leftovers. Backfill executed via MCP: 2 customers demoted, operator (platform_admins-matched) untouched. PR #978.
+- **Staff land in TA-mode concierge** at the tenant root (PR #977); viewers keep customer chat; unknown roles fail-safe to the guarded surface.
+- **{{ai_content}} + marketing-grade templates** (PR #980): AI content is an explicit body-only variable, editor shows labeled placeholder blocks; defaults redesigned (table-based, BrandedLayout); group reminders gained the CAN-SPAM footer they never had.
+- **Dependabot root cause:** dependabot.yml declared `dependencies`/`automerge-candidate` labels that didn't exist in the repo (dependabot can't create labels — silently skipped). Labels created. Residual stall cause = strict up-to-date protection + no self-rebase on behind-only PRs → new cron `dependabot-update-branch.yml` (PR #981) update-branches eligible PRs 6-hourly **using the platform GitHub App token** (GH_APP_ID/GH_APP_PRIVATE_KEY Actions secrets mirror runtime creds) because GITHUB_TOKEN pushes don't trigger CI (recursion guard) — rejected: GITHUB_TOKEN (strands PRs), @dependabot rebase comments (bot-authored commands unreliable).
+
+**Open follow-ups:** #965, #966 (operator picks test approach; lean = add jsdom+RTL), #970, #979 — all Sonnet-suitable.
+
+---
+
 ## D-204 — 2026-06-10 — Onboarding/UX sprint: 4 features built by parallel worker agents, all merged
 
 **Decision.** Operator's onboarding review produced 4 issues (#960–#963), built simultaneously by 4 worker agents in isolated worktrees, audited, and merged to dev same-session: PR #968 (onboarding post-submission guidance + approval/rejection emails), PR #964 (signup form: sub_host hidden "for now", red required-field validation), PR #967 (tenant subdomain landing shell), PR #971 (tenant-editable email templates; migration applied to dev, prod gated).
