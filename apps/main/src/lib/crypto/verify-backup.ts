@@ -61,9 +61,19 @@ export function verifyBackup(input: BackupVerificationInput): BackupVerification
         };
       }
 
-      const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
-      decipher.setAuthTag(tag);
-      const plaintext = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+      // #738: try AAD-bound path first (ciphertexts produced after encryptCredential gained AAD),
+      // then fall back to legacy no-AAD for ciphertexts that predate the fix.
+      let plaintext: string;
+      try {
+        const d = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
+        d.setAAD(Buffer.from(keyId, "utf8"));
+        d.setAuthTag(tag);
+        plaintext = Buffer.concat([d.update(encrypted), d.final()]).toString("utf8");
+      } catch {
+        const d = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
+        d.setAuthTag(tag);
+        plaintext = Buffer.concat([d.update(encrypted), d.final()]).toString("utf8");
+      }
 
       if (plaintext === expected_plaintext) {
         return { passed: true };
