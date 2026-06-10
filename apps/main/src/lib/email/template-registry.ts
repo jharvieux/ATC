@@ -56,6 +56,12 @@ const GROUP_VARIABLES: readonly TemplateVariable[] = [
   { name: "coordinator_message", description: "The coordinator's personal message (may be empty)", sample: "Can't wait to sail with you all!" },
 ];
 
+const GROUP_INVITATION_VARIABLES: readonly TemplateVariable[] = [
+  ...GROUP_VARIABLES,
+  { name: "departure_port", description: "Port of departure", sample: "Miami, FL" },
+  { name: "invite_url", description: "The invitee's personal RSVP link", sample: "https://example.ai-travelconcierge.com/groups/invite/tok123" },
+];
+
 export const EMAIL_TEMPLATE_REGISTRY = {
   pre_cruise_t_90: {
     label: "Pre-cruise — 90 days out",
@@ -105,10 +111,7 @@ export const EMAIL_TEMPLATE_REGISTRY = {
     label: "Group invitation",
     description: "Sent when a coordinator invites someone to a group cruise.",
     default_subject_template: "You're invited to a group cruise!",
-    variables: [
-      ...GROUP_VARIABLES,
-      { name: "invite_url", description: "The invitee's personal RSVP link", sample: "https://example.ai-travelconcierge.com/groups/invite/tok123" },
-    ],
+    variables: GROUP_INVITATION_VARIABLES,
   },
   group_reminder: {
     label: "Group invitation reminder",
@@ -125,6 +128,19 @@ export const EMAIL_TEMPLATE_REGISTRY = {
       { name: "cruise_label", description: "Cruise description (falls back to \"your cruise\")", sample: "Mardi Gras sailing 2026-11-03" },
       { name: "refresh_url", description: "Link to request fresh pricing", sample: "https://example.ai-travelconcierge.com/quotes/q1/refresh" },
       { name: "validity_days", description: "How many days estimates stay valid", sample: "14" },
+    ],
+  },
+  task_reminder: {
+    label: "Task reminder",
+    description: "Sent to the task assignee (or creator) when a task reminder fires.",
+    default_subject_template: "Task reminder: {{task_title}}",
+    variables: [
+      { name: "recipient_name", description: "Name of the task recipient", sample: "Alex Chen" },
+      { name: "task_title", description: "Title of the task", sample: "Follow up with cruise quote" },
+      { name: "task_description", description: "Task description (may be empty)", sample: "Client asked for Royal Caribbean options" },
+      { name: "due_at", description: "Task due date/time (may be empty)", sample: "2026-07-01T14:00:00Z" },
+      { name: "priority", description: "Task priority (low, normal, high)", sample: "high" },
+      { name: "task_url", description: "Link to the task in the CRM", sample: "https://example.ai-travelconcierge.com/crm/tasks/abc123" },
     ],
   },
 } as const satisfies Record<string, EmailTemplateSpec>;

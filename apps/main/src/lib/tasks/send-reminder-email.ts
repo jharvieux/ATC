@@ -1,12 +1,16 @@
 // BP37 §37.3.2 — Email channel for task reminders.
 //
-// Loads the tenant + recipient + task, renders TaskReminder template,
-// calls sendEmail (BP23). Returns the email log status. The reminder
-// cron records this as 'delivered' / 'suppressed' / 'failed'.
+// Loads the tenant + recipient + task, resolves subject/body via
+// resolveEmailContent (#970 — tenant overrides), renders TaskReminder
+// template for the platform-default path, calls sendEmail (BP23).
+// Returns the email log status. The reminder cron records this as
+// 'delivered' / 'suppressed' / 'failed'.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email/send";
+import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { TaskReminder } from "@/emails/TaskReminder";
+import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 
 type TenantRow = {
   id: string;
@@ -95,20 +99,62 @@ export async function sendTaskReminderEmail(args: {
   // §37.3.2 — operational reminder; suppression honors unsubscribe.
   const unsubscribeUrl = `${appUrl}/email/unsubscribe?token=task-reminder`;
 
-  const jsx = TaskReminder({
-    branding,
+  const recipientName = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+
+  const layoutProps: Omit<BrandedLayoutProps, "children"> = {
+    branding: {
+      logo_url: branding.logo_url ?? null,
+      primary_color: branding.primary_color ?? null,
+      secondary_color: branding.secondary_color ?? null,
+      accent_color: branding.accent_color ?? null,
+      slogan: branding.slogan ?? null,
+    },
     tenant_legal_name: tenant.legal_name,
     tenant_business_address: tenant.mailing_address ?? "",
-    recipient_name: [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email,
-    task_title: task.title,
-    task_description: task.description,
-    due_at: task.due_at,
-    priority: task.priority,
-    task_url: taskUrl,
     unsubscribe_url: unsubscribeUrl,
-  });
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const html = renderToStaticMarkup(jsx);
+  };
+
+  let subject: string;
+  let html: string;
+  try {
+    const resolved = await resolveEmailContent({
+      db: svc,
+      tenant_id: tenant.id,
+      email_type: "task_reminder",
+      variables: {
+        recipient_name: recipientName,
+        task_title: task.title,
+        task_description: task.description ?? "",
+        due_at: task.due_at ?? "",
+        priority: task.priority,
+        task_url: taskUrl,
+      },
+    });
+    subject = resolved.subject;
+
+    if (resolved.overrideBodyText !== null) {
+      html = await renderOverrideBodyInLayout(layoutProps, resolved.overrideBodyText);
+    } else {
+      const { renderToStaticMarkup } = await import("react-dom/server");
+      html = renderToStaticMarkup(TaskReminder({
+        branding,
+        tenant_legal_name: tenant.legal_name,
+        tenant_business_address: tenant.mailing_address ?? "",
+        recipient_name: recipientName,
+        task_title: task.title,
+        task_description: task.description,
+        due_at: task.due_at,
+        priority: task.priority,
+        task_url: taskUrl,
+        unsubscribe_url: unsubscribeUrl,
+      }));
+    }
+  } catch (err) {
+    console.error(
+      `[send-reminder-email] template resolution failed for tenant=${tenant_id} task=${task_id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { status: "failed", reason: "template_resolution_failed" };
+  }
 
   const result = await sendEmail({
     db: svc,
@@ -122,7 +168,7 @@ export async function sendTaskReminderEmail(args: {
       email_from_name: tenant.email_from_name,
     },
     to: user.email,
-    subject: `Task reminder: ${task.title}`,
+    subject,
     template_id: "task_reminder",
     category: "transactional",
     html,
