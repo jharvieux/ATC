@@ -118,6 +118,13 @@ export default function ConciergePage(): React.JSX.Element {
       <aside className="w-56 shrink-0 border-r border-border flex flex-col bg-card">
         <div className="px-3 py-3 border-b border-border">
           <h2 className="text-[13px] font-semibold text-foreground mb-2">Concierge</h2>
+          {/* #904 — draft composer entry point */}
+          <a
+            href="/concierge/draft"
+            className="block text-[12px] text-primary hover:underline mb-2"
+          >
+            ✉ Draft a reply
+          </a>
           <Button
             variant="outline"
             className="w-full text-[12px] h-7"

@@ -84,7 +84,9 @@ export type AICallPurpose =
   // #902 / D-195 — TA-mode dashboard chat (audience='tenant_member').
   // Deliberately NOT in CUSTOMER_FACING_PURPOSES: staff turns accept the
   // soft-tier model downgrade (cost containment over register fidelity).
-  | "ta_chat_main";
+  | "ta_chat_main"
+  // #904 — draft-reply composer (TA-facing; same downgrade posture as ta_chat).
+  | "draft_reply";
 
 // Purposes that run customer-facing turns. NOT downgraded at soft1.
 const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([

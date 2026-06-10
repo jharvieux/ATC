@@ -18,7 +18,10 @@ export const RetrieveRequestSchema = z.object({
   tenant_id: UUID,
   // Anon chat turns have no authenticated user — allow null.
   user_id: UUID.nullable().optional().default(null),
-  conversation_id: UUID,
+  // #904 draft-reply turns have no conversation row — allow null. The rag
+  // side logs it into rag_retrieval_log.conversation_id, which is nullable
+  // (apps/rag/supabase/migrations/0003_ingestion_queue_and_retrieval_log.sql:65).
+  conversation_id: UUID.nullable().optional().default(null),
   // Personas are identified by slug at the call site (e.g. "marcus-cole").
   // The RAG route logs persona_id to rag_retrieval_log.persona_id (UUID column)
   // but guards slugs with a UUID regex and inserts null instead — so slugs and
