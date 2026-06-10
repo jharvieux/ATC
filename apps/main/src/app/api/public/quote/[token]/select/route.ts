@@ -7,7 +7,7 @@
 // redirected to per §38.4.3 step 3.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwait, safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 export async function POST(
   req: Request,
@@ -57,11 +57,26 @@ export async function POST(
     .from("quote_options")
     .update({ customer_selected: true, customer_selected_at: now })
     .eq("id", optionId), "quote_options.update");
-  // Transition the quote container.
-  await safeAwait(svc
-    .from("quotes")
-    .update({ status: "accepted", accepted_at: now, updated_at: now })
-    .eq("id", quote.id), "quotes.update");
+  // #741: CAS guard — only transition if still in sent/viewed.
+  // A concurrent acceptance would set status='accepted', making the
+  // .in() predicate miss, and safeAwaitRowCount throws ROW_COUNT_MISMATCH.
+  try {
+    await safeAwaitRowCount(
+      svc
+        .from("quotes")
+        .update({ status: "accepted", accepted_at: now, updated_at: now })
+        .eq("id", quote.id)
+        .in("status", ["sent", "viewed"])
+        .select("id"),
+      "quotes.cas_accept_via_token",
+      1,
+    );
+  } catch (err) {
+    if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+      return Response.json({ error: "quote_status_changed_during_accept" }, { status: 409 });
+    }
+    throw err;
+  }
 
   return Response.json({
     ok: true,

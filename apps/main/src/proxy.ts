@@ -4,6 +4,7 @@
 // Compute (Node.js). @supabase/supabase-js v2 is edge-compatible so no
 // explicit `runtime = 'nodejs'` is needed. See MEMORY.md D-037 for rationale.
 
+import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import {
   getTenantBySlug,
@@ -160,7 +161,8 @@ function isAcceptableAdminCredential(req: NextRequest): boolean {
   if (auth?.startsWith("Bearer ")) {
     const token = auth.slice("Bearer ".length).trim();
     const serviceKey = process.env.MAIN_APP_ADMIN_API_KEY;
-    if (token && serviceKey && token === serviceKey) return true;
+    if (token && serviceKey && token.length === serviceKey.length &&
+        timingSafeEqual(Buffer.from(token), Buffer.from(serviceKey))) return true;
   }
   return hasSupabaseAuthCookie(req);
 }
