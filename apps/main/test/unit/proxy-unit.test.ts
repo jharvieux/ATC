@@ -170,6 +170,21 @@ describe("proxy()", () => {
       expect(res.status).toBe(403);
     });
 
+    it("#736: rejects tokens equal in char-length but different in byte-length (multibyte chars)", async () => {
+      // constantTimeEqual uses Buffer byte lengths; a naive string-length check
+      // would allow "é" (1 char, 2 bytes) to pass a length guard against
+      // a 1-byte key, then throw inside timingSafeEqual with a misleading error.
+      process.env.MAIN_APP_ADMIN_API_KEY = "z";
+      const res = await proxy(
+        makeReq({
+          host: "ai-travelconcierge.com",
+          pathname: "/api/admin/tenants",
+          headers: { authorization: "Bearer é" },
+        }),
+      );
+      expect(res.status).toBe(403);
+    });
+
     it("does NOT apply the admin gate to /api/tenant/* or other non-admin paths", async () => {
       // On platform domain with no admin path, gate not invoked.
       const res = await proxy(
