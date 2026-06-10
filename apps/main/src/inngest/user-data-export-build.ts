@@ -2,16 +2,17 @@
 // Triggered by the user.data_export_requested event.
 // Uploads to Supabase Storage and emails the user a signed URL.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-interface ExportPayload {
-  auth_user_id: string;
-  export_request_id: string;
-}
+const ExportPayloadSchema = z.object({
+  auth_user_id: z.string(),
+  export_request_id: z.string(),
+});
 
 interface RagExportResponse {
   ok?: boolean;
@@ -25,7 +26,12 @@ export const userDataExportBuild = inngest.createFunction(
     triggers: [{ event: "user.data_export_requested" }],
   },
   async ({ event }) => {
-    const { auth_user_id, export_request_id } = event.data as ExportPayload;
+    const parsed = ExportPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[user-data-export-build] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { auth_user_id, export_request_id } = parsed.data;
     const db = createServiceRoleClient();
 
     // Gather all data for this user.

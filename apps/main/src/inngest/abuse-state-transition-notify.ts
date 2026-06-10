@@ -13,6 +13,7 @@
 // imports (same pattern as lib/email/send-breach-notifications.ts and
 // inngest/precruise-generate-and-send.ts).
 import * as React from "react";
+import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { sendTenantEmail } from "@/lib/email/send-tenant-email";
@@ -24,6 +25,16 @@ interface NotificationCopy {
   body_intro: string;
 }
 
+const AbuseStateTransitionPayloadSchema = z.object({
+  tenant_id: z.string().optional(),
+  dimension: z.enum(["ai_cost", "chat_volume", "email_volume", "group_invite", "rag_cap"]).optional(),
+  from_state: z.string().optional(),
+  to_state: z.string().optional(),
+  metric_value: z.string().optional(),
+  threshold_crossed: z.string().optional(),
+  reason: z.string().optional(),
+});
+
 const PUBLIC_ORIGIN_PATH = "/settings/usage";
 
 export const abuseStateTransitionNotify = inngest.createFunction(
@@ -32,15 +43,12 @@ export const abuseStateTransitionNotify = inngest.createFunction(
     triggers: [{ event: "abuse.state_transition" }],
   },
   async ({ event }) => {
-    const data = event.data as {
-      tenant_id?: string;
-      dimension?: "ai_cost" | "chat_volume" | "email_volume" | "group_invite" | "rag_cap";
-      from_state?: string;
-      to_state?: string;
-      metric_value?: string;
-      threshold_crossed?: string;
-      reason?: string;
-    };
+    const parsed = AbuseStateTransitionPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[abuse-state-transition-notify] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const data = parsed.data;
     if (!data?.tenant_id || !data.dimension || !data.to_state) {
       return { skipped: "missing-payload-fields" };
     }
