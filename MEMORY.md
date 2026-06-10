@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-202 — 2026-06-10 — Scraping-source rulings: cabin intel sources picked, Apify stays for live pricing
+
+**Decision:**
+1. **Cabin-level intel (#953)** comes from (a) CruiseMapper `/cabins/<Ship-Slug-Id>` pages — live-probed: ~20 categories/ship with spec tables, floor-plan diagram GIFs, photos, prose; robots allows (only `/admin/` disallowed) — and (b) CruiseDeckPlans.com — robots explicitly crawler-friendly (`Crawl-Delay: 10`), public per-cabin-NUMBER pages + full-size cabin photos; ToS read required before Phase B build.
+2. **Cruise Critic is ruled out permanently** for scraping: robots blocks AI crawlers sitewide (incl. ClaudeBot) and Tripadvisor ToS prohibits it. cruiseline.com likewise (Incapsula anti-bot on robots.txt itself). Written cabin reviews therefore have NO compliant source; long-term answer is first-party TA/customer cabin notes.
+3. **Apify is NOT being replaced by DIY crawlers** for live cruise pricing. The value is maintained actors + residential proxies + headless compute, not crawler code; DIY = proxy bills + permanent 9-site maintenance + direct ToS exposure. If live pricing becomes strategic, evaluate agent-credentialed B2B APIs (Traveltek/Revelex-class, CLIA/IATA-gated) instead.
+
+**Why:** operator asked (2026-06-10) whether DIY crawlers could replace Apify and where cabin info/reviews/diagrams could be scraped. Probe was operator-approved and run live (fixtures in /tmp; builder re-records).
+
+**Rejected:** DIY booking-engine crawlers (cost/maintenance/exposure); Cruise Critic scraping (compliance); M365-hosted inbound as part of the same sweep (see D-201).
+
+**Artifacts:** issue #953 (probe findings + two-phase scope, triaged READY — Sonnet); conversation analysis 2026-06-10.
+
+---
+
 ## D-201 — 2026-06-10 — Design pass (Fable) over the four NEEDS-DESIGN issues — operator decisions locked
 
 **Decision:** Design docs shipped in `docs/design/` (PR #952) for #890/#712/#811/#781, with these operator-confirmed choices:
