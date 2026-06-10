@@ -30,6 +30,7 @@ import {
   loadTenantSnapshot,
   PLATFORM_TENANT_ID,
   buildSystemArg,
+  AiCostHardStateError,
   type AICallPurpose,
   type InstrumentedClaudeArgs,
 } from "./call-wrapper";
@@ -166,6 +167,20 @@ export function instrumentedClaudeStream(
     (async () => {
       await primePricingCache(db);
       const snapshot = await loadTenantSnapshot(db, args.tenant_id);
+
+      // #866 — mirror instrumentedClaudeCall's hard-state gate. Without this,
+      // a tenant in hard state could still stream (the call-wrapper check only
+      // runs for non-streaming callers). Fail-closed: deny the stream before
+      // opening the Anthropic connection, same as the non-streaming path.
+      // Set streamError + notify() BEFORE throwing so the textStream iterator
+      // wakes up and propagates the error rather than hanging indefinitely.
+      if (snapshot.ai_cost_state === "hard" && args.tenant_id !== PLATFORM_TENANT_ID) {
+        const hardErr = new AiCostHardStateError(args.tenant_id, args.purpose);
+        streamError = hardErr;
+        notify();
+        throw hardErr;
+      }
+
       const model = selectModelForPurpose({
         desired_model: args.model,
         purpose: args.purpose,
