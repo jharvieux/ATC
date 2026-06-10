@@ -7,6 +7,12 @@ import { lookupCname, lookupTxt } from "@/lib/dns/doh-resolver";
 import { vercelRemoveDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
+// Caps per-run to prevent FUNCTION_INVOCATION_TIMEOUT as custom-domain tenant count grows.
+// Cursor: custom_domain_last_reverified_at ASC NULLS FIRST — processed domains always sort
+// later than unprocessed ones, so each drain batch covers fresh territory.
+const BATCH_LIMIT = 200;
+const TIME_BUDGET_MS = 55_000;
+
 export const customDomainReverify = inngest.createFunction(
   {
     id: "custom-domain-reverify",
@@ -16,84 +22,93 @@ export const customDomainReverify = inngest.createFunction(
     const db = createServiceRoleClient();
     const reservedParent = (process.env.RESERVED_PARENT_DOMAIN ?? "tenants.ai-travelconcierge.com").toLowerCase();
 
-    const { data: tenants, error } = await db
-      .from("tenants")
-      .select("id, custom_domain, custom_domain_verification_token, custom_domain_status")
-      .eq("custom_domain_status", "verified");
-
-    if (error) {
-      console.error("[custom-domain-reverify] fetch failed: %s", error.message);
-      return;
-    }
-
     let checked = 0;
     let drifted = 0;
+    let batches = 0;
+    const start = Date.now();
 
-    for (const row of (tenants ?? []) as {
-      id: string;
-      custom_domain: string;
-      custom_domain_verification_token: string;
-    }[]) {
-      checked++;
+    while (Date.now() - start < TIME_BUDGET_MS) {
+      const { data: tenants, error } = await db
+        .from("tenants")
+        .select("id, custom_domain, custom_domain_verification_token, custom_domain_status")
+        .eq("custom_domain_status", "verified")
+        .order("custom_domain_last_reverified_at", { ascending: true, nullsFirst: true })
+        .limit(BATCH_LIMIT);
 
-      try {
-        const [cnameTarget, txtValues] = await Promise.all([
-          lookupCname(row.custom_domain),
-          lookupTxt(`_verify.${row.custom_domain}`),
-        ]);
+      if (error) {
+        console.error("[custom-domain-reverify] fetch failed: %s", error.message);
+        return { checked, drifted, batches };
+      }
 
-        const cnameOk = cnameTarget === reservedParent;
-        const txtOk = txtValues.includes(row.custom_domain_verification_token);
+      const batch = (tenants ?? []) as {
+        id: string;
+        custom_domain: string;
+        custom_domain_verification_token: string;
+      }[];
+      batches++;
+      if (batch.length === 0) break;
 
-        if (cnameOk && txtOk) {
-          // Both still match — update timestamp, no tenant-visible signal.
-          await safeAwait(db
-            .from("tenants")
-            .update({ custom_domain_last_reverified_at: new Date().toISOString() })
-            .eq("id", row.id), "tenants.update");
-          continue;
-        }
+      for (const row of batch) {
+        checked++;
+        try {
+          const [cnameTarget, txtValues] = await Promise.all([
+            lookupCname(row.custom_domain),
+            lookupTxt(`_verify.${row.custom_domain}`),
+          ]);
 
-        if (!cnameOk) {
-          // CNAME drifted — remove binding within 1 hour, alert tenant.
-          try {
-            await vercelRemoveDomain(row.custom_domain);
-          } catch (e) {
-            if (!(e instanceof CrownJewelGuardError)) {
-              console.error("[custom-domain-reverify] Vercel remove failed for %s: %s", row.custom_domain, e);
-            }
+          const cnameOk = cnameTarget === reservedParent;
+          const txtOk = txtValues.includes(row.custom_domain_verification_token);
+
+          if (cnameOk && txtOk) {
+            await safeAwait(db
+              .from("tenants")
+              .update({ custom_domain_last_reverified_at: new Date().toISOString() })
+              .eq("id", row.id), "tenants.update");
+            continue;
           }
+
+          if (!cnameOk) {
+            try {
+              await vercelRemoveDomain(row.custom_domain);
+            } catch (e) {
+              if (!(e instanceof CrownJewelGuardError)) {
+                console.error("[custom-domain-reverify] Vercel remove failed for %s: %s", row.custom_domain, e);
+              }
+            }
+            await safeAwait(db
+              .from("tenants")
+              .update({
+                custom_domain_status: "cname_drifted",
+                custom_domain_unbound_at: new Date().toISOString(),
+              })
+              .eq("id", row.id), "tenants.update");
+            drifted++;
+            console.warn("[custom-domain-reverify] CNAME drift tenant=%s domain=%s", row.id, row.custom_domain);
+            await notifyDomainDrift(db, row.id, row.custom_domain, "cname_drifted");
+            continue;
+          }
+
+          // TXT drifted — keep binding for 72h grace, set status.
           await safeAwait(db
             .from("tenants")
             .update({
-              custom_domain_status: "cname_drifted",
-              custom_domain_unbound_at: new Date().toISOString(),
+              custom_domain_status: "txt_drifted",
+              custom_domain_last_reverified_at: new Date().toISOString(),
             })
             .eq("id", row.id), "tenants.update");
           drifted++;
-          console.warn("[custom-domain-reverify] CNAME drift tenant=%s domain=%s", row.id, row.custom_domain);
-          await notifyDomainDrift(db, row.id, row.custom_domain, "cname_drifted");
-          continue;
+          console.warn("[custom-domain-reverify] TXT drift tenant=%s domain=%s (72h grace started)", row.id, row.custom_domain);
+          await notifyDomainDrift(db, row.id, row.custom_domain, "txt_drifted");
+        } catch (e) {
+          console.error("[custom-domain-reverify] check failed for tenant %s: %s", row.id, e);
         }
-
-        // TXT drifted — keep binding for 72h grace, set status.
-        await safeAwait(db
-          .from("tenants")
-          .update({
-            custom_domain_status: "txt_drifted",
-            custom_domain_last_reverified_at: new Date().toISOString(),
-          })
-          .eq("id", row.id), "tenants.update");
-        drifted++;
-        console.warn("[custom-domain-reverify] TXT drift tenant=%s domain=%s (72h grace started)", row.id, row.custom_domain);
-        await notifyDomainDrift(db, row.id, row.custom_domain, "txt_drifted");
-      } catch (e) {
-        console.error("[custom-domain-reverify] check failed for tenant %s: %s", row.id, e);
       }
+
+      if (batch.length < BATCH_LIMIT) break;
     }
 
-    console.info("[custom-domain-reverify] checked=%d drifted=%d", checked, drifted);
-    return { checked, drifted };
+    console.info("[custom-domain-reverify] checked=%d drifted=%d batches=%d", checked, drifted, batches);
+    return { checked, drifted, batches };
   },
 );
 

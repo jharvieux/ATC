@@ -7,6 +7,11 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
+// Cap per-run to prevent FUNCTION_INVOCATION_TIMEOUT on mass-termination spikes.
+// Purge is idempotent — already-purged tenants are a fast no-op on the RAG side.
+const BATCH_LIMIT = 50;
+const TIME_BUDGET_MS = 55_000;
+
 export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
   {
     id: "rag-tenant-scoped-purge-on-termination",
@@ -21,7 +26,8 @@ export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
       .from("tenants")
       .select("id")
       .eq("status", "terminated")
-      .lt("terminated_at", cutoff);
+      .lt("terminated_at", cutoff)
+      .limit(BATCH_LIMIT);
 
     if (error) {
       console.error("[rag-tenant-scoped-purge] Failed to fetch terminated tenants: %s", error.message);
@@ -34,7 +40,11 @@ export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
       return;
     }
 
+    let purged = 0;
+    const start = Date.now();
     for (const tenant of tenants ?? []) {
+      if (Date.now() - start >= TIME_BUDGET_MS) break;
+
       // BP09 — RS256 JWT carries the PLATFORM sentinel. The tenant being
       // purged has status='terminated' in tenant_registry_shadow, and the
       // rag verifier rejects non-active tenants (verify-service-jwt.ts
@@ -65,8 +75,11 @@ export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
       if (!response.ok) {
         console.error("[rag-tenant-scoped-purge] Purge failed for tenant %s: %s", tenant.id, response.status);
       } else {
+        purged++;
         console.info("[rag-tenant-scoped-purge] Purged tenant-scoped chunks for terminated tenant=%s", tenant.id);
       }
     }
+
+    return { purged, total: (tenants ?? []).length };
   },
 );

@@ -37,6 +37,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
             const chain: Record<string, unknown> = {
               eq() { return chain; },
               gt() { return chain; },
+              limit() { return chain; },
               then(resolve: (v: { data: unknown; error: null }) => unknown) {
                 return resolve({ data: mocks.availableRows, error: null });
               },
@@ -149,7 +150,7 @@ describe("runPayoutsExecuteTransfer — BOOKING_CRONS_DISABLED kill switch", () 
   it("returns zero counts without touching Stripe when flag is true", async () => {
     process.env.BOOKING_CRONS_DISABLED = "true";
     const result = await runPayoutsExecuteTransfer();
-    expect(result).toEqual({ processed: 0, failed: 0, total: 0 });
+    expect(result).toEqual({ processed: 0, failed: 0, total: 0, batches: 0 });
   });
 });
 
