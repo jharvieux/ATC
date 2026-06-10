@@ -1,28 +1,31 @@
-# Session state — last updated 2026-06-10 16:00 UTC
+# Session state — last updated 2026-06-10 21:30 UTC
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 
 ## Just completed
-- Merged PR #949 (#774 cron drain loops) and PR #950 (#831 CruiseMapper port backfill); issues #774/#785/#831 closed
-- Design pass (Fable) over the four NEEDS-DESIGN issues → PR #952 (doc-only):
-  - #890 inbound persona email — Resend inbound chosen over M365; Phase 1 build-ready, Phase 2 (CRM) designed/deferred
-  - #712 personal API tokens — admin-only minting, no expiry
-  - #811 platform-admin scoping — reviewer-only matrix
-  - #781 canonical matcher — deterministic + review queue; #780 schema change recommended (alias tables, see comment on #780)
-- MEMORY D-201 logged; design links commented on #890/#712/#811/#781/#780
+- Merged PR #949 (#774 cron drain loops), PR #950 (#831 port backfill) → #774/#785/#831 closed
+- Design pass (Fable) → PR #952 merged: docs/design/ for #890 (Resend inbound, phased CRM), #712 (admin-only API tokens), #811 (reviewer-only scope), #781 (canonical matcher; alias-table schema change recommended on #780)
+- PR #954 merged: CLAUDE.md audit section rewritten for #924 diff-hash binding (timestamp-era guidance removed)
+- Cabin-intel probe (operator-approved) → issue #953 opened: CruiseMapper /cabins pages (specs+diagrams, robots-OK) + CruiseDeckPlans.com (crawler-friendly robots, per-cabin pages); Cruise Critic + cruiseline.com ruled out
+- #708 re-triaged: BLOCKED on test/staging Supabase provisioning (#386/#563) — supersedes old READY triage
+- #821 verified live (RLS on all 8 RAG tables, advisor clean, anon key unused/not client-exposed) and closed — work had shipped in PR #825, issue was never closed
 
 ## In flight
-- PR #952 (feature/design-docs-890-712-811-781): doc-only, audit-exempt; update-branched, waiting for CI → merge when green
+Nothing in flight — clean checkpoint
 
 ## Next step
-1. Merge PR #952 when CI passes, delete branch
-2. Build queue (all now have designs or were already READY): #890 Phase 1, #712, #811, #786, #885, #708, #780 (with alias-table schema change)
+**Start #780** (canonical cruise_lines/cruise_ships/ports tables) — per operator, next session opens with #780 and everything it unlocks (#781 → #783, feeds #953). Build notes:
+- Use ALIAS TABLES (alias_normalized UNIQUE), NOT aliases text[] — see docs/design/cruise-canonical-normalization.md + comment on #780
+- Migration → Opus FIRST AUDIT; OPERATOR GATE on prod apply
+- Reconcile ports with existing port_info_chunks (no duplicate store)
+Then: #890 Phase 1, #712, #811, #786, #953, #885 (all design-ready or READY)
 
 ## Blocked on user
-- atc-rag prod deploy (operator approval per memory)
+- Test/staging Supabase project provisioning (#386) — unblocks #708/#709/#533/#534 together
+- gh auth tokens were revoked server-side twice on 2026-06-10 — if it recurs, check github.com/settings/applications (GitHub CLI OAuth app)
 
 ## Open questions
-- Issue #948 (vendor-health 503 granularity) — no triage comment yet
-- Issue #926 (audit-check timestamp fallback removal) — open
-- Issue #951 (backfill halt-on-parse-failure alert) — open follow-up
+- #948 (vendor-health 503 granularity) + #951 (backfill halt alert): small fixes, no triage comments yet
+- #926 (remove audit-check timestamp fallback): NOW UNBLOCKED — zero open PRs, all future audits hash-bound; five-minute workflow edit
+- Apify replacement assessment (no issue): keep Apify for live pricing; evaluate agent-credentialed B2B APIs (Traveltek/Revelex-class) if live pricing becomes strategic
