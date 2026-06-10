@@ -1,5 +1,3 @@
-name: dependabot-update-branch
-
 # Branch protection on dev requires up-to-date branches, so a Dependabot PR
 # with auto-merge armed can stall forever once dev advances past it —
 # Dependabot does not self-rebase merely-behind (non-conflicting) PRs
@@ -12,12 +10,17 @@ name: dependabot-update-branch
 # fire — strictly worse than the stall. App-authored pushes trigger CI
 # normally. Reuses the platform's existing GitHub App (GH_APP_ID /
 # GH_APP_PRIVATE_KEY secrets mirror the runtime credentials).
+name: dependabot-update-branch
 
 on:
   schedule:
     - cron: "17 */6 * * *"
   workflow_dispatch:
 
+# Lock GITHUB_TOKEN to nothing — all API calls use the minted App token,
+# whose grants come from the App's own installation configuration. Do not
+# "fix" this by adding contents: write here; it would widen GITHUB_TOKEN
+# for no reason.
 permissions: {}
 
 jobs:
@@ -26,7 +29,7 @@ jobs:
     steps:
       - name: Mint GitHub App token
         id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
@@ -46,8 +49,14 @@ jobs:
           for n in $prs; do
             # PRs with failing checks belong to dependabot-retry-ci; updating
             # them just burns CI minutes on a branch that can't merge anyway.
-            if gh pr checks "$n" --repo "$GITHUB_REPOSITORY" 2>/dev/null | cut -f2 | grep -qx "fail"; then
-              echo "PR #$n has failing checks — skipping (dependabot-retry-ci owns failures)."
+            # JSON bucket field, not positional columns (gh's table layout is
+            # undocumented); gh pr checks exits non-zero while checks are
+            # pending, so a fallback "0" prefers update over skip on transient
+            # errors — auto-merge still won't fire unless checks pass.
+            FAILING=$(gh pr checks "$n" --repo "$GITHUB_REPOSITORY" \
+              --json bucket --jq '[.[] | select(.bucket == "fail")] | length' 2>/dev/null || echo "0")
+            if [ "$FAILING" -gt 0 ]; then
+              echo "PR #$n has $FAILING failing check(s) — skipping (dependabot-retry-ci owns failures)."
               continue
             fi
             echo "Updating branch for PR #$n"
