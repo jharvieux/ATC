@@ -55,6 +55,8 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("tasks", "list"),
   key("team_members", "list"),
   key("tenant_branding", "read"),
+  // #963 — settings page shows current overrides to all roles.
+  key("email_templates", "read"),
   // Customer self-service reads (§11.3 / §25.3 / §11.6). End customers
   // default to role='tenant_owner' (per migration 20260625000001), and
   // tenant staff may also use the same endpoints when acting as a user.
@@ -151,6 +153,8 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   // Tenant settings (owner-only)
   key("host_config", "write"),
   key("tenant_branding", "write"),
+  // #963 — outgoing-email template overrides affect every customer email.
+  key("email_templates", "write"),
   key("persona_addendum", "write"),
   // Team management (owner-only — assigns roles to other tenant members)
   key("team_members", "update_role"),

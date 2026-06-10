@@ -12,6 +12,8 @@
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
+import { resolveEmailContent } from "@/lib/email/template-resolve";
+import { bodyTextToHtml } from "@/lib/email/template-engine";
 
 interface InvitationRow {
   id: string;
@@ -98,8 +100,36 @@ export const groupReminderCadence = inngest.createFunction(
       const apiKey = process.env.RESEND_API_KEY;
       if (!apiKey) { skipped++; continue; }
 
-      const subject = `Reminder: ${group.cruise_line} — ${group.ship_name} sailing ${group.sailing_date}`;
-      const html = `<p>Hi ${inv.invitee_name ?? "there"},</p><p>Friendly reminder about your group trip on <strong>${group.ship_name}</strong> (${group.cruise_line}) sailing <strong>${group.sailing_date}</strong>.</p>${group.coordinator_message ? `<blockquote>${group.coordinator_message}</blockquote>` : ""}`;
+      // #963 — tenant subject/body override → platform default. Fail loud
+      // per-recipient: a failed override read or render skips this send
+      // (logged), never falls back silently or sends an empty body.
+      let subject: string;
+      let html: string;
+      try {
+        const resolved = await resolveEmailContent({
+          db: svc,
+          tenant_id: group.tenant_id,
+          email_type: "group_reminder",
+          variables: {
+            invitee_name: inv.invitee_name ?? "there",
+            cruise_line: group.cruise_line,
+            ship_name: group.ship_name,
+            sailing_date: group.sailing_date,
+            coordinator_message: group.coordinator_message ?? "",
+          },
+        });
+        subject = resolved.subject;
+        html =
+          resolved.overrideBodyText !== null
+            ? bodyTextToHtml(resolved.overrideBodyText)
+            : `<p>Hi ${inv.invitee_name ?? "there"},</p><p>Friendly reminder about your group trip on <strong>${group.ship_name}</strong> (${group.cruise_line}) sailing <strong>${group.sailing_date}</strong>.</p>${group.coordinator_message ? `<blockquote>${group.coordinator_message}</blockquote>` : ""}`;
+      } catch (err) {
+        console.error(
+          `[group-reminder-cadence] template resolution failed for tenant=${group.tenant_id} invitation=${inv.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        skipped++;
+        continue;
+      }
 
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",

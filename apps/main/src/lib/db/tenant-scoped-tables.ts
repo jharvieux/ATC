@@ -99,6 +99,7 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "trip_itineraries",                 // BP39
   "trip_resources",                   // BP39
   "pre_cruise_email_content",         // pre-cruise email content
+  "tenant_email_templates",           // #963 per-tenant email subject/body overrides
   "email_suppressions",               // tenant email suppression list
   "legal_consents",                   // tenant consent records
   "legal_documents",                  // tenant legal docs (versioned per spec)

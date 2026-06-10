@@ -13,6 +13,7 @@ const SECTIONS = [
     items: [
       { href: "/onboarding/profile",        label: "Business Profile",         desc: "Update your agency name, legal name, address, and support contact." },
       { href: "/settings/branding",         label: "Branding",                 desc: "Logo, colors, and white-label appearance for your workspace." },
+      { href: "/settings/email-templates",  label: "Email Templates",          desc: "Customize the subject and body of emails sent to your customers." },
       { href: "/settings/personas",         label: "AI Personas",              desc: "Customize the six base AI personas and add your own addendums." },
       { href: "/settings/ai-mode",          label: "AI Mode",                  desc: "Set autonomous, draft-only, or disabled mode; configure background AI." },
       { href: "/settings/voice",            label: "Voice Profile",            desc: "Paste email samples so your AI concierge drafts replies in your voice." },

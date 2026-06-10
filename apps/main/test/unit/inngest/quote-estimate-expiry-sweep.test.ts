@@ -130,7 +130,9 @@ describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
 
     await runSweep();
     const call = mockSendEmail.mock.calls[0]![0] as Record<string, unknown>;
-    expect(call.subject).toBe("Your cruise estimate has expired — request fresh pricing");
+    // #963 — the default subject now comes from the template registry; with
+    // no representative option, {{cruise_label}} falls back to "your cruise".
+    expect(call.subject).toBe("Your estimate for your cruise has expired — request fresh pricing");
   });
 
   it("skips quotes where contact has no email — not expired, not emailed", async () => {
