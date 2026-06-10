@@ -23,6 +23,21 @@ export interface EmailTemplateSpec {
   description: string;
   default_subject_template: string;
   variables: readonly TemplateVariable[];
+  /**
+   * #975 — present when the platform writes AI-generated content into this
+   * email. A body override may place it with {{ai_content}}; omitting the
+   * token sends the override without AI content (allowed, editor warns).
+   * Never valid in subjects — the value is multi-paragraph text.
+   */
+  ai_content?: { description: string };
+}
+
+export const AI_CONTENT_VARIABLE = "ai_content";
+
+/** Variable names allowed in a BODY template (subjects use spec.variables only). */
+export function bodyVariableNames(spec: EmailTemplateSpec): string[] {
+  const names = spec.variables.map((v) => v.name);
+  return spec.ai_content ? [...names, AI_CONTENT_VARIABLE] : names;
 }
 
 const PRE_CRUISE_VARIABLES: readonly TemplateVariable[] = [
@@ -45,30 +60,46 @@ export const EMAIL_TEMPLATE_REGISTRY = {
   pre_cruise_t_90: {
     label: "Pre-cruise — 90 days out",
     description:
-      "Sent 90 days before sailing. The platform default body includes AI-generated destination highlights; a custom body replaces that content entirely.",
+      "Sent 90 days before sailing. Place {{ai_content}} in a custom body to position the AI-generated sections around your own copy; leave it out to send your copy alone.",
     default_subject_template: "90 days to your {{cruise_line}} cruise — let the anticipation begin!",
     variables: PRE_CRUISE_VARIABLES,
+    ai_content: {
+      description:
+        "AI writes personalized destination highlights, must-do experiences, and a documentation reminder for this sailing here.",
+    },
   },
   pre_cruise_t_30: {
     label: "Pre-cruise — 30 days out",
     description:
-      "Sent 30 days before sailing. The platform default body includes AI-generated reservation and packing guidance; a custom body replaces that content entirely.",
+      "Sent 30 days before sailing. Place {{ai_content}} in a custom body to position the AI-generated sections around your own copy; leave it out to send your copy alone.",
     default_subject_template: "30 days out — final prep for {{ship_name}}",
     variables: PRE_CRUISE_VARIABLES,
+    ai_content: {
+      description:
+        "AI writes personalized reservation reminders, online check-in guidance, and packing inspiration for this sailing here.",
+    },
   },
   pre_cruise_t_7: {
     label: "Pre-cruise — 7 days out",
     description:
-      "Sent 7 days before sailing. The platform default body includes an AI-generated packing checklist and the cruise weather forecast; a custom body replaces that content entirely.",
+      "Sent 7 days before sailing. Place {{ai_content}} in a custom body to position the AI-generated sections around your own copy; leave it out to send your copy alone.",
     default_subject_template: "One week away — pack, prepare, and get excited!",
     variables: PRE_CRUISE_VARIABLES,
+    ai_content: {
+      description:
+        "AI writes a personalized packing checklist, ship highlights, cruise-line tips, and embarkation advice for this sailing here.",
+    },
   },
   pre_cruise_t_1: {
     label: "Pre-cruise — 1 day out",
     description:
-      "Sent the day before sailing. The platform default body includes departure-port logistics and the carry-on essentials checklist; a custom body replaces that content entirely.",
+      "Sent the day before sailing. Place {{ai_content}} in a custom body to position the AI-generated sections around your own copy; leave it out to send your copy alone.",
     default_subject_template: "Tomorrow! Your {{cruise_line}} cruise departs — final checklist inside",
     variables: PRE_CRUISE_VARIABLES,
+    ai_content: {
+      description:
+        "AI writes a preview of your first port of call and what to expect on departure day here.",
+    },
   },
   group_invitation: {
     label: "Group invitation",

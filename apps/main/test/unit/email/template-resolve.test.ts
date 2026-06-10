@@ -75,6 +75,38 @@ describe("resolveEmailContent", () => {
     expect(resolved.overrideBodyText).toBeNull();
   });
 
+  // #975 — {{ai_content}} in an override body is substituted with the
+  // AI-generated text the sender supplies, so tenants frame the AI content
+  // instead of replacing it. An override WITHOUT the token simply doesn't
+  // get AI content — both shapes must render.
+  it("substitutes {{ai_content}} in an override body with the sender-supplied AI text", async () => {
+    const resolved = await resolveEmailContent({
+      db: makeDb({
+        data: { subject_template: null, body_template: "Our take:\n\n{{ai_content}}\n\nBon voyage!" },
+        error: null,
+      }),
+      tenant_id: "t-1",
+      email_type: "pre_cruise_t_90",
+      variables: { ...PRE_CRUISE_VARS, ai_content: "Nassau sparkles in September.\n\n• Snorkel Atlantis" },
+    });
+    expect(resolved.overrideBodyText).toBe(
+      "Our take:\n\nNassau sparkles in September.\n\n• Snorkel Atlantis\n\nBon voyage!",
+    );
+  });
+
+  it("renders an override that omits {{ai_content}} without AI text (allowed)", async () => {
+    const resolved = await resolveEmailContent({
+      db: makeDb({
+        data: { subject_template: null, body_template: "Just our own copy, {{customer_name}}." },
+        error: null,
+      }),
+      tenant_id: "t-1",
+      email_type: "pre_cruise_t_90",
+      variables: { ...PRE_CRUISE_VARS, ai_content: "AI text that should not appear" },
+    });
+    expect(resolved.overrideBodyText).toBe("Just our own copy, Alice.");
+  });
+
   it("throws when the override read fails — never a silent default fallback", async () => {
     await expect(
       resolveEmailContent({

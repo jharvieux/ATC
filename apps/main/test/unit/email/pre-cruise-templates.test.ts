@@ -117,6 +117,25 @@ describe("PreCruiseT90 — §23.4", () => {
     expect(html).toContain("Royal Caribbean");
     expect(html).toContain("Nassau awaits!");
   });
+
+  // #975 — T-90 gained the companion-page CTA in the marketing-grade redesign.
+  it("renders the companion-page CTA when companion_page_url is provided", () => {
+    const jsx = React.createElement(PreCruiseT90, {
+      layout: baseLayout,
+      customer_name: "Charlie",
+      ship_name: "Ship",
+      cruise_line: "Royal Caribbean",
+      sailing_date: "2026-07-01",
+      ports: [],
+      documentation_reminder: "Check your passport.",
+      destination_teaser: "Nassau awaits!",
+      must_do_experiences: [],
+      did_you_know: "Fact.",
+      companion_page_url: "https://example.com/companion/tok90",
+    });
+    const html = ReactDOMServer.renderToStaticMarkup(jsx);
+    expect(html).toContain("https://example.com/companion/tok90");
+  });
 });
 
 describe("PreCruiseT30 — §23.4", () => {

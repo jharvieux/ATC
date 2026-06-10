@@ -1,4 +1,6 @@
 // §23.4 — T-1 day pre-cruise email template (Tomorrow!).
+// #975 — marketing-grade layout: countdown badge, eyebrow section headings,
+// tenant-accent CTA.
 //
 // CRITICAL: The carry-on essentials callout is hardcoded and MUST NOT be
 // removed or AI-generated. It prevents the most common avoidable trip-ruining
@@ -8,6 +10,7 @@ import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 import { CruiseForecastChart } from "./CruiseForecastChart";
 import { DestinationHero } from "./DestinationHero";
+import { SectionHeading, CtaButton, CountdownBadge, DEFAULT_PRIMARY, DEFAULT_ACCENT } from "./EmailParts";
 import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 import type { DailyForecast } from "@/lib/weather/cruise-forecast";
 
@@ -38,15 +41,20 @@ export interface PreCruiseT1Props {
 }
 
 export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
+  const primary = props.layout.branding.primary_color ?? DEFAULT_PRIMARY;
+  const accent = props.layout.branding.accent_color ?? DEFAULT_ACCENT;
+
   return (
     <BrandedLayout {...props.layout}>
-      <h2 style={{ color: "#1f2937", marginTop: 0 }}>
+      <CountdownBadge accent={accent}>Departing tomorrow</CountdownBadge>
+
+      <h2 style={{ color: primary, margin: "0 0 16px 0", fontSize: 24, textAlign: "center" }}>
         Tomorrow is the day, {props.customer_name}! 🚢
       </h2>
 
       {props.destination_image && <DestinationHero image={props.destination_image} />}
 
-      <p>
+      <p style={{ lineHeight: 1.7 }}>
         Your voyage on the <strong>{props.ship_name}</strong> sets sail tomorrow. Here&rsquo;s
         everything you need for a smooth embarkation.
       </p>
@@ -90,16 +98,16 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
       </table>
       {/* ── END CARRY-ON ESSENTIALS CALLOUT ── */}
 
-      {props.departure_port && <DeparturePortSection port={props.departure_port} />}
+      {props.departure_port && <DeparturePortSection port={props.departure_port} accent={accent} />}
 
       {props.cruise_forecast && props.cruise_forecast.length > 0 ? (
         <>
-          <h3 style={{ color: "#374151" }}>Weather Along the Way</h3>
+          <SectionHeading accent={accent}>Weather Along the Way</SectionHeading>
           <CruiseForecastChart forecast={props.cruise_forecast} />
         </>
       ) : props.weather_summary ? (
         <>
-          <h3 style={{ color: "#374151" }}>Weather Overview</h3>
+          <SectionHeading accent={accent}>Weather Overview</SectionHeading>
           <p style={{ lineHeight: 1.7 }}>{props.weather_summary}</p>
           <p style={{ fontSize: 11, color: "#9ca3af", margin: "0 0 16px 0" }}>
             Weather data by{" "}
@@ -111,21 +119,16 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
         </>
       ) : null}
 
-      <h3 style={{ color: "#374151" }}>First Port Preview</h3>
+      <SectionHeading accent={accent}>First Port Preview</SectionHeading>
       <p style={{ lineHeight: 1.7 }}>{props.first_port_preview}</p>
 
-      <h3 style={{ color: "#374151" }}>What to Expect Tomorrow</h3>
+      <SectionHeading accent={accent}>What to Expect Tomorrow</SectionHeading>
       <p style={{ lineHeight: 1.7 }}>{props.day_of_expectations}</p>
 
       {props.companion_page_url && (
-        <p style={{ marginTop: 24 }}>
-          <a
-            href={props.companion_page_url}
-            style={{ background: "#3b82f6", color: "#fff", padding: "12px 24px", borderRadius: 6, textDecoration: "none" }}
-          >
-            Open Your Full Day-1 Guide →
-          </a>
-        </p>
+        <CtaButton href={props.companion_page_url} accent={accent}>
+          Open Your Full Day-1 Guide →
+        </CtaButton>
       )}
 
       {props.destination_image && (
@@ -142,15 +145,15 @@ export function PreCruiseT1(props: PreCruiseT1Props): React.ReactElement {
   );
 }
 
-function DeparturePortSection(props: { port: PortInfo }): React.ReactElement {
-  const { port } = props;
+function DeparturePortSection(props: { port: PortInfo; accent: string }): React.ReactElement {
+  const { port, accent } = props;
   return (
     <>
-      <h3 style={{ color: "#374151" }}>Getting to the Port</h3>
+      <SectionHeading accent={accent}>Getting to the Port</SectionHeading>
       <p style={{ fontWeight: 600, marginBottom: 4 }}>{port.port_name}</p>
       {port.official_url && (
         <p style={{ marginTop: 0 }}>
-          <a href={port.official_url} style={{ color: "#3b82f6" }}>
+          <a href={port.official_url} style={{ color: accent }}>
             Official port website →
           </a>
         </p>

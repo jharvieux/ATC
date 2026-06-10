@@ -16,6 +16,41 @@ function escapeReviewHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// #975 — structured shell for the three review-decision emails. Table-based
+// with inline styles (email-client-safe, same approach as BrandedLayout).
+// These are platform→applicant transactional notices: platform header, no
+// unsubscribe link.
+function reviewEmailShell(args: {
+  heading: string;
+  bodyHtml: string;
+  cta?: { href: string; label: string } | null;
+}): string {
+  const ctaHtml = args.cta
+    ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:28px 0;"><tbody><tr><td align="center">
+         <table role="presentation" cellspacing="0" cellpadding="0"><tbody><tr>
+           <td style="border-radius:8px;background-color:#3b82f6;">
+             <a href="${args.cta.href}" style="display:inline-block;padding:14px 32px;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;">${args.cta.label}</a>
+           </td>
+         </tr></tbody></table>
+       </td></tr></tbody></table>`
+    : "";
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f6f6f6;font-family:Arial,sans-serif;"><tbody><tr><td align="center" style="padding:24px 0;">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;max-width:600px;"><tbody>
+      <tr><td style="padding:24px;background-color:#1f2937;">
+        <h1 style="margin:0;color:#ffffff;font-size:20px;">AI Travel Concierge</h1>
+      </td></tr>
+      <tr><td style="padding:24px 32px;line-height:1.6;font-size:15px;color:#222222;">
+        <h2 style="margin:0 0 16px 0;color:#1f2937;font-size:22px;">${args.heading}</h2>
+        ${args.bodyHtml}
+        ${ctaHtml}
+      </td></tr>
+      <tr><td style="padding:16px 32px;background-color:#fafafa;border-top:1px solid #eeeeee;font-size:12px;color:#888888;">
+        <p style="margin:0;">AI Travel Concierge — platform review team</p>
+      </td></tr>
+    </tbody></table>
+  </td></tr></tbody></table>`;
+}
+
 // Best-effort decision notification to the tenant's active users (#960).
 // A send failure must not roll back the review decision, so errors are
 // logged and swallowed. Callers invoke this BEFORE emitting lifecycle
@@ -153,14 +188,17 @@ export async function POST(
               : null;
           await notifyTenantUsers(db, tenantId, {
             subject: "Your AI Travel Concierge account is approved",
-            html: `<h2>Your account has been approved</h2>
-              <p><strong>${escapeReviewHtml(tenant.legal_name ?? "Your agency")}</strong> has passed platform review and is now active.</p>
-              ${
-                portalUrl
-                  ? `<p><a href="${portalUrl}">Sign in to your agency portal</a> to get started — your 30-day trial starts today.</p>`
-                  : "<p>Sign in at your agency subdomain to get started — your 30-day trial starts today.</p>"
-              }
-              <p>If you skipped branding during onboarding, you can finish it any time from your settings.</p>`,
+            html: reviewEmailShell({
+              heading: "Your account has been approved 🎉",
+              bodyHtml: `<p><strong>${escapeReviewHtml(tenant.legal_name ?? "Your agency")}</strong> has passed platform review and is now active.</p>
+                <p>Your <strong>30-day trial starts today</strong>. ${
+                  portalUrl
+                    ? "Sign in to your agency portal to get started."
+                    : "Sign in at your agency subdomain to get started."
+                }</p>
+                <p>If you skipped branding during onboarding, you can finish it any time from your settings.</p>`,
+              cta: portalUrl ? { href: portalUrl, label: "Sign in to your agency portal →" } : null,
+            }),
             template_id: "tenant_review_approved",
             template_variables: { portal_url: portalUrl ?? "" },
           });
@@ -196,10 +234,12 @@ export async function POST(
           // does, the recipient query must already have run.
           await notifyTenantUsers(db, tenantId, {
             subject: "Update on your AI Travel Concierge application",
-            html: `<h2>Your application was not approved</h2>
-              <p>After review, we are unable to approve <strong>${escapeReviewHtml(tenant.legal_name ?? "your agency")}</strong> at this time.</p>
-              <p><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the review team.")}</p>
-              <p>If you believe this decision is in error, contact us at support@ai-travelconcierge.com.</p>`,
+            html: reviewEmailShell({
+              heading: "Your application was not approved",
+              bodyHtml: `<p>After review, we are unable to approve <strong>${escapeReviewHtml(tenant.legal_name ?? "your agency")}</strong> at this time.</p>
+                <p style="padding:12px 16px;background-color:#fef2f2;border-left:4px solid #ef4444;border-radius:4px;"><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the review team.")}</p>
+                <p>If you believe this decision is in error, contact us at support@ai-travelconcierge.com.</p>`,
+            }),
             template_id: "tenant_review_rejected",
             template_variables: { reason: body.reason ?? "" },
           });
@@ -234,10 +274,12 @@ export async function POST(
 
           await notifyTenantUsers(db, tenantId, {
             subject: "Action required: more information needed",
-            html: `<h2>More information needed for your application</h2>
-              <p>Our review team needs more information before approving your account.</p>
-              <p><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the reviewer.")}</p>
-              <p>Please sign in and update the requested information in your onboarding flow.</p>`,
+            html: reviewEmailShell({
+              heading: "More information needed for your application",
+              bodyHtml: `<p>Our review team needs more information before approving your account.</p>
+                <p style="padding:12px 16px;background-color:#fffbeb;border-left:4px solid #f59e0b;border-radius:4px;"><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the reviewer.")}</p>
+                <p>Please sign in and update the requested information in your onboarding flow.</p>`,
+            }),
             template_id: "tenant_review_more_info",
             template_variables: { reason: body.reason ?? "" },
           });

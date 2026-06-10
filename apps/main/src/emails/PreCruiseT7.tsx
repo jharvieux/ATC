@@ -1,9 +1,12 @@
 // §23.4 — T-7 day pre-cruise email template (Almost there!).
+// #975 — marketing-grade layout: countdown badge, eyebrow section headings,
+// checklist cards, and a tenant-accent CTA.
 
 import * as React from "react";
 import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 import { CruiseForecastChart } from "./CruiseForecastChart";
 import { DestinationHero } from "./DestinationHero";
+import { SectionHeading, CtaButton, CountdownBadge, ChecklistCard, DEFAULT_PRIMARY, DEFAULT_ACCENT } from "./EmailParts";
 import type { DestinationImage } from "@/lib/cruise-regions/destination-images";
 import type { DailyForecast } from "@/lib/weather/cruise-forecast";
 
@@ -26,68 +29,62 @@ export interface PreCruiseT7Props {
 }
 
 export function PreCruiseT7(props: PreCruiseT7Props): React.ReactElement {
+  const primary = props.layout.branding.primary_color ?? DEFAULT_PRIMARY;
+  const accent = props.layout.branding.accent_color ?? DEFAULT_ACCENT;
+
   return (
     <BrandedLayout {...props.layout}>
-      <h2 style={{ color: "#1f2937", marginTop: 0 }}>
-        One week to go — almost there, {props.customer_name}!
+      <CountdownBadge accent={accent}>One week to go</CountdownBadge>
+
+      <h2 style={{ color: primary, margin: "0 0 16px 0", fontSize: 24, textAlign: "center" }}>
+        Almost there, {props.customer_name}!
       </h2>
 
       {props.destination_image && <DestinationHero image={props.destination_image} />}
 
-      <p>
+      <p style={{ lineHeight: 1.7 }}>
         Your voyage on the <strong>{props.ship_name}</strong> departs{" "}
         <strong>{props.sailing_date}</strong>. Here&rsquo;s what to focus on this week.
       </p>
 
       {props.cruise_forecast && props.cruise_forecast.length > 0 && (
         <>
-          <h3 style={{ color: "#374151" }}>Weather Along the Way</h3>
+          <SectionHeading accent={accent}>Weather Along the Way</SectionHeading>
           <CruiseForecastChart forecast={props.cruise_forecast} />
         </>
       )}
 
       {props.packing_checklist.length > 0 && (
         <>
-          <h3 style={{ color: "#374151" }}>AI-Generated Packing Checklist</h3>
-          <ul>
-            {props.packing_checklist.map((item, i) => <li key={i}>{item}</li>)}
-          </ul>
+          <SectionHeading accent={accent}>Your Packing Checklist</SectionHeading>
+          <ChecklistCard accent={accent} items={props.packing_checklist} />
         </>
       )}
 
       {props.ship_highlights.length > 0 && (
         <>
-          <h3 style={{ color: "#374151" }}>Ship Highlights</h3>
-          <ul>
-            {props.ship_highlights.map((h, i) => <li key={i}>{h}</li>)}
-          </ul>
+          <SectionHeading accent={accent}>Ship Highlights</SectionHeading>
+          <ChecklistCard accent={accent} items={props.ship_highlights} />
         </>
       )}
 
       {props.cruise_line_tips.length > 0 && (
         <>
-          <h3 style={{ color: "#374151" }}>Cruise Line Tips</h3>
-          <ul>
-            {props.cruise_line_tips.map((t, i) => <li key={i}>{t}</li>)}
-          </ul>
+          <SectionHeading accent={accent}>Cruise Line Tips</SectionHeading>
+          <ChecklistCard accent={accent} items={props.cruise_line_tips} />
         </>
       )}
 
-      <h3 style={{ color: "#374151" }}>Embarkation Day</h3>
+      <SectionHeading accent={accent}>Embarkation Day</SectionHeading>
       <p style={{ lineHeight: 1.7 }}>{props.embarkation_advice}</p>
 
-      <h3 style={{ color: "#374151" }}>Your First Day Aboard</h3>
+      <SectionHeading accent={accent}>Your First Day Aboard</SectionHeading>
       <p style={{ lineHeight: 1.7 }}>{props.first_day_inspiration}</p>
 
       {props.companion_page_url && (
-        <p style={{ marginTop: 24 }}>
-          <a
-            href={props.companion_page_url}
-            style={{ background: "#3b82f6", color: "#fff", padding: "12px 24px", borderRadius: 6, textDecoration: "none" }}
-          >
-            Full Voyage Guide →
-          </a>
-        </p>
+        <CtaButton href={props.companion_page_url} accent={accent}>
+          Full Voyage Guide →
+        </CtaButton>
       )}
 
       {props.destination_image && (
