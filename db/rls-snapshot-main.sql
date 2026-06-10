@@ -93,6 +93,7 @@
 -- public.tasks (rls_enabled)
 -- public.tenant_attribution_categories (rls_enabled)
 -- public.tenant_branding (rls_enabled)
+-- public.tenant_email_templates (rls_enabled)
 -- public.tenant_host_configs (rls_enabled)
 -- public.tenant_host_fee_overrides (rls_enabled)
 -- public.tenant_inactivity_nudges (rls_enabled)
@@ -1343,6 +1344,21 @@ CREATE POLICY "tenant_branding_update" ON public.tenant_branding
   USING ((tenant_id IN ( SELECT users.tenant_id
    FROM users
   WHERE users.auth_user_id = auth.uid())));
+
+-- TABLE: public.tenant_email_templates
+CREATE POLICY "tenant_email_templates_delete_policy" ON public.tenant_email_templates
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "tenant_email_templates_insert_policy" ON public.tenant_email_templates
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "tenant_email_templates_select_policy" ON public.tenant_email_templates
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "tenant_email_templates_update_policy" ON public.tenant_email_templates
+  FOR UPDATE TO PUBLIC
+  USING (false)
+  WITH CHECK (false);
 
 -- TABLE: public.tenant_host_configs
 CREATE POLICY "tenant_host_configs_delete_policy" ON public.tenant_host_configs

@@ -356,6 +356,10 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_attribution_categories TO 
 GRANT INSERT, SELECT, UPDATE ON public.tenant_branding TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_branding TO service_role;
 
+-- TABLE: public.tenant_email_templates
+GRANT SELECT ON public.tenant_email_templates TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_email_templates TO service_role;
+
 -- TABLE: public.tenant_host_configs
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_host_configs TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_host_configs TO service_role;
