@@ -111,6 +111,8 @@
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
+-- public.voice_profiles (rls_enabled)
+-- public.voice_samples (rls_enabled)
 -- public.weather_forecast_cache (rls_enabled)
 -- public.weather_usage_metrics (rls_enabled)
 --
@@ -1538,6 +1540,34 @@ CREATE POLICY "ule_update_service" ON public.usage_limit_events
   FOR UPDATE TO PUBLIC
   USING (false);
 
+-- TABLE: public.user_consent_pending
+CREATE POLICY "user_consent_pending_select" ON public.user_consent_pending
+  FOR SELECT TO PUBLIC
+  USING (auth_user_id = auth.uid());
+
+-- TABLE: public.user_data_export_requests
+CREATE POLICY "user_data_export_insert" ON public.user_data_export_requests
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_id = auth.uid());
+CREATE POLICY "user_data_export_select" ON public.user_data_export_requests
+  FOR SELECT TO PUBLIC
+  USING (auth_user_id = auth.uid());
+
+-- TABLE: public.users
+CREATE POLICY "users_delete_policy" ON public.users
+  FOR DELETE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "users_insert_policy" ON public.users
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "users_select_policy" ON public.users
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "users_update_policy" ON public.users
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
 -- TABLE: public.voice_profiles
 CREATE POLICY "voice_profiles_delete_policy" ON public.voice_profiles
   FOR DELETE TO PUBLIC
@@ -1567,34 +1597,6 @@ CREATE POLICY "voice_samples_update_policy" ON public.voice_samples
   FOR UPDATE TO PUBLIC
   USING (false)
   WITH CHECK (false);
-
--- TABLE: public.user_consent_pending
-CREATE POLICY "user_consent_pending_select" ON public.user_consent_pending
-  FOR SELECT TO PUBLIC
-  USING (auth_user_id = auth.uid());
-
--- TABLE: public.user_data_export_requests
-CREATE POLICY "user_data_export_insert" ON public.user_data_export_requests
-  FOR INSERT TO PUBLIC
-  WITH CHECK (auth_user_id = auth.uid());
-CREATE POLICY "user_data_export_select" ON public.user_data_export_requests
-  FOR SELECT TO PUBLIC
-  USING (auth_user_id = auth.uid());
-
--- TABLE: public.users
-CREATE POLICY "users_delete_policy" ON public.users
-  FOR DELETE TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
-CREATE POLICY "users_insert_policy" ON public.users
-  FOR INSERT TO PUBLIC
-  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
-CREATE POLICY "users_select_policy" ON public.users
-  FOR SELECT TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id));
-CREATE POLICY "users_update_policy" ON public.users
-  FOR UPDATE TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id))
-  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.weather_forecast_cache
 CREATE POLICY "weather_forecast_cache_no_user_delete" ON public.weather_forecast_cache
