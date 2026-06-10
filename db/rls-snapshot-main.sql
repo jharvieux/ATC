@@ -1538,6 +1538,36 @@ CREATE POLICY "ule_update_service" ON public.usage_limit_events
   FOR UPDATE TO PUBLIC
   USING (false);
 
+-- TABLE: public.voice_profiles
+CREATE POLICY "voice_profiles_delete_policy" ON public.voice_profiles
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "voice_profiles_insert_policy" ON public.voice_profiles
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "voice_profiles_select_policy" ON public.voice_profiles
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "voice_profiles_update_policy" ON public.voice_profiles
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.voice_samples
+CREATE POLICY "voice_samples_delete_policy" ON public.voice_samples
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "voice_samples_insert_policy" ON public.voice_samples
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "voice_samples_select_policy" ON public.voice_samples
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "voice_samples_update_policy" ON public.voice_samples
+  FOR UPDATE TO PUBLIC
+  USING (false)
+  WITH CHECK (false);
+
 -- TABLE: public.user_consent_pending
 CREATE POLICY "user_consent_pending_select" ON public.user_consent_pending
   FOR SELECT TO PUBLIC
