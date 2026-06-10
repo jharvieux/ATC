@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(async () => ({})),
   subUpdate: vi.fn(async () => ({})),
   update: vi.fn((_payload: Record<string, unknown>) => ({ eq: async () => ({ error: null }) })),
-  tenantRow: { id: "t-1", stripe_subscription_id: "sub_1", stripe_customer_id: "cus_1", review_decision: null } as Record<string, unknown> | null,
+  sendNotification: vi.fn(async (_input: Record<string, unknown>) => ({ status: "sent" })),
+  tenantRow: { id: "t-1", legal_name: "Acme Travel LLC", slug: "acme", stripe_subscription_id: "sub_1", stripe_customer_id: "cus_1", review_decision: null } as Record<string, unknown> | null,
+  usersRows: [{ email: "owner@acme.test" }] as Array<{ email: string }>,
   fetchErr: null as { message: string } | null,
 }));
 
@@ -40,13 +42,27 @@ vi.mock("@/lib/auth/assert-platform-admin", async () => {
 vi.mock("@/lib/db/platform-admin-client", () => ({
   withPlatformAdminAudit: vi.fn(async (_opts, fn: (db: unknown, rec: () => void) => Promise<unknown>) => {
     const db = {
-      from: () => ({
-        select: () => ({ eq: () => ({ single: async () => ({ data: mocks.tenantRow, error: mocks.fetchErr }) }) }),
-        update: mocks.update,
-      }),
+      from: (table: string) => {
+        if (table === "users") {
+          // db.from("users").select("email").eq(...).eq(...) — awaited list query.
+          return {
+            select: () => ({
+              eq: () => ({ eq: async () => ({ data: mocks.usersRows, error: null }) }),
+            }),
+          };
+        }
+        return {
+          select: () => ({ eq: () => ({ single: async () => ({ data: mocks.tenantRow, error: mocks.fetchErr }) }) }),
+          update: mocks.update,
+        };
+      },
     };
     return fn(db, () => {});
   }),
+}));
+
+vi.mock("@/lib/email/notifications", () => ({
+  sendTenantNotification: mocks.sendNotification,
 }));
 
 vi.mock("stripe", () => ({
@@ -66,8 +82,11 @@ vi.mock("@/lib/onboarding/state-machine", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
-  mocks.tenantRow = { id: "t-1", stripe_subscription_id: "sub_1", stripe_customer_id: "cus_1", review_decision: null };
+  process.env.PLATFORM_PRIMARY_DOMAIN = "platform.test";
+  mocks.tenantRow = { id: "t-1", legal_name: "Acme Travel LLC", slug: "acme", stripe_subscription_id: "sub_1", stripe_customer_id: "cus_1", review_decision: null };
+  mocks.usersRows = [{ email: "owner@acme.test" }];
   mocks.fetchErr = null;
+  mocks.sendNotification.mockResolvedValue({ status: "sent" });
 });
 
 async function postReview(body: unknown, headers: Record<string, string> = { "x-admin-user-id": "admin-1" }): Promise<Response> {
@@ -107,5 +126,53 @@ describe("POST /api/admin/tenants/[id]/review — reject side-effects (#403)", (
     const names = mocks.send.mock.calls.map((c) => c[0].name);
     expect(names).toContain("tenant.activated");
     expect(names).not.toContain("tenant.terminated");
+  });
+});
+
+// #960 — the tenant admin was left in limbo after submitting: nothing told
+// them the decision. These tests pin the contract that every decision
+// (approve / reject) emails the tenant's active users, and that a broken
+// email pipeline can never block the decision itself.
+describe("POST /api/admin/tenants/[id]/review — decision notifications (#960)", () => {
+  it("approve emails active tenant users with a sign-in link to their subdomain", async () => {
+    const res = await postReview({ action: "approve" });
+    expect(res.status).toBe(200);
+
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    const input = mocks.sendNotification.mock.calls[0]![0];
+    expect(input.to).toBe("owner@acme.test");
+    expect(input.template_id).toBe("tenant_review_approved");
+    expect(input.html).toContain("https://acme.platform.test/");
+    expect(input.html).toContain("Acme Travel LLC");
+  });
+
+  it("reject emails the reason BEFORE emitting tenant.terminated (defensive ordering)", async () => {
+    const res = await postReview({ action: "reject", reason: "duplicate <application>" });
+    expect(res.status).toBe(200);
+
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    const input = mocks.sendNotification.mock.calls[0]![0];
+    expect(input.template_id).toBe("tenant_review_rejected");
+    // Reason is rendered HTML-escaped.
+    expect(input.html).toContain("duplicate &lt;application&gt;");
+
+    // Ordering: the recipients query reads users with status='active'. No
+    // tenant.terminated handler deactivates those rows today (verified
+    // 2026-06-10), but the email must stay ahead of the event so a future
+    // handler that does can never strand the applicant unnotified.
+    const terminatedCall = mocks.send.mock.calls.findIndex((c) => c[0].name === "tenant.terminated");
+    expect(terminatedCall).toBeGreaterThanOrEqual(0);
+    expect(mocks.sendNotification.mock.invocationCallOrder[0]!).toBeLessThan(
+      mocks.send.mock.invocationCallOrder[terminatedCall]!,
+    );
+  });
+
+  it("a failing email pipeline does not block the decision (best-effort)", async () => {
+    mocks.sendNotification.mockRejectedValue(new Error("resend down"));
+    const res = await postReview({ action: "approve" });
+    expect(res.status).toBe(200);
+
+    const names = mocks.send.mock.calls.map((c) => c[0].name);
+    expect(names).toContain("tenant.activated");
   });
 });
