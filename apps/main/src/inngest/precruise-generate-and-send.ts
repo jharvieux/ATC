@@ -23,6 +23,7 @@ import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
+import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { PreCruiseT90, type PreCruiseT90Props } from "@/emails/PreCruiseT90";
@@ -463,19 +464,41 @@ async function buildAndSend(args: {
     }
   }
 
-  const { html, subject } = await buildEmail(phase, {
-    layoutProps: emailCtx.layoutProps,
-    customerName: emailCtx.customerName,
-    shipName: emailCtx.shipName,
-    cruiseLine: emailCtx.cruiseLine,
-    sailingDate: emailCtx.sailingDate,
-    ports: emailCtx.ports,
-    generatedContent,
-    companionPageUrl: emailCtx.companionPageUrl,
-    portInfo,
-    destinationImage,
-    cruiseForecast,
+  // #963 — tenant subject/body override → platform default. A failed
+  // override read or render throws (fail loud → Inngest retry); we never
+  // silently fall back or send an empty body.
+  const resolved = await resolveEmailContent({
+    db: svc,
+    tenant_id: emailCtx.tenant.id,
+    email_type: `pre_cruise_${phase}`,
+    variables: {
+      customer_name: emailCtx.customerName,
+      ship_name: emailCtx.shipName,
+      cruise_line: emailCtx.cruiseLine,
+      sailing_date: emailCtx.sailingDate,
+      companion_page_url: emailCtx.companionPageUrl,
+    },
   });
+  const subject = resolved.subject;
+
+  const html =
+    resolved.overrideBodyText !== null
+      ? await renderOverrideBodyInLayout(emailCtx.layoutProps, resolved.overrideBodyText)
+      : (
+          await buildEmail(phase, {
+            layoutProps: emailCtx.layoutProps,
+            customerName: emailCtx.customerName,
+            shipName: emailCtx.shipName,
+            cruiseLine: emailCtx.cruiseLine,
+            sailingDate: emailCtx.sailingDate,
+            ports: emailCtx.ports,
+            generatedContent,
+            companionPageUrl: emailCtx.companionPageUrl,
+            portInfo,
+            destinationImage,
+            cruiseForecast,
+          })
+        ).html;
 
   const tenantInput: SendEmailInput["tenant"] = {
     id: emailCtx.tenant.id,
@@ -685,7 +708,7 @@ async function buildEmail(
     destinationImage: DestinationImage | null;
     cruiseForecast: DailyForecast[] | null;
   },
-): Promise<{ html: string; subject: string }> {
+): Promise<{ html: string }> {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { layoutProps, customerName, shipName, cruiseLine, sailingDate, ports, generatedContent: c, companionPageUrl, portInfo, destinationImage, cruiseForecast } = ctx;
 
@@ -705,10 +728,7 @@ async function buildEmail(
         suggested_reads: (c.suggested_reads as string[]) ?? [],
         destination_image: destinationImage,
       };
-      return {
-        html: renderToStaticMarkup(React.createElement(PreCruiseT90, props)),
-        subject: `90 days to your ${cruiseLine} cruise — let the anticipation begin!`,
-      };
+      return { html: renderToStaticMarkup(React.createElement(PreCruiseT90, props)) };
     }
     case "t_30": {
       const props: PreCruiseT30Props = {
@@ -725,10 +745,7 @@ async function buildEmail(
         companion_page_url: companionPageUrl,
         destination_image: destinationImage,
       };
-      return {
-        html: renderToStaticMarkup(React.createElement(PreCruiseT30, props)),
-        subject: `30 days out — final prep for ${shipName}`,
-      };
+      return { html: renderToStaticMarkup(React.createElement(PreCruiseT30, props)) };
     }
     case "t_7": {
       const props: PreCruiseT7Props = {
@@ -745,10 +762,7 @@ async function buildEmail(
         destination_image: destinationImage,
         cruise_forecast: cruiseForecast,
       };
-      return {
-        html: renderToStaticMarkup(React.createElement(PreCruiseT7, props)),
-        subject: `One week away — pack, prepare, and get excited!`,
-      };
+      return { html: renderToStaticMarkup(React.createElement(PreCruiseT7, props)) };
     }
     case "t_1": {
       const props: PreCruiseT1Props = {
@@ -763,10 +777,7 @@ async function buildEmail(
         destination_image: destinationImage,
         cruise_forecast: cruiseForecast,
       };
-      return {
-        html: renderToStaticMarkup(React.createElement(PreCruiseT1, props)),
-        subject: `Tomorrow! Your ${cruiseLine} cruise departs — final checklist inside`,
-      };
+      return { html: renderToStaticMarkup(React.createElement(PreCruiseT1, props)) };
     }
   }
 }
