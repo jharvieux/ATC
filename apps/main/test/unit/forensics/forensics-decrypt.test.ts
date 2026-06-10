@@ -124,8 +124,11 @@ describe("decryptForensicsSnapshot (#739)", () => {
     // Row claims key_id is "forensics-evil" but the ciphertext was encrypted with AAD="forensics-v1"
     mocks.row = makeRow(bundle, EVIL_KEY_ID);
 
-    // Both AAD path (wrong AAD) and legacy path (tag covers AAD) must fail → throws
-    await expect(decryptForensicsSnapshot("snap-tampered")).rejects.toThrow();
+    // Both AAD path (wrong AAD) and legacy path (tag covers original AAD) fail →
+    // the outer catch classifies it as auth_tag_mismatch (tampered, not corrupt).
+    await expect(decryptForensicsSnapshot("snap-tampered")).rejects.toThrow(
+      "forensics_decrypt_auth_tag_mismatch",
+    );
   });
 
   it("throws ForensicsKeyMissingError when encryption_key_id not in env", async () => {

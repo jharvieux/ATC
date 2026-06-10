@@ -100,17 +100,33 @@ export async function decryptForensicsSnapshot(snapshot_id: string): Promise<{
 
   // #739: try AAD-bound path first (snapshots captured after the AAD fix).
   // Fall back to legacy no-AAD for snapshots captured before this change.
+  // Outer catch classifies the final failure so callers (and runbook operators)
+  // can distinguish tampering from bundle corruption — meaningful on this legal-
+  // evidence path (§26.5a, court-order gated).
   let rawPlaintext: Buffer;
   try {
-    const d = createDecipheriv(ALGORITHM, keyBuf, iv, { authTagLength: TAG_BYTES });
-    d.setAAD(Buffer.from(row.encryption_key_id, "utf8"));
-    d.setAuthTag(tag);
-    rawPlaintext = Buffer.concat([d.update(ciphertext), d.final()]);
-  } catch {
-    // Legacy path: snapshot was captured without AAD binding.
-    const d = createDecipheriv(ALGORITHM, keyBuf, iv, { authTagLength: TAG_BYTES });
-    d.setAuthTag(tag);
-    rawPlaintext = Buffer.concat([d.update(ciphertext), d.final()]);
+    try {
+      const d = createDecipheriv(ALGORITHM, keyBuf, iv, { authTagLength: TAG_BYTES });
+      d.setAAD(Buffer.from(row.encryption_key_id, "utf8"));
+      d.setAuthTag(tag);
+      rawPlaintext = Buffer.concat([d.update(ciphertext), d.final()]);
+    } catch {
+      // Legacy path: snapshot was captured without AAD binding.
+      const d = createDecipheriv(ALGORITHM, keyBuf, iv, { authTagLength: TAG_BYTES });
+      d.setAuthTag(tag);
+      rawPlaintext = Buffer.concat([d.update(ciphertext), d.final()]);
+    }
+  } catch (err) {
+    const isAuthTag =
+      err instanceof Error &&
+      (err.message.includes("Unsupported state") ||
+        err.message.includes("auth tag") ||
+        err.message.includes("bad decrypt"));
+    throw new Error(
+      isAuthTag
+        ? `forensics_decrypt_auth_tag_mismatch: snapshot ${snapshot_id} failed authentication (possibly tampered)`
+        : `forensics_decrypt_corrupt: snapshot ${snapshot_id} could not be decrypted: ${err instanceof Error ? err.message : "unknown"}`,
+    );
   }
   const plaintext = rawPlaintext.toString("utf8");
   const payload = JSON.parse(plaintext);
