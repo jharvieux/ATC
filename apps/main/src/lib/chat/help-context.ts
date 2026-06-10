@@ -66,7 +66,9 @@ export function buildHelpContextBlock(message: string, tierCode: string): string
   if (tokens.length === 0) return null;
 
   const scored = loadAllDocs()
-    .filter((d) => d.tiers.length === 0 || d.tiers.includes(tierCode))
+    // Empty tierCode means "no tier filter" — used by the help_ai route where
+    // all docs are appropriate (the persona serves every plan tier).
+    .filter((d) => !tierCode || d.tiers.length === 0 || d.tiers.includes(tierCode))
     .map((doc) => ({ doc, ...scoreDoc(doc, tokens) }))
     .filter((s) => s.titleHits >= 1)
     .sort((a, b) => b.score - a.score)
