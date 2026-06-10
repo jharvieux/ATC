@@ -8,17 +8,22 @@
 #   human-readable summary the maintainer reads when reviewing the PR.
 #
 #   Layer 2 — PR comments: both subagents post their full report as a
-#   PR comment with a stable marker (`<!-- d091-audit:v1 -->` and
-#   `<!-- prepr-audit:v1 -->`). Each comment's createdAt is compared
-#   against the latest CODE-CHANGING commit, so an audit run BEFORE the
-#   most recent real change doesn't pass.
+#   PR comment with a stable marker (`<!-- d091-audit:v1 diff:<hash> -->`
+#   and `<!-- prepr-audit:v1 diff:<hash> -->`). The `diff:<hash>` value
+#   is a sha256 of the PR's current effective diff (sorted filename+patch
+#   pairs). The check recomputes the hash from the PR files API and passes
+#   iff a marker comment with the matching hash exists — timestamps become
+#   irrelevant, so update-branch merge commits never stale the audit.
+#
+#   Transition fallback: comments without a `diff:` field (pre-dating hash
+#   binding) are accepted if their createdAt is after the latest code-
+#   changing commit's timestamp. This fallback will be removed once all
+#   open PRs have rotated through a hash-bound audit.
 #
 #   "Code-changing" means the commit's diff has at least one file entry.
 #   Empty commits — used to refresh the workflow's PR-body snapshot when
 #   the body changes — are walked over: the audit threshold is the date
-#   of the previous non-empty commit, not the empty commit at HEAD. That
-#   way reposting the existing audit comments verbatim is sufficient when
-#   only no-op commits separate them from HEAD.
+#   of the previous non-empty commit, not the empty commit at HEAD.
 #
 # Layer 2 is the load-bearing part — Layer 1 alone could be fabricated
 # in the PR body without ever running the subagents. The marker-on-comment
@@ -180,7 +185,7 @@ jobs:
           echo "✓ Audit section present (chars=$CHAR_COUNT)"
           printf '%s' "$SECTION" | head -20
 
-      - name: Verify both subagent comments posted AFTER the latest code-changing commit
+      - name: Verify both subagent comments are bound to the current diff (hash-first, timestamp fallback)
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -234,40 +239,85 @@ jobs:
             echo "Effective audit threshold $EFFECTIVE_SHA committed at $HEAD_DATE (walked past $i empty commit(s) from HEAD $HEAD_SHA)"
           fi
 
-          # ISO 8601 timestamps sort lexicographically, so plain string
-          # comparison is correct here (both APIs return UTC `Z` strings).
+          # Compute a hash of the current PR's effective diff so audit
+          # comments can be bound to an exact tree state rather than a
+          # timestamp. An update-branch that doesn't change any source file
+          # produces the same hash → existing audit comments still pass
+          # without a repost, killing the merge-train friction (issue #924).
           #
-          # `--paginate --slurp` returns one JSON array of pages (each page
-          # is itself an array of comments). `.[][]` flattens to all
-          # comments, then we filter by marker and pick the newest. Slurp
-          # avoids the "jq sees one page at a time" gotcha that would
-          # require an undocumented "comments are returned oldest-first"
-          # assumption.
+          # Hash input: sorted (filename + patch) pairs from the PR files
+          # API. Binaries (no `patch` field) substitute (filename + sha +
+          # status) so their blob identity is still captured.
+          #
+          # `--paginate --slurp` collects all pages into a JSON array of
+          # arrays; `[.[][]]` flattens before sort.
+          DIFF_HASH=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/files" \
+            | jq -r '[.[][]] | sort_by(.filename)[] | if .patch then (.filename + "\n" + .patch) else (.filename + "\n" + .sha + "\n" + .status) end' \
+            | sha256sum | cut -d' ' -f1)
+          echo "Diff hash for PR #$PR_NUMBER: $DIFF_HASH"
+
+          # check_marker: pass if we find a marker comment whose embedded
+          # diff hash matches DIFF_HASH (new-style). Transition fallback:
+          # for comments pre-dating hash binding, accept if the newest one
+          # was posted after HEAD_DATE (timestamp rule). Remove the fallback
+          # branch once all open PRs have rotated through a hash-bound audit.
+          #
+          # `--paginate --slurp` + `.[][]` is the same flatten pattern used
+          # for PR files above; it avoids the "newest comment on first page"
+          # gotcha with unsorted pagination.
           check_marker() {
-            local marker="$1"
+            local marker_prefix="$1"   # e.g. "d091-audit:v1"
             local name="$2"
-            local newest
-            newest=$(gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
-              | jq -r --arg M "<!-- $marker -->" '[.[][] | select(.body | contains($M))] | sort_by(.created_at) | last | .created_at // empty')
-            if [ -z "$newest" ]; then
-              echo "::error::Missing $name audit comment (marker <!-- $marker -->)."
+
+            # Fetch all comments whose body contains the marker prefix
+            # (matches both old <!-- d091-audit:v1 --> and new
+            # <!-- d091-audit:v1 diff:... -->).
+            local ALL_COMMENTS
+            ALL_COMMENTS=$(gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
+              | jq --arg M "<!-- $marker_prefix" '[.[][] | select(.body | contains($M))]')
+
+            if [ "$(printf '%s' "$ALL_COMMENTS" | jq 'length')" -eq 0 ]; then
+              echo "::error::Missing $name audit comment (marker <!-- $marker_prefix -->)."
               echo ""
               echo "Run the $name subagent on this PR; it posts the audit as a"
               echo "comment with that marker. The marker is invisible in the"
               echo "rendered Markdown but the workflow looks for it in the body."
               return 1
             fi
-            if [ "$newest" \< "$HEAD_DATE" ]; then
-              echo "::error::$name audit comment is stale."
-              echo ""
-              echo "Newest $name comment was posted at $newest, but the latest"
-              echo "code-changing commit ($EFFECTIVE_SHA) was made at $HEAD_DATE."
-              echo "Re-run the $name subagent so it posts a fresh comment, OR"
-              echo "(if no source changed since the last audit) re-post the"
-              echo "existing comment body verbatim with the same marker."
-              return 1
+
+            # New-style check: a comment body must contain diff:<DIFF_HASH>.
+            local MATCHING
+            MATCHING=$(printf '%s' "$ALL_COMMENTS" \
+              | jq --arg H "diff:$DIFF_HASH" '[.[] | select(.body | contains($H))] | length')
+            if [ "$MATCHING" -gt 0 ]; then
+              echo "✓ $name audit comment hash matches current diff ($DIFF_HASH)"
+              return 0
             fi
-            echo "✓ $name audit comment posted $newest (>= threshold $HEAD_DATE)"
+
+            # Timestamp fallback: newest comment without a diff: field
+            # (pre-hash-binding era). Accepted if posted after HEAD_DATE.
+            local NEWEST_OLD
+            NEWEST_OLD=$(printf '%s' "$ALL_COMMENTS" \
+              | jq -r '[.[] | select(.body | contains("diff:") | not)] | sort_by(.created_at) | last | .created_at // empty')
+            if [ -n "$NEWEST_OLD" ] && ! [ "$NEWEST_OLD" \< "$HEAD_DATE" ]; then
+              echo "✓ $name audit comment posted $NEWEST_OLD (timestamp fallback — no diff hash)"
+              return 0
+            fi
+
+            # Both checks failed — report why.
+            if [ -n "$NEWEST_OLD" ]; then
+              echo "::error::$name audit comment is stale (timestamp fallback)."
+              echo ""
+              echo "Newest legacy comment at $NEWEST_OLD; effective code commit"
+              echo "($EFFECTIVE_SHA) at $HEAD_DATE."
+              echo "Re-run the $name subagent — it will embed the current diff hash."
+            else
+              echo "::error::$name audit comment diff hash mismatch."
+              echo ""
+              echo "Expected diff hash: $DIFF_HASH"
+              echo "No existing comment embeds this hash. Re-run the $name subagent."
+            fi
+            return 1
           }
 
           # Collect both failures so the author sees them together rather
