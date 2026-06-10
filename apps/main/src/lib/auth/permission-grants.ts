@@ -134,6 +134,10 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   // resolveMemberIdentity in chat/route.ts, not assertPermission — so no
   // ta_chat:create grant here (it would be stub-shaped).
   key("ta_chat", "list"),
+  // #903 — Voice profiles (D-193 Phase 2). Own samples + card. Both roles
+  // can read/write their own data; owner additionally manages house style.
+  key("voice_profile", "read"),
+  key("voice_profile", "write"),
 ]);
 
 // TENANT_OWNER grants — full set. AGENT_GRANTS plus owner-only.
