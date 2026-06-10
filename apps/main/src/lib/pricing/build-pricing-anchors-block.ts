@@ -96,7 +96,10 @@ export async function buildPricingAnchorsBlock(
   }
 
   const { data, error } = await q;
-  if (error || !data || data.length === 0) return "";
+  // Entities present but no anchors found — inject guidance-only so rule 6
+  // (non-price questions must NOT deflect to the booking system) still reaches
+  // the model even when general_pricing_ranges is empty.
+  if (error || !data || data.length === 0) return buildPricingGuidanceOnly();
 
   const rows = data as AnchorRow[];
   // Sort deterministically so the block is cache-stable.
