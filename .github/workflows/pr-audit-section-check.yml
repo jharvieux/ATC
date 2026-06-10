@@ -15,15 +15,6 @@
 #   iff a marker comment with the matching hash exists — timestamps become
 #   irrelevant, so update-branch merge commits never stale the audit.
 #
-#   Transition fallback: comments without a `diff:` field (pre-dating hash
-#   binding) are accepted if their createdAt is after the latest code-
-#   changing commit's timestamp. This fallback will be removed once all
-#   open PRs have rotated through a hash-bound audit.
-#
-#   "Code-changing" means the commit's diff has at least one file entry.
-#   Empty commits — used to refresh the workflow's PR-body snapshot when
-#   the body changes — are walked over: the audit threshold is the date
-#   of the previous non-empty commit, not the empty commit at HEAD.
 #
 # Layer 2 is the load-bearing part — Layer 1 alone could be fabricated
 # in the PR body without ever running the subagents. The marker-on-comment
@@ -191,53 +182,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-
-          # Walk back through any empty commits at HEAD to find the most
-          # recent commit that actually changed files. An empty commit
-          # (e.g. `git commit --allow-empty` used to refresh THIS check's
-          # PR-body snapshot) doesn't invalidate prior audits — the audited
-          # tree is identical. The walk is capped to keep this bounded on
-          # weird branches.
-          # Structured so that on every break, $COMMIT_JSON is the
-          # response for the current $EFFECTIVE_SHA — the limit check runs
-          # BEFORE we advance, so we never leave the loop with a stale
-          # cached JSON for the prior SHA.
-          EFFECTIVE_SHA="$HEAD_SHA"
-          WALK_LIMIT=20
-          i=0
-          while :; do
-            COMMIT_JSON=$(gh api "repos/$REPO/commits/$EFFECTIVE_SHA")
-            FILE_COUNT=$(printf '%s' "$COMMIT_JSON" | jq '.files | length')
-            if [ "$FILE_COUNT" -gt 0 ]; then
-              break
-            fi
-            PARENT=$(printf '%s' "$COMMIT_JSON" | jq -r '.parents[0].sha // empty')
-            if [ -z "$PARENT" ]; then
-              echo "::notice::No parent for empty commit $EFFECTIVE_SHA; using it as the threshold."
-              break
-            fi
-            if [ "$i" -ge "$WALK_LIMIT" ]; then
-              echo "::notice::Walk limit ($WALK_LIMIT empty commits) reached; using $EFFECTIVE_SHA as the threshold."
-              break
-            fi
-            echo "::notice::Skipping empty commit $EFFECTIVE_SHA (no file changes) → $PARENT"
-            EFFECTIVE_SHA="$PARENT"
-            i=$((i + 1))
-          done
-
-          HEAD_DATE=$(printf '%s' "$COMMIT_JSON" | jq -r '.commit.committer.date')
-          if [ -z "$HEAD_DATE" ]; then
-            echo "::error::Could not resolve committed date for effective SHA $EFFECTIVE_SHA."
-            exit 1
-          fi
-          if [ "$EFFECTIVE_SHA" = "$HEAD_SHA" ]; then
-            echo "Head commit $HEAD_SHA committed at $HEAD_DATE"
-          else
-            echo "Effective audit threshold $EFFECTIVE_SHA committed at $HEAD_DATE (walked past $i empty commit(s) from HEAD $HEAD_SHA)"
-          fi
 
           # Compute a hash of the current PR's effective diff so audit
           # comments can be bound to an exact tree state rather than a
