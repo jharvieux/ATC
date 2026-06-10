@@ -10,6 +10,7 @@
 import React from "react";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
+import { BrandingSetupBannerServer } from "@/components/branding-setup-banner/BrandingSetupBannerServer";
 
 export default async function TenantAreaLayout({
   children,
@@ -18,6 +19,7 @@ export default async function TenantAreaLayout({
   return (
     <>
       <SiteHeader {...headerProps} />
+      <BrandingSetupBannerServer />
       {children}
     </>
   );
