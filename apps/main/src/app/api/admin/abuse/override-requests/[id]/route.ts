@@ -8,6 +8,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
   let adminUserId: string;
@@ -31,22 +32,29 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     await withPlatformAdminAudit(
       { admin_user_id: adminUserId, reason: "abuse_override_request_review", operation: `abuse_override_request_deny:${id}` },
       async (db, recordQuery) => {
-        const { error } = await db
-          .from("tenant_override_requests")
-          .update({
-            status: "denied",
-            reviewed_by_user_id: adminUserId,
-            reviewed_at: new Date().toISOString(),
-            deny_reason: b.deny_reason as string,
-          })
-          .eq("id", id)
-          .eq("status", "pending");
-        if (error) throw new Error(error.message);
+        await safeAwaitRowCount(
+          db
+            .from("tenant_override_requests")
+            .update({
+              status: "denied",
+              reviewed_by_user_id: adminUserId,
+              reviewed_at: new Date().toISOString(),
+              deny_reason: b.deny_reason as string,
+            })
+            .eq("id", id)
+            .eq("status", "pending")
+            .select("id"),
+          "tenant_override_requests.cas_deny",
+          1,
+        );
         recordQuery({ op: "update", table: "tenant_override_requests", row_count: 1 });
       },
     );
     return Response.json({ ok: true });
   } catch (err) {
+    if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+      return Response.json({ error: "already_reviewed" }, { status: 409 });
+    }
     return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }

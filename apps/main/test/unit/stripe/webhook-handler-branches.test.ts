@@ -18,6 +18,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 type DbCall = { table: string; op: "insert" | "update"; payload: unknown };
 let dbCalls: DbCall[];
 let progressToCalls: Array<{ tenantId: string; stage: string }>;
+// #744: tracks .eq(col,val) calls on payout_records update chains so tests can
+// assert the status='processing' guard is present.
+let updateEqCalls: Array<{ table: string; col: string; val: unknown }>;
 
 let insertResult: { error: { code?: string; message: string } | null } = { error: null };
 let updateResult: { data: unknown; error: { message: string } | null } = { data: null, error: null };
@@ -56,7 +59,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
         update(payload: unknown) {
           dbCalls.push({ table, op: "update", payload });
           const u: Record<string, unknown> = {
-            eq() { return u; },
+            eq(col: string, val: unknown) { updateEqCalls.push({ table, col, val }); return u; },
             in() { return u; },
             select(_cols: string) {
               void _cols;
@@ -126,6 +129,7 @@ function makeReq(): Request {
 beforeEach(() => {
   dbCalls = [];
   progressToCalls = [];
+  updateEqCalls = [];
   insertResult = { error: null };
   updateResult = { data: null, error: null };
   updateSelectResult = null;
@@ -246,6 +250,17 @@ describe("Stripe webhook — transfer.paid", () => {
     )?.payload as Record<string, unknown> | undefined;
     expect(outcome!.processing_outcome).toBe("error");
     expect(outcome!.error_detail).toEqual(expect.stringContaining("1 of 2"));
+  });
+
+  it("#744: UPDATE predicate includes .eq('status','processing') guard", async () => {
+    // Without this guard, an admin-reset row (processing→available) would be set
+    // to 'paid' by .in("id", ids) alone, and the count check would still pass.
+    mockEventType = "transfer.paid";
+    mockEventData = { id: "tr_status_guard" };
+    selectArray = { data: [{ id: "p-1" }], error: null };
+    await handleStripeWebhook(makeReq(), "platform");
+    const payoutEqs = updateEqCalls.filter((c) => c.table === "payout_records");
+    expect(payoutEqs).toContainEqual(expect.objectContaining({ col: "status", val: "processing" }));
   });
 });
 
