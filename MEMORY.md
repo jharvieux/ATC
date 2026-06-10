@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-201 — 2026-06-10 — Design pass (Fable) over the four NEEDS-DESIGN issues — operator decisions locked
+
+**Decision:** Design docs shipped in `docs/design/` (PR #952) for #890/#712/#811/#781, with these operator-confirmed choices:
+1. **#890 inbound persona email — Resend inbound, not Microsoft 365.** Apex `ai-travelconcierge.com` has NO MX record today (replies hard-bounce; nothing to migrate). M365 stays the operator's personal/business mailbox on its own domain. Phase 1 = receive/persist/forward to tenant support_email; Phase 2 (designed, deferred) = CRM timeline + §904 draft-reply composer pre-fill, preserving the D-193 draft-only contract.
+2. **#712 personal API tokens — tenant-admin-only minting, no expiry.** Tokens act as the chosen member; scope ceiling (`rag_submissions:create`) ANDed with role RBAC; `atc_pat_` prefix, SHA-256-only storage.
+3. **#811 platform-admin scoping — reviewer only.** Reviewer = RAG authority + post-termination chunks; finance/support/service explicitly deferred. Default-deny resource param on `assertPlatformAdmin` + enumeration test.
+4. **#781 canonical matcher — no fuzzy auto-apply.** Deterministic exact/alias matching; everything else goes to a human review queue (AI suggestion-only). **Changes #780:** alias tables with `alias_normalized UNIQUE` replace `aliases text[]` (cross-row uniqueness must be DB-enforced) — commented on #780 before it's built.
+
+**Why:** these four were triaged NEEDS DESIGN — Opus/fable; building them on Sonnet without a design risked wrong-provider lock-in (#890), an over-broad auth surface (#712), and CRM data corruption (#781).
+
+**Rejected:** M365/Graph inbound (subscription-renewal cron + license + second provider for no gain); member-self-service token minting (operator wants admin control); full 4-role admin matrix now (no finance/support admin exists yet); fuzzy auto-matching (silent CRM corruption risk outweighs backfill convenience).
+
+**Artifacts:** PR #952; docs/design/{inbound-persona-email,personal-api-tokens,platform-admin-reviewer-scope,cruise-canonical-normalization}.md; comments on #890 #712 #811 #781 #780.
+
+---
+
 ## D-200 — 2026-06-10 — #924/#802/#846 shipped: diff-hash audit binding + payout fixes
 
 **Shipped (PR #925):** `pr-audit-section-check` now validates audit comments by sha256 hash of the PR's effective diff (sorted filename+patch pairs) rather than comment timestamps. An update-branch merge commit produces an identical hash → no repost needed; a conflict-resolving merge produces a different hash → re-audit required. Agents embed `diff:<hash>` in their marker comment. Timestamp fallback retained during transition. Closes #924.
