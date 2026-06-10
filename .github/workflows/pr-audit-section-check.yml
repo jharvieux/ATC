@@ -260,7 +260,8 @@ jobs:
           # diff hash matches DIFF_HASH (new-style). Transition fallback:
           # for comments pre-dating hash binding, accept if the newest one
           # was posted after HEAD_DATE (timestamp rule). Remove the fallback
-          # branch once all open PRs have rotated through a hash-bound audit.
+          # branch once all open PRs have rotated through a hash-bound audit
+          # (tracked in issue #926).
           #
           # `--paginate --slurp` + `.[][]` is the same flatten pattern used
           # for PR files above; it avoids the "newest comment on first page"

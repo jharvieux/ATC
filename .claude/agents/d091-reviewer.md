@@ -239,6 +239,8 @@ sits next to the PR on GitHub (durable record + the
    DIFF_HASH=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files" \
      | jq -r '[.[][]] | sort_by(.filename)[] | if .patch then (.filename + "\n" + .patch) else (.filename + "\n" + .sha + "\n" + .status) end' \
      | shasum -a 256 | awk '{print $1}')
+   # shasum -a 256 = macOS equivalent of Linux sha256sum; both produce
+   # identical hex output and the workflow uses sha256sum on ubuntu-latest.
    ```
 
 3. Post the report. The marker on line 1 **must include the hash** —
