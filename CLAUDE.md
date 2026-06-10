@@ -54,7 +54,7 @@ For each PR, classify:
 - **MERGEABLE + BEHIND** → `gh pr update-branch`. Re-check in next pass.
 - **MERGEABLE + UNSTABLE (only non-required checks failing)** → merge if the PR is yours (Claude-authored) AND was opened in a prior session AND no `regression-suspected` label. Surface otherwise.
 - **DIRTY (merge conflict)** — if the conflict is one we know how to resolve (event-registry additions, ai-batch-flush additions, route registrations — additive lists), attempt a rebase + push. Otherwise surface as "needs your call."
-- **BLOCKED on missing audit section** — if Claude-authored, run the audit subagents + edit the PR body + re-request the audit-check. If human-authored, surface.
+- **BLOCKED on missing audit section** — if Claude-authored, run the audit subagents + edit the PR body (the check re-runs automatically on body edits). If human-authored, surface.
 - **Failing CI on dependabot PRs** — let the `dependabot-retry-ci` workflow handle. Don't intervene.
 - **Failing CI with the `regression-suspected` label** — triage.
 - **Open > 7 days with no progress AND no `regression-suspected` label** — surface for triage; ask whether to close or push forward.
@@ -435,7 +435,14 @@ If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-ex
 
 **Mandatory `## Audit` section in every PR description.**
 
-The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the PR body AND marker-stamped PR comments (`<!-- d091-audit:v1 -->`, `<!-- prepr-audit:v1 -->`) posted after the head commit. The agents post those comments themselves — do not post them manually.
+The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the PR body AND marker-stamped PR comments from each agent, **bound to the PR's current diff by hash** (#924 / D-200). Each agent embeds `diff:<sha256>` in its marker (`<!-- d091-audit:v1 diff:<hash> -->`, `<!-- prepr-audit:v1 diff:<hash> -->`), where the hash covers the PR's effective diff (sorted filename+patch pairs from the PR files API). The check recomputes the hash and passes only if a marker comment with the matching hash exists — comment timestamps are irrelevant. The agents post those comments themselves — do not post them manually.
+
+What hash binding means in practice:
+
+- **A plain `update-branch` never stales an audit.** A merge commit that doesn't change the effective diff produces the same hash, so existing audit comments stay valid — do NOT repost comments or re-run agents after update-branching a queued PR.
+- **Any commit that changes the effective diff** (fix-commits, conflict-resolving merges) changes the hash — re-run the agents; they post fresh hash-bound comments.
+- **Editing the PR body re-triggers the check** (the workflow listens for `edited` events) — never push a no-op commit to refresh it. Empty commits are also walked over by the check, so they neither help nor hurt.
+- A legacy timestamp fallback still accepts pre-hash-era comments during the transition; its removal is tracked in #926. New audits always carry the hash.
 
 **Workflow (order matters):**
 
@@ -455,7 +462,7 @@ The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the 
 
    Re-runs after fix-commits use Sonnet, even if the original first-run used Opus — re-runs are checking known patterns, not exploring new surface area. Exception: if the fix-commit itself introduced one of the triggers above (rare), use Opus again.
 
-5. If either agent reports findings, fix them, push, and re-run that agent (it will post a fresh comment superseding the stale one).
+5. If either agent reports findings, fix them, push, and re-run that agent (its fresh comment embeds the new diff hash; the old comment's stale hash no longer matches and is ignored by the check).
 6. Update the `## Audit` block in the PR body with the combined findings summary and a standalone `Status:` line.
 7. Wait for CI to complete. If all checks pass, merge (squash merge by default). Delete the feature branch after merge.
 
