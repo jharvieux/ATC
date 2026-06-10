@@ -10,6 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { guardConversationAccess, type ConversationAccessRow } from "@/lib/chat/guard-conversation-access";
 
 export async function POST(
   req: Request,
@@ -28,6 +29,18 @@ export async function POST(
     }
 
     const db = tenantClient(ctx);
+
+    // #908 — caller must own the conversation (or be staff on a customer
+    // thread): without this, any member could switch personas on anyone's thread.
+    const { data: conv, error: convErr } = await db
+      .from("conversations")
+      .select("id, audience, user_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
+    if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
+    const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
+    if (guard) return guard;
 
     // The DB personas table is the single source of truth for switchable slugs
     // (#589). Scope to active travel_concierge rows so the platform help_ai

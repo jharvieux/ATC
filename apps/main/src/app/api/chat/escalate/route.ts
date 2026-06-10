@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { guardConversationAccess, type ConversationAccessRow } from "@/lib/chat/guard-conversation-access";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -23,6 +24,18 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const db = tenantClient(ctx);
+
+    // #908 — caller must own the conversation (or be staff on a customer
+    // thread): without this, any member could escalate anyone's thread.
+    const { data: conv, error: convErr } = await db
+      .from("conversations")
+      .select("id, audience, user_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
+    if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
+    const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
+    if (guard) return guard;
 
     const { error: esErr } = await db.from("escalation_topics").insert({
       conversation_id: conversationId,

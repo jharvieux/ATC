@@ -9,35 +9,9 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-import type { TenantContext } from "@/lib/db/tenant-context";
-
-type AudienceRow = { audience: string; user_id: string | null };
-
-// #902 / D-195 — own-only visibility for TA-mode threads, enforced at the app
-// layer: conversations RLS is tenant-scoped only (auth_user_in_tenant), so
-// without this check ANY member — including viewer-role customers — could read
-// a TA thread (commission talk, margin strategy) by id. 404, not 403, so the
-// thread's existence isn't leaked. Fail closed: an unresolvable caller id
-// never matches. (The same tenant-wide readability also affects CUSTOMER
-// threads — pre-existing, tracked separately; see the #902 PR's linked issue.)
-async function guardTaThread(
-  db: ReturnType<typeof tenantClient>,
-  ctx: TenantContext,
-  conv: AudienceRow,
-): Promise<Response | null> {
-  if (conv.audience !== "tenant_member") return null;
-  const authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
-  if (!authUserId) return Response.json({ error: "not_found" }, { status: 404 });
-  const { data: urow, error } = await db
-    .from("users")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
-  if (error || !urow || (urow as { id: string }).id !== conv.user_id) {
-    return Response.json({ error: "not_found" }, { status: 404 });
-  }
-  return null;
-}
+// #908 — owner-or-staff guard (supersedes #902's local TA-only guard; customer
+// threads were tenant-wide readable until this).
+import { guardConversationAccess, type ConversationAccessRow } from "@/lib/chat/guard-conversation-access";
 
 export async function GET(
   req: Request,
@@ -58,7 +32,7 @@ export async function GET(
       .maybeSingle();
     if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
     if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
-    const guard = await guardTaThread(db, ctx, conv as AudienceRow);
+    const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
     if (guard) return guard;
 
     const { data: msgs, error: msgErr } = await db
@@ -98,7 +72,7 @@ export async function PATCH(
       .maybeSingle();
     if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
     if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
-    const guard = await guardTaThread(db, ctx, conv as AudienceRow);
+    const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
     if (guard) return guard;
 
     const { error } = await db
