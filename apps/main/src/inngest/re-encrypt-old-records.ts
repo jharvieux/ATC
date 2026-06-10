@@ -67,18 +67,22 @@ export const reEncryptOldRecords = inngest.createFunction(
       }
 
       const newEncrypted = encryptCredential(decrypted.value);
-      const { error: updateError } = await db
+      // #737: verify row count so a concurrent re-encrypt run doesn't inflate
+      // reencryptedCount when 0 rows actually matched the key_id guard.
+      const { data: updated, error: updateError } = await db
         .from("tenant_host_configs")
         .update({ credentials: newEncrypted })
         .eq("id", row.id)
-        // Guard: only update if still at the old key (concurrent-safe)
-        .filter("credentials->>'key_id'", "eq", previousKeyId);
+        .filter("credentials->>'key_id'", "eq", previousKeyId)
+        .select("id");
 
       if (updateError) {
         console.warn(
           `re-encrypt-old-records: failed to update record ${row.id}: ${updateError.message}`,
         );
         failedCount++;
+      } else if (!updated || updated.length === 0) {
+        console.info(`re-encrypt-old-records: record ${row.id} already re-encrypted (concurrent), skipping.`);
       } else {
         reencryptedCount++;
       }
