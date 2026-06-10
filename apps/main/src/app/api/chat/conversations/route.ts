@@ -15,18 +15,38 @@ export async function GET(req: Request): Promise<Response> {
       action: "list",
     });
     const db = tenantClient(ctx);
-    const userId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
+    const authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
+
+    // #913: conversations.user_id stores public.users.id, not auth.users.id.
+    // Resolve the mapping before filtering so the list returns the caller's
+    // own threads rather than nothing (or all tenant threads if RLS allows).
+    let publicUserId: string | null = null;
+    if (authUserId) {
+      const { data: urow, error: uErr } = await db
+        .from("users")
+        .select("id")
+        .eq("auth_user_id", authUserId)
+        .maybeSingle();
+      if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+      publicUserId = (urow as { id: string } | null)?.id ?? null;
+    }
+
+    // No public users row → no conversations to own. Return empty rather than
+    // running an unfiltered query (which would return all tenant conversations).
+    if (!publicUserId) {
+      return Response.json({ conversations: [] });
+    }
 
     // #902: customer listing only — TA-mode threads (audience='tenant_member')
     // have their own dashboard surface (PR B) and must not mix into customer
     // chat history.
-    let q = db
+    const q = db
       .from("conversations")
       .select("id, title, status, last_message_at, message_count, active_persona_id")
       .eq("audience", "customer")
+      .eq("user_id", publicUserId)
       .order("last_message_at", { ascending: false })
       .limit(50);
-    if (userId) q = q.eq("user_id", userId);
 
     const { data, error } = await q;
     if (error) return Response.json({ error: error.message }, { status: 500 });

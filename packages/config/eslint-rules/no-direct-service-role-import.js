@@ -375,6 +375,15 @@ const ALLOWED_PATH_SUFFIXES = [
   // customer_memories using its own tenantClient via factory; the
   // service-role import here is scoped to enqueue + audit reads.
   "/inngest/extract-memory.ts",
+  // #903 — Voice-profile extraction. tenantClient fetches samples (RLS-scoped);
+  // service-role is used only for the voice_profiles upsert + stale-row delete,
+  // which require a bypass of the voice_profiles UPDATE/DELETE RLS=false policies
+  // (deletions go through service-role after app-layer ownership assertion, per
+  // the D-091 two-layer pattern used throughout the codebase).
+  "/inngest/extract-voice-profile.ts",
+  // #903 — Voice sample deletion. RLS DELETE=false on voice_samples (service-role
+  // only). App layer asserts ownership before calling service-role (D-091 two-layer).
+  "/app/api/voice-profiles/samples/[id]/route.ts",
   // §23.4 — Open-Meteo embarkation forecast helper. Platform-scoped
   // (no tenant context): reads platform_settings + weather tables and
   // calls a public free-tier API. Service-role required because
