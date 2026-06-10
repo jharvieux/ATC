@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.102.0",
+    "@anthropic-ai/sdk": "^0.103.0",
     "@atc/contracts": "workspace:*",
     "@atc/shared-types": "workspace:*",
     "@kenjiuno/decompressrtf": "0.1.4",
@@ -24,7 +24,7 @@
     "@radix-ui/react-slot": "^1.2.5",
     "@radix-ui/react-tabs": "^1.1.14",
     "@react-pdf/renderer": "^4.5.1",
-    "@sentry/nextjs": "^10.56.0",
+    "@sentry/nextjs": "^10.57.0",
     "big.js": "^7.0.1",
     "cheerio": "^1.2.0",
     "class-variance-authority": "^0.7.1",
