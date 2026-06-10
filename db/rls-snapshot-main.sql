@@ -22,6 +22,7 @@
 -- public.bookings (rls_enabled)
 -- public.bug_submissions (rls_enabled)
 -- public.campaigns (rls_enabled)
+-- public.canonical_match_reviews (rls_enabled)
 -- public.ccpa_deletion_executions (rls_enabled)
 -- public.commissions (rls_enabled)
 -- public.complaints (rls_enabled)
@@ -29,6 +30,10 @@
 -- public.contact_relationships (rls_enabled)
 -- public.contacts (rls_enabled)
 -- public.conversations (rls_enabled)
+-- public.cruise_line_aliases (rls_enabled)
+-- public.cruise_lines (rls_enabled)
+-- public.cruise_ship_aliases (rls_enabled)
+-- public.cruise_ships (rls_enabled)
 -- public.customer_bug_submission_counters (rls_enabled)
 -- public.customer_chat_counters (rls_enabled)
 -- public.customer_chat_tenant_overrides (rls_enabled)
@@ -71,7 +76,9 @@
 -- public.platform_admins (rls_enabled)
 -- public.platform_revenue (rls_enabled)
 -- public.platform_settings (rls_enabled)
+-- public.port_aliases (rls_enabled)
 -- public.port_info_chunks (rls_enabled)
+-- public.ports (rls_enabled)
 -- public.pre_cruise_email_content (rls_enabled)
 -- public.price_watches (rls_enabled)
 -- public.quote_options (rls_enabled)
@@ -471,6 +478,26 @@ CREATE POLICY "conversations_update_policy" ON public.conversations
   FOR UPDATE TO PUBLIC
   USING (auth_user_can_access_conversation(id, tenant_id))
   WITH CHECK (auth_user_can_access_conversation(id, tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.cruise_line_aliases
+CREATE POLICY "cruise_line_aliases_read" ON public.cruise_line_aliases
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+
+-- TABLE: public.cruise_lines
+CREATE POLICY "cruise_lines_read" ON public.cruise_lines
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+
+-- TABLE: public.cruise_ship_aliases
+CREATE POLICY "cruise_ship_aliases_read" ON public.cruise_ship_aliases
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+
+-- TABLE: public.cruise_ships
+CREATE POLICY "cruise_ships_read" ON public.cruise_ships
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
 
 -- TABLE: public.customer_bug_submission_counters
 CREATE POLICY "customer_bug_submission_counters_tenant_delete" ON public.customer_bug_submission_counters
@@ -1040,6 +1067,11 @@ CREATE POLICY "platform_settings_select_policy" ON public.platform_settings
   FOR SELECT TO PUBLIC
   USING (auth.uid() IS NOT NULL);
 
+-- TABLE: public.port_aliases
+CREATE POLICY "port_aliases_read" ON public.port_aliases
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+
 -- TABLE: public.port_info_chunks
 CREATE POLICY "port_info_insert_service" ON public.port_info_chunks
   FOR INSERT TO PUBLIC
@@ -1050,6 +1082,11 @@ CREATE POLICY "port_info_read" ON public.port_info_chunks
 CREATE POLICY "port_info_update_service" ON public.port_info_chunks
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: public.ports
+CREATE POLICY "ports_read" ON public.ports
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
 
 -- TABLE: public.pre_cruise_email_content
 CREATE POLICY "pce_content_delete_service" ON public.pre_cruise_email_content
