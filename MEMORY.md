@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-203 — 2026-06-10 — #780 Phase 1 shipped: canonical cruise catalog (PR #959)
+
+**Decision.** Canonical `cruise_lines` / `cruise_ships` / `ports` tables + per-entity alias tables landed on dev with the admin CRUD UI (`/admin/cruise-catalog`), scraper cutover, and `ship_class` persistence. Key calls made during the build:
+
+- **Alias tables over `text[]` columns** — `alias_normalized UNIQUE` gives DB-enforced cross-row integrity (an alias pointing at two lines would corrupt every downstream join). Rejected: `aliases text[]` (app-side-only enforcement, single-layer).
+- **Ships NOT seeded in SQL** — CruiseMapper ship URLs don't encode the line, so line→ship attribution can't be derived in a migration. `discoverShipUrls` now reads active lines from the DB and upserts `cruise_ships` per line on each discovery run (falls back to the hardcoded list if the table is empty/unreachable). Rejected: best-guess SQL seeding (would mis-attribute ships).
+- **Dropped `cruise_ships.slug` UNIQUE** (migration 20260630000004) — redundant with `cruisemapper_slug UNIQUE`, and a second unique constraint not named in the upsert's `onConflict` throws via safeAwait and poisons discovery retries. Plain index kept for lookups.
+- **`canonical_match_reviews` is RLS-on-zero-policies, service-role-only** (tier_definitions precedent; entries added to db/rls-exceptions.{sql,txt}). It's the #781 Phase-2 review-queue target.
+- **Migrations applied to dev Supabase via MCP; prod apply remains operator-gated.**
+- **Process lesson:** `pnpm verify` does NOT run `next build`; the Next 15 async-params route typing error only surfaced in the CI Build job. Build locally when adding dynamic-segment route handlers. Also: the local `.env.local` SUPABASE_DB_URL points at a DIFFERENT database than CI's — never regenerate `db/grants-snapshot-main.sql` / `db/rls-snapshot-main.sql` locally; hand-edit to match the migration DDL (verified against live via MCP) instead.
+
+**Related:** PR #959 (six audit rounds), issues #780 (closed), #781 (Phase 2), #926 removal of audit timestamp fallback (same session, PR #958).
+
+---
+
 ## D-202 — 2026-06-10 — Scraping-source rulings: cabin intel sources picked, Apify stays for live pricing
 
 **Decision:**
