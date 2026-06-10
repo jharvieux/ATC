@@ -419,6 +419,14 @@ const ALLOWED_PATH_SUFFIXES = [
   // shape as refresh-cruisemapper-sailings (per-URL steps, service-role for
   // inventory reads/writes). §5.4.4.
   "/inngest/backfill-cruisemapper-ports.ts",
+  // #965 — Branding setup banner server component: reads tenant_memberships
+  // (role) and tenant_branding (logo_url) to decide whether to show the
+  // banner. Both tables are RLS-gated to the tenant's own members, but this
+  // component renders in the layout before page-level auth runs, so
+  // tenantClient(ctx) has no resolved ctx to scope to. Reads are display-only;
+  // errors return null (no throw). Two-layer isolation satisfied by explicit
+  // .eq("tenant_id", tenantId) on both queries. Read-only.
+  "/components/branding-setup-banner/BrandingSetupBannerServer.tsx",
 ];
 
 function endsWithAllowed(filename) {
