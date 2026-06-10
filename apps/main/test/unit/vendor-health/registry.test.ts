@@ -5,6 +5,7 @@ import {
   recordVendorFailure,
   recordVendorSuccess,
   vendorHealthStatus,
+  snapshotVendorHealth,
   _resetVendorHealthForTests,
 } from "@/lib/vendor-health/registry";
 
@@ -39,5 +40,19 @@ describe("vendorHealthStatus", () => {
     for (let i = 0; i < 5; i++) recordVendorFailure("stripe", "x");
     expect(vendorHealthStatus("stripe")).toBe("down");
     expect(vendorHealthStatus("resend")).toBe("healthy");
+  });
+
+  it("#785: new vendors start healthy — inngest, upstash, rag, supabase_rag", () => {
+    expect(vendorHealthStatus("inngest")).toBe("healthy");
+    expect(vendorHealthStatus("upstash")).toBe("healthy");
+    expect(vendorHealthStatus("rag")).toBe("healthy");
+    expect(vendorHealthStatus("supabase_rag")).toBe("healthy");
+  });
+
+  it("#785: new vendors appear in snapshotVendorHealth()", () => {
+    const snap = snapshotVendorHealth();
+    expect(Object.keys(snap)).toEqual(
+      expect.arrayContaining(["inngest", "upstash", "rag", "supabase_rag"]),
+    );
   });
 });

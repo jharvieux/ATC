@@ -11,7 +11,7 @@
 // during a partial outage. Acceptable for §26.9 (we want best-effort
 // degraded-mode hooks, not strong consensus).
 
-export type VendorName = "anthropic" | "openai" | "stripe" | "resend" | "supabase";
+export type VendorName = "anthropic" | "openai" | "stripe" | "resend" | "supabase" | "inngest" | "upstash" | "rag" | "supabase_rag";
 
 export type VendorHealthStatus = "healthy" | "degraded" | "down";
 
@@ -67,7 +67,7 @@ export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
 
 export function snapshotVendorHealth(): Record<VendorName, VendorHealthState> {
   const out = {} as Record<VendorName, VendorHealthState>;
-  for (const name of ["anthropic", "openai", "stripe", "resend", "supabase"] as VendorName[]) {
+  for (const name of ["anthropic", "openai", "stripe", "resend", "supabase", "inngest", "upstash", "rag", "supabase_rag"] as VendorName[]) {
     out[name] = { ...ensure(name) };
   }
   return out;
