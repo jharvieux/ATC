@@ -39,7 +39,6 @@ interface SseEvent {
   conversation_id?: string;
   display_name?: string;
   slug?: string;
-  // #881
   assets?: DisplayAsset[];
 }
 
@@ -258,8 +257,6 @@ function Bubble({ bubble }: { bubble: ChatBubble }): JSX.Element {
               : "bg-muted"
         }`}
       >
-        {/* #881: assistant bubbles render through renderMessageContent so
-            [[display_asset:<uuid>]] markers resolve to hyperlinks. */}
         {isUser || isSystem
           ? bubble.content
           : renderMessageContent(bubble.content, bubble.assets, { showAssetLinks: true })}

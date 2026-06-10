@@ -35,11 +35,13 @@ describe("CustomerContextChatPanel — asset marker rendering (#881)", () => {
     expect(str).toContain("No images here.");
   });
 
-  it("renderMessageContent with undefined assets leaves marker as-is (no assets event received)", () => {
-    // When no 'assets' SSE event fires, pendingAssets stays empty → markers
-    // are stripped by the asset-id-validation layer server-side before
-    // this path is hit. But the renderer must not crash with undefined.
+  it("renderMessageContent with undefined assets renders the marker literally (unresolved unknown-ID path)", () => {
+    // When no 'assets' SSE event fires, pendingAssets is empty / undefined.
+    // The server's asset-id-validation layer normally strips orphan markers,
+    // but the renderer must handle undefined assets gracefully: unknown IDs
+    // are rendered as the literal marker text (the renderer's own fallback).
     const rendered = renderMessageContent(CONTENT_WITH_MARKER, undefined, { showAssetLinks: true });
-    expect(rendered).not.toBeNull();
+    const str = JSON.stringify(rendered);
+    expect(str).toContain("[[display_asset:");
   });
 });
