@@ -16,6 +16,7 @@
 //      'rag.submission_ready_for_normalization' to continue the
 //      pipeline.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { detectZeroTolerancePII } from "@/lib/rag-ingest/pii-regex-prefilter";
@@ -23,6 +24,23 @@ import { computeAggregation, type AggregationState } from "@/lib/rag-ingest/pii-
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
+
+const RagPiiCallerMetadataSchema = z.object({
+  tenant_id: z.string(),
+  submission_id: z.string(),
+}).nullable();
+
+const RagPiiBatchResultPayloadSchema = z.object({
+  tenant_id: z.string(),
+  result_text: z.string(),
+  caller_metadata: RagPiiCallerMetadataSchema,
+});
+
+const RagPiiBatchFailurePayloadSchema = z.object({
+  tenant_id: z.string(),
+  error_detail: z.string(),
+  caller_metadata: RagPiiCallerMetadataSchema,
+});
 
 const HAIKU_MODEL = process.env.RAG_INGEST_PII_REDACTION_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
@@ -205,11 +223,12 @@ export const ragPiiRedactFromBatchResult = inngest.createFunction(
     triggers: [{ event: "ai.batch_request.completed.rag_pii_redaction" }],
   },
   async ({ event }) => {
-    const { tenant_id, result_text, caller_metadata } = event.data as {
-      tenant_id: string;
-      result_text: string;
-      caller_metadata: { tenant_id: string; submission_id: string } | null;
-    };
+    const parsed = RagPiiBatchResultPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[rag-pii-redact:consumer] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { tenant_id, result_text, caller_metadata } = parsed.data;
     if (!caller_metadata) {
       console.error("[rag-pii-redact:consumer] missing caller_metadata");
       return { error: "missing_caller_metadata" };
@@ -237,11 +256,12 @@ export const ragPiiRedactFromBatchFailure = inngest.createFunction(
     triggers: [{ event: "ai.batch_request.failed.rag_pii_redaction" }],
   },
   async ({ event }) => {
-    const { tenant_id, error_detail, caller_metadata } = event.data as {
-      tenant_id: string;
-      error_detail: string;
-      caller_metadata: { tenant_id: string; submission_id: string } | null;
-    };
+    const parsed = RagPiiBatchFailurePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[rag-pii-redact:failure] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { tenant_id, error_detail, caller_metadata } = parsed.data;
     if (!caller_metadata) {
       console.error("[rag-pii-redact:failure] missing caller_metadata");
       return { error: "missing_caller_metadata" };

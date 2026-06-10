@@ -10,6 +10,7 @@
  * the canonical viewer is the in-app HTML render.
  */
 
+import { z } from "zod";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { inngest } from "./client";
 import { tenantContextFromInngestEvent } from "@/lib/db/factories";
@@ -18,11 +19,12 @@ import { loadAllDocs } from "@/lib/help-ai/docs-loader";
 import { env } from "@/lib/env";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
-interface ExportPayload {
-  tenant_id: string;
-  job_id: string;
-  code_version: string;
-}
+const ExportPayloadSchema = z.object({
+  tenant_id: z.string(),
+  job_id: z.string(),
+  code_version: z.string(),
+});
+type ExportPayload = z.infer<typeof ExportPayloadSchema>;
 
 /**
  * Convert a markdown doc to a flat list of docx paragraphs.
@@ -74,8 +76,13 @@ export const helpDocsDocxGenerate = inngest.createFunction(
     triggers: [{ event: "help/docs.export.docx" }],
   },
   async ({ event }) => {
+    const parsed = ExportPayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[help-docs-docx-generate] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const data: ExportPayload = parsed.data;
     const ctx = tenantContextFromInngestEvent(event);
-    const data = event.data as ExportPayload;
     const db = tenantClient(ctx);
 
     const docs = loadAllDocs();
