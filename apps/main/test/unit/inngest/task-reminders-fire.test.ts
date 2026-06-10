@@ -1,8 +1,10 @@
 // #900 — task-reminders-fire drain loop.
 //
-// Verifies that a backlog larger than BATCH_LIMIT (200) is fully drained
-// within a single run. Without the drain loop, only the first 200 rows
-// would be processed, and the rest would silently accumulate.
+// Covers:
+//   - Drain loop: a backlog > BATCH_LIMIT is fully drained in one run.
+//   - §37.3.3 snooze suppression: remind_at < snoozed_until → status=suppressed.
+//   - Email channel: sendTaskReminderEmail called, status=delivered.
+//   - Per-row failure: safeAwait throws → failed++ without aborting the run.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -24,7 +26,14 @@ vi.mock("@/lib/db/safe-mutation", async () => {
 // The DB mock returns rows from `pool` in BATCH_LIMIT-sized pages.
 // Each SELECT drains the front of the pool; UPDATE is a no-op.
 const BATCH_LIMIT = 200;
-type PoolRow = { id: string; tenant_id: string; task_id: string; channel: "in_app"; remind_at: string; tasks: { snoozed_until: null; assigned_to_user_id: null; status: "open"; title: string } };
+type PoolRow = {
+  id: string;
+  tenant_id: string;
+  task_id: string;
+  channel: "in_app" | "email";
+  remind_at: string;
+  tasks: { snoozed_until: string | null; assigned_to_user_id: null; status: "open"; title: string };
+};
 const pool: PoolRow[] = [];
 
 vi.mock("@/lib/db/service-role-client", () => ({
@@ -39,7 +48,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           limit(n: number) { this._limit = n; return this; },
           eq() { return { then: (r: (v: { error: null }) => unknown) => Promise.resolve(r({ error: null })) }; },
           update() { return this; },
-          // then() is called by the Supabase select chain
+          // Supabase builders are thenables — Promise.resolve() calls .then() to settle them.
           then(resolve: (v: { data: typeof pool; error: null }) => unknown) {
             const batch = pool.splice(0, this._limit);
             return Promise.resolve(resolve({ data: batch, error: null }));
@@ -56,18 +65,21 @@ vi.mock("@/lib/db/service-role-client", () => ({
   }),
 }));
 
-function makeRow(id: string) {
+function makeRow(id: string, overrides: Partial<PoolRow> = {}): PoolRow {
   return {
     id,
     tenant_id: "t-1",
     task_id: `task-${id}`,
-    channel: "in_app" as const,
+    channel: "in_app",
     remind_at: new Date(Date.now() - 1000).toISOString(),
-    tasks: { snoozed_until: null, assigned_to_user_id: null, status: "open" as const, title: "Test task" },
+    tasks: { snoozed_until: null, assigned_to_user_id: null, status: "open", title: "Test task" },
+    ...overrides,
   };
 }
 
 import { taskRemindersFire } from "@/inngest/task-reminders-fire";
+import { sendTaskReminderEmail } from "@/lib/tasks/send-reminder-email";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 type FireResult = { processed: number; delivered: number; suppressed: number; failed: number; batches: number };
 const run = taskRemindersFire as unknown as () => Promise<FireResult>;
@@ -105,5 +117,42 @@ describe("task-reminders-fire — drain loop (#900)", () => {
     expect(result.processed).toBe(BATCH_LIMIT);
     // First batch full (200) → re-queries; second batch empty (0) → breaks.
     expect(result.batches).toBe(2);
+  });
+});
+
+describe("task-reminders-fire — per-row behaviors", () => {
+  it("§37.3.3: snooze suppression — remind_at inside snoozed_until window → suppressed=1, delivered=0", async () => {
+    const remindAt = new Date(Date.now() - 1000).toISOString();
+    const snoozedUntil = new Date(Date.now() + 60_000).toISOString();
+    pool.push(makeRow("snoozed", {
+      remind_at: remindAt,
+      tasks: { snoozed_until: snoozedUntil, assigned_to_user_id: null, status: "open", title: "Snoozed task" },
+    }));
+    const result = await run();
+    expect(result.suppressed).toBe(1);
+    expect(result.delivered).toBe(0);
+    expect(vi.mocked(sendTaskReminderEmail)).not.toHaveBeenCalled();
+  });
+
+  it("email channel: sendTaskReminderEmail called → delivered=1", async () => {
+    pool.push(makeRow("email-row", { channel: "email" }));
+    const result = await run();
+    expect(vi.mocked(sendTaskReminderEmail)).toHaveBeenCalledTimes(1);
+    expect(result.delivered).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("per-row DB error: safeAwait throws for one row → failed=1, run continues", async () => {
+    // The try/catch inside the loop catches safeAwait errors so a single
+    // row's DB failure doesn't abort the rest of the batch.
+    pool.push(makeRow("good"), makeRow("bad"), makeRow("good2"));
+    vi.mocked(safeAwait)
+      .mockResolvedValueOnce(undefined)   // good row
+      .mockRejectedValueOnce(new Error("DB write error"))  // bad row
+      .mockResolvedValueOnce(undefined);  // good2 row
+    const result = await run();
+    expect(result.processed).toBe(3);
+    expect(result.failed).toBe(1);
+    expect(result.delivered).toBe(2);
   });
 });
