@@ -12,10 +12,6 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 import { respondToAuthError } from "@/lib/auth/respond";
 
-// #750: cap the platform-layer body budget to the documented 50MB limit so
-// oversized requests are rejected before the full body is buffered into heap.
-export const maxRequestBodySize = "52mb";
-
 const SUPPORTED_MIMES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
@@ -37,6 +33,18 @@ export async function POST(req: Request): Promise<Response> {
     const db = tenantClient(ctx);
 
     const maxBytes = Number(process.env.RAG_INGEST_MAX_FILE_SIZE_BYTES ?? 52_428_800);
+
+    // #750: reject early on Content-Length if the declared size already exceeds
+    // the cap — prevents buffering a huge body just to discard it. Attacker-
+    // controllable (can lie), so the post-parse file.size check below remains
+    // the authoritative gate.
+    const declaredLength = Number(req.headers.get("content-length") ?? "0");
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      return Response.json(
+        { error: "file_too_large", max_bytes: maxBytes, suggestion: "split_into_smaller_files" },
+        { status: 413 },
+      );
+    }
 
     let form: FormData;
     try {

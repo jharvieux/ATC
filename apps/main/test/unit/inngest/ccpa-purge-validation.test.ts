@@ -103,4 +103,61 @@ describe("userDataPurgeAfterGrace — Zod validation (#742)", () => {
     // Handler continues to DB re-read; result depends on DB mock
     expect(result).not.toMatchObject({ reason: "invalid_payload" });
   });
+
+  it("skips as stale when DB deleted_at differs from payload deleted_at — the real timing-bypass guard", async () => {
+    // The Zod refine only validates the payload's own consistency; the load-bearing
+    // check is the DB mismatch: even if an attacker forges a past purge_at that
+    // passes the refine, the DB's deleted_at won't match and the job is skipped.
+    const dbDeletedAt = daysAgo(30);
+    const differentDeletedAt = daysAgo(35); // payload claims a different deletion time
+    const purge_at = new Date(new Date(differentDeletedAt).getTime() + 30 * 86_400_000).toISOString();
+
+    const usersChain = chainable({
+      maybeSingle: async () => ({ data: { deleted_at: dbDeletedAt, status: "deleted" }, error: null }),
+    });
+    mocks.serviceClient.mockReturnValue({ from: () => ({ select: () => usersChain }) });
+
+    const result = await fn.handler({
+      event: {
+        data: {
+          auth_user_id: "00000000-0000-0000-0000-000000000001",
+          user_id: "00000000-0000-0000-0000-000000000002",
+          deleted_at: differentDeletedAt,
+          purge_at,
+        },
+      },
+      step: { sleepUntil: mocks.sleepUntil },
+    });
+    expect(result).toMatchObject({ skipped: true, reason: "stale" });
+    expect(mocks.purgeUser).not.toHaveBeenCalled();
+  });
+
+  it("passes the DB-sourced deleted_at to purgeUserDataPerRetention, not the payload value", async () => {
+    // Verifies the DB-sourced value is used — regression guard against reverting
+    // to event payload, which is attacker-controllable.
+    const dbDeletedAt = daysAgo(30);
+    const purge_at = new Date(new Date(dbDeletedAt).getTime() + 30 * 86_400_000).toISOString();
+
+    const usersChain = chainable({
+      maybeSingle: async () => ({ data: { deleted_at: dbDeletedAt, status: "deleted" }, error: null }),
+    });
+    mocks.serviceClient.mockReturnValue({ from: () => ({ select: () => usersChain }) });
+
+    await fn.handler({
+      event: {
+        data: {
+          auth_user_id: "00000000-0000-0000-0000-000000000001",
+          user_id: "00000000-0000-0000-0000-000000000002",
+          deleted_at: dbDeletedAt,
+          purge_at,
+        },
+      },
+      step: { sleepUntil: mocks.sleepUntil },
+    });
+
+    expect(mocks.purgeUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ grace_period_ended_at: dbDeletedAt }),
+    );
+  });
 });
