@@ -34,7 +34,7 @@
     "slop-check": "tsx scripts/slop-check.ts",
     "check:auth-error": "node scripts/check-auth-error-adoption.mjs",
     "check:dropped-columns": "tsx scripts/check-dropped-column-readers.ts",
-    "check:duplication": "jscpd --config .jscpd.json",
+    "check:duplication": "jscpd --config .jscpd.json apps/main/src apps/rag/src",
     "check:page-service-role": "node scripts/check-page-service-role.mjs",
     "check:d091": "tsx scripts/check-d091-anti-patterns.ts",
     "verify": "pnpm typecheck && pnpm lint && pnpm lint:migrations && pnpm test && pnpm test:rag && pnpm slop-check && pnpm check:auth-error && pnpm check:dropped-columns && pnpm check:duplication && pnpm check:page-service-role && pnpm check:d091",
