@@ -19,7 +19,7 @@
 
 CREATE TABLE public.voice_samples (
   id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id    TEXT        NOT NULL,
+  tenant_id    UUID        NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
   user_id      TEXT        NULL,
   body         TEXT        NOT NULL CHECK (char_length(body) BETWEEN 50 AND 8000),
   source_label TEXT        NOT NULL DEFAULT '',
@@ -56,7 +56,7 @@ COMMENT ON TABLE public.voice_samples IS
 
 CREATE TABLE public.voice_profiles (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id     TEXT        NOT NULL,
+  tenant_id     UUID        NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
   user_id       TEXT        NULL,
   style_card    JSONB       NOT NULL DEFAULT '{}',
   samples_hash  TEXT        NOT NULL DEFAULT '',
