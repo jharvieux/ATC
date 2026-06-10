@@ -31,6 +31,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
+import { buildHelpContextBlock } from "@/lib/chat/help-context";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
 import { loadConversationHistory } from "@/lib/chat/conversation-history";
@@ -269,11 +270,22 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       }
 
       // Build the Help AI persona prompt.
+      // #906: for open Q&A turns (session_type='help'), inject the
+      // PLATFORM HELP CONTEXT block so answers are grounded in the shipped
+      // docs rather than model priors. Bug/feature flows have their own
+      // structured content and don't need it. Empty tierCode = no tier
+      // filter (help_ai serves every plan tier).
+      const helpContextBlock =
+        session.session_type === "help"
+          ? buildHelpContextBlock(userMessage, "")
+          : null;
+
       const { prompt: systemPrompt } = await buildSystemPrompt({
         persona_slug: "help_ai",
         tenant_id: ctx.tenant_id,
         tenant_tier: "sub_pro", // tenant tier is irrelevant for Help AI (no addendum applied)
         db,
+        ...(helpContextBlock ? { help_context_block: helpContextBlock } : {}),
       });
       const stateAddendum = nextQuestion
         ? `\n\nThe user is in a structured ${session.session_type} flow. After acknowledging their last message, ask exactly the following next question verbatim: "${nextQuestion}"`
