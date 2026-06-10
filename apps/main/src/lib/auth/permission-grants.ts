@@ -128,6 +128,10 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("notifications", "write"),
   // RAG submissions (operational — submit content; approve/reject is owner)
   key("rag_submissions", "create"),
+  // #902 — TA-mode dashboard chat (audience='tenant_member'). Viewers
+  // (customers) are explicitly excluded — they only get customer chat.
+  key("ta_chat", "create"),
+  key("ta_chat", "list"),
 ]);
 
 // TENANT_OWNER grants — full set. AGENT_GRANTS plus owner-only.

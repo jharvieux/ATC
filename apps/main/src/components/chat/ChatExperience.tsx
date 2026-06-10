@@ -51,17 +51,30 @@ export interface ChatExperienceProps {
    *  pinning the conversation to the chosen agent. Undefined falls back
    *  to the tenant's default persona. */
   personaSlug?: string;
+  // #902 — "ta" requests the tenant_member audience on every turn.
+  // The API verifies eligibility server-side.
+  mode?: "ta";
+  // #902 — when resuming an existing TA conversation: seed the
+  // conversationIdRef so subsequent messages append to it, and
+  // pre-populate the message list with the prior transcript.
+  initialConversationId?: string | undefined;
+  initialMessages?: ChatMessage[] | undefined;
 }
 
-export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Element {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function ChatExperience({
+  personaSlug,
+  mode,
+  initialConversationId,
+  initialMessages,
+}: ChatExperienceProps): JSX.Element {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [streaming, setStreaming] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [signupWall, setSignupWall] = useState<string | null>(null);
   const [hardLimit, setHardLimit] = useState<{ body: string; reset_at: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const conversationIdRef = useRef<string | null>(null);
+  const conversationIdRef = useRef<string | null>(initialConversationId ?? null);
 
   // Restore draft from localStorage on mount; clear on submit.
   useEffect(() => {
@@ -99,6 +112,7 @@ export function ChatExperience({ personaSlug }: ChatExperienceProps): JSX.Elemen
             message,
             conversation_id: conversationIdRef.current,
             personaSlug,
+            mode,
           }),
         ),
       });

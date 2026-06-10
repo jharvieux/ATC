@@ -12,6 +12,9 @@ export interface ChatRequestBodyInputs {
    *  exactOptionalPropertyTypes makes `?: string` reject the React state
    *  shape that yields `string | undefined`. */
   personaSlug?: string | undefined;
+  // #902 — "ta" requests the tenant_member audience. The route verifies
+  // eligibility server-side; omitting it defaults to customer mode.
+  mode?: "ta" | undefined;
 }
 
 export function buildChatRequestBody(
@@ -25,5 +28,6 @@ export function buildChatRequestBody(
     // missing vs explicit-null differently in some places, so keeping the
     // shape minimal matches the prior /chat behaviour.
     ...(inputs.personaSlug ? { persona_slug: inputs.personaSlug } : {}),
+    ...(inputs.mode ? { mode: inputs.mode } : {}),
   };
 }
