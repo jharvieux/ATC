@@ -62,11 +62,16 @@ export async function GET(req: NextRequest): Promise<Response> {
     safe !== null && new URL(safe.path, url.origin).pathname === "/signup/complete";
 
   // §17.2 — Microsoft no-email recovery chain. The Graph calls need the
-  // provider token (Microsoft's), not the Supabase JWT; fall back defensively.
+  // provider token (Microsoft's), NOT the Supabase JWT — the JWT would leak
+  // auth_user_id + email + role to Microsoft's servers (#729).
   if (provider === "azure") {
-    const graphToken =
-      (session.provider_token as string | undefined) ?? session.access_token;
-    email = await recoverMicrosoftEmail(email, graphToken);
+    const graphToken = session.provider_token as string | undefined;
+    if (graphToken) {
+      email = await recoverMicrosoftEmail(email, graphToken);
+    }
+    // If provider_token is absent (rare edge case), email stays as-is from
+    // authUser.email. If that's also null, the no-email path below redirects
+    // to /signup/email-prompt — correct and safe.
   }
 
   // §17.2 generalized — Facebook (and any provider without a Graph-equivalent)

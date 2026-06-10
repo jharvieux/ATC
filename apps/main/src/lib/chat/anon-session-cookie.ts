@@ -3,7 +3,7 @@
 // ANON_COOKIE_SECRET. Prevents clients from forging or swapping session IDs
 // to bypass per-session rate limits or access another user's conversation history.
 
-import { createHmac, randomUUID } from "crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 
 export const ANON_SESSION_COOKIE = "atc-anon-session";
 
@@ -29,10 +29,10 @@ export function verifyAnonSession(value: string): string | null {
   const mac = value.slice(dot + 1);
   const expected = sign(uuid);
   if (mac.length !== expected.length) return null;
-  // Constant-time comparison to prevent timing attacks.
-  let diff = 0;
-  for (let i = 0; i < mac.length; i++) diff |= mac.charCodeAt(i) ^ expected.charCodeAt(i);
-  return diff === 0 ? uuid : null;
+  // #725: timingSafeEqual prevents timing attacks — the JS XOR loop is not
+  // constant-time under V8 JIT optimisation.
+  if (!timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
+  return uuid;
 }
 
 export function freshAnonSession(): { id: string; cookieValue: string } {
