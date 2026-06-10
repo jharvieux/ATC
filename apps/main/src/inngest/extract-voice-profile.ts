@@ -47,8 +47,9 @@ export interface ExtractVoiceProfileInput {
   svc: ReturnType<typeof createServiceRoleClient>;
 }
 
+// Return type for the testable helper — excludes payment-gate outcomes (those
+// are handled by the Inngest wrapper before this function is called).
 export type ExtractVoiceProfileResult =
-  | { status: "skipped_payment" }
   | { status: "no_samples" }
   | { status: "unchanged" }
   | { status: "extracted"; samples: number };
