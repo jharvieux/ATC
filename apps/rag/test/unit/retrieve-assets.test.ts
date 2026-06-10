@@ -37,6 +37,8 @@ interface AssetRow { asset_id: string; kind: string; entity_type: string; entity
 let rpcChunks: ChunkRpcRow[] = [];
 let assetLinks: AssetLinkRow[] = [];
 let assetRows: AssetRow[] = [];
+// #939: inject a DB error on the rag_media_assets SELECT to test fail-loud.
+let assetRowsError: { message: string } | null = null;
 // Captures the .or() filter the rag_media_assets query applies, so a test can
 // assert the DB-layer tenant predicate is present (D-091 #395).
 let capturedAssetOrFilter: string | null = null;
@@ -51,7 +53,7 @@ vi.mock("@/lib/db/supabase", () => ({
         table === "knowledge_chunks"
           ? { data: assetLinks as unknown[], error: null }
           : table === "rag_media_assets"
-            ? { data: assetRows as unknown[], error: null }
+            ? { data: assetRowsError ? null : (assetRows as unknown[]), error: assetRowsError ?? null }
             : { data: [] as unknown[], error: null };
       return {
         select() {
@@ -123,6 +125,7 @@ beforeEach(() => {
   rpcChunks = [];
   assetLinks = [];
   assetRows = [];
+  assetRowsError = null;
   capturedAssetOrFilter = null;
   capturedChunkOrFilter = null;
   currentCtx = { scope: "read", service_identifier: "tenant-app", user_id: USER_ID, tenant_id: TENANT_ID };
@@ -263,5 +266,18 @@ describe("POST /api/retrieve — asset hydration (BP38)", () => {
     const json = (await res.json()) as { chunks: Array<{ related_asset_ids: string[] }>; assets: Array<unknown> };
     expect(json.chunks[0]!.related_asset_ids).toEqual([]);
     expect(json.assets).toEqual([]);
+  });
+
+  it("#939 fail-loud: rag_media_assets DB error surfaces as 500, not silent empty-assets response", async () => {
+    // Prior to the fix, { data: assetRows } discarded the error and treated
+    // DB failures as "no assets" — indistinguishable from a legitimate empty
+    // result. This test pins the fail-loud contract: a DB error must propagate
+    // to a 500 so callers know the response is degraded.
+    rpcChunks = [rpcChunk({ id: "c1" })];
+    assetLinks = [{ id: "c1", related_asset_ids: ["a-1111-1111-1111-111111111111"], scope: "global", tenant_id: null }];
+    assetRowsError = { message: "connection timeout" };
+
+    const res = await POST(makeReq(), { params: Promise.resolve({}) });
+    expect(res.status).toBe(500);
   });
 });

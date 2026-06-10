@@ -158,11 +158,12 @@ export const POST = withServiceAuth(async (req, ctx) => {
       // another tenant's asset metadata out of the response, one out-of-band
       // upsert away from a cross-tenant leak. ctx.tenant_id is a validated UUID
       // (RetrieveRequestSchema), safe to interpolate into the PostgREST filter.
-      const { data: assetRows } = await db
+      const { data: assetRows, error: assetRowsErr } = await db
         .from("rag_media_assets")
         .select("asset_id, kind, entity_type, entity_id, scope, tenant_id, image_url, source_page_url, attribution, caption, width_px, height_px")
         .in("asset_id", [...allAssetIds])
         .or(`scope.eq.global,tenant_id.eq.${ctx.tenant_id}`);
+      if (assetRowsErr) throw new Error(`rag_media_assets lookup failed: ${assetRowsErr.message}`);
       for (const r of (assetRows ?? []) as Array<{ asset_id: string; kind: string; entity_type: string; entity_id: string; scope: "global" | "tenant"; tenant_id: string | null; image_url: string; source_page_url: string; attribution: string; caption: string | null; width_px: number | null; height_px: number | null }>) {
         // Second layer — drop a tenant-scope asset the caller shouldn't see.
         if (r.scope === "tenant" && r.tenant_id !== ctx.tenant_id) continue;
