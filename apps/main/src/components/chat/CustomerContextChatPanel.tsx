@@ -18,11 +18,15 @@ import { useEffect, useRef, useState } from "react";
 import type { CustomerContextRef } from "@/lib/chat/customer-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { renderMessageContent, type DisplayAsset } from "@/components/chat/renderMessageContent";
 
 interface ChatBubble {
   role: "user" | "assistant" | "system";
   content: string;
   id: string;
+  // #881 — assets from the SSE 'assets' event, used to resolve
+  // [[display_asset:<uuid>]] markers in renderMessageContent.
+  assets?: DisplayAsset[];
 }
 
 interface SseEvent {
@@ -35,6 +39,8 @@ interface SseEvent {
   conversation_id?: string;
   display_name?: string;
   slug?: string;
+  // #881
+  assets?: DisplayAsset[];
 }
 
 interface CustomerContextChatPanelProps {
@@ -106,6 +112,7 @@ export function CustomerContextChatPanel({
       let buf = "";
       let assistantContent = "";
       let assistantId: string | null = null;
+      let pendingAssets: DisplayAsset[] = [];
 
       while (true) {
         const { value, done } = await reader.read();
@@ -138,6 +145,11 @@ export function CustomerContextChatPanel({
                 setStreaming(assistantContent);
               }
               break;
+            case "assets":
+              // #881 — capture assets so [[display_asset:<uuid>]] markers
+              // in the finalized message resolve to hyperlinks.
+              pendingAssets = ev.assets ?? [];
+              break;
             case "hard_limit":
             case "signup_wall":
             case "escalation":
@@ -153,12 +165,14 @@ export function CustomerContextChatPanel({
               break;
             case "done":
               if (assistantContent) {
+                const assets = pendingAssets;
                 setBubbles((prev) => [
                   ...prev,
                   {
                     id: assistantId ?? `a-${Date.now()}`,
                     role: "assistant",
                     content: assistantContent,
+                    assets,
                   },
                 ]);
               }
@@ -244,7 +258,11 @@ function Bubble({ bubble }: { bubble: ChatBubble }): JSX.Element {
               : "bg-muted"
         }`}
       >
-        {bubble.content}
+        {/* #881: assistant bubbles render through renderMessageContent so
+            [[display_asset:<uuid>]] markers resolve to hyperlinks. */}
+        {isUser || isSystem
+          ? bubble.content
+          : renderMessageContent(bubble.content, bubble.assets, { showAssetLinks: true })}
       </div>
     </div>
   );
