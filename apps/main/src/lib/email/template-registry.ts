@@ -59,7 +59,7 @@ const GROUP_VARIABLES: readonly TemplateVariable[] = [
 const GROUP_INVITATION_VARIABLES: readonly TemplateVariable[] = [
   ...GROUP_VARIABLES,
   { name: "departure_port", description: "Port of departure", sample: "Miami, FL" },
-  { name: "invite_url", description: "The invitee's personal RSVP link", sample: "https://example.ai-travelconcierge.com/groups/invite/tok123" },
+  { name: "invite_url", description: "The invitee's personal RSVP link", sample: "https://example.ai-travelconcierge.com/group/invite/tok123" },
 ];
 
 export const EMAIL_TEMPLATE_REGISTRY = {
@@ -117,7 +117,10 @@ export const EMAIL_TEMPLATE_REGISTRY = {
     label: "Group invitation reminder",
     description: "Periodic reminder to invitees who haven't RSVP'd yet.",
     default_subject_template: "Reminder: {{cruise_line}} — {{ship_name}} sailing {{sailing_date}}",
-    variables: GROUP_VARIABLES,
+    variables: [
+      ...GROUP_VARIABLES,
+      { name: "invite_url", description: "The invitee's personal RSVP link", sample: "https://example.ai-travelconcierge.com/group/invite/tok123" },
+    ],
   },
   quote_estimate_expired: {
     label: "Quote estimate expired",
