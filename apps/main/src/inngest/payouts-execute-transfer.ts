@@ -78,6 +78,9 @@ export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; 
   let total = 0;
   let batches = 0;
   const start = Date.now();
+  // Cursor prevents busy-spin when rows are skipped (e.g. missing stripe_connect_account_id).
+  // Skipped rows stay 'available' and would re-appear at the front of every un-cursored query.
+  let lastId = "";
 
   while (Date.now() - start < TIME_BUDGET_MS) {
     const { data: rows, error } = await db
@@ -85,6 +88,8 @@ export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; 
       .select("id, tenant_id, amount_cents, attempt_generation, currency, commission_id")
       .eq("status", "available")
       .gt("amount_cents", 0)
+      .gt("id", lastId)
+      .order("id", { ascending: true })
       .limit(BATCH_LIMIT);
 
     if (error) throw new Error(`payouts-execute-transfer: fetch failed: ${error.message}`);
@@ -191,6 +196,7 @@ export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; 
       }
     }
 
+    lastId = available[available.length - 1]?.id ?? lastId;
     if (available.length < BATCH_LIMIT) break;
   }
 

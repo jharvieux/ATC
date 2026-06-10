@@ -37,6 +37,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
             const chain: Record<string, unknown> = {
               eq() { return chain; },
               gt() { return chain; },
+              order() { return chain; },
               limit() { return chain; },
               then(resolve: (v: { data: unknown; error: null }) => unknown) {
                 return resolve({ data: mocks.availableRows, error: null });

@@ -101,6 +101,11 @@ export const customDomainReverify = inngest.createFunction(
           await notifyDomainDrift(db, row.id, row.custom_domain, "txt_drifted");
         } catch (e) {
           console.error("[custom-domain-reverify] check failed for tenant %s: %s", row.id, e);
+          // Advance cursor so a persistently-failing DNS row doesn't busy-loop at the front of every re-query.
+          await safeAwait(db
+            .from("tenants")
+            .update({ custom_domain_last_reverified_at: new Date().toISOString() })
+            .eq("id", row.id), "tenants.update.reverify_error");
         }
       }
 
