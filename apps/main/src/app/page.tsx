@@ -11,9 +11,15 @@ import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
 import { AgentCardGrid } from "@/components/landing/AgentCardGrid";
-import { resolvePostLoginDestination } from "@/lib/auth/resolve-post-login";
+import {
+  resolvePostLoginDestination,
+  getTenantRole,
+} from "@/lib/auth/resolve-post-login";
 import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { getCachedUser } from "@/lib/auth/get-cached-user";
+import { TenantShell } from "@/components/tenant-shell/TenantShell";
+import { ChatExperience } from "@/components/chat/ChatExperience";
 
 export default async function HomePage() {
   // Compute header props (which already does a getUser) before deciding
@@ -32,7 +38,32 @@ export default async function HomePage() {
     const dest = await resolvePostLoginDestination(
       new Request("https://placeholder.internal/", { headers: forwarded }),
     );
-    if (dest) redirect(dest);
+    if (dest) {
+      // #962 — tenant-subdomain members land on the app shell at "/"
+      // (collapsible nav + embedded support chat) instead of being
+      // redirected to /crm/contacts or /chat. Platform admins and
+      // onboarding-incomplete staff keep their redirects, as do users
+      // with no active membership in THIS tenant (e.g. staff of a
+      // different tenant) — for them the old dispatch is still right.
+      if (
+        !headerProps.isPlatformDomain &&
+        dest !== "/admin" &&
+        !dest.startsWith("/onboarding")
+      ) {
+        const tenantId = incoming.get(RESOLVED_TENANT_ID_HEADER);
+        const { user } = await getCachedUser();
+        const role =
+          tenantId && user ? await getTenantRole(user.id, tenantId) : null;
+        if (role) {
+          return (
+            <TenantShell role={role}>
+              <ChatExperience />
+            </TenantShell>
+          );
+        }
+      }
+      redirect(dest);
+    }
   }
 
   // Tenant-branded hero — only fires for tenant subdomains. On the
