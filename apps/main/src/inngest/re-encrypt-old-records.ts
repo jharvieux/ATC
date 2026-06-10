@@ -27,6 +27,8 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
+type CredRow = { id: string; credentials: { ciphertext: string; key_id: string } };
+
 export const reEncryptOldRecords = inngest.createFunction(
   {
     id: "re-encrypt-old-records",
@@ -36,14 +38,11 @@ export const reEncryptOldRecords = inngest.createFunction(
       { cron: "0 6 * * *" },
     ],
   },
-  async (ctx?: { event?: { name?: string } }) => {
+  async ({ event }: { event?: { name?: string } } = {}) => {
     const e = env();
     const db = createServiceRoleClient();
-    const eventName = (ctx as { event?: { name?: string } } | undefined)?.event?.name;
+    const eventName = event?.name;
 
-    // #935: AAD-bind sweep. Re-encrypts current-key rows to bind key_id into AAD.
-    // Pre-#934 ciphertexts lacked AAD binding; this sweep closes that gap.
-    // Only runs on explicit trigger — not cron, not the key-rotation event.
     if (eventName === "admin/bind_aad_credentials_started") {
       const currentKeyId = e.APP_ENCRYPTION_KEY_ID_CURRENT;
       const { data: aadRows, error: aadFetchError } = await db
@@ -60,7 +59,7 @@ export const reEncryptOldRecords = inngest.createFunction(
       let aadBound = 0;
       let aadFailed = 0;
 
-      for (const row of aadPending as { id: string; credentials: { ciphertext: string; key_id: string } }[]) {
+      for (const row of aadPending as CredRow[]) {
         const decrypted = decryptCredential(row.credentials);
         if (!decrypted.ok) {
           console.warn(`bind-aad-sweep: failed to decrypt ${row.id}: ${decrypted.error.code}`);
@@ -115,7 +114,7 @@ export const reEncryptOldRecords = inngest.createFunction(
     let reencryptedCount = 0;
     let failedCount = 0;
 
-    for (const row of pending as { id: string; credentials: { ciphertext: string; key_id: string } }[]) {
+    for (const row of pending as CredRow[]) {
       const decrypted = decryptCredential(row.credentials);
       if (!decrypted.ok) {
         console.warn(
