@@ -96,7 +96,11 @@ export async function buildPricingAnchorsBlock(
   }
 
   const { data, error } = await q;
-  if (error || !data || data.length === 0) return "";
+  if (error) {
+    console.warn("[pricing-anchors] read failed — using guidance-only:", error.message);
+  }
+  // #828: rule 6 must reach the model even when the table is empty.
+  if (error || !data || data.length === 0) return buildPricingGuidanceOnly();
 
   const rows = data as AnchorRow[];
   // Sort deterministically so the block is cache-stable.
