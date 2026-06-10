@@ -12,6 +12,10 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 import { respondToAuthError } from "@/lib/auth/respond";
 
+// #750: cap the platform-layer body budget to the documented 50MB limit so
+// oversized requests are rejected before the full body is buffered into heap.
+export const maxRequestBodySize = "52mb";
+
 const SUPPORTED_MIMES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx

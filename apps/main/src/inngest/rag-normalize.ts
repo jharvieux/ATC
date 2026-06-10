@@ -63,6 +63,34 @@ export const ragNormalize = inngest.createFunction(
 
     const content_hash = createHash("sha256").update(content).digest("hex");
 
+    // #748: static pre-filter for prompt injection patterns before any AI call.
+    // Chunks containing these patterns are quarantined for manual review rather
+    // than being auto-normalized and potentially promoted to global scope.
+    const INJECTION_PATTERNS = [
+      /\bINSTRUCTIONS:\s*\n/i,
+      /\bOVERRIDE:\s/i,
+      /\bSYSTEM:\s*\n/i,
+      /IGNORE\s+PREVIOUS\s+INSTRUCTIONS/i,
+      /<<CHUNK_DATA_(START|END)>>/,
+    ];
+    const injectionMatch = INJECTION_PATTERNS.find((p) => p.test(content));
+    if (injectionMatch) {
+      console.warn("[rag-normalize] injection pattern detected in submission %s — quarantining for manual review", submission_id);
+      await safeAwait(db
+        .from("rag_submissions")
+        .update({
+          normalization_status: "normalized",
+          normalization_result: { injection_detected: true, content_hash },
+          auto_flagged_for_global: false,
+          review_status: "ready_for_review",
+          content_hash,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", submission_id)
+        .eq("tenant_id", tenant_id), "rag_submissions.update");
+      return { ok: true, injection_quarantine: true };
+    }
+
     const norm = await haikuNormalize(content, { tenant_id });
     if (norm.status === "failed") {
       const isLastAttempt = attempt >= 3;

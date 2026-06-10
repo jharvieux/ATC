@@ -6,17 +6,23 @@
 // anonymization, forensics-snapshot-before-deletion for active disputes,
 // and the audit row insert.
 
+import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { purgeUserDataPerRetention } from "@/lib/privacy/purge-user-data";
 import { createNotification } from "@/lib/notifications/create";
 
-interface PurgePayload {
-  auth_user_id: string;
-  user_id: string;
-  deleted_at: string;
-  purge_at: string;
-}
+// #742: validate the event payload with Zod so a crafted event (compromised
+// signing key) cannot skip the 30-day grace period by providing a past purge_at.
+const PurgePayloadSchema = z.object({
+  auth_user_id: z.string().uuid(),
+  user_id: z.string().uuid(),
+  deleted_at: z.string().datetime(),
+  purge_at: z.string().datetime(),
+}).refine(
+  (d) => new Date(d.purge_at).getTime() >= new Date(d.deleted_at).getTime() + 25 * 24 * 60 * 60 * 1000,
+  { message: "purge_at must be at least 25 days after deleted_at" },
+);
 
 export const userDataPurgeAfterGrace = inngest.createFunction(
   {
@@ -24,7 +30,12 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
     triggers: [{ event: "user.data_purge_scheduled" }],
   },
   async ({ event, step }) => {
-    const { auth_user_id, user_id, deleted_at, purge_at } = event.data as PurgePayload;
+    const parsed = PurgePayloadSchema.safeParse(event.data);
+    if (!parsed.success) {
+      console.error("[user-data-purge] invalid event payload: %s", parsed.error.message);
+      return { skipped: true, reason: "invalid_payload" };
+    }
+    const { auth_user_id, user_id, deleted_at, purge_at } = parsed.data;
 
     // §17.10 — Sleep until purge_at (30 days after the delete request).
     // Inngest persists the function state during sleep; on wake we
@@ -83,9 +94,11 @@ export const userDataPurgeAfterGrace = inngest.createFunction(
       return { skipped: true, reason: "already_purged" };
     }
 
+    // #742: use the DB-sourced deleted_at, not the event payload value, so a
+    // crafted event with a different timestamp cannot widen the grace window.
     const result = await purgeUserDataPerRetention(db, {
       user_id,
-      grace_period_ended_at: deleted_at,
+      grace_period_ended_at: typedUser.deleted_at,
     });
 
     if (result.purge_outcome === "error") {
