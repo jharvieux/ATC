@@ -69,8 +69,9 @@ export async function POST(req: Request): Promise<Response> {
     const bytes = await file.arrayBuffer();
 
     // #720: reject files whose magic bytes don't match the declared MIME type.
-    // file.type is attacker-controlled; magic bytes are not.
-    const magic = new Uint8Array(bytes, 0, 8);
+    // file.type is attacker-controlled; magic bytes are not. Clamp to actual
+    // file length so tiny files (< 8 bytes) don't throw RangeError.
+    const magic = new Uint8Array(bytes, 0, Math.min(8, bytes.byteLength));
     if (!magicBytesMatch(file.type, magic)) {
       return Response.json({ error: "magic_bytes_mismatch", declared_mime: file.type }, { status: 415 });
     }
@@ -116,7 +117,8 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 
-// #720: PDF = "%PDF-" (5 bytes), Office Open XML (docx/xlsx/pptx) = PK\x03\x04 (4 bytes ZIP).
+// #720: PDF = "%PDF-" (5 bytes), Office Open XML (docx/xlsx/pptx) = PK\x03\x04 (4 bytes ZIP),
+// legacy Office (doc/xls/ppt) = OLE2 Compound Document D0 CF 11 E0 (4 bytes).
 // TXT, MD, HTML have no reliable magic bytes — accepted as-is.
 // Images: JPEG = FF D8 FF, PNG = 89 50 4E 47.
 function magicBytesMatch(mime: string, magic: Uint8Array): boolean {
@@ -130,14 +132,20 @@ function magicBytesMatch(mime: string, magic: Uint8Array): boolean {
   ) {
     return magic[0] === 0x50 && magic[1] === 0x4b && magic[2] === 0x03 && magic[3] === 0x04; // PK\x03\x04
   }
+  if (
+    mime === "application/msword" ||
+    mime === "application/vnd.ms-excel" ||
+    mime === "application/vnd.ms-powerpoint"
+  ) {
+    return magic[0] === 0xd0 && magic[1] === 0xcf && magic[2] === 0x11 && magic[3] === 0xe0; // OLE2
+  }
   if (mime === "image/jpeg") {
     return magic[0] === 0xff && magic[1] === 0xd8 && magic[2] === 0xff;
   }
   if (mime === "image/png") {
     return magic[0] === 0x89 && magic[1] === 0x50 && magic[2] === 0x4e && magic[3] === 0x47;
   }
-  // text/plain, text/markdown, text/html, application/msword, application/vnd.ms-excel,
-  // application/vnd.ms-powerpoint: no reliable magic bytes — accept as-is.
+  // text/plain, text/markdown, text/html: no reliable magic bytes — accept as-is.
   return true;
 }
 

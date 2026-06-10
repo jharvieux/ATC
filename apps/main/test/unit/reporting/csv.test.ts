@@ -57,29 +57,28 @@ describe("SYNC_EXPORT_MAX_ROWS", () => {
 });
 
 describe("csvCell — formula injection prevention (#727)", () => {
-  it("quotes cells starting with '='", () => {
-    const csv = rowsToCsv([{ utm_source: "=HYPERLINK(\"http://evil.com\",\"click\")" }]);
-    expect(csv).toContain(`"=HYPERLINK`);
-    expect(csv).not.toMatch(/^=HYPERLINK/m);
+  it("neutralizes =, +, -, @ prefixes so spreadsheet apps cannot execute them as formulas", () => {
+    // Security property: after CSV parsing, the first character the spreadsheet app
+    // sees must NOT be a formula initiator. Quoting alone doesn't suffice — Excel
+    // strips quotes before evaluating. A tab prefix is the correct neutralization.
+    const dangerous = [
+      '=HYPERLINK("http://evil.com","click")',
+      "+cmd|'evil'",
+      "-2+3+cmd|'evil'",
+      "@SUM(1+1)*cmd|'evil'",
+    ];
+    for (const input of dangerous) {
+      const csv = rowsToCsv([{ value: input }]);
+      const dataLine = csv.split("\n")[1] ?? "";
+      // Strip CSV quoting to get what the spreadsheet app sees after parsing.
+      const cell = dataLine.startsWith('"')
+        ? dataLine.slice(1, dataLine.lastIndexOf('"')).replace(/""/g, '"')
+        : dataLine;
+      expect(cell, `"${input}" must be neutralized`).not.toMatch(/^[=+\-@]/);
+    }
   });
 
-  it("quotes cells starting with '+'", () => {
-    const csv = rowsToCsv([{ utm_source: "+cmd|'evil'" }]);
-    expect(csv).toContain(`"+cmd`);
-    expect(csv).not.toMatch(/^\+cmd/m);
-  });
-
-  it("quotes cells starting with '-'", () => {
-    const csv = rowsToCsv([{ field: "-2+3+cmd|'evil'" }]);
-    expect(csv).toContain(`"-2+3`);
-  });
-
-  it("quotes cells starting with '@'", () => {
-    const csv = rowsToCsv([{ field: "@SUM(1+1)*cmd|'evil'" }]);
-    expect(csv).toContain(`"@SUM`);
-  });
-
-  it("does not quote safe values without formula prefix", () => {
+  it("does not alter safe values without formula prefix", () => {
     const csv = rowsToCsv([{ utm_source: "google", campaign: "summer2026" }]);
     expect(csv).toBe("utm_source,campaign\ngoogle,summer2026\n");
   });

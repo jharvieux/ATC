@@ -38,8 +38,12 @@ vi.mock("@/lib/db/service-role-client", () => ({
             async single() {
               return dbBehavior.selectResult["single"] ?? { data: null, error: null };
             },
-            then(resolve: (v: { data: unknown[]; error: null }) => unknown) {
-              return resolve({ data: (dbBehavior.selectResult["array"]?.data as unknown[]) ?? [], error: null });
+            then(resolve: (v: { data: unknown[] | null; error: { message: string } | null }) => unknown) {
+              const arrayErr = dbBehavior.selectResult["array"]?.error ?? null;
+              return resolve({
+                data: arrayErr ? null : ((dbBehavior.selectResult["array"]?.data as unknown[]) ?? []),
+                error: arrayErr,
+              });
             },
           };
           return chain;
@@ -228,4 +232,11 @@ describe("Stripe webhook — D-091 P1 #1 error propagation", () => {
       expect(res.status, `${type} SELECT error should return 500`).toBe(500);
     });
   }
+
+  it("#717: returns 500 when payout_records SELECT fails on transfer.paid", async () => {
+    setEvent("transfer.paid", { id: "tr_1" });
+    dbBehavior.selectResult["array"] = { data: null, error: { message: "synthetic SELECT error on transfer.paid" } };
+    const res = await handleStripeWebhook(makeRequest(), "platform");
+    expect(res.status, "transfer.paid payout_records SELECT error should return 500").toBe(500);
+  });
 });

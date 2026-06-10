@@ -75,14 +75,13 @@ function csvCell(v: unknown): string {
   } else {
     s = String(v);
   }
-  // #727: =,+,-,@ prefix triggers formula execution in Excel/LibreOffice — always quote.
-  if (
-    /^[=+\-@]/.test(s) ||
-    s.includes('"') ||
-    s.includes(",") ||
-    s.includes("\n") ||
-    s.includes("\r")
-  ) {
+  // #727: neutralize CSV formula injection — prepend tab so spreadsheet apps
+  // don't evaluate cells starting with =, +, -, @ as formulas. CSV quoting
+  // alone doesn't prevent execution: Excel strips quotes before evaluating.
+  if (/^[=+\-@]/.test(s)) {
+    s = `\t${s}`;
+  }
+  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r") || s.includes("\t")) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;

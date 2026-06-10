@@ -42,6 +42,7 @@ function makeUploadReq(mimeType: string, bytes: Uint8Array, filename = "test"): 
 
 const PDF_MAGIC = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x20, 0x20, 0x20]); // %PDF- ...
 const ZIP_MAGIC = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x20, 0x20, 0x20, 0x20]); // PK\x03\x04 ...
+const OLE2_MAGIC = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]); // OLE2 Compound Document
 const JPEG_MAGIC = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x20, 0x20, 0x20, 0x20]);
 const PNG_MAGIC = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const RANDOM_BYTES = new Uint8Array([0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
@@ -103,5 +104,23 @@ describe("RAG file upload — magic bytes validation (#720)", () => {
       makeUploadReq("text/plain", RANDOM_BYTES, "notes.txt"),
     );
     expect(res.status).not.toBe(415);
+  });
+
+  it("accepts legacy .doc bytes (OLE2 Compound Document magic)", async () => {
+    const res = await POST(makeUploadReq("application/msword", OLE2_MAGIC, "test.doc"));
+    expect(res.status).not.toBe(415);
+  });
+
+  it("rejects non-OLE2 bytes declared as application/msword → 415", async () => {
+    const res = await POST(makeUploadReq("application/msword", RANDOM_BYTES, "fake.doc"));
+    expect(res.status).toBe(415);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("magic_bytes_mismatch");
+  });
+
+  it("accepts a tiny text file (< 8 bytes) without RangeError", async () => {
+    const tiny = new Uint8Array([0x68, 0x69]); // "hi"
+    const res = await POST(makeUploadReq("text/plain", tiny, "tiny.txt"));
+    expect(res.status).not.toBe(500);
   });
 });
