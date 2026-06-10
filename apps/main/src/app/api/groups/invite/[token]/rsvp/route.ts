@@ -8,6 +8,7 @@
 
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { createClient } from "@supabase/supabase-js";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 
@@ -87,13 +88,15 @@ export async function POST(req: Request, props: { params: Promise<{ token: strin
     }
   }
 
-  const { error } = await svc
-    .from("invitations")
-    .update({ rsvp_state })
-    .eq("id", invitation_id)
-    .is("token_revoked_at", null);
-
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  try {
+    await safeAwait(
+      // d091-allow:service-role-tenant — public invite route; HMAC-verified invitation_id, no tenant ctx.
+      svc.from("invitations").update({ rsvp_state }).eq("id", invitation_id).is("token_revoked_at", null),
+      "invitations.rsvp_update",
+    );
+  } catch {
+    return Response.json({ error: "rsvp_update_failed" }, { status: 500 });
+  }
 
   // If form submission, redirect back to the invitee page.
   if (!contentType.includes("application/json")) {
