@@ -42,8 +42,8 @@ emails are never uploaded or stored.
    empty and the TA fills it.
 3. **Paste** into the inquiry textarea — universal fallback.
 
-Parsing lives in `lib/draft/parse-eml.ts` / `lib/draft/parse-msg.ts` (thin,
-unit-tested wrappers; browser-only imports kept out of route code).
+Parsing lives in `lib/draft/parse-inquiry.ts` (thin, unit-tested
+wrappers; parser imports are dynamic so they never reach the server bundle).
 Greeting-name derivation (`lib/draft/greeting-name.ts`, pure):
 display-name → first token title-cased; else mailbox local-part only if it
 looks like a name (`sarah.mitchell` → `Sarah`, but `info`/`bookings`/
