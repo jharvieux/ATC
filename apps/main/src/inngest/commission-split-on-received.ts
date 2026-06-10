@@ -79,6 +79,7 @@ export async function runCommissionSplitOnReceived(event: { data: { commission_i
     const { error: insertError } = await db.from("payout_records").insert({
       tenant_id: commission.tenant_id,
       amount_cents: commission.subhost_payable_cents.toString(),
+      currency: commission.currency,
       status: "pending",
       hold_release_at: holdReleaseAt.toISOString(),
       commission_id,
