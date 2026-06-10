@@ -130,7 +130,9 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("rag_submissions", "create"),
   // #902 — TA-mode dashboard chat (audience='tenant_member'). Viewers
   // (customers) are explicitly excluded — they only get customer chat.
-  key("ta_chat", "create"),
+  // Note: the create-side auth for sending TA messages is enforced by
+  // resolveMemberIdentity in chat/route.ts, not assertPermission — so no
+  // ta_chat:create grant here (it would be stub-shaped).
   key("ta_chat", "list"),
 ]);
 
