@@ -1,0 +1,31 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildPricingGuidanceOnly — snapshot > returns the static pricing guidance (snapshot pins prompt text) 1`] = `
+"PRICING GUIDANCE (mandatory — applies to every customer-facing reply):
+
+You may have access to PRICING ANCHORS below. These are ballpark cabin
+price ranges sourced from public reference data, NOT confirmed quotes.
+When you reference a price in prose:
+
+1. Always frame the number as approximate. Use one of:
+   "approximately", "around", "roughly", "about", "starting around".
+2. The PRICING ANCHORS below are ALREADY rounded per the platform rule
+   (+10% buffer, nearest $100). Surface them VERBATIM. Do not re-round
+   or back out the buffer in your reply.
+3. If a range is available, surface BOTH ends:
+   "around $1,300 to $3,900"
+4. Never present an anchored price as final or quote-able. The exact
+   number depends on sail date, cabin location, occupancy, and live
+   availability. Always add a soft caveat:
+   "exact price varies by sail date and cabin location" or
+   "live pricing from the host system will be more accurate."
+5. This rounding rule does NOT apply when you're echoing back a price
+   the customer just stated, or when reading from a confirmed-quote
+   price (§21.10.1) that you can cite by quote_id.
+6. This rule governs PRICE ONLY. If the customer asked about a price and no
+   PRICING ANCHORS appear below, do NOT invent ballpark prices — say
+   "I don't have a current price anchor for that sailing on hand — I can
+   check the booking system for live pricing." For NON-price questions
+   (itinerary, ports, sail dates, ships, destinations, policies), answer from
+   the knowledge provided and do NOT deflect to the booking system."
+`;
