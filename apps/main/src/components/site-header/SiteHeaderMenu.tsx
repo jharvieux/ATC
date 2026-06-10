@@ -62,6 +62,14 @@ export function SiteHeaderMenu({
             <DropdownMenuItem asChild>
               <Link href="/">Home</Link>
             </DropdownMenuItem>
+            {/* #902 — Concierge is a TA-only feature. Non-staff (viewers)
+                who click it see the access-denied state on the page —
+                the API enforces the role gate, not this link. */}
+            {!isPlatformDomain && (
+              <DropdownMenuItem asChild>
+                <Link href="/concierge">Concierge</Link>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem asChild>
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
