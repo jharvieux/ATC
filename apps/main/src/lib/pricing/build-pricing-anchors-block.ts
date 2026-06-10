@@ -96,9 +96,10 @@ export async function buildPricingAnchorsBlock(
   }
 
   const { data, error } = await q;
-  // Entities present but no anchors found — inject guidance-only so rule 6
-  // (non-price questions must NOT deflect to the booking system) still reaches
-  // the model even when general_pricing_ranges is empty.
+  if (error) {
+    console.warn("[pricing-anchors] read failed — using guidance-only:", error.message);
+  }
+  // #828: rule 6 must reach the model even when the table is empty.
   if (error || !data || data.length === 0) return buildPricingGuidanceOnly();
 
   const rows = data as AnchorRow[];

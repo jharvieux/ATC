@@ -72,6 +72,7 @@ describe("buildPricingAnchorsBlock — guidance fallback (#828)", () => {
       ships: [],
     });
     expect(result).toBe(buildPricingGuidanceOnly());
+    expect(result).toContain("NON-price questions");
   });
 
   it("returns empty when there are no entities (no cruise lines, no ships)", async () => {
