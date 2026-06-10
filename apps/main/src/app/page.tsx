@@ -19,7 +19,9 @@ import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { getCachedUser } from "@/lib/auth/get-cached-user";
 import { TenantShell } from "@/components/tenant-shell/TenantShell";
+import { defaultPanelForRole } from "@/components/tenant-shell/nav-sections";
 import { ChatExperience } from "@/components/chat/ChatExperience";
+import { ConciergeExperience } from "@/components/concierge/ConciergeExperience";
 
 export default async function HomePage() {
   // Compute header props (which already does a getUser) before deciding
@@ -55,9 +57,15 @@ export default async function HomePage() {
         const role =
           tenantId && user ? await getTenantRole(user.id, tenantId) : null;
         if (role) {
+          // #974 — staff default to TA mode (trade chat, no customer
+          // guardrails); viewers keep the guardrailed customer chat.
           return (
             <TenantShell role={role}>
-              <ChatExperience />
+              {defaultPanelForRole(role) === "ta-concierge" ? (
+                <ConciergeExperience />
+              ) : (
+                <ChatExperience />
+              )}
             </TenantShell>
           );
         }
