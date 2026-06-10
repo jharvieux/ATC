@@ -13,6 +13,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
@@ -101,23 +102,30 @@ export async function POST(req: Request): Promise<Response> {
           throw Object.assign(new Error("Item has already been reviewed"), { status: 422 });
         }
 
-        const { error: updateError } = await db
-          .from("reconciliation_review_queue")
-          .update({
-            status: action,
-            reviewed_at: new Date().toISOString(),
-            reviewed_by: adminUserId,
-            notes: notes ?? row.notes,
-          })
-          .eq("id", id);
-
-        if (updateError) throw new Error(updateError.message);
+        await safeAwaitRowCount(
+          db
+            .from("reconciliation_review_queue")
+            .update({
+              status: action,
+              reviewed_at: new Date().toISOString(),
+              reviewed_by: adminUserId,
+              notes: notes ?? row.notes,
+            })
+            .eq("id", id)
+            .in("status", ["pending", "orphan"])
+            .select("id"),
+          "reconciliation_review_queue.cas_action",
+          1,
+        );
         return { ok: true, id, action };
       },
     );
 
     return Response.json(result);
   } catch (err) {
+    if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+      return Response.json({ error: "already_actioned" }, { status: 409 });
+    }
     const status = (err as { status?: number }).status ?? 500;
     const message = err instanceof Error ? err.message : "Error";
     return Response.json({ error: message }, { status });
