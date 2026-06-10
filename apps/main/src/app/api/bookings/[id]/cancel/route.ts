@@ -12,7 +12,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { transitionCommissionState } from "@/lib/commissions/state-machine";
 import { writeAuditLog } from "@/lib/audit/write";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwait, safeAwaitRowCount } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 
 type CommissionRow = {
@@ -169,16 +169,27 @@ export async function POST(
 
     if (payout.status === "pending") {
       // Within hold period — zero out and cancel payout, insert negative revenue row.
-      // D-091 R3 Pattern 7 — CAS guard via .eq("status", "pending") in addition to
-      // .eq("id", payout.id). Without it a payout that raced to 'processing' or
-      // 'available' between the read above and this update would still be zeroed,
-      // potentially clawing back money already wired to the sub-host.
-      await safeAwait(adminDb
-        .from("payout_records")
-        .update({ status: "cancelled", amount_cents: 0 })
-        .eq("tenant_id", ctx.tenant_id)
-        .eq("id", payout.id)
-        .eq("status", "pending"), "payout_records.update");
+      // CAS guard: .eq("status", "pending") ensures the payout hasn't raced to
+      // 'processing'/'available'/'paid' between the read above and this update.
+      // safeAwaitRowCount asserts exactly 1 row was affected; 0 rows → 409 so the
+      // caller retries against fresh state (D-091 R2 Pattern 7 — #846).
+      const updated = await safeAwaitRowCount(
+        adminDb
+          .from("payout_records")
+          .update({ status: "cancelled", amount_cents: 0 })
+          .eq("tenant_id", ctx.tenant_id)
+          .eq("id", payout.id)
+          .eq("status", "pending")
+          .select("id"),
+        "payout_records.cas_cancel",
+        1,
+      ).catch(() => null);
+      if (!updated) {
+        return Response.json(
+          { error: "payout_state_changed", message: "Payout status changed concurrently — retry" },
+          { status: 409 },
+        );
+      }
 
       // Negative platform_revenue row for clawback
       await safeAwait(adminDb.from("platform_revenue").insert({
