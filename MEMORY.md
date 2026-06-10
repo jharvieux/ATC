@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-197 — 2026-06-10 — Sonnet build session: #913, #903, #881 built; #906 and #866 also shipped
+
+**Shipped (Sonnet build session, 2026-06-10):**
+
+- **#913** (PR #916, merged 52ddd807): `GET /api/chat/conversations` user_id filter fixed — `ctx.source.user_id` is `auth.users.id` but the column stores `public.users.id`. Short-circuits to empty list when no public.users row exists (no unfiltered query).
+
+- **#906** (PR #914): help_ai open-QA turns now grounded in platform docs via `buildHelpContextBlock`. Added empty-tierCode sentinel so help_ai (all plans) sees all docs without a DB call. Bug: prompt claimed doc grounding but route never injected any.
+
+- **#866** (PR #915): `instrumentedClaudeStream` now enforces `ai_cost_state='hard'` (mirrors `instrumentedClaudeCall`). Sets `streamError + notify()` before throwing so the textStream iterator wakes rather than hanging.
+
+- **#903** (PR #917, pending CI): Phase 2 voice profiles — `voice_samples` + `voice_profiles` tables (UUID tenant_id FK, partial unique indexes), Inngest extraction function (hash guard prevents re-billing on unchanged samples, `runExtractVoiceProfile` extracted for testability), `resolveVoiceProfile` lib (own→house→null, fail-closed), CRUD API routes, settings page. Three audit rounds: (1) `.is()` → conditional `.eq()`/`.is()` for non-null user_id (PostgREST limitation); (2) insert-or-update replacing upsert (partial-index PK ≠ onConflict expression); (3) card override preserves extracted style_card; (4) migration `tenant_id UUID` not `TEXT` (auth_user_in_tenant takes UUID).
+
+- **#881** (PR #918, pending CI): `CustomerContextChatPanel` wires the `assets` SSE event and routes assistant content through `renderMessageContent`. Same gap as #882 fixed for main chat; the embeddable panel was a separate consumer.
+
+**Key finding:** `voice_profiles` migration tenant_id must be UUID (not TEXT) because `auth_user_in_tenant(UUID)` exists in the DB; the TEXT version does not. All existing tenant-scoped tables use UUID FK to tenants.
+
+**Artifacts:** PRs #914 (merged), #915 (pending CI), #916 (merged), #917 (pending CI), #918 (pending CI). Related: [[D-196]], [[D-193]].
+
+---
+
 ## D-196 — 2026-06-09 — #902 PR A shipped (TA-mode chat API); found conversations RLS is tenant-level only (#908)
 
 **Shipped:** PR #909 (merged 630da4bf, Opus-audited clean ×2) — the [[D-195]] design, API-complete: `mode:"ta"` gate (403 fail-closed, role boundary `tenant_owner|agent` since customers are viewer members), `TA_MEMBER_RULES` Layer-2 swap with customer prompts byte-identical (equality-tested), `buildHelpContextBlock`, `ta_chat_main` purpose, 200/day fail-closed cap, `conversations.audience` migration (applied to prod DB via MCP before merge — additive, safe ahead of deploy).
