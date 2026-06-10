@@ -82,7 +82,6 @@ export const reEncryptOldRecords = inngest.createFunction(
         );
         failedCount++;
       } else if (!updated || updated.length === 0) {
-        // 0 rows matched: already re-encrypted by a concurrent run; skip silently.
         console.info(`re-encrypt-old-records: record ${row.id} already re-encrypted (concurrent), skipping.`);
       } else {
         reencryptedCount++;
