@@ -111,6 +111,8 @@
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
+-- public.voice_profiles (rls_enabled)
+-- public.voice_samples (rls_enabled)
 -- public.weather_forecast_cache (rls_enabled)
 -- public.weather_usage_metrics (rls_enabled)
 --
@@ -1565,6 +1567,36 @@ CREATE POLICY "users_update_policy" ON public.users
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.voice_profiles
+CREATE POLICY "voice_profiles_delete_policy" ON public.voice_profiles
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "voice_profiles_insert_policy" ON public.voice_profiles
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "voice_profiles_select_policy" ON public.voice_profiles
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "voice_profiles_update_policy" ON public.voice_profiles
+  FOR UPDATE TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id))
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.voice_samples
+CREATE POLICY "voice_samples_delete_policy" ON public.voice_samples
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "voice_samples_insert_policy" ON public.voice_samples
+  FOR INSERT TO PUBLIC
+  WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+CREATE POLICY "voice_samples_select_policy" ON public.voice_samples
+  FOR SELECT TO PUBLIC
+  USING (auth_user_in_tenant(tenant_id));
+CREATE POLICY "voice_samples_update_policy" ON public.voice_samples
+  FOR UPDATE TO PUBLIC
+  USING (false)
+  WITH CHECK (false);
 
 -- TABLE: public.weather_forecast_cache
 CREATE POLICY "weather_forecast_cache_no_user_delete" ON public.weather_forecast_cache
