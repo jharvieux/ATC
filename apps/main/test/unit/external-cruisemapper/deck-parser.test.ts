@@ -88,3 +88,34 @@ describe("parseDeckPlanPage — combined gallery page", () => {
     expect(parseDeckPlanPage(FIXTURE_GALLERY, "https://www.cruisemapper.com/ships/Carnival-Horizon-1355")).toBeNull();
   });
 });
+
+// When CruiseMapper 301-redirects a renamed ship (e.g. Pacific-Princess-589 →
+// Azamara-Onward-589), the diy-fetcher follows the redirect silently and
+// returns body from the destination page. The deck link prefix check uses the
+// sourceUrl slug, so passing the original URL produces no matches → null.
+// refresh-cruisemapper-static.ts must pass fetched.finalUrl for deck plans (#819).
+describe("parseDeckPlanPage — redirect scenario (renamed ship)", () => {
+  const REDIRECTED_SHIP_URL = "https://www.cruisemapper.com/deckplans/Azamara-Onward-589";
+  const STALE_ORIGINAL_URL  = "https://www.cruisemapper.com/deckplans/Pacific-Princess-589";
+
+  const REDIRECT_FIXTURE = `
+<!doctype html><html><body>
+<h1>Azamara Onward deck plans</h1>
+<div class="deckplans">
+  <a href="https://www.cruisemapper.com/deckplans/Azamara-Onward-589/deck05-8001"><img loading="lazy" src="https://www.cruisemapper.com/images/deckplans/thumbs/589aa1234567890.gif" alt="Azamara Onward Deck 05 - Staterooms" /></a>
+  <a href="https://www.cruisemapper.com/deckplans/Azamara-Onward-589/deck06-8002"><img loading="lazy" src="https://www.cruisemapper.com/images/deckplans/thumbs/589bb9876543210.gif" alt="Azamara Onward Deck 06 - Club Ocean" /></a>
+</div>
+</body></html>
+`;
+
+  it("parses correctly when given the final (post-redirect) URL as sourceUrl", () => {
+    const p = parseDeckPlanPage(REDIRECT_FIXTURE, REDIRECTED_SHIP_URL);
+    expect(p).not.toBeNull();
+    expect(p!.shipSlug).toBe("Azamara-Onward-589");
+    expect(p!.deckCount).toBe(2);
+  });
+
+  it("returns null when given the stale pre-redirect URL as sourceUrl", () => {
+    expect(parseDeckPlanPage(REDIRECT_FIXTURE, STALE_ORIGINAL_URL)).toBeNull();
+  });
+});

@@ -311,7 +311,12 @@ async function processOneUrl(
 
   result.fetched = 1;
 
-  const parsed = kind === "port" ? parsePortPage(fetched.body, url) : parseDeckPlanPage(fetched.body, url);
+  // Use the final URL (after any HTTP redirects) as sourceUrl for the deck
+  // parser: it derives the ship slug from the URL, and CruiseMapper 301s
+  // renamed ships (e.g. Pacific-Princess-589 → Azamara-Onward-589), so the
+  // deck link prefix check would never match if we pass the original URL.
+  const parseUrl = kind === "deck_plan" ? fetched.finalUrl : url;
+  const parsed = kind === "port" ? parsePortPage(fetched.body, url) : parseDeckPlanPage(fetched.body, parseUrl);
   if (!parsed) {
     result.parse_failed = 1;
     await markInventory(db, url, "parse_failed", "parser_returned_null");
