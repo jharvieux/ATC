@@ -92,6 +92,33 @@ export function pickHighestRankActiveMembership(
   );
 }
 
+// #962 — role for ONE specific tenant (the one the middleware resolved
+// from the subdomain), for the landing shell's nav gating. Unlike the
+// dispatcher below, which picks across ALL memberships, this pins
+// tenant_id — the verified auth_user_id plus the explicit tenant_id
+// filter are the two scoping layers on the service-role query (D-091).
+// Returns null when the user has no active membership in a routeable
+// tenant (#666 filter); callers fall back to the redirect dispatch.
+export async function getTenantRole(
+  authUserId: string,
+  tenantId: string,
+): Promise<PostLoginRole | null> {
+  const db = createServiceRoleClient();
+  const { data, error } = await db
+    .from("users")
+    .select("role, tenant_id, tenants(onboarding_stage, status)")
+    .eq("auth_user_id", authUserId)
+    .eq("tenant_id", tenantId)
+    .eq("status", "active");
+  if (error) {
+    throw new Error(`getTenantRole: users lookup: ${error.message}`);
+  }
+  const rows = ((data ?? []) as unknown as MembershipRow[]).filter((r) =>
+    isRouteableTenant(normalizeTenant(r.tenants)),
+  );
+  return pickHighestRankActiveMembership(rows)?.role ?? null;
+}
+
 export async function resolvePostLoginDestination(
   req: Request,
 ): Promise<string | null> {
