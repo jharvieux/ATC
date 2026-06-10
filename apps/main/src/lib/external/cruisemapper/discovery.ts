@@ -169,6 +169,10 @@ export async function discoverShipUrls(db: SupabaseClient): Promise<string[]> {
     .select("id, cruisemapper_slug")
     .eq("is_active", true);
 
+  if (linesErr) {
+    console.warn("discoverShipUrls: cruise_lines query failed, falling back to hardcoded list", linesErr.message);
+  }
+
   if (!linesErr && catalogLines && catalogLines.length > 0) {
     const allShipUrls: string[] = [];
     for (const line of catalogLines as Array<{ id: string; cruisemapper_slug: string }>) {
@@ -185,25 +189,31 @@ export async function discoverShipUrls(db: SupabaseClient): Promise<string[]> {
         allShipUrls.push(...lineShipUrls);
       }
     }
-    return allShipUrls.length > 0 ? await loadInventoryByKind(db, "ship") : await loadInventoryByKind(db, "ship");
+    return await loadInventoryByKind(db, "ship");
   }
 
-  // Fallback: hardcoded list (cruise_lines table not yet populated).
+  // Fallback: hardcoded list (cruise_lines table not yet populated or DB error).
   const fresh = await discoverPaginated(CRUISE_LINE_PAGES, MAX_FLEET_PAGES_PER_LINE, extractFleetShipUrls);
   if (fresh.length > 0) await upsertInventory(db, fresh, "ship");
   return await loadInventoryByKind(db, "ship");
 }
 
-// Upsert a ship row derived from a CruiseMapper ship URL into cruise_ships.
-// cruisemapper_slug is the last URL path segment (e.g. "Symphony-of-the-Seas-1").
-// slug = lowercased full segment (unique on CruiseMapper by construction).
-// canonical_name = slug portion with hyphens → spaces, title-cased.
-async function upsertCruiseShipFromUrl(db: SupabaseClient, cruiseLineId: string, url: string): Promise<void> {
+// Exported so tests can verify slug + canonical_name derivation without a live DB.
+// cruisemapper_slug is the last path segment (e.g. "Symphony-of-the-Seas-1").
+// slug = lowercased full segment; canonical_name = name portion, title-cased.
+export function deriveShipFields(url: string): { cruisemapperSlug: string; slug: string; canonicalName: string } | null {
   const cruisemapperSlug = url.split("/").pop();
-  if (!cruisemapperSlug) return;
+  if (!cruisemapperSlug) return null;
   const slug = cruisemapperSlug.toLowerCase();
   const namePart = cruisemapperSlug.replace(/-\d+$/, "").replace(/-/g, " ");
   const canonicalName = namePart.replace(/\b\w/g, (c) => c.toUpperCase());
+  return { cruisemapperSlug, slug, canonicalName };
+}
+
+async function upsertCruiseShipFromUrl(db: SupabaseClient, cruiseLineId: string, url: string): Promise<void> {
+  const fields = deriveShipFields(url);
+  if (!fields) return;
+  const { cruisemapperSlug, slug, canonicalName } = fields;
   await safeAwait(
     db.from("cruise_ships").upsert(
       { cruise_line_id: cruiseLineId, slug, canonical_name: canonicalName, cruisemapper_slug: cruisemapperSlug },
