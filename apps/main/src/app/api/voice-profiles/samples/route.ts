@@ -16,7 +16,7 @@ import { inngest } from "@/inngest/client";
 
 export async function GET(req: Request): Promise<Response> {
   try {
-    const { ctx, user } = await assertPermission(req, {
+    const { ctx } = await assertPermission(req, {
       resource: "voice_profile",
       action: "read",
     });
@@ -74,8 +74,7 @@ export async function GET(req: Request): Promise<Response> {
       });
     }
 
-    // No auth_user_id — shouldn't happen (assertPermission gated), but be safe.
-    void user; // keep the import used
+    // No auth_user_id — structurally unreachable (assertPermission requires a session).
     return Response.json({ own_samples: [], house_samples: [], profile: null, is_owner: false });
   } catch (err) {
     return respondToAuthError(err);

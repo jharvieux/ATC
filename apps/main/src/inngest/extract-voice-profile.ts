@@ -71,9 +71,9 @@ export const extractVoiceProfile = inngest.createFunction(
     if (samples.length === 0) {
       // No samples — delete any stale profile row and return.
       await safeAwait(
-        svc.from("voice_profiles").delete()
-          .eq("tenant_id", tenant_id)
-          .is("user_id", user_id),
+        (user_id === null
+          ? svc.from("voice_profiles").delete().eq("tenant_id", tenant_id).is("user_id", null)
+          : svc.from("voice_profiles").delete().eq("tenant_id", tenant_id).eq("user_id", user_id)),
         "voice_profiles.delete.no_samples",
       );
       return { status: "no_samples" };
