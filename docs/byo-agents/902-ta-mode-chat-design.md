@@ -97,12 +97,16 @@ For `audience === "tenant_member"`:
 New `lib/chat/help-context.ts` → `buildHelpContextBlock(message: string):
 string | null`:
 
-- Runs `searchDocs(message)` (in-memory, microseconds) on every TA turn; on
-  hits, loads the top N (start: 2) matching docs via `getDocBySlug` and emits a
-  `PLATFORM HELP CONTEXT` block — doc title + body, capped (~6k chars total),
-  with the embedded instruction: answer platform questions only from this
-  block; if it doesn't cover the question, say so and point at the Help page —
-  never invent platform behavior.
+- Scores all docs per TA turn with a token-based matcher over `loadAllDocs()`
+  (in-memory, microseconds): qualification requires a TITLE-token hit (platform
+  questions name the feature — "branding", "quote", "billing"), body hits only
+  refine rank. *Implementation note: the originally-planned `searchDocs()`
+  reuse was dropped — it substring-matches the whole query, which suits the
+  help search box but never matches a conversational message.* Top 2 docs emit
+  a `PLATFORM HELP CONTEXT` block — doc title + body, capped (~6k chars
+  total), with the embedded instruction: answer platform questions only from
+  this block; if it doesn't cover the question, say so and point at the Help
+  page — never invent platform behavior.
 - No hits → returns null → section omitted (same omit-when-empty convention as
   `displayable_assets_block`).
 - **Customer isolation is structural, not filtered:** the builder is invoked
