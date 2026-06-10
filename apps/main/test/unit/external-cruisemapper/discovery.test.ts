@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { extractDetailUrls, extractDeckPlanLinks, extractFleetShipUrls, loadInventoryByKind } from "../../../src/lib/external/cruisemapper/discovery";
+import { extractDetailUrls, extractDeckPlanLinks, extractFleetShipUrls, loadInventoryByKind, deriveShipFields } from "../../../src/lib/external/cruisemapper/discovery";
 
 const BASE = "https://www.cruisemapper.com";
 
@@ -272,5 +272,28 @@ describe("loadInventoryByKind — paginates past the 1000-row cap (#788)", () =>
   it("throws on a DB error rather than masking it as an empty inventory", async () => {
     const { db } = makeMockDb({}, { error: "connection reset" });
     await expect(loadInventoryByKind(db, "port")).rejects.toThrow(/connection reset/);
+  });
+});
+
+describe("deriveShipFields — slug and canonical name derivation (#780)", () => {
+  it("lowercases the full slug segment", () => {
+    const f = deriveShipFields("https://www.cruisemapper.com/ships/Symphony-of-the-Seas-1");
+    expect(f?.slug).toBe("symphony-of-the-seas-1");
+  });
+
+  it("strips the trailing numeric id from canonical_name and title-cases", () => {
+    const f = deriveShipFields("https://www.cruisemapper.com/ships/Symphony-of-the-Seas-1");
+    expect(f?.canonicalName).toBe("Symphony Of The Seas");
+  });
+
+  it("preserves the exact URL segment as cruisemapper_slug", () => {
+    const f = deriveShipFields("https://www.cruisemapper.com/ships/Carnival-Breeze-703");
+    expect(f?.cruisemapperSlug).toBe("Carnival-Breeze-703");
+    expect(f?.slug).toBe("carnival-breeze-703");
+    expect(f?.canonicalName).toBe("Carnival Breeze");
+  });
+
+  it("returns null for a URL with no path segment", () => {
+    expect(deriveShipFields("")).toBeNull();
   });
 });
