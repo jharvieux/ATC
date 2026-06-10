@@ -17,9 +17,13 @@ export async function GET(req: Request): Promise<Response> {
     const db = tenantClient(ctx);
     const userId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
 
+    // #902: customer listing only — TA-mode threads (audience='tenant_member')
+    // have their own dashboard surface (PR B) and must not mix into customer
+    // chat history.
     let q = db
       .from("conversations")
       .select("id, title, status, last_message_at, message_count, active_persona_id")
+      .eq("audience", "customer")
       .order("last_message_at", { ascending: false })
       .limit(50);
     if (userId) q = q.eq("user_id", userId);

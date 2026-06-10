@@ -58,6 +58,8 @@ import {
   enforceCustomerLimit,
   generateHardLimitSummary,
 } from "@/lib/chat/customer-limit";
+import { enforceTaDailyLimit } from "@/lib/chat/ta-daily-limit";
+import { buildHelpContextBlock } from "@/lib/chat/help-context";
 import {
   detectToneOverride,
   applyToneOverride,
@@ -66,7 +68,7 @@ import { resolveToneLevel } from "@/lib/chat/tone-resolution";
 import { deriveFingerprint, extractClientIp } from "@/lib/chat/fingerprint";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
 import { loadConversationHistory } from "@/lib/chat/conversation-history";
-import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
+import { buildSystemPrompt, type ChatAudience } from "@/lib/personas/build-system-prompt";
 import { resolveActivePersonaSlug } from "@/lib/personas/resolve-active-persona-slug";
 import { buildDisplayableAssetsBlock } from "@/lib/ai/display-assets-block";
 import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-id-validation";
@@ -82,6 +84,7 @@ import {
 } from "@/lib/supervisor/run-supervisor";
 import type { SupervisorOutcome } from "@/lib/supervisor/types";
 import type { TenantContext } from "@/lib/db/tenant-context";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const SSE_HEADERS: HeadersInit = {
   "Content-Type": "text/event-stream",
@@ -139,6 +142,9 @@ export async function POST(req: Request): Promise<Response> {
     conversation_id?: string | null;
     persona_slug?: string | null;
     customer_context_ref?: CustomerContextRef | null;
+    // #902 — "ta" requests the tenant_member audience; the server VERIFIES
+    // eligibility below. Any other value is ignored (customer mode).
+    mode?: string | null;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -209,6 +215,23 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // #902 / D-195 — TA mode (audience='tenant_member'). Verified BEFORE the
+  // SSE stream exists so ineligible callers get a real 403, not a 200 stream
+  // carrying an error event. Fail closed: anything short of a verified
+  // tenant_owner/agent membership in the resolved tenant is refused — never
+  // silently downgraded to customer mode (a downgrade would answer in the
+  // wrong register and mask the misconfiguration). Customers are viewer-role
+  // members, so ROLE — not membership — is the boundary.
+  let taIdentity: MemberIdentity | null = null;
+  if (body.mode === "ta") {
+    taIdentity = hasCredential
+      ? await resolveMemberIdentity(req, tenantId, createServiceRoleClient())
+      : null;
+    if (!taIdentity || (taIdentity.role !== "tenant_owner" && taIdentity.role !== "agent")) {
+      return new Response(JSON.stringify({ error: "ta_mode_forbidden" }), { status: 403 });
+    }
+  }
+
   // ── Build the SSE stream and start the heavy work inline. The TransformStream
   //    lets the route return immediately while we keep writing events.
   const encoder = new TextEncoder();
@@ -230,6 +253,7 @@ export async function POST(req: Request): Promise<Response> {
     tenantId,
     hasCredential,
     resolvedAnonSessionId,
+    taIdentity,
     userMessage,
     conversationIdInput: body.conversation_id ?? null,
     personaSlugInput: body.persona_slug ?? null,
@@ -260,6 +284,10 @@ type HandleChatArgs = {
   tenantId: string;
   hasCredential: boolean;
   resolvedAnonSessionId: string | null;
+  // #902 — non-null ⇔ the POST handler verified a tenant_owner/agent member
+  // requesting TA mode. Carries the already-resolved identity so handleChat
+  // doesn't re-resolve (and can't disagree with what was verified).
+  taIdentity: MemberIdentity | null;
   userMessage: string;
   conversationIdInput: string | null;
   personaSlugInput: string | null;
@@ -267,6 +295,48 @@ type HandleChatArgs = {
   send: (ev: SseEvent) => Promise<void>;
   close: () => Promise<void>;
 };
+
+type MemberIdentity = {
+  ctx: TenantContext;
+  userId: string;       // public.users.id (FK target)
+  authUserId: string;   // auth.users.id (platform_admins key)
+  customerEmail: string | null;
+  role: string | null;  // public.users.role — the TA-mode boundary (#902)
+};
+
+// #860/#902 — resolve a credentialed request to a member of the resolved
+// tenant. Returns null for invalid/expired sessions, non-members, and missing
+// users rows. The customer path degrades null to anonymous (#860 — never
+// hard-error a customer turn); the TA path hard-fails null with a 403 (#902 —
+// never silently downgrade a staff request).
+async function resolveMemberIdentity(
+  req: Request,
+  tenantId: string,
+  svc: SupabaseClient,
+): Promise<MemberIdentity | null> {
+  try {
+    const ctx = await tenantContextFromRequest(req);
+    const authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
+    if (!authUserId) return null;
+    const { data: urow, error: uerr } = await svc
+      .from("users")
+      .select("id, email, role")
+      .eq("auth_user_id", authUserId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    // Fail-safe (caller decides anon-vs-403) but observable: a valid session
+    // that can't resolve a users.id is unexpected (tenantContextFromRequest
+    // already verified membership), so surface it rather than silently degrading.
+    if (uerr) console.error(`[chat] users.id lookup failed (tenant=${tenantId}): ${uerr.message}`);
+    const u = urow as { id: string; email: string | null; role: string | null } | null;
+    if (!u) return null;
+    return { ctx, userId: u.id, authUserId, customerEmail: u.email, role: u.role };
+  } catch {
+    // Invalid/expired session, or an authenticated user who isn't a member
+    // of this tenant.
+    return null;
+  }
+}
 
 const VALID_CONTEXT_TYPES = new Set(["booking", "trip_itinerary", "quote"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -289,6 +359,10 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   //   • ctx.source.user_id = the AUTH id (auth.users.id) — tools/RLS need auth.uid().
   //   • userId             = public.users.id — conversations / ai_call_log /
   //     customer_* all FK users(id); writing the auth id there 500s (#850-class).
+  // #902 — audience is decided by the POST handler's verification, never here:
+  // a non-null taIdentity means the 403 gate already passed for this request.
+  const audience: ChatAudience = args.taIdentity ? "tenant_member" : "customer";
+
   let ctx: TenantContext | null = null;
   let userId: string | null = null;     // public.users.id (FK target) or null
   let authUserId: string | null = null; // auth.users.id (platform_admins key)
@@ -296,33 +370,13 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // send to. Resolved here server-side; never supplied by the model.
   let customerEmail: string | null = null;
 
-  if (hasCredential) {
-    try {
-      ctx = await tenantContextFromRequest(args.req);
-      authUserId = ctx.source.kind === "http_request" ? ctx.source.user_id : null;
-      if (authUserId) {
-        const { data: urow, error: uerr } = await svc
-          .from("users")
-          .select("id, email")
-          .eq("auth_user_id", authUserId)
-          .eq("tenant_id", tenantId)
-          .maybeSingle();
-        // Fail-safe (treat as anon) but observable: a valid session that can't
-        // resolve a users.id is unexpected (tenantContextFromRequest already
-        // verified membership), so surface it rather than silently degrading.
-        if (uerr) console.error(`[chat] users.id lookup failed (tenant=${tenantId}): ${uerr.message}`);
-        const urowTyped = urow as { id: string; email: string | null } | null;
-        userId = urowTyped?.id ?? null;
-        customerEmail = urowTyped?.email ?? null;
-      }
-    } catch {
-      // #860: an invalid/expired session, or an authenticated user who isn't a
-      // member of this tenant → DEGRADE to anonymous. Never hard-error the turn.
-      ctx = null;
-      userId = null;
-      authUserId = null;
-      customerEmail = null;
-    }
+  if (args.taIdentity) {
+    ({ ctx, userId, authUserId, customerEmail } = args.taIdentity);
+  } else if (hasCredential) {
+    // #860: null (invalid/expired session, non-member) → DEGRADE to anonymous.
+    // Never hard-error a customer turn.
+    const ident = await resolveMemberIdentity(args.req, tenantId, svc);
+    if (ident) ({ ctx, userId, authUserId, customerEmail } = ident);
   }
 
   // Anonymous when no resolved member user (no credential / invalid / non-member).
@@ -353,6 +407,24 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   let customerCurrentCount = 0;
   if (isPlatformAdmin) {
     // Staff bypass — no rate limiting for internal testers.
+  } else if (audience === "tenant_member") {
+    // #902 — TA daily backstop cap (operator: 200/day default; the tenant
+    // AI-cost state machine is the primary spend governor). Fail-closed:
+    // a count failure denies the turn rather than running uncapped.
+    const decision = await enforceTaDailyLimit(svc, { tenant_id: tenantId, user_id: userId! });
+    if (!decision.allowed) {
+      const resetAt = new Date();
+      resetAt.setUTCHours(24, 0, 0, 0);
+      const bodyText =
+        decision.reason === "cap"
+          ? `Daily chat limit reached (${decision.cap} messages). It resets at midnight UTC.`
+          : "Chat is temporarily unavailable. Please try again in a few minutes.";
+      await send({ type: "hard_limit", body: bodyText, reset_at: resetAt.toISOString() });
+      await send({ type: "done" });
+      await close();
+      return;
+    }
+    customerCurrentCount = decision.current_count;
   } else if (userId) {
     const decision = await enforceCustomerLimit(svc, { user_id: userId, tenant_id: tenantId });
     if (decision.tier === "hard") {
@@ -436,7 +508,8 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   // ── 3. Detect customer tone-change (authenticated only — anon has no memory).
-  if (userId) {
+  // #902: customer audience only — TA mode pins tone and has no rapport memory.
+  if (userId && audience === "customer") {
     const override = detectToneOverride(userMessage);
     if (override) {
       // Load tenant max tone to clamp the override.
@@ -460,11 +533,15 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   let conversationActivePersonaId: string | null = null;
   let conversationContactId: string | null = null;
   if (conversationId) {
+    // #902: the audience filter blocks cross-register continuation — a TA
+    // continuing a customer thread (or vice versa) would leak the wrong
+    // Layer-2 rules into an existing transcript.
     const { data: conv } = await svc
       .from("conversations")
       .select("id, active_persona_id, contact_id")
       .eq("id", conversationId)
       .eq("tenant_id", tenantId)
+      .eq("audience", audience)
       .maybeSingle();
     if (!conv) {
       await send({ type: "error", message: "conversation_not_found" });
@@ -499,6 +576,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
         tenant_id: tenantId,
         user_id: userId,
         anonymous_session_id: !userId ? anonSessionId : null,
+        audience,
         status: "active",
         first_message_at: new Date().toISOString(),
         last_message_at: new Date().toISOString(),
@@ -549,11 +627,15 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // Gated by PHASE_2_CUSTOMER_BUG_FLOW_ENABLED + tenant_settings opt-out
   // inside detectBugIntent.
   try {
-    const bug = await detectBugIntent({
-      message: userMessage,
-      tenant_id: tenantId,
-      db: svc,
-    });
+    // #902: customer-facing offer only — TA bug reporting lives in the help
+    // flows, not as a chat interrupt.
+    const bug = audience === "customer"
+      ? await detectBugIntent({
+          message: userMessage,
+          tenant_id: tenantId,
+          db: svc,
+        })
+      : { triggered: false as const, matched_phrase: null, offer_message: null };
     if (bug.triggered && bug.matched_phrase && bug.offer_message) {
       await send({
         type: "bug_offer",
@@ -599,7 +681,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
 
   let customerRapportLevel: number | null = null;
   let customerRapportDirective: "direct" | null = null;
-  if (userId) {
+  if (userId && audience === "customer") {
     const { data: mem } = await svc
       .from("customer_memories")
       .select("rapport_tone_level, rapport_tone_directive")
@@ -639,7 +721,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     user_id: userId,
     conversation_id: conversationId,
     persona_id: personaSlug,
-    customer_has_booking: false,
+    // #902: the closed-promo gate hides promos from non-booked CUSTOMERS;
+    // a staff member is entitled to see their own tenant's promos.
+    customer_has_booking: audience === "tenant_member",
     context_messages: contextMessages,
   });
 
@@ -649,14 +733,18 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   // ── 7. Resolve tone and build system prompt.
-  const tone = resolveToneLevel({
-    tenant_max_level: tenantMaxTone,
-    persona_slug: personaSlug,
-    customer_rapport_level: customerRapportLevel,
-    customer_rapport_directive: customerRapportDirective,
-    customer_message: userMessage,
-    ...(retrieval.entities.intent === "support" ? { topic: "cancellation_complaint" as const } : {}),
-  });
+  // #902: TA mode pins professional tone (D-195) — customer rapport memory and
+  // message-driven tone resolution are customer-audience machinery.
+  const tone = audience === "tenant_member"
+    ? { level: 2 }
+    : resolveToneLevel({
+        tenant_max_level: tenantMaxTone,
+        persona_slug: personaSlug,
+        customer_rapport_level: customerRapportLevel,
+        customer_rapport_directive: customerRapportDirective,
+        customer_message: userMessage,
+        ...(retrieval.entities.intent === "support" ? { topic: "cancellation_complaint" as const } : {}),
+      });
 
   // BP39 §33.7.1 — build the DISPLAYABLE ASSETS prompt block from the
   // assets retrieveForChat surfaced (already scope-filtered + chunk-filtered).
@@ -675,8 +763,14 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // §20.4 — Customer context: server-resolves the ref against the tenant.
   // A bad/cross-tenant ref returns null; we silently drop it (no error
   // surfaced to the client because context is best-effort enrichment).
-  const customerContext = customerContextRef
+  const customerContext = audience === "customer" && customerContextRef
     ? await resolveCustomerContext({ ref: customerContextRef, tenant_id: tenantId, db: svc })
+    : null;
+
+  // #902 — PLATFORM HELP CONTEXT is built ONLY on the TA branch: customer
+  // prompts structurally never contain platform-internals content.
+  const helpContextBlock = audience === "tenant_member"
+    ? buildHelpContextBlock(userMessage, tenantTier)
     : null;
 
   const systemPromptBase = await buildSystemPrompt({
@@ -685,10 +779,12 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     tenant_tier: tenantTier,
     tone_level: tone.level,
     db: svc,
+    audience,
     knowledge_block: retrieval.knowledge_block,
     ...(displayableAssetsBlock ? { displayable_assets_block: displayableAssetsBlock } : {}),
     ...(pricingAnchorsBlock ? { pricing_anchors_block: pricingAnchorsBlock } : {}),
     ...(customerContext ? { customer_context: customerContext } : {}),
+    ...(helpContextBlock ? { help_context_block: helpContextBlock } : {}),
   });
 
   // Append the §24.9 persona augmentation if Soft1/Soft2 fired.
@@ -766,6 +862,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
 
   const generationModel = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
+  // #902 — separate cost attribution for TA turns (and TA accepts the
+  // soft-tier model downgrade; see AICallPurpose).
+  const chatPurpose = audience === "tenant_member" ? ("ta_chat_main" as const) : ("chat_main" as const);
 
   // BP24 — Streaming-mode opt-in. Default off; flip CHAT_STREAMING_ENABLED=true
   // in the runtime env to route the chat reply through the streaming wrapper
@@ -809,7 +908,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       conversation_id: conversationId,
       user_id: userId,
       model: generationModel,
-      purpose: "chat_main",
+      purpose: chatPurpose,
       max_tokens: 1024,
       system: sys,
       messages,
@@ -959,7 +1058,7 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
           conversation_id: conversationId,
           user_id: userId,
           model: generationModel,
-          purpose: "chat_main" as const,
+          purpose: chatPurpose,
           max_tokens: 1024,
           system: sys,
         };

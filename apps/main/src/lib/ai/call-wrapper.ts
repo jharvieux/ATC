@@ -80,7 +80,11 @@ export type AICallPurpose =
   // §38.8 — Agent-facing quote-builder AI co-pilot.
   | "quote_copilot"
   // §38.8.1 / §39.5 — Token-gated customer chat (quote view, itinerary).
-  | "public_token_chat";
+  | "public_token_chat"
+  // #902 / D-195 — TA-mode dashboard chat (audience='tenant_member').
+  // Deliberately NOT in CUSTOMER_FACING_PURPOSES: staff turns accept the
+  // soft-tier model downgrade (cost containment over register fidelity).
+  | "ta_chat_main";
 
 // Purposes that run customer-facing turns. NOT downgraded at soft1.
 const CUSTOMER_FACING_PURPOSES: ReadonlySet<AICallPurpose> = new Set([
