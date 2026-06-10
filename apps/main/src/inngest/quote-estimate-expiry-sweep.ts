@@ -22,6 +22,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { QuoteEstimateExpiredEmail } from "@/emails/QuoteEstimateExpiredEmail";
+import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 const DEFAULT_VALIDITY_DAYS = 7;
@@ -187,26 +188,46 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
       });
       const unsubscribeUrl = `${baseUrl}/email/unsubscribe?token=${unsubToken}`;
 
-      const jsx = React.createElement(QuoteEstimateExpiredEmail, {
-        layout: {
-          branding: {
-            logo_url: (branding as BrandingRow).logo_url ?? null,
-            primary_color: (branding as BrandingRow).primary_color ?? null,
-            secondary_color: (branding as BrandingRow).secondary_color ?? null,
-            accent_color: (branding as BrandingRow).accent_color ?? null,
-            slogan: (branding as BrandingRow).slogan ?? null,
-          },
-          tenant_legal_name: tenant.legal_name ?? "Your Travel Agency",
-          tenant_business_address: tenant.mailing_address ? String(tenant.mailing_address) : "",
-          unsubscribe_url: unsubscribeUrl,
+      const layout = {
+        branding: {
+          logo_url: (branding as BrandingRow).logo_url ?? null,
+          primary_color: (branding as BrandingRow).primary_color ?? null,
+          secondary_color: (branding as BrandingRow).secondary_color ?? null,
+          accent_color: (branding as BrandingRow).accent_color ?? null,
+          slogan: (branding as BrandingRow).slogan ?? null,
         },
-        customer_name: customerName,
-        cruise_label: cruiseLabel,
-        refresh_url: refreshUrl,
-        validity_days: validityDays,
+        tenant_legal_name: tenant.legal_name ?? "Your Travel Agency",
+        tenant_business_address: tenant.mailing_address ? String(tenant.mailing_address) : "",
+        unsubscribe_url: unsubscribeUrl,
+      };
+
+      // #963 — tenant subject/body override → platform default. A failed
+      // override read or render throws (fail loud → next sweep retries);
+      // we never silently fall back or send an empty body.
+      const resolved = await resolveEmailContent({
+        db,
+        tenant_id: r.tenant_id,
+        email_type: "quote_estimate_expired",
+        variables: {
+          customer_name: customerName,
+          cruise_label: cruiseLabel ?? "your cruise",
+          refresh_url: refreshUrl ?? "",
+          validity_days: String(validityDays),
+        },
       });
 
-      const html = renderToStaticMarkup(jsx);
+      const html =
+        resolved.overrideBodyText !== null
+          ? await renderOverrideBodyInLayout(layout, resolved.overrideBodyText)
+          : renderToStaticMarkup(
+              React.createElement(QuoteEstimateExpiredEmail, {
+                layout,
+                customer_name: customerName,
+                cruise_label: cruiseLabel,
+                refresh_url: refreshUrl,
+                validity_days: validityDays,
+              }),
+            );
 
       const tenantInput: SendEmailInput["tenant"] = {
         id: r.tenant_id,
@@ -220,9 +241,10 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         email_from_name: tenant.email_from_name ?? null,
       };
 
-      const subject = cruiseLabel
-        ? `Your estimate for ${cruiseLabel} has expired — request fresh pricing`
-        : "Your cruise estimate has expired — request fresh pricing";
+      // Default subject comes from the template registry; when there's no
+      // cruise label the {{cruise_label}} variable falls back to "your
+      // cruise" (deliberate small copy change from the pre-#963 wording).
+      const subject = resolved.subject;
 
       const result = await sendEmail({
         db,
