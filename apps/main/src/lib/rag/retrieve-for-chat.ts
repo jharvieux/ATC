@@ -23,7 +23,9 @@ export interface RetrieveForChatInput {
   // Authenticated users.id, or null for anonymous turns. NEVER the anon session
   // id — this flows to ai_call_log.user_id (FK to users) via entity extraction (#850).
   user_id: string | null;
-  conversation_id: string;
+  // Null for turns with no conversation row (#904 draft replies) — a synthetic
+  // UUID here would FK-violate ai_call_log.conversation_id (#850-class).
+  conversation_id: string | null;
   persona_id: string;
   // Persona specialty keywords from the persona base block (§9.1).
   persona_keywords?: string[];
@@ -170,7 +172,7 @@ interface RagRetrieveCallInput {
   query: string;
   tenant_id: string;
   user_id: string | null;
-  conversation_id: string;
+  conversation_id: string | null;
   persona_id: string;
   top_k: number;
   include_closed_promos_for_contact: string | null;

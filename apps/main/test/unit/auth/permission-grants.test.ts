@@ -176,6 +176,8 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   // #902 — TA-mode conversation list (agent + owner; viewer denied by this matrix)
   ["ta_chat", "list"],
   // #903 — Voice profiles (agent + owner; viewer denied)
+  // #904 — draft composer (agent + owner; viewer denied)
+  ["draft_reply", "create"],
   ["voice_profile", "read"],
   ["voice_profile", "write"],
 ];
