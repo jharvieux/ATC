@@ -177,23 +177,39 @@ sits next to the PR on GitHub (durable record + the
    If that returns empty, the branch isn't on a PR yet — abort with a clear
    error so the main agent opens the PR first, then re-runs you.
 
-2. Post the report with the **`<!-- prepr-audit:v1 -->`** marker at the top
-   so the workflow can find it. The marker is invisible in rendered
-   Markdown but present in the comment body:
+2. Compute the diff hash (binds the comment to the exact tree state —
+   an update-branch that changes nothing produces the same hash, so an
+   existing comment still satisfies the check without a repost):
    ```bash
-   gh pr comment "$PR" --body "$(cat <<'EOF'
-   <!-- prepr-audit:v1 -->
+   REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+   DIFF_HASH=$(gh api --paginate --slurp "repos/$REPO/pulls/$PR/files" \
+     | jq -r '[.[][]] | sort_by(.filename)[] | if .patch then (.filename + "\n" + .patch) else (.filename + "\n" + .sha + "\n" + .status) end' \
+     | (sha256sum 2>/dev/null || shasum -a 256) | awk '{print $1}')
+   # (sha256sum 2>/dev/null || shasum -a 256): sha256sum on Linux/CI,
+   # shasum on macOS — both produce identical hex. sha256sum fails fast
+   # (without consuming stdin) when absent, so shasum gets full input.
+   ```
+
+3. Post the report. The marker on line 1 **must include the hash** —
+   write the body to a temp file so `$DIFF_HASH` expands while the rest
+   of the report (which may contain backticks) stays literal:
+   ```bash
+   BODY_TMP=$(mktemp)
+   trap 'rm -f "$BODY_TMP"' EXIT
+   printf '<!-- prepr-audit:v1 diff:%s -->\n' "$DIFF_HASH" > "$BODY_TMP"
+   cat >> "$BODY_TMP" <<'EOF'
    ## Audit (pre-pr-reviewer)
    ...(your report verbatim)...
    EOF
-   )"
+   gh pr comment "$PR" --body "$(cat "$BODY_TMP")"
    ```
-   Use a `heredoc` so backticks and other Markdown survive.
 
-3. Report success back to the main agent: `"Posted as comment on PR #<N>."`
+4. Report success back to the main agent: `"Posted as comment on PR #<N>."`
    If `gh pr comment` fails (auth, rate-limit, network), report the error
    verbatim — don't pretend the post succeeded.
 
-Re-running you after new commits posts a **new** comment (don't try to
-edit prior ones; the workflow looks at the newest matching comment
-against the head commit's timestamp).
+Re-running after new commits recomputes the hash and posts a **new**
+comment — the workflow picks up the freshest one matching the current
+diff. If the diff is unchanged (e.g. only a merge commit was added by
+update-branch), the hash is identical and the existing comment already
+satisfies the check; a new post is harmless but not required.
