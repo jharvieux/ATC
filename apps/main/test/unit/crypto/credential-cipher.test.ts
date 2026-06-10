@@ -176,7 +176,7 @@ describe("credential-cipher (§13.5)", () => {
     const result = decryptCredential(tampered);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(["auth_tag_mismatch", "decryption_failed"]).toContain(result.error.code);
+      expect(result.error.code).toBe("auth_tag_mismatch");
     }
   });
 
