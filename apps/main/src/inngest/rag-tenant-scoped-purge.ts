@@ -7,9 +7,10 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 
-// Cap per-run to prevent FUNCTION_INVOCATION_TIMEOUT on mass-termination spikes.
-// Purge is idempotent — already-purged tenants are a fast no-op on the RAG side.
-const BATCH_LIMIT = 50;
+// TIME_BUDGET_MS is the per-run safety valve. No row-count cap: already-purged tenants
+// return a fast no-op from the RAG service, so the function naturally advances through
+// the full eligible set across daily runs. An explicit LIMIT with no cursor would
+// permanently starve tenants beyond the cap (D-091 busy-spin variant on CCPA data).
 const TIME_BUDGET_MS = 55_000;
 
 export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
@@ -27,7 +28,7 @@ export const ragTenantScopedPurgeOnTermination = inngest.createFunction(
       .select("id")
       .eq("status", "terminated")
       .lt("terminated_at", cutoff)
-      .limit(BATCH_LIMIT);
+      .order("terminated_at", { ascending: true });
 
     if (error) {
       console.error("[rag-tenant-scoped-purge] Failed to fetch terminated tenants: %s", error.message);
