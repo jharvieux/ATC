@@ -84,8 +84,9 @@ CREATE INDEX canonical_match_reviews_status_idx ON public.canonical_match_review
 
 ALTER TABLE public.canonical_match_reviews ENABLE ROW LEVEL SECURITY;
 
--- Platform admins read/write via service-role API routes.
-GRANT SELECT ON public.canonical_match_reviews TO authenticated;
+-- Service-role only — accessed via platform-admin API routes that use the service-role client.
+-- No authenticated grant: RLS default-deny would block it anyway, and Phase 2 (#781) reads
+-- also go through admin API routes, not direct client queries.
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.canonical_match_reviews TO service_role;
 
 -- ── Seed ports from cruisemapper_url_inventory ────────────────────────────────

@@ -71,7 +71,6 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.campaigns TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.campaigns TO service_role;
 
 -- TABLE: public.canonical_match_reviews
-GRANT SELECT ON public.canonical_match_reviews TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.canonical_match_reviews TO service_role;
 
 -- TABLE: public.ccpa_deletion_executions
