@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-200 — 2026-06-10 — #924/#802/#846 shipped: diff-hash audit binding + payout fixes
+
+**Shipped (PR #925):** `pr-audit-section-check` now validates audit comments by sha256 hash of the PR's effective diff (sorted filename+patch pairs) rather than comment timestamps. An update-branch merge commit produces an identical hash → no repost needed; a conflict-resolving merge produces a different hash → re-audit required. Agents embed `diff:<hash>` in their marker comment. Timestamp fallback retained during transition. Closes #924.
+
+**Shipped (PR #927):** (1) `commission-split-on-received`: `payout_records.insert` now explicitly forwards `currency: commission.currency` instead of relying on the column DEFAULT ('USD'). Non-USD commissions (GBP, EUR, etc.) were silently getting the wrong currency. Closes #802. (2) Cancel route: payout_records CAS update now uses `safeAwaitRowCount(query, context, 1)` with narrowed `try/catch` — `ROW_COUNT_MISMATCH` → 409 (concurrent race, caller should retry); other DB errors → re-throw → 500. Pre-fix `.catch(() => null)` collapsed both paths, masking DB failures as silent no-ops. Closes #846.
+
+**Why:** D-198 documented update-branch friction (merge commits staling audits). Issue #924 tracked the hash-binding fix. #802/#846 were D-091 pattern 2 violations identified in prior audit passes.
+
+**How to apply:** Audit agents now MUST use the hash-posting instructions in `.claude/agents/*.md`. Any PR that gets update-branched without a conflict-resolving commit passes without re-audit.
+
+---
+
 ## D-199 — 2026-06-10 — #904 Phase 3 draft composer shipped (PR #922): client-side parsing, code-based suggestion, draft-only contract
 
 **Decision/shipped:** D-193's payoff feature. Key design calls (docs/byo-agents/904-draft-composer-design.md):
