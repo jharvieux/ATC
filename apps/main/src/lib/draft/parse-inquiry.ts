@@ -19,8 +19,8 @@ export async function parseEmlFile(buf: ArrayBuffer): Promise<ParsedInquiry> {
   const { default: PostalMime } = await import("postal-mime");
   const email = await new PostalMime().parse(buf);
   const from = email.from ?? null;
-  // text preferred; postal-mime exposes an html→text conversion side too.
-  const body = (email.text ?? "").trim() || stripHtml(email.html ?? "") || null;
+  // text part preferred; html-only emails go through real DOM parsing.
+  const body = (email.text ?? "").trim() || htmlToText(email.html ?? "") || null;
   return {
     from_name: from?.name?.trim() || null,
     from_email: from?.address?.trim() || null,
@@ -55,17 +55,15 @@ export async function parseMsgFile(buf: ArrayBuffer): Promise<ParsedInquiry> {
   };
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
+// Real HTML parsing via DOMParser — this module runs client-side, so no
+// hand-rolled regex sanitizer (the pattern CodeQL rightly distrusts: tag and
+// entity replacement is unfixable by regex). In non-DOM environments (unit
+// tests run in node) html-only bodies yield "" → null body → the UI's
+// paste-the-body fallback, the same contract as an unparseable .msg.
+function htmlToText(html: string): string {
+  if (!html || typeof DOMParser === "undefined") return "";
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body?.textContent ?? "").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // Minimal RTF→text: drop control words/groups, decode \'hh escapes, honor
