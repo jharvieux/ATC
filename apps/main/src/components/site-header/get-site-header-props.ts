@@ -5,6 +5,7 @@
 
 import { headers } from "next/headers";
 import { getCachedUser } from "@/lib/auth/get-cached-user";
+import { getRequestTenantBranding } from "@/lib/branding/request-branding";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import type { SiteHeaderProps } from "./SiteHeader";
 
@@ -24,5 +25,11 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
   // request rather than running it twice. See get-cached-user.ts.
   const { isAuthenticated } = await getCachedUser();
 
-  return { isPlatformDomain, isAuthenticated };
+  // §16 — tenant subdomains show the tenant's logo in the chrome.
+  // Request-memoized alongside the theme injector and layout metadata.
+  const tenantBranding = isPlatformDomain
+    ? null
+    : await getRequestTenantBranding();
+
+  return { isPlatformDomain, isAuthenticated, tenantBranding };
 }

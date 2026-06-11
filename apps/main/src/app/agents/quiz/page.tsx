@@ -4,12 +4,14 @@
 
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
+import { TenantTheme } from "@/components/branding/TenantTheme";
 import { AgentQuizClient } from "./AgentQuizClient";
 
 export default async function AgentQuizPage() {
   const headerProps = await getSiteHeaderProps();
   return (
     <>
+      <TenantTheme />
       <SiteHeader {...headerProps} />
       <main className="mx-auto max-w-2xl px-6 py-16">
         <h1 className="text-3xl font-bold tracking-tight">Find your agent</h1>
