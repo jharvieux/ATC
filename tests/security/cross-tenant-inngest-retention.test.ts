@@ -153,6 +153,11 @@ describeIf("BP30 Tier 3 — forensicsLogPurgeCron boundary", () => {
 // user-data unit tests).
 
 describeIf("BP30 Tier 3 — userDataPurgeAfterGrace grace-window short-circuit", () => {
+  // The handler's Zod schema (#742 / PR #937) refuses payloads where
+  // purge_at is less than 25 days after deleted_at — a forged event must
+  // not shrink the CCPA grace window. Fixtures therefore date deleted_at
+  // 30 days back so both branches clear the refine and exercise the
+  // sleepUntil short-circuit itself, not payload validation.
   it("defers (returns deferred) when purge_at is in the future", async () => {
     const futurePurgeAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const { result } = await invokeInngestHandler<{ deferred?: boolean; status?: string }>(
@@ -162,7 +167,7 @@ describeIf("BP30 Tier 3 — userDataPurgeAfterGrace grace-window short-circuit",
         data: {
           auth_user_id: "00000000-0000-4000-8000-00000000d001",
           user_id:      "00000000-0000-4000-8000-00000000d002",
-          deleted_at:   new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          deleted_at:   new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
           purge_at:     futurePurgeAt,
         },
       },
@@ -173,24 +178,24 @@ describeIf("BP30 Tier 3 — userDataPurgeAfterGrace grace-window short-circuit",
 
   it("does not defer (runs the purge path) when purge_at is in the past", async () => {
     const pastPurgeAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const { result } = await invokeInngestHandler<{ deferred?: boolean; skipped?: boolean }>(
+    const { result } = await invokeInngestHandler<{ deferred?: boolean; skipped?: boolean; reason?: string }>(
       userDataPurgeAfterGrace,
       {
         name: "user.data_purge_scheduled",
         data: {
           auth_user_id: "00000000-0000-4000-8000-00000000d001",
           user_id:      "00000000-0000-4000-8000-00000000d002",
-          deleted_at:   new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+          deleted_at:   new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
           purge_at:     pastPurgeAt,
         },
       },
     );
     // Past wake → sleepUntil no-ops → handler proceeds, finds no such user
-    // (d002 isn't seeded), returns { skipped: true }. No `status` check
-    // needed here: the no-defer path sets no `status`, so !deferred alone
-    // proves it (unlike the future test, which must also accept
-    // status === "deferred").
+    // (d002 isn't seeded), returns a bare { skipped: true }. Asserting
+    // reason is undefined distinguishes this from the Zod invalid_payload
+    // skip, which would mean the purge path never ran at all.
     expect(Boolean(result.deferred)).toBe(false);
     expect(result.skipped).toBe(true);
+    expect(result.reason).toBeUndefined();
   });
 });

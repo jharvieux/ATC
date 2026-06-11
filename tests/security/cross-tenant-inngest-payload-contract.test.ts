@@ -6,20 +6,25 @@
  * and ONLY from event.data.tenant_id. The static probe (Tier 0) checks
  * the import shape; this live probe verifies the runtime behaviour.
  *
- * Two shapes of contract enforcement live in the codebase today:
+ * Three shapes of contract enforcement live in the codebase today:
  *
  *   1. Centralised via tenantContextFromInngestEvent — throws a
  *      structured error when tenant_id is missing. Handlers using it
  *      fail loudly. This suite asserts the throw.
  *
- *   2. Inline guards — handler checks `data?.tenant_id` itself and
+ *   2. Zod schema validated before any tenant work (#840 / PR #945) —
+ *      invalid payloads return { skipped: true, reason:
+ *      "invalid_payload" } so a permanently-malformed event can't
+ *      trigger infinite Inngest retries. This suite asserts the skip.
+ *
+ *   3. Inline guards — handler checks `data?.tenant_id` itself and
  *      returns `{ skipped: "..." }`. Slightly looser shape but the
  *      same security property. This suite asserts the skip.
  *
- * Handlers that DON'T enforce centrally (a third shape: read
- * event.data.tenant_id directly + pass to createServiceRoleClient
- * calls with manual .eq filters) are flagged as TODO findings rather
- * than tested — fixing them is a separate refactor.
+ * Handlers that DON'T enforce at all (read event.data.tenant_id
+ * directly + pass to createServiceRoleClient calls with manual .eq
+ * filters) are flagged as TODO findings rather than tested — fixing
+ * them is a separate refactor.
  */
 
 import { describe, expect, it } from "vitest";
@@ -50,7 +55,6 @@ describeIf("BP30 Tier 2 — event-payload contract (centralised enforcement)", (
   // ── Handlers using tenantContextFromInngestEvent → throws on missing.
   const centralisedHandlers = [
     { name: "extractMemory", fn: extractMemory, eventName: "conversation.memory_extract_requested" },
-    { name: "githubIssueRetry", fn: githubIssueRetry, eventName: "help.github_issue_creation_failed" },
   ];
 
   it.each(centralisedHandlers)(
@@ -76,6 +80,32 @@ describeIf("BP30 Tier 2 — event-payload contract (centralised enforcement)", (
           data: { tenant_id: 12345 as unknown as string },
         }),
       ).rejects.toThrow(/tenant_id/);
+    },
+  );
+});
+
+describeIf("BP30 Tier 2 — event-payload contract (Zod-schema enforcement)", () => {
+  // ── githubIssueRetry validates event.data with a Zod schema BEFORE
+  // tenantContextFromInngestEvent runs (#840 / PR #945): an invalid
+  // payload returns { skipped: true, reason: "invalid_payload" } instead
+  // of throwing, so a permanently-malformed event can't trigger infinite
+  // Inngest retries. Same security property — no tenant-scoped work
+  // happens without a valid string tenant_id — different failure shape.
+  const invalidPayloads = [
+    { label: "missing", data: { /* deliberately no tenant_id */ } },
+    { label: "non-string", data: { tenant_id: 12345 as unknown as string } },
+  ];
+
+  it.each(invalidPayloads)(
+    "githubIssueRetry skips without dispatching when event.data.tenant_id is $label",
+    async ({ data }) => {
+      const { result } = await invokeInngestHandler<{ skipped?: boolean; reason?: string }>(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        githubIssueRetry as any,
+        { name: "help.github_issue_creation_failed", data },
+      );
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBe("invalid_payload");
     },
   );
 });
