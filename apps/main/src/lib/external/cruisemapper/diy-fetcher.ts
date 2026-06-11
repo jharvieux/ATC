@@ -24,7 +24,7 @@ import { checkRobotsAllowed } from "./robots-check";
 import { getCruiseMapperRateLimiter } from "./rate-limiter";
 
 export type FetchResult =
-  | { status: "ok"; body: string; bodyHash: string; latencyMs: number; url: string }
+  | { status: "ok"; body: string; bodyHash: string; latencyMs: number; url: string; finalUrl: string }
   | { status: "unchanged"; bodyHash: string; latencyMs: number; url: string }
   | { status: "robots_disallowed"; url: string }
   | { status: "client_error"; code: number; url: string }
@@ -88,7 +88,7 @@ export async function fetchCruiseMapperPage(url: string, options: FetchOptions =
           return { status: "unchanged", bodyHash, latencyMs, url };
         }
         console.log(`[cm-diy] ${url} ${res.status} ${latencyMs}ms hash=${bodyHash.slice(0, 12)}`);
-        return { status: "ok", body, bodyHash, latencyMs, url };
+        return { status: "ok", body, bodyHash, latencyMs, url, finalUrl: res.url };
       }
 
       // Non-OK paths.
