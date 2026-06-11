@@ -42,7 +42,7 @@ export async function GET(
         .limit(50),
       db
         .from("bookings")
-        .select("id, created_at, status, cruise_line, ship_name, sailing_date, total_amount_cents")
+        .select("id, created_at, status, cruise_line, ship_name, sailing_date, total_amount_cents, cruise_line_id, cruise_lines(display_name)")
         .eq("primary_contact_id", id)
         .order("created_at", { ascending: false })
         .limit(50),

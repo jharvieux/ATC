@@ -118,6 +118,7 @@ import { refreshCruisemapperStatic } from "@/inngest/refresh-cruisemapper-static
 import { refreshCruisemapperSailings } from "@/inngest/refresh-cruisemapper-sailings";
 // §831 — CruiseMapper port backfill (on-demand re-enrich trigger)
 import { backfillCruisemapperPorts } from "@/inngest/backfill-cruisemapper-ports";
+import { backfillCruiseFk } from "@/inngest/backfill-cruise-fk";
 // #828b §33.4 — derive ballpark general_pricing_ranges from interior lead-ins
 import { deriveGeneralPriceRanges } from "@/inngest/derive-general-price-ranges";
 // BP40 §33.8 — Price-watch daily evaluator
@@ -268,6 +269,8 @@ export const { GET, POST, PUT } = serve({
     refreshCruisemapperSailings,
     // §831: CruiseMapper port backfill (on-demand re-enrich trigger)
     backfillCruisemapperPorts,
+    // #781 Phase 2 Step 2: cruise FK backfill (on-demand)
+    backfillCruiseFk,
     // #828b: derive ballpark general_pricing_ranges from interior lead-ins
     deriveGeneralPriceRanges,
     // BP40: Price-watch daily evaluator (§33.8)

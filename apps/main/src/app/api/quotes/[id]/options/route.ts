@@ -10,6 +10,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { getMaxOptionsForTenant } from "@/lib/quotes/tier-gate";
 import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 
 const OptionCreateSchema = z.object({
   label: z.string().optional(),
@@ -101,6 +102,11 @@ export async function POST(
       ? Math.max(...existingRows.map((r) => r.option_index)) + 1
       : 1;
 
+    const [lineRes, shipRes] = await Promise.all([
+      resolveCanonical(parsed.data.cruise_line, "line", db),
+      resolveCanonical(parsed.data.ship_name, "ship", db),
+    ]);
+
     const { data, error } = await db
       .from("quote_options")
       .insert({
@@ -108,6 +114,8 @@ export async function POST(
         tenant_id: ctx.tenant_id,
         quote_id: quoteId,
         option_index: nextIndex,
+        ...(lineRes.matched && { cruise_line_id: lineRes.id }),
+        ...(shipRes.matched && { cruise_ship_id: shipRes.id }),
       })
       .select()
       .single();

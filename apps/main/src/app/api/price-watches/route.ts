@@ -13,6 +13,7 @@ import { CreateWatchSchema } from "@/lib/price-watches/schemas";
 import { routeFor } from "@/lib/pricing/line-routing";
 import type { CruiseLineCode } from "@/lib/pricing/types";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,11 @@ export async function POST(req: Request): Promise<Response> {
     const rawAmount: unknown = row.price_amount;
     const baselineDollars = typeof rawAmount === "number" ? rawAmount : Number(rawAmount);
 
+    const [lineRes, shipRes] = await Promise.all([
+      resolveCanonical(body.cruise_line, "line", db),
+      resolveCanonical(body.ship, "ship", db),
+    ]);
+
     const insertRow = {
       tenant_id: ctx.tenant_id,
       subscriber_user_id: user.id,
@@ -67,6 +73,8 @@ export async function POST(req: Request): Promise<Response> {
       dollar_threshold: body.dollar_threshold ?? null,
       percent_threshold: body.percent_threshold ?? null,
       status: "active",
+      ...(lineRes.matched && { cruise_line_id: lineRes.id }),
+      ...(shipRes.matched && { cruise_ship_id: shipRes.id }),
     };
     const { data: created, error: insErr } = await db
       .from("price_watches")
