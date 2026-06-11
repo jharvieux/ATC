@@ -1,7 +1,20 @@
 // BP37 §33.6.3 — image-asset recorder host allowlist tests.
+// §953 Phase A — recordCabinImage entity-id + kind-selection tests.
 
-import { describe, expect, it } from "vitest";
-import { _isHostAllowedForTests } from "../../../src/lib/external/cruisemapper/image-asset-recorder";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { _isHostAllowedForTests, recordCabinImage } from "../../../src/lib/external/cruisemapper/image-asset-recorder";
+
+const mocks = vi.hoisted(() => ({
+  signServiceJwt: vi.fn().mockResolvedValue("fake.jwt.token"),
+}));
+
+vi.mock("../../../src/lib/rag-auth/sign-service-jwt", () => ({
+  signServiceJwt: mocks.signServiceJwt,
+}));
+
+vi.mock("../../../src/lib/rag-auth/platform-sentinel", () => ({
+  PLATFORM_SENTINEL_TENANT_ID: "00000000-0000-0000-0000-000000000000",
+}));
 
 describe("isHostAllowed", () => {
   it("allows cruisemapper.com and known CDN", () => {
@@ -41,5 +54,74 @@ describe("isHostAllowed", () => {
     // CruiseMapper serves deck plans as .gif; before #768 the extension
     // allowlist omitted gif, so every deck image was rejected here.
     expect(_isHostAllowedForTests("https://www.cruisemapper.com/images/deckplans/1355a0a74af575c.gif").allowed).toBe(true);
+  });
+});
+
+describe("recordCabinImage — entity-id and kind selection (§953)", () => {
+  let lastPayload: Record<string, unknown> = {};
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("RAG_SERVICE_URL", "https://rag.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ asset_id: "asset-abc123" }),
+    }));
+  });
+
+  it("sends kind=cabin_plan for imageType=floor_plan", async () => {
+    const out = await recordCabinImage({
+      imageUrl: "https://www.cruisemapper.com/images/cabins/2216c841be4f85b.gif",
+      sourcePageUrl: "https://www.cruisemapper.com/cabins/Norwegian-Prima-2216",
+      shipSlug: "Norwegian-Prima-2216",
+      categoryName: "The Haven Premier Owner Suite",
+      imageType: "floor_plan",
+    });
+    expect(out.status).toBe("recorded");
+    const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    lastPayload = JSON.parse(call[1].body as string) as Record<string, unknown>;
+    expect(lastPayload.kind).toBe("cabin_plan");
+  });
+
+  it("sends kind=cabin_photo for imageType=photo", async () => {
+    await recordCabinImage({
+      imageUrl: "https://www.cruisemapper.com/images/cabins/pictures/2216C-5043-90c314a.jpg",
+      sourcePageUrl: "https://www.cruisemapper.com/cabins/Norwegian-Prima-2216",
+      shipSlug: "Norwegian-Prima-2216",
+      categoryName: "The Haven Premier Owner Suite",
+      imageType: "photo",
+    });
+    const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const payload = JSON.parse(call[1].body as string) as Record<string, unknown>;
+    expect(payload.kind).toBe("cabin_photo");
+  });
+
+  it("constructs entity_id as <shipSlug>-cabin-<lowercased-slugified-category>", async () => {
+    await recordCabinImage({
+      imageUrl: "https://www.cruisemapper.com/images/cabins/2216c841be4f85b.gif",
+      sourcePageUrl: "https://www.cruisemapper.com/cabins/Norwegian-Prima-2216",
+      shipSlug: "Norwegian-Prima-2216",
+      categoryName: "3-Bedroom The Haven Premier Owner Suite with Balcony Jacuzzi",
+      imageType: "floor_plan",
+    });
+    const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const payload = JSON.parse(call[1].body as string) as Record<string, unknown>;
+    // Category name lowercased + non-alnum chars → hyphens, trimmed.
+    expect(payload.entity_id).toBe(
+      "Norwegian-Prima-2216-cabin-3-bedroom-the-haven-premier-owner-suite-with-balcony-jacuzzi"
+    );
+  });
+
+  it("returns skipped for a non-allowlisted image URL without calling RAG", async () => {
+    const out = await recordCabinImage({
+      imageUrl: "https://evil.com/fake.gif",
+      sourcePageUrl: "https://www.cruisemapper.com/cabins/Norwegian-Prima-2216",
+      shipSlug: "Norwegian-Prima-2216",
+      categoryName: "Studio",
+      imageType: "floor_plan",
+    });
+    expect(out.status).toBe("skipped");
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
