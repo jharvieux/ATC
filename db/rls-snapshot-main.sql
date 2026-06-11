@@ -379,10 +379,14 @@ CREATE POLICY "campaigns_update" ON public.campaigns
 -- TABLE: public.canonical_match_reviews
 CREATE POLICY "canonical_match_reviews_platform_admin_read" ON public.canonical_match_reviews
   FOR SELECT TO PUBLIC
-  USING (EXISTS ( SELECT 1 FROM public.platform_admins WHERE (platform_admins.auth_user_id = auth.uid())));
+  USING ((EXISTS ( SELECT 1
+   FROM platform_admins
+  WHERE platform_admins.auth_user_id = auth.uid())));
 CREATE POLICY "canonical_match_reviews_platform_admin_update" ON public.canonical_match_reviews
   FOR UPDATE TO PUBLIC
-  USING (EXISTS ( SELECT 1 FROM public.platform_admins WHERE (platform_admins.auth_user_id = auth.uid())));
+  USING ((EXISTS ( SELECT 1
+   FROM platform_admins
+  WHERE platform_admins.auth_user_id = auth.uid())));
 
 -- TABLE: public.ccpa_deletion_executions
 CREATE POLICY "ccpa_executions_delete_service" ON public.ccpa_deletion_executions
