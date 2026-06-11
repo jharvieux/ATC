@@ -2,7 +2,7 @@
 // Verifies: alert-once semantics (only one alert per transition), recovery
 // alert on down→healthy, and fail-closed behavior when the DB write errors.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { upsertVendorHealth, computeStatus, _resetVendorHealthForTests } from "@/lib/vendor-health/registry";
 
 // ---------------------------------------------------------------------------
