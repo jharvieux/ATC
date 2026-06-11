@@ -156,6 +156,19 @@ export function isNonCruiseSailingUrl(url: string): boolean {
   return /-ferry-/i.test(url);
 }
 
+// Clear stale parse_failed status on ferry URLs so monitoring shows
+// "intentionally skipped" rather than a real parser break (#819).
+async function stampFerrySkips(db: SupabaseClient, ferryUrls: string[]): Promise<{ stamped: number }> {
+  const { data, error } = await db
+    .from("cruisemapper_url_inventory")
+    .update({ last_ingest_status: "not_cruise_ship", last_error: null })
+    .in("url", ferryUrls)
+    .eq("last_ingest_status", "parse_failed")
+    .select("url");
+  if (error) throw new Error(`stampFerrySkips failed: ${error.message}`);
+  return { stamped: (data ?? []).length };
+}
+
 export const refreshCruisemapperSailings = inngest.createFunction(
   {
     id: "refresh-cruisemapper-sailings",
@@ -181,6 +194,12 @@ export const refreshCruisemapperSailings = inngest.createFunction(
 
     const allShipUrls = await step.run("load-ships", () => loadInventoryByKind(createServiceRoleClient(), "ship"));
     const shipUrls = allShipUrls.filter((u) => !isNonCruiseSailingUrl(u));
+    const ferryUrls = allShipUrls.filter((u) => isNonCruiseSailingUrl(u));
+    // Stamp any ferry row still showing parse_failed so monitoring reflects
+    // "intentionally skipped", not a real parser break (#819).
+    if (ferryUrls.length > 0) {
+      await step.run("stamp-ferry-skips", () => stampFerrySkips(createServiceRoleClient(), ferryUrls));
+    }
 
     const sailing = emptySailingResult();
     let fetchUnchanged = 0;
