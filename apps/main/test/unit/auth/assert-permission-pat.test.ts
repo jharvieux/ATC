@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHash } from "node:crypto";
 import { assertPermission, AuthForbidden, AuthReauthRequired } from "@/lib/auth/assert-permission";
+import { respondToAuthError } from "@/lib/auth/respond";
 
 const TENANT_ID = "tenant-uuid-aaaa";
 const OTHER_TENANT_ID = "tenant-uuid-bbbb";
@@ -152,38 +153,46 @@ describe("assertPermission — PAT path", () => {
     ).rejects.toBeInstanceOf(AuthReauthRequired);
   });
 
-  it("rejects token not found in DB", async () => {
+  it("rejects token not found in DB → 401 via respondToAuthError", async () => {
     mocks.svcFrom.mockReturnValue(makeServiceRoleClient(null));
-    await expect(
-      assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }),
-    ).rejects.toThrow("invalid personal access token");
+    let err: unknown;
+    try { await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }); }
+    catch (e) { err = e; }
+    expect((err as Error).message).toContain("invalid personal access token");
+    expect(respondToAuthError(err).status).toBe(401);
   });
 
-  it("rejects revoked token", async () => {
+  it("rejects revoked token → 401 via respondToAuthError", async () => {
     mocks.svcFrom.mockReturnValue(
       makeServiceRoleClient({ ...validPat, revoked_at: "2026-06-01T00:00:00Z" }),
     );
-    await expect(
-      assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }),
-    ).rejects.toThrow("revoked");
+    let err: unknown;
+    try { await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }); }
+    catch (e) { err = e; }
+    expect((err as Error).message).toContain("revoked");
+    expect(respondToAuthError(err).status).toBe(401);
   });
 
-  it("rejects token belonging to a different tenant (cross-tenant isolation)", async () => {
+  it("rejects token belonging to a different tenant → 401 via respondToAuthError", async () => {
     mocks.svcFrom.mockReturnValue(
       makeServiceRoleClient({ ...validPat, tenant_id: OTHER_TENANT_ID }),
     );
-    await expect(
-      assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }),
-    ).rejects.toThrow("tenant mismatch");
+    let err: unknown;
+    try { await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }); }
+    catch (e) { err = e; }
+    expect((err as Error).message).toContain("tenant mismatch");
+    expect(respondToAuthError(err).status).toBe(401);
   });
 
-  it("rejects inactive user", async () => {
+  it("rejects inactive user → 401 via respondToAuthError", async () => {
     mocks.svcFrom.mockReturnValue(
       makeServiceRoleClient(validPat, null, { ...activeOwnerUser, status: "suspended" }),
     );
-    await expect(
-      assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }),
-    ).rejects.toThrow("not active");
+    let err: unknown;
+    try { await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }); }
+    catch (e) { err = e; }
+    expect((err as Error).message).toContain("not active");
+    expect(respondToAuthError(err).status).toBe(401);
   });
 
   it("scope ceiling: rejects when required scope not in token's scopes", async () => {
@@ -218,26 +227,28 @@ describe("assertPermission — PAT path", () => {
     ).rejects.toBeInstanceOf(ConsentPendingError);
   });
 
-  it("PAT lookup DB error surfaces as a throw (fail-closed)", async () => {
+  it("PAT lookup DB error → 500 (server fault, not credential failure)", async () => {
     mocks.svcFrom.mockReturnValue(
       makeServiceRoleClient(null, { message: "connection timeout" }),
     );
-    await expect(
-      assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }),
-    ).rejects.toThrow("PAT lookup failed");
+    let err: unknown;
+    try { await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" }); }
+    catch (e) { err = e; }
+    expect((err as Error).message).toContain("PAT lookup failed");
+    // DB error is a server fault — must NOT return 401 (that would hide infra outages).
+    expect(respondToAuthError(err).status).toBe(500);
   });
 
-  it("missing tenant header rejects (missing or platform context)", async () => {
+  it("missing tenant header → 401 via respondToAuthError", async () => {
     const req = new Request("https://tenant.example.com/api/rag/submit/ios-shortcut", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${RAW_TOKEN}`,
-        // no x-resolved-tenant-id
-      },
+      headers: { Authorization: `Bearer ${RAW_TOKEN}` },
     });
-    await expect(
-      assertPermission(req, { resource: "rag_submissions", action: "create" }),
-    ).rejects.toThrow("missing or platform tenant context");
+    let err: unknown;
+    try { await assertPermission(req, { resource: "rag_submissions", action: "create" }); }
+    catch (e) { err = e; }
+    expect((err as Error).message).toContain("missing or platform tenant context");
+    expect(respondToAuthError(err).status).toBe(401);
   });
 
   it("does NOT call tenantContextFromRequest on the PAT path", async () => {
