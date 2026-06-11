@@ -427,6 +427,16 @@ const ALLOWED_PATH_SUFFIXES = [
   // errors return null (no throw). Two-layer isolation satisfied by explicit
   // .eq("tenant_id", tenantId) on both queries. Read-only.
   "/components/branding-setup-banner/BrandingSetupBannerServer.tsx",
+  // #712 — assertPermission PAT path: PAT token lookup + acting user lookup both
+  // require service_role (personal_access_tokens has no authenticated PostgREST
+  // policies; all access is service-role-only). The tenant isolation is enforced
+  // app-layer: patRow.tenant_id === middleware-resolved tenantId. §7.9 / §26.2.
+  "/lib/auth/assert-permission.ts",
+  // #712 — PAT token list + create routes: personal_access_tokens has no
+  // authenticated PostgREST policies. Tenant isolation enforced by explicit
+  // .eq("tenant_id", ctx.tenant_id) + assertPermission. §7.9 / §26.2.
+  "/app/api/integrations/tokens/route.ts",
+  "/app/api/integrations/tokens/[id]/route.ts",
 ];
 
 function endsWithAllowed(filename) {

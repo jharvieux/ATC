@@ -8,9 +8,22 @@
 // just show the Log in button.
 
 import React from "react";
+import type { Metadata } from "next";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
 import { BrandingSetupBannerServer } from "@/components/branding-setup-banner/BrandingSetupBannerServer";
+import { TenantTheme } from "@/components/branding/TenantTheme";
+import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+
+// §16 — tenant subdomains carry the tenant's name + favicon in the tab.
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getRequestTenantBranding();
+  if (!branding) return {};
+  return {
+    title: branding.display_name,
+    ...(branding.favicon_url ? { icons: { icon: branding.favicon_url } } : {}),
+  };
+}
 
 export default async function TenantAreaLayout({
   children,
@@ -18,6 +31,7 @@ export default async function TenantAreaLayout({
   const headerProps = await getSiteHeaderProps();
   return (
     <>
+      <TenantTheme />
       <SiteHeader {...headerProps} />
       <BrandingSetupBannerServer />
       {children}

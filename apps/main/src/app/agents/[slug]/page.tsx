@@ -15,6 +15,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { SiteHeader } from "@/components/site-header/SiteHeader";
 import { getSiteHeaderProps } from "@/components/site-header/get-site-header-props";
+import { TenantTheme } from "@/components/branding/TenantTheme";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { fetchPersonaCustomerBio } from "@/lib/agents/fetch-customer-bio";
 
@@ -40,6 +41,7 @@ export default async function AgentProfilePage({ params }: PageParams) {
 
   return (
     <>
+      <TenantTheme />
       <SiteHeader {...headerProps} />
       <main className="mx-auto max-w-3xl px-6 py-16">
         <div className="flex flex-col gap-6 sm:flex-row sm:items-start">

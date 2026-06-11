@@ -7,6 +7,7 @@
 import { notFound } from "next/navigation";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyCompanionToken } from "@/lib/email/unsubscribe-token";
+import { TenantTheme } from "@/components/branding/TenantTheme";
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -41,6 +42,8 @@ export default async function CompanionPage(props: PageProps) {
 
   return (
     <main className="max-w-[700px] mx-auto px-4 py-8">
+      {/* §16.2 — tenant colors/font when viewed on the tenant subdomain. */}
+      <TenantTheme />
       <header className="border-b-2 border-blue-500 pb-4 mb-8">
         <h1 className="m-0 text-foreground">Your Voyage Guide — {phaseLabel}</h1>
       </header>

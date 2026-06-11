@@ -4,8 +4,8 @@
 // to acme.ai-travelconcierge.com should see acme's branding, so RLS
 // (which gates tenant_branding to authenticated tenant members) won't
 // work here. Service-role bypasses RLS; the fields returned are
-// public-marketing-only (display_name, logo URLs, slogan), never PII
-// or credentials.
+// public-marketing-only (display_name, logo URLs, slogan, theme colors,
+// font, favicon), never PII or credentials.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
@@ -13,7 +13,12 @@ export interface TenantBranding {
   display_name: string;
   logo_url: string | null;
   logo_dark_url: string | null;
+  favicon_url: string | null;
   slogan: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  accent_color: string | null;
+  font_family: string | null;
 }
 
 /**
@@ -34,7 +39,9 @@ export async function fetchTenantBranding(
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("tenants")
-    .select("display_name, status, tenant_branding(logo_url, logo_dark_url, slogan)")
+    .select(
+      "display_name, status, tenant_branding(logo_url, logo_dark_url, favicon_url, slogan, primary_color, secondary_color, accent_color, font_family)",
+    )
     .eq("id", tenantId)
     .maybeSingle();
 
@@ -52,13 +59,27 @@ export async function fetchTenantBranding(
   const row = data as unknown as {
     display_name: string;
     status: string;
-    tenant_branding: Array<{ logo_url: string | null; logo_dark_url: string | null; slogan: string | null }>;
+    tenant_branding: Array<{
+      logo_url: string | null;
+      logo_dark_url: string | null;
+      favicon_url: string | null;
+      slogan: string | null;
+      primary_color: string | null;
+      secondary_color: string | null;
+      accent_color: string | null;
+      font_family: string | null;
+    }>;
   };
   const branding = row.tenant_branding[0] ?? null;
   return {
     display_name: row.display_name,
     logo_url: branding?.logo_url ?? null,
     logo_dark_url: branding?.logo_dark_url ?? null,
+    favicon_url: branding?.favicon_url ?? null,
     slogan: branding?.slogan ?? null,
+    primary_color: branding?.primary_color ?? null,
+    secondary_color: branding?.secondary_color ?? null,
+    accent_color: branding?.accent_color ?? null,
+    font_family: branding?.font_family ?? null,
   };
 }
