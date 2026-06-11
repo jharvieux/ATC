@@ -435,6 +435,16 @@ const ALLOWED_PATH_SUFFIXES = [
   // table. No tenant context (cross-vendor platform data); gated by AdminLayout
   // assertPlatformAdmin. Same pattern as supervisor/page.tsx. Read-only.
   "/app/(admin)/admin/vendor-status/page.tsx",
+  // #712 — assertPermission PAT path: PAT token lookup + acting user lookup both
+  // require service_role (personal_access_tokens has no authenticated PostgREST
+  // policies; all access is service-role-only). The tenant isolation is enforced
+  // app-layer: patRow.tenant_id === middleware-resolved tenantId. §7.9 / §26.2.
+  "/lib/auth/assert-permission.ts",
+  // #712 — PAT token list + create routes: personal_access_tokens has no
+  // authenticated PostgREST policies. Tenant isolation enforced by explicit
+  // .eq("tenant_id", ctx.tenant_id) + assertPermission. §7.9 / §26.2.
+  "/app/api/integrations/tokens/route.ts",
+  "/app/api/integrations/tokens/[id]/route.ts",
 ];
 
 function endsWithAllowed(filename) {

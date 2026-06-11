@@ -22,6 +22,12 @@ const SECTIONS = [
     ],
   },
   {
+    heading: "Developer",
+    items: [
+      { href: "/settings/integrations", label: "API Tokens", desc: "Create and revoke personal access tokens for the iOS Shortcut and external integrations." },
+    ],
+  },
+  {
     heading: "Usage & Compliance",
     items: [
       { href: "/settings/usage",            label: "Usage",                    desc: "Current-period gauges, RAG storage status, and override requests." },

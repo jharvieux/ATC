@@ -38,6 +38,15 @@ const KNOWN_AUTH_FAILURE_PREFIXES = [
   // is intentionally NOT listed here — that's an internal server invariant
   // violation (should 500), not a bad credential (should 401).
   "tenantContextFromRequest:",
+  // #712 — PAT path rejections: bad token, revoked token, wrong tenant,
+  // inactive user, and missing tenant header all map to 401 (credential
+  // failures from the client's perspective). DB errors on PAT lookup
+  // intentionally stay as 500 (server-side fault).
+  "assertPermission: invalid personal access token",
+  "assertPermission: personal access token has been revoked",
+  "assertPermission: personal access token tenant mismatch",
+  "assertPermission: PAT acting user is not active",
+  "assertPermission: PAT path: missing or platform tenant context",
 ] as const;
 
 function isKnownAuthFailure(err: unknown): boolean {
