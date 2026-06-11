@@ -105,6 +105,8 @@ export const vendorHealthProbe = inngest.createFunction(
     // 15-min cadence (#894 Inngest cost): real traffic also records vendor
     // health via recordVendorSuccess/Failure, so the probe is a backstop.
     triggers: [{ cron: "*/15 * * * *" }],
+    // Prevent overlapping runs from double-counting failures and double-paging.
+    concurrency: { limit: 1 },
   },
   async () => {
     if (process.env.STAGING_MODE === "true") {
