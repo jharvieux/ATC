@@ -2,7 +2,7 @@
 
 An Apple Shortcuts shortcut that lets you share any selected text or webpage from Safari (or any other app) directly to your ATC knowledge base.
 
-> **Token generation UI coming soon.** This shortcut requires a personal API token. The Settings → Integrations page that generates long-lived tokens is not yet built — see [#712](https://github.com/jharvieux/ATC/issues/712) for status. The setup steps below describe the target state once that feature ships.
+This shortcut requires a personal API token. Generate one from **Settings → API Tokens** in your ATC workspace.
 
 ---
 
@@ -19,19 +19,10 @@ An Apple Shortcuts shortcut that lets you share any selected text or webpage fro
 
 ### Step 1 — Get your API token
 
-**When Settings → Integrations is available:**
 1. Open your platform in a browser: `https://yourteam.atcplatform.com`
-2. Sign in and go to **Settings → Integrations**
-3. Tap **Generate API Token** and copy it to your clipboard
-
-**Developer workaround (until the UI ships):**
-On a Mac, open the platform in Safari, sign in, then open Web Inspector (Develop menu → Show Web Inspector → Console) and run:
-
-```javascript
-(await window.__supabase?.auth?.getSession())?.data?.session?.access_token
-```
-
-Copy the printed token. Note that session JWTs expire in approximately 1 hour — you will need to update the `ATC Token` action in the shortcut each time it expires. Long-lived tokens from Settings → Integrations will not have this limitation.
+2. Sign in and go to **Settings → API Tokens**
+3. Click **Create**, give the token a name (e.g. "iOS Shortcut"), and click **Create** again
+4. Copy the token — it is shown exactly once
 
 ### Step 2 — Create the shortcut
 
