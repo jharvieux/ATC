@@ -44,8 +44,8 @@ export const backfillCruiseFk = inngest.createFunction(
     triggers: [{ event: "cruise.fk_backfill_requested" }],
   },
   async ({ event, step }) => {
-    // Cross-tenant by design — backfill spans all tenants. Event kind is
-    // platform_admin (event-registry.ts); service role bypasses RLS intentionally.
+    // d091-allow:service-role-tenant — FK backfill spans all tenants by design;
+    // platform_admin event kind; service-role bypasses RLS intentionally.
     const svc = createServiceRoleClient();
 
     const payload = PayloadSchema.parse(event.data);

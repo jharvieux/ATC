@@ -25,11 +25,12 @@ export async function resolveCanonical(
   const variants = safeVariants(norm);
 
   if (entityType === "line") {
-    const { data: lines } = await db
+    const { data: lines, error: linesErr } = await db
       .from("cruise_lines")
       .select("id, slug, canonical_name, display_name")
       .eq("is_active", true);
 
+    if (linesErr) throw new Error(`resolveCanonical: cruise_lines select failed: ${linesErr.message}`);
     if (lines) {
       for (const v of variants) {
         for (const line of lines) {
@@ -64,11 +65,12 @@ export async function resolveCanonical(
       if (alias?.cruise_ship_id) return { matched: true, id: alias.cruise_ship_id };
     }
 
-    const { data: ships } = await db
+    const { data: ships, error: shipsErr } = await db
       .from("cruise_ships")
       .select("id, slug, canonical_name")
       .eq("is_active", true);
 
+    if (shipsErr) throw new Error(`resolveCanonical: cruise_ships select failed: ${shipsErr.message}`);
     if (ships) {
       for (const v of variants) {
         for (const ship of ships) {
