@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-207 — 2026-06-11 — #781 Phase 2 Step 2: canonical_match_reviews gains real RLS policies (D-203 reversal)
+
+**Decision.** PR #993 adds authenticated SELECT + UPDATE RLS policies (`canonical_match_reviews_platform_admin_read`, `canonical_match_reviews_platform_admin_update`) to `canonical_match_reviews` and grants `SELECT, UPDATE TO authenticated`. This reverses the D-203 call that left it RLS-on-zero-policies / service-role-only. Accordingly, the `canonical_match_reviews` entry has been removed from `db/rls-exceptions.{sql,txt}`.
+
+**Why:** The Phase-2 admin review queue reads unmatched canonical values via `GET /api/admin/canonical-matcher/review-queue` and confirms/rejects via `PATCH`, both authenticated PostgREST paths behind `withPlatformAdminAudit`. Service-role-only was correct for Phase 1 (table existed but had no UI). Phase 2 adds the UI, so authenticated PostgREST policies are now needed and the exception entry is no longer justified.
+
+**Related:** PR #993 (Phase 2 Step 2, canonical matcher + backfill + reader repointing), D-203 (original zero-policy decision).
+
+---
+
 ## D-206 — 2026-06-10 — §953 Phase A shipped (PR #991); #781 Phase 2 Step 1 merged (PR #990); migration ordering lesson
 
 **Decisions/facts established:**
