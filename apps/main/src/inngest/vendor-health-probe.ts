@@ -140,7 +140,7 @@ export const vendorHealthProbe = inngest.createFunction(
     const svc = createServiceRoleClient();
 
     // Upsert durable state + fire transition alerts.
-    await Promise.allSettled(
+    const settled = await Promise.allSettled(
       allResults.map(async (r) => {
         const { prior_status, new_status, transitioned } = await upsertVendorHealth({
           vendor: r.vendor,
@@ -176,6 +176,14 @@ export const vendorHealthProbe = inngest.createFunction(
       }),
     );
 
-    return { ok: true };
+    const upsertFailures = settled.filter((r) => r.status === "rejected");
+    if (upsertFailures.length > 0) {
+      console.error(
+        `vendor-health-probe: ${upsertFailures.length} upsert(s) failed`,
+        upsertFailures.map((r) => (r as PromiseRejectedResult).reason),
+      );
+    }
+
+    return { ok: true, upsert_failures: upsertFailures.length };
   },
 );
