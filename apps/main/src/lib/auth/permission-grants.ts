@@ -171,6 +171,10 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("rag_submissions", "approve"),
   key("rag_submissions", "reject"),
   key("rag_submissions", "review"),
+  // #712 — Personal API tokens (owner-only; agents/viewers cannot mint tokens).
+  key("api_tokens", "list"),
+  key("api_tokens", "create"),
+  key("api_tokens", "revoke"),
 ]);
 
 const GRANTS_BY_ROLE: Record<UserRole, ReadonlySet<GrantKey>> = {
