@@ -4,6 +4,32 @@ Newest entries on top.
 
 ---
 
+## D-208 — 2026-06-11 — #811 shipped with D-170 scope; D-201 narrowing deferred to #1003
+
+**Decision:** PR #1001 merged using the D-170 role scope (broader reviewer access) and `assertPlatformRole` mechanism. D-201's narrower spec (reviewer = RAG + chunks only; finance/support deferred; resource-centric mechanism) was not followed — the operator's call is to ship the fuller scope now and revisit the D-201 narrowing later.
+
+**Why:** D-170 scope is more operationally useful; doesn't create security exposure (every API route is still role-gated). D-201 narrowing would restrict reviewer to 2 admin areas, which may not match actual operator intent.
+
+**What to apply:** issue #1003 tracks the scope-alignment review.
+
+**Rejected:** implementing D-201 scope narrowing before merge (would have made reviewer access too limited to be useful).
+
+---
+
+## D-207 — 2026-06-11 — Nightly #997 root-caused (test-shape drift, not regression); standalone snapshot-sync chosen to unblock dev
+
+**Decisions/facts established:**
+- **Nightly failures #997/#998 were test-fixture drift, not product bugs.** PR #945 (#840) made `githubIssueRetry` Zod-skip (`{ skipped: true, reason: "invalid_payload" }`) instead of throwing on bad tenant_id; PR #937 (#742) added a `purge_at ≥ deleted_at + 25 days` refine to `userDataPurgeAfterGrace`. The env-gated Tier-2/3 nightly tests (skipped in PR CI — they need `SUPABASE_DB_URL`) still encoded the old shapes. Fixed in PR #999: githubIssueRetry moved to a new "Zod-schema enforcement" suite; retention fixtures dated `deleted_at` 30 days back; past-branch assertion tightened (`reason` undefined) because it had been passing accidentally via the invalid_payload skip.
+- **Lesson: hardening PRs that change a handler's failure shape must grep `tests/security/` for that handler's name** — those suites are invisible to PR CI's affected-tests path and only fail at the next nightly.
+- **Standalone snapshot-sync PR (operator's call) over merging #993/#994/#995 first.** Prod migrations applied 2026-06-10 ahead of their PRs broke the required RLS Snapshot Diff check for EVERY PR into dev. PR #1000 regenerated `db/{rls,grants}-snapshot-main.sql` from the live DB (+21 lines, exactly the 3 tables: canonical_match_reviews, vendor_health, personal_access_tokens). Rejected: merging the three feature PRs first (each also failed the check since none carried the other two's tables; user deferred PR triage).
+- **Corollary to D-205: an MCP prod apply ahead of its PR merge blocks ALL of dev until snapshots sync.** If migrations are applied out-of-band again, regenerate + commit the snapshots in the same session.
+- **Nightly workflow run-conclusion is always "success"** — failures surface only via the posted issue (the test step swallows its exit code). `gh run rerun` is useless on it; verify by dispatching a fresh run and checking whether a new issue appears.
+- **Audit warnings tracked elsewhere:** d091 noted `vendor_health` + `personal_access_tokens` are RLS-enabled/zero-policy and not on `db/rls-exceptions` (entries arrive with #994/#995), and the stale `canonical_match_reviews` rls-exceptions entry (#993 removes it).
+
+**Related artifacts:** PRs #999, #1000 (both merged); issues #997, #998 (closed); SESSION.md 2026-06-11.
+
+---
+
 ## D-206 — 2026-06-10 — §953 Phase A shipped (PR #991); #781 Phase 2 Step 1 merged (PR #990); migration ordering lesson
 
 **Decisions/facts established:**
