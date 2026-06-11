@@ -71,6 +71,7 @@
 -- public.pending_rag_sync (rls_enabled)
 -- public.persona_addendums (rls_enabled)
 -- public.persona_safety_config (rls_enabled)
+-- public.personal_access_tokens (rls_enabled)
 -- public.personas (rls_enabled)
 -- public.pipeline_stages (rls_enabled)
 -- public.platform_admins (rls_enabled)

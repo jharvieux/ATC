@@ -265,6 +265,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.persona_addendums TO service_role
 GRANT SELECT ON public.persona_safety_config TO authenticated;
 GRANT SELECT, UPDATE ON public.persona_safety_config TO service_role;
 
+-- TABLE: public.personal_access_tokens
+GRANT SELECT, INSERT, UPDATE ON public.personal_access_tokens TO service_role;
+
 -- TABLE: public.personas
 GRANT SELECT ON public.personas TO authenticated;
 GRANT SELECT, UPDATE ON public.personas TO service_role;

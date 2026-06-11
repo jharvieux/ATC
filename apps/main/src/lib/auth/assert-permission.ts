@@ -14,6 +14,7 @@
 // mutating route was therefore open to any active tenant member, regardless
 // of role.
 
+import { createHash } from "node:crypto";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import {
@@ -25,6 +26,9 @@ import { isPermitted, type UserRole } from "./permission-grants";
 import { getConsentPending, type PendingConsent } from "@/lib/consent/pending";
 import { createRequestScopedClient, createBearerClient, extractBearerToken } from "./ssr-client";
 import { getCachedUser } from "./get-cached-user";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { safeAwait } from "@/lib/db/safe-mutation";
 
 export type User = {
   id: string;
@@ -94,6 +98,9 @@ interface AssertPermissionOpts {
   action: string;
 }
 
+// #712 — 5-minute throttle on last_used_at writes to avoid a DB write on every request.
+const PAT_LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
+
 export async function assertPermission(
   req: Request,
   opts: AssertPermissionOpts,
@@ -122,9 +129,17 @@ export async function assertPermission(
     return { ctx: ctxBypass, user: syntheticUser };
   }
 
-  const ctx = await tenantContextFromRequest(req);
-
   const pathname = new URL(req.url).pathname;
+  const bearerToken = extractBearerToken(req);
+
+  // #712 — Personal access token path. PATs are NOT Supabase JWTs, so they
+  // must be intercepted here before tenantContextFromRequest calls auth.getUser(),
+  // which would fail trying to verify a non-JWT bearer token.
+  if (bearerToken?.startsWith("atc_pat_")) {
+    return assertPermissionWithPAT(req, bearerToken, pathname, opts);
+  }
+
+  const ctx = await tenantContextFromRequest(req);
 
   // Bearer token path — used by the browser extension and iOS Shortcut.
   // These clients cannot set HttpOnly cookies; they authenticate via
@@ -133,7 +148,6 @@ export async function assertPermission(
   // auth_user_id — no second getUser() call needed.
   // Sensitive routes (§17.7) require a browser re-auth UI that external
   // clients don't have, so they are hard-blocked here.
-  const bearerToken = extractBearerToken(req);
   if (bearerToken) {
     if (isSensitiveRoute(pathname)) {
       throw new AuthReauthRequired(pathname);
@@ -249,6 +263,112 @@ export async function assertPermission(
   }
 
   return { ctx, user };
+}
+
+// ---------------------------------------------------------------------------
+// #712 — Personal access token auth path
+// ---------------------------------------------------------------------------
+
+type PatRow = {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  scopes: string[];
+  revoked_at: string | null;
+  last_used_at: string | null;
+};
+
+async function assertPermissionWithPAT(
+  req: Request,
+  rawToken: string,
+  pathname: string,
+  opts: AssertPermissionOpts,
+): Promise<{ ctx: TenantContext; user: User }> {
+  // Sensitive routes are hard-blocked for all non-session auth.
+  if (isSensitiveRoute(pathname)) {
+    throw new AuthReauthRequired(pathname);
+  }
+
+  const tenantId = req.headers.get(RESOLVED_TENANT_ID_HEADER);
+  if (!tenantId || tenantId === "platform") {
+    throw new Error("assertPermission: PAT path: missing or platform tenant context.");
+  }
+
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  const svc = createServiceRoleClient();
+
+  const { data: pat, error: patErr } = await svc
+    .from("personal_access_tokens")
+    .select("id, tenant_id, user_id, scopes, revoked_at, last_used_at")
+    .eq("token_hash", tokenHash)
+    .maybeSingle();
+
+  if (patErr) {
+    throw new Error(`assertPermission: PAT lookup failed: ${patErr.message}`);
+  }
+  if (!pat) {
+    throw new Error("assertPermission: invalid personal access token.");
+  }
+  const patRow = pat as PatRow;
+  if (patRow.revoked_at) {
+    throw new Error("assertPermission: personal access token has been revoked.");
+  }
+  // Two-layer tenant isolation: token row's tenant_id vs middleware-resolved tenant.
+  if (patRow.tenant_id !== tenantId) {
+    throw new Error("assertPermission: personal access token tenant mismatch.");
+  }
+
+  // Load acting user — reject unless active in the resolved tenant.
+  const { data: userRow, error: userErr } = await svc
+    .from("users")
+    .select("id, auth_user_id, tenant_id, status, role")
+    .eq("id", patRow.user_id)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  if (userErr) {
+    throw new Error(`assertPermission: PAT user lookup failed: ${userErr.message}`);
+  }
+  if (!userRow || (userRow as { status: string }).status !== "active") {
+    throw new Error("assertPermission: PAT acting user is not active.");
+  }
+  const actingUser = userRow as User;
+
+  // Scope ceiling: the token's scopes must include this resource:action.
+  const scopeKey = `${opts.resource}:${opts.action}`;
+  if (!patRow.scopes.includes(scopeKey)) {
+    throw new AuthForbidden(opts.resource, opts.action, actingUser.role);
+  }
+
+  // Role RBAC — acting user's role must also grant this operation.
+  if (!isPermitted(actingUser.role, opts.resource, opts.action)) {
+    throw new AuthForbidden(opts.resource, opts.action, actingUser.role);
+  }
+
+  // Consent gate — same as JWT bearer path.
+  const consentPending = await getConsentPending(actingUser.auth_user_id);
+  if (consentPending.length > 0) {
+    throw new ConsentPendingError(pathname, consentPending);
+  }
+
+  // Throttled last_used_at update: at most one write per PAT_LAST_USED_THROTTLE_MS.
+  const lastUsed = patRow.last_used_at ? new Date(patRow.last_used_at).getTime() : 0;
+  if (Date.now() - lastUsed > PAT_LAST_USED_THROTTLE_MS) {
+    await safeAwait(
+      svc
+        .from("personal_access_tokens")
+        .update({ last_used_at: new Date().toISOString() })
+        .eq("id", patRow.id),
+      "personal_access_tokens.update.last_used_at",
+    );
+  }
+
+  const ctx: TenantContext = {
+    tenant_id: tenantId,
+    source: { kind: "http_request", user_id: actingUser.auth_user_id },
+  };
+
+  return { ctx, user: actingUser };
 }
 
 /**
