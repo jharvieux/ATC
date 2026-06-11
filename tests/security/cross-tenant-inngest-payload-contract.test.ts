@@ -50,7 +50,6 @@ describeIf("BP30 Tier 2 — event-payload contract (centralised enforcement)", (
   // ── Handlers using tenantContextFromInngestEvent → throws on missing.
   const centralisedHandlers = [
     { name: "extractMemory", fn: extractMemory, eventName: "conversation.memory_extract_requested" },
-    { name: "githubIssueRetry", fn: githubIssueRetry, eventName: "help.github_issue_creation_failed" },
   ];
 
   it.each(centralisedHandlers)(
@@ -76,6 +75,32 @@ describeIf("BP30 Tier 2 — event-payload contract (centralised enforcement)", (
           data: { tenant_id: 12345 as unknown as string },
         }),
       ).rejects.toThrow(/tenant_id/);
+    },
+  );
+});
+
+describeIf("BP30 Tier 2 — event-payload contract (Zod-schema enforcement)", () => {
+  // ── githubIssueRetry validates event.data with a Zod schema BEFORE
+  // tenantContextFromInngestEvent runs (#840 / PR #945): an invalid
+  // payload returns { skipped: true, reason: "invalid_payload" } instead
+  // of throwing, so a permanently-malformed event can't trigger infinite
+  // Inngest retries. Same security property — no tenant-scoped work
+  // happens without a valid string tenant_id — different failure shape.
+  const invalidPayloads = [
+    { label: "missing", data: { /* deliberately no tenant_id */ } },
+    { label: "non-string", data: { tenant_id: 12345 as unknown as string } },
+  ];
+
+  it.each(invalidPayloads)(
+    "githubIssueRetry skips without dispatching when event.data.tenant_id is $label",
+    async ({ data }) => {
+      const { result } = await invokeInngestHandler<{ skipped?: boolean; reason?: string }>(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        githubIssueRetry as any,
+        { name: "help.github_issue_creation_failed", data },
+      );
+      expect(result.skipped).toBe(true);
+      expect(result.reason).toBe("invalid_payload");
     },
   );
 });
