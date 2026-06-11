@@ -64,10 +64,13 @@ export const backfillCruiseFk = inngest.createFunction(
         let skipped = 0;
 
         while (true) {
+          // Fetch rows where EITHER FK is still null and free-text is present.
+          // Using OR so a row with cruise_line_id set but cruise_ship_id null is
+          // still backfilled (and vice versa).
           const baseQuery = svc
             .from(table)
             .select(`id, cruise_line, ${shipCol}`)
-            .is("cruise_line_id", null)
+            .or("cruise_line_id.is.null,cruise_ship_id.is.null")
             .not("cruise_line", "is", null)
             .order("id")
             .limit(BATCH);
@@ -90,12 +93,13 @@ export const backfillCruiseFk = inngest.createFunction(
               resolveCanonical(shipRaw, "ship", svc),
             ]);
 
-            const update: Record<string, string | null> = {
-              cruise_line_id: lineResult.matched ? lineResult.id : null,
-              cruise_ship_id: shipResult.matched ? shipResult.id : null,
-            };
+            // Only include a FK key when the entity matched — never overwrite
+            // a previously-correct FK with null.
+            const update: Record<string, string> = {};
+            if (lineResult.matched) update.cruise_line_id = lineResult.id;
+            if (shipResult.matched) update.cruise_ship_id = shipResult.id;
 
-            if (lineResult.matched || shipResult.matched) {
+            if (Object.keys(update).length > 0) {
               await safeAwait(
                 svc.from(table).update(update).eq("id", row.id),
                 `${table}.update.cruise_fk`,

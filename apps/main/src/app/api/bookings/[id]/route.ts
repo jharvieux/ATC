@@ -170,7 +170,6 @@ export async function PATCH(
     return Response.json({ error: "no_updatable_fields" }, { status: 400 });
   }
 
-  // If cruise_line or ship_name changed, re-resolve FKs.
   if ("cruise_line" in patch) {
     const r = await resolveCanonical(patch.cruise_line as string | undefined, "line", db);
     patch.cruise_line_id = r.matched ? r.id : null;

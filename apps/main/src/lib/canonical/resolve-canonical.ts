@@ -25,7 +25,6 @@ export async function resolveCanonical(
   const variants = safeVariants(norm);
 
   if (entityType === "line") {
-    // Exact match against slug / canonical_name / display_name.
     const { data: lines } = await db
       .from("cruise_lines")
       .select("id, slug, canonical_name, display_name")
@@ -45,7 +44,6 @@ export async function resolveCanonical(
       }
     }
 
-    // Alias lookup — all variants.
     for (const v of variants) {
       const { data: alias } = await db
         .from("cruise_line_aliases")
@@ -56,7 +54,6 @@ export async function resolveCanonical(
       if (alias?.cruise_line_id) return { matched: true, id: alias.cruise_line_id };
     }
   } else {
-    // Ships: alias lookup first (canonical_name / slug also checked as fallback).
     for (const v of variants) {
       const { data: alias } = await db
         .from("cruise_ship_aliases")
