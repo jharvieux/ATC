@@ -6,7 +6,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
-import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface ReviewActionBody {
   chunk_id: string;
@@ -16,7 +16,7 @@ interface ReviewActionBody {
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -72,7 +72,7 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

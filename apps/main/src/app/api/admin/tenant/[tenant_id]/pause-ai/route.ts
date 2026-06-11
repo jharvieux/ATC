@@ -20,13 +20,13 @@
 // "ai_kill_switch_tenant_pause" (or "ai_kill_switch_tenant_resume" on resume).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function POST(req: Request, props: { params: Promise<{ tenant_id: string }> }): Promise<Response> {
   const params = await props.params;
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

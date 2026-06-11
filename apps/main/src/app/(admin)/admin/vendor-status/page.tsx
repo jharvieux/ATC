@@ -3,10 +3,12 @@
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { listVendorHealth } from "@/lib/vendor-health/registry";
+import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function VendorStatusPage(): Promise<JSX.Element> {
+  await assertPlatformRolePage(["superadmin", "support"]);
   const svc = createServiceRoleClient();
   const rows = await listVendorHealth(svc);
 

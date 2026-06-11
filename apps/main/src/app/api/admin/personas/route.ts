@@ -9,7 +9,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import {
-  assertPlatformAdmin,
+  assertPlatformRole,
   PlatformAdminError,
   type PlatformAdminContext,
 } from "@/lib/auth/assert-platform-admin";
@@ -19,7 +19,7 @@ import { PERSONA_LIST_COLUMNS } from "@/lib/personas/persona-admin";
 export async function GET(req: Request): Promise<Response> {
   let ctx: PlatformAdminContext;
   try {
-    ctx = await assertPlatformAdmin(req);
+    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
