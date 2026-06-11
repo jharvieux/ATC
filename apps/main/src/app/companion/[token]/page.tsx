@@ -5,9 +5,21 @@
 // Tenant branding applied via the tenant resolver middleware.
 
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { verifyCompanionToken } from "@/lib/email/unsubscribe-token";
 import { TenantTheme } from "@/components/branding/TenantTheme";
+import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+
+// §16.2 — tenant subdomains show the tenant's name + favicon on companion pages.
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getRequestTenantBranding();
+  if (!branding) return {};
+  return {
+    title: branding.display_name,
+    ...(branding.favicon_url ? { icons: { icon: branding.favicon_url } } : {}),
+  };
+}
 
 interface PageProps {
   params: Promise<{ token: string }>;

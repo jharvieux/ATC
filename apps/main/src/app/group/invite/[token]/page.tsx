@@ -3,6 +3,19 @@
 // cabin grid, and RSVP buttons if valid.
 
 import * as React from "react";
+import type { Metadata } from "next";
+import { TenantTheme } from "@/components/branding/TenantTheme";
+import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+
+// §16.2 — tenant subdomains show the tenant's name + favicon on the invite page.
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getRequestTenantBranding();
+  if (!branding) return {};
+  return {
+    title: branding.display_name,
+    ...(branding.favicon_url ? { icons: { icon: branding.favicon_url } } : {}),
+  };
+}
 
 type PageProps = { params: Promise<{ token: string }> };
 
@@ -61,6 +74,8 @@ export default async function InvitePage(props: PageProps): Promise<React.ReactE
 
   return (
     <main className="max-w-[680px] mx-auto px-4 py-8">
+      {/* §16.2 — tenant colors/font when viewed on the tenant subdomain. */}
+      <TenantTheme />
       {group.hero_image_url && (
         // eslint-disable-next-line @next/next/no-img-element
         (<img src={group.hero_image_url} alt={group.departure_port} className="w-full rounded-xl mb-6 max-h-[300px] object-cover" />)
