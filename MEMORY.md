@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-210 — 2026-06-11 — #781 Phase 2 Step 2: canonical_match_reviews gains real RLS policies (D-203 reversal)
+
+**Decision.** PR #993 adds authenticated SELECT + UPDATE RLS policies (`canonical_match_reviews_platform_admin_read`, `canonical_match_reviews_platform_admin_update`) to `canonical_match_reviews` and grants `SELECT, UPDATE TO authenticated`. This reverses the D-203 call that left it RLS-on-zero-policies / service-role-only. Accordingly, the `canonical_match_reviews` entry has been removed from `db/rls-exceptions.{sql,txt}`.
+
+**Why:** The Phase-2 admin review queue reads unmatched canonical values via `GET /api/admin/canonical-matcher/review-queue` and confirms/rejects via `PATCH`, both authenticated PostgREST paths behind `withPlatformAdminAudit`. Service-role-only was correct for Phase 1 (table existed but had no UI). Phase 2 adds the UI, so authenticated PostgREST policies are now needed and the exception entry is no longer justified.
+
+**Related:** PR #993 (Phase 2 Step 2, canonical matcher + backfill + reader repointing), D-203 (original zero-policy decision).
+
+---
+
 ## D-209 — 2026-06-11 — Tenant branding applied at runtime (§16.2) — token mapping + injection points chosen
 
 **Decision:** "Implement the tenant branding UI" interpreted as *applying* the saved brand to tenant-facing surfaces — the settings form already existed (punch-list #21, closed in #346) but nothing web-side consumed colors/font/favicon (emails did). Built on branch `claude/tenant-branding-ui-1piloz`. Key calls:
@@ -43,6 +53,7 @@ Newest entries on top.
 - **Audit warnings tracked elsewhere:** d091 noted `vendor_health` + `personal_access_tokens` are RLS-enabled/zero-policy and not on `db/rls-exceptions` (entries arrive with #994/#995), and the stale `canonical_match_reviews` rls-exceptions entry (#993 removes it).
 
 **Related artifacts:** PRs #999, #1000 (both merged); issues #997, #998 (closed); SESSION.md 2026-06-11.
+
 
 ---
 

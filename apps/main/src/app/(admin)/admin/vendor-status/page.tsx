@@ -1,54 +1,60 @@
-// §26.9 — Operator-facing vendor status page.
-// Reads the in-memory registry. Per-instance snapshot — if the operator
-// hits this page multiple times they may see slightly different states
-// from different Vercel function instances during a partial outage.
+// §26.9 / #786 — Operator-facing vendor status page.
+// Reads from the durable `vendor_health` table for a cross-instance consistent view.
 
-import { snapshotVendorHealth } from "@/lib/vendor-health/registry";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { listVendorHealth } from "@/lib/vendor-health/registry";
 import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function VendorStatusPage(): Promise<JSX.Element> {
   await assertPlatformRolePage(["superadmin", "support"]);
-  const snapshot = snapshotVendorHealth();
-  const rows = Object.entries(snapshot);
+  const svc = createServiceRoleClient();
+  const rows = await listVendorHealth(svc);
 
   return (
     <main className="px-6 py-6 max-w-[880px] mx-auto">
-      <h1>Vendor status (this instance)</h1>
+      <h1>Vendor status</h1>
       <p className="text-muted-foreground">
-        Updated by the <code>vendor-health-probe</code> cron every minute. This
-        is a per-instance view — open the page multiple times to compare
-        across instances.
+        Updated by the <code>vendor-health-probe</code> cron every 15 minutes.
+        Cross-instance consistent view — reads from the shared <code>vendor_health</code> table.
       </p>
-      <table className="w-full border-collapse mt-4 text-sm">
-        <thead>
-          <tr className="bg-muted">
-            <th className="text-left px-2.5 py-2.5 border-b border-border">Vendor</th>
-            <th className="text-left px-2.5 py-2.5 border-b border-border">Status</th>
-            <th className="text-left px-2.5 py-2.5 border-b border-border">Failures</th>
-            <th className="text-left px-2.5 py-2.5 border-b border-border">Last checked</th>
-            <th className="text-left px-2.5 py-2.5 border-b border-border">Last error</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([name, state]) => (
-            <tr key={name}>
-              <td className="px-2.5 py-2.5 border-b border-muted font-semibold">{name}</td>
-              <td className={`px-2.5 py-2.5 border-b border-muted ${statusColorClass(state.status)}`}>
-                {state.status}
-              </td>
-              <td className="px-2.5 py-2.5 border-b border-muted">{state.consecutive_failures}</td>
-              <td className="px-2.5 py-2.5 border-b border-muted">
-                {state.last_checked_at ?? "—"}
-              </td>
-              <td className="px-2.5 py-2.5 border-b border-muted text-red-600 dark:text-red-400">
-                {state.last_error ?? "—"}
-              </td>
+      {rows.length === 0 ? (
+        <p className="mt-4 text-muted-foreground">No data yet — probe hasn&apos;t run.</p>
+      ) : (
+        <table className="w-full border-collapse mt-4 text-sm">
+          <thead>
+            <tr className="bg-muted">
+              <th className="text-left px-2.5 py-2.5 border-b border-border">Vendor</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border">Status</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border">Failures</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border">Last checked</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border">Status changed</th>
+              <th className="text-left px-2.5 py-2.5 border-b border-border">Last error</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.vendor}>
+                <td className="px-2.5 py-2.5 border-b border-muted font-semibold">{row.vendor}</td>
+                <td className={`px-2.5 py-2.5 border-b border-muted ${statusColorClass(row.status)}`}>
+                  {row.status}
+                </td>
+                <td className="px-2.5 py-2.5 border-b border-muted">{row.consecutive_failures}</td>
+                <td className="px-2.5 py-2.5 border-b border-muted">
+                  {row.last_checked_at ?? "—"}
+                </td>
+                <td className="px-2.5 py-2.5 border-b border-muted">
+                  {row.status_changed_at ?? "—"}
+                </td>
+                <td className="px-2.5 py-2.5 border-b border-muted text-red-600 dark:text-red-400">
+                  {row.last_error ?? "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </main>
   );
 }

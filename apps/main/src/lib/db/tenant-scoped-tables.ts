@@ -154,4 +154,12 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   // Cross-tenant log — service-role-only writes from cron paths, reads via
   // platform-admin audit. tenant_id is nullable.
   "email_log",
+  // #780/#781 — canonical cruise-line/ship reference catalogs (no tenant_id).
+  // RLS grants SELECT to any authenticated user; all writes are service-role
+  // (CruiseMapper scraper). Reads flow through tenantClient in quote/booking
+  // routes for dropdowns and FK resolution.
+  "cruise_lines",
+  "cruise_line_aliases",
+  "cruise_ships",
+  "cruise_ship_aliases",
 ]);

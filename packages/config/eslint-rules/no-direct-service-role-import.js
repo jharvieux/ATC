@@ -419,6 +419,9 @@ const ALLOWED_PATH_SUFFIXES = [
   // shape as refresh-cruisemapper-sailings (per-URL steps, service-role for
   // inventory reads/writes). §5.4.4.
   "/inngest/backfill-cruisemapper-ports.ts",
+  // #781 Phase 2 Step 2 — cross-table backfill cron: reads/writes quote_options,
+  // bookings, groups, price_watches as platform data (no tenant context). §5.4.4.
+  "/inngest/backfill-cruise-fk.ts",
   // #965 — Branding setup banner server component: reads tenant_memberships
   // (role) and tenant_branding (logo_url) to decide whether to show the
   // banner. Both tables are RLS-gated to the tenant's own members, but this
@@ -427,6 +430,14 @@ const ALLOWED_PATH_SUFFIXES = [
   // errors return null (no throw). Two-layer isolation satisfied by explicit
   // .eq("tenant_id", tenantId) on both queries. Read-only.
   "/components/branding-setup-banner/BrandingSetupBannerServer.tsx",
+  // #786 — Vendor health probe: 15-min cron that upserts durable status to
+  // the platform-wide `vendor_health` table. No tenant context; service-role
+  // is the only viable client. §5.4.4.
+  "/inngest/vendor-health-probe.ts",
+  // #786 — Vendor status admin page: reads from the platform-wide `vendor_health`
+  // table. No tenant context (cross-vendor platform data); gated by AdminLayout
+  // assertPlatformAdmin. Same pattern as supervisor/page.tsx. Read-only.
+  "/app/(admin)/admin/vendor-status/page.tsx",
   // #712 — assertPermission PAT path: PAT token lookup + acting user lookup both
   // require service_role (personal_access_tokens has no authenticated PostgREST
   // policies; all access is service-role-only). The tenant isolation is enforced

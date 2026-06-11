@@ -121,6 +121,10 @@ export const EVENT_REGISTRY: Record<string, RegisteredEvent> = {
   // §831 — CruiseMapper port backfill (on-demand re-enrich trigger).
   // Optional data.ship_urls narrows to a subset; defaults to full inventory.
   "cruisemapper/port-backfill.requested": { kind: "platform_admin", payload_shape: platformAdminShape },
+
+  // #781 Phase 2 Step 2 — populate cruise_line_id / cruise_ship_id FKs from free-text.
+  // Optional data.tables narrows to a subset; defaults to all four tables.
+  "cruise.fk_backfill_requested": { kind: "platform_admin", payload_shape: platformAdminShape },
 };
 
 export class EventNotRegisteredError extends Error {

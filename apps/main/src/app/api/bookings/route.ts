@@ -93,7 +93,7 @@ export async function GET(req: Request): Promise<Response> {
   let query = db
     .from("bookings")
     .select(
-      "id, status, cruise_line, ship_name, sailing_date, duration_nights, total_amount_cents, currency, primary_contact_id, is_test, created_at, updated_at",
+      "id, status, cruise_line, ship_name, sailing_date, duration_nights, total_amount_cents, currency, primary_contact_id, is_test, created_at, updated_at, cruise_line_id, cruise_lines(display_name)",
       { count: "exact" },
     )
     .order("updated_at", { ascending: false })

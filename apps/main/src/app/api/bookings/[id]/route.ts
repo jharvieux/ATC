@@ -10,6 +10,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { fromCents, type Cents } from "@/lib/money";
 import { isStatusPatchable, isFieldPatchable } from "@/lib/bookings/patchable-fields";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 
 interface BookingRow {
   id: string;
@@ -167,6 +168,15 @@ export async function PATCH(
   }
   if (Object.keys(patch).length === 1) {
     return Response.json({ error: "no_updatable_fields" }, { status: 400 });
+  }
+
+  if ("cruise_line" in patch) {
+    const r = await resolveCanonical(patch.cruise_line as string | undefined, "line", db);
+    patch.cruise_line_id = r.matched ? r.id : null;
+  }
+  if ("ship_name" in patch) {
+    const r = await resolveCanonical(patch.ship_name as string | undefined, "ship", db);
+    patch.cruise_ship_id = r.matched ? r.id : null;
   }
 
   await safeAwait(
