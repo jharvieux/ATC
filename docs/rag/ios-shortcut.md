@@ -16,10 +16,10 @@ payloads:
 ## Authentication
 
 The Shortcut stores an API token in iOS Keychain under key `atc_api_token`.
-The token is provisioned out-of-band: user logs in to the platform on
-desktop, navigates to Settings → Integrations → iOS Shortcut, clicks
-"Generate token" (which issues a long-lived personal access token), then
-scans the resulting QR code into the Shortcut's "Set token" action.
+The token is provisioned from Settings → API Tokens in the platform web
+app (requires tenant_owner role). User clicks Create, names the token
+(e.g. "iOS Shortcut"), copies the plaintext token shown once, and pastes
+it into the Shortcut's "Set token" action. Token is stored in iOS Keychain.
 
 ## Endpoint contract
 

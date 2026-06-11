@@ -276,3 +276,23 @@ describe("permission-grants — exhaustive matrix", () => {
     }
   });
 });
+
+describe("api_tokens (#712) — owner-only", () => {
+  // PATs are long-lived credentials that act with the minting user's role.
+  // Letting agents or viewers mint tokens would let them create durable
+  // credentials outside session controls (no SSO revocation, no sensitive-
+  // route re-auth). Owner-only is the security boundary, not a convenience.
+  it("tenant_owner can list, create, and revoke tokens", () => {
+    expect(isPermitted("tenant_owner", "api_tokens", "list")).toBe(true);
+    expect(isPermitted("tenant_owner", "api_tokens", "create")).toBe(true);
+    expect(isPermitted("tenant_owner", "api_tokens", "revoke")).toBe(true);
+  });
+
+  it("agent and viewer are denied every api_tokens action", () => {
+    for (const role of ["agent", "viewer"] as const) {
+      for (const action of ["list", "create", "revoke"] as const) {
+        expect(isPermitted(role, "api_tokens", action)).toBe(false);
+      }
+    }
+  });
+});
