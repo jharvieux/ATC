@@ -62,6 +62,9 @@ function DialogContent({
 }) {
   const { open, setOpen } = React.useContext(DialogContext);
 
+  // open in deps: cleanup fires when the dialog closes, removing the listener.
+  // setOpen changes identity each render but is always functionally equivalent;
+  // the re-registration on each open-state change is harmless.
   React.useEffect(() => {
     if (!open) return;
     function handleKey(e: KeyboardEvent) {

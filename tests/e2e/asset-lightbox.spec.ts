@@ -77,7 +77,6 @@ test("clicking the asset trigger opens the lightbox with the correct image", asy
   const trigger = page.getByRole("button", { name: TRIGGER_LABEL });
   await expect(trigger).toBeVisible({ timeout: 10_000 });
 
-  // Dialog is not open yet.
   await expect(page.getByRole("dialog")).not.toBeVisible();
 
   await trigger.click();
@@ -129,10 +128,7 @@ test("backdrop click closes the lightbox", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // The backdrop is the aria-hidden div that is a direct sibling of
-  // [role=dialog] inside the modal container. The CSS :has() selector
-  // finds the container that owns the dialog, then picks its
-  // aria-hidden child (the overlay), not the panel itself.
+  // aria-hidden sibling of [role=dialog] is the backdrop overlay, not the panel.
   const backdrop = page.locator(":has(> [role=dialog]) > [aria-hidden='true']");
   await backdrop.click();
 
