@@ -11,6 +11,7 @@ import React, { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { contrastWarning } from "@/lib/branding/tenant-theme";
 
 const TEXT_INPUT_CLS =
   "w-full rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
@@ -289,23 +290,30 @@ function LabeledInput(props: {
 }
 
 function ColorPicker(props: { label: string; value: string; onChange: (v: string) => void }) {
+  // §16.2 — non-blocking WCAG AA contrast warning; the tenant can still save.
+  const warning = isHex(props.value) ? contrastWarning(props.value) : null;
   return (
-    <label className="flex items-center gap-3">
-      <span className="text-sm font-medium text-gray-700 w-32">{props.label}</span>
-      <input
-        type="color"
-        value={isHex(props.value) ? props.value : "#000000"}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onChange(e.target.value)}
-        className="h-9 w-12 rounded border border-gray-300"
-        aria-label={`${props.label} color picker`}
-      />
-      <input
-        type="text"
-        className={TEXT_INPUT_CLS + " w-32"}
-        value={props.value}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onChange(e.target.value)}
-      />
-    </label>
+    <div>
+      <label className="flex items-center gap-3">
+        <span className="text-sm font-medium text-gray-700 w-32">{props.label}</span>
+        <input
+          type="color"
+          value={isHex(props.value) ? props.value : "#000000"}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onChange(e.target.value)}
+          className="h-9 w-12 rounded border border-gray-300"
+          aria-label={`${props.label} color picker`}
+        />
+        <input
+          type="text"
+          className={TEXT_INPUT_CLS + " w-32"}
+          value={props.value}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => props.onChange(e.target.value)}
+        />
+      </label>
+      {warning && (
+        <p className="mt-1 ml-[8.75rem] text-xs text-amber-700">{warning}</p>
+      )}
+    </div>
   );
 }
 

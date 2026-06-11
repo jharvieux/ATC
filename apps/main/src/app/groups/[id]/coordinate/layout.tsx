@@ -3,6 +3,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { TenantTheme } from "@/components/branding/TenantTheme";
 
 const TABS = [
   { slug: "overview", label: "Overview" },
@@ -25,6 +26,8 @@ export default async function CoordinateLayout({
 
   return (
     <div className="max-w-[900px] mx-auto px-4 py-6">
+      {/* §16.2 — tenant colors/font when viewed on the tenant subdomain. */}
+      <TenantTheme />
       <nav
         className="flex border-b-2 border-border mb-6"
         aria-label="Coordinator tabs"

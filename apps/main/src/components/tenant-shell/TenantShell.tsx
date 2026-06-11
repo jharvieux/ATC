@@ -16,7 +16,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Logo } from "@/components/branding/Logo";
+import { BrandLogo, type BrandLogoBranding } from "@/components/branding/BrandLogo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -32,11 +32,14 @@ import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface TenantShellProps {
   role: UserRole;
+  /** Tenant logo/name for the top bar (§16); null shows the platform logo. */
+  branding?: BrandLogoBranding | null;
   children: React.ReactNode;
 }
 
 export function TenantShell({
   role,
+  branding = null,
   children,
 }: Readonly<TenantShellProps>): React.ReactElement {
   // null = the visitor hasn't toggled yet → CSS-only default (closed
@@ -68,7 +71,7 @@ export function TenantShell({
             <PanelLeft className="h-5 w-5" />
           </button>
           <Link href="/" aria-label="Home">
-            <Logo height={49} />
+            <BrandLogo branding={branding} height={49} />
           </Link>
         </div>
         <DropdownMenu>

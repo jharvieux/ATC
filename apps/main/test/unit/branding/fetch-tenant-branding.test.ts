@@ -63,7 +63,12 @@ describe("fetchTenantBranding — DB branches (issue #655)", () => {
           {
             logo_url: "https://acme.example.com/logo.svg",
             logo_dark_url: "https://acme.example.com/logo-dark.svg",
+            favicon_url: "https://acme.example.com/favicon.ico",
             slogan: "Plan smarter, travel further.",
+            primary_color: "#2563eb",
+            secondary_color: "#6b7280",
+            accent_color: "#f59e0b",
+            font_family: "Inter, sans-serif",
           },
         ],
       },
@@ -75,7 +80,12 @@ describe("fetchTenantBranding — DB branches (issue #655)", () => {
       display_name: "Acme Travel",
       logo_url: "https://acme.example.com/logo.svg",
       logo_dark_url: "https://acme.example.com/logo-dark.svg",
+      favicon_url: "https://acme.example.com/favicon.ico",
       slogan: "Plan smarter, travel further.",
+      primary_color: "#2563eb",
+      secondary_color: "#6b7280",
+      accent_color: "#f59e0b",
+      font_family: "Inter, sans-serif",
     });
   });
 
@@ -120,7 +130,12 @@ describe("fetchTenantBranding — DB branches (issue #655)", () => {
       display_name: "No-Brand Co",
       logo_url: null,
       logo_dark_url: null,
+      favicon_url: null,
       slogan: null,
+      primary_color: null,
+      secondary_color: null,
+      accent_color: null,
+      font_family: null,
     });
   });
 

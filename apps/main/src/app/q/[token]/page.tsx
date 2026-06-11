@@ -10,6 +10,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { headers } from "next/headers";
 import { writeAuditLog } from "@/lib/audit/write";
 import { PublicTokenChatPanel } from "@/components/chat/PublicTokenChatPanel";
+import { TenantTheme } from "@/components/branding/TenantTheme";
 import { fromCents, type Cents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
@@ -128,6 +129,8 @@ export default async function CustomerQuoteViewPage(props: PageProps): Promise<J
 
   return (
     <main className="max-w-[760px] mx-auto px-6 py-8">
+      {/* §16.2 — tenant colors/font when viewed on the tenant subdomain. */}
+      <TenantTheme />
       <header className="border-b-2 border-[#1f4e79] pb-4 mb-6">
         <div className="text-[#1f4e79] font-semibold text-[14px]">
           {tenant?.display_name ?? ""}
