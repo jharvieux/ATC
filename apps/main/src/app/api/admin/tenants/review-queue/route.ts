@@ -1,14 +1,14 @@
 // §15.11 — Admin review queue: pending tenant applications.
 // GET: paginated list of tenants in review_decision = 'pending'.
-// Visible only to platform_compliance and platform_super_admin roles.
+// Visible only to superadmin and reviewer roles.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

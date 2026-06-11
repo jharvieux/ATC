@@ -10,7 +10,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
-import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface Body {
   authority_manual_override: number | null;
@@ -33,7 +33,7 @@ export async function POST(
 ): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer", "service"])).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

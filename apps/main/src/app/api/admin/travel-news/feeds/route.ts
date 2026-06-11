@@ -4,7 +4,7 @@
 // POST /api/admin/travel-news/feeds  → { feed: { id, name, url, is_active, last_fetched_at, created_at } }
 
 import {
-  assertPlatformAdmin,
+  assertPlatformRole,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
@@ -13,7 +13,7 @@ import { safeAwait } from "@/lib/db/safe-mutation";
 export async function GET(req: Request): Promise<Response> {
   let ctx;
   try {
-    ctx = await assertPlatformAdmin(req);
+    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -45,7 +45,7 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
   let ctx;
   try {
-    ctx = await assertPlatformAdmin(req);
+    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

@@ -9,7 +9,7 @@
 import Stripe from "stripe";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { inngest } from "@/inngest/client";
-import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 function escapeHtml(s: string): string {
   return s
@@ -31,7 +31,7 @@ export async function POST(
 ): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformAdmin(req)).admin_user_id;
+    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
