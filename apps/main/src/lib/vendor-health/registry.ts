@@ -154,7 +154,7 @@ export async function upsertVendorHealth(
 
   const { error } = await db.from("vendor_health").upsert(row, { onConflict: "vendor" });
   if (error) {
-    console.error(`[vendor-health] upsert failed for ${vendor}: ${error.message}`);
+    throw new Error(`[vendor-health] upsert failed for ${vendor}: ${error.message}`);
   }
 
   // Update in-process cache.

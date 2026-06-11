@@ -122,24 +122,17 @@ describe("upsertVendorHealth — transitions", () => {
 // ---------------------------------------------------------------------------
 
 describe("upsertVendorHealth — DB write failure", () => {
-  it("logs error but does not throw when upsert fails", async () => {
+  it("throws when upsert fails so probe Promise.allSettled catches it and no alert fires", async () => {
     const db = makeDb(null, { message: "connection refused" });
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(
       upsertVendorHealth({ vendor: "openai", success: false, db: db as never }),
-    ).resolves.toBeDefined();
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[vendor-health] upsert failed for openai"),
-    );
-    consoleSpy.mockRestore();
+    ).rejects.toThrow("[vendor-health] upsert failed for openai: connection refused");
   });
 
-  it("still returns correct transition result even when upsert fails", async () => {
+  it("throws even when the computed transition would fire an alert", async () => {
     const db = makeDb({ status: "degraded", consecutive_failures: 4, status_changed_at: null }, { message: "timeout" });
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await upsertVendorHealth({ vendor: "stripe", success: false, db: db as never });
-    expect(result.new_status).toBe("down");
-    expect(result.transitioned).toBe(true);
-    consoleSpy.mockRestore();
+    await expect(
+      upsertVendorHealth({ vendor: "stripe", success: false, db: db as never }),
+    ).rejects.toThrow("[vendor-health] upsert failed for stripe: timeout");
   });
 });

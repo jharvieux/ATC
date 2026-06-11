@@ -17,7 +17,7 @@
 //      idle probe tells us nothing the real path doesn't.
 
 import { inngest } from "./client";
-import { recordVendorFailure, recordVendorSuccess, upsertVendorHealth, type VendorName } from "@/lib/vendor-health/registry";
+import { upsertVendorHealth, type VendorName } from "@/lib/vendor-health/registry";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 
@@ -31,16 +31,11 @@ async function ping(vendor: VendorName, url: string, headers: Record<string, str
   try {
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
     if (res.ok || res.status === 401 || res.status === 403) {
-      recordVendorSuccess(vendor);
       return { vendor, success: true };
     }
-    const msg = `http_${res.status}`;
-    recordVendorFailure(vendor, msg);
-    return { vendor, success: false, error_message: msg };
+    return { vendor, success: false, error_message: `http_${res.status}` };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    recordVendorFailure(vendor, msg);
-    return { vendor, success: false, error_message: msg };
+    return { vendor, success: false, error_message: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -54,23 +49,16 @@ async function pingInngest(): Promise<PingResult> {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {
-      const msg = `http_${res.status}`;
-      recordVendorFailure("inngest", msg);
-      return { vendor: "inngest", success: false, error_message: msg };
+      return { vendor: "inngest", success: false, error_message: `http_${res.status}` };
     }
     const body = (await res.json()) as { status?: { indicator?: string } };
     const indicator = body?.status?.indicator ?? "unknown";
     if (indicator === "none") {
-      recordVendorSuccess("inngest");
       return { vendor: "inngest", success: true };
     }
-    const msg = `status_${indicator}`;
-    recordVendorFailure("inngest", msg);
-    return { vendor: "inngest", success: false, error_message: msg };
+    return { vendor: "inngest", success: false, error_message: `status_${indicator}` };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    recordVendorFailure("inngest", msg);
-    return { vendor: "inngest", success: false, error_message: msg };
+    return { vendor: "inngest", success: false, error_message: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -81,9 +69,6 @@ async function pingRagReadiness(): Promise<PingResult[]> {
   const ragUrl = process.env.RAG_SERVICE_URL;
   if (!ragUrl) {
     const msg = "RAG_SERVICE_URL not configured";
-    recordVendorFailure("rag", msg);
-    recordVendorFailure("upstash", msg);
-    recordVendorFailure("supabase_rag", msg);
     return [
       { vendor: "rag", success: false, error_message: msg },
       { vendor: "upstash", success: false, error_message: msg },
@@ -93,38 +78,19 @@ async function pingRagReadiness(): Promise<PingResult[]> {
   try {
     const res = await fetch(`${ragUrl}/api/health/ready`, { signal: AbortSignal.timeout(8000) });
     const body = (await res.json()) as { redis?: string; supabase_rag?: string };
-    const results: PingResult[] = [];
-
-    if (res.ok) {
-      recordVendorSuccess("rag");
-      results.push({ vendor: "rag", success: true });
-    } else {
-      const msg = `http_${res.status}`;
-      recordVendorFailure("rag", msg);
-      results.push({ vendor: "rag", success: false, error_message: msg });
-    }
-    if (body.redis === "ok") {
-      recordVendorSuccess("upstash");
-      results.push({ vendor: "upstash", success: true });
-    } else {
-      const msg = body.redis ?? "no_response";
-      recordVendorFailure("upstash", msg);
-      results.push({ vendor: "upstash", success: false, error_message: msg });
-    }
-    if (body.supabase_rag === "ok") {
-      recordVendorSuccess("supabase_rag");
-      results.push({ vendor: "supabase_rag", success: true });
-    } else {
-      const msg = body.supabase_rag ?? "no_response";
-      recordVendorFailure("supabase_rag", msg);
-      results.push({ vendor: "supabase_rag", success: false, error_message: msg });
-    }
-    return results;
+    return [
+      res.ok
+        ? { vendor: "rag", success: true }
+        : { vendor: "rag", success: false, error_message: `http_${res.status}` },
+      body.redis === "ok"
+        ? { vendor: "upstash", success: true }
+        : { vendor: "upstash", success: false, error_message: body.redis ?? "no_response" },
+      body.supabase_rag === "ok"
+        ? { vendor: "supabase_rag", success: true }
+        : { vendor: "supabase_rag", success: false, error_message: body.supabase_rag ?? "no_response" },
+    ];
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    recordVendorFailure("rag", msg);
-    recordVendorFailure("upstash", `rag_unreachable: ${msg}`);
-    recordVendorFailure("supabase_rag", `rag_unreachable: ${msg}`);
     return [
       { vendor: "rag", success: false, error_message: msg },
       { vendor: "upstash", success: false, error_message: `rag_unreachable: ${msg}` },
@@ -161,14 +127,14 @@ export const vendorHealthProbe = inngest.createFunction(
         pingRagReadiness(),
       ]);
 
-    // ragResults is [ PingResult[] ] (one element: the array from pingRagReadiness).
     const allResults: PingResult[] = [
       openaiResult,
       stripeResult,
       resendResult,
       supabaseResult,
       inngestResult,
-      ...(ragResults[0] as PingResult[]),
+      // ragResults is [ PingResult[] ] — one element wrapping the three RAG vendor results.
+      ...ragResults[0],
     ];
 
     const svc = createServiceRoleClient();
