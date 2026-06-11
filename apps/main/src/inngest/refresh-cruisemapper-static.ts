@@ -28,17 +28,18 @@ import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
-import { discoverShipUrls, discoverPortUrls, discoverDeckPlanUrls } from "@/lib/external/cruisemapper/discovery";
+import { discoverShipUrls, discoverPortUrls, discoverDeckPlanUrls, discoverCabinUrls } from "@/lib/external/cruisemapper/discovery";
 import { fetchCruiseMapperPage } from "@/lib/external/cruisemapper/diy-fetcher";
 import { parseShipPage } from "@/lib/external/cruisemapper/parsers/ship-parser";
 import { parsePortPage } from "@/lib/external/cruisemapper/parsers/port-parser";
 import { parseDeckPlanPage } from "@/lib/external/cruisemapper/parsers/deck-parser";
+import { parseCabinPage } from "@/lib/external/cruisemapper/parsers/cabin-parser";
 // D-088 — DIY price-range extraction (replaces Apify general-pricing path).
 import { parsePriceRanges } from "@/lib/external/cruisemapper/parsers/price-range-parser";
 import { upsertGeneralPriceRange } from "@/lib/pricing/general-pricing-ranges";
 import { screenForPromptInjection } from "@/lib/external/cruisemapper/prompt-injection-screen";
 import { ingestReferenceToRag } from "@/lib/external/cruisemapper/rag-reference-ingest";
-import { recordDeckPlanImage } from "@/lib/external/cruisemapper/image-asset-recorder";
+import { recordDeckPlanImage, recordCabinImage } from "@/lib/external/cruisemapper/image-asset-recorder";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -47,9 +48,10 @@ const MIN_SAMPLES_BEFORE_HALT = 20; // don't halt on a tiny initial sample
 // Per-step batch sizes. Each batch's external fetches are paced by the
 // in-process token bucket within its single step invocation; batching keeps the
 // total Inngest step count bounded as the fleet grows (~215 ships).
-const SHIP_CHUNK = 10; // ship intel + price ranges — light per URL
-const PORT_CHUNK = 10; // 1 fetch + 1 RAG ingest — light
-const DECK_CHUNK = 8;  // fetch + several image records + 1 RAG ingest
+const SHIP_CHUNK = 10;  // ship intel + price ranges — light per URL
+const PORT_CHUNK = 10;  // 1 fetch + 1 RAG ingest — light
+const DECK_CHUNK = 8;   // fetch + several image records + 1 RAG ingest
+const CABIN_CHUNK = 6;  // fetch + ~20 image records (floor plans + photos) + 1 RAG ingest
 
 export interface KindRunResult {
   attempted: number;
@@ -179,11 +181,30 @@ export const refreshCruisemapperStatic = inngest.createFunction(
       }
     }
 
+    // §953 Phase A: cabin intel. Cabin URLs are derived from the ship slugs
+    // (no extra discovery fetch needed — /cabins/<slug> mirrors /ships/<slug>).
+    const cabinUrls = await step.run("discover-cabins", () => discoverCabinUrls(createServiceRoleClient()));
+
+    const cabin = emptyKindResult();
+    for (let i = 0; i < cabinUrls.length; i += CABIN_CHUNK) {
+      const batch = cabinUrls.slice(i, i + CABIN_CHUNK);
+      const r = await step.run(`cabins-${i / CABIN_CHUNK}`, () => processUrlBatch(batch, "cabin"));
+      mergeKind(cabin, r);
+      const reason = haltReason(cabin, "cabin");
+      if (reason) {
+        cabin.halted = true;
+        cabin.halt_reason = reason;
+        await step.run(`halt-cabin-${i / CABIN_CHUNK}`, () => alertHalt("cabin", cabin));
+        break;
+      }
+    }
+
     return {
-      discovered: { ship: shipUrls.length, port: portUrls.length, deck_plan: deckUrls.length },
+      discovered: { ship: shipUrls.length, port: portUrls.length, deck_plan: deckUrls.length, cabin: cabinUrls.length },
       ship,
       port,
       deck,
+      cabin,
     };
   },
 );
@@ -197,7 +218,7 @@ async function processShipBatch(urls: string[]): Promise<KindRunResult> {
   return total;
 }
 
-async function processUrlBatch(urls: string[], kind: "port" | "deck_plan"): Promise<KindRunResult> {
+async function processUrlBatch(urls: string[], kind: "port" | "deck_plan" | "cabin"): Promise<KindRunResult> {
   const db = createServiceRoleClient();
   const total = emptyKindResult();
   for (const url of urls) mergeKind(total, await processOneUrl(db, url, kind));
@@ -284,11 +305,11 @@ async function finalizeIngest(
   await safeAwait(db.from("cruisemapper_url_inventory").update(update).eq("url", url), "cruisemapper_url_inventory.update");
 }
 
-// Process ONE port or deck-plan URL: fetch → parse → screen → RAG ingest.
+// Process ONE port, deck-plan, or cabin URL: fetch → parse → screen → RAG ingest.
 async function processOneUrl(
   db: SupabaseClient,
   url: string,
-  kind: "port" | "deck_plan",
+  kind: "port" | "deck_plan" | "cabin",
 ): Promise<KindRunResult> {
   const result = emptyKindResult();
   result.attempted = 1;
@@ -317,7 +338,9 @@ async function processOneUrl(
   // would never match if we passed the original URL.
   const parsed = kind === "port"
     ? parsePortPage(fetched.body, url)
-    : parseDeckPlanPage(fetched.body, fetched.finalUrl);
+    : kind === "deck_plan"
+      ? parseDeckPlanPage(fetched.body, fetched.finalUrl)
+      : parseCabinPage(fetched.body, url);
   if (!parsed) {
     result.parse_failed = 1;
     await markInventory(db, url, "parse_failed", "parser_returned_null");
@@ -342,7 +365,7 @@ async function processOneUrl(
       source_domain: "cruisemapper.com",
       destination: portParsed.portName,
     };
-  } else {
+  } else if (kind === "deck_plan") {
     // BP37 deck plans: one combined gallery page per ship → record each deck's
     // image as a hot-linked asset, then ingest a single per-ship chunk.
     const deckParsed = parsed as NonNullable<ReturnType<typeof parseDeckPlanPage>>;
@@ -366,6 +389,30 @@ async function processOneUrl(
       source_url: url,
       source_domain: "cruisemapper.com",
       ship: deckParsed.shipName,
+      related_asset_ids: assetIds,
+    };
+  } else {
+    // §953 Phase A — cabin intel: record floor plans + photos, ingest one chunk per ship.
+    const cabinParsed = parsed as NonNullable<ReturnType<typeof parseCabinPage>>;
+    const assetIds: string[] = [];
+    for (const img of cabinParsed.images) {
+      const rec = await recordCabinImage({
+        imageUrl: img.imageUrl,
+        sourcePageUrl: url,
+        shipSlug: cabinParsed.shipSlug,
+        categoryName: img.categoryName,
+        imageType: img.imageType,
+        caption: img.caption,
+      });
+      if (rec.status === "recorded" && rec.asset_id) assetIds.push(rec.asset_id);
+    }
+    payload = {
+      source_identifier: `cruisemapper:cabin:${cabinParsed.shipSlug}`,
+      category: "cabin_intel" as const,
+      text: cabinParsed.text,
+      source_url: url,
+      source_domain: "cruisemapper.com",
+      ship: cabinParsed.shipName,
       related_asset_ids: assetIds,
     };
   }
