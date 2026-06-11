@@ -56,7 +56,7 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    const rawToken = `atc_pat_${randomBytes(32).toString("hex")}`;
+    const rawToken = `atc_pat_${randomBytes(32).toString("base64url")}`;
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
     const svc = createServiceRoleClient();
