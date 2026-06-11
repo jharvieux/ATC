@@ -5,7 +5,7 @@
 // DELETE /api/admin/travel-news/feeds/[id] → 204
 
 import {
-  assertPlatformAdmin,
+  assertPlatformRole,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
@@ -17,7 +17,7 @@ export async function PATCH(
 ): Promise<Response> {
   let ctx;
   try {
-    ctx = await assertPlatformAdmin(req);
+    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -71,7 +71,7 @@ export async function DELETE(
 ): Promise<Response> {
   let ctx;
   try {
-    ctx = await assertPlatformAdmin(req);
+    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

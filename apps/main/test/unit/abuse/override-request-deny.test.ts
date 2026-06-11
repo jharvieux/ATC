@@ -12,9 +12,11 @@ vi.mock("@/lib/auth/assert-platform-admin", async () => {
   const actual = await vi.importActual<typeof import("@/lib/auth/assert-platform-admin")>(
     "@/lib/auth/assert-platform-admin",
   );
+  const gate = async () => ({ admin_user_id: "admin-1", role: "reviewer" as const, via: "session" as const });
   return {
     ...actual,
-    assertPlatformAdmin: vi.fn(async () => ({ admin_user_id: "admin-1", role: "test", via: "session" as const })),
+    assertPlatformAdmin: vi.fn(gate),
+    assertPlatformRole: vi.fn(gate),
   };
 });
 
