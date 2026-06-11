@@ -71,6 +71,7 @@
 -- public.pending_rag_sync (rls_enabled)
 -- public.persona_addendums (rls_enabled)
 -- public.persona_safety_config (rls_enabled)
+-- public.personal_access_tokens (rls_enabled)
 -- public.personas (rls_enabled)
 -- public.pipeline_stages (rls_enabled)
 -- public.platform_admins (rls_enabled)
@@ -119,6 +120,7 @@
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
+-- public.vendor_health (rls_enabled)
 -- public.voice_profiles (rls_enabled)
 -- public.voice_samples (rls_enabled)
 -- public.weather_forecast_cache (rls_enabled)
@@ -373,6 +375,18 @@ CREATE POLICY "campaigns_update" ON public.campaigns
   FOR UPDATE TO authenticated
   USING (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id))
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
+
+-- TABLE: public.canonical_match_reviews
+CREATE POLICY "canonical_match_reviews_platform_admin_read" ON public.canonical_match_reviews
+  FOR SELECT TO PUBLIC
+  USING ((EXISTS ( SELECT 1
+   FROM platform_admins
+  WHERE platform_admins.auth_user_id = auth.uid())));
+CREATE POLICY "canonical_match_reviews_platform_admin_update" ON public.canonical_match_reviews
+  FOR UPDATE TO PUBLIC
+  USING ((EXISTS ( SELECT 1
+   FROM platform_admins
+  WHERE platform_admins.auth_user_id = auth.uid())));
 
 -- TABLE: public.ccpa_deletion_executions
 CREATE POLICY "ccpa_executions_delete_service" ON public.ccpa_deletion_executions
