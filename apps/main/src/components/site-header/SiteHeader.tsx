@@ -11,7 +11,7 @@
 // chaining DB calls per page.
 
 import Link from "next/link";
-import { Logo } from "@/components/branding/Logo";
+import { BrandLogo, type BrandLogoBranding } from "@/components/branding/BrandLogo";
 import { SiteHeaderMenu } from "./SiteHeaderMenu";
 import { Button } from "@/components/ui/button";
 
@@ -20,17 +20,20 @@ export interface SiteHeaderProps {
   isPlatformDomain: boolean;
   /** True when the visitor has an authenticated session. */
   isAuthenticated: boolean;
+  /** Tenant logo/name for tenant subdomains (§16); null shows the platform logo. */
+  tenantBranding: BrandLogoBranding | null;
 }
 
 export function SiteHeader({
   isPlatformDomain,
   isAuthenticated,
+  tenantBranding,
 }: SiteHeaderProps) {
   return (
     <header className="w-full border-b border-border bg-background">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
         <Link href="/" aria-label="Home">
-          <Logo height={63} />
+          <BrandLogo branding={tenantBranding} height={63} />
         </Link>
         <div className="flex items-center gap-3">
           {!isAuthenticated && (
