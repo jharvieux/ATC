@@ -6,20 +6,25 @@
  * and ONLY from event.data.tenant_id. The static probe (Tier 0) checks
  * the import shape; this live probe verifies the runtime behaviour.
  *
- * Two shapes of contract enforcement live in the codebase today:
+ * Three shapes of contract enforcement live in the codebase today:
  *
  *   1. Centralised via tenantContextFromInngestEvent — throws a
  *      structured error when tenant_id is missing. Handlers using it
  *      fail loudly. This suite asserts the throw.
  *
- *   2. Inline guards — handler checks `data?.tenant_id` itself and
+ *   2. Zod schema validated before any tenant work (#840 / PR #945) —
+ *      invalid payloads return { skipped: true, reason:
+ *      "invalid_payload" } so a permanently-malformed event can't
+ *      trigger infinite Inngest retries. This suite asserts the skip.
+ *
+ *   3. Inline guards — handler checks `data?.tenant_id` itself and
  *      returns `{ skipped: "..." }`. Slightly looser shape but the
  *      same security property. This suite asserts the skip.
  *
- * Handlers that DON'T enforce centrally (a third shape: read
- * event.data.tenant_id directly + pass to createServiceRoleClient
- * calls with manual .eq filters) are flagged as TODO findings rather
- * than tested — fixing them is a separate refactor.
+ * Handlers that DON'T enforce at all (read event.data.tenant_id
+ * directly + pass to createServiceRoleClient calls with manual .eq
+ * filters) are flagged as TODO findings rather than tested — fixing
+ * them is a separate refactor.
  */
 
 import { describe, expect, it } from "vitest";
