@@ -18,13 +18,15 @@ vi.mock("@/lib/auth/assert-platform-admin", async () => {
   const actual = await vi.importActual<typeof import("@/lib/auth/assert-platform-admin")>(
     "@/lib/auth/assert-platform-admin",
   );
+  const gate = async (req: Request) => {
+    const adminUserId = req.headers.get("x-admin-user-id");
+    if (!adminUserId) throw new actual.PlatformAdminError(401, "missing_bearer", "Missing auth.");
+    return { admin_user_id: adminUserId, role: "superadmin" as const, via: "session" as const };
+  };
   return {
     ...actual,
-    assertPlatformAdmin: vi.fn(async (req: Request) => {
-      const adminUserId = req.headers.get("x-admin-user-id");
-      if (!adminUserId) throw new actual.PlatformAdminError(401, "missing_bearer", "Missing auth.");
-      return { admin_user_id: adminUserId, role: "test", via: "session" as const };
-    }),
+    assertPlatformAdmin: vi.fn(gate),
+    assertPlatformRole: vi.fn(gate),
   };
 });
 
