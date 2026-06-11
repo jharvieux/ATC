@@ -4,6 +4,19 @@ Newest entries on top.
 
 ---
 
+## D-206 — 2026-06-10 — §953 Phase A shipped (PR #991); #781 Phase 2 Step 1 merged (PR #990); migration ordering lesson
+
+**Decisions/facts established:**
+- **§953 Phase A (cabin intel)**: one `cabin_intel` chunk per ship. `discoverCabinUrls` derives `/cabins/<slug>` from ship inventory — no extra fetches. Images recorded per category as `cabin_plan` / `cabin_photo` via extended `recordCabinImage`. Parser returns null on non-cabin URLs or no-cabinItem pages. Entity-id pattern: `${shipSlug}-cabin-${categorySlug}`.
+- **Migration timestamp ordering rule**: a migration MUST sort AFTER the migrations that create any table it references (FK targets) or alters. Tsc does not catch this — Supabase pushes and test runs catch it at apply time. Verify by listing `ls migrations/ | sort` and confirming the new file is later than its FK dependencies. (Bit us on #990 — `20260611000000_cruise_fk_expand.sql` sorted before `cruise_lines` / `cruise_ships` → renamed to `20260701000000`.)
+- **App constraint ↔ DB constraint sync**: when a new status/kind value is introduced in application code (e.g., `'not_cruise_ship'` in stampFerrySkips), the migration adding it to the DB CHECK constraint must ship in the SAME PR, not as a follow-up. Shipping code first creates a window where the app will throw CHECK violations at runtime. (Bit us on #989/#991.)
+- **Audit agent diff-hash source**: the pr-audit-section-check validates hashes computed from the GitHub PR files API (`gh api repos/.../pulls/N/files`), not from `git diff`. When a branch has diverged significantly from dev, agents sometimes fall back to git diff — producing a hash that never matches. Explicitly instruct agents to use the PR API when re-running after this happens.
+
+**Why:** These three patterns caused avoidable re-work (3 extra audit rounds on #990, a runtime bug window on #989).
+**How to apply:** Before writing a new migration, run `ls apps/main/supabase/migrations/ | sort | tail -5` to confirm the new timestamp is last. For any new status value in app code, add it to the CHECK constraint in the same PR.
+
+---
+
 ## D-205 — 2026-06-10 — Operator directives executed: prod = the MCP project; viewer backfill run; dependabot unstuck + cron
 
 **Decisions/facts established:**
