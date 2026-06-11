@@ -149,9 +149,9 @@ test("backdrop click closes the lightbox", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // aria-hidden sibling of [role=dialog] is the backdrop overlay, not the panel.
-  const backdrop = page.locator(":has(> [role=dialog]) > [aria-hidden='true']");
-  await backdrop.click();
+  // Click the top-left corner — outside the centered dialog panel, so it
+  // lands on the backdrop overlay and triggers the outside-click close.
+  await page.mouse.click(1, 1);
 
   await expect(dialog).not.toBeVisible();
 });
