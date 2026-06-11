@@ -6,13 +6,25 @@
 // public-token AI assistant for follow-up questions.
 
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { headers } from "next/headers";
 import { writeAuditLog } from "@/lib/audit/write";
 import { PublicTokenChatPanel } from "@/components/chat/PublicTokenChatPanel";
 import { TenantTheme } from "@/components/branding/TenantTheme";
+import { getRequestTenantBranding } from "@/lib/branding/request-branding";
 import { fromCents, type Cents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+
+// §16.2 — tenant subdomains show the tenant's name + favicon on the quote page.
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getRequestTenantBranding();
+  if (!branding) return {};
+  return {
+    title: branding.display_name,
+    ...(branding.favicon_url ? { icons: { icon: branding.favicon_url } } : {}),
+  };
+}
 
 interface PageProps {
   params: Promise<{ token: string }>;
