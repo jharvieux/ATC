@@ -1,10 +1,7 @@
 // §26.9 — Vendor health registry.
 //
-// Dual-layer:
-//   1. In-process cache: avoids a DB round-trip on every gated call.
-//      Cache TTL = CACHE_TTL_MS (30 s). Probe writes invalidate it.
-//   2. Durable store: `vendor_health` Supabase table. The probe upserts
-//      there; the admin page reads from there for cross-instance consistency.
+// In-process cache (CACHE_TTL_MS = 30 s) for gate.ts reads, backed by the
+// `vendor_health` Supabase table for cross-instance consistent state.
 //
 // Transition semantics: status changes (healthy→degraded, degraded→down,
 // any→healthy) are computed against the DURABLE prior state, not the
@@ -180,8 +177,7 @@ export async function listVendorHealth(
     .select("vendor, status, consecutive_failures, last_checked_at, last_error, status_changed_at")
     .order("vendor");
   if (error) {
-    console.error(`[vendor-health] list failed: ${error.message}`);
-    return [];
+    throw new Error(`[vendor-health] list failed: ${error.message}`);
   }
   return (data ?? []) as Array<VendorHealthState & { vendor: string }>;
 }

@@ -119,6 +119,7 @@
 -- public.user_consent_pending (rls_enabled)
 -- public.user_data_export_requests (rls_enabled)
 -- public.users (rls_enabled)
+-- public.vendor_health (rls_enabled)
 -- public.voice_profiles (rls_enabled)
 -- public.voice_samples (rls_enabled)
 -- public.weather_forecast_cache (rls_enabled)

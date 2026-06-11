@@ -457,6 +457,9 @@ GRANT INSERT, SELECT, UPDATE ON public.user_data_export_requests TO service_role
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.users TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.users TO service_role;
 
+-- TABLE: public.vendor_health
+GRANT INSERT, SELECT, UPDATE ON public.vendor_health TO service_role;
+
 -- TABLE: public.voice_profiles
 GRANT INSERT, SELECT, UPDATE ON public.voice_profiles TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.voice_profiles TO service_role;
