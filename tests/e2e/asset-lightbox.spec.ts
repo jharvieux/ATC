@@ -44,6 +44,18 @@ function cannedSseBody(): string {
 }
 
 test.beforeEach(async ({ page }) => {
+  // Suppress the CookieConsentBanner (role=dialog) so it doesn't pollute
+  // [role=dialog] assertions. The banner opens when cookie_preferences is
+  // absent; pre-setting it prevents the useEffect from calling setOpen(true).
+  await page.context().addCookies([{
+    name: "cookie_preferences",
+    value: encodeURIComponent(JSON.stringify({ performance: true, marketing: false, set_at: "2026-01-01T00:00:00.000Z" })),
+    domain: "localhost",
+    path: "/",
+    httpOnly: false,
+    sameSite: "Lax",
+  }]);
+
   // Inject the bypass Bearer on ALL requests (page navigations + API calls).
   // For page navigations this triggers the proxy's bypass branch, which sets
   // x-resolved-tenant-id: TENANT without ever reaching the platform-redirect
