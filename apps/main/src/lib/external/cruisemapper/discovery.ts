@@ -284,7 +284,32 @@ export function extractDeckPlanLinks(html: string, shipUrl: string): string[] {
   return [...out];
 }
 
-async function upsertInventory(db: SupabaseClient, urls: string[], kind: "ship" | "port" | "deck_plan"): Promise<void> {
+// §953 Phase A: derive the cabin-intel URL for a ship from its /ships/ URL.
+// CruiseMapper cabin pages share the same slug: /cabins/<Ship-Slug-Id>.
+export function cabinUrlFromShipUrl(shipUrl: string): string | null {
+  try {
+    const u = new URL(shipUrl);
+    if (!/^\/ships\/[^/]+$/.test(u.pathname)) return null;
+    u.pathname = u.pathname.replace("/ships/", "/cabins/");
+    return u.toString();
+  } catch { return null; }
+}
+
+// Discover cabin URLs by deriving /cabins/<slug> from the existing ship
+// inventory — no extra HTTP fetches needed because the slug is invariant
+// between the /ships/ and /cabins/ paths. Falls back to existing cabin
+// inventory if no ship URLs are found.
+export async function discoverCabinUrls(db: SupabaseClient): Promise<string[]> {
+  const shipUrls = await loadInventoryByKind(db, "ship");
+  const cabinUrls = shipUrls.flatMap((u) => {
+    const c = cabinUrlFromShipUrl(u);
+    return c ? [c] : [];
+  });
+  if (cabinUrls.length > 0) await upsertInventory(db, cabinUrls, "cabin");
+  return await loadInventoryByKind(db, "cabin");
+}
+
+async function upsertInventory(db: SupabaseClient, urls: string[], kind: "ship" | "port" | "deck_plan" | "cabin"): Promise<void> {
   if (urls.length === 0) return;
   const nowIso = new Date().toISOString();
   // Chunk by 500 to keep payloads reasonable.
@@ -305,7 +330,7 @@ async function upsertInventory(db: SupabaseClient, urls: string[], kind: "ship" 
 // Exported so the sailing cron shares one paginated loader instead of keeping a
 // second copy that can drift. Throws on DB error rather than masking it as an
 // empty inventory.
-export async function loadInventoryByKind(db: SupabaseClient, kind: "ship" | "port" | "deck_plan"): Promise<string[]> {
+export async function loadInventoryByKind(db: SupabaseClient, kind: "ship" | "port" | "deck_plan" | "cabin"): Promise<string[]> {
   const PAGE = 1000;
   const urls: string[] = [];
   for (let from = 0; ; from += PAGE) {
