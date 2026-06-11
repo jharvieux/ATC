@@ -17,27 +17,19 @@
 // Request to reuse the route-handler gate verbatim.
 
 import React from "react";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import { assertPlatformAdmin } from "@/lib/auth/assert-platform-admin";
+import { getCachedAdminContext } from "@/lib/auth/assert-platform-admin";
 import { AdminShell } from "@/components/admin-shell/AdminShell";
 import { COOKIE_NAME, parseCollapsedCookie } from "@/components/admin-shell/collapsed-cookie";
 
 export default async function AdminLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): Promise<React.ReactElement> {
-  const incoming = await headers();
-  const forwarded = new Headers();
-  const cookie = incoming.get("cookie");
-  if (cookie) forwarded.set("cookie", cookie);
-  const authorization = incoming.get("authorization");
-  if (authorization) forwarded.set("authorization", authorization);
-
-  try {
-    await assertPlatformAdmin(
-      new Request("https://admin.internal/", { headers: forwarded }),
-    );
-  } catch {
+  // getCachedAdminContext uses React.cache — shared with any page that
+  // calls it too, so layout + page = one DB round-trip.
+  const ctx = await getCachedAdminContext();
+  if (!ctx) {
     notFound();
   }
 
@@ -48,5 +40,9 @@ export default async function AdminLayout({
     (await cookies()).get(COOKIE_NAME)?.value,
   );
 
-  return <AdminShell initialCollapsed={initialCollapsed}>{children}</AdminShell>;
+  return (
+    <AdminShell initialCollapsed={initialCollapsed} adminRole={ctx.role}>
+      {children}
+    </AdminShell>
+  );
 }

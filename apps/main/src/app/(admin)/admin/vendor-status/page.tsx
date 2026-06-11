@@ -4,10 +4,12 @@
 // from different Vercel function instances during a partial outage.
 
 import { snapshotVendorHealth } from "@/lib/vendor-health/registry";
+import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
 
 export const dynamic = "force-dynamic";
 
-export default function VendorStatusPage(): JSX.Element {
+export default async function VendorStatusPage(): Promise<JSX.Element> {
+  await assertPlatformRolePage(["superadmin", "support"]);
   const snapshot = snapshotVendorHealth();
   const rows = Object.entries(snapshot);
 
