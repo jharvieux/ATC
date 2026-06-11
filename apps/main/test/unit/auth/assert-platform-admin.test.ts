@@ -19,7 +19,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
   }),
 }));
 
-import { assertPlatformAdmin, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import {
+  assertPlatformAdmin,
+  assertPlatformRole,
+  PlatformAdminError,
+} from "@/lib/auth/assert-platform-admin";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -95,5 +99,50 @@ describe("assertPlatformAdmin", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("not_a_platform_admin");
+  });
+});
+
+describe("assertPlatformRole", () => {
+  it("passes when the caller's role is in the allowed set", async () => {
+    mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uuid-r" } }, error: null });
+    mockFromMaybeSingle.mockResolvedValue({
+      data: { auth_user_id: "uuid-r", role: "reviewer" },
+      error: null,
+    });
+    const ctx = await assertPlatformRole(req(), ["superadmin", "reviewer"]);
+    expect(ctx.role).toBe("reviewer");
+  });
+
+  it("rejects with 403 when the caller's role is not in the allowed set", async () => {
+    mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uuid-s" } }, error: null });
+    mockFromMaybeSingle.mockResolvedValue({
+      data: { auth_user_id: "uuid-s", role: "support" },
+      error: null,
+    });
+    await expect(
+      assertPlatformRole(req(), ["superadmin", "reviewer"]),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
+  });
+
+  it("allows the service bearer when 'service' is in the allowed set", async () => {
+    const ctx = await assertPlatformRole(req({ Authorization: "Bearer service-secret-key" }), [
+      "superadmin",
+      "reviewer",
+      "service",
+    ]);
+    expect(ctx.role).toBe("service");
+  });
+
+  it("rejects the service bearer when 'service' is NOT in the allowed set", async () => {
+    await expect(
+      assertPlatformRole(req({ Authorization: "Bearer service-secret-key" }), ["superadmin"]),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
+  });
+
+  it("propagates assertPlatformAdmin failures (e.g. invalid session) before role check", async () => {
+    mockAuthGetUser.mockResolvedValue({ data: null, error: { message: "no session" } });
+    await expect(
+      assertPlatformRole(req(), ["superadmin", "reviewer"]),
+    ).rejects.toMatchObject({ status: 401, code: "invalid_session" });
   });
 });
