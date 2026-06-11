@@ -15,7 +15,11 @@ type Row = {
   status_changed_at: string | null;
 } | null;
 
-function makeDb(currentRow: Row, upsertError: { message: string } | null = null) {
+function makeDb(
+  currentRow: Row,
+  upsertError: { message: string } | null = null,
+  selectError: { message: string } | null = null,
+) {
   const upsertSpy = vi.fn().mockResolvedValue({ error: upsertError });
   return {
     from(_table: string) {
@@ -24,7 +28,7 @@ function makeDb(currentRow: Row, upsertError: { message: string } | null = null)
           return {
             eq(_col: string, _val: unknown) {
               return {
-                maybeSingle: () => Promise.resolve({ data: currentRow }),
+                maybeSingle: () => Promise.resolve({ data: currentRow, error: selectError }),
               };
             },
           };
@@ -134,5 +138,15 @@ describe("upsertVendorHealth — DB write failure", () => {
     await expect(
       upsertVendorHealth({ vendor: "stripe", success: false, db: db as never }),
     ).rejects.toThrow("[vendor-health] upsert failed for stripe: timeout");
+  });
+
+  it("throws on SELECT error so a DB-read failure doesn't fire spurious alerts", async () => {
+    // DB unavailable during read: prior_status would default to "healthy", causing
+    // transitioned=true and a spurious alert. Instead we must throw immediately.
+    const db = makeDb(null, null, { message: "connection timeout" });
+    await expect(
+      upsertVendorHealth({ vendor: "resend", success: false, db: db as never }),
+    ).rejects.toThrow("[vendor-health] read failed for resend: connection timeout");
+    expect(db._upsertSpy).not.toHaveBeenCalled();
   });
 });

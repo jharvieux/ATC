@@ -127,11 +127,14 @@ export async function upsertVendorHealth(
   const now = new Date().toISOString();
 
   // 1. Read current durable state (may be absent on first run).
-  const { data: current } = await db
+  const { data: current, error: readError } = await db
     .from("vendor_health")
     .select("status, consecutive_failures, status_changed_at")
     .eq("vendor", vendor)
     .maybeSingle();
+  if (readError) {
+    throw new Error(`[vendor-health] read failed for ${vendor}: ${readError.message}`);
+  }
 
   const prior_status: VendorHealthStatus = (current?.status as VendorHealthStatus | undefined) ?? "healthy";
   const prior_failures: number = current?.consecutive_failures ?? 0;
