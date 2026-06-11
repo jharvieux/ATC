@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { HEADERS } from "./_helpers";
+import { BYPASS, HEADERS } from "./_helpers";
 
 // #885 — AssetLightbox open-state browser test.
 //
@@ -44,9 +44,18 @@ function cannedSseBody(): string {
 }
 
 test.beforeEach(async ({ page }) => {
-  // Inject bypass Bearer + tenant header on all API calls so auth gates pass.
-  await page.route("**/api/**", async (route) => {
-    const headers = { ...route.request().headers(), ...HEADERS };
+  // Inject the bypass Bearer on ALL requests (page navigations + API calls).
+  // For page navigations this triggers the proxy's bypass branch, which sets
+  // x-resolved-tenant-id: TENANT without ever reaching the platform-redirect
+  // code that calls env().PLATFORM_PRIMARY_DOMAIN (unavailable in CI).
+  // For API calls the full HEADERS set covers the auth + tenant headers.
+  await page.route("**", async (route) => {
+    const req = route.request();
+    const isApi = req.url().includes("/api/");
+    const headers = {
+      ...req.headers(),
+      ...(isApi ? HEADERS : { Authorization: `Bearer ${BYPASS}` }),
+    };
     await route.continue({ headers });
   });
 
