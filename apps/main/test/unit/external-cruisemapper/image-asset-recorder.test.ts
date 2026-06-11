@@ -58,8 +58,6 @@ describe("isHostAllowed", () => {
 });
 
 describe("recordCabinImage — entity-id and kind selection (§953)", () => {
-  let lastPayload: Record<string, unknown> = {};
-
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("RAG_SERVICE_URL", "https://rag.test");
@@ -80,8 +78,8 @@ describe("recordCabinImage — entity-id and kind selection (§953)", () => {
     });
     expect(out.status).toBe("recorded");
     const call = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    lastPayload = JSON.parse(call[1].body as string) as Record<string, unknown>;
-    expect(lastPayload.kind).toBe("cabin_plan");
+    const payload = JSON.parse(call[1].body as string) as Record<string, unknown>;
+    expect(payload.kind).toBe("cabin_plan");
   });
 
   it("sends kind=cabin_photo for imageType=photo", async () => {
