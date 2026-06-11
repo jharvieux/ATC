@@ -10,11 +10,11 @@
 
 CREATE TABLE public.canonical_match_reviews (
   id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  entity_type      text        NOT NULL CHECK (entity_type IN ('line', 'ship', 'port')),
+  entity_type      text        NOT NULL CHECK (entity_type IN ('line', 'ship')),
   value_normalized text        NOT NULL,
   value_raw        text        NOT NULL,
-  occurrence_count integer     NOT NULL DEFAULT 1,
-  sources          jsonb       NOT NULL DEFAULT '[]',  -- [{table, column, count}]
+  source_table     text        NOT NULL,
+  source_column    text        NOT NULL,
   suggested_id     uuid,        -- nullable; AI/trigram suggestion for admin UI
   suggestion_note  text,
   status           text        NOT NULL DEFAULT 'pending'

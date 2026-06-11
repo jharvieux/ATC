@@ -91,6 +91,7 @@ export async function resolveCanonical(
 
 // queueForReview — upserts an unmatched value to canonical_match_reviews.
 // Service-role only. Best-effort: caller should not throw if this fails.
+// Idempotent: duplicate (entity_type, value_normalized) pairs are ignored.
 export async function queueForReview(
   raw: string,
   entityType: CanonicalEntityType,
@@ -105,8 +106,8 @@ export async function queueForReview(
         entity_type: entityType,
         value_normalized: norm,
         value_raw: raw.trim(),
-        occurrence_count: 1,
-        sources: JSON.stringify([{ table: source.table, column: source.column, count: 1 }]),
+        source_table: source.table,
+        source_column: source.column,
       },
       { onConflict: "entity_type,value_normalized", ignoreDuplicates: true },
     );
