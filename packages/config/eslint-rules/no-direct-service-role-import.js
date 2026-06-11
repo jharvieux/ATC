@@ -427,6 +427,14 @@ const ALLOWED_PATH_SUFFIXES = [
   // errors return null (no throw). Two-layer isolation satisfied by explicit
   // .eq("tenant_id", tenantId) on both queries. Read-only.
   "/components/branding-setup-banner/BrandingSetupBannerServer.tsx",
+  // #786 — Vendor health probe: 15-min cron that upserts durable status to
+  // the platform-wide `vendor_health` table. No tenant context; service-role
+  // is the only viable client. §5.4.4.
+  "/inngest/vendor-health-probe.ts",
+  // #786 — Vendor status admin page: reads from the platform-wide `vendor_health`
+  // table. No tenant context (cross-vendor platform data); gated by AdminLayout
+  // assertPlatformAdmin. Same pattern as supervisor/page.tsx. Read-only.
+  "/app/(admin)/admin/vendor-status/page.tsx",
 ];
 
 function endsWithAllowed(filename) {

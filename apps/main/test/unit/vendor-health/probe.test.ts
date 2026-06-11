@@ -14,9 +14,19 @@ vi.mock("@/inngest/client", () => ({
 
 const mockRecordSuccess = vi.fn();
 const mockRecordFailure = vi.fn();
+const mockUpsertVendorHealth = vi.fn().mockResolvedValue({ prior_status: "healthy", new_status: "healthy", transitioned: false });
 vi.mock("@/lib/vendor-health/registry", () => ({
   recordVendorSuccess: (...args: unknown[]) => mockRecordSuccess(...args),
   recordVendorFailure: (...args: unknown[]) => mockRecordFailure(...args),
+  upsertVendorHealth: (...args: unknown[]) => mockUpsertVendorHealth(...args),
+}));
+
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({}),
+}));
+
+vi.mock("@/lib/monitoring/send-operator-alert", () => ({
+  sendOperatorAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Pluggable fetch mock: tests set fetchResponses to control what each URL returns.
@@ -40,6 +50,7 @@ beforeEach(() => {
   fetchResponses.clear();
   mockRecordSuccess.mockClear();
   mockRecordFailure.mockClear();
+  mockUpsertVendorHealth.mockClear();
   delete process.env.STAGING_MODE;
   delete process.env.RAG_SERVICE_URL;
   // Stub existing vendors so they don't throw on undefined URLs.
