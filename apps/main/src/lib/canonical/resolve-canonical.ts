@@ -46,22 +46,24 @@ export async function resolveCanonical(
     }
 
     for (const v of variants) {
-      const { data: alias } = await db
+      const { data: alias, error: aliasErr } = await db
         .from("cruise_line_aliases")
         .select("cruise_line_id")
         .eq("alias_normalized", v)
         .maybeSingle();
 
+      if (aliasErr) throw new Error(`resolveCanonical: cruise_line_aliases select failed: ${aliasErr.message}`);
       if (alias?.cruise_line_id) return { matched: true, id: alias.cruise_line_id };
     }
   } else {
     for (const v of variants) {
-      const { data: alias } = await db
+      const { data: alias, error: aliasErr } = await db
         .from("cruise_ship_aliases")
         .select("cruise_ship_id")
         .eq("alias_normalized", v)
         .maybeSingle();
 
+      if (aliasErr) throw new Error(`resolveCanonical: cruise_ship_aliases select failed: ${aliasErr.message}`);
       if (alias?.cruise_ship_id) return { matched: true, id: alias.cruise_ship_id };
     }
 
