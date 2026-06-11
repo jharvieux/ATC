@@ -12,8 +12,6 @@ const TRAILING_SUFFIXES = [
   "ocean",
 ];
 
-const LEADING_PREFIXES = ["the"];
-
 export function normalizeForMatch(raw: string): string {
   return raw
     .toLowerCase()
@@ -29,12 +27,9 @@ export function safeVariants(norm: string): string[] {
   const result = new Set<string>([norm]);
 
   let base = norm;
-  for (const prefix of LEADING_PREFIXES) {
-    if (base.startsWith(prefix + " ")) {
-      base = base.slice(prefix.length + 1);
-      result.add(base);
-      break;
-    }
+  if (base.startsWith("the ")) {
+    base = base.slice(4);
+    result.add(base);
   }
 
   // Try stripping trailing suffixes (longest first to avoid partial matches).
