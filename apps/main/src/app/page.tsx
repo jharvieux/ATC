@@ -4,6 +4,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -15,13 +16,25 @@ import {
   resolvePostLoginDestination,
   getTenantRole,
 } from "@/lib/auth/resolve-post-login";
-import { fetchTenantBranding } from "@/lib/branding/fetch-tenant-branding";
+import type { TenantBranding } from "@/lib/branding/fetch-tenant-branding";
+import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+import { TenantTheme } from "@/components/branding/TenantTheme";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { getCachedUser } from "@/lib/auth/get-cached-user";
 import { TenantShell } from "@/components/tenant-shell/TenantShell";
 import { defaultPanelForRole } from "@/components/tenant-shell/nav-sections";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import { ConciergeExperience } from "@/components/concierge/ConciergeExperience";
+
+// §16 — tenant subdomains carry the tenant's name + favicon in the tab.
+export async function generateMetadata(): Promise<Metadata> {
+  const branding = await getRequestTenantBranding();
+  if (!branding) return {};
+  return {
+    title: branding.display_name,
+    ...(branding.favicon_url ? { icons: { icon: branding.favicon_url } } : {}),
+  };
+}
 
 export default async function HomePage() {
   // Compute header props (which already does a getUser) before deciding
@@ -60,13 +73,16 @@ export default async function HomePage() {
           // #974 — staff default to TA mode (trade chat, no customer
           // guardrails); viewers keep the guardrailed customer chat.
           return (
-            <TenantShell role={role}>
-              {defaultPanelForRole(role) === "ta-concierge" ? (
-                <ConciergeExperience />
-              ) : (
-                <ChatExperience />
-              )}
-            </TenantShell>
+            <>
+              <TenantTheme />
+              <TenantShell role={role} branding={headerProps.tenantBranding}>
+                {defaultPanelForRole(role) === "ta-concierge" ? (
+                  <ConciergeExperience />
+                ) : (
+                  <ChatExperience />
+                )}
+              </TenantShell>
+            </>
           );
         }
       }
@@ -76,15 +92,14 @@ export default async function HomePage() {
 
   // Tenant-branded hero — only fires for tenant subdomains. On the
   // platform domain `branding` stays null and the generic hero renders.
-  // proxy.ts emits the resolved tenant id (or the "platform" sentinel)
-  // on this header — it's stripped from inbound requests so the value
-  // is always middleware-set, never attacker-supplied.
+  // Request-memoized: getSiteHeaderProps already did this lookup.
   const branding = headerProps.isPlatformDomain
     ? null
-    : await fetchTenantBranding(incoming.get(RESOLVED_TENANT_ID_HEADER));
+    : await getRequestTenantBranding();
 
   return (
     <>
+      <TenantTheme />
       <SiteHeader {...headerProps} />
       <main>
         <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 py-24 text-center">
@@ -122,7 +137,7 @@ function PlatformHero() {
   );
 }
 
-function TenantHero({ branding }: { branding: NonNullable<Awaited<ReturnType<typeof fetchTenantBranding>>> }) {
+function TenantHero({ branding }: { branding: TenantBranding }) {
   return (
     <>
       {branding.logo_url ? (
