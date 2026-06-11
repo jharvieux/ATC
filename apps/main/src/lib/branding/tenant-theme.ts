@@ -201,6 +201,8 @@ export interface TenantThemeInput {
 export function buildTenantThemeCss(theme: TenantThemeInput): string | null {
   const vars: string[] = [];
 
+  // The second operand of each guard narrows the field to string for
+  // foregroundTripleFor — not redundant, don't simplify away.
   const primary = hexToHslTriple(theme.primary_color);
   if (primary && theme.primary_color) {
     vars.push(

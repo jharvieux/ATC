@@ -5,8 +5,10 @@
 // so it's safe to drop into any dynamic server tree.
 //
 // Deliberately NOT in the root layout: reading request headers there
-// would force the whole app dynamic, breaking the ISR/static routes
-// (/agents/[slug], /chat/[slug]).
+// would force the whole app dynamic, breaking routes that don't already
+// read headers (/chat/[slug] is fully static; /agents/[slug] declares
+// ISR but already reads headers via getSiteHeaderProps, so rendering
+// this component there changes nothing).
 
 import * as React from "react";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
