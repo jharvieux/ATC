@@ -6,7 +6,7 @@
 // concurrent admin POSTs can't both queue duplicate RAG submissions.
 
 import {
-  assertPlatformAdmin,
+  assertPlatformRole,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
@@ -19,7 +19,7 @@ export async function POST(
 ): Promise<Response> {
   let ctx;
   try {
-    ctx = await assertPlatformAdmin(req);
+    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

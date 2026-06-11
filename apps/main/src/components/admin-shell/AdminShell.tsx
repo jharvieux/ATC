@@ -15,6 +15,7 @@ import { Menu } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { AdminSidebar } from "./AdminSidebar";
+import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
 
 export interface AdminShellProps {
   children: React.ReactNode;
@@ -22,11 +23,14 @@ export interface AdminShellProps {
    *  server, threaded through so the first paint matches the operator's
    *  saved state without a client-side flash (#669). */
   initialCollapsed: Record<string, boolean>;
+  /** The current admin's role — controls which sidebar sections are shown. */
+  adminRole: PlatformAdminRole | "service";
 }
 
 export function AdminShell({
   children,
   initialCollapsed,
+  adminRole,
 }: Readonly<AdminShellProps>): React.ReactElement {
   const [open, setOpen] = React.useState(true);
 
@@ -56,7 +60,7 @@ export function AdminShell({
         </div>
       </header>
       <div className="flex flex-1">
-        <AdminSidebar open={open} initialCollapsed={initialCollapsed} />
+        <AdminSidebar open={open} initialCollapsed={initialCollapsed} adminRole={adminRole} />
         <main className="flex-1 overflow-x-hidden">{children}</main>
       </div>
     </div>

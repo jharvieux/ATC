@@ -15,7 +15,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ADMIN_NAV_SECTIONS, type AdminNavSection } from "./sidebar-sections";
+import { filterNavForRole, type AdminNavSection } from "./sidebar-sections";
+import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
 import { isActiveLink } from "./is-active-link";
 import { serializeCollapsedCookie } from "./collapsed-cookie";
 
@@ -38,11 +39,14 @@ export interface AdminSidebarProps {
    *  server. Threaded down so the first client render matches the SSR
    *  HTML — no flash (#669). */
   initialCollapsed: Record<string, boolean>;
+  /** The current admin's role — filters which sections and items are shown. */
+  adminRole: PlatformAdminRole | "service";
 }
 
 export function AdminSidebar({
   open,
   initialCollapsed,
+  adminRole,
 }: AdminSidebarProps): React.ReactElement {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>(
@@ -57,6 +61,8 @@ export function AdminSidebar({
     });
   }, []);
 
+  const visibleSections = filterNavForRole(adminRole);
+
   return (
     <aside
       className={cn(
@@ -65,7 +71,7 @@ export function AdminSidebar({
       )}
     >
       <nav className="flex flex-col gap-4 px-3 py-6">
-        {ADMIN_NAV_SECTIONS.map((section) => (
+        {visibleSections.map((section) => (
           <Section
             key={section.heading}
             section={section}

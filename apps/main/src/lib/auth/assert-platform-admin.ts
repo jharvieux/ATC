@@ -23,15 +23,20 @@
 // right HTTP status (401 for missing/invalid token, 403 for token-valid-but-
 // not-an-admin, 500 for misconfiguration).
 
+import { cache as reactCache } from "react";
+import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
+import { type PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
+
+export type { PlatformAdminRole };
 
 export interface PlatformAdminContext {
   /** auth_user_id from Supabase (human admin), or "service:bearer" for the service-to-service bearer path. */
   admin_user_id: string;
-  /** Role string from platform_admins, or "service" for the bearer path. */
-  role: string;
+  /** Role from platform_admins, or "service" for the bearer path. */
+  role: PlatformAdminRole | "service";
   /** Discriminator so callers can branch on how authorization happened. */
   via: "session" | "bearer";
 }
@@ -112,7 +117,7 @@ export async function assertPlatformAdmin(req: Request): Promise<PlatformAdminCo
     );
   }
 
-  const typed = adminRow as { auth_user_id: string; role: string };
+  const typed = adminRow as { auth_user_id: string; role: PlatformAdminRole };
   return { admin_user_id: typed.auth_user_id, role: typed.role, via: "session" };
 }
 
@@ -133,3 +138,89 @@ export async function assertSuperadmin(req: Request): Promise<PlatformAdminConte
   }
   return ctx;
 }
+
+/**
+ * Asserts the caller has a platform-admin credential AND one of the specified
+ * allowed roles. Use in API route handlers where role-scoped access is needed.
+ *
+ * @param allowedRoles - Roles that may access this resource. Include "service"
+ *   to permit the service-to-service bearer path (RAG cron, etc.).
+ */
+export async function assertPlatformRole(
+  req: Request,
+  allowedRoles: (PlatformAdminRole | "service")[],
+): Promise<PlatformAdminContext> {
+  const ctx = await assertPlatformAdmin(req);
+  if (!allowedRoles.includes(ctx.role)) {
+    throw new PlatformAdminError(
+      403,
+      "insufficient_role",
+      `This action requires one of: ${allowedRoles.join(", ")}.`,
+    );
+  }
+  return ctx;
+}
+
+// ─── React.cache helpers for server-component pages ───────────────────────────
+// Follows the same pattern as get-cached-user.ts: one DB lookup per request
+// shared between (admin)/layout.tsx and any page that calls getCachedAdminContext().
+//
+// React.cache is server-only; guard for vitest the same way get-cached-user does.
+type CacheFn = <T extends (...a: never[]) => unknown>(fn: T) => T;
+const _cache: CacheFn = (() => {
+  if (typeof reactCache === "function") return reactCache as CacheFn;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "assert-platform-admin: react.cache missing in production — admin DB lookup would double.",
+    );
+  }
+  return (fn) => fn;
+})();
+
+/**
+ * Request-scoped memoised admin-context lookup for server components.
+ * Call from pages inside (admin)/ that need to check the caller's role.
+ * The layout also calls this; React.cache ensures a single DB round-trip.
+ *
+ * Returns null when the caller is not a valid platform admin (missing
+ * session, not in platform_admins, etc.). The layout already blocks
+ * unauthenticated callers via notFound(), so null here is a belt-and-
+ * suspenders signal that shouldn't normally surface in production.
+ */
+export const getCachedAdminContext = _cache(async (): Promise<PlatformAdminContext | null> => {
+  const incoming = await headers();
+  const forwarded = new Headers();
+  const cookie = incoming.get("cookie");
+  if (cookie) forwarded.set("cookie", cookie);
+  const authorization = incoming.get("authorization");
+  if (authorization) forwarded.set("authorization", authorization);
+  try {
+    return await assertPlatformAdmin(
+      new Request("https://admin.internal/", { headers: forwarded }),
+    );
+  } catch {
+    return null;
+  }
+});
+
+/**
+ * Convenience for pages: gets the admin context and throws notFound() if the
+ * caller's role is not in allowedRoles. Returns the full context so the page
+ * can use admin_user_id / role without a second call.
+ */
+export async function assertPlatformRolePage(
+  allowedRoles: (PlatformAdminRole | "service")[],
+): Promise<PlatformAdminContext> {
+  // next/navigation is a server-only import; import inline to avoid
+  // pulling it into edge/test environments where it doesn't exist.
+  const { notFound } = await import("next/navigation");
+  const ctx = await getCachedAdminContext();
+  if (!ctx || !allowedRoles.includes(ctx.role)) {
+    notFound();
+    // notFound() throws internally in Next.js (NEXT_NOT_FOUND) — this
+    // line is unreachable but satisfies TypeScript's control-flow analysis.
+    throw new Error("unreachable");
+  }
+  return ctx;
+}
+
