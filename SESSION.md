@@ -1,30 +1,28 @@
-# Session state — last updated 2026-06-11 14:00 UTC
+# Session state — last updated 2026-06-11 13:50 UTC
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 **Note (D-205):** there is currently ONE Supabase project (mfaknjyqiwcjojukcnea) serving production — MCP applies ARE prod applies. Gate accordingly until #386/#534 split environments.
 
 ## Just completed
-- Merged PR #1001 (#811): platform admin role gates
-  - `assertPlatformRole`, `getCachedAdminContext`, `assertPlatformRolePage` added to `assert-platform-admin.ts`
-  - ~49 API routes migrated from `assertPlatformAdmin` to `assertPlatformRole` with per-route allowed-role arrays
-  - `(admin)/layout.tsx` rewritten to use `getCachedAdminContext()`; `adminRole` threaded to `AdminShell`/`AdminSidebar`
-  - Sidebar and hub page now filter by caller's role
-  - 10 test files updated; 5 new auth unit tests
-  - D-208 memory entry logged (D-170 scope used; D-201 narrowing deferred to #1003)
-- Opened issue #1002: per-page `assertPlatformRolePage` gates for remaining ~22 admin pages
-- Opened issue #1003: D-201 vs D-170 role-scope alignment review
+- Tenant branding applied at runtime (§16.2) on branch `claude/tenant-branding-ui-1piloz` (D-209):
+  - New `lib/branding/tenant-theme.ts` (hex→HSL, WCAG contrast, font sanitize, CSS builder) + `TenantTheme` injector + `BrandLogo` + request-memoized `getRequestTenantBranding`
+  - Injected on (tenant) layout, root page (shell + landing), agents pages, group coordinator layout, /q/[token], /companion/[token]
+  - Tenant logo in SiteHeader + TenantShell; tenant name/favicon via generateMetadata
+  - §16.2 contrast warnings in settings/branding form (non-blocking)
+  - `pnpm verify` green; `next build` compiles + typechecks (prerender stops at /legal/ai-disclaimer missing Supabase env — same failure on clean base, pre-existing)
+- Opened issue #1008: remaining unbranded customer surfaces (app/settings/*, groups invitation views, tokenized-page favicon/title)
 
 ## In flight
-- Nothing in flight — clean checkpoint
+- Branch `claude/tenant-branding-ui-1piloz` pushed; NO PR opened (remote session — user didn't request one). When a PR is wanted: open into dev, run d091-reviewer + pre-pr-reviewer (diff is 18 files / ~640 added lines → first audit run on Opus per CLAUDE.md size trigger), fill `## Audit`, reference #1008 in "Not in scope".
 
 ## Next step
-- Resume open issues per user direction: #826 (chat structured ship+date itinerary/price lookup), #885 (Playwright lightbox test), #953 Phase A (CruiseMapper cabin parser follow-up)
-- PRs #993, #994, #995 (grants snapshot fixes) — waiting for CI, user said merge later
+- User decision: open the PR for `claude/tenant-branding-ui-1piloz` into dev (then audit agents + merge), or review the branch first.
 
 ## Blocked on user
-- Nothing
+- Whether to open/merge the tenant-branding PR.
 
 ## Open questions
 - #1003: D-201 narrowing — reviewer scope and mechanism review (user chose to defer)
 - PRs #993/#994/#995 still open; user said "merge everything later"
+- #1008: theming sweep for remaining customer surfaces (deferred from this branch)

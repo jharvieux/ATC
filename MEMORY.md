@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-209 — 2026-06-11 — Tenant branding applied at runtime (§16.2) — token mapping + injection points chosen
+
+**Decision:** "Implement the tenant branding UI" interpreted as *applying* the saved brand to tenant-facing surfaces — the settings form already existed (punch-list #21, closed in #346) but nothing web-side consumed colors/font/favicon (emails did). Built on branch `claude/tenant-branding-ui-1piloz`. Key calls:
+
+- **Token mapping:** tenant `primary_color` → `--primary` + `--ring`; `secondary_color` → `--secondary`; `accent_color` → `--accent`; all `*-foreground` tokens computed (white vs near-black by WCAG contrast) so brand-colored controls stay readable whatever hex the tenant picks.
+- **Unlayered `:root` override:** globals.css tokens live in `@layer base`; the injected `<style>` is unlayered, so one block beats both light defaults and `.dark` overrides. One tenant palette applies in both color schemes (spec defines a single palette per tenant).
+- **NOT in the root layout:** reading request headers there would force `/agents/[slug]` (ISR) and `/chat/[slug]` (static params) dynamic. Instead a `<TenantTheme />` server component is rendered per tenant-facing layout/page; branding fetch is request-memoized (`getRequestTenantBranding`, get-cached-user shim pattern — React 18, `react.cache` absent in vitest).
+- **Google Fonts loaded at runtime** for a non-system first family in `font_family` (sanitized to `[A-Za-z0-9 ,'"-]` against style-tag escape); unknown names 404 harmlessly and fall down the stack.
+- **Contrast warnings (§16.2):** non-blocking, 3:1 (WCAG AA for UI components, SC 1.4.11) vs white and vs near-black — the always-passable 4.5:1-vs-best-foreground check would never fire, so the useful warning is "washes out against the page background."
+
+**Rejected:** root-layout injection (breaks ISR); deriving pale tints for `--accent`/`--secondary` (unpredictable; direct mapping honors what the tenant picked); per-mode tenant palettes (not in spec).
+
+**Related artifacts:** branch `claude/tenant-branding-ui-1piloz`; follow-up #1008 (remaining customer surfaces: app/settings/*, groups invitation views, tokenized-page favicon/title); specs §16.2.
+
+---
+
 ## D-208 — 2026-06-11 — #811 shipped with D-170 scope; D-201 narrowing deferred to #1003
 
 **Decision:** PR #1001 merged using the D-170 role scope (broader reviewer access) and `assertPlatformRole` mechanism. D-201's narrower spec (reviewer = RAG + chunks only; finance/support deferred; resource-centric mechanism) was not followed — the operator's call is to ship the fuller scope now and revisit the D-201 narrowing later.
