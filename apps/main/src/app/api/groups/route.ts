@@ -11,6 +11,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { selectHeroImage } from "@/lib/groups/hero-image";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
@@ -66,6 +67,11 @@ export async function POST(req: Request): Promise<Response> {
       coordinator_url: hero_image_url ?? null,
     });
 
+    const [lineRes, shipRes] = await Promise.all([
+      resolveCanonical(cruise_line, "line", svc),
+      resolveCanonical(ship_name, "ship", svc),
+    ]);
+
     // Insert group row (status: active — transitions from planning on send).
     const { data: group, error: groupErr } = await svc
       .from("groups")
@@ -82,6 +88,8 @@ export async function POST(req: Request): Promise<Response> {
         ...(coordinator_message !== undefined && { coordinator_message }),
         visibility_default,
         hero_image_url: heroUrl,
+        ...(lineRes.matched && { cruise_line_id: lineRes.id }),
+        ...(shipRes.matched && { cruise_ship_id: shipRes.id }),
       })
       .select("id")
       .single();
@@ -135,7 +143,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, error } = await svc
       .from("groups")
-      .select("id,status,cruise_line,ship_name,sailing_date,departure_port,hero_image_url,created_at")
+      .select("id,status,cruise_line,ship_name,sailing_date,departure_port,hero_image_url,created_at,cruise_line_id,cruise_lines(display_name)")
       .eq("tenant_id", ctx.tenant_id)
       .order("sailing_date", { ascending: true });
 

@@ -18,6 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { resolveCommissionRate, type ResolvedCommissionRate } from "./resolve-commission-rate";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 import type {
   BookingConfirmationFields,
   IntakeFormFields,
@@ -269,6 +270,11 @@ async function insertImportedBooking(
   contactId: string,
   acceptingUserId: string | null | undefined,
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const [lineRes, shipRes] = await Promise.all([
+    resolveCanonical(fields.cruise_line, "line", svc),
+    resolveCanonical(fields.ship_name, "ship", svc),
+  ]);
+
   const { data, error } = await svc
     .from("bookings")
     .insert({
@@ -291,6 +297,8 @@ async function insertImportedBooking(
       imported_by_user_id: acceptingUserId ?? null,
       provider_booking_ref: fields.provider_booking_ref,
       status: "confirmed",
+      ...(lineRes.matched && { cruise_line_id: lineRes.id }),
+      ...(shipRes.matched && { cruise_ship_id: shipRes.id }),
     })
     .select("id")
     .single();

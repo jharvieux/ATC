@@ -12,6 +12,7 @@ import { populateConversionTouch } from "@/lib/attribution/populate-conversion-t
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -81,7 +82,7 @@ export async function GET(req: Request): Promise<Response> {
     const { data: optionRows, error: optionsErr } = await db
       .from("quote_options")
       .select(
-        "quote_id, option_index, customer_selected, cruise_line, ship_name, sailing_date, total_amount_cents",
+        "quote_id, option_index, customer_selected, cruise_line, ship_name, sailing_date, total_amount_cents, cruise_line_id, cruise_lines(display_name)",
       )
       .in("quote_id", quotes.map((q) => q.id))
       .order("option_index", { ascending: true });
@@ -145,11 +146,17 @@ export async function POST(req: Request): Promise<Response> {
     // quote_options row. Multi-option callers post additional options to
     // /api/quotes/:id/options.
     if (Object.keys(optionFields).length > 0) {
+      const [lineRes, shipRes] = await Promise.all([
+        resolveCanonical(optionFields.cruise_line as string | undefined, "line", db),
+        resolveCanonical(optionFields.ship_name as string | undefined, "ship", db),
+      ]);
       await safeAwait(db.from("quote_options").insert({
         tenant_id: ctx.tenant_id,
         quote_id: quoteId,
         option_index: 1,
         ...optionFields,
+        ...(lineRes.matched && { cruise_line_id: lineRes.id }),
+        ...(shipRes.matched && { cruise_ship_id: shipRes.id }),
       }), "quote_options.insert");
     }
 

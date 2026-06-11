@@ -419,6 +419,9 @@ const ALLOWED_PATH_SUFFIXES = [
   // shape as refresh-cruisemapper-sailings (per-URL steps, service-role for
   // inventory reads/writes). §5.4.4.
   "/inngest/backfill-cruisemapper-ports.ts",
+  // #781 Phase 2 Step 2 — cross-table backfill cron: reads/writes quote_options,
+  // bookings, groups, price_watches as platform data (no tenant context). §5.4.4.
+  "/inngest/backfill-cruise-fk.ts",
   // #965 — Branding setup banner server component: reads tenant_memberships
   // (role) and tenant_branding (logo_url) to decide whether to show the
   // banner. Both tables are RLS-gated to the tenant's own members, but this

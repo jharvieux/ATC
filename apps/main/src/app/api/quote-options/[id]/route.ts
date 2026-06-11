@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 
 const OptionPatchSchema = z.object({
   label: z.string().optional(),
@@ -56,9 +57,19 @@ export async function PATCH(
       }
     }
 
+    const extraFks: Record<string, string | null> = {};
+    if (parsed.data.cruise_line !== undefined) {
+      const r = await resolveCanonical(parsed.data.cruise_line, "line", db);
+      extraFks.cruise_line_id = r.matched ? r.id : null;
+    }
+    if (parsed.data.ship_name !== undefined) {
+      const r = await resolveCanonical(parsed.data.ship_name, "ship", db);
+      extraFks.cruise_ship_id = r.matched ? r.id : null;
+    }
+
     const { data, error } = await db
       .from("quote_options")
-      .update({ ...parsed.data, updated_at: new Date().toISOString() })
+      .update({ ...parsed.data, ...extraFks, updated_at: new Date().toISOString() })
       .eq("id", id)
       .select()
       .single();
