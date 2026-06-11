@@ -4,6 +4,7 @@
 // reviewers, finance admins, and support admins only see their own sections.
 
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { getCachedAdminContext } from "@/lib/auth/assert-platform-admin";
 import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
 
@@ -77,7 +78,8 @@ function filterSections(sections: HubSection[], role: PlatformAdminRole | "servi
 
 export default async function AdminHubPage() {
   const ctx = await getCachedAdminContext();
-  const visibleSections = filterSections(SECTIONS, ctx?.role ?? "support");
+  if (!ctx) notFound();
+  const visibleSections = filterSections(SECTIONS, ctx.role);
 
   return (
     <main className="px-6 py-10 max-w-[860px] mx-auto">

@@ -227,6 +227,3 @@ export async function assertPlatformRolePage(
   return ctx;
 }
 
-/** All human platform-admin roles — convenience for routes open to any admin
- *  but not to the service bearer. */
-export const ALL_ADMIN_ROLES = PLATFORM_ADMIN_ROLES as readonly (PlatformAdminRole | "service")[];
