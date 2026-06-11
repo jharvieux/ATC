@@ -61,6 +61,16 @@ function DialogContent({
   className?: string;
 }) {
   const { open, setOpen } = React.useContext(DialogContext);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [open, setOpen]);
+
   if (!open) return null;
 
   return (
