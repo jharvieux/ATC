@@ -55,6 +55,38 @@ function makeDb() {
   };
 }
 
+// makeDbWithError returns a DB stub where the named table returns { data: null, error: { message } }
+// for any read operation on that table — used to verify each SELECT error path throws.
+function makeDbWithError(errorTable: string, msg: string) {
+  const err = { message: msg };
+  return {
+    from(table: string) {
+      return {
+        select(_cols: string) {
+          const isErrorTable = table === errorTable;
+          const chain: Record<string, unknown> = {
+            eq(_col: string, _val: unknown) { return chain; },
+            maybeSingle() {
+              if (isErrorTable) return Promise.resolve({ data: null, error: err });
+              if (table === "cruise_line_aliases") return Promise.resolve({ data: mocks.cruiseLineAliases });
+              if (table === "cruise_ship_aliases") return Promise.resolve({ data: mocks.cruiseShipAliases });
+              return Promise.resolve({ data: null });
+            },
+            then(resolve: (v: { data: unknown; error?: unknown }) => unknown) {
+              if (isErrorTable) return resolve({ data: null, error: err });
+              if (table === "cruise_lines") return resolve({ data: mocks.cruiseLines });
+              if (table === "cruise_ships") return resolve({ data: mocks.cruiseShips });
+              return resolve({ data: [] });
+            },
+          };
+          return chain;
+        },
+        upsert() { return Promise.resolve({ error: null }); },
+      };
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -112,6 +144,21 @@ describe("resolveCanonical — line", () => {
     const result = await resolveCanonical("NOT A REAL CRUISE LINE XYZ123", "line", db as never);
     expect(result.matched).toBe(false);
   });
+
+  it("throws when cruise_lines bulk SELECT fails (not silently matched:false)", async () => {
+    const db = makeDbWithError("cruise_lines", "connection timeout");
+    await expect(resolveCanonical("Royal Caribbean", "line", db as never)).rejects.toThrow(
+      "cruise_lines select failed",
+    );
+  });
+
+  it("throws when cruise_line_aliases point-read fails", async () => {
+    // No bulk match so code reaches the alias loop
+    const db = makeDbWithError("cruise_line_aliases", "alias db error");
+    await expect(resolveCanonical("MSC Cruises", "line", db as never)).rejects.toThrow(
+      "cruise_line_aliases select failed",
+    );
+  });
 });
 
 describe("resolveCanonical — ship", () => {
@@ -133,6 +180,21 @@ describe("resolveCanonical — ship", () => {
     const db = makeDb();
     const result = await resolveCanonical("SS Nessie", "ship", db as never);
     expect(result.matched).toBe(false);
+  });
+
+  it("throws when cruise_ship_aliases point-read fails", async () => {
+    const db = makeDbWithError("cruise_ship_aliases", "alias timeout");
+    await expect(resolveCanonical("Harmony of the Seas", "ship", db as never)).rejects.toThrow(
+      "cruise_ship_aliases select failed",
+    );
+  });
+
+  it("throws when cruise_ships bulk SELECT fails", async () => {
+    // No alias match so code reaches the bulk ships SELECT
+    const db = makeDbWithError("cruise_ships", "ships db error");
+    await expect(resolveCanonical("Wonder of the Seas", "ship", db as never)).rejects.toThrow(
+      "cruise_ships select failed",
+    );
   });
 });
 
