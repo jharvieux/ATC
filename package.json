@@ -59,7 +59,7 @@
     "mutate:commissions": "stryker run --mutate \"apps/main/src/lib/commissions/**/*.ts\""
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.103.0",
+    "@anthropic-ai/sdk": "^0.104.1",
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.60.0",
     "@testing-library/react": "^16.3.0",
@@ -68,7 +68,7 @@
     "@supabase/supabase-js": "^2.108.1",
     "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.8",
-    "inngest": "^4.5.0",
+    "inngest": "^4.5.1",
     "jsdom": "^26.1.0",
     "jscpd": "^5.0.5",
     "knip": "^6.16.1",

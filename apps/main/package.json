@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.103.0",
+    "@anthropic-ai/sdk": "^0.104.1",
     "@atc/contracts": "workspace:*",
     "@atc/shared-types": "workspace:*",
     "@kenjiuno/decompressrtf": "0.1.4",
@@ -33,11 +33,11 @@
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.8.0",
     "geist": "^1.7.2",
-    "inngest": "^4.5.0",
+    "inngest": "^4.5.1",
     "jose": "^6.2.3",
     "lucide-react": "^1.17.0",
     "mammoth": "^1.12.0",
-    "next": "^16.2.7",
+    "next": "^16.2.9",
     "next-themes": "^0.4.6",
     "officeparser": "^7.2.1",
     "openai": "^6.42.0",
