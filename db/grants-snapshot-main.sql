@@ -71,6 +71,7 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.campaigns TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.campaigns TO service_role;
 
 -- TABLE: public.canonical_match_reviews
+GRANT SELECT, UPDATE ON public.canonical_match_reviews TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.canonical_match_reviews TO service_role;
 
 -- TABLE: public.ccpa_deletion_executions
@@ -265,6 +266,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.persona_addendums TO service_role
 GRANT SELECT ON public.persona_safety_config TO authenticated;
 GRANT SELECT, UPDATE ON public.persona_safety_config TO service_role;
 
+-- TABLE: public.personal_access_tokens
+GRANT INSERT, SELECT, UPDATE ON public.personal_access_tokens TO service_role;
+
 -- TABLE: public.personas
 GRANT SELECT ON public.personas TO authenticated;
 GRANT SELECT, UPDATE ON public.personas TO service_role;
@@ -456,6 +460,9 @@ GRANT INSERT, SELECT, UPDATE ON public.user_data_export_requests TO service_role
 -- TABLE: public.users
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.users TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.users TO service_role;
+
+-- TABLE: public.vendor_health
+GRANT INSERT, SELECT, UPDATE ON public.vendor_health TO service_role;
 
 -- TABLE: public.voice_profiles
 GRANT INSERT, SELECT, UPDATE ON public.voice_profiles TO authenticated;
