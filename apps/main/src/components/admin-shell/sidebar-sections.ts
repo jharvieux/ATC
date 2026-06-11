@@ -5,14 +5,16 @@
 // hub page if you want it surfaced as a card).
 //
 // requiredRoles: roles that may see this item. Omit to allow all admins.
-// "superadmin" always has access regardless of requiredRoles.
+// Superadmin access depends on including "superadmin" in requiredRoles —
+// there is no automatic bypass. Every restricted item must list "superadmin"
+// explicitly if superadmins should see it.
 
 import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
 
 export interface AdminNavItem {
   href: string;
   label: string;
-  /** Roles that may access this page. Superadmin always passes. */
+  /** Roles that may access this page. Must include "superadmin" for superadmin access. */
   requiredRoles?: PlatformAdminRole[];
 }
 

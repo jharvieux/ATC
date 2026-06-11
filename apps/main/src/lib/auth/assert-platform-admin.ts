@@ -28,10 +28,7 @@ import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
-import {
-  type PlatformAdminRole,
-  PLATFORM_ADMIN_ROLES,
-} from "@/lib/auth/platform-admin-roles";
+import { type PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
 
 export type { PlatformAdminRole };
 
