@@ -268,3 +268,37 @@ describe("assertPermission — PAT path", () => {
     expect(TOKEN_HASH).toBe(expected);
   });
 });
+
+describe("assertPermission — PAT last_used_at throttle", () => {
+  // last_used_at exists for operator visibility ("is this token still in
+  // use?") but writing it on EVERY request would turn each API call into a
+  // DB write. The throttle caps that at one write per 5 minutes — these
+  // tests pin both sides so a refactor can't silently drop the audit trail
+  // (never writes) or the throttle (writes every call).
+  const THROTTLE_CTX = "personal_access_tokens.update.last_used_at";
+
+  it("writes last_used_at when the token has never been used", async () => {
+    // validPat.last_used_at is null → treated as epoch → write fires.
+    await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" });
+    expect(mocks.safeAwait).toHaveBeenCalledWith(expect.anything(), THROTTLE_CTX);
+  });
+
+  it("writes last_used_at when the last use is older than the throttle window", async () => {
+    const staleUse = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    mocks.svcFrom.mockReturnValue(
+      makeServiceRoleClient({ ...validPat, last_used_at: staleUse }, null, activeOwnerUser, null),
+    );
+    await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" });
+    expect(mocks.safeAwait).toHaveBeenCalledWith(expect.anything(), THROTTLE_CTX);
+  });
+
+  it("skips the write when the token was used within the throttle window", async () => {
+    const recentUse = new Date(Date.now() - 60 * 1000).toISOString();
+    mocks.svcFrom.mockReturnValue(
+      makeServiceRoleClient({ ...validPat, last_used_at: recentUse }, null, activeOwnerUser, null),
+    );
+    await assertPermission(makeRequest(), { resource: "rag_submissions", action: "create" });
+    const throttleWrites = mocks.safeAwait.mock.calls.filter((c) => c[1] === THROTTLE_CTX);
+    expect(throttleWrites).toHaveLength(0);
+  });
+});
