@@ -40,7 +40,7 @@ async function upsertMetrics(
       const current = Number(row[col] ?? 0);
       update[col] = current + delta;
     }
-    await safeAwait(db.from("tenant_usage_metrics").update(update).eq("id", row.id as string), "tenant_usage_metrics.update");
+    await safeAwait(db.from("tenant_usage_metrics").update(update).eq("id", row.id as string).eq("tenant_id", tenant_id), "tenant_usage_metrics.update");
   } else {
     await safeAwait(db.from("tenant_usage_metrics").insert({
       tenant_id,
@@ -92,7 +92,8 @@ export async function incrementEmailSent(ctx: CounterContext): Promise<void> {
         email_sent_today: newToday,
         email_sent_day_ref: today,
       })
-      .eq("id", row.id), "tenant_usage_metrics.update");
+      .eq("id", row.id)
+      .eq("tenant_id", ctx.tenant.tenant_id), "tenant_usage_metrics.update");
     await checkStateTransitionIfNeeded({ db: ctx.db, tenant: ctx.tenant, dimension: "email_volume", metric_value: BigInt(newToday) });
   } else {
     await safeAwait(ctx.db.from("tenant_usage_metrics").insert({

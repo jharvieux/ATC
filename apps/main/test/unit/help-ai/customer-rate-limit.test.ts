@@ -43,10 +43,17 @@ function mockDbForCounter(state: { rows: CounterRow[] }): SupabaseClient {
         }),
       }),
       update: (patch: Partial<CounterRow>) => ({
-        eq: async (_c: string, id: string) => {
+        eq: (_c: string, id: string) => {
           const idx = state.rows.findIndex((r) => r.id === id);
           if (idx >= 0) state.rows[idx] = { ...state.rows[idx]!, ...patch };
-          return { error: null };
+          const result = { data: null, error: null };
+          const p = Promise.resolve(result);
+          const chain: Record<string, unknown> = {
+            eq: () => chain,
+            then: p.then.bind(p),
+            catch: p.catch.bind(p),
+          };
+          return chain;
         },
       }),
       insert: async (payload: Omit<CounterRow, "id">) => {

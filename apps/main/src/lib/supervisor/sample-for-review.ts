@@ -93,6 +93,7 @@ export async function maybeSampleForReview(input: SampleForReviewInput): Promise
     .from("messages")
     .select("id, role, content, created_at")
     .eq("conversation_id", conversation_id)
+    .eq("tenant_id", tenant_id)
     .order("created_at", { ascending: false })
     .limit(CONTEXT_MESSAGE_WINDOW);
 

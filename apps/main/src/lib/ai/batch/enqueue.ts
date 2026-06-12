@@ -72,7 +72,8 @@ export async function enqueueBatchRequest(args: EnqueueArgs): Promise<EnqueueRes
     args.db
       .from("ai_batch_requests")
       .update({ custom_id: r.id })
-      .eq("id", r.id),
+      .eq("id", r.id)
+      .eq("tenant_id", args.tenant_id),
     "ai_batch_requests.update.custom_id",
   );
 

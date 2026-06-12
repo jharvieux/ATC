@@ -53,7 +53,8 @@ export async function softCommitTransfer({
       transfer_soft_commit_at: now.toISOString(),
       transferred_to_user_id: user_id,
     })
-    .eq("id", anonymous_session_id);
+    .eq("id", anonymous_session_id)
+    .eq("tenant_id", tenant_id);
 
   if (sessionErr) {
     throw new Error(`softCommitTransfer: session update failed — ${sessionErr.message}`);
@@ -64,7 +65,8 @@ export async function softCommitTransfer({
   const { error: convErr } = await db
     .from("conversations")
     .update({ user_id })
-    .eq("anonymous_session_id", anonymous_session_id);
+    .eq("anonymous_session_id", anonymous_session_id)
+    .eq("tenant_id", tenant_id);
 
   if (convErr) {
     throw new Error(`softCommitTransfer: conversation re-key failed — ${convErr.message}`);
@@ -76,7 +78,8 @@ export async function softCommitTransfer({
   const { error: msgErr } = await db
     .from("messages")
     .update({ user_id })
-    .eq("anonymous_session_id", anonymous_session_id);
+    .eq("anonymous_session_id", anonymous_session_id)
+    .eq("tenant_id", tenant_id);
 
   // Messages may not have anonymous_session_id — tolerate if the column is absent.
   if (msgErr && !msgErr.message.includes("column")) {
@@ -130,6 +133,7 @@ export async function undoTransfer({
     .from("anonymous_sessions")
     .select("id, transferred_to_user_id, transfer_soft_commit_at, transfer_committed_at, transfer_undo_count")
     .eq("id", anonymous_session_id)
+    .eq("tenant_id", tenant_id)
     .maybeSingle();
 
   if (sessionReadErr) {
@@ -159,7 +163,8 @@ export async function undoTransfer({
       transferred_to_user_id: null,
       transfer_undo_count: (session.transfer_undo_count ?? 0) + 1,
     })
-    .eq("id", anonymous_session_id);
+    .eq("id", anonymous_session_id)
+    .eq("tenant_id", tenant_id);
 
   if (clearErr) {
     throw new Error(`undoTransfer: session clear failed — ${clearErr.message}`);
@@ -170,7 +175,8 @@ export async function undoTransfer({
   const { error: convErr } = await db
     .from("conversations")
     .update({ user_id: null })
-    .eq("anonymous_session_id", anonymous_session_id);
+    .eq("anonymous_session_id", anonymous_session_id)
+    .eq("tenant_id", tenant_id);
 
   if (convErr) {
     throw new Error(`undoTransfer: conversation revert failed — ${convErr.message}`);
@@ -180,7 +186,8 @@ export async function undoTransfer({
   const { error: msgErr } = await db
     .from("messages")
     .update({ user_id: null })
-    .eq("anonymous_session_id", anonymous_session_id);
+    .eq("anonymous_session_id", anonymous_session_id)
+    .eq("tenant_id", tenant_id);
 
   if (msgErr && !msgErr.message.includes("column")) {
     throw new Error(`undoTransfer: message revert failed — ${msgErr.message}`);
@@ -191,6 +198,7 @@ export async function undoTransfer({
     .from("messages")
     .select("created_at")
     .eq("anonymous_session_id", anonymous_session_id)
+    .eq("tenant_id", tenant_id)
     .order("created_at", { ascending: true });
 
   const messageCount = msgSnapshot?.length ?? 0;

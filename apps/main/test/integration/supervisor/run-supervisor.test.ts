@@ -68,22 +68,43 @@ function buildMockDb(opts: {
 
   const updatedConversation = { ...conversation };
 
+  // Helper: returns a thenable object that also supports chained .eq() calls.
+  // Necessary because queries now chain two .eq() filters (id + tenant_id).
+  function makeUpdateChain(
+    patch: Record<string, unknown>,
+    onFirstEq: () => void,
+  ) {
+    const result = { data: null, error: null };
+    const p = Promise.resolve(result);
+    const chain: Record<string, unknown> = {
+      eq: () => chain,
+      then: p.then.bind(p),
+      catch: p.catch.bind(p),
+    };
+    return {
+      eq: (_col: string, _val: unknown) => {
+        onFirstEq();
+        return chain;
+      },
+    };
+  }
+
+  // Helper: returns a select chain that supports multiple .eq() calls before terminal.
+  function makeSelectChain(terminal: Record<string, unknown>) {
+    const chain: Record<string, unknown> = { eq: () => chain, ...terminal };
+    return chain;
+  }
+
   const db = {
     from: (table: string) => {
       if (table === "conversations") {
         return {
-          select: () => ({
-            eq: () => ({
-              single: async () => ({ data: { ...updatedConversation }, error: null }),
-            }),
+          select: () => makeSelectChain({
+            single: async () => ({ data: { ...updatedConversation }, error: null }),
           }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: (_col: string, _val: string) => {
-              // Apply patch to local state for sequential reads
-              Object.assign(updatedConversation, patch);
-              conversationUpdates?.(patch);
-              return Promise.resolve({ data: null, error: null });
-            },
+          update: (patch: Record<string, unknown>) => makeUpdateChain(patch, () => {
+            Object.assign(updatedConversation, patch);
+            conversationUpdates?.(patch);
           }),
         };
       }
@@ -126,9 +147,7 @@ function buildMockDb(opts: {
       }
       if (table === "messages") {
         return {
-          update: () => ({
-            eq: () => Promise.resolve({ data: null, error: null }),
-          }),
+          update: (patch: Record<string, unknown>) => makeUpdateChain(patch, () => {}),
         };
       }
       if (table === "escalation_topics") {
@@ -141,7 +160,7 @@ function buildMockDb(opts: {
       }
       return {
         select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }),
-        update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+        update: (patch: Record<string, unknown>) => makeUpdateChain(patch, () => {}),
         insert: () => Promise.resolve({ data: null, error: null }),
       };
     },
@@ -402,6 +421,92 @@ describe("runSupervisor — slur consecutive-hit escalation (§10.2 tone_drift)"
       (p) => "supervisor_slur_consecutive_count" in p,
     );
     expect(countUpdate?.supervisor_slur_consecutive_count).toBe(0);
+  });
+});
+
+describe("runSupervisor — tenant_id filter on DB mutations (§D-091)", () => {
+  it("conversations UPDATE and messages UPDATE both carry tenant_id eq filter", async () => {
+    const conversationsEqCols: string[] = [];
+    const messagesEqCols: string[] = [];
+
+    function makeMutationChain(eqCols: string[]) {
+      const result = { data: null, error: null };
+      const p = Promise.resolve(result);
+      const chain: Record<string, unknown> = {
+        eq: (col: string, _val: unknown) => { eqCols.push(col); return chain; },
+        then: p.then.bind(p),
+        catch: p.catch.bind(p),
+      };
+      return { eq: (col: string, _val: unknown) => { eqCols.push(col); return chain; } };
+    }
+
+    const db = {
+      from: (table: string) => {
+        if (table === "conversations") {
+          const convData = makeConversation({ regen_count_total: 0 });
+          const selChain: Record<string, unknown> = {};
+          selChain.eq = () => selChain;
+          selChain.single = async () => ({ data: convData, error: null });
+          return {
+            select: () => selChain,
+            update: (_patch: Record<string, unknown>) => makeMutationChain(conversationsEqCols),
+          };
+        }
+        if (table === "ai_kill_switch_state") {
+          return {
+            select: () => ({
+              eq: () => ({ single: async () => ({ data: { global_paused: false }, error: null }) }),
+            }),
+          };
+        }
+        if (table === "platform_settings") {
+          return {
+            select: () => ({
+              eq: (_col: string, _key: string) => ({
+                single: async () => ({ data: { value: [] }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === "tenant_settings") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: { supplemental_hate_speech_denylist: [] }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === "messages") {
+          return {
+            update: (_patch: Record<string, unknown>) => makeMutationChain(messagesEqCols),
+          };
+        }
+        if (table === "escalation_topics") {
+          return { insert: () => Promise.resolve({ data: null, error: null }) };
+        }
+        return {
+          select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }),
+          update: (_patch: Record<string, unknown>) => makeMutationChain([]),
+          insert: () => Promise.resolve({ data: null, error: null }),
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    process.env.SUPERVISOR_REGEN_MAX_PER_CONVERSATION = "6";
+
+    await runSupervisor({
+      ctx,
+      conversation_id: CONVERSATION_ID,
+      message_id: MESSAGE_ID,
+      candidate_response: WARNING_RESPONSE,
+      db,
+    });
+
+    expect(conversationsEqCols).toContain("id");
+    expect(conversationsEqCols).toContain("tenant_id");
+    expect(messagesEqCols).toContain("id");
+    expect(messagesEqCols).toContain("tenant_id");
   });
 });
 

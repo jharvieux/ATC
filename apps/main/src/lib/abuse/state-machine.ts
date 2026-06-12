@@ -145,7 +145,8 @@ async function transitionMonthly(
       [meta.state_col]: newState,
       [meta.state_changed_col]: new Date().toISOString(),
     })
-    .eq("id", row.id as string), "tenant_usage_metrics.update");
+    .eq("id", row.id as string)
+    .eq("tenant_id", tenant.tenant_id), "tenant_usage_metrics.update");
 
   await inngest.send({
     name: "abuse.state_transition",

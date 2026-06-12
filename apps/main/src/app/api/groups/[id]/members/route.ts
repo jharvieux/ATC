@@ -63,7 +63,7 @@ export async function POST(
 
     // §18.10 — sailed groups are read-only.
     try {
-      await assertGroupNotSailed(db, id);
+      await assertGroupNotSailed(db, id, ctx.tenant_id);
     } catch (err) {
       if (err instanceof GroupSailedError) {
         return Response.json(
