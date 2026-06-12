@@ -72,6 +72,9 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("me", "get"),
   // §15.3 / §17.3 — onboarding profile read (pre-fills Edit Profile page).
   key("onboarding", "profile:read"),
+  // #996 — any member can view PATs that act as them; the route scopes to
+  // caller's own user_id for non-owners (same self-service pattern as above).
+  key("api_tokens", "list"),
 ]);
 
 // AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
@@ -171,8 +174,9 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("rag_submissions", "approve"),
   key("rag_submissions", "reject"),
   key("rag_submissions", "review"),
-  // #712 — Personal API tokens (owner-only; agents/viewers cannot mint tokens).
-  key("api_tokens", "list"),
+  // #712 / #996 — PAT management. list is in READ_GRANTS (self-view for all
+  // roles; route scopes to caller's own user_id for non-owners). create/revoke
+  // remain owner-only.
   key("api_tokens", "create"),
   key("api_tokens", "revoke"),
 ]);
