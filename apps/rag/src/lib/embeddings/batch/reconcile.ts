@@ -62,6 +62,7 @@ export async function reconcileEmbeddingBatches(args: {
 
   // Pick up distinct submitted batch_ids, oldest first.
   const { data: batchIdRows, error: lookupErr } = await db
+    // d091-allow:service-role-tenant — platform embedding reconcile cron; pending_embedding.tenant_id nullable by design; cross-tenant batch processing required.
     .from("pending_embedding")
     .select("batch_id, submitted_at")
     .eq("status", "submitted")
@@ -138,6 +139,7 @@ async function applyCompletedBatch(args: {
   const { db, batchId, status } = args;
 
   const { data: pendingData, error: pendingErr } = await db
+    // d091-allow:service-role-tenant — platform embedding reconcile cron; pending_embedding.tenant_id nullable by design; cross-tenant batch processing required.
     .from("pending_embedding")
     .select("id, chunk_id, custom_id, tenant_id")
     .eq("batch_id", batchId)
@@ -290,6 +292,7 @@ async function failBatch(
 ): Promise<number> {
   const rows = await safeAwait(
     db
+      // d091-allow:service-role-tenant — platform embedding reconcile cron; pending_embedding.tenant_id nullable by design; cross-tenant batch processing required.
       .from("pending_embedding")
       .update({
         status: "failed",

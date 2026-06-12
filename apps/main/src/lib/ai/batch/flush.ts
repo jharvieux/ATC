@@ -46,6 +46,7 @@ export async function flushPendingForPurpose(args: {
   // Pick the next slice of pending rows, oldest first, for FAIRNESS
   // across tenants — a tenant that enqueued first gets serviced first.
   const { data, error } = await db
+    // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
     .from("ai_batch_requests")
     .select("id, custom_id, request_params")
     .eq("purpose", purpose)
@@ -64,6 +65,7 @@ export async function flushPendingForPurpose(args: {
   // re-fire if pending > MAX. Cheaper than a second query: we only
   // need to know whether more exist.
   const { count: remainingCount } = await db
+    // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
     .from("ai_batch_requests")
     .select("id", { count: "exact", head: true })
     .eq("purpose", purpose)
@@ -100,6 +102,7 @@ export async function flushPendingForPurpose(args: {
   // Link the requests to the job + flip them to submitted.
   await safeAwait(
     db
+      // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
       .from("ai_batch_requests")
       .update({
         status: "submitted",
