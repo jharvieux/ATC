@@ -42,7 +42,9 @@ export type GenerationSseEvent =
   | { type: "delta"; text: string }
   | { type: "delta_start" }
   | { type: "rewriting" }
-  | { type: "supervisor"; action: "allow" | "regenerate" | "escalate"; regens: number }
+  // The loop only emits action "allow" (vendor-down fallback); regenerate/
+  // escalate summary events are the route's post-loop responsibility.
+  | { type: "supervisor"; action: "allow"; regens: number }
   | { type: "error"; message: string }
   | { type: "done" };
 
@@ -83,7 +85,9 @@ export type GenerationLoopResult =
   | {
       status: "complete";
       candidate: string;
-      supervisorOutcome: SupervisorOutcome | null;
+      // Both non-null: "complete" means at least one attempt persisted a row
+      // and ran the supervisor (the loop aborts otherwise).
+      supervisorOutcome: SupervisorOutcome;
       assistantMessageId: string;
       // BP24 telemetry — observability for the streaming-enabled cohort.
       streamedAttempts: number;
@@ -405,14 +409,21 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
       : "Your previous response was flagged for tone or grounding. Rewrite with stricter adherence to the rules in the system prompt.";
   }
 
+  if (!assistantMessageId || !supervisorOutcome) {
+    // Pathological exit: every attempt aborted before persisting (six
+    // consecutive per-sentence fires). No message row exists and no supervisor
+    // ran — fail loud instead of delivering an empty turn (the pre-extraction
+    // code returned null behind a `!` and silently no-op'd downstream).
+    await send({ type: "error", message: "message_persist_failed" });
+    await close();
+    return { status: "aborted" };
+  }
+
   return {
     status: "complete",
     candidate,
     supervisorOutcome,
-    // Non-null whenever an attempt reached the persist step (the guard above
-    // aborts otherwise). Mirrors the pre-extraction `assistantMessageId!`,
-    // including the latent edge where every attempt regen'd before persisting.
-    assistantMessageId: assistantMessageId!,
+    assistantMessageId,
     streamedAttempts,
     perSentenceFires,
     postStreamSupervisorFires,

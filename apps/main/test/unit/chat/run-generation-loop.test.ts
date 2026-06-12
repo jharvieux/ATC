@@ -277,6 +277,24 @@ describe("streaming branch (BP24 option B)", () => {
     expect(secondSys).toContain("HATE_SPEECH_REGEN_INSTRUCTION_SENTINEL");
   });
 
+  it("ALL 6 attempts hit per-sentence aborts → fail loud (error + close), never a phantom empty turn", async () => {
+    const h = harness(streaming);
+    vi.mocked(instrumentedClaudeStream).mockImplementation(() => ({
+      textStream: (async function* () { yield "FLAGGED."; })(),
+      done: Promise.resolve({ text: "unused", raw: RAW }),
+    }) as never);
+    vi.mocked(checkSentence).mockReturnValue({ hit: true, hashedTerm: "h" });
+    const out = await runGenerationLoop(h.args);
+    // No attempt ever persisted a row or reached the supervisor — completing
+    // here would hand the caller a null message id behind a string type.
+    expect(out).toEqual({ status: "aborted" });
+    expect(instrumentedClaudeStream).toHaveBeenCalledTimes(6);
+    expect(h.inserts).toHaveLength(0);
+    expect(h.events.filter((e) => e.type === "delta")).toEqual([]);
+    expect(h.events.at(-1)).toEqual({ type: "error", message: "message_persist_failed" });
+    expect(h.isClosed()).toBe(true);
+  });
+
   it("tool_use on the first pass → preamble cleared (rewriting) and the post-tool reply streamed", async () => {
     const h = harness(streaming);
     const followUp = [{ role: "user" as const, content: "tool results" }];
