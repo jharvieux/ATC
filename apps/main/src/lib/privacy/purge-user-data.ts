@@ -82,6 +82,7 @@ export async function purgeUserDataPerRetention(
   let forensics_snapshot_reason: string | null = null;
 
   const { data: bookingIdsForUser } = await db
+    // d091-allow:service-role-tenant — §25.4 CCPA purge; sweeps this user's rows across all tenants by spec; cross-tenant required, service-role mandatory (purged user has no session).
     .from("bookings")
     .select("id")
     .eq("user_id", user_id);
@@ -90,6 +91,7 @@ export async function purgeUserDataPerRetention(
   let openDisputeCommissions: Array<{ id: string; dispute_status: string }> = [];
   if (bookingIds.length > 0) {
     const { data: disputes } = await db
+      // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
       .from("commissions")
       .select("id, dispute_status, booking_id")
       .in("booking_id", bookingIds)
@@ -100,14 +102,17 @@ export async function purgeUserDataPerRetention(
   if (openDisputeCommissions.length > 0) {
     try {
       const { data: snapshotBookings } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("bookings")
         .select("*")
         .in("id", bookingIds);
       const { data: snapshotCommissions } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("commissions")
         .select("*")
         .in("booking_id", bookingIds);
       const { data: snapshotMessages } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("messages")
         .select("id, conversation_id, role, content, created_at")
         .gte("created_at", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
@@ -146,6 +151,7 @@ export async function purgeUserDataPerRetention(
     const conversationIds = await loadConversationIds(db, user_id);
     if (conversationIds.length > 0) {
       const { data: nulled, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("messages")
         .update({
           content: null,
@@ -166,6 +172,7 @@ export async function purgeUserDataPerRetention(
       // anonymization is incomplete (an audit query can still join
       // conversations -> users to find the deleted user).
       const { data: convNulled, error: convErr } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("conversations")
         .update({ user_id: null })
         .in("id", conversationIds)
@@ -180,6 +187,7 @@ export async function purgeUserDataPerRetention(
     //   quotes.user_id.
     {
       const { data: qn, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("quotes")
         .update({ narrative: null })
         .eq("user_id", user_id)
@@ -190,6 +198,7 @@ export async function purgeUserDataPerRetention(
     }
     if (bookingIds.length > 0) {
       const { data: bn, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("bookings")
         .update({ notes: null })
         .in("id", bookingIds)
@@ -200,6 +209,7 @@ export async function purgeUserDataPerRetention(
     }
     {
       const { data: mem, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("customer_memories")
         .delete()
         .eq("user_id", user_id)
@@ -214,6 +224,7 @@ export async function purgeUserDataPerRetention(
     let affected_tenant_ids: string[] = [];
     {
       const { data: cnotes, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("contacts")
         .update({
           user_id: null,
@@ -234,6 +245,7 @@ export async function purgeUserDataPerRetention(
     //   handle the passenger-contact path in Step 7.
     if (bookingIds.length > 0) {
       const { data: ban, error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("bookings")
         .update({
           user_id: null,
@@ -248,6 +260,7 @@ export async function purgeUserDataPerRetention(
       // Commissions: linked via booking_id. We DON'T null booking_id (that's
       // the financial ledger key); we just stamp the hash + timestamp.
       const { data: can, error: cerr } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("commissions")
         .update({
           anonymized_customer_hash: customer_hash,
@@ -269,12 +282,14 @@ export async function purgeUserDataPerRetention(
     //   so the audit row is informative.
     {
       const { data: anonContacts } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("contacts")
         .select("id")
         .eq("anonymized_customer_hash", customer_hash);
       const anonContactIds = ((anonContacts ?? []) as Array<{ id: string }>).map((r) => r.id);
       if (anonContactIds.length > 0) {
         const { data: paxRows } = await db
+          // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
           .from("booking_passengers")
           .select("id")
           .in("contact_id", anonContactIds);
@@ -285,6 +300,7 @@ export async function purgeUserDataPerRetention(
     // Step 8 — users row PII clear + status='purged'.
     {
       const { error } = await db
+        // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
         .from("users")
         .update({
           email: null,
@@ -352,6 +368,7 @@ async function loadConversationIds(
   user_id: string,
 ): Promise<string[]> {
   const { data } = await db
+    // d091-allow:service-role-tenant — §25.4 CCPA purge; cross-tenant by spec, service-role required (no user session).
     .from("conversations")
     .select("id")
     .eq("user_id", user_id);

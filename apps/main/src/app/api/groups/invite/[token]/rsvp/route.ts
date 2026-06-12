@@ -57,6 +57,7 @@ export async function POST(req: Request, props: { params: Promise<{ token: strin
   //
   // Also pull group_id so we can apply §18.10 sailed read-only gate below.
   const { data: invitationRow } = await svc
+    // d091-allow:service-role-tenant — public HMAC-verified route; invitation_id comes from parseAndVerifyHmac above; no tenant ctx on this public endpoint.
     .from("invitations")
     .select("token_bound_email, group_id")
     .eq("id", invitation_id)

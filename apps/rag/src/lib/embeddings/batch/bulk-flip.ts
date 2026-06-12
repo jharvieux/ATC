@@ -20,6 +20,7 @@ export async function bulkFlipPendingStatus(
 ): Promise<void> {
   for (let i = 0; i < ids.length; i += STATUS_FLIP_CHUNK) {
     await safeAwait(
+      // d091-allow:service-role-tenant — platform embedding cron; pending_embedding.tenant_id nullable by design; cross-tenant status flip required.
       db.from("pending_embedding").update(payload).in("id", ids.slice(i, i + STATUS_FLIP_CHUNK)),
       context,
     );

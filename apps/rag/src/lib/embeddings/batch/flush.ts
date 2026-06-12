@@ -72,6 +72,7 @@ export async function flushPendingEmbeddings(args: {
   while (pending.length < MAX_REQUESTS_PER_BATCH) {
     const want = Math.min(PAGE, MAX_REQUESTS_PER_BATCH - pending.length);
     const { data, error } = await db
+      // d091-allow:service-role-tenant — platform embedding cron; pending_embedding.tenant_id is nullable by design (platform rows have null); cross-batch flush by design.
       .from("pending_embedding")
       .select("id, chunk_id, content, custom_id, status, batch_id, openai_file_id, output_file_id, error_detail, queued_at, submitted_at, completed_at")
       .eq("status", "pending")
@@ -89,6 +90,7 @@ export async function flushPendingEmbeddings(args: {
   }
 
   const { count: remainingCount } = await db
+    // d091-allow:service-role-tenant — platform embedding cron; pending_embedding.tenant_id is nullable by design (platform rows have null); cross-batch flush by design.
     .from("pending_embedding")
     .select("id", { count: "exact", head: true })
     .eq("status", "pending");

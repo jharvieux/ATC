@@ -29,3 +29,11 @@ platform_admins # §26 platform admin roster — no tenant_id (platform-scoped).
 tier_definitions # #548 — global reference catalog, no tenant_id (platform-scoped, PLATFORM_READABLE). RLS enabled with zero policies for default-deny over the Data API. All reads are via service-role-backed clients (tenantClient PLATFORM_READABLE passthrough or createServiceRoleClient), which bypass RLS. No authenticated-user read path; USING(true) SELECT policy barred by the lint gate.
 vendor_health # #786 — platform-scoped vendor health state; no tenant_id. RLS enabled with zero policies = default-deny over the Data API. All reads/writes via service_role (probe upsert + admin page read); no authenticated/SSR read path by design.
 personal_access_tokens # #712 — tenant-scoped PAT table; RLS enabled with zero policies = default-deny over the Data API. All reads/writes via service_role only (assertPermission PAT path + token CRUD routes). No authenticated-user PostgREST path; tenant_id isolation enforced in app layer.
+cruise_lines # platform reference table; no tenant_id column. Shared cruise line catalog across all tenants. Service-role reads/writes by canonical resolver and CruiseMapper scraper.
+cruise_ships # platform reference table; no tenant_id column. Shared cruise ship catalog across all tenants. Service-role reads/writes by canonical resolver.
+cruise_line_aliases # platform reference table; no tenant_id column. Alias mappings for cruise_lines. Service-role reads by canonical resolver.
+cruise_ship_aliases # platform reference table; no tenant_id column. Alias mappings for cruise_ships. Service-role reads by canonical resolver.
+personas # platform-level persona definitions; no tenant_id column. Personas are platform-wide, not tenant-scoped. Service-role reads/writes by persona admin and repo.
+persona_safety_config # platform-level persona safety configuration; no tenant_id column. Single shared config row keyed by slug. Service-role reads/writes by persona admin.
+ai_kill_switch_state # global kill-switch control; no tenant_id column. Singleton row (id=1) toggled by platform admins. Service-role reads by supervisor pipeline.
+ai_batch_jobs # per-OpenAI-batch job ledger; no tenant_id column. Each job spans all tenants' requests in that batch by design. Service-role reads/writes by flush and reconcile crons.

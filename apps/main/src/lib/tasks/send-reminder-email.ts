@@ -65,6 +65,7 @@ export async function sendTaskReminderEmail(args: {
   if (!recipientUserId) return { status: "suppressed", reason: "no_recipient_user" };
 
   const { data: userData } = await svc
+    // d091-allow:service-role-tenant — identity-table read by PK; tenant already verified at line 62 (task.tenant_id !== tenant_id guard); user may belong to any tenant calling the cron.
     .from("users")
     .select("id, email, first_name, last_name")
     .eq("id", recipientUserId)

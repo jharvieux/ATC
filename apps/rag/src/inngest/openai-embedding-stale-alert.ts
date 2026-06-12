@@ -26,6 +26,7 @@ export const openaiEmbeddingStaleAlert = inngest.createFunction(
     const db = ragDb();
     const cutoff = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
     const { count, error } = await db
+      // d091-allow:service-role-tenant — platform stale-alert cron; pending_embedding.tenant_id nullable by design; platform-wide count required.
       .from("pending_embedding")
       .select("id", { count: "exact", head: true })
       .in("status", ["pending", "submitted"])

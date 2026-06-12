@@ -101,6 +101,7 @@ export async function reconcileSubmittedBatches(args: {
     // Batch ended — fetch all the request rows so we can pair results
     // back to (tenant_id, caller_metadata).
     const { data: requestsData, error: requestsErr } = await db
+      // d091-allow:service-role-tenant — platform reconcile cron processes all tenants' requests for a given batch by design; tenant isolation applied per-row during result attribution.
       .from("ai_batch_requests")
       .select("id, tenant_id, purpose, custom_id, caller_metadata, status")
       .eq("batch_job_id", job.id);

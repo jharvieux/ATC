@@ -3,7 +3,6 @@
 # only — including a NEW occurrence beyond the recorded count for a line.
 # Line format: <count>\t<file>\t<id>\t<snippet>. Prefer fixing or an inline
 # `d091-allow:<id> <reason>` over growing this.
-1	apps/main/src/app/(admin)/supervisor/page.tsx	service-role-tenant	.from("ai_kill_switch_state")
 1	apps/main/src/app/(admin)/supervisor/page.tsx	service-role-tenant	.from("messages")
 1	apps/main/src/app/api/admin/abuse/overrides/route.ts	cas-rowcount	.update({
 1	apps/main/src/app/api/admin/reconciliation/upload/route.ts	service-role-tenant	.from("commissions")
@@ -20,7 +19,6 @@
 1	apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	await safeAwait(svc.from("invitations").update({
 1	apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	const { error } = await svc.from("invitations").update(updates).eq("id", invitation_id).is("token_revoked_at", null);
 1	apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	svc.from("invitations")
-1	apps/main/src/app/api/groups/invite/[token]/rsvp/route.ts	service-role-tenant	.from("invitations")
 1	apps/main/src/app/api/help/sessions/[id]/message/route.ts	service-role-tenant	db.from("help_sessions")
 1	apps/main/src/app/api/imports/review/[id]/accept/route.ts	service-role-tenant	.from("commissions")
 1	apps/main/src/app/api/imports/review/[id]/merge/route.ts	service-role-tenant	.from("import_queue")
@@ -88,37 +86,15 @@
 1	apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	.from("users")
 1	apps/main/src/inngest/user-data-export-build.ts	service-role-tenant	await safeAwait(db.from("user_data_export_requests").update({
 1	apps/main/src/inngest/user-data-purge-after-grace.ts	service-role-tenant	.from("users")
-1	apps/main/src/lib/agents/fetch-customer-bio.ts	service-role-tenant	.from("personas")
 1	apps/main/src/lib/ai/batch/reconcile.ts	service-role-tenant	.from("ai_batch_requests")
 1	apps/main/src/lib/ai/stream-wrapper.ts	service-role-tenant	.from("tenant_usage_metrics")
 1	apps/main/src/lib/booking/dob-gate.ts	service-role-tenant	.from("booking_passengers")
-1	apps/main/src/lib/canonical/resolve-canonical.ts	service-role-tenant	.from("cruise_line_aliases")
-1	apps/main/src/lib/canonical/resolve-canonical.ts	service-role-tenant	.from("cruise_lines")
-1	apps/main/src/lib/canonical/resolve-canonical.ts	service-role-tenant	.from("cruise_ship_aliases")
-1	apps/main/src/lib/canonical/resolve-canonical.ts	service-role-tenant	.from("cruise_ships")
 1	apps/main/src/lib/consent/pending.ts	service-role-tenant	.from("user_consent_pending")
-1	apps/main/src/lib/external/cruisemapper/discovery.ts	service-role-tenant	.from("cruise_lines")
 1	apps/main/src/lib/groups/hero-image.ts	service-role-tenant	.from("destination_images")
 1	apps/main/src/lib/groups/hero-image.ts	service-role-tenant	.from("destination_images_cache")
 1	apps/main/src/lib/http/idempotency.ts	service-role-tenant	.from("request_idempotency")
-1	apps/main/src/lib/personas/persona-admin.ts	service-role-tenant	.from("persona_safety_config")
-1	apps/main/src/lib/personas/persona-admin.ts	service-role-tenant	.from("personas")
-1	apps/main/src/lib/personas/persona-admin.ts	service-role-tenant	db.from("persona_safety_config").select("version").eq("id", "default").maybeSingle(),
-1	apps/main/src/lib/personas/persona-admin.ts	service-role-tenant	db.from("personas").select("version").eq("slug", slug).maybeSingle(),
-1	apps/main/src/lib/personas/persona-repository.ts	service-role-tenant	.from("persona_safety_config")
-1	apps/main/src/lib/personas/persona-repository.ts	service-role-tenant	.from("personas")
-1	apps/main/src/lib/personas/resolve-active-persona-slug.ts	service-role-tenant	.from("personas")
-1	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("booking_passengers")
-1	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("contacts")
-1	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("customer_memories")
-1	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("quotes")
-1	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("users")
-1	apps/main/src/lib/supervisor/run-supervisor.ts	service-role-tenant	.from("ai_kill_switch_state")
-1	apps/main/src/lib/tasks/send-reminder-email.ts	service-role-tenant	.from("users")
 1	apps/main/src/lib/weather/open-meteo.ts	service-role-tenant	.from("weather_forecast_cache")
 1	apps/main/src/lib/weather/open-meteo.ts	service-role-tenant	.from("weather_usage_metrics")
-1	apps/rag/src/inngest/openai-embedding-stale-alert.ts	service-role-tenant	.from("pending_embedding")
-1	apps/rag/src/lib/embeddings/batch/bulk-flip.ts	service-role-tenant	db.from("pending_embedding").update(payload).in("id", ids.slice(i, i + STATUS_FLIP_CHUNK)),
 2	apps/main/src/app/api/bookings/[id]/cancel/route.ts	service-role-tenant	.from("bookings")
 2	apps/main/src/app/api/chat/route.ts	service-role-tenant	.from("conversations")
 2	apps/main/src/app/api/help/sessions/[id]/message/route.ts	service-role-tenant	.from("help_sessions")
@@ -132,17 +108,10 @@
 2	apps/main/src/inngest/persona-addendum-rescreen-nightly.ts	service-role-tenant	.from("persona_addendums")
 2	apps/main/src/lib/commissions/state-machine.ts	service-role-tenant	.from("commissions")
 2	apps/main/src/lib/import/promote.ts	service-role-tenant	.from("import_queue")
-2	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("conversations")
-2	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("messages")
 2	apps/main/src/lib/stripe/webhook-handler.ts	service-role-tenant	.from("payout_records")
-2	apps/rag/src/lib/embeddings/batch/flush.ts	service-role-tenant	.from("pending_embedding")
-2	apps/rag/src/lib/embeddings/batch/reconcile.ts	service-role-tenant	.from("pending_embedding")
 3	apps/main/src/app/api/public/quote/[token]/select/route.ts	service-role-tenant	.from("quote_options")
 3	apps/main/src/inngest/extract-memory.ts	service-role-tenant	.from("customer_memories")
 3	apps/main/src/inngest/payouts-execute-transfer.ts	service-role-tenant	.from("payout_records")
-3	apps/main/src/lib/ai/batch/flush.ts	service-role-tenant	.from("ai_batch_requests")
-3	apps/main/src/lib/ai/batch/reconcile.ts	service-role-tenant	.from("ai_batch_jobs")
-3	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("commissions")
 4	apps/main/src/app/api/groups/invite/[token]/route.ts	service-role-tenant	.from("invitations")
 4	apps/main/src/inngest/abuse-recompute-nightly.ts	unbounded-limit	.limit(50000);
 4	apps/main/src/inngest/forum-moderation-retry.ts	service-role-tenant	.from("forum_messages")
@@ -150,7 +119,6 @@
 4	apps/main/src/inngest/precruise-generate-and-send.ts	service-role-tenant	.from("pre_cruise_email_content")
 4	apps/main/src/inngest/rag-extract-content.ts	service-role-tenant	.from("rag_submissions")
 4	apps/main/src/inngest/rag-normalize.ts	service-role-tenant	.from("rag_submissions")
-4	apps/main/src/lib/privacy/purge-user-data.ts	service-role-tenant	.from("bookings")
 5	apps/main/src/app/api/groups/[id]/invitations/route.ts	service-role-tenant	.from("invitations")
 6	apps/main/src/app/api/bookings/[id]/submit/route.ts	service-role-tenant	.from("bookings")
 6	apps/main/src/inngest/rag-pii-redact.ts	service-role-tenant	.from("rag_submissions")
