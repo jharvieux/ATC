@@ -1,19 +1,20 @@
-# Session state — last updated 2026-06-12 (post-merge of PR #1022)
+# Session state — last updated 2026-06-12 (post-merge of PR #1026)
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 **Note (D-205):** there is currently ONE Supabase project (mfaknjyqiwcjojukcnea) serving production — MCP applies ARE prod applies. Gate accordingly until #386/#534 split environments.
 
 ## Just completed (this session)
-- **PR #1022 merged into dev** (#1016 closed): `runGenerationLoop` extracted from `handleChat()` into `apps/main/src/lib/chat/run-generation-loop.ts`. Resumed the prior session's uncommitted round-2 audit fixes, fixed a typecheck error in them, verified, pushed (8efa5b70), re-ran both audit agents (clean), updated the PR audit body, merged, branch deleted. Logged as D-213.
-- Opened issue **#1023**: the D-091 `service-role-tenant` detector can't see modules that receive the service-role client as a parameter (surfaced by the extraction).
-- The #1015 + #1016 chat-route split from the Vitals scan (D-212) is now fully shipped.
+- **PR #1022 merged** (#1016 closed): `runGenerationLoop` extracted from `handleChat()`. Logged as D-213.
+- **PR #1026 merged** (#1023 closed): D-091 `service-role-tenant` gate now also triggers on a `SupabaseClient` type annotation, so parameter-receiving modules are scanned. Baseline 177 → 246 (69 surfaced hits absorbed as tracked debt). Logged as D-214.
+- Opened issues **#1023** (closed by #1026) and **#1025** (classify the 69 newly-baselined hits: fix / inline-allow / PLATFORM_TABLES).
+- **PR #1024 merged** (docs: D-213 + SESSION).
 
 ## In flight
-- Nothing in flight — clean checkpoint. Local is on `dev`, fast-forwarded to 221fd1cf.
+- Nothing in flight — clean checkpoint. Local on `dev` at 8a76a65c; this MEMORY (D-214) + SESSION update ships as a doc-only PR immediately after this write.
 
 ## Next step
-- No queued work. Candidates if the operator wants one picked up: #1023 (detector gap, well-specified), #1010 (vendor-health split-brain), or the deferral queue (#1002, #1003).
+- No queued work. Strongest candidates: **#1025** (well-specified, security-relevant, natural follow-on), #1010 (vendor-health split-brain), #1002/#1003 (deferred role-scope items).
 
 ## Blocked on user
 - Nothing.

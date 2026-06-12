@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-214 — 2026-06-12 — #1023 shipped (PR #1026): D-091 tenant gate now scans SupabaseClient-param modules; 69 surfaced hits baselined, audit filed as #1025
+
+**Decision:** The `service-role-tenant` detector's file gate gained one regex alternation (`:\s*SupabaseClient\b`), so any module typing a value as `SupabaseClient` is scanned — closing the blind spot where parameter-receiving modules (which never name the service-role factory) escaped entirely. Verified the original escape vector live: stripping a tenant filter from `run-generation-loop.ts` now fails `pnpm check:d091` on that line.
+
+**Conservatism is deliberate:** RLS-backed clients passed as parameters gate their files in too. Chosen over trying to distinguish client kinds at the file level (undecidable from text — the caller decides what's passed in) because fail-closed is the right default for a tenant-isolation gate; the inline `d091-allow:service-role-tenant <reason>` hatch and the count-based baseline absorb legitimate cases.
+
+**Debt absorbed, not hidden:** the wider scope surfaced ~69 pre-existing occurrences in ~20 modules (privacy purge, anon-to-auth, supervisor, personas, AI batch, RAG embeddings), baselined 177 → 246. Each is a *potential* cross-tenant gap; **#1025** tracks classifying every one (fix / inline-allow with reason / PLATFORM_TABLES) with the goal of driving the baseline back at or below 177.
+
+**Rejected:** fixing the 69 call sites in the detector PR (20 security-sensitive modules want their own reviewable changes); dropping the file gate entirely and scanning everything (would flag every RLS-client query missing a literal `tenant_id`, poisoning the gate for normal tenant-client code).
+
+**Related:** PR #1026; issues #1023 (closed), #1025; [[D-213]] (the extraction that exposed the gap).
+
+---
+
 ## D-213 — 2026-06-12 — #1016 shipped (PR #1022): runGenerationLoop extracted; fail-loud replaces a silent null; detector gap filed as #1023
 
 **Decision:** The streaming generation machinery (`streamTurn` closure + attempt/regen/tool-dispatch loop) moved out of `handleChat()` into `apps/main/src/lib/chat/run-generation-loop.ts`. The route keeps the orchestration spine (setup, post-loop supervisor summary/escalation, asset validation, final done/close). SSE event sequences unchanged; 13 unit tests pin the event-sequence/persistence contract.
