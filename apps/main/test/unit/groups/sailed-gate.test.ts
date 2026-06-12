@@ -8,6 +8,8 @@ import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 
+type EqEntry = [string, unknown];
+
 function fakeDb(opts: { status?: string; sailed_at?: string | null; error?: { message: string } | null; data?: null }): SupabaseClient {
   const terminal = async () => {
     if (opts.error) return { data: null, error: opts.error };
@@ -66,5 +68,33 @@ describe("assertGroupNotSailed", () => {
       expect(e).toBeInstanceOf(GroupSailedError);
       // Allows callers to do `if (e instanceof GroupSailedError) { return 410 }`
     }
+  });
+
+  it("applies tenant_id eq filter with correct value (§D-091 second-layer isolation)", async () => {
+    const eqArgs: EqEntry[] = [];
+    const trackingDb: SupabaseClient = {
+      from: (_t: string) => ({
+        select: (_c: string) => ({
+          eq: (col: string, val: unknown) => {
+            eqArgs.push([col, val]);
+            return {
+              eq: (col2: string, val2: unknown) => {
+                eqArgs.push([col2, val2]);
+                return { maybeSingle: async () => ({ data: { status: "active", sailed_at: null }, error: null }) };
+              },
+              maybeSingle: async () => ({ data: { status: "active", sailed_at: null }, error: null }),
+            };
+          },
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    await assertGroupNotSailed(trackingDb, "g1", "tenant-xyz");
+
+    const cols = eqArgs.map(([col]) => col);
+    expect(cols).toContain("id");
+    expect(cols).toContain("tenant_id");
+    const tenantEntry = eqArgs.find(([col]) => col === "tenant_id");
+    expect(tenantEntry?.[1]).toBe("tenant-xyz");
   });
 });

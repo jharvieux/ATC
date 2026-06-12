@@ -426,18 +426,18 @@ describe("runSupervisor — slur consecutive-hit escalation (§10.2 tone_drift)"
 
 describe("runSupervisor — tenant_id filter on DB mutations (§D-091)", () => {
   it("conversations UPDATE and messages UPDATE both carry tenant_id eq filter", async () => {
-    const conversationsEqCols: string[] = [];
-    const messagesEqCols: string[] = [];
+    const conversationsEqArgs: Array<[string, unknown]> = [];
+    const messagesEqArgs: Array<[string, unknown]> = [];
 
-    function makeMutationChain(eqCols: string[]) {
+    function makeMutationChain(eqArgs: Array<[string, unknown]>) {
       const result = { data: null, error: null };
       const p = Promise.resolve(result);
       const chain: Record<string, unknown> = {
-        eq: (col: string, _val: unknown) => { eqCols.push(col); return chain; },
+        eq: (col: string, val: unknown) => { eqArgs.push([col, val]); return chain; },
         then: p.then.bind(p),
         catch: p.catch.bind(p),
       };
-      return { eq: (col: string, _val: unknown) => { eqCols.push(col); return chain; } };
+      return { eq: (col: string, val: unknown) => { eqArgs.push([col, val]); return chain; } };
     }
 
     const db = {
@@ -449,7 +449,7 @@ describe("runSupervisor — tenant_id filter on DB mutations (§D-091)", () => {
           selChain.single = async () => ({ data: convData, error: null });
           return {
             select: () => selChain,
-            update: (_patch: Record<string, unknown>) => makeMutationChain(conversationsEqCols),
+            update: (_patch: Record<string, unknown>) => makeMutationChain(conversationsEqArgs),
           };
         }
         if (table === "ai_kill_switch_state") {
@@ -479,7 +479,7 @@ describe("runSupervisor — tenant_id filter on DB mutations (§D-091)", () => {
         }
         if (table === "messages") {
           return {
-            update: (_patch: Record<string, unknown>) => makeMutationChain(messagesEqCols),
+            update: (_patch: Record<string, unknown>) => makeMutationChain(messagesEqArgs),
           };
         }
         if (table === "escalation_topics") {
@@ -503,10 +503,16 @@ describe("runSupervisor — tenant_id filter on DB mutations (§D-091)", () => {
       db,
     });
 
-    expect(conversationsEqCols).toContain("id");
-    expect(conversationsEqCols).toContain("tenant_id");
-    expect(messagesEqCols).toContain("id");
-    expect(messagesEqCols).toContain("tenant_id");
+    const convCols = conversationsEqArgs.map(([col]) => col);
+    const msgCols = messagesEqArgs.map(([col]) => col);
+    expect(convCols).toContain("id");
+    expect(convCols).toContain("tenant_id");
+    expect(msgCols).toContain("id");
+    expect(msgCols).toContain("tenant_id");
+    const convTenant = conversationsEqArgs.find(([col]) => col === "tenant_id");
+    const msgTenant = messagesEqArgs.find(([col]) => col === "tenant_id");
+    expect(convTenant?.[1]).toBe(TENANT_ID);
+    expect(msgTenant?.[1]).toBe(TENANT_ID);
   });
 });
 
