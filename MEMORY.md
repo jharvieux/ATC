@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-217 — 2026-06-12 — #1034/#1035 shipped in PR #1036; fail-closed on DB read errors in 4 enforcement gates
+
+**Decision:** Fixes for all three confirmed fail-open enforcement gates shipped in a single PR (#1036, squash-merged to dev). Pattern: `const { data, error } = await db...` → `if (error) throw`.
+
+**Scope:** `deferred-processing-guard.ts` (conversations + anonymous_sessions), `anonymous-limit.ts` (getCountSince + incrementAnonCounters), `load-deny-list.ts` (platform settings + tenant supplemental; `.single()` → `.maybeSingle()`), `customer-limit.ts` (enforceCustomerLimit counter read, recountFromMessages, upsertCounter existence check).
+
+**Out of scope (pre-existing, lower blast radius):** `loadPlatformSetting` (persona-prompt text, env fallback OK), `generateHardLimitSummary` (best-effort summary), tier-gate functions (already fail-closed to most-restrictive tier), `upsertCounter` existence check (write path, not enforcement gate — noted in pre-pr audit as a NIT).
+
+**Related:** issues #1034, #1035 (closed by PR #1036); [[D-216]]
+
+---
+
 ## D-216 — 2026-06-12 — #1028/#1029/#1030 shipped in PR #1032; d091-baseline shrinks by 17
 
 **Decision:** All three issue clusters shipped as a single PR (#1032, squash-merged to dev). 17 entries removed from `scripts/d091-baseline.txt`. Audit agents (both re-run after fix-up commit) returned clean.
