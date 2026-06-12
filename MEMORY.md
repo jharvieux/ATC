@@ -4,6 +4,37 @@ Newest entries on top.
 
 ---
 
+## D-212 — 2026-06-11 — Chat-route god-function split deferred to #1015 + #1016 (Vitals scan)
+
+**Decision:** A Vitals codebase-health scan flagged `apps/main/src/app/api/chat/route.ts` as the lowest-health file in the repo (health 3.9/10, complexity 86, 1,265 lines) — root cause is a single ~900-line `handleChat()` doing tenant resolution, quota gating, tone override, persistence, RAG, system-prompt assembly, the streaming generate/regen/tool-dispatch loop, supervisor, and asset validation in one scope. Rather than refactor it inline this session, the work was split into two sequenced, no-behavior-change extractions, each its own future PR:
+
+- **#1015 (do first):** extract the quota/gating block (platform-admin bypass + anon/customer/TA limits) into `resolveChatQuota(args) → { decision, blockedResponse? }`. Prioritized first because it's where quota-*bypass* bugs would hide — isolating it behind a tested boundary is a security win.
+- **#1016 (after #1015):** extract the streaming generation machinery (`streamTurn` closure + attempt/regen/tool-dispatch loop) into `runGenerationLoop()`.
+
+**Why deferred (not done now):** Each touches the product's primary surface, so they want independent review; and the session's scope was the #1 ROI cleanup (#1014), not the chat route. Both issues carry `enhancement` + `refactor` labels and acceptance criteria specific enough to pick up cold (incl. tests-verify-intent on the quota decision + SSE event-sequence parity).
+
+**Rejected:** doing the chat-route refactor in the same session as #1014 (too much surface in one sitting; the two chat extractions are independently reviewable and shouldn't ride on a config PR).
+
+**Related:** issues #1015, #1016; [[D-211]] (the #1014 cleanup from the same scan); Vitals scan 2026-06-11.
+
+---
+
+## D-211 — 2026-06-11 — service-role ESLint allowlist extracted to its own data module (#1014)
+
+**Decision:** The 435-line `ALLOWED_PATH_SUFFIXES` array was moved out of `packages/config/eslint-rules/no-direct-service-role-import.js` into a sibling data module `packages/config/eslint-rules/service-role-allowlist.js` that the rule `require()`s. The rule dropped 537 → ~100 lines of pure logic; the rule's error-message pointer (`ALLOWLIST_FILE`) now names the data file so a lint failure tells contributors exactly where to add an entry. **Going forward, sanctioned service-role callers are added to `service-role-allowlist.js`, not the rule.** Logged in CLAUDE.md's auto-triage additive-list line so merge conflicts there are rebased autonomously.
+
+**Why:** The rule was the repo's highest-churn file (59 changes) and a recurring merge-conflict magnet — every PR adding a service-role caller edited the lint rule itself. Vitals scored it health 4.8 / risk 306.8 (top of the repo), entirely from the inline data array. Splitting data from logic was the scan's #1 ROI cleanup.
+
+**Why kept centralized (not per-file opt-in comments):** this is an RLS-bypass *security boundary*; a single auditable top-to-bottom list a reviewer can scan is the whole point. Decentralizing into self-allow comments would weaken that, so it was explicitly avoided.
+
+**Safety:** no behavior change — the 184 allowlist entries are byte-identical to HEAD (verified by set-diff); the split was done with a deterministic script, not hand-retyping. `pnpm lint --max-warnings=0` across the full codebase is the coverage gate (the rule fires on every file). Both audit agents clean.
+
+**Rejected:** leaving it inline (status quo — the churn/conflict problem); decentralizing to per-file markers (loses central auditability of a security boundary).
+
+**Related:** PR #1014; CLAUDE.md auto-triage additive-list line; [[D-212]] (deferred chat-route refactors from the same scan).
+
+---
+
 ## D-210 — 2026-06-11 — #781 Phase 2 Step 2: canonical_match_reviews gains real RLS policies (D-203 reversal)
 
 **Decision.** PR #993 adds authenticated SELECT + UPDATE RLS policies (`canonical_match_reviews_platform_admin_read`, `canonical_match_reviews_platform_admin_update`) to `canonical_match_reviews` and grants `SELECT, UPDATE TO authenticated`. This reverses the D-203 call that left it RLS-on-zero-policies / service-role-only. Accordingly, the `canonical_match_reviews` entry has been removed from `db/rls-exceptions.{sql,txt}`.
