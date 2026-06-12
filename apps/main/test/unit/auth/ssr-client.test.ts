@@ -5,10 +5,11 @@
 // parseCookieHeader drops a chunk, mangles a base64url value, or splits on the
 // wrong '=', the reassembled session JWT is corrupt and getUser() fails —
 // which presents as every authenticated user being silently logged out. None
-// of that is caught by typecheck, so the round-trip is pinned here. The route
-// handlers and middleware read cookies via NextRequest.cookies (Next's own,
-// already-tested parser); only the request-scoped read path uses this parser,
-// so this is the seam under test.
+// of that is caught by typecheck, so the round-trip is pinned here.
+//
+// All three server clients now use req.cookies.getAll() for NextRequest inputs
+// (Next.js built-in parser). parseCookieHeader survives as the fallback for
+// plain Request callers (unit tests, non-Next environments).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
@@ -34,6 +35,7 @@ vi.mock("@supabase/ssr", () => ({
 
 import {
   parseCookieHeader,
+  createRequestScopedClient,
   createMiddlewareClient,
   createRouteHandlerClient,
   getAuthCookieDomain,
@@ -311,5 +313,54 @@ describe("auth cookie domain is injected on write", () => {
     applyAuthCookies(res);
     const setCookie = res.headers.get("set-cookie") ?? "";
     expect(setCookie).not.toMatch(/Domain=/i);
+  });
+});
+
+// WHY: createRequestScopedClient is the auth client used by every route handler
+// that reads the session (assertPermission, tenantContextFromRequest,
+// signup/complete, etc.). The fix from the signup-loop regression (#1045)
+// changed it from parseCookieHeader to req.cookies.getAll() for NextRequest
+// inputs — the two parsers can diverge when middleware sets cookies via
+// NextResponse.next({ request: { headers } }), which caused signup POST 401s
+// after OAuth. These tests pin both paths so neither regresses.
+describe("createRequestScopedClient", () => {
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://test.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
+    capturedCookieAdapter = {};
+  });
+
+  it("getAll reads from req.cookies.getAll() when given a NextRequest", () => {
+    const ref = "xyzabc";
+    const req = new NextRequest("https://x.example.com/api/auth/signup/complete", {
+      headers: { cookie: `sb-${ref}-auth-token=session-jwt` },
+    });
+    createRequestScopedClient(req);
+    expect(capturedCookieAdapter.getAll!()).toContainEqual({
+      name: `sb-${ref}-auth-token`,
+      value: "session-jwt",
+    });
+  });
+
+  it("getAll falls back to parseCookieHeader for a plain Request (no .cookies.getAll)", () => {
+    const req = new Request("https://x.example.com/api/test", {
+      headers: { cookie: "plain-token=abc123" },
+    });
+    createRequestScopedClient(req);
+    expect(capturedCookieAdapter.getAll!()).toContainEqual({
+      name: "plain-token",
+      value: "abc123",
+    });
+  });
+
+  it("setAll is a no-op (proxy.ts owns refresh; this client has no response to write to)", () => {
+    const req = new NextRequest("https://x.example.com/api/auth/signup/complete");
+    createRequestScopedClient(req);
+    expect(() =>
+      capturedCookieAdapter.setAll!(
+        [{ name: "sb-x-auth-token", value: "v", options: {} }],
+        {},
+      ),
+    ).not.toThrow();
   });
 });
