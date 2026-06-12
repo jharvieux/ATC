@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-221 — 2026-06-12 — Signup 401 loop: createRequestScopedClient must use req.cookies.getAll(), not parseCookieHeader
+
+**Decision:** Fixed the agency signup loop (PR #1046) by changing `createRequestScopedClient` to prefer `req.cookies.getAll()` for `NextRequest` inputs instead of the custom `parseCookieHeader(req.headers.get("cookie"))`.
+
+**Why:** When Next.js middleware calls `NextResponse.next({ request: { headers } })` to forward a rotated session, `req.headers.get("cookie")` and `req.cookies.getAll()` can diverge. `createRequestScopedClient` was the only SSR client using the header-string path. `POST /api/auth/signup/complete` called this client, so `getUser()` returned `AuthSessionMissingError` without ever calling the Supabase API → 401 → `window.location.href = "/signup"` loop. Confirmed via Supabase auth logs: zero `/auth/v1/user` calls from the signup route in 24h; all 100 entries were from the callback's `exchangeCodeForSession`.
+
+**What was rejected:** Investigated parseCookieHeader correctness (it is correct for standard Supabase base64url values) and PKCE flow timing (callback correctly fires SIGNED_IN and awaits applyServerStorage). The divergence is at the Next.js cookie-forwarding layer, not the parser logic itself.
+
+**Artifacts:** PR #1046, `apps/main/src/lib/auth/ssr-client.ts:182-202`, `apps/main/test/unit/auth/ssr-client.test.ts`.
+
+---
+
 ## D-220 — 2026-06-12 — #1010 vendor-health split-brain resolved by probing Anthropic, not by durable real-traffic writes
 
 **Decision:** Closed the #1010 split-brain via the issue's Option 3: the 15-min vendor-health probe now pings Anthropic with `GET /v1/models` (`x-api-key` + `anthropic-version` headers). The endpoint is free/no-token-cost and was verified live (401 unauthenticated = reachable, same semantics the probe already uses for OpenAI/Stripe/Resend). Anthropic — the one vendor gating the chat route — now gets a durable `vendor_health` row, admin-page visibility, and alert-once-per-transition coverage. Shipped in PR #1041.
