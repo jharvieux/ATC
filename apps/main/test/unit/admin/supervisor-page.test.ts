@@ -18,6 +18,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: mocks.createServiceRoleClient,
 }));
 
+vi.mock("@/lib/auth/assert-platform-admin", () => ({
+  assertPlatformRolePage: vi.fn().mockResolvedValue({ admin_id: "test", role: "superadmin" }),
+}));
+
 // safe-mutation is intentionally NOT mocked — we want the real safeAwait /
 // SupabaseMutationError to throw on the injected error.
 
