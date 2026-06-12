@@ -50,7 +50,16 @@ export function buildHandlers() {
       | "patch"
       | "head";
 
-    return http[method](fixture.request.url, () => {
+    // Match by method + PATH on any origin (`*${path}`), not the exact
+    // recorded absolute URL. The contract under test is the request path +
+    // response shape — not the host. Origin-agnostic matching keeps the test
+    // green through a base-URL override (a local proxy / AI gateway, or an
+    // ANTHROPIC_BASE_URL/STRIPE-base env var) and a future SDK default-endpoint
+    // change, while `onUnhandledRequest: "error"` still fires if the SDK hits a
+    // genuinely different PATH (real contract drift). #1017.
+    const path = new URL(fixture.request.url).pathname;
+
+    return http[method](`*${path}`, () => {
       return HttpResponse.json(
         fixture.response.body as Record<string, unknown>,
         {
