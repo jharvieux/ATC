@@ -68,3 +68,4 @@ next-env.d.ts
 
 # Vitals provenance data
 .vitals/
+headroom_memory.db
