@@ -36,4 +36,4 @@ cruise_ship_aliases # platform reference table; no tenant_id column. Alias mappi
 personas # platform-level persona definitions; no tenant_id column. Personas are platform-wide, not tenant-scoped. Service-role reads/writes by persona admin and repo.
 persona_safety_config # platform-level persona safety configuration; no tenant_id column. Single shared config row keyed by slug. Service-role reads/writes by persona admin.
 ai_kill_switch_state # global kill-switch control; no tenant_id column. Singleton row (id=1) toggled by platform admins. Service-role reads by supervisor pipeline.
-ai_batch_jobs # per-OpenAI-batch job ledger; no tenant_id column. Each job spans all tenants' requests in that batch by design. Service-role reads/writes by flush and reconcile crons.
+ai_batch_jobs # per-Anthropic-batch job ledger; no tenant_id column. Each job spans all tenants' requests in that batch by design. Service-role reads/writes by flush and reconcile crons.
