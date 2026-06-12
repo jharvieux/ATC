@@ -82,10 +82,7 @@ function makePostChain({
       return { select: () => ({ eq: eqChain }) };
     }
     // Second call: insert
-    return {
-      from: mocks.svcFrom,
-      insert: () => ({ select: () => ({ single: singleFn }) }),
-    };
+    return { insert: () => ({ select: () => ({ single: singleFn }) }) };
   });
 
   return { maybeSingleFn, singleFn };

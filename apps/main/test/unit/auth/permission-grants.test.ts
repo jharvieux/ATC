@@ -144,6 +144,8 @@ const READ_PAIRS: ReadonlyArray<[string, string]> = [
   ["tasks", "list"],
   ["team_members", "list"],
   ["tenant_branding", "read"],
+  // #996 — self-view for all roles (route scopes to caller's user_id for non-owners)
+  ["api_tokens", "list"],
 ];
 
 const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [

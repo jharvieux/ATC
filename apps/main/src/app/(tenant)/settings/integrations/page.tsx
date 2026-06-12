@@ -161,7 +161,7 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
   if (forbidden) {
     return (
       <main className="px-6 py-10 max-w-[720px] mx-auto">
-        <p className="text-sm text-muted-foreground">API token management is available to workspace owners only.</p>
+        <p className="text-sm text-muted-foreground">You do not have access to API token management.</p>
       </main>
     );
   }
