@@ -211,17 +211,20 @@ describe("customer three-tier limit (§24.9)", () => {
     expect(counterUpdates).toEqual([{ hard_limit_summary_audit_id: auditId }]);
   });
 
-  it("soft tiers → allowed, with the in-character nudge surfaced for the prompt", async () => {
-    const { svc } = svcStub();
-    vi.mocked(enforceCustomerLimit).mockResolvedValue({
-      tier: "soft2",
-      resolved,
-      current_count: 31,
-      persona_augmentation: "gentle nudge",
-    });
-    const d = await resolveChatQuota(baseArgs(svc));
-    expect(d).toEqual({ allowed: true, personaAugmentation: "gentle nudge", customerCurrentCount: 31 });
-  });
+  it.each(["soft1", "soft2"] as const)(
+    "%s tier → allowed, with the in-character nudge surfaced for the prompt",
+    async (tier) => {
+      const { svc } = svcStub();
+      vi.mocked(enforceCustomerLimit).mockResolvedValue({
+        tier,
+        resolved,
+        current_count: 31,
+        persona_augmentation: "gentle nudge",
+      });
+      const d = await resolveChatQuota(baseArgs(svc));
+      expect(d).toEqual({ allowed: true, personaAugmentation: "gentle nudge", customerCurrentCount: 31 });
+    },
+  );
 
   it("below tier → allowed with no augmentation", async () => {
     const { svc } = svcStub();
