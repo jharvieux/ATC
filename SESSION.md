@@ -1,25 +1,25 @@
-# Session state — last updated 2026-06-12 (post #1025 classification)
+# Session state — last updated 2026-06-12 13:15 UTC
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 **Note (D-205):** there is currently ONE Supabase project (mfaknjyqiwcjojukcnea) serving production — MCP applies ARE prod applies. Gate accordingly until #386/#534 split environments.
 
-## Just completed (this session)
-- **PR #1022 merged** (#1016: `runGenerationLoop` extraction; D-213).
-- **PR #1026 merged** (#1023: D-091 gate scans SupabaseClient-param modules; D-214).
-- **#1025 classification complete** (D-215): all 69 baselined hits read and bucketed. Full table posted as a comment on #1025. Fix issues filed: **#1028** (supervisor path), **#1029** (anon→auth transfer), **#1030** (8-module one-liner batch). Remaining #1025 work = mechanical inline-allows (28) + PLATFORM_TABLES adds (16) + baseline regen.
-- Doc PRs #1024, #1027 merged.
+## Just completed
+- Implemented fixes for GitHub issues #1028, #1029, #1030 (D-091 second-layer tenant isolation for 17 service-role queries)
+- Opened PR #1032 (feature/tenant-filter-hardening-1028-1029-1030 → dev)
+- Fix-up commit (f26d141f): addressed d091 WARNING (test mocks not asserting tenant_id values) and shared NIT (rsvp route selecting unused tenant_id); moved d091-allow comment inline above .from()
+- Both audit agents re-run and posted hash-bound marker comments; PR body updated
+- All CI checks green; PR #1032 squash-merged and branch deleted
+- MEMORY.md entry D-216 added
 
 ## In flight
-- Nothing in flight — clean checkpoint (this MEMORY D-215 + SESSION update ships as a doc-only PR immediately after this write).
+- Nothing in flight — clean checkpoint
 
 ## Next step
-- Operator decides sequencing on the fix issues. Suggested order: **#1028** (chat pipeline, highest exposure) → **#1029** → **#1030** → finish #1025 (annotations + PLATFORM_TABLES + baseline regen; target ≤177 baselined). Per the operator's model discussion: fixes are Sonnet-suitable now that classification is done.
+- Open a follow-up GitHub issue for `deferred-processing-guard.ts` fail-open on DB read error (both `conversations` and `anonymous_sessions` SELECTs destructure only `{ data }`, ignoring `{ error }` → guard passes on DB timeout). Pre-existing on dev, surfaced by d091-reviewer on PR #1032.
 
 ## Blocked on user
-- Sequencing/go-ahead on #1028/#1029/#1030 and the #1025 mechanical pass.
+- Nothing
 
-## Open questions (carried over)
-- #1003: D-201 narrowing — reviewer scope/mechanism (user chose to defer)
-- #1008: theming sweep for remaining customer surfaces (deferred from PR #1009)
-- Untracked `headroom_memory.db` at repo root (headroom MCP artifact) — left untracked; consider gitignoring in a future PR.
+## Open questions
+- `deferred-processing-guard.ts` fail-open on DB error: pre-existing issue surfaced by audit but not in scope for PR #1032. Needs GitHub issue.

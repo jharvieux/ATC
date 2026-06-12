@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-216 — 2026-06-12 — #1028/#1029/#1030 shipped in PR #1032; d091-baseline shrinks by 17
+
+**Decision:** All three issue clusters shipped as a single PR (#1032, squash-merged to dev). 17 entries removed from `scripts/d091-baseline.txt`. Audit agents (both re-run after fix-up commit) returned clean.
+
+**Fix-up commit required:** Initial audit found (1) rsvp route selected `tenant_id` in sailed-check but never read it — dropped from `.select("status, sailed_at")` and type cast; (2) sailed-gate and run-supervisor test mocks tracked column names but not values — upgraded to `[col, val]` pair capture with explicit tenant value assertions. Fix-up also moved the `d091-allow:service-role-tenant` comment inline above `.from()` (checker only looks one preceding non-blank line back, not 3 lines).
+
+**`deferred-processing-guard.ts` pre-existing follow-up:** both conversations and anonymous_sessions SELECTs swallow `{ error }` → fail-open on DB error. Not introduced by this PR; surfaced by d091-reviewer. No issue filed yet — add to open questions.
+
+**Related:** issues #1028, #1029, #1030 (closed by PR #1032); [[D-215]]
+
+---
+
 ## D-215 — 2026-06-12 — #1025 classification done: 25 real fixes (→ #1028/#1029/#1030), 28 intentional cross-tenant, 16 tenant-less-table
 
 **Decision:** All 69 occurrences baselined by the #1023 gate widening were classified by reading each module and verifying table schemas against migrations. Outcome: **~25 genuine hardening fixes** spun out as three issues — **#1028** (supervisor path: conversations/messages on the service-role chat-pipeline client keyed by conversation_id only — same class as the #1022 bug), **#1029** (anon→auth transfer: ownership-re-keying UPDATEs whose tenant scoping is a docstring convention, not code), **#1030** (one-liner batch across 8 modules where tenant id is already in scope). **~28 intentional** (CCPA purge sweeps all tenants by spec §25.4; AI-batch + RAG-embedding platform crons; HMAC-token RSVP; guard-protected identity read) get inline-allows under #1025. **~16 are tables with no tenant_id column** (cruise canon ×4, personas ×2, ai_kill_switch_state, ai_batch_jobs) → PLATFORM_TABLES.
