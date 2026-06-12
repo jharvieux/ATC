@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-219 — 2026-06-12 — #996 member-picker for PAT minting shipped in PR #1039
+
+api_tokens:list moved to READ_GRANTS (self-view pattern — route scopes to caller's user_id for non-owners). POST /api/integrations/tokens now accepts optional user_id validated as active tenant member. Settings page shows member picker + "Acting as" column for owners.
+
+**Why:** Design doc (#712 / personal-api-tokens.md) specified tenant_owner can mint tokens acting as any active member. Deferred from PR #995 to ship core infrastructure first.
+**What was rejected:** Keeping list as owner-only (would prevent self-view for non-owners per design doc).
+
+---
+
+## D-218 — 2026-06-12 — #1002 per-page assertPlatformRolePage gates shipped in PR #1038
+
+All ~17 remaining admin pages now have per-page role gates. "use client" pages split into server-component page.tsx (gate) + _client.tsx (existing code). Supervisor page gated to all admin roles. Weather redirect gated to superadmin.
+
+**Why:** Defense-in-depth — layout already gates admin-ness but not per-role access. Wrong-role admins could navigate directly to role-restricted pages and see HTML even though API was gated.
+**What was rejected:** Layout-level role routing (complex/fragile vs per-page gates).
+
+---
+
 ## D-217 — 2026-06-12 — #1034/#1035 shipped in PR #1036; fail-closed on DB read errors in 4 enforcement gates
 
 **Decision:** Fixes for all three confirmed fail-open enforcement gates shipped in a single PR (#1036, squash-merged to dev). Pattern: `const { data, error } = await db...` → `if (error) throw`.
