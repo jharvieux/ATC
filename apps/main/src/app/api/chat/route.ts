@@ -23,7 +23,6 @@
 //  10. Streaming mode: deltas already flushed; emit `done`. Non-streaming
 //      mode: SSE-stream the approved text word-by-word back to the client.
 
-import { randomUUID } from "node:crypto";
 import {
   ANON_SESSION_COOKIE,
   buildAnonCookieHeader,
@@ -46,26 +45,15 @@ import { checkSentence } from "@/lib/supervisor/per-sentence-check";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { tenantContextFromRequest } from "@/lib/db/factories";
-import { writeAuditLog } from "@/lib/audit/write";
 import { vendorHealthStatus } from "@/lib/vendor-health/registry";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import {
-  checkAnonLimit,
-  incrementAnonCounters,
-  recordLimitHitAndCheckBurst,
-} from "@/lib/chat/anonymous-limit";
-import {
-  enforceCustomerLimit,
-  generateHardLimitSummary,
-} from "@/lib/chat/customer-limit";
-import { enforceTaDailyLimit } from "@/lib/chat/ta-daily-limit";
+import { resolveChatQuota } from "@/lib/chat/resolve-chat-quota";
 import { buildHelpContextBlock } from "@/lib/chat/help-context";
 import {
   detectToneOverride,
   applyToneOverride,
 } from "@/lib/chat/customer-tone-override";
 import { resolveToneLevel } from "@/lib/chat/tone-resolution";
-import { deriveFingerprint, extractClientIp } from "@/lib/chat/fingerprint";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
 import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import { buildSystemPrompt, type ChatAudience } from "@/lib/personas/build-system-prompt";
@@ -387,125 +375,25 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     ctx = { tenant_id: tenantId, source: { kind: "http_request", user_id: anonSessionId! } };
   }
 
-  // #860 staff bypass: platform admins (keyed by the auth id) chat unmetered —
-  // costs are still logged downstream. Fail-closed: a lookup error → no bypass.
-  let isPlatformAdmin = false;
-  if (authUserId) {
-    const { data: adminRow, error: adminErr } = await svc
-      .from("platform_admins")
-      .select("auth_user_id")
-      .eq("auth_user_id", authUserId)
-      .maybeSingle();
-    // Fail-closed (no bypass on error) but observable — matches assertPlatformAdmin.
-    if (adminErr) console.error(`[chat] platform_admins lookup failed (tenant=${tenantId}): ${adminErr.message}`);
-    isPlatformAdmin = Boolean(adminRow);
+  // ── 2. Rate limit (#1015 — see resolveChatQuota). #860: platform admins
+  // bypass entirely (unmetered; costs are still logged). Authenticated
+  // members → §24.9 customer tiers. Else → anon caps.
+  const quota = await resolveChatQuota({
+    svc,
+    req: args.req,
+    tenantId,
+    audience,
+    userId,
+    authUserId,
+    anonSessionId,
+  });
+  if (!quota.allowed) {
+    await send(quota.blockedResponse);
+    await send({ type: "done" });
+    await close();
+    return;
   }
-
-  // ── 2. Rate limit. #860: platform admins bypass entirely (unmetered; costs are
-  // still logged). Authenticated members → §24.9 customer tiers. Else → anon caps.
-  let personaAugmentation: string | null = null;
-  let customerCurrentCount = 0;
-  if (isPlatformAdmin) {
-    // Staff bypass — no rate limiting for internal testers.
-  } else if (audience === "tenant_member") {
-    // #902 — TA daily backstop cap (operator: 200/day default; the tenant
-    // AI-cost state machine is the primary spend governor). Fail-closed:
-    // a count failure denies the turn rather than running uncapped.
-    const decision = await enforceTaDailyLimit(svc, { tenant_id: tenantId, user_id: userId! });
-    if (!decision.allowed) {
-      const resetAt = new Date();
-      resetAt.setUTCHours(24, 0, 0, 0);
-      const bodyText =
-        decision.reason === "cap"
-          ? `Daily chat limit reached (${decision.cap} messages). It resets at midnight UTC.`
-          : "Chat is temporarily unavailable. Please try again in a few minutes.";
-      await send({ type: "hard_limit", body: bodyText, reset_at: resetAt.toISOString() });
-      await send({ type: "done" });
-      await close();
-      return;
-    }
-    customerCurrentCount = decision.current_count;
-  } else if (userId) {
-    const decision = await enforceCustomerLimit(svc, { user_id: userId, tenant_id: tenantId });
-    if (decision.tier === "hard") {
-      // §24.9 system-spoken hard-limit message — NOT in-character.
-      const resetAtPretty = new Date(decision.reset_at).toLocaleDateString();
-      const sysBody =
-        "Chat limit reached. You've reached the message limit for this billing period. " +
-        "To continue chatting, you can book a cruise (which doubles your quota while you have " +
-        "an upcoming trip) or request a handoff to a trip consultant. " +
-        `Your quota resets ${resetAtPretty}.`;
-      await send({ type: "hard_limit", body: sysBody, reset_at: decision.reset_at });
-
-      // Best-effort: generate Haiku summary and write audit + admin alert.
-      const summary = await generateHardLimitSummary(svc, {
-        user_id: userId,
-        tenant_id: tenantId,
-        user_email: null,
-      });
-      const auditId = randomUUID();
-      await writeAuditLog({
-        tenant_id: tenantId,
-        actor_user_id: userId,
-        actor_type: "system",
-        action: "customer_chat.hard_limit_blocked",
-        resource_type: "user",
-        resource_id: userId,
-        changes: { audit_correlation_id: auditId, current_count: decision.current_count, summary },
-      });
-      // Persist the audit id on the counter row so the alert can be re-linked.
-      await safeAwait(svc
-        .from("customer_chat_counters")
-        .update({ hard_limit_summary_audit_id: auditId })
-        .eq("user_id", userId)
-        .eq("tenant_id", tenantId), "customer_chat_counters.update");
-
-      await send({ type: "done" });
-      await close();
-      return;
-    }
-    // Soft1 / Soft2 → persona augmentation feeds the prompt; below tier just proceeds.
-    personaAugmentation =
-      decision.tier === "soft1" || decision.tier === "soft2"
-        ? decision.persona_augmentation
-        : null;
-    customerCurrentCount = decision.current_count;
-  } else {
-    // Anonymous path
-    const ip = extractClientIp(args.req);
-    const fingerprint = deriveFingerprint(args.req);
-    const limit = await checkAnonLimit(svc, {
-      tenant_id: tenantId,
-      session_id: anonSessionId!,
-      ip,
-      fingerprint,
-    });
-    if (!limit.allowed) {
-      await recordLimitHitAndCheckBurst(svc, {
-        tenant_id: tenantId,
-        session_id: anonSessionId!,
-        ip,
-        fingerprint,
-        hit_identifier_type: limit.hit_identifier_type!,
-      });
-      // §24.8 — DO NOT reveal which identifier hit.
-      await send({
-        type: "signup_wall",
-        body:
-          "You've reached the free chat limit for this session. " +
-          "Sign up to keep chatting — it's free and your conversation will be transferred.",
-      });
-      await send({ type: "done" });
-      await close();
-      return;
-    }
-    await incrementAnonCounters(svc, {
-      tenant_id: tenantId,
-      session_id: anonSessionId!,
-      ip,
-      fingerprint,
-    });
-  }
+  const { personaAugmentation, customerCurrentCount } = quota;
 
   // ── 3. Detect customer tone-change (authenticated only — anon has no memory).
   // #902: customer audience only — TA mode pins tone and has no rapport memory.
