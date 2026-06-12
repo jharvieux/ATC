@@ -100,6 +100,13 @@ describe("detectServiceRoleTenant (1)", () => {
     );
     expect(v.map((x) => x.id)).toEqual(["service-role-tenant"]);
   });
+  it("honors the escape hatch on the SupabaseClient-param gate path too", () => {
+    const v = detectServiceRoleTenant(
+      "f.ts",
+      L(`async function persist(svc: SupabaseClient, id: string) {\n  // d091-allow:service-role-tenant RLS-backed client, tenant scoping enforced by policy\n  await svc.from("messages").update({ x: 1 }).eq("id", id);\n}`),
+    );
+    expect(v).toEqual([]);
+  });
 });
 
 describe("computeNewViolations — count-based baseline", () => {
