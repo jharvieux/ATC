@@ -1,25 +1,22 @@
-# Session state — last updated 2026-06-12 14:35 UTC
+# Session state — last updated 2026-06-12 10:45 UTC
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 **Note (D-205):** there is currently ONE Supabase project (mfaknjyqiwcjojukcnea) serving production — MCP applies ARE prod applies. Gate accordingly until #386/#534 split environments.
 
 ## Just completed
-- Closed stale issues #1029 and #1030 (fixed by PR #1032 but not auto-closed)
-- Filed #1034 (deferred-processing-guard fail-open) and #1035 (anonymous-limit, load-deny-list, customer-limit fail-open) based on codebase scan
-- Implemented PR #1036: fail-closed DB error handling in 4 enforcement gates (#1034, #1035)
-- Squash-merged PR #1036 to dev
-- MEMORY.md entry D-217 added
+- PR #1038 merged: assertPlatformRolePage gates on all ~17 remaining admin pages (closes #1002)
+- PR #1039 merged: member picker for PAT minting + self-view for all roles (closes #996)
+- MEMORY.md entries D-218 and D-219 added
 
 ## In flight
 - Nothing in flight — clean checkpoint
 
 ## Next step
-- Ship SESSION/MEMORY chore commit via PR, then look at remaining open issues (#1010 vendor-health split-brain, #1002 per-page role gates, #996 member-picker)
+- Remaining open issues: #1010 (vendor-health split-brain), #1025 (audit 69 service-role-tenant hits), #1035 (may need closing — check if PR #1036 auto-closed it)
 
 ## Blocked on user
 - Nothing
 
 ## Open questions
-- `customer-limit.ts` `upsertCounter` existence check error path has no dedicated test (pre-pr NIT, write path, low blast radius — acceptable to leave unless the user wants it added)
-- Pre-existing bare `{ data }` reads in `loadPlatformSetting` (persona prompt) and `generateHardLimitSummary` (best-effort summary) — intentionally out of scope per #1035
+- #1003 (D-201 vs D-170 role-scope alignment review) was surfaced in auto-triage — no fix issued, surface for user if they want to act on it
