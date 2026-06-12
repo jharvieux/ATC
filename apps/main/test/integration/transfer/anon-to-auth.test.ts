@@ -41,58 +41,75 @@ function buildTransferMockDb(opts: {
   const { session, sessionUpdates, conversationUpdates, convAnonSessionId = ANON_SESSION_ID } = opts;
   const currentSession = { ...session };
 
+  // Returns a chainable+thenable update result. Applies `onFirstEq` exactly once
+  // on the first .eq() call; subsequent .eq() calls chain through.
+  function makeUpdateChain(onFirstEq: () => void): { eq: (c: string, v: unknown) => Record<string, unknown> } {
+    const result = { data: null, error: null };
+    const p = Promise.resolve(result);
+    let called = false;
+    const chain: Record<string, unknown> = {
+      eq: (_c: string, _v: unknown) => chain,
+      then: p.then.bind(p),
+      catch: p.catch.bind(p),
+    };
+    return {
+      eq: (_c: string, _v: unknown) => {
+        if (!called) { called = true; onFirstEq(); }
+        return chain;
+      },
+    };
+  }
+
+  // Returns a chainable select result that supports any number of .eq() / .order()
+  // calls before a terminal (.maybeSingle or direct await).
+  function makeSelectChain(
+    maybeSingleData: unknown,
+    awaitData?: unknown,
+  ): Record<string, unknown> {
+    const makeChain = (): Record<string, unknown> => {
+      const p = Promise.resolve(awaitData !== undefined ? awaitData : { data: maybeSingleData, error: null });
+      return {
+        eq: () => makeChain(),
+        order: () => makeChain(),
+        maybeSingle: async () => ({ data: maybeSingleData, error: null }),
+        then: p.then.bind(p),
+        catch: p.catch.bind(p),
+      };
+    };
+    return makeChain();
+  }
+
   return {
     from: (table: string) => {
       if (table === "anonymous_sessions") {
         return {
-          select: () => ({
-            eq: (_c: string, _v: string) => ({
-              maybeSingle: async () => ({ data: { ...currentSession }, error: null }),
-            }),
-          }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: (_c: string, _v: string) => {
+          select: () => makeSelectChain({ ...currentSession }),
+          update: (patch: Record<string, unknown>) =>
+            makeUpdateChain(() => {
               Object.assign(currentSession, patch);
               sessionUpdates?.(patch);
-              return Promise.resolve({ data: null, error: null });
-            },
-          }),
+            }),
         };
       }
       if (table === "conversations") {
         return {
-          select: () => ({
-            eq: (_c: string, _v: string) => ({
-              maybeSingle: async () => ({
-                data: { anonymous_session_id: convAnonSessionId },
-                error: null,
-              }),
-              eq: (_c2: string, _v2: string) => ({
-                select: () => ({ data: [{ id: CONV_ID }], error: null }),
-              }),
-            }),
-          }),
-          update: (patch: Record<string, unknown>) => ({
-            eq: (_c: string, _v: string) => {
-              conversationUpdates?.(patch);
-              return Promise.resolve({ data: null, error: null });
-            },
-          }),
+          select: () => makeSelectChain(
+            { anonymous_session_id: convAnonSessionId },
+            { data: [{ id: CONV_ID }], error: null },
+          ),
+          update: (patch: Record<string, unknown>) =>
+            makeUpdateChain(() => { conversationUpdates?.(patch); }),
         };
       }
       if (table === "messages") {
         return {
-          update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
-          select: () => ({
-            eq: () => ({
-              order: () => ({ data: [], error: null }),
-            }),
-          }),
+          update: (_patch: Record<string, unknown>) => makeUpdateChain(() => {}),
+          select: () => makeSelectChain(null, { data: [], error: null }),
         };
       }
       return {
-        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
-        update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+        select: () => makeSelectChain(null),
+        update: (_patch: Record<string, unknown>) => makeUpdateChain(() => {}),
       };
     },
   } as unknown as SupabaseClient;
@@ -235,7 +252,7 @@ describe("assertNotInDeferredWindow (§11.6)", () => {
     });
 
     await expect(
-      assertNotInDeferredWindow(db, CONV_ID),
+      assertNotInDeferredWindow(db, CONV_ID, TENANT_ID),
     ).rejects.toThrow(DeferredProcessingError);
   });
 
@@ -250,7 +267,7 @@ describe("assertNotInDeferredWindow (§11.6)", () => {
       },
     });
 
-    await expect(assertNotInDeferredWindow(db, CONV_ID)).resolves.toBeUndefined();
+    await expect(assertNotInDeferredWindow(db, CONV_ID, TENANT_ID)).resolves.toBeUndefined();
   });
 
   it("does not throw when conversation has no anonymous_session_id", async () => {
@@ -265,6 +282,6 @@ describe("assertNotInDeferredWindow (§11.6)", () => {
       convAnonSessionId: null,
     });
 
-    await expect(assertNotInDeferredWindow(db, CONV_ID)).resolves.toBeUndefined();
+    await expect(assertNotInDeferredWindow(db, CONV_ID, TENANT_ID)).resolves.toBeUndefined();
   });
 });

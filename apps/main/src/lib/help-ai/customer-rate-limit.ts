@@ -107,7 +107,8 @@ export async function recordCustomerBugSubmission(
         submission_count: row.submission_count + 1,
         last_submission_at: now,
       })
-      .eq("id", row.id), "customer_bug_submission_counters.update");
+      .eq("id", row.id)
+      .eq("tenant_id", tenant_id), "customer_bug_submission_counters.update");
   } else {
     await safeAwait(db.from("customer_bug_submission_counters").insert({
       user_id,

@@ -28,10 +28,12 @@ export class DeferredProcessingError extends Error {
  *
  * @param db - A Supabase client scoped to the correct tenant (tenantClient or service-role).
  * @param conversation_id - The conversation to check.
+ * @param tenant_id - The tenant owning the conversation (two-layer isolation).
  */
 export async function assertNotInDeferredWindow(
   db: SupabaseClient,
   conversation_id: string,
+  tenant_id: string,
 ): Promise<void> {
   // Find any anonymous_session linked to this conversation that is mid-commit.
   // The join goes: conversations.anonymous_session_id → anonymous_sessions.id
@@ -42,6 +44,7 @@ export async function assertNotInDeferredWindow(
     .from("conversations")
     .select("anonymous_session_id")
     .eq("id", conversation_id)
+    .eq("tenant_id", tenant_id)
     .maybeSingle();
 
   const anonSessionId = conv?.anonymous_session_id as string | null | undefined;
@@ -51,6 +54,7 @@ export async function assertNotInDeferredWindow(
     .from("anonymous_sessions")
     .select("id, transfer_soft_commit_at, transfer_committed_at")
     .eq("id", anonSessionId)
+    .eq("tenant_id", tenant_id)
     .maybeSingle();
 
   if (!session) return;

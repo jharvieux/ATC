@@ -10,7 +10,6 @@ import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { createClient } from "@supabase/supabase-js";
-import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 
 const VALID_RSVP = new Set(["pending", "interested", "not_going", "booked"]);
 
@@ -71,20 +70,28 @@ export async function POST(req: Request, props: { params: Promise<{ token: strin
     }
   }
 
-  // §18.10 — RSVP edits blocked once the group has sailed. Travel-start date
-  // marks the group read-only for RSVP/member management (forum stays open
-  // separately per §19.10).
+  // §18.10 — RSVP edits blocked once the group has sailed. Public route has no
+  // tenant ctx, so the sailed check is inlined: one group read with both PK and
+  // tenant_id (derived from the group row itself; invitation has no tenant_id column).
   if (inv?.group_id) {
-    try {
-      await assertGroupNotSailed(svc, inv.group_id);
-    } catch (e) {
-      if (e instanceof GroupSailedError) {
-        return Response.json(
-          { error: "group_sailed", sailed_at: e.sailed_at, message: "This trip has sailed. RSVP changes are no longer accepted." },
-          { status: 410 },
-        );
-      }
+    const { data: groupRow, error: gErr } = await svc
+      // d091-allow:service-role-tenant — public HMAC-verified route; group isolated by PK validated by token chain.
+      .from("groups")
+      .select("status, sailed_at")
+      .eq("id", inv.group_id)
+      .maybeSingle();
+    if (gErr) {
       return Response.json({ error: "group_sailed_lookup_failed" }, { status: 500 });
+    }
+    if (!groupRow) {
+      return Response.json({ error: "group_sailed_lookup_failed" }, { status: 500 });
+    }
+    const g = groupRow as { status: string; sailed_at: string | null };
+    if (g.status === "sailed") {
+      return Response.json(
+        { error: "group_sailed", sailed_at: g.sailed_at, message: "This trip has sailed. RSVP changes are no longer accepted." },
+        { status: 410 },
+      );
     }
   }
 

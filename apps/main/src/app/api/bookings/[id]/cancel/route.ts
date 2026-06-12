@@ -131,6 +131,7 @@ export async function POST(
       .from("commissions")
       .select("id, status, platform_retained_cents, currency, platform_split_rate, received_commission_cents, gross_commission_cents")
       .eq("booking_id", bookingId)
+      .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
 
     if (!commissionData) {

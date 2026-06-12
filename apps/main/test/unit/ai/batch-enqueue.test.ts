@@ -26,9 +26,14 @@ function makeDb(opts: { insertedId?: string; insertError?: { message: string } }
           },
           update(_payload: unknown) {
             calls.push({ table, op: "update", payload: _payload });
-            return {
-              eq: async () => ({ data: null, error: null }),
+            const result = { data: null, error: null };
+            const p = Promise.resolve(result);
+            const chain: Record<string, unknown> = {
+              eq: () => chain,
+              then: p.then.bind(p),
+              catch: p.catch.bind(p),
             };
+            return { eq: (_col: string, _val: unknown) => chain };
           },
         };
       },

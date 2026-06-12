@@ -21,7 +21,7 @@ export class GroupSailedError extends Error {
  * group we can't read is a group we can't authorize a mutation against).
  *
  * Caller pattern (route handler):
- *   try { await assertGroupNotSailed(svc, groupId); }
+ *   try { await assertGroupNotSailed(db, groupId, ctx.tenant_id); }
  *   catch (e) {
  *     if (e instanceof GroupSailedError) {
  *       return Response.json({ error: "group_sailed", sailed_at: e.sailed_at }, { status: 410 });
@@ -32,11 +32,13 @@ export class GroupSailedError extends Error {
 export async function assertGroupNotSailed(
   db: SupabaseClient,
   group_id: string,
+  tenant_id: string,
 ): Promise<void> {
   const { data, error } = await db
     .from("groups")
     .select("status, sailed_at")
     .eq("id", group_id)
+    .eq("tenant_id", tenant_id)
     .maybeSingle();
 
   if (error) {

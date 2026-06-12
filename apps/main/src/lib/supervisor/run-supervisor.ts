@@ -98,6 +98,7 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
       "regen_tokens_consumed, regen_count_total, regen_budget_exhausted_at, supervisor_slur_consecutive_count",
     )
     .eq("id", conversation_id)
+    .eq("tenant_id", input.ctx.tenant_id)
     .single();
 
   if (convErr || !conversation) {
@@ -247,7 +248,8 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
           regen_budget_exhausted_at: new Date().toISOString(),
           supervisor_slur_consecutive_count: newSlurConsecutiveCount,
         })
-        .eq("id", conversation_id), "conversations.update");
+        .eq("id", conversation_id)
+        .eq("tenant_id", input.ctx.tenant_id), "conversations.update");
     } else {
       // Budget allows another regen
       action = "regenerate";
@@ -262,7 +264,8 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
             conversation.regen_tokens_consumed + estimatedTokensForIncrement,
           supervisor_slur_consecutive_count: newSlurConsecutiveCount,
         })
-        .eq("id", conversation_id), "conversations.update");
+        .eq("id", conversation_id)
+        .eq("tenant_id", input.ctx.tenant_id), "conversations.update");
     }
   } else {
     action = "allow";
@@ -271,7 +274,8 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
       await safeAwait(db
         .from("conversations")
         .update({ supervisor_slur_consecutive_count: newSlurConsecutiveCount })
-        .eq("id", conversation_id), "conversations.update");
+        .eq("id", conversation_id)
+        .eq("tenant_id", input.ctx.tenant_id), "conversations.update");
     }
   }
 
@@ -299,7 +303,8 @@ export async function runSupervisor(input: RunSupervisorInput): Promise<Supervis
   await safeAwait(db
     .from("messages")
     .update({ supervisor_findings: supervisorFindings })
-    .eq("id", message_id), "messages.update");
+    .eq("id", message_id)
+    .eq("tenant_id", input.ctx.tenant_id), "messages.update");
 
   // §10.5a — probabilistic sample-for-review snapshot. Escalations always
   // insert; other categories sampled at configurable rates. Best-effort:

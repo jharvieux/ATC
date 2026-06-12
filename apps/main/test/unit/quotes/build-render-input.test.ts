@@ -42,7 +42,9 @@ function makeDb(quote: { data: Partial<QuoteRow> | null; error: { message: strin
   return {
     from: () => ({
       select: () => ({
-        eq: () => ({ maybeSingle: () => Promise.resolve(quote) }),
+        eq: () => ({
+          eq: () => ({ maybeSingle: () => Promise.resolve(quote) }),
+        }),
       }),
     }),
   } as unknown as Parameters<typeof loadQuoteRow>[0]["db"];
@@ -124,6 +126,7 @@ describe("loadQuoteRow — cheap container SELECT for status branching", () => {
     const result = await loadQuoteRow({
       db: makeDb({ data: BASE_QUOTE, error: null }),
       quoteId: "quote-1",
+      tenant_id: TENANT_ID,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -136,6 +139,7 @@ describe("loadQuoteRow — cheap container SELECT for status branching", () => {
     const result = await loadQuoteRow({
       db: makeDb({ data: null, error: null }),
       quoteId: "missing",
+      tenant_id: TENANT_ID,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -148,6 +152,7 @@ describe("loadQuoteRow — cheap container SELECT for status branching", () => {
     const result = await loadQuoteRow({
       db: makeDb({ data: null, error: { message: "connection refused" } }),
       quoteId: "quote-1",
+      tenant_id: TENANT_ID,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {

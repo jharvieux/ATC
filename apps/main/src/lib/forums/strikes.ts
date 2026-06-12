@@ -54,6 +54,7 @@ export async function checkStrikePatterns(
     .select("id")
     .eq("user_id", user_id)
     .eq("forum_id", forum_id)
+    .eq("tenant_id", tenant_id)
     .eq("strike_kind", "ai_hidden")
     .gte("created_at", window24h.toISOString());
 
@@ -84,6 +85,7 @@ export async function checkStrikePatterns(
     .select("id")
     .eq("user_id", user_id)
     .eq("forum_id", forum_id)
+    .eq("tenant_id", tenant_id)
     .eq("strike_kind", "coordinator_hidden");
 
   const coordinatorHiddenCumulative = (coordStrikes ?? []).length;
@@ -93,7 +95,8 @@ export async function checkStrikePatterns(
     .from("forum_strikes")
     .select("id")
     .eq("user_id", user_id)
-    .eq("forum_id", forum_id);
+    .eq("forum_id", forum_id)
+    .eq("tenant_id", tenant_id);
 
   const totalCumulative = (allStrikes ?? []).length;
 

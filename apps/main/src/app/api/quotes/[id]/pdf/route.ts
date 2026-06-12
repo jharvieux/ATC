@@ -34,7 +34,7 @@ export async function GET(
     const adminDb = createServiceRoleClient();
     const { id } = await params;
 
-    const loaded = await loadQuoteRow({ db, quoteId: id });
+    const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
       return Response.json({ error: loaded.message }, { status: loaded.status });
     }

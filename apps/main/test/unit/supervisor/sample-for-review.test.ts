@@ -38,12 +38,16 @@ function makeFake(rates: Partial<Record<string, number>>, recentMessages: unknow
         return {
           select() {
             return {
-              eq() {
+              eq(_col: string, _val: unknown) {
                 return {
-                  order() {
+                  eq(_col2: string, _val2: unknown) {
                     return {
-                      async limit() {
-                        return { data: recentMessages };
+                      order() {
+                        return {
+                          async limit() {
+                            return { data: recentMessages };
+                          },
+                        };
                       },
                     };
                   },
@@ -209,6 +213,61 @@ describe("maybeSampleForReview — §10.5a sampling decisions", () => {
     await maybeSampleForReview({ ...baseInput, action: "escalate", findings: [], db });
     const ctx = log.inserts[0]?.values.conversation_context_snapshot as { messages: unknown[] };
     expect(ctx.messages).toEqual(recent);
+  });
+
+  it("messages SELECT carries tenant_id filter (§D-091)", async () => {
+    Math.random = () => 0.0;
+    const eqArgs: Array<[string, unknown]> = [];
+    const trackingDb: SupabaseClient = {
+      from(table: string) {
+        if (table === "platform_settings") {
+          return {
+            select() {
+              return {
+                eq(_col: string, _key: string) {
+                  return { async single() { return { data: null }; } };
+                },
+              };
+            },
+          } as unknown as ReturnType<SupabaseClient["from"]>;
+        }
+        if (table === "messages") {
+          return {
+            select() {
+              return {
+                eq(col: string, val: unknown) {
+                  eqArgs.push([col, val]);
+                  return {
+                    eq(col2: string, val2: unknown) {
+                      eqArgs.push([col2, val2]);
+                      return {
+                        order() {
+                          return { async limit() { return { data: [] }; } };
+                        },
+                      };
+                    },
+                  };
+                },
+              };
+            },
+          } as unknown as ReturnType<SupabaseClient["from"]>;
+        }
+        if (table === "supervisor_review_queue") {
+          return {
+            async insert() { return { data: null, error: null }; },
+          } as unknown as ReturnType<SupabaseClient["from"]>;
+        }
+        throw new Error("unexpected table: " + table);
+      },
+    } as unknown as SupabaseClient;
+
+    await maybeSampleForReview({ ...baseInput, action: "escalate", findings: [], db: trackingDb });
+
+    const cols = eqArgs.map(([col]) => col);
+    expect(cols).toContain("conversation_id");
+    expect(cols).toContain("tenant_id");
+    const tenantEntry = eqArgs.find(([col]) => col === "tenant_id");
+    expect(tenantEntry?.[1]).toBe("tenant-1");
   });
 
   it("purge_after is in the FUTURE (default 90-day retention)", async () => {

@@ -88,7 +88,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
     // §18.10 — Group invitations management (revoke / reissue / invite) is part of
     // "member management" which is blocked once the group has sailed.
     try {
-      await assertGroupNotSailed(svc, params.id);
+      await assertGroupNotSailed(svc, params.id, ctx.tenant_id);
     } catch (e) {
       if (e instanceof GroupSailedError) {
         return Response.json(

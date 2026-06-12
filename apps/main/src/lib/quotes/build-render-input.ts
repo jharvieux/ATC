@@ -57,6 +57,7 @@ export type BuildInputResult =
 interface LoadArgs {
   db: SupabaseClient;
   quoteId: string;
+  tenant_id: string;
 }
 
 interface BuildArgs {
@@ -72,6 +73,7 @@ export async function loadQuoteRow(args: LoadArgs): Promise<LoadQuoteResult> {
     .from("quotes")
     .select(QUOTE_COLUMNS)
     .eq("id", args.quoteId)
+    .eq("tenant_id", args.tenant_id)
     .maybeSingle();
   if (error) {
     return { ok: false, status: 500, message: error.message };

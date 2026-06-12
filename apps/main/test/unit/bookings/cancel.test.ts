@@ -41,11 +41,10 @@ vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
     from: (table: string) => {
       if (table === "commissions") {
-        return {
-          select: () => ({
-            eq: () => ({ maybeSingle: mocks.commissionMaybeSingle }),
-          }),
-        };
+        const chain: Record<string, unknown> = {};
+        chain.eq = () => chain;
+        chain.maybeSingle = mocks.commissionMaybeSingle;
+        return { select: () => chain };
       }
       // bookings: select (lookup) + update (mark cancelled, passed to safeAwait)
       return {

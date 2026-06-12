@@ -35,7 +35,7 @@ export async function POST(
 
     // Cheap quote load first so non-draft sends 409 without paying the
     // tenant + platform_settings lookups.
-    const loaded = await loadQuoteRow({ db, quoteId: id });
+    const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
       return Response.json({ error: loaded.message }, { status: loaded.status });
     }

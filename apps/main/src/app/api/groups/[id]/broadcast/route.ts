@@ -78,7 +78,7 @@ export async function POST(
     const group = groupRow as unknown as GroupRow;
 
     try {
-      await assertGroupNotSailed(db, id);
+      await assertGroupNotSailed(db, id, ctx.tenant_id);
     } catch (err) {
       if (err instanceof GroupSailedError) {
         return Response.json(
