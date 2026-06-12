@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-220 — 2026-06-12 — #1010 vendor-health split-brain resolved by probing Anthropic, not by durable real-traffic writes
+
+**Decision:** Closed the #1010 split-brain via the issue's Option 3: the 15-min vendor-health probe now pings Anthropic with `GET /v1/models` (`x-api-key` + `anthropic-version` headers). The endpoint is free/no-token-cost and was verified live (401 unauthenticated = reachable, same semantics the probe already uses for OpenAI/Stripe/Resend). Anthropic — the one vendor gating the chat route — now gets a durable `vendor_health` row, admin-page visibility, and alert-once-per-transition coverage. Shipped in PR #1041.
+
+**Why:** The probe's original "Anthropic has no cheap GET endpoint" rationale predated the Anthropic Models API. Once that exists, probing is strictly cheaper than any durable-write path.
+
+**Rejected:** Option 1 (routing real-traffic `recordVendorSuccess/Failure` through durable writes) — adds a DB write plus a void-async serverless hazard to the hottest code path for marginal gain. The two-tier split (in-process per-instance fast path for gate reads; probe-fed durable table as 15-min backstop) is now documented in code as intentional, in both `vendor-health-probe.ts` and `registry.ts` (whose "legacy/tests-only" label on the real-traffic path was factually wrong and is fixed).
+
+**Operational note:** GitHub closing keywords DO fire on dev merges (dev is the default branch) — #1010 auto-closed. #1035 hadn't because PR #1036's body said "Fixes issues #1034 and #1035", and the word "issues" breaks GitHub's keyword parsing; closed manually this session.
+
+**Related:** PR #1041, issue #1010, PR #994 (origin), D-091 Opus audit that flagged it.
+
+---
+
 ## D-219 — 2026-06-12 — #996 member-picker for PAT minting shipped in PR #1039
 
 api_tokens:list moved to READ_GRANTS (self-view pattern — route scopes to caller's user_id for non-owners). POST /api/integrations/tokens now accepts optional user_id validated as active tenant member. Settings page shows member picker + "Acting as" column for owners.
