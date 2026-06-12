@@ -181,7 +181,16 @@ export function createBearerClient(token: string): SupabaseClient {
 
 export function createRequestScopedClient(req: Request): SupabaseClient {
   const { url, anonKey } = supabaseAnonConfig();
-  const cookies = parseCookieHeader(req.headers.get("cookie"));
+  // Prefer Next.js's built-in RequestCookies parser when available (NextRequest).
+  // req.headers.get("cookie") + parseCookieHeader is equivalent for well-formed
+  // cookies but the NextRequest path has better handling for edge cases in how
+  // Next.js forwards request headers from middleware (NextResponse.next with
+  // modified headers). The fallback remains available for plain Request callers
+  // (unit tests, non-Next environments).
+  const nextReq = req as NextRequest;
+  const cookies = typeof nextReq.cookies?.getAll === "function"
+    ? nextReq.cookies.getAll()
+    : parseCookieHeader(req.headers.get("cookie"));
   return createServerClient(url, anonKey, {
     cookies: {
       getAll: () => cookies,
