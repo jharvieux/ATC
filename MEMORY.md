@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-215 — 2026-06-12 — #1025 classification done: 25 real fixes (→ #1028/#1029/#1030), 28 intentional cross-tenant, 16 tenant-less-table
+
+**Decision:** All 69 occurrences baselined by the #1023 gate widening were classified by reading each module and verifying table schemas against migrations. Outcome: **~25 genuine hardening fixes** spun out as three issues — **#1028** (supervisor path: conversations/messages on the service-role chat-pipeline client keyed by conversation_id only — same class as the #1022 bug), **#1029** (anon→auth transfer: ownership-re-keying UPDATEs whose tenant scoping is a docstring convention, not code), **#1030** (one-liner batch across 8 modules where tenant id is already in scope). **~28 intentional** (CCPA purge sweeps all tenants by spec §25.4; AI-batch + RAG-embedding platform crons; HMAC-token RSVP; guard-protected identity read) get inline-allows under #1025. **~16 are tables with no tenant_id column** (cruise canon ×4, personas ×2, ai_kill_switch_state, ai_batch_jobs) → PLATFORM_TABLES.
+
+**Notable calls:** `invitations` lacks tenant_id but is group-scoped data, so it gets a per-site allow-reason, NOT a PLATFORM_TABLES blanket. RLS-backed reads in mixed files (cancel route commissions, quote render-input) were put in the fix bucket — the explicit filter completes the two-layer rule cheaply rather than arguing the RLS layer suffices.
+
+**Why issues, not fixes, this session:** operator scoped the session to analysis + issue filing; each fix cluster is security-sensitive and wants its own reviewable PR (consistent with the D-214 rejection of bundling).
+
+**Related:** issues #1025 (classification comment posted there; retains B+C mechanical work), #1028, #1029, #1030; [[D-214]], [[D-213]].
+
+---
+
 ## D-214 — 2026-06-12 — #1023 shipped (PR #1026): D-091 tenant gate now scans SupabaseClient-param modules; 69 surfaced hits baselined, audit filed as #1025
 
 **Decision:** The `service-role-tenant` detector's file gate gained one regex alternation (`:\s*SupabaseClient\b`), so any module typing a value as `SupabaseClient` is scanned — closing the blind spot where parameter-receiving modules (which never name the service-role factory) escaped entirely. Verified the original escape vector live: stripping a tenant filter from `run-generation-loop.ts` now fails `pnpm check:d091` on that line.
