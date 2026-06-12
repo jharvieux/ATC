@@ -77,7 +77,6 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
       if (!res.ok) return;
       const d = (await res.json()) as { members: Member[]; caller_role: string };
       setMembers(d.members);
-      // Identify self from the /api/auth/me endpoint to pre-select in picker.
     } catch {
       // Members are optional; failure is non-fatal.
     }
@@ -87,10 +86,10 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
     try {
       const res = await fetch("/api/auth/me");
       if (!res.ok) return;
-      const d = (await res.json()) as { id?: string };
-      if (d.id) {
-        setSelfId(d.id);
-        setSelectedUserId(d.id);
+      const d = (await res.json()) as { user_id?: string };
+      if (d.user_id) {
+        setSelfId(d.user_id);
+        setSelectedUserId(d.user_id);
       }
     } catch {
       // Best-effort.
