@@ -171,7 +171,12 @@ export function detectCasRowcount(file: string, lines: string[]): Violation[] {
 // --- Detector (1): service-role .from(tenant-table) missing tenant_id ------
 export function detectServiceRoleTenant(file: string, lines: string[]): Violation[] {
   const text = lines.join("\n");
-  if (!/createServiceRoleClient|SUPABASE_SERVICE_ROLE_KEY|serviceRoleClient/.test(text)) return [];
+  // Also gate-in modules that RECEIVE a client as a `SupabaseClient`-typed
+  // parameter without naming the factory — the caller may hand them the
+  // service-role client (#1023; how run-generation-loop.ts escaped the scan).
+  // Conservative on purpose: an RLS-backed client passed the same way gets
+  // flagged too — suppress with `d091-allow:service-role-tenant <reason>`.
+  if (!/createServiceRoleClient|SUPABASE_SERVICE_ROLE_KEY|serviceRoleClient|:\s*SupabaseClient\b/.test(text)) return [];
   const out: Violation[] = [];
   const fromRe = /\.from\(\s*['"`]([a-z0-9_]+)['"`]\s*\)/i;
   lines.forEach((ln, i) => {

@@ -93,6 +93,13 @@ describe("detectServiceRoleTenant (1)", () => {
   it("honors the inline escape hatch", () => {
     expect(detectServiceRoleTenant("f.ts", svc(`// d091-allow:service-role-tenant platform-scoped read, no tenant column\nawait db.from("bookings").select("*").eq("id", id);`))).toEqual([]);
   });
+  it("flags a module that RECEIVES the client as a SupabaseClient-typed parameter (#1023)", () => {
+    const v = detectServiceRoleTenant(
+      "f.ts",
+      L(`async function persist(svc: SupabaseClient, id: string) {\n  await svc.from("messages").update({ x: 1 }).eq("id", id);\n}`),
+    );
+    expect(v.map((x) => x.id)).toEqual(["service-role-tenant"]);
+  });
 });
 
 describe("computeNewViolations — count-based baseline", () => {
