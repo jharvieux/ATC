@@ -21,12 +21,9 @@ function makeDb(opts: {
     rpc: (_fn: string) => ({
       then: (resolve: (v: { data: unknown; error: null }) => unknown) =>
         Promise.resolve({ data: null, error: null }).then(resolve),
-      catch: (reject: (e: unknown) => unknown) => Promise.resolve(null).catch(reject),
-      // rpc fallback: error → falls back to env defaults
     }),
     from: (table: string) => {
       if (table === "customer_chat_counters") {
-        // counter existence read (enforceCustomerLimit) + upsert existence read
         return {
           select: () => ({
             eq: () => ({
