@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-213 — 2026-06-12 — #1016 shipped (PR #1022): runGenerationLoop extracted; fail-loud replaces a silent null; detector gap filed as #1023
+
+**Decision:** The streaming generation machinery (`streamTurn` closure + attempt/regen/tool-dispatch loop) moved out of `handleChat()` into `apps/main/src/lib/chat/run-generation-loop.ts`. The route keeps the orchestration spine (setup, post-loop supervisor summary/escalation, asset validation, final done/close). SSE event sequences unchanged; 13 unit tests pin the event-sequence/persistence contract.
+
+**Two deliberate non-move changes (audit-driven):**
+- **Fail-loud on the all-attempts-aborted exit.** Pre-extraction code returned `assistantMessageId!` — if all 6 attempts hit per-sentence aborts before persisting, the caller got a null behind a string type and silently delivered an empty turn. The loop now emits `error: message_persist_failed` + close and returns `{ status: "aborted" }`. Types made honest alongside (`supervisorOutcome` non-null on `complete`; loop's supervisor SSE event typed to the only action it emits).
+- **Tenant-filter debt fixed in-move:** the two `messages.update` calls gained `.eq("tenant_id", ...)` (two-layer isolation). They had escaped the D-091 `service-role-tenant` gate because the new module takes `svc` as a parameter and never names the service-role client — that detector blind spot is filed as **#1023** (fix the gate, not just this instance).
+
+**Rejected:** re-baselining the missing tenant filters (it's a security-boundary gap, not style); keeping the `!` assertion for byte-identical parity (the latent empty-turn edge was worth the one behavioral divergence, and it's test-covered).
+
+**Related:** PR #1022; issues #1016 (closed), #1023; [[D-212]] (the deferral that created #1016); #1015/PR #1021 (the quota extraction that preceded it).
+
+---
+
 ## D-212 — 2026-06-11 — Chat-route god-function split deferred to #1015 + #1016 (Vitals scan)
 
 **Decision:** A Vitals codebase-health scan flagged `apps/main/src/app/api/chat/route.ts` as the lowest-health file in the repo (health 3.9/10, complexity 86, 1,265 lines) — root cause is a single ~900-line `handleChat()` doing tenant resolution, quota gating, tone override, persistence, RAG, system-prompt assembly, the streaming generate/regen/tool-dispatch loop, supervisor, and asset validation in one scope. Rather than refactor it inline this session, the work was split into two sequenced, no-behavior-change extractions, each its own future PR:
