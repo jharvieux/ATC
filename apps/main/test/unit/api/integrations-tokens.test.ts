@@ -160,4 +160,12 @@ describe("POST /api/integrations/tokens", () => {
     const res = await POST(req({ name: "Evil", user_id: "u-foreign" }));
     expect(res.status).toBe(422);
   });
+
+  it("returns 500 when the member-lookup DB call fails (fail-closed, not fail-open)", async () => {
+    mocks.assertPermission.mockResolvedValue(callerAs("tenant_owner", "u-owner"));
+    makePostChain({ memberError: { message: "db down" } });
+
+    const res = await POST(req({ name: "Test", user_id: "u-other" }));
+    expect(res.status).toBe(500);
+  });
 });
