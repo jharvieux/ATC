@@ -288,9 +288,16 @@ describe("api_tokens (#712) — owner-only", () => {
     expect(isPermitted("tenant_owner", "api_tokens", "revoke")).toBe(true);
   });
 
-  it("agent and viewer are denied every api_tokens action", () => {
+  it("all roles can list tokens (self-view — route scopes to caller's user_id for non-owners)", () => {
+    // #996: api_tokens:list moved to READ_GRANTS so any member can see tokens acting as them.
+    for (const role of ["tenant_owner", "agent", "viewer"] as const) {
+      expect(isPermitted(role, "api_tokens", "list")).toBe(true);
+    }
+  });
+
+  it("agent and viewer cannot create or revoke tokens", () => {
     for (const role of ["agent", "viewer"] as const) {
-      for (const action of ["list", "create", "revoke"] as const) {
+      for (const action of ["create", "revoke"] as const) {
         expect(isPermitted(role, "api_tokens", action)).toBe(false);
       }
     }

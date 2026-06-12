@@ -1,14 +1,21 @@
 "use client";
 
-// #712 — Personal API tokens settings page.
+// #712 / #996 — Personal API tokens settings page.
 //
-// Tenant owners can create, list, and revoke personal access tokens here.
-// Tokens are used by the iOS Shortcut and other external integrations.
+// tenant_owner: create tokens acting as any active member (member picker),
+//   see all tokens in the tenant with "Acting as" column, revoke any.
+// other roles: see only tokens that act as them (read-only, no create/revoke).
+//
 // The plaintext token is shown exactly once after creation; after that
-// only the name, scopes, and last-used date are visible.
+// only the name, acting member, scopes, and last-used date are visible.
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+
+interface ActingUser {
+  display_name: string | null;
+  email: string;
+}
 
 interface ApiToken {
   id: string;
@@ -17,12 +24,28 @@ interface ApiToken {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  user_id: string;
+  created_by_user_id: string;
+  users: ActingUser | null;
+  creators: ActingUser | null;
+}
+
+interface Member {
+  id: string;
+  email: string;
+  display_name: string | null;
 }
 
 export default function IntegrationsSettingsPage(): React.JSX.Element {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
+  const [isOwner, setIsOwner] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+
+  // Member picker
+  const [members, setMembers] = useState<Member[]>([]);
+  const [selfId, setSelfId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
 
   // Create-token form
   const [newName, setNewName] = useState("");
@@ -40,14 +63,45 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
       const res = await fetch("/api/integrations/tokens");
       if (res.status === 403) { setForbidden(true); return; }
       if (!res.ok) { setLoadErr(`Load failed (HTTP ${res.status})`); return; }
-      const d = (await res.json()) as { tokens: ApiToken[] };
+      const d = (await res.json()) as { tokens: ApiToken[]; is_owner: boolean };
       setTokens(d.tokens);
+      setIsOwner(d.is_owner);
     } catch (e) {
       setLoadErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadMembers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/tenant/users");
+      if (!res.ok) return;
+      const d = (await res.json()) as { members: Member[]; caller_role: string };
+      setMembers(d.members);
+      // Identify self from the /api/auth/me endpoint to pre-select in picker.
+    } catch {
+      // Members are optional; failure is non-fatal.
+    }
+  }, []);
+
+  const loadSelf = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (!res.ok) return;
+      const d = (await res.json()) as { id?: string };
+      if (d.id) {
+        setSelfId(d.id);
+        setSelectedUserId(d.id);
+      }
+    } catch {
+      // Best-effort.
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    void loadSelf();
+    void loadMembers();
+  }, [load, loadSelf, loadMembers]);
 
   async function createToken(): Promise<void> {
     const name = newName.trim();
@@ -56,10 +110,17 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
     setCreateErr(null);
     setNewPlaintext(null);
     try {
+      const body: { name: string; scopes: string[]; user_id?: string } = {
+        name,
+        scopes: ["rag_submissions:create"],
+      };
+      if (selectedUserId && selectedUserId !== selfId) {
+        body.user_id = selectedUserId;
+      }
       const res = await fetch("/api/integrations/tokens", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, scopes: ["rag_submissions:create"] }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const e = (await res.json()) as { error?: string };
@@ -106,6 +167,18 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
     );
   }
 
+  function actingLabel(tok: ApiToken): string {
+    const u = tok.users;
+    if (!u) return tok.user_id;
+    return u.display_name ?? u.email;
+  }
+
+  function createdByLabel(tok: ApiToken): string {
+    const u = tok.creators;
+    if (!u) return tok.created_by_user_id;
+    return u.display_name ?? u.email;
+  }
+
   const activeTokens = tokens.filter((t) => !t.revoked_at);
   const revokedTokens = tokens.filter((t) => t.revoked_at);
 
@@ -114,44 +187,61 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
       <h1 className="text-2xl font-bold mb-1">API Tokens</h1>
       <p className="text-muted-foreground text-[14px] mb-8">
         Personal access tokens let external tools (like the iOS Shortcut) submit RAG content to your workspace.
-        Tokens are scoped to your account — they cannot access other workspace members&apos; data.
+        {isOwner
+          ? " As an owner, you can mint tokens that act as any active workspace member."
+          : " Tokens shown here act on your behalf."}
       </p>
 
-      {/* New token form */}
-      <section className="mb-8 border border-border rounded-lg p-5 bg-card">
-        <h2 className="text-[15px] font-semibold mb-3">Create new token</h2>
-        <div className="flex gap-2 items-start">
-          <input
-            type="text"
-            placeholder="Token name (e.g. iOS Shortcut)"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void createToken(); }}
-            maxLength={100}
-            className="flex-1 rounded border border-border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <Button onClick={() => void createToken()} disabled={creating || !newName.trim()}>
-            {creating ? "Creating…" : "Create"}
-          </Button>
-        </div>
-        {createErr && <p className="text-destructive text-[13px] mt-2">{createErr}</p>}
-
-        {newPlaintext && (
-          <div className="mt-4 border border-border rounded-md p-4 bg-muted">
-            <p className="text-[13px] font-semibold text-foreground mb-2">
-              Copy this token now — it will not be shown again.
-            </p>
-            <div className="flex gap-2 items-center">
-              <code className="flex-1 text-[12px] font-mono break-all text-foreground bg-background border border-border rounded px-2 py-1.5">
-                {newPlaintext}
-              </code>
-              <Button variant="outline" onClick={() => void copyToken()}>
-                {copied ? "Copied!" : "Copy"}
-              </Button>
-            </div>
+      {/* New token form — owners only */}
+      {isOwner && (
+        <section className="mb-8 border border-border rounded-lg p-5 bg-card">
+          <h2 className="text-[15px] font-semibold mb-3">Create new token</h2>
+          <div className="flex gap-2 items-start flex-wrap">
+            <input
+              type="text"
+              placeholder="Token name (e.g. iOS Shortcut)"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void createToken(); }}
+              maxLength={100}
+              className="flex-1 min-w-[200px] rounded border border-border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            {members.length > 1 && (
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="rounded border border-border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.display_name ?? m.email}{m.id === selfId ? " (you)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+            <Button onClick={() => void createToken()} disabled={creating || !newName.trim()}>
+              {creating ? "Creating…" : "Create"}
+            </Button>
           </div>
-        )}
-      </section>
+          {createErr && <p className="text-destructive text-[13px] mt-2">{createErr}</p>}
+
+          {newPlaintext && (
+            <div className="mt-4 border border-border rounded-md p-4 bg-muted">
+              <p className="text-[13px] font-semibold text-foreground mb-2">
+                Copy this token now — it will not be shown again.
+              </p>
+              <div className="flex gap-2 items-center">
+                <code className="flex-1 text-[12px] font-mono break-all text-foreground bg-background border border-border rounded px-2 py-1.5">
+                  {newPlaintext}
+                </code>
+                <Button variant="outline" onClick={() => void copyToken()}>
+                  {copied ? "Copied!" : "Copy"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Active tokens */}
       {loadErr && <p className="text-destructive text-[13px] mb-4">{loadErr}</p>}
@@ -171,6 +261,9 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
                 <div>
                   <p className="font-semibold text-[14px] text-foreground">{tok.name}</p>
                   <p className="text-[12px] text-muted-foreground mt-0.5">
+                    {isOwner && (
+                      <>Acting as {actingLabel(tok)} &middot; Created by {createdByLabel(tok)} &middot;{" "}</>
+                    )}
                     Scopes: {tok.scopes.join(", ")} &middot;{" "}
                     {tok.last_used_at
                       ? `Last used ${new Date(tok.last_used_at).toLocaleDateString()}`
@@ -178,14 +271,16 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
                     &middot; Created {new Date(tok.created_at).toLocaleDateString()}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                                   onClick={() => void revokeToken(tok.id)}
-                  disabled={revoking === tok.id}
-                  className="text-destructive hover:text-destructive"
-                >
-                  {revoking === tok.id ? "Revoking…" : "Revoke"}
-                </Button>
+                {isOwner && (
+                  <Button
+                    variant="outline"
+                    onClick={() => void revokeToken(tok.id)}
+                    disabled={revoking === tok.id}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    {revoking === tok.id ? "Revoking…" : "Revoke"}
+                  </Button>
+                )}
               </div>
             ))}
           </div>
@@ -193,7 +288,7 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
       )}
 
       {activeTokens.length === 0 && !loadErr && (
-        <p className="text-[14px] text-muted-foreground mb-6">No active tokens. Create one above.</p>
+        <p className="text-[14px] text-muted-foreground mb-6">No active tokens. {isOwner ? "Create one above." : "No tokens are acting on your behalf."}</p>
       )}
 
       {/* Revoked tokens */}
@@ -211,6 +306,7 @@ export default function IntegrationsSettingsPage(): React.JSX.Element {
                 <div>
                   <p className="font-semibold text-[14px] text-foreground line-through">{tok.name}</p>
                   <p className="text-[12px] text-muted-foreground mt-0.5">
+                    {isOwner && <>Acting as {actingLabel(tok)} &middot;{" "}</>}
                     Revoked {new Date(tok.revoked_at!).toLocaleDateString()} &middot; Created{" "}
                     {new Date(tok.created_at).toLocaleDateString()}
                   </p>
