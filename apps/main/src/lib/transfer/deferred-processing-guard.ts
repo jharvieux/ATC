@@ -40,22 +40,24 @@ export async function assertNotInDeferredWindow(
   // Conversations may not have an anonymous_session_id column yet (that wire
   // happens when auth is fully built out). We guard gracefully — if the column
   // doesn't exist in the query result, assume not deferred.
-  const { data: conv } = await db
+  const { data: conv, error: convErr } = await db
     .from("conversations")
     .select("anonymous_session_id")
     .eq("id", conversation_id)
     .eq("tenant_id", tenant_id)
     .maybeSingle();
+  if (convErr) throw new Error(`deferred_window_lookup_failed: conversations.read: ${convErr.message}`);
 
   const anonSessionId = conv?.anonymous_session_id as string | null | undefined;
   if (!anonSessionId) return;
 
-  const { data: session } = await db
+  const { data: session, error: sessionErr } = await db
     .from("anonymous_sessions")
     .select("id, transfer_soft_commit_at, transfer_committed_at")
     .eq("id", anonSessionId)
     .eq("tenant_id", tenant_id)
     .maybeSingle();
+  if (sessionErr) throw new Error(`deferred_window_lookup_failed: anonymous_sessions.read: ${sessionErr.message}`);
 
   if (!session) return;
 

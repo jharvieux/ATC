@@ -75,13 +75,14 @@ async function recountFromMessages(
   windowDays: number,
 ): Promise<number> {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await db
+  const { data, error } = await db
     .from("messages")
     .select("id, conversations!inner(user_id, tenant_id)")
     .eq("role", "user")
     .gte("created_at", since)
     .eq("conversations.user_id", user_id)
     .eq("conversations.tenant_id", tenant_id);
+  if (error) throw new Error(`customer_chat.recount_from_messages failed: ${error.message}`);
   return Array.isArray(data) ? data.length : 0;
 }
 
@@ -100,7 +101,7 @@ export async function enforceCustomerLimit(
   const resolved = await resolveCaps(db, args.user_id, args.tenant_id);
 
   // Load (or seed) the counter row.
-  const { data: existing } = await db
+  const { data: existing, error: counterErr } = await db
     .from("customer_chat_counters")
     .select(
       "current_count, last_message_at, soft1_last_issued_at, soft2_last_issued_at, hard_limit_hit_at",
@@ -108,6 +109,7 @@ export async function enforceCustomerLimit(
     .eq("user_id", args.user_id)
     .eq("tenant_id", args.tenant_id)
     .maybeSingle();
+  if (counterErr) throw new Error(`customer_chat_counters.read failed: ${counterErr.message}`);
 
   let counter = existing as {
     current_count: number;
@@ -233,12 +235,13 @@ async function upsertCounter(
 ): Promise<void> {
   // Manual upsert: PostgREST's .upsert() requires onConflict columns to be
   // available; here PK is (user_id, tenant_id).
-  const { data: row } = await db
+  const { data: row, error: existenceErr } = await db
     .from("customer_chat_counters")
     .select("user_id")
     .eq("user_id", user_id)
     .eq("tenant_id", tenant_id)
     .maybeSingle();
+  if (existenceErr) throw new Error(`customer_chat_counters.read failed: ${existenceErr.message}`);
   if (row) {
     await safeAwait(db
       .from("customer_chat_counters")

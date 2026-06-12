@@ -124,4 +124,22 @@ describe("checkAnonLimit", () => {
     });
     expect(r.allowed).toBe(true);
   });
+
+  it("fail-closed: DB error on counter read → throws (not silently allowed)", async () => {
+    const errorDb: SupabaseClient = {
+      from: (_t: string) => {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          gte: () => chain,
+          maybeSingle: async () => ({ data: null, error: { message: "connection timeout" } }),
+        };
+        return chain as unknown as ReturnType<SupabaseClient["from"]>;
+      },
+    } as unknown as SupabaseClient;
+
+    await expect(
+      checkAnonLimit(errorDb, { tenant_id: "t1", session_id: "s", ip: "1.2.3.4", fingerprint: "fp" }),
+    ).rejects.toThrow(/anonymous_chat_counters\.read failed/);
+  });
 });

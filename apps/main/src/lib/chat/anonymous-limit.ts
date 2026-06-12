@@ -65,7 +65,8 @@ async function getCountSince(
     .eq("identifier_type", identifier_type)
     .eq("identifier_value", identifier_value);
   if (since) q = q.gte("last_message_at", since);
-  const { data } = await q.maybeSingle();
+  const { data, error } = await q.maybeSingle();
+  if (error) throw new Error(`anonymous_chat_counters.read failed: ${error.message}`);
   return (data as { current_count?: number } | null)?.current_count ?? 0;
 }
 
@@ -118,13 +119,14 @@ export async function incrementAnonCounters(
   for (const [type, value] of ids) {
     if (!value) continue;
     // Read-then-write because PostgREST UPSERT can't ON CONFLICT increment.
-    const { data: existing } = await db
+    const { data: existing, error: readErr } = await db
       .from("anonymous_chat_counters")
       .select("current_count")
       .eq("tenant_id", input.tenant_id)
       .eq("identifier_type", type)
       .eq("identifier_value", value)
       .maybeSingle();
+    if (readErr) throw new Error(`anonymous_chat_counters.read failed: ${readErr.message}`);
     const current = (existing as { current_count?: number } | null)?.current_count ?? 0;
     if (existing) {
       await safeAwait(db
