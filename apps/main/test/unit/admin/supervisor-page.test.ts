@@ -19,7 +19,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 }));
 
 vi.mock("@/lib/auth/assert-platform-admin", () => ({
-  assertPlatformRolePage: vi.fn().mockResolvedValue({ admin_id: "test", role: "superadmin" }),
+  assertPlatformRolePage: vi.fn().mockResolvedValue({ admin_user_id: "test", role: "superadmin", via: "session" }),
 }));
 
 // safe-mutation is intentionally NOT mocked — we want the real safeAwait /
