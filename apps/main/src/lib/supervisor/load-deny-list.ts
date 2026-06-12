@@ -13,21 +13,23 @@ export async function loadUnionSlurDenyList(
   db: SupabaseClient,
   tenant_id: string,
 ): Promise<string[]> {
-  const { data: slurSetting } = await db
+  const { data: slurSetting, error: platformErr } = await db
     .from("platform_settings")
     .select("value")
     .eq("key", "supervisor_slur_deny_list")
-    .single();
+    .maybeSingle();
+  if (platformErr) throw new Error(`supervisor_slur_deny_list.read failed: ${platformErr.message}`);
 
   const platformDenyList: string[] = Array.isArray(slurSetting?.value)
     ? (slurSetting.value as string[])
     : [];
 
-  const { data: tenantSupplemental } = await db
+  const { data: tenantSupplemental, error: tenantErr } = await db
     .from("tenant_settings")
     .select("supplemental_hate_speech_denylist")
     .eq("tenant_id", tenant_id)
     .maybeSingle();
+  if (tenantErr) throw new Error(`supplemental_hate_speech_denylist.read failed: ${tenantErr.message}`);
 
   const supplemental: string[] = Array.isArray(
     (tenantSupplemental as { supplemental_hate_speech_denylist?: unknown } | null)

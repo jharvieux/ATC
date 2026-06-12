@@ -284,4 +284,64 @@ describe("assertNotInDeferredWindow (§11.6)", () => {
 
     await expect(assertNotInDeferredWindow(db, CONV_ID, TENANT_ID)).resolves.toBeUndefined();
   });
+
+  it("fail-closed: throws when conversations SELECT errors (not silently passes)", async () => {
+    const db: SupabaseClient = {
+      from: (table: string) => {
+        if (table === "conversations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: null, error: { message: "DB timeout" } }),
+                }),
+              }),
+            }),
+          } as unknown as ReturnType<SupabaseClient["from"]>;
+        }
+        throw new Error("unexpected table: " + table);
+      },
+    } as unknown as SupabaseClient;
+
+    await expect(assertNotInDeferredWindow(db, CONV_ID, TENANT_ID)).rejects.toThrow(
+      /deferred_window_lookup_failed.*conversations/,
+    );
+  });
+
+  it("fail-closed: throws when anonymous_sessions SELECT errors (not silently passes)", async () => {
+    const db: SupabaseClient = {
+      from: (table: string) => {
+        if (table === "conversations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { anonymous_session_id: ANON_SESSION_ID },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          } as unknown as ReturnType<SupabaseClient["from"]>;
+        }
+        if (table === "anonymous_sessions") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: null, error: { message: "connection reset" } }),
+                }),
+              }),
+            }),
+          } as unknown as ReturnType<SupabaseClient["from"]>;
+        }
+        throw new Error("unexpected table: " + table);
+      },
+    } as unknown as SupabaseClient;
+
+    await expect(assertNotInDeferredWindow(db, CONV_ID, TENANT_ID)).rejects.toThrow(
+      /deferred_window_lookup_failed.*anonymous_sessions/,
+    );
+  });
 });

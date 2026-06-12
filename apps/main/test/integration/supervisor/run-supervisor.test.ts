@@ -124,7 +124,14 @@ function buildMockDb(opts: {
         return {
           select: () => ({
             eq: (_col: string, key: string) => ({
+              // Support both .single() (old callers) and .maybeSingle() (load-deny-list post-fix)
               single: async () => {
+                if (key === "supervisor_slur_deny_list") {
+                  return { data: { value: slurDenyList }, error: null };
+                }
+                return { data: null, error: null };
+              },
+              maybeSingle: async () => {
                 if (key === "supervisor_slur_deny_list") {
                   return { data: { value: slurDenyList }, error: null };
                 }
@@ -464,6 +471,7 @@ describe("runSupervisor — tenant_id filter on DB mutations (§D-091)", () => {
             select: () => ({
               eq: (_col: string, _key: string) => ({
                 single: async () => ({ data: { value: [] }, error: null }),
+                maybeSingle: async () => ({ data: { value: [] }, error: null }),
               }),
             }),
           };
