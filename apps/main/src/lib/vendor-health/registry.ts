@@ -56,7 +56,11 @@ export function vendorHealthStatus(name: VendorName): VendorHealthStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy in-memory only path (used when no DB client is available, e.g. tests)
+// Real-traffic path (#1010): recordVendorSuccess/Failure are called inline
+// from AI/email wrappers on every live vendor call. They write ONLY to this
+// per-instance state + cache — never the durable table — keeping the hot
+// path free of DB writes. Durable state is the probe's job (15-min backstop);
+// the two stores intentionally diverge between probe runs.
 // ---------------------------------------------------------------------------
 
 const memRegistry = new Map<VendorName, VendorHealthState>();

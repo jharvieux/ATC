@@ -6,15 +6,17 @@
 // Alert fires exactly once per transition because the durable status is the
 // gate — a down vendor doesn't page on every subsequent failure.
 //
-// NOT probed: Anthropic. Two reasons:
-//   1. Anthropic doesn't expose a free GET endpoint — /v1/messages is
-//      POST only, so the previous probe was returning 405 every minute
-//      (1440 wasted requests/day against the per-minute rate limit, with
-//      no useful signal).
-//   2. Every real Anthropic call already records vendor health via
-//      recordVendorSuccess/Failure in lib/ai/call-wrapper.ts +
-//      lib/ai/stream-wrapper.ts. Real traffic is the right signal; an
-//      idle probe tells us nothing the real path doesn't.
+// Anthropic is probed via GET /v1/models (the Models API — free, no token
+// cost, not the POST-only /v1/messages that 405'd in the original probe).
+// Verified 2026-06-12: returns 401 without a key, 200 with one; ping()
+// counts 401/403 as "up" so reachability is the signal either way.
+//
+// Two-tier design (#1010): real traffic records vendor health in-process
+// via recordVendorSuccess/Failure (lib/ai/call-wrapper.ts,
+// lib/ai/stream-wrapper.ts, lib/email/send.ts) — that feeds the fast
+// per-instance gate reads. This probe is the durable backstop: it is the
+// only writer to the vendor_health table, so the cross-instance admin view
+// and the alert-once-per-transition guarantee ride the 15-min cadence.
 
 import { inngest } from "./client";
 import { upsertVendorHealth, type VendorName } from "@/lib/vendor-health/registry";
@@ -113,8 +115,12 @@ export const vendorHealthProbe = inngest.createFunction(
       return { skipped_for_staging: true };
     }
 
-    const [openaiResult, stripeResult, resendResult, supabaseResult, inngestResult, ...ragResults] =
+    const [anthropicResult, openaiResult, stripeResult, resendResult, supabaseResult, inngestResult, ...ragResults] =
       await Promise.all([
+        ping("anthropic", "https://api.anthropic.com/v1/models", {
+          "x-api-key": process.env.ANTHROPIC_API_KEY ?? "",
+          "anthropic-version": "2023-06-01",
+        }),
         ping("openai", "https://api.openai.com/v1/models", {
           Authorization: `Bearer ${process.env.OPENAI_API_KEY ?? ""}`,
         }),
@@ -130,6 +136,7 @@ export const vendorHealthProbe = inngest.createFunction(
       ]);
 
     const allResults: PingResult[] = [
+      anthropicResult,
       openaiResult,
       stripeResult,
       resendResult,

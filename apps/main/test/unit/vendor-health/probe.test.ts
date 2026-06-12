@@ -54,10 +54,42 @@ beforeEach(() => {
   delete process.env.RAG_SERVICE_URL;
   // Stub existing vendors so they don't throw on undefined URLs.
   fetchResponses.set("undefined/auth/v1/health", { ok: true, status: 200 });
-  // openai, stripe, resend return 401 (up, unauthorized)
+  // anthropic, openai, stripe, resend return 401 (up, unauthorized)
+  fetchResponses.set("https://api.anthropic.com/v1/models", { ok: false, status: 401 });
   fetchResponses.set("https://api.openai.com/v1/models", { ok: false, status: 401 });
   fetchResponses.set("https://api.stripe.com/v1/balance", { ok: false, status: 401 });
   fetchResponses.set("https://api.resend.com/domains", { ok: false, status: 401 });
+});
+
+describe("anthropic probe — durable row coverage (#1010)", () => {
+  beforeEach(() => {
+    fetchResponses.set("https://status.inngest.com/api/v2/status.json", {
+      ok: true, status: 200,
+      json: () => Promise.resolve({ status: { indicator: "none" } }),
+    });
+    process.env.RAG_SERVICE_URL = "https://rag.test";
+    fetchResponses.set("https://rag.test/api/health/ready", {
+      ok: true, status: 200,
+      json: () => Promise.resolve({ redis: "ok", supabase_rag: "ok" }),
+    });
+  });
+
+  it("upserts a durable anthropic row — 401 from /v1/models counts as reachable", async () => {
+    // Before #1010 anthropic was never probed, so vendor_health had no row
+    // for the one vendor that gates the chat route. This pins the fix.
+    await run();
+    expect(mockUpsertVendorHealth).toHaveBeenCalledWith(
+      expect.objectContaining({ vendor: "anthropic", success: true }),
+    );
+  });
+
+  it("records anthropic failure when /v1/models returns a 5xx", async () => {
+    fetchResponses.set("https://api.anthropic.com/v1/models", { ok: false, status: 529 });
+    await run();
+    expect(mockUpsertVendorHealth).toHaveBeenCalledWith(
+      expect.objectContaining({ vendor: "anthropic", success: false, error_message: "http_529" }),
+    );
+  });
 });
 
 describe("pingInngest — statuspage indicator parsing", () => {
