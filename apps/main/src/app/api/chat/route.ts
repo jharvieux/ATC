@@ -754,7 +754,8 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // On "aborted" the loop already sent the terminal SSE events and closed.
   const gen = await runGenerationLoop({
     svc,
-    ctx,
+    // Non-null: every identity path above sets ctx (anon turns forge one in §1).
+    ctx: ctx!,
     tenantId,
     conversationId,
     conversationContactId,

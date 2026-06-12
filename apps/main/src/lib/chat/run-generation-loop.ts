@@ -53,7 +53,8 @@ type TurnMessage = {
 
 export type RunGenerationLoopArgs = {
   svc: SupabaseClient;
-  ctx: TenantContext | null;
+  // Always present: anonymous turns get a minimal forged ctx at the route layer.
+  ctx: TenantContext;
   tenantId: string;
   conversationId: string;
   conversationContactId: string | null;
@@ -99,8 +100,11 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
     ctx,
     tenantId,
     conversationId,
+    conversationContactId,
     userId,
+    customerEmail,
     personaSlug,
+    userMessage,
     chatHistory,
     systemPrompt,
     generationModel,
@@ -108,6 +112,8 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
     streamingEnabled,
     slurDenyList,
     retrieval,
+    tenantMaxTone,
+    tenantAllowProfanity,
     send,
     close,
   } = args;
@@ -190,7 +196,6 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
       // streaming branch). The pre-tool preamble already shown is cleared via
       // `rewriting` so only the post-tool reply is surfaced — matching the
       // non-streaming branch, where candidate = the follow-up text.
-      const ctxForTools = ctx;
       let turnMessages: TurnMessage[] = chatHistory;
       let toolPass = 0;
       let dispatched: Awaited<ReturnType<typeof runToolUseLoop>> = null;
@@ -227,16 +232,16 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
         // Clean turn. Single-pass tool-use: only the first turn may dispatch
         // (a follow-up's own tool_use, if any, is left for a later turn — the
         // same single-pass contract as the non-streaming branch).
-        if (ctxForTools && toolPass === 0) {
+        if (toolPass === 0) {
           const loopOut = await runToolUseLoop({
             result: { raw: turn.raw },
             originalMessages: chatHistory,
             dispatchCtx: {
-              ctx: ctxForTools,
+              ctx,
               db: svc,
               conversation_id: conversationId,
-              contact_id: args.conversationContactId,
-              customer_email: args.customerEmail,
+              contact_id: conversationContactId,
+              customer_email: customerEmail,
               persona_slug: personaSlug,
             },
           });
@@ -298,31 +303,28 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
         });
 
         // Tool-use loop. Returns null if no tool_use blocks — common case.
-        const ctxForTools = ctx;
-        if (ctxForTools) {
-          const loopOut = await runToolUseLoop({
-            result,
-            originalMessages: chatHistory,
-            dispatchCtx: {
-              ctx: ctxForTools,
-              db: svc,
-              conversation_id: conversationId,
-              contact_id: args.conversationContactId,
-              customer_email: args.customerEmail,
-              persona_slug: personaSlug,
-            },
+        const loopOut = await runToolUseLoop({
+          result,
+          originalMessages: chatHistory,
+          dispatchCtx: {
+            ctx,
+            db: svc,
+            conversation_id: conversationId,
+            contact_id: conversationContactId,
+            customer_email: customerEmail,
+            persona_slug: personaSlug,
+          },
+        });
+        if (loopOut) {
+          // Follow-up call with tool_result blocks appended.
+          result = await instrumentedClaudeCall({
+            ...baseArgs,
+            messages: loopOut.followUpMessages,
+            tools: PERSONA_TOOLS as unknown as AnthropicTool[],
           });
-          if (loopOut) {
-            // Follow-up call with tool_result blocks appended.
-            result = await instrumentedClaudeCall({
-              ...baseArgs,
-              messages: loopOut.followUpMessages,
-              tools: PERSONA_TOOLS as unknown as AnthropicTool[],
-            });
-            console.info(
-              `[chat:tool-use] dispatched=${loopOut.dispatchedTools.join(",")} mutated=${loopOut.mutated}`,
-            );
-          }
+          console.info(
+            `[chat:tool-use] dispatched=${loopOut.dispatchedTools.join(",")} mutated=${loopOut.mutated}`,
+          );
         }
         candidateText = result.text;
       } catch {
@@ -374,16 +376,16 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
     }
 
     supervisorOutcome = await runSupervisor({
-      ctx: ctx!,
+      ctx,
       conversation_id: conversationId,
       message_id: assistantMessageId,
       candidate_response: candidate,
       retrieved_chunks: retrieval.retrieved_chunk_ids,
       db: svc,
       entities: { intent: retrieval.entities.intent, categories_hint: retrieval.entities.categories_hint },
-      tenant_tone_max_level: args.tenantMaxTone,
-      tenant_allow_profanity: args.tenantAllowProfanity,
-      customer_prior_message: args.userMessage,
+      tenant_tone_max_level: tenantMaxTone,
+      tenant_allow_profanity: tenantAllowProfanity,
+      customer_prior_message: userMessage,
     });
 
     if (supervisorOutcome.action === "allow") break;

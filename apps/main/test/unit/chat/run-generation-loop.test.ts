@@ -43,6 +43,8 @@ const RAW = {} as never;
 function svcStub() {
   const inserts: unknown[] = [];
   const updates: unknown[] = [];
+  // Per-update .eq() filters — lets tests assert tenant scoping (D-091 two-layer).
+  const updateFilters: Array<Array<[string, unknown]>> = [];
   let insertResult: { data: unknown; error: { message: string } | null } = {
     data: { id: "msg-1" },
     error: null,
@@ -57,8 +59,10 @@ function svcStub() {
         },
         update: (row: unknown) => {
           updates.push(row);
+          const filters: Array<[string, unknown]> = [];
+          updateFilters.push(filters);
           const chain = {
-            eq: () => chain,
+            eq: (col: string, val: unknown) => { filters.push([col, val]); return chain; },
             then: (resolve: (v: unknown) => void) => resolve({ data: null, error: null }),
           };
           return chain;
@@ -70,6 +74,7 @@ function svcStub() {
     svc: svc as unknown as SupabaseClient,
     inserts,
     updates,
+    updateFilters,
     failInsert(message: string) {
       insertResult = { data: null, error: { message } };
     },
@@ -176,6 +181,11 @@ describe("non-streaming branch", () => {
     expect(secondSys).toContain("flagged for tone or grounding");
     expect(h.inserts).toHaveLength(1);
     expect(h.updates).toEqual([{ content: "good draft" }]);
+    // D-091 two-layer isolation: the regen UPDATE must be tenant-scoped, not id-only.
+    expect(h.updateFilters[0]).toEqual([
+      ["id", "msg-1"],
+      ["tenant_id", "tenant-1"],
+    ]);
   });
 
   it("lexical tone_drift finding → regen uses the hate-speech instruction, not the generic one", async () => {
