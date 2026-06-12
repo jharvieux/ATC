@@ -1,30 +1,28 @@
-# Session state — last updated 2026-06-11 15:45 UTC
+# Session state — last updated 2026-06-11 22:30 CT
 
 ## Standing rule (operator, permanent)
 **No prod DB changes or manual prod deploys without per-instance operator approval.** Dev-merge pipeline stays autonomous.
 **Note (D-205):** there is currently ONE Supabase project (mfaknjyqiwcjojukcnea) serving production — MCP applies ARE prod applies. Gate accordingly until #386/#534 split environments.
 
-## Just completed
-- Tenant branding applied at runtime (§16.2), D-209 — **PR #1009 opened into dev** from `claude/tenant-branding-ui-1piloz`
-- Both audit agents ran (Opus first run, 18-file diff): d091 PASS (2 nits), pre-pr clean (2 informational nits); nit fixes pushed; PR `## Audit` section filled with combined report + Status line
-- Opened issue #1008 (remaining unbranded customer surfaces, deferred)
+## Just completed (this session)
+- Ran a Vitals codebase-health scan (overall 6.7/10); full hotspot diagnosis delivered in-session.
+- **PR #1014 (merged into dev):** extracted the 435-line service-role allowlist out of the ESLint rule into `packages/config/eslint-rules/service-role-allowlist.js`. Entries byte-identical (set-diff verified), no behavior change. Both audit agents clean. Logged as D-211.
+- Filed deferred chat-route refactors as issues **#1015** (`resolveChatQuota`, do first) and **#1016** (`runGenerationLoop`); both `enhancement` + `refactor`. Created the `refactor` label. Logged as D-212.
 
-## In flight
-- **Open-PR sweep done (user request).** State:
-  - **#995 (PATs) MERGED** (squash) — fully green incl. audit check. Branch `feature/712-personal-api-tokens` NOT deleted (git proxy in this remote session only accepts the designated branch; delete from a gh session).
-  - **#993, #994, #1007**: ALL CI green EXCEPT `pr-audit-section-check` — marker-comment diff-hash mismatch (D-204 pattern: update-branch reconciled shared snapshot files → new effective diff). Need both audit agents re-run from a gh-capable session to restamp hashes. #993/#994 also now BEHIND after #995's merge — update-branch first, serially (both touch db snapshots), then re-audit, then merge.
-  - **#1009 (this branch)**: update-branched onto post-#995 dev; CI re-running. Audit findings are in the PR body but marker comments still can't be posted from this container (no gh CLI, GitHub API blocked by network policy).
-- This session is subscribed to #1009 activity with an hourly self check-in monitor.
+## In flight (this session)
+- Branch `docs/service-role-allowlist-process` (off dev). Uncommitted: CLAUDE.md (additive-list line now lists `service-role-allowlist.js`), MEMORY.md (D-211 + D-212), SESSION.md (this file), .gitignore (`.vitals/` ignore). NOT doc-only-exempt (.gitignore breaks it) → audit agents required. Next: verify → commit → PR → audit agents (Sonnet) → merge.
+
+## Carried over from prior session — NOT touched this session (status unverified)
+- PRs **#993, #994, #1007**: per the last checkpoint, all CI green except `pr-audit-section-check` (marker-comment diff-hash mismatch, D-204); needed update-branch (serially, #993/#994 touch db snapshots) + audit re-run + merge. Verify current state before acting.
+- PR **#1009** (tenant branding §16.2, D-209): last checkpoint had it update-branched with audit findings in body but markers unposted from the prior container. Verify whether it merged.
+- Branch `feature/712-personal-api-tokens` (PR #995, already merged) flagged for deletion.
 
 ## Next step
-- From a gh-capable session, in order:
-  1. Re-run d091-reviewer + pre-pr-reviewer on PR #1009 (markers post → check green → squash-merge, delete branch).
-  2. Update-branch #993 → re-run both agents → merge; then #994 the same (serially — both touch db snapshots); then #1007 (re-audit only; no snapshot overlap).
-  3. Delete merged branch `feature/712-personal-api-tokens`.
+- Finish the in-flight docs PR (above). Then, if resuming the carry-over queue, re-verify each PR's actual current status (don't trust this stale snapshot) before update-branching/re-auditing.
 
 ## Blocked on user
-- Nothing (PR merge is blocked on the marker-comment re-run above, not on a decision).
+- Nothing for this session's work.
 
-## Open questions
-- #1003: D-201 narrowing — reviewer scope and mechanism review (user chose to defer)
+## Open questions (carried over)
+- #1003: D-201 narrowing — reviewer scope/mechanism (user chose to defer)
 - #1008: theming sweep for remaining customer surfaces (deferred from PR #1009)

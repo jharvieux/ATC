@@ -53,7 +53,7 @@ For each PR, classify:
 - **MERGEABLE + CLEAN + all required checks green** → merge (squash) and delete branch. No judgement needed.
 - **MERGEABLE + BEHIND** → `gh pr update-branch`. Re-check in next pass.
 - **MERGEABLE + UNSTABLE (only non-required checks failing)** → merge if the PR is yours (Claude-authored) AND was opened in a prior session AND no `regression-suspected` label. Surface otherwise.
-- **DIRTY (merge conflict)** — if the conflict is one we know how to resolve (event-registry additions, ai-batch-flush additions, route registrations — additive lists), attempt a rebase + push. Otherwise surface as "needs your call."
+- **DIRTY (merge conflict)** — if the conflict is one we know how to resolve (event-registry additions, ai-batch-flush additions, route registrations, service-role-allowlist.js additions — additive lists), attempt a rebase + push. Otherwise surface as "needs your call."
 - **BLOCKED on missing audit section** — if Claude-authored, run the audit subagents + edit the PR body (the check re-runs automatically on body edits). If human-authored, surface.
 - **Failing CI on dependabot PRs** — let the `dependabot-retry-ci` workflow handle. Don't intervene.
 - **Failing CI with the `regression-suspected` label** — triage.
