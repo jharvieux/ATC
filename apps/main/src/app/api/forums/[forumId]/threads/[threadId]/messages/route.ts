@@ -155,6 +155,7 @@ export async function POST(
       .from("users")
       .select("email")
       .eq("id", user.id)
+      .eq("tenant_id", ctx.tenant_id)
       .single();
     if (userEmailErr) throw new Error(`users.email lookup failed: ${userEmailErr.message}`);
     const { data: invitation } = await svc
