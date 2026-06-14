@@ -519,10 +519,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr create \
+          CREATE_OUT=$(gh pr create \
             --base dev \
             --head "$GITHUB_REF_NAME" \
             --title "chore: merge $GITHUB_REF_NAME back to dev" \
             --label "release-merge" \
-            --body "Automated post-release merge."
+            --body "Automated post-release merge." 2>&1) || {
+            if echo "$CREATE_OUT" | grep -q "No commits between"; then
+              echo "Release branch already in sync with dev — nothing to merge back."
+              exit 0
+            fi
+            echo "$CREATE_OUT"
+            exit 1
+          }
+          echo "$CREATE_OUT"
           gh pr merge --merge --auto || { echo "Auto-merge failed or conflict — resolve manually. PR URL above."; exit 0; }
