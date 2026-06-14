@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-224 — 2026-06-14 — #1054: audited TENANT_SCOPED_TABLES + added DB-backed reintroduction guard
+
+**Decision:** Completed the [[project_booking_customer_tenant]]-adjacent follow-up to D-223. Audited every entry of `TENANT_SCOPED_TABLES` against the live schema, found exactly **5 of 83** with no `tenant_id` column, and moved all 5 to `PLATFORM_READABLE_TABLES`: `invitations`, `rag_global_promotions`, `auth_attempts`, `security_incidents`, `staging_cron_skips`. Added `scripts/check-tenant-scoped-columns.ts` — a DB-backed bidirectional CI guard — wired into `.github/workflows/e2e.yml` after the RLS coverage step. Shipped as PR #1058 (squash `50588a98`), closing #1054.
+
+**Why:** Same #1045 bug class as D-223 — a no-`tenant_id` table in `TENANT_SCOPED_TABLES` makes the tenantClient proxy inject `.eq("tenant_id", …)` and Postgres hard-500s. `invitations` was the live trap (3 tenantClient callers: groups/[id], /members, /broadcast — all gate on a tenant-scoped `groups` ownership check first, so the injected filter was both wrong and redundant; it also broke the /members invite insert). The other 4 are service-role-only today (dormant traps). `attribution_rollup` (matview) correctly stays scoped — it HAS tenant_id (verified via pg_class/pg_attribute, since matviews aren't in information_schema.columns).
+
+**Guard design (the "ensure it can't recur" half of the ask):** Two directions. (1) Any scoped table without tenant_id → FAIL (no valid exception). (2) Any platform-readable table WITH tenant_id → FAIL unless allowlisted — the scarier inverse, since a tenant_id-bearing table in the unscoped passthrough is a SILENT cross-tenant leak, not a 500. One allowlist entry: `email_log` (nullable, intentionally cross-tenant). DB-backed (mirrors `rls-coverage-check.ts`), so it runs in e2e.yml, NOT the offline `pnpm verify` chain. Validated both ways: green on live schema; fails with exactly the 5 tables against the pre-fix classification.
+
+**What was rejected:** Putting the guard in `pnpm verify` — it needs a migrated DB, so it belongs alongside `rls:coverage` in CI, not in the offline local chain.
+
+**Co-located bugs found during the audit, filed NOT fixed (surgical-changes):** #1056 (`invitations` routes query non-existent `status` col, should be `rsvp_state` — group-detail + broadcast 500; broadcast needs a §18.6 product call on which RSVP states = recipients), #1057 (`abuse-recompute-nightly` queries non-existent `tenant_id` on `rag_global_promotions`, error swallowed → silently zeros promoted count → corrupts `tenant_rag_quotas`), #1059 (forum post-message route reads `invitations` with wrong key `invitee_email`=UUID + no group_id scope — broken rsvp gate + cross-tenant read; service-role path, unaffected by this reclassification).
+
+**Artifacts:** PR #1058 (`50588a98`), `scripts/check-tenant-scoped-columns.ts`, `apps/main/src/lib/db/tenant-scoped-tables.ts`, `.github/workflows/e2e.yml`, `apps/main/test/unit/db/tenant-client.test.ts`, issues #1056/#1057/#1059.
+
+---
+
 ## D-223 — 2026-06-14 — Signup legal-accept 500: legal_documents moved to PLATFORM_READABLE_TABLES
 
 **Decision:** Fixed the signup-blocking bug ("tenant id doesn't exist" on legal-doc acceptance) by moving `legal_documents` out of `TENANT_SCOPED_TABLES` and into `PLATFORM_READABLE_TABLES` in `apps/main/src/lib/db/tenant-scoped-tables.ts`, plus a regression test asserting `tenantClient.from("legal_documents")` injects NO tenant filter.
