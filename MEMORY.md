@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-227 — 2026-06-14 — OAuth initiation forces account chooser (prompt=select_account); beta053 cut
+
+**Decision:** Added `queryParams: { prompt: "select_account" }` to the `signInWithOAuth` options in `oauth-initiate/route.ts` (PR #1049). Then cut `release/beta053` from dev carrying two fixes: #1048 (onboarding RBAC grants → fixes "forbidden" on legal accept) and #1049 (OAuth account chooser).
+
+**Why:** Without `prompt`, the provider silently reuses the browser's single live IdP session, so a user already signed into one Google/Microsoft account is bounced straight back with that identity and cannot pick a different one — this is both the "incognito never asked me to log in" report AND a real risk of an agency being provisioned under the wrong account. `prompt=select_account` is the standard OIDC fix (honored by Google + Azure; Facebook ignores it harmlessly). Reserved `state` is still never set, so the #438 PKCE/CSRF guard holds.
+
+**Trade-off accepted:** single-account users now get one extra "confirm account" click on every login instead of a fully silent bounce. Judged trivial vs. the wrong-identity risk; user directed the change.
+
+**What was rejected / deferred:** Page-level login gate for deep-linked `/signup/complete` and `/onboarding/*` (those pages render for anyone; auth enforced only at the API layer). Deferred to keep #1049 surgical — tracked as issue #1050. It is a UX wart, not a security hole (submits 401/403 when logged out).
+
+**Note on numbering:** Originally written as D-222 on branch `chore/log-beta053`. Renumbered D-227 on merge to resolve a numbering collision — dev independently assigned D-222 (RLS zero policies) while this branch was open.
+
+**Artifacts:** PR #1049, issue #1050, `apps/main/src/app/api/auth/oauth-initiate/route.ts`, `apps/main/test/unit/auth/oauth-initiate.test.ts`, `release/beta053` (pipeline run 27508043350; prod deploy gated by the GitHub `production` environment).
+
+---
+
+
 ## D-226 — 2026-06-14 — #1052: RLS migration applied to live beta DB; dual-ledger drift surfaced (#1067)
 
 **Decision:** Applied `20260701000006_rls_enable_advisor_flagged_tables.sql` (already merged to dev in #1053) to the **live beta** DB — user confirmed beta is the live environment and explicitly approved ("run it, its the live environment"), satisfying the per-instance operator approval in [[feedback_no_prod_deploys_without_asking]]. The migration is purely additive `ALTER TABLE [IF EXISTS] … ENABLE ROW LEVEL SECURITY` on 7 tables (apify_spend_ledger, cruisemapper_url_inventory, pricing_cache, destination_images, destination_images_cache, reconciliation_review_queue, schema_migrations), zero `CREATE POLICY` = default-deny over the Data API (service_role has BYPASSRLS). Verified all 7 → `relrowsecurity = t` via psql; advisor now reports **zero** `rls_disabled_in_public`, the 7 appear as INFO `rls_enabled_no_policy` (intended). Regenerated `db/rls-snapshot-main.sql` (rag unchanged); closing #1052.

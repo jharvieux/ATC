@@ -1,26 +1,25 @@
-# Session state — last updated 2026-06-14 22:10 UTC
+# Session state — last updated 2026-06-14 23:30 UTC
 
 ## Just completed
-- **#1052 — RLS enabled on 7 tables in LIVE BETA.** Applied `20260701000006_rls_enable_advisor_flagged_tables.sql` (merged to dev in #1053) directly to the beta DB via `psql --single-transaction` (user approved: "run it, its the live environment"). All 7 tables verified `relrowsecurity = t`. Security advisor now reports **zero** `rls_disabled_in_public`; the 7 show as INFO `rls_enabled_no_policy` (intended default-deny). Regenerated `db/rls-snapshot-main.sql` (rag unchanged). MEMORY D-226 added. PR `chore/1052-rls-snapshot-beta` → dev carries the snapshot + SESSION/MEMORY.
-- **Discovered dual migration-ledger drift** → filed #1067. Beta runs on the supabase-CLI ledger (`supabase_migrations.schema_migrations`, current thru `20260701000005`); the custom runner `scripts/db-migrate.ts` reads a stale `public.schema_migrations` and collides if run against beta. `pnpm db:migrate` is the wrong tool for beta/prod.
-- **#1056 wrap-up** (carried from prior session, now committed in this PR): MEMORY D-225 + SESSION reflect #1056 shipped via PR #1062 (`2006cacc`).
+- PR #1073 merged to dev: fix forum invitation gate (`fix/1059-forum-invitation-gate`). Two bugs: `invitee_email` was compared against UUID instead of email; no group_id scope on invitations query. Fixed by resolving email from `public.users` (tenant-scoped lookup) then querying invitations by `group_id + invitee_email`, excluding revoked tokens. D-091 audit + pre-pr audit clean. Issue #1059 closed.
+- PR #1072 merged to dev: fix `rag_global_promotions` promoted-chunk count query (issue #1057). Was using non-existent `tenant_id` column; fixed with `!inner` join through `rag_submissions`. Issue #1057 closed.
+- PR #1071 merged to dev: fix ICA scroll gate permanently disabling input when content fits without scrolling. Added `useEffect` mount check via `scrollContainerRef`. Issue tracked in #1074.
+- PR #1070 merged to dev: fix deploy.yml auto-merge step crashing on "No commits between" (issue #1069). Now exits 0 on benign "already in sync" case.
+- PR #1051 merged to dev: log D-222 (OAuth/beta053) + SESSION for the chore/log-beta053 carry-over. Conflict resolved: OAuth entry renumbered D-227 to avoid collision with dev's D-222 (RLS zero policies).
+- Cut `release/beta056` tag on dev.
 
 ## In flight
-- PR `chore/1052-rls-snapshot-beta` open to dev (snapshot + MEMORY D-225/D-226 + SESSION). Touches `db/rls-snapshot-main.sql` (.sql → audit agents required, not doc-only exempt). Awaiting audit agents + CI, then squash-merge + close #1052.
+- Nothing in flight — clean checkpoint.
 
 ## Next step
-- Run both audit agents on the PR, update `## Audit` block, wait for CI green, squash-merge, delete branch, then `gh issue close 1052` with the advisor-clean confirmation.
-
-## UI / placeholder inventory (all filed, still open)
-- #1061 coordinator broadcast composer UI · #1063 group forum UI · #1064 invitees roster UI · #1065 CRM relationship graph UI · #1066 stale-comment cleanup.
+- User to direct. Remaining triaged bugs: #1044 (remainingCount swallow in flush.ts — P2, non-trivial), #1003 (D-201 vs D-170 role-scope alignment). Enhancement queue: #1061–#1065.
 
 ## Blocked on user
-- beta053 production deploy approval (GitHub Actions run 27508043350).
-- Staging re-test of signup → legal-accept flow end-to-end (after deploy).
-- Stashed `docs/site-urls.md` domain-change — DELETED this session (stashes dropped per user OK); no longer blocked.
+- beta053 production deploy approval (GitHub Actions run 27508043350) — may already have resolved.
+- #1067 — dual migration-ledger drift; reconcile supabase-CLI ledger vs `scripts/db-migrate.ts` reader.
+- #1003 — D-201 vs D-170 role-scope alignment decision.
 
 ## Open questions
-- **#1067** (new) — dual-ledger drift; reconcile source of truth + retire/guard `pnpm db:migrate` for beta/prod. Cross-refs #534 (disabled prod migration step in deploy.yml).
-- **#1059** — forum post-message reads invitations with wrong key + no group scope (sibling of #1056).
-- **#1057** — abuse-recompute non-existent `tenant_id` on rag_global_promotions → corrupts tenant_rag_quotas (higher severity).
-- #1044 (remainingCount swallow in flush.ts), #1003 (D-201 vs D-170 role-scope) — still user's call.
+- #1044 (remainingCount swallow in flush.ts) — non-trivial, awaits user prioritization.
+- #1074 (test gap: no gate tests for forum RSVP + group scope) — tracking issue opened.
+- #1050 — page-level login gate for onboarding deep links (deferred from beta053 work).
