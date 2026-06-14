@@ -4,7 +4,7 @@ Newest entries on top.
 
 ---
 
-## D-222 — 2026-06-14 — OAuth initiation forces account chooser (prompt=select_account); beta053 cut
+## D-227 — 2026-06-14 — OAuth initiation forces account chooser (prompt=select_account); beta053 cut
 
 **Decision:** Added `queryParams: { prompt: "select_account" }` to the `signInWithOAuth` options in `oauth-initiate/route.ts` (PR #1049). Then cut `release/beta053` from dev carrying two fixes: #1048 (onboarding RBAC grants → fixes "forbidden" on legal accept) and #1049 (OAuth account chooser).
 
@@ -14,7 +14,84 @@ Newest entries on top.
 
 **What was rejected / deferred:** Page-level login gate for deep-linked `/signup/complete` and `/onboarding/*` (those pages render for anyone; auth enforced only at the API layer). Deferred to keep #1049 surgical — tracked as issue #1050. It is a UX wart, not a security hole (submits 401/403 when logged out).
 
+**Note on numbering:** Originally written as D-222 on branch `chore/log-beta053`. Renumbered D-227 on merge to resolve a numbering collision — dev independently assigned D-222 (RLS zero policies) while this branch was open.
+
 **Artifacts:** PR #1049, issue #1050, `apps/main/src/app/api/auth/oauth-initiate/route.ts`, `apps/main/test/unit/auth/oauth-initiate.test.ts`, `release/beta053` (pipeline run 27508043350; prod deploy gated by the GitHub `production` environment).
+
+---
+
+
+## D-226 — 2026-06-14 — #1052: RLS migration applied to live beta DB; dual-ledger drift surfaced (#1067)
+
+**Decision:** Applied `20260701000006_rls_enable_advisor_flagged_tables.sql` (already merged to dev in #1053) to the **live beta** DB — user confirmed beta is the live environment and explicitly approved ("run it, its the live environment"), satisfying the per-instance operator approval in [[feedback_no_prod_deploys_without_asking]]. The migration is purely additive `ALTER TABLE [IF EXISTS] … ENABLE ROW LEVEL SECURITY` on 7 tables (apify_spend_ledger, cruisemapper_url_inventory, pricing_cache, destination_images, destination_images_cache, reconciliation_review_queue, schema_migrations), zero `CREATE POLICY` = default-deny over the Data API (service_role has BYPASSRLS). Verified all 7 → `relrowsecurity = t` via psql; advisor now reports **zero** `rls_disabled_in_public`, the 7 appear as INFO `rls_enabled_no_policy` (intended). Regenerated `db/rls-snapshot-main.sql` (rag unchanged); closing #1052.
+
+**How (NOT the custom runner):** Applied directly via `psql "$SUPABASE_DB_URL" --single-transaction -f <file>`, NOT `pnpm db:migrate`. Beta runs on the **supabase-CLI ledger** `supabase_migrations.schema_migrations` (current through `20260701000005`), advanced by `npx supabase db push`. The custom runner `scripts/db-migrate.ts` reads a **separate, stale** `public.schema_migrations` (~103 rows, stuck ~`20260627000024`); running `pnpm db:migrate` re-attempts already-applied migrations and collides (`is_platform_internal already exists`, 42701 — rolled back cleanly, no partial state). So beta was only ONE migration behind reality, not the ~25 the stale ledger implied.
+
+**What was rejected:** Hand-writing either ledger row (idempotent migration; corrupting the opaque CLI-ledger versioning is the real risk). Also rejected the disabled pipeline path: `deploy.yml` prod migration step (~L461-464) is gated `if: ${{ false }}` (#534), so it could not apply this.
+
+**Tech debt filed:** #1067 — dual migration-ledger drift; `pnpm db:migrate` is the wrong tool for beta/prod and will keep colliding until reconciled. Cross-refs #534 (disabled prod migration step).
+
+**Artifacts:** `apps/main/supabase/migrations/20260701000006_rls_enable_advisor_flagged_tables.sql` (merged #1053), `db/rls-snapshot-main.sql` (this PR), issues #1052 (closed), #1067 (new), #534.
+
+---
+
+## D-225 — 2026-06-14 — #1056: group detail + broadcast use rsvp_state; coordinator picks recipient states
+
+**Decision:** Fixed the two `invitations`-`status`-column 500s found during the D-224 audit and shipped the §18.6 product call. Both `GET /api/groups/[id]` and `POST /api/groups/[id]/broadcast` now read `rsvp_state` (the real column; `status` never existed on `invitations`). Group-detail `invitation_counts` is keyed by the four real RSVP states. Broadcast gains an optional `recipient_states` body field — a zod enum of `pending|interested|not_going|booked`, `.min(1).max(4)`; **omitted → default `interested`+`booked`** (engaged + committed); explicit `[]` or invalid value → **400** (fail-closed: a broadcast to nobody is a UI error, never send-to-all). Shipped as PR #1062 (squash `2006cacc`), closing #1056.
+
+**Why this contract:** The user clarified the original "checkboxes" ask was about **people in different RSVP states**, not different groups. Default = intent+commitment (`interested`+`booked`), excluding `pending` non-responders and `not_going` declines — the audience a coordinator almost always wants. Fail-closed on empty selection because the alternative (treat empty as "everyone") is the dangerous default.
+
+**What was rejected:** Building the composer UI in this PR. No broadcast composer exists today — the `coordinate/[tab]` tabs are static placeholders and nothing in-app calls the broadcast endpoint. Shipping the validated backend now + filing the UI as a standalone issue keeps the bug fix surgical. Composer UI = **#1061** (subject/message + four RSVP-state checkboxes wired to this endpoint, default `interested`+`booked` checked, submit disabled at zero states). #1061 also folds in relabeling two **mislabeled** `TODO(prompt-24)` comments in `coordinate/[tab]/page.tsx` (BP24 is the shipped Chat UI prompt; those placeholders are BP19/§18 invitees + BP20/§19 forum, not chat).
+
+**Isolation (unchanged from D-224):** `invitations` has no `tenant_id` (PLATFORM_READABLE, [[project_booking_customer_tenant]]/#1054); isolation holds via `group_id` → `groups.tenant_id`, verified by the tenant-scoped `groups` query that runs (and 404s cross-tenant) before any invitations read. Both audit agents clean on the final diff hash.
+
+**Artifacts:** PR #1062 (`2006cacc`), `apps/main/src/app/api/groups/[id]/route.ts`, `apps/main/src/app/api/groups/[id]/broadcast/route.ts`, `apps/main/test/unit/groups/group-routes.test.ts` (18 tests), issue #1061 (composer UI follow-up). Sibling bug #1059 (forum invitations read) still open, untouched.
+
+---
+
+## D-224 — 2026-06-14 — #1054: audited TENANT_SCOPED_TABLES + added DB-backed reintroduction guard
+
+**Decision:** Completed the [[project_booking_customer_tenant]]-adjacent follow-up to D-223. Audited every entry of `TENANT_SCOPED_TABLES` against the live schema, found exactly **5 of 83** with no `tenant_id` column, and moved all 5 to `PLATFORM_READABLE_TABLES`: `invitations`, `rag_global_promotions`, `auth_attempts`, `security_incidents`, `staging_cron_skips`. Added `scripts/check-tenant-scoped-columns.ts` — a DB-backed bidirectional CI guard — wired into `.github/workflows/e2e.yml` after the RLS coverage step. Shipped as PR #1058 (squash `50588a98`), closing #1054.
+
+**Why:** Same #1045 bug class as D-223 — a no-`tenant_id` table in `TENANT_SCOPED_TABLES` makes the tenantClient proxy inject `.eq("tenant_id", …)` and Postgres hard-500s. `invitations` was the live trap (3 tenantClient callers: groups/[id], /members, /broadcast — all gate on a tenant-scoped `groups` ownership check first, so the injected filter was both wrong and redundant; it also broke the /members invite insert). The other 4 are service-role-only today (dormant traps). `attribution_rollup` (matview) correctly stays scoped — it HAS tenant_id (verified via pg_class/pg_attribute, since matviews aren't in information_schema.columns).
+
+**Guard design (the "ensure it can't recur" half of the ask):** Two directions. (1) Any scoped table without tenant_id → FAIL (no valid exception). (2) Any platform-readable table WITH tenant_id → FAIL unless allowlisted — the scarier inverse, since a tenant_id-bearing table in the unscoped passthrough is a SILENT cross-tenant leak, not a 500. One allowlist entry: `email_log` (nullable, intentionally cross-tenant). DB-backed (mirrors `rls-coverage-check.ts`), so it runs in e2e.yml, NOT the offline `pnpm verify` chain. Validated both ways: green on live schema; fails with exactly the 5 tables against the pre-fix classification.
+
+**What was rejected:** Putting the guard in `pnpm verify` — it needs a migrated DB, so it belongs alongside `rls:coverage` in CI, not in the offline local chain.
+
+**Co-located bugs found during the audit, filed NOT fixed (surgical-changes):** #1056 (`invitations` routes query non-existent `status` col, should be `rsvp_state` — group-detail + broadcast 500; broadcast needs a §18.6 product call on which RSVP states = recipients), #1057 (`abuse-recompute-nightly` queries non-existent `tenant_id` on `rag_global_promotions`, error swallowed → silently zeros promoted count → corrupts `tenant_rag_quotas`), #1059 (forum post-message route reads `invitations` with wrong key `invitee_email`=UUID + no group_id scope — broken rsvp gate + cross-tenant read; service-role path, unaffected by this reclassification).
+
+**Artifacts:** PR #1058 (`50588a98`), `scripts/check-tenant-scoped-columns.ts`, `apps/main/src/lib/db/tenant-scoped-tables.ts`, `.github/workflows/e2e.yml`, `apps/main/test/unit/db/tenant-client.test.ts`, issues #1056/#1057/#1059.
+
+---
+
+## D-223 — 2026-06-14 — Signup legal-accept 500: legal_documents moved to PLATFORM_READABLE_TABLES
+
+**Decision:** Fixed the signup-blocking bug ("tenant id doesn't exist" on legal-doc acceptance) by moving `legal_documents` out of `TENANT_SCOPED_TABLES` and into `PLATFORM_READABLE_TABLES` in `apps/main/src/lib/db/tenant-scoped-tables.ts`, plus a regression test asserting `tenantClient.from("legal_documents")` injects NO tenant filter.
+
+**Why:** `legal_documents` is a global versioned catalog (ToU/privacy/AI-disclaimer/etc.) with NO `tenant_id` column — acceptance records live in the separate tenant-scoped `legal_consents` table. Because it was wrongly in `TENANT_SCOPED_TABLES`, the tenantClient proxy injected `.eq("tenant_id", …)` against a column that doesn't exist, so Postgres hard-errored `column legal_documents.tenant_id does not exist`. The onboarding legal route (`api/onboarding/legal/route.ts`) returned that DB message verbatim to the user, surfacing as "tenant id doesn't exist." Root-caused from live prod postgres logs. Same misclassification also broke `onboarding/ica` and the public `legal/[doctype]/current` route (both read via tenantClient).
+
+**Key correction:** The proxy does NOT silently return 0 rows for a missing `tenant_id` column — it hard-500s. The old comment claiming "over-inclusion is fine" was false and is now corrected: only list a table in `TENANT_SCOPED_TABLES` if it actually HAS a `tenant_id` column; no-tenant_id catalogs go in `PLATFORM_READABLE_TABLES`. Under-inclusion (throw on unknown table) is the only safe-by-default direction.
+
+**What was rejected:** (a) Switching the three callers to `createServiceRoleClient` directly — would bypass the deliberate fail-closed proxy and scatter raw service-role access. (b) Adding a `tenant_id` column to `legal_documents` — it's intentionally global per the legal-consent spec; per-tenant acceptance is already modeled by `legal_consents`.
+
+**Follow-up:** Other no-tenant_id tables potentially still mislisted in `TENANT_SCOPED_TABLES` — the corrected comment prevents future mistakes but doesn't audit existing entries. Tracked in a GitHub issue (see PR).
+
+**Artifacts:** branch `fix/legal-documents-platform-readable`, `apps/main/src/lib/db/tenant-scoped-tables.ts`, `apps/main/test/unit/db/tenant-client.test.ts`.
+
+---
+
+## D-222 — 2026-06-14 — #1052: enable RLS (zero policies) on 7 advisor-flagged public tables
+
+**Decision:** Cleared the Supabase advisor `rls_disabled_in_public` findings (PR #1053, squash `82d9dcbb`) by enabling RLS with ZERO policies on 7 platform-scoped public tables — schema_migrations, apify_spend_ledger, cruisemapper_url_inventory, pricing_cache, destination_images, destination_images_cache, reconciliation_review_queue — plus matching `skip_table` allowlist entries in BOTH `db/rls-exceptions.sql` and `db/rls-exceptions.txt`.
+
+**Why:** Zero-policy RLS = default-deny for anon/authenticated over the PostgREST Data API; `service_role` has BYPASSRLS so every legitimate path (adapters, Inngest crons, hero-image helper, platform-admin reconciliation, the db-migrate runner) is untouched. None of the 7 carry a tenant_id, and anon/authenticated never held SELECT/DML (only stray REFERENCES/TRIGGER/TRUNCATE) — so there was no live read path to break. This is the established repo convention (tier_definitions / vendor_health / personal_access_tokens). Verified `pricing_cache` reads via `tenantClient` resolve through `createServiceRoleClient` (it's in PLATFORM_READABLE_TABLES) so they pass straight through.
+
+**What was rejected:** (a) Writing real USING(...) SELECT policies — barred by the lint gate for platform tables and unnecessary with no authenticated read path. (b) REVOKE-only (used for materialized views that can't take RLS) — these are real tables, so ENABLE RLS is the advisor-satisfying fix. (c) Touching the stray REFERENCES/TRIGGER/TRUNCATE grants — out of scope, not Data-API-exploitable, would force a grants-snapshot regen.
+
+**Still open:** #1052 stays OPEN until the gated apply completes: migration applied to test+prod via the gated pipeline (#534) → `pnpm rls:snapshot` + commit `db/rls-snapshot-{main,rag}.sql` → re-run advisor, confirm 7 findings clear, then close. Snapshot regen is a gated post-apply step, NOT a PR blocker (rls:check is non-blocking on dev).
+
+**Artifacts:** PR #1053, issue #1052, `apps/main/supabase/migrations/20260701000006_rls_enable_advisor_flagged_tables.sql`, `db/rls-exceptions.{sql,txt}`.
 
 ---
 

@@ -121,6 +121,21 @@ describe("tenantClient proxy", () => {
     expect(qb.filterBuilder.eqCalls).toEqual([]);
   });
 
+  it("passes through .from('legal_documents') — global versioned legal catalog has no tenant_id column", () => {
+    // Regression: legal_documents was wrongly in TENANT_SCOPED_TABLES, so the
+    // proxy injected `.eq("tenant_id", …)` against a table with no such column.
+    // Postgres hard-errors "column legal_documents.tenant_id does not exist",
+    // which 500'd the onboarding legal-accept step and blocked signup.
+    const qb = makeQueryBuilder();
+    mockFrom.mockReturnValue(qb);
+
+    const db = tenantClient(ctx);
+    db.from("legal_documents").select("id, document_type, version");
+
+    expect(mockFrom).toHaveBeenCalledWith("legal_documents");
+    expect(qb.filterBuilder.eqCalls).toEqual([]);
+  });
+
   it("passes through .from('personas') — the global persona catalog (#589 switch route depends on this)", () => {
     // personas has no tenant_id (global catalog). De-registering it would make
     // tenantClient.from('personas') throw, 500-ing the persona-switch route.
@@ -133,6 +148,33 @@ describe("tenantClient proxy", () => {
     expect(mockFrom).toHaveBeenCalledWith("personas");
     expect(qb.filterBuilder.eqCalls).toEqual([]);
   });
+
+  // #1054 — five tables that were wrongly in TENANT_SCOPED_TABLES despite
+  // having no tenant_id column (the #1045 bug class). `invitations` is the live
+  // trap: its three tenantClient callers (groups/[id], /members, /broadcast)
+  // verify group ownership via a tenant-scoped `groups` query, then filter by
+  // group_id — so the injected `.eq("tenant_id", …)` was both wrong (no column →
+  // 500) and redundant. The other four are service-role-only today (dormant
+  // traps), but a future tenantClient caller would have hit the same hard-error.
+  // Each must pass through WITHOUT a tenant filter.
+  for (const table of [
+    "invitations",
+    "rag_global_promotions",
+    "auth_attempts",
+    "security_incidents",
+    "staging_cron_skips",
+  ]) {
+    it(`passes through .from('${table}') — no tenant_id column (#1054)`, () => {
+      const qb = makeQueryBuilder();
+      mockFrom.mockReturnValue(qb);
+
+      const db = tenantClient(ctx);
+      db.from(table).select("*");
+
+      expect(mockFrom).toHaveBeenCalledWith(table);
+      expect(qb.filterBuilder.eqCalls).toEqual([]);
+    });
+  }
 
   it("THROWS on tables in neither TENANT_SCOPED_TABLES nor PLATFORM_READABLE_TABLES", () => {
     // Fail-closed contract — see UnregisteredTenantTableError.

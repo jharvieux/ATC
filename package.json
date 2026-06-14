@@ -25,6 +25,7 @@
     "rls:check:main": "tsx scripts/rls-snapshot-diff.ts --target=main",
     "rls:check:rag": "tsx scripts/rls-snapshot-diff.ts --target=rag",
     "rls:coverage": "tsx scripts/rls-coverage-check.ts",
+    "check:tenant-scoped-columns": "tsx scripts/check-tenant-scoped-columns.ts",
     "grants:snapshot:main": "tsx scripts/grants-snapshot.ts --target=main > db/grants-snapshot-main.sql",
     "grants:snapshot:rag": "tsx scripts/grants-snapshot.ts --target=rag > db/grants-snapshot-rag.sql",
     "grants:snapshot": "pnpm grants:snapshot:main && pnpm grants:snapshot:rag",

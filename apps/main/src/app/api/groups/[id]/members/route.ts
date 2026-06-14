@@ -86,6 +86,9 @@ export async function POST(
       };
     });
 
+    // invitations has no tenant_id column (PLATFORM_READABLE, #1054) — the
+    // proxy injects no tenant filter. Isolation holds via group_id: id, which
+    // was verified tenant-owned by the tenant-scoped groups query above.
     const { error: insertErr } = await db.from("invitations").insert(rows);
     if (insertErr) {
       return Response.json({ error: insertErr.message }, { status: 500 });

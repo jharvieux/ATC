@@ -1,24 +1,25 @@
-# Session state — last updated 2026-06-14 13:45 UTC
+# Session state — last updated 2026-06-14 23:30 UTC
 
 ## Just completed
-- PR #1049 merged to dev: force OAuth account chooser (`prompt=select_account`) in `oauth-initiate/route.ts`. Fixes the "incognito never asked me to log in / couldn't pick a different account" report and the wrong-identity provisioning risk. Updated the #438 state-guard test to assert on the `state` key directly + added prompt coverage (google, azure). Both audit agents clean.
-- Opened issue #1050: page-level login gate for deep-linked `/signup/complete` and `/onboarding/*` (deferred from #1049; UX wart, not a security hole).
-- Cut `release/beta053` from dev = beta052 + #1048 (onboarding RBAC "forbidden" fix) + #1049 (OAuth chooser). Pushed; deploy pipeline ran, CI green.
-- Logged D-222 in MEMORY.md.
+- PR #1073 merged to dev: fix forum invitation gate (`fix/1059-forum-invitation-gate`). Two bugs: `invitee_email` was compared against UUID instead of email; no group_id scope on invitations query. Fixed by resolving email from `public.users` (tenant-scoped lookup) then querying invitations by `group_id + invitee_email`, excluding revoked tokens. D-091 audit + pre-pr audit clean. Issue #1059 closed.
+- PR #1072 merged to dev: fix `rag_global_promotions` promoted-chunk count query (issue #1057). Was using non-existent `tenant_id` column; fixed with `!inner` join through `rag_submissions`. Issue #1057 closed.
+- PR #1071 merged to dev: fix ICA scroll gate permanently disabling input when content fits without scrolling. Added `useEffect` mount check via `scrollContainerRef`. Issue tracked in #1074.
+- PR #1070 merged to dev: fix deploy.yml auto-merge step crashing on "No commits between" (issue #1069). Now exits 0 on benign "already in sync" case.
+- PR #1051 merged to dev: log D-222 (OAuth/beta053) + SESSION for the chore/log-beta053 carry-over. Conflict resolved: OAuth entry renumbered D-227 to avoid collision with dev's D-222 (RLS zero policies).
+- Cut `release/beta056` tag on dev.
 
 ## In flight
-- `release/beta053` is at the **production approval gate** (GitHub `production` environment, 1 pending deployment, run 27508043350). Waiting on the user to approve in GitHub Actions to deploy to prod. The pipeline then tags `vbeta053` and auto-opens a merge-back PR to dev.
-- chore/log-beta053 branch: MEMORY.md (D-222) + this SESSION.md, about to PR into dev (doc-only).
+- Nothing in flight — clean checkpoint.
 
 ## Next step
-- User: approve the production deployment for beta053 in GitHub Actions (or decline).
-- Merge the chore/log-beta053 doc PR into dev once its checks pass.
+- User to direct. Remaining triaged bugs: #1044 (remainingCount swallow in flush.ts — P2, non-trivial), #1003 (D-201 vs D-170 role-scope alignment). Enhancement queue: #1061–#1065.
 
 ## Blocked on user
-- Production deploy approval for beta053 (manual environment gate).
-- Decision on the stray local `docs/site-urls.md` edit — currently stashed ("stray docs/site-urls.md edits (carry-over)"). Contains a domain change (ai-travelconcierge.com → aitravelconcierge.com) plus an accidental pasted alias `echo` line (junk). Needs the user to say whether the domain change is intentional before it's restored/committed; the alias line should be dropped regardless.
+- beta053 production deploy approval (GitHub Actions run 27508043350) — may already have resolved.
+- #1067 — dual migration-ledger drift; reconcile supabase-CLI ledger vs `scripts/db-migrate.ts` reader.
+- #1003 — D-201 vs D-170 role-scope alignment decision.
 
 ## Open questions
-- #1044 (remainingCount swallow in flush.ts) — non-trivial fix, tracked as issue.
-- #1003 — D-201 vs D-170 role-scope alignment — user hasn't decided whether to act.
-- #1050 — page-level login gate for onboarding deep links (deferred this session).
+- #1044 (remainingCount swallow in flush.ts) — non-trivial, awaits user prioritization.
+- #1074 (test gap: no gate tests for forum RSVP + group scope) — tracking issue opened.
+- #1050 — page-level login gate for onboarding deep links (deferred from beta053 work).

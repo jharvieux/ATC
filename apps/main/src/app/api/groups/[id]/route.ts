@@ -1,7 +1,9 @@
 // §7.7 / §18 — Group detail.
 //
-// Includes counts grouped by invitation.status so the coordinator UI can
-// render member/pending/declined chips in one round-trip.
+// Includes counts grouped by invitation.rsvp_state so the coordinator UI can
+// render the RSVP-state chips (pending/interested/not_going/booked) in one
+// round-trip. (#1056: invitations has no `status` column — RSVP state lives in
+// `rsvp_state`; selecting `status` hard-500'd this endpoint.)
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
@@ -19,7 +21,7 @@ interface GroupRow {
 }
 
 interface InvitationCountRow {
-  status: string;
+  rsvp_state: string;
 }
 
 export async function GET(
@@ -47,19 +49,19 @@ export async function GET(
       return Response.json({ error: "not_found" }, { status: 404 });
     }
 
-    // Aggregate invitation counts. Client app-side accumulation keeps the
-    // query simple and avoids a SQL group-by RPC.
+    // Aggregate invitation counts by RSVP state. Client app-side accumulation
+    // keeps the query simple and avoids a SQL group-by RPC.
     const { data: invRows, error: invErr } = await db
       .from("invitations")
-      .select("status")
+      .select("rsvp_state")
       .eq("group_id", id);
     if (invErr) {
       return Response.json({ error: invErr.message }, { status: 500 });
     }
     const counts: Record<string, number> = {};
     for (const r of (invRows ?? []) as InvitationCountRow[]) {
-      const status = r.status ?? "unknown";
-      counts[status] = (counts[status] ?? 0) + 1;
+      const rsvp_state = r.rsvp_state ?? "unknown";
+      counts[rsvp_state] = (counts[rsvp_state] ?? 0) + 1;
     }
 
     const group = groupRow as unknown as GroupRow;
