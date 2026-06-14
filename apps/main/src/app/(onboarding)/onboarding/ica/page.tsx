@@ -1,9 +1,12 @@
 "use client";
 
 // §15.5 — Onboarding Stage 4: ICA acceptance.
-// Scroll-to-bottom gate via IntersectionObserver + typed legal name.
+// Scroll-to-bottom gate + typed legal name.
 // OPERATOR CONFIRM placeholder: chunk-license-survival clause text is
 // TODO(legal-attorney): final wording per §15.14.6.
+
+// Pixel slop used by both the mount check and the live scroll handler.
+const SCROLL_BOTTOM_TOLERANCE_PX = 10;
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -24,7 +27,6 @@ By signing below you agree to all terms and conditions set forth in this agreeme
 
 export default function OnboardingIcaPage() {
   const router = useRouter();
-  const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [scrolledToBottom, setScrolledToBottom] = useState(false);
   const [typedName, setTypedName] = useState("");
@@ -36,14 +38,14 @@ export default function OnboardingIcaPage() {
   // Unlock immediately when content already fits.
   useEffect(() => {
     const el = scrollContainerRef.current;
-    if (el && el.scrollHeight <= el.clientHeight + 10) {
+    if (el && el.scrollHeight <= el.clientHeight + SCROLL_BOTTOM_TOLERANCE_PX) {
       setScrolledToBottom(true);
     }
   }, []);
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_BOTTOM_TOLERANCE_PX;
     if (atBottom) setScrolledToBottom(true);
   }
 
@@ -83,7 +85,6 @@ export default function OnboardingIcaPage() {
         className="border rounded h-80 overflow-y-auto p-4 mb-4 bg-gray-50 text-sm whitespace-pre-wrap"
       >
         {ICA_CONTENT}
-        <div ref={bottomRef} />
       </div>
 
       {!scrolledToBottom && (
