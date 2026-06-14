@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   groupMaybeSingle: vi.fn(),
   invitationsBranch: vi.fn(),
   membersBranch: vi.fn(),
+  membersIn: vi.fn(),
   invitationsInsert: vi.fn(),
   tenantsMaybeSingle: vi.fn(),
   brandingMaybeSingle: vi.fn(),
@@ -53,9 +54,9 @@ vi.mock("@/lib/groups/invitation-token", () => ({
 }));
 
 // One tenantClient mock. The invitations branch terminal handles both:
-//   - detail's `.select("status").eq("group_id", id)` → invitationsBranch
-//   - broadcast/members `.select(...).eq("group_id", id).eq("status", ...)` →
-//     membersBranch (one extra .eq() in the chain).
+//   - detail's `.select("rsvp_state").eq("group_id", id)` → invitationsBranch
+//   - broadcast's `.select(...).eq("group_id", id).in("rsvp_state", states)` →
+//     membersBranch (the .in() records the state list via membersIn).
 vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
     from: (table: string) => {
@@ -70,10 +71,13 @@ vi.mock("@/lib/db/tenant-client", () => ({
         const terminal = {
           then: (resolve: (v: unknown) => unknown) =>
             mocks.invitationsBranch().then(resolve),
-          eq: () => ({
-            then: (resolve: (v: unknown) => unknown) =>
-              mocks.membersBranch().then(resolve),
-          }),
+          in: (col: string, vals: unknown) => {
+            mocks.membersIn(col, vals);
+            return {
+              then: (resolve: (v: unknown) => unknown) =>
+                mocks.membersBranch().then(resolve),
+            };
+          },
         };
         return {
           select: () => ({
@@ -152,17 +156,17 @@ function getReq(): Request {
 }
 
 describe("GET /api/groups/[id]", () => {
-  it("returns group + aggregated invitation counts grouped by status", async () => {
+  it("returns group + aggregated invitation counts grouped by rsvp_state (#1056)", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID, status: "active" },
       error: null,
     });
     mocks.invitationsBranch.mockResolvedValue({
       data: [
-        { status: "accepted" },
-        { status: "accepted" },
-        { status: "pending" },
-        { status: "declined" },
+        { rsvp_state: "booked" },
+        { rsvp_state: "booked" },
+        { rsvp_state: "pending" },
+        { rsvp_state: "not_going" },
       ],
       error: null,
     });
@@ -173,7 +177,7 @@ describe("GET /api/groups/[id]", () => {
       invitation_counts: Record<string, number>;
     };
     expect(body.group.id).toBe(GROUP_ID);
-    expect(body.invitation_counts).toEqual({ accepted: 2, pending: 1, declined: 1 });
+    expect(body.invitation_counts).toEqual({ booked: 2, pending: 1, not_going: 1 });
   });
 
   it("returns 404 for a missing/RLS-hidden group (same shape as cross-tenant)", async () => {
@@ -279,7 +283,7 @@ describe("POST /api/groups/[id]/members", () => {
 });
 
 describe("POST /api/groups/[id]/broadcast", () => {
-  it("dispatches one sendTenantNotification per accepted invitee and reports counts", async () => {
+  it("dispatches one sendTenantNotification per recipient and reports counts", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID, cruise_line: "Norwegian", ship_name: "Bliss", sailing_date: "2026-09-15" },
       error: null,
@@ -307,13 +311,51 @@ describe("POST /api/groups/[id]/broadcast", () => {
     expect(body.suppressed).toBe(1);
     expect(body.failed).toBe(0);
     expect(mocks.sendTenantNotification).toHaveBeenCalledTimes(3);
+    // #1056 — omitted recipient_states → default engaged+committed audience.
+    expect(mocks.membersIn).toHaveBeenCalledWith("rsvp_state", ["interested", "booked"]);
     // Verify the rendered HTML at least includes the subject string.
     const firstCall = mocks.sendTenantNotification.mock.calls[0]?.[0] as { html: string; subject: string };
     expect(firstCall.subject).toBe("Hello");
     expect(firstCall.html).toContain("Hello");
   });
 
-  it("short-circuits with 'no_recipients' when no accepted invitations exist (don't pay the render+send loop)", async () => {
+  it("forwards explicit recipient_states to the rsvp_state filter (#1056)", async () => {
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID, cruise_line: null, ship_name: null, sailing_date: null },
+      error: null,
+    });
+    mocks.membersBranch.mockResolvedValue({
+      data: [{ invitee_email: "p@example.com" }],
+      error: null,
+    });
+    const res = await BROADCAST_POST(
+      postReq({ subject: "Last call", message: "RSVP please", recipient_states: ["pending"] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.membersIn).toHaveBeenCalledWith("rsvp_state", ["pending"]);
+  });
+
+  it("rejects an explicit empty recipient_states array via zod (400) — broadcast to nobody is a UI error", async () => {
+    const res = await BROADCAST_POST(
+      postReq({ subject: "x", message: "y", recipient_states: [] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.membersIn).not.toHaveBeenCalled();
+    expect(mocks.sendTenantNotification).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid rsvp_state value via zod (400) — e.g. the old 'accepted'", async () => {
+    const res = await BROADCAST_POST(
+      postReq({ subject: "x", message: "y", recipient_states: ["accepted"] }),
+      PARAMS,
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.sendTenantNotification).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits with 'no_recipients' when no invitations match the selected states (don't pay the render+send loop)", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID, cruise_line: null, ship_name: null, sailing_date: null },
       error: null,

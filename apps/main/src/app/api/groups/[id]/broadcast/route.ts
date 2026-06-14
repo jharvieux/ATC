@@ -1,4 +1,11 @@
-// §7.7 / §18.6 — Coordinator broadcast to all accepted group members.
+// §7.7 / §18.6 — Coordinator broadcast to selected RSVP states.
+//
+// The coordinator chooses which RSVP states receive each broadcast
+// (recipient_states); omitted defaults to the engaged+committed set
+// (interested + booked). (#1056: the prior code filtered on a non-existent
+// `status = 'accepted'` column — invitations has no `status` column and no
+// 'accepted' value; RSVP state is `rsvp_state` ∈ pending|interested|
+// not_going|booked, so the old query hard-500'd and broadcast never sent.)
 //
 // Renders GroupBroadcast (BrandedLayout-wrapped) per-recipient and dispatches
 // via sendTenantNotification, which handles suppressions + rate limits +
@@ -13,10 +20,27 @@ import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate
 import { sendTenantNotification } from "@/lib/email/notifications";
 import { GroupBroadcast } from "@/emails/GroupBroadcast";
 
+// invitations.rsvp_state CHECK values (apps/main/supabase/migrations/
+// 20260529000000_groups.sql). Keep in sync with that constraint.
+const RSVP_STATES = ["pending", "interested", "not_going", "booked"] as const;
+
+// §18.6 default audience when the coordinator doesn't specify: people who've
+// shown intent (interested) or committed (booked). Excludes pending
+// non-responders and not_going declines.
+const DEFAULT_RECIPIENT_STATES: readonly string[] = ["interested", "booked"];
+
 const BodySchema = z
   .object({
     subject: z.string().min(1).max(200),
     message: z.string().min(1).max(20000),
+    // #1056 — coordinator-selected recipient RSVP states. Omitted → default
+    // audience. An explicit empty array is rejected (.min(1)): a broadcast to
+    // nobody is a UI error, not a silent no-op.
+    recipient_states: z
+      .array(z.enum(RSVP_STATES))
+      .min(1)
+      .max(RSVP_STATES.length)
+      .optional(),
   })
   .strict();
 
@@ -60,6 +84,7 @@ export async function POST(
       return Response.json({ error: "invalid_body" }, { status: 400 });
     }
     const { subject, message } = parsed.data;
+    const recipientStates = parsed.data.recipient_states ?? DEFAULT_RECIPIENT_STATES;
 
     const { id } = await params;
     const db = tenantClient(ctx);
@@ -89,12 +114,14 @@ export async function POST(
       throw err;
     }
 
-    // Accepted invitations are the canonical member list (§18.6).
+    // Recipients = invitations in the selected RSVP states (§18.6). invitations
+    // has no tenant_id (PLATFORM_READABLE, #1054); isolation holds via group_id,
+    // whose tenant ownership was verified by the tenant-scoped groups query above.
     const { data: memberRows, error: memberErr } = await db
       .from("invitations")
       .select("invitee_email")
       .eq("group_id", id)
-      .eq("status", "accepted");
+      .in("rsvp_state", recipientStates);
     if (memberErr) {
       return Response.json({ error: memberErr.message }, { status: 500 });
     }
