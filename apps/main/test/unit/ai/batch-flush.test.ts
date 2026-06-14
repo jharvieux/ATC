@@ -1,5 +1,4 @@
-// §27.12 — flushPendingForPurpose behavior tests.
-//
+// flushPendingForPurpose behavior tests.
 // Covers: count-query DB error surfaces as throw (D-091 #1044),
 // happy-path return values, and early-exit when nothing is pending.
 
@@ -59,12 +58,10 @@ function makeDb(opts: {
 
         return {
           select(cols: string, opts?: { count?: string; head?: boolean }) {
-            if (opts?.count === "exact" || callNum === 2) {
-              // Count query
+            if (opts?.count === "exact") {
               const result = Promise.resolve({ count: countValue, error: countError });
               return buildChain(result);
             }
-            // Row query
             const result = Promise.resolve({
               data: pendingError ? null : pendingRows,
               error: pendingError,
@@ -90,7 +87,7 @@ function makeDb(opts: {
         };
       }
 
-      return { from: () => ({}) };
+      throw new Error(`makeDb: unexpected table "${table}"`);
     },
   };
 }
