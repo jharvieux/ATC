@@ -147,11 +147,23 @@ export async function POST(
       .eq("user_id", user.id)
       .maybeSingle();
 
-    // Load invitation for rsvp_state check
+    // Load invitation for rsvp_state check.
+    // invitations.invitee_email is an email string; user.auth_user_id is a UUID.
+    // Resolve the email from public.users, then scope to this group (invitations
+    // has no tenant_id — isolation is via group_id → groups.tenant_id).
+    const { data: userRow, error: userEmailErr } = await svc
+      .from("users")
+      .select("email")
+      .eq("id", user.id)
+      .eq("tenant_id", ctx.tenant_id)
+      .single();
+    if (userEmailErr) throw new Error(`users.email lookup failed: ${userEmailErr.message}`);
     const { data: invitation } = await svc
       .from("invitations")
       .select("rsvp_state")
-      .eq("invitee_email", user.auth_user_id)
+      .eq("group_id", (forum as { group_id: string }).group_id)
+      .eq("invitee_email", (userRow as { email: string }).email)
+      .is("token_revoked_at", null)
       .maybeSingle();
 
     const userPerms = {
