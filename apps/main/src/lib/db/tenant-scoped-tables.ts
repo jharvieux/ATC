@@ -61,9 +61,12 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "price_watches",
   // 2026-05-25 audit catch-up — every table with the 4-policy RLS set
   // (per db/rls-snapshot-main.sql) that's reachable via tenantClient.
-  // Over-inclusion is fine: tables in here that lack a tenant_id column
-  // are blocked at the DB layer (the auto-injected filter returns 0 rows
-  // or RLS rejects the write). Under-inclusion is the security risk.
+  // Only list a table here if it actually HAS a tenant_id column: the proxy
+  // injects `.eq("tenant_id", …)`, and against a table without that column
+  // Postgres hard-errors ("column <t>.tenant_id does not exist") rather than
+  // returning 0 rows — that 500'd signup at the legal step (legal_documents
+  // was wrongly listed here). A global/no-tenant_id catalog belongs in
+  // PLATFORM_READABLE_TABLES instead. Under-inclusion is the security risk.
   "tasks",                            // BP37 §37
   "task_reminders",                   // BP37 §37
   "task_sequences",                   // BP37
@@ -102,7 +105,6 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "tenant_email_templates",           // #963 per-tenant email subject/body overrides
   "email_suppressions",               // tenant email suppression list
   "legal_consents",                   // tenant consent records
-  "legal_documents",                  // tenant legal docs (versioned per spec)
   "audit_log",                        // tenant audit log (writes service-role only)
   "auth_attempts",                    // tenant auth attempt log
   "abuse_signals",                    // BP27/28 abuse signals
@@ -148,6 +150,16 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   // persona-switch route (#589); tenant-scoped overrides live in the separate
   // tenant_persona_overrides / persona_addendums tables.
   "personas",
+  // Global versioned legal catalog (no tenant_id column) — the canonical
+  // ToU/privacy/AI-disclaimer/etc. documents shared across all tenants. RLS
+  // grants SELECT to any authenticated user; all writes are service-role
+  // (admin legal-docs route). Read via tenantClient by the onboarding
+  // legal-accept + ICA steps and the public /api/legal/[doctype]/current
+  // route. Per-tenant/per-user acceptance lives in the separate tenant-scoped
+  // legal_consents table. Auto-scoping this would inject `.eq("tenant_id", …)`
+  // and hard-error ("column legal_documents.tenant_id does not exist"),
+  // breaking signup at the legal step.
+  "legal_documents",
   // Platform-wide settings (no tenant_id, singleton-ish rows).
   "platform_settings",
   "ai_kill_switch_state",

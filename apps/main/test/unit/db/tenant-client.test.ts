@@ -121,6 +121,21 @@ describe("tenantClient proxy", () => {
     expect(qb.filterBuilder.eqCalls).toEqual([]);
   });
 
+  it("passes through .from('legal_documents') — global versioned legal catalog has no tenant_id column", () => {
+    // Regression: legal_documents was wrongly in TENANT_SCOPED_TABLES, so the
+    // proxy injected `.eq("tenant_id", …)` against a table with no such column.
+    // Postgres hard-errors "column legal_documents.tenant_id does not exist",
+    // which 500'd the onboarding legal-accept step and blocked signup.
+    const qb = makeQueryBuilder();
+    mockFrom.mockReturnValue(qb);
+
+    const db = tenantClient(ctx);
+    db.from("legal_documents").select("id, document_type, version");
+
+    expect(mockFrom).toHaveBeenCalledWith("legal_documents");
+    expect(qb.filterBuilder.eqCalls).toEqual([]);
+  });
+
   it("passes through .from('personas') — the global persona catalog (#589 switch route depends on this)", () => {
     // personas has no tenant_id (global catalog). De-registering it would make
     // tenantClient.from('personas') throw, 500-ing the persona-switch route.
