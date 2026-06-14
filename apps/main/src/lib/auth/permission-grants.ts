@@ -154,6 +154,21 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   ...AGENT_GRANTS,
   // §15.3 — onboarding profile update (owner-only: affects legal name, slug, address).
   key("onboarding", "profile:submit"),
+  // §15.4–§15.5 / §17.4 — onboarding wizard write actions. The operator who
+  // signs up is provisioned as tenant_owner (signup/complete/route.ts), so the
+  // entire wizard past the profile step is owner-driven. These were missing
+  // when assertPermission's RBAC stub was replaced (2026-05-25, Finding 5),
+  // 403'ing every new-agency signup at the legal step. Grant-coverage is now
+  // pinned by test/unit/auth/onboarding-grants.test.ts.
+  key("onboarding", "legal:accept"),
+  key("onboarding", "ica:accept"),
+  key("onboarding", "tier:select"),
+  key("onboarding", "state_of_operation:submit"),
+  key("onboarding", "branding:skip"),
+  key("onboarding", "connect:setup"),
+  key("onboarding", "tax_form:start"),
+  key("onboarding", "subscription:setup"),
+  key("onboarding", "review:submit"),
   // Tenant settings (owner-only)
   key("host_config", "write"),
   key("tenant_branding", "write"),
