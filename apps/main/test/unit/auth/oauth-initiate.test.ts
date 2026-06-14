@@ -67,7 +67,21 @@ describe("GET /api/auth/oauth-initiate", () => {
     await get("?provider=google&redirect_to=%2Fcrm%2Fbookings");
     expect(mockSignInWithOAuth).toHaveBeenCalledTimes(1);
     expect(oauthArg().provider).toBe("google");
-    expect(oauthArg().options?.queryParams).toBeUndefined();
+    // The #438 guard is specifically "don't set `state`" — queryParams now
+    // carries `prompt` (account chooser), so assert on the state key directly.
+    expect(oauthArg().options?.queryParams?.state).toBeUndefined();
+  });
+
+  it("forces the provider account chooser with prompt=select_account so a signed-in user can pick a different account", async () => {
+    await get("?provider=google");
+    expect(oauthArg().options?.queryParams?.prompt).toBe("select_account");
+    vi.clearAllMocks();
+    mockSignInWithOAuth.mockResolvedValue({
+      data: { url: "https://example.com" },
+      error: null,
+    });
+    await get("?provider=azure");
+    expect(oauthArg().options?.queryParams?.prompt).toBe("select_account");
   });
 
   it("points redirectTo at /api/auth/callback on the request origin", async () => {
