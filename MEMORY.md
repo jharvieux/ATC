@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-223 — 2026-06-14 — Signup legal-accept 500: legal_documents moved to PLATFORM_READABLE_TABLES
+
+**Decision:** Fixed the signup-blocking bug ("tenant id doesn't exist" on legal-doc acceptance) by moving `legal_documents` out of `TENANT_SCOPED_TABLES` and into `PLATFORM_READABLE_TABLES` in `apps/main/src/lib/db/tenant-scoped-tables.ts`, plus a regression test asserting `tenantClient.from("legal_documents")` injects NO tenant filter.
+
+**Why:** `legal_documents` is a global versioned catalog (ToU/privacy/AI-disclaimer/etc.) with NO `tenant_id` column — acceptance records live in the separate tenant-scoped `legal_consents` table. Because it was wrongly in `TENANT_SCOPED_TABLES`, the tenantClient proxy injected `.eq("tenant_id", …)` against a column that doesn't exist, so Postgres hard-errored `column legal_documents.tenant_id does not exist`. The onboarding legal route (`api/onboarding/legal/route.ts`) returned that DB message verbatim to the user, surfacing as "tenant id doesn't exist." Root-caused from live prod postgres logs. Same misclassification also broke `onboarding/ica` and the public `legal/[doctype]/current` route (both read via tenantClient).
+
+**Key correction:** The proxy does NOT silently return 0 rows for a missing `tenant_id` column — it hard-500s. The old comment claiming "over-inclusion is fine" was false and is now corrected: only list a table in `TENANT_SCOPED_TABLES` if it actually HAS a `tenant_id` column; no-tenant_id catalogs go in `PLATFORM_READABLE_TABLES`. Under-inclusion (throw on unknown table) is the only safe-by-default direction.
+
+**What was rejected:** (a) Switching the three callers to `createServiceRoleClient` directly — would bypass the deliberate fail-closed proxy and scatter raw service-role access. (b) Adding a `tenant_id` column to `legal_documents` — it's intentionally global per the legal-consent spec; per-tenant acceptance is already modeled by `legal_consents`.
+
+**Follow-up:** Other no-tenant_id tables potentially still mislisted in `TENANT_SCOPED_TABLES` — the corrected comment prevents future mistakes but doesn't audit existing entries. Tracked in a GitHub issue (see PR).
+
+**Artifacts:** branch `fix/legal-documents-platform-readable`, `apps/main/src/lib/db/tenant-scoped-tables.ts`, `apps/main/test/unit/db/tenant-client.test.ts`.
+
+---
+
+## D-222 — 2026-06-14 — #1052: enable RLS (zero policies) on 7 advisor-flagged public tables
+
+**Decision:** Cleared the Supabase advisor `rls_disabled_in_public` findings (PR #1053, squash `82d9dcbb`) by enabling RLS with ZERO policies on 7 platform-scoped public tables — schema_migrations, apify_spend_ledger, cruisemapper_url_inventory, pricing_cache, destination_images, destination_images_cache, reconciliation_review_queue — plus matching `skip_table` allowlist entries in BOTH `db/rls-exceptions.sql` and `db/rls-exceptions.txt`.
+
+**Why:** Zero-policy RLS = default-deny for anon/authenticated over the PostgREST Data API; `service_role` has BYPASSRLS so every legitimate path (adapters, Inngest crons, hero-image helper, platform-admin reconciliation, the db-migrate runner) is untouched. None of the 7 carry a tenant_id, and anon/authenticated never held SELECT/DML (only stray REFERENCES/TRIGGER/TRUNCATE) — so there was no live read path to break. This is the established repo convention (tier_definitions / vendor_health / personal_access_tokens). Verified `pricing_cache` reads via `tenantClient` resolve through `createServiceRoleClient` (it's in PLATFORM_READABLE_TABLES) so they pass straight through.
+
+**What was rejected:** (a) Writing real USING(...) SELECT policies — barred by the lint gate for platform tables and unnecessary with no authenticated read path. (b) REVOKE-only (used for materialized views that can't take RLS) — these are real tables, so ENABLE RLS is the advisor-satisfying fix. (c) Touching the stray REFERENCES/TRIGGER/TRUNCATE grants — out of scope, not Data-API-exploitable, would force a grants-snapshot regen.
+
+**Still open:** #1052 stays OPEN until the gated apply completes: migration applied to test+prod via the gated pipeline (#534) → `pnpm rls:snapshot` + commit `db/rls-snapshot-{main,rag}.sql` → re-run advisor, confirm 7 findings clear, then close. Snapshot regen is a gated post-apply step, NOT a PR blocker (rls:check is non-blocking on dev).
+
+**Artifacts:** PR #1053, issue #1052, `apps/main/supabase/migrations/20260701000006_rls_enable_advisor_flagged_tables.sql`, `db/rls-exceptions.{sql,txt}`.
+
+---
+
 ## D-221 — 2026-06-12 — Signup 401 loop: createRequestScopedClient must use req.cookies.getAll(), not parseCookieHeader
 
 **Decision:** Fixed the agency signup loop (PR #1046) by changing `createRequestScopedClient` to prefer `req.cookies.getAll()` for `NextRequest` inputs instead of the custom `parseCookieHeader(req.headers.get("cookie"))`.
