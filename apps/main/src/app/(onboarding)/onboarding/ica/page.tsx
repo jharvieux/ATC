@@ -5,7 +5,7 @@
 // OPERATOR CONFIRM placeholder: chunk-license-survival clause text is
 // TODO(legal-attorney): final wording per §15.14.6.
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 // TODO(legal-attorney): replace placeholder text with final ICA per §15.14.6.
@@ -25,10 +25,21 @@ By signing below you agree to all terms and conditions set forth in this agreeme
 export default function OnboardingIcaPage() {
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [scrolledToBottom, setScrolledToBottom] = useState(false);
   const [typedName, setTypedName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // If the ICA content is shorter than the container (no scrollbar appears),
+  // the onScroll handler never fires and the input stays permanently disabled.
+  // Unlock immediately when content already fits.
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (el && el.scrollHeight <= el.clientHeight + 10) {
+      setScrolledToBottom(true);
+    }
+  }, []);
 
   function handleScroll(e: React.UIEvent<HTMLDivElement>) {
     const el = e.currentTarget;
@@ -67,6 +78,7 @@ export default function OnboardingIcaPage() {
       <h1 className="text-2xl font-semibold mb-4">Independent Contractor Agreement</h1>
 
       <div
+        ref={scrollContainerRef}
         onScroll={handleScroll}
         className="border rounded h-80 overflow-y-auto p-4 mb-4 bg-gray-50 text-sm whitespace-pre-wrap"
       >
