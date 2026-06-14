@@ -37,8 +37,6 @@ function makeDb(opts: {
     jobId = "job-uuid",
   } = opts;
 
-  let aiReqCallCount = 0;
-
   const buildChain = (result: Promise<unknown>) => {
     const chain: Record<string, unknown> = {};
     const then = result.then.bind(result);
@@ -53,9 +51,6 @@ function makeDb(opts: {
   return {
     from(table: string) {
       if (table === "ai_batch_requests") {
-        aiReqCallCount++;
-        const callNum = aiReqCallCount;
-
         return {
           select(cols: string, opts?: { count?: string; head?: boolean }) {
             if (opts?.count === "exact") {
