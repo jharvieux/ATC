@@ -44,8 +44,15 @@ export async function GET(req: NextRequest): Promise<Response> {
   // claim from the id_token and Supabase throws "Error getting user email from
   // external provider" before our callback even runs. `User.Read` is also added
   // so the Graph fallback in recoverMicrosoftEmail (§17.2) has a working token.
+  // `prompt=select_account` forces the provider to show its account chooser
+  // instead of silently reusing the browser's single live IdP session. Without
+  // it, a user already signed into one Google/Microsoft account is bounced
+  // straight back with that identity and can't pick a different one — which let
+  // an agency get provisioned under the wrong account. Standard OIDC param,
+  // honored by Google and Azure; Facebook ignores it harmlessly.
   const oauthOptions: Parameters<typeof supabase.auth.signInWithOAuth>[0]["options"] = {
     redirectTo: callbackUrl.toString(),
+    queryParams: { prompt: "select_account" },
     ...(provider === "azure" && { scopes: "email User.Read" }),
   };
   const { data, error } = await supabase.auth.signInWithOAuth({
