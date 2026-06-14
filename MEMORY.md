@@ -4,6 +4,34 @@ Newest entries on top.
 
 ---
 
+## D-226 — 2026-06-14 — #1052: RLS migration applied to live beta DB; dual-ledger drift surfaced (#1067)
+
+**Decision:** Applied `20260701000006_rls_enable_advisor_flagged_tables.sql` (already merged to dev in #1053) to the **live beta** DB — user confirmed beta is the live environment and explicitly approved ("run it, its the live environment"), satisfying the per-instance operator approval in [[feedback_no_prod_deploys_without_asking]]. The migration is purely additive `ALTER TABLE [IF EXISTS] … ENABLE ROW LEVEL SECURITY` on 7 tables (apify_spend_ledger, cruisemapper_url_inventory, pricing_cache, destination_images, destination_images_cache, reconciliation_review_queue, schema_migrations), zero `CREATE POLICY` = default-deny over the Data API (service_role has BYPASSRLS). Verified all 7 → `relrowsecurity = t` via psql; advisor now reports **zero** `rls_disabled_in_public`, the 7 appear as INFO `rls_enabled_no_policy` (intended). Regenerated `db/rls-snapshot-main.sql` (rag unchanged); closing #1052.
+
+**How (NOT the custom runner):** Applied directly via `psql "$SUPABASE_DB_URL" --single-transaction -f <file>`, NOT `pnpm db:migrate`. Beta runs on the **supabase-CLI ledger** `supabase_migrations.schema_migrations` (current through `20260701000005`), advanced by `npx supabase db push`. The custom runner `scripts/db-migrate.ts` reads a **separate, stale** `public.schema_migrations` (~103 rows, stuck ~`20260627000024`); running `pnpm db:migrate` re-attempts already-applied migrations and collides (`is_platform_internal already exists`, 42701 — rolled back cleanly, no partial state). So beta was only ONE migration behind reality, not the ~25 the stale ledger implied.
+
+**What was rejected:** Hand-writing either ledger row (idempotent migration; corrupting the opaque CLI-ledger versioning is the real risk). Also rejected the disabled pipeline path: `deploy.yml` prod migration step (~L461-464) is gated `if: ${{ false }}` (#534), so it could not apply this.
+
+**Tech debt filed:** #1067 — dual migration-ledger drift; `pnpm db:migrate` is the wrong tool for beta/prod and will keep colliding until reconciled. Cross-refs #534 (disabled prod migration step).
+
+**Artifacts:** `apps/main/supabase/migrations/20260701000006_rls_enable_advisor_flagged_tables.sql` (merged #1053), `db/rls-snapshot-main.sql` (this PR), issues #1052 (closed), #1067 (new), #534.
+
+---
+
+## D-225 — 2026-06-14 — #1056: group detail + broadcast use rsvp_state; coordinator picks recipient states
+
+**Decision:** Fixed the two `invitations`-`status`-column 500s found during the D-224 audit and shipped the §18.6 product call. Both `GET /api/groups/[id]` and `POST /api/groups/[id]/broadcast` now read `rsvp_state` (the real column; `status` never existed on `invitations`). Group-detail `invitation_counts` is keyed by the four real RSVP states. Broadcast gains an optional `recipient_states` body field — a zod enum of `pending|interested|not_going|booked`, `.min(1).max(4)`; **omitted → default `interested`+`booked`** (engaged + committed); explicit `[]` or invalid value → **400** (fail-closed: a broadcast to nobody is a UI error, never send-to-all). Shipped as PR #1062 (squash `2006cacc`), closing #1056.
+
+**Why this contract:** The user clarified the original "checkboxes" ask was about **people in different RSVP states**, not different groups. Default = intent+commitment (`interested`+`booked`), excluding `pending` non-responders and `not_going` declines — the audience a coordinator almost always wants. Fail-closed on empty selection because the alternative (treat empty as "everyone") is the dangerous default.
+
+**What was rejected:** Building the composer UI in this PR. No broadcast composer exists today — the `coordinate/[tab]` tabs are static placeholders and nothing in-app calls the broadcast endpoint. Shipping the validated backend now + filing the UI as a standalone issue keeps the bug fix surgical. Composer UI = **#1061** (subject/message + four RSVP-state checkboxes wired to this endpoint, default `interested`+`booked` checked, submit disabled at zero states). #1061 also folds in relabeling two **mislabeled** `TODO(prompt-24)` comments in `coordinate/[tab]/page.tsx` (BP24 is the shipped Chat UI prompt; those placeholders are BP19/§18 invitees + BP20/§19 forum, not chat).
+
+**Isolation (unchanged from D-224):** `invitations` has no `tenant_id` (PLATFORM_READABLE, [[project_booking_customer_tenant]]/#1054); isolation holds via `group_id` → `groups.tenant_id`, verified by the tenant-scoped `groups` query that runs (and 404s cross-tenant) before any invitations read. Both audit agents clean on the final diff hash.
+
+**Artifacts:** PR #1062 (`2006cacc`), `apps/main/src/app/api/groups/[id]/route.ts`, `apps/main/src/app/api/groups/[id]/broadcast/route.ts`, `apps/main/test/unit/groups/group-routes.test.ts` (18 tests), issue #1061 (composer UI follow-up). Sibling bug #1059 (forum invitations read) still open, untouched.
+
+---
+
 ## D-224 — 2026-06-14 — #1054: audited TENANT_SCOPED_TABLES + added DB-backed reintroduction guard
 
 **Decision:** Completed the [[project_booking_customer_tenant]]-adjacent follow-up to D-223. Audited every entry of `TENANT_SCOPED_TABLES` against the live schema, found exactly **5 of 83** with no `tenant_id` column, and moved all 5 to `PLATFORM_READABLE_TABLES`: `invitations`, `rag_global_promotions`, `auth_attempts`, `security_incidents`, `staging_cron_skips`. Added `scripts/check-tenant-scoped-columns.ts` — a DB-backed bidirectional CI guard — wired into `.github/workflows/e2e.yml` after the RLS coverage step. Shipped as PR #1058 (squash `50588a98`), closing #1054.

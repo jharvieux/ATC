@@ -1,24 +1,26 @@
-# Session state — last updated 2026-06-14 21:30 UTC
+# Session state — last updated 2026-06-14 22:10 UTC
 
 ## Just completed
-- **#1054 shipped + closed** via PR #1058 (squash `50588a98` on dev). Audited all of `TENANT_SCOPED_TABLES` against the live schema: 5 of 83 entries had no `tenant_id` column. Moved `invitations`, `rag_global_promotions`, `auth_attempts`, `security_incidents`, `staging_cron_skips` to `PLATFORM_READABLE_TABLES`. `attribution_rollup` (matview) correctly stays scoped (has tenant_id).
-- **Reintroduction guard**: `scripts/check-tenant-scoped-columns.ts` — DB-backed, bidirectional (scoped-without-tenant_id FAILs; platform-readable-WITH-tenant_id FAILs unless allowlisted, one entry `email_log`). Wired into `.github/workflows/e2e.yml` after RLS coverage; CI ran it green (Playwright job passed). Added 5 regression tests in `tenant-client.test.ts`.
-- Both audit agents clean on re-run (after a fix-commit adding an isolation comment at members/route.ts:89). All PR checks green incl. `pr-audit-section-check`. MEMORY D-224 added.
-- **Filed 3 co-located bugs** (not fixed — surgical-changes): #1056 (invitations `status`→`rsvp_state` drift, 500s group-detail + broadcast; broadcast needs §18.6 product call), #1057 (abuse-recompute non-existent `tenant_id` on rag_global_promotions, swallowed → corrupts tenant_rag_quotas), #1059 (forum post-message reads invitations with wrong key + no group scope).
+- **#1052 — RLS enabled on 7 tables in LIVE BETA.** Applied `20260701000006_rls_enable_advisor_flagged_tables.sql` (merged to dev in #1053) directly to the beta DB via `psql --single-transaction` (user approved: "run it, its the live environment"). All 7 tables verified `relrowsecurity = t`. Security advisor now reports **zero** `rls_disabled_in_public`; the 7 show as INFO `rls_enabled_no_policy` (intended default-deny). Regenerated `db/rls-snapshot-main.sql` (rag unchanged). MEMORY D-226 added. PR `chore/1052-rls-snapshot-beta` → dev carries the snapshot + SESSION/MEMORY.
+- **Discovered dual migration-ledger drift** → filed #1067. Beta runs on the supabase-CLI ledger (`supabase_migrations.schema_migrations`, current thru `20260701000005`); the custom runner `scripts/db-migrate.ts` reads a stale `public.schema_migrations` and collides if run against beta. `pnpm db:migrate` is the wrong tool for beta/prod.
+- **#1056 wrap-up** (carried from prior session, now committed in this PR): MEMORY D-225 + SESSION reflect #1056 shipped via PR #1062 (`2006cacc`).
 
 ## In flight
-- Nothing in flight — clean checkpoint. On `dev`, up to date with origin.
+- PR `chore/1052-rls-snapshot-beta` open to dev (snapshot + MEMORY D-225/D-226 + SESSION). Touches `db/rls-snapshot-main.sql` (.sql → audit agents required, not doc-only exempt). Awaiting audit agents + CI, then squash-merge + close #1052.
 
 ## Next step
-- None forced. When resuming: run session-start auto-triage. Candidate work is the 3 issues filed this session (#1056 needs a §18.6 product decision from the user before broadcast recipient logic can land).
+- Run both audit agents on the PR, update `## Audit` block, wait for CI green, squash-merge, delete branch, then `gh issue close 1052` with the advisor-clean confirmation.
+
+## UI / placeholder inventory (all filed, still open)
+- #1061 coordinator broadcast composer UI · #1063 group forum UI · #1064 invitees roster UI · #1065 CRM relationship graph UI · #1066 stale-comment cleanup.
 
 ## Blocked on user
-- **#1056** — needs a §18.6 product decision: which `rsvp_state` values (`pending`/`interested`/`not_going`/`booked`) count as broadcast/member recipients. Can't finalize the broadcast fix without it.
-- beta053 production deploy approval (user's call, GitHub Actions run 27508043350).
-- Staging re-test of the signup → legal-accept flow end-to-end (after deploy).
-- Stashed `docs/site-urls.md` domain-change — still stashed, blocked on user.
+- beta053 production deploy approval (GitHub Actions run 27508043350).
+- Staging re-test of signup → legal-accept flow end-to-end (after deploy).
+- Stashed `docs/site-urls.md` domain-change — DELETED this session (stashes dropped per user OK); no longer blocked.
 
 ## Open questions
-- **#1052 still OPEN** — gated prod apply pending: migrate to test+prod via #534 → `pnpm rls:snapshot` + commit snapshots → re-run advisor → close.
-- #1057 / #1059 — both unowned bug issues; #1057 (RAG quota corruption) is the higher-severity of the two.
+- **#1067** (new) — dual-ledger drift; reconcile source of truth + retire/guard `pnpm db:migrate` for beta/prod. Cross-refs #534 (disabled prod migration step in deploy.yml).
+- **#1059** — forum post-message reads invitations with wrong key + no group scope (sibling of #1056).
+- **#1057** — abuse-recompute non-existent `tenant_id` on rag_global_promotions → corrupts tenant_rag_quotas (higher severity).
 - #1044 (remainingCount swallow in flush.ts), #1003 (D-201 vs D-170 role-scope) — still user's call.
