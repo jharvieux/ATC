@@ -228,11 +228,14 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           //   count is rag-side and comes from the pre-loop batch fetch.
           //   If the rag fetch failed (empty map), we leave the chunk count
           //   alone rather than zeroing it — fail safe vs fail loud.
-          const { data: promoCountRows } = await db
+          // rag_global_promotions has no tenant_id column — tenant scope is via
+          // submission_id → rag_submissions.tenant_id (FK confirmed).
+          const { data: promoCountRows, error: promoErr } = await db
             .from("rag_global_promotions")
-            .select("id")
-            .eq("tenant_id", t.id)
+            .select("id, rag_submissions!inner(tenant_id)")
+            .eq("rag_submissions.tenant_id", t.id)
             .is("demoted_at", null);
+          if (promoErr) throw new Error(`rag_global_promotions.select failed: ${promoErr.message}`);
           const promotedTrue = Array.isArray(promoCountRows) ? promoCountRows.length : 0;
           const { data: quotaRow } = await db
             .from("tenant_rag_quotas")
