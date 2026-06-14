@@ -64,12 +64,13 @@ export async function flushPendingForPurpose(args: {
   // Count remaining beyond this batch so the caller can schedule a
   // re-fire if pending > MAX. Cheaper than a second query: we only
   // need to know whether more exist.
-  const { count: remainingCount } = await db
+  const { count: remainingCount, error: countErr } = await db
     // d091-allow:service-role-tenant — platform cron bundles all tenants' pending requests into one Anthropic batch by design; no tenant_id filter is correct here.
     .from("ai_batch_requests")
     .select("id", { count: "exact", head: true })
     .eq("purpose", purpose)
     .eq("status", "pending");
+  if (countErr) throw new Error(`flushPendingForPurpose: remaining count failed: ${countErr.message}`);
   const remaining = Math.max(0, (remainingCount ?? 0) - pending.length);
 
   // Build the Anthropic batch request payload.
