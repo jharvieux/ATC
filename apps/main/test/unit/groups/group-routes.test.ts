@@ -371,6 +371,22 @@ describe("POST /api/groups/[id]/broadcast", () => {
     expect(mocks.sendTenantNotification).not.toHaveBeenCalled();
   });
 
+  it("returns 500 when the invitations SELECT errors (don't send to a partial/empty list)", async () => {
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID, cruise_line: null, ship_name: null, sailing_date: null },
+      error: null,
+    });
+    // A failed recipient query must surface as 500, not fall through to a
+    // zero-recipient "success" — that would silently drop the broadcast.
+    mocks.membersBranch.mockResolvedValue({ data: null, error: { message: "boom" } });
+    const res = await BROADCAST_POST(
+      postReq({ subject: "x", message: "y" }),
+      PARAMS,
+    );
+    expect(res.status).toBe(500);
+    expect(mocks.sendTenantNotification).not.toHaveBeenCalled();
+  });
+
   it("returns 410 sailed for a sailed group (§18.10)", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID, cruise_line: null, ship_name: null, sailing_date: null },
