@@ -149,6 +149,33 @@ describe("tenantClient proxy", () => {
     expect(qb.filterBuilder.eqCalls).toEqual([]);
   });
 
+  // #1054 — five tables that were wrongly in TENANT_SCOPED_TABLES despite
+  // having no tenant_id column (the #1045 bug class). `invitations` is the live
+  // trap: its three tenantClient callers (groups/[id], /members, /broadcast)
+  // verify group ownership via a tenant-scoped `groups` query, then filter by
+  // group_id — so the injected `.eq("tenant_id", …)` was both wrong (no column →
+  // 500) and redundant. The other four are service-role-only today (dormant
+  // traps), but a future tenantClient caller would have hit the same hard-error.
+  // Each must pass through WITHOUT a tenant filter.
+  for (const table of [
+    "invitations",
+    "rag_global_promotions",
+    "auth_attempts",
+    "security_incidents",
+    "staging_cron_skips",
+  ]) {
+    it(`passes through .from('${table}') — no tenant_id column (#1054)`, () => {
+      const qb = makeQueryBuilder();
+      mockFrom.mockReturnValue(qb);
+
+      const db = tenantClient(ctx);
+      db.from(table).select("*");
+
+      expect(mockFrom).toHaveBeenCalledWith(table);
+      expect(qb.filterBuilder.eqCalls).toEqual([]);
+    });
+  }
+
   it("THROWS on tables in neither TENANT_SCOPED_TABLES nor PLATFORM_READABLE_TABLES", () => {
     // Fail-closed contract — see UnregisteredTenantTableError.
     mockFrom.mockReturnValue(makeQueryBuilder());

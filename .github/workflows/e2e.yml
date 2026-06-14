@@ -164,6 +164,11 @@ jobs:
           SUPABASE_DB_URL: postgresql://postgres@localhost:5432/atc_main_test
         run: pnpm rls:coverage
 
+      - name: Tenant-scoped column guard (#1054)
+        env:
+          SUPABASE_DB_URL: postgresql://postgres@localhost:5432/atc_main_test
+        run: pnpm check:tenant-scoped-columns
+
       - name: Run Playwright specs
         run: pnpm exec playwright test
         # webServer in playwright.config.ts auto-starts postgrest + proxy + next dev.

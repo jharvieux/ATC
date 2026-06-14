@@ -45,9 +45,10 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "sub_host_subcontractors",
   "tenant_branding",
   "persona_addendums",
-  // BP19: Group bookings (§18)
+  // BP19: Group bookings (§18). NOTE: `invitations` is NOT here — it has no
+  // tenant_id column (scoped via group_id → groups.tenant_id); see
+  // PLATFORM_READABLE_TABLES below.
   "groups",
-  "invitations",
   // BP20: Forum (§19) + booking flow (§20)
   "forums",
   "forum_threads",
@@ -91,7 +92,6 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "customer_bug_submission_counters", // §32 customer bug counters
   "anonymous_chat_counters",          // BP24 anonymous rate
   "rag_submissions",                  // RAG tenant submissions
-  "rag_global_promotions",            // RAG global promotions (per-tenant promote)
   "help_sessions",                    // §32 self-service help
   "help_doc_versions",                // BP31 help docs
   "bug_submissions",                  // §32 help
@@ -106,14 +106,11 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "email_suppressions",               // tenant email suppression list
   "legal_consents",                   // tenant consent records
   "audit_log",                        // tenant audit log (writes service-role only)
-  "auth_attempts",                    // tenant auth attempt log
   "abuse_signals",                    // BP27/28 abuse signals
   "abuse_recompute_drift_log",        // BP28 abuse recompute drift
   "ai_call_log",                      // tenant AI call audit
   "ccpa_deletion_executions",         // CCPA deletion execution log
   "forensics_log",                    // tenant forensics log (writes service-role only)
-  "security_incidents",               // tenant security incidents
-  "staging_cron_skips",               // staging cron skip tracking
   "usage_limit_events",               // BP27/28 usage limit events
   "group_invite_pending_approval",    // BP19 group invite approvals
 ]);
@@ -174,4 +171,31 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   "cruise_line_aliases",
   "cruise_ships",
   "cruise_ship_aliases",
+  // #1054 — the following five have NO tenant_id column and were wrongly listed
+  // in TENANT_SCOPED_TABLES, where the proxy would inject `.eq("tenant_id", …)`
+  // and Postgres would hard-error ("column <t>.tenant_id does not exist").
+  // `legal_documents` (above) was the first instance found — it 500'd signup at
+  // the legal-accept step (#1045). The CI guard `check:tenant-scoped-columns`
+  // now blocks reintroduction of any no-tenant_id table into the scoped set.
+  //
+  // `invitations` — group invites. Isolation is via group_id → groups.tenant_id,
+  // NOT a tenant_id column. The three tenantClient callers (groups/[id],
+  // /members, /broadcast) verify group ownership through a tenant-scoped
+  // `groups` query (404 cross-tenant) BEFORE filtering invitations by group_id,
+  // so passthrough is isolation-safe.
+  "invitations",
+  // `auth_attempts` — platform-wide auth-failure log keyed by email_hash + ip
+  // (no tenant_id). Service-role-only writes/reads (auth-failure-monitor cron).
+  "auth_attempts",
+  // `security_incidents` — platform incident register; cross-tenant by design
+  // (carries an `affected_tenant_ids` array, not a single tenant_id).
+  // Service-role-only access.
+  "security_incidents",
+  // `staging_cron_skips` — staging-only cron skip tracking (cron_id/reason/
+  // skipped_at, no tenant_id). Service-role-only writes from cron paths.
+  "staging_cron_skips",
+  // `rag_global_promotions` — registry of tenant chunks promoted to the GLOBAL
+  // RAG corpus (no tenant_id; linkage is via tenant_chunk_id/global_chunk_id).
+  // Accessed via platformAdminClient/withPlatformAdminAudit, not tenantClient.
+  "rag_global_promotions",
 ]);
