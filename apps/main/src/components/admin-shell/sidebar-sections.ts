@@ -32,7 +32,7 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
       { href: "/admin/tenants/review-queue", label: "Tenant Review Queue", requiredRoles: ["superadmin"] },
       { href: "/admin/abuse-monitoring",     label: "Abuse Monitoring",    requiredRoles: ["superadmin"] },
       { href: "/admin/denylist",             label: "Content Deny-list",   requiredRoles: ["superadmin", "reviewer"] },
-      { href: "/admin/admins",               label: "Platform Admins" },
+      { href: "/admin/admins",               label: "Platform Admins",            requiredRoles: ["superadmin"] },
     ],
   },
   {
