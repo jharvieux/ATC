@@ -288,10 +288,17 @@ describe("Stripe webhook — checkout.session.completed", () => {
     expect(u!.stripe_customer_id).toBe("cus_1");
   });
 
-  it("advances onboarding to 'connect_setup' when current stage is 'subscription'", async () => {
-    selectMaybeSingle = { data: { onboarding_stage: "subscription" }, error: null };
+  it("advances onboarding to 'connect_setup' when current stage is 'subscription' (sub_host)", async () => {
+    selectMaybeSingle = { data: { onboarding_stage: "subscription", tenant_type: "sub_host" }, error: null };
     await handleStripeWebhook(makeReq(), "platform");
     expect(progressToCalls).toContainEqual({ tenantId: "t-1", stage: "connect_setup" });
+  });
+
+  it("advances onboarding to 'branding' when tenant_type is byo_host — BYO skips connect_setup (§3.1)", async () => {
+    selectMaybeSingle = { data: { onboarding_stage: "subscription", tenant_type: "byo_host" }, error: null };
+    await handleStripeWebhook(makeReq(), "platform");
+    expect(progressToCalls).toContainEqual({ tenantId: "t-1", stage: "branding" });
+    expect(progressToCalls).not.toContainEqual({ tenantId: "t-1", stage: "connect_setup" });
   });
 
   it("does NOT advance onboarding when current stage is not 'subscription'", async () => {

@@ -85,11 +85,12 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // BYO hosts skip ica + tax_form (sub-host-only steps).
-    const { data: tenantRow } = await readDb
+    const { data: tenantRow, error: tenantErr } = await readDb
       .from("tenants")
       .select("tenant_type")
       .eq("id", ctx.tenant_id)
       .single();
+    if (tenantErr) return Response.json({ error: tenantErr.message }, { status: 500 });
     const nextStageName = tenantRow?.tenant_type === "byo_host" ? "state_of_operation" : "ica";
 
     await progressTo(ctx.tenant_id, nextStageName);
