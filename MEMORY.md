@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-232 — 2026-06-15 — group.invitations permission matrix gap (issue #1091, PR #1096)
+
+`group.invitations:list` and `group.invitations:manage` were never added to `permission-grants.ts` when the invitations API routes were built. `isPermitted` returned `false` for every role → every coordinator got 403 on GET/POST to `/api/groups/:id/invitations`. Unit tests mocked `assertPermission` so the gap wasn't caught.
+
+Fix: two additive lines to `READ_GRANTS` and `AGENT_GRANTS` + two rows in the exhaustive test matrix.
+
+**Why**: The route tests mocked `assertPermission` at the route level, so the test passed even though the underlying permission check would have denied it. The gap only appeared in the live app.
+
+**How to apply**: When building new routes with `assertPermission`, always add the corresponding `(resource, action)` pair to `permission-grants.ts` AND the exhaustive matrix in `permission-grants.test.ts` in the same PR. The matrix test is Stryker-resistant — it will catch missing or mis-named keys. Never defer grant additions to a follow-up PR.
+
+---
+
 ## D-231 — 2026-06-15 — #783 Phase 3 — Sailing catalog + cascade-dropdown group creation (PR #1093)
 
 Connected group-booking via sailing catalog is live. Key decisions:
