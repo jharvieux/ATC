@@ -501,6 +501,11 @@ CREATE POLICY "cruise_lines_read" ON public.cruise_lines
   FOR SELECT TO PUBLIC
   USING (auth.uid() IS NOT NULL);
 
+-- TABLE: public.cruise_sailings
+CREATE POLICY "cruise_sailings_read" ON public.cruise_sailings
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+
 -- TABLE: public.cruise_ship_aliases
 CREATE POLICY "cruise_ship_aliases_read" ON public.cruise_ship_aliases
   FOR SELECT TO PUBLIC
@@ -1220,6 +1225,11 @@ CREATE POLICY "request_idempotency_no_user_select" ON public.request_idempotency
 CREATE POLICY "request_idempotency_no_user_update" ON public.request_idempotency
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: public.sailing_port_calls
+CREATE POLICY "sailing_port_calls_read" ON public.sailing_port_calls
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
 
 -- TABLE: public.security_incidents
 CREATE POLICY "security_incidents_delete_service" ON public.security_incidents

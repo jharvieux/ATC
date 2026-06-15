@@ -50,27 +50,55 @@ const SHIP_HTML = `<!doctype html><html><body>
 
 const SHIP_URL = "https://www.cruisemapper.com/ships/Norwegian-Prima-2216";
 
-// Inventory db mock: select(...).eq.eq.maybeSingle resolves the enriched status;
-// upsert records the mark-enriched calls.
+// Inventory db mock: dispatches on table name.
+// - cruise_ships: single-eq lookup (slug → id); returns null so catalog persistence silently skips.
+// - cruisemapper_url_inventory: two-eq lookup for enrichment status + upsert for mark-enriched.
+// - cruise_sailings / sailing_port_calls: upsert stubs for catalog persistence.
 function makeDb(enrichedStatus: string | null) {
   const upserts: Array<Record<string, unknown>> = [];
   const db = {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
+    from: (table: string) => {
+      if (table === "cruise_ships") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === "cruise_sailings") {
+        return {
+          upsert: () => ({
+            select: () => ({
+              single: async () => ({ data: { id: "sail-stub" }, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === "sailing_port_calls") {
+        return {
+          upsert: (_rows: unknown) => Promise.resolve({ error: null }),
+        };
+      }
+      // cruisemapper_url_inventory — enrichment check + mark-enriched upsert.
+      return {
+        select: () => ({
           eq: () => ({
-            maybeSingle: async () => ({
-              data: enrichedStatus ? { last_ingest_status: enrichedStatus } : null,
-              error: null,
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: enrichedStatus ? { last_ingest_status: enrichedStatus } : null,
+                error: null,
+              }),
             }),
           }),
         }),
-      }),
-      upsert: (row: Record<string, unknown>) => {
-        upserts.push(row);
-        return Promise.resolve({ error: null });
-      },
-    }),
+        upsert: (row: Record<string, unknown>) => {
+          upserts.push(row);
+          return Promise.resolve({ error: null });
+        },
+      };
+    },
   } as unknown as Parameters<typeof processSailingHtml>[0];
   return { db, upserts };
 }

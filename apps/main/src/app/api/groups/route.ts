@@ -35,6 +35,8 @@ interface CreateGroupBody {
   visibility_default?: "visible" | "hidden";
   hero_image_url?: string;
   invitees: InviteeInput[];
+  // #783 Phase 3 — catalog FK (optional; populated by the cascade-dropdown UX).
+  sailing_id?: string;
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -47,6 +49,7 @@ export async function POST(req: Request): Promise<Response> {
       max_cabins, target_group_rate_cents, coordinator_message,
       visibility_default = "visible", hero_image_url,
       invitees = [],
+      sailing_id,
     } = body;
 
     if (!cruise_line || !ship_name || !sailing_date || !departure_port) {
@@ -90,6 +93,7 @@ export async function POST(req: Request): Promise<Response> {
         hero_image_url: heroUrl,
         ...(lineRes.matched && { cruise_line_id: lineRes.id }),
         ...(shipRes.matched && { cruise_ship_id: shipRes.id }),
+        ...(sailing_id !== undefined && { sailing_id }),
       })
       .select("id")
       .single();
