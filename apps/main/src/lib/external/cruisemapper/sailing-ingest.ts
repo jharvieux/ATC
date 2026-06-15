@@ -40,6 +40,9 @@ export interface SailingRunResult {
   // reached (1 req/sec would push the Vercel function past maxDuration). The ship
   // is NOT stamped complete; the next run resumes it (already-enriched ones skip).
   list_details_deferred: number;
+  // #783 — structured catalog (cruise_sailings + sailing_port_calls) persistence.
+  catalog_upserted: number;   // sailing row written/updated this run
+  catalog_errors: number;     // upsert failed (ship found in catalog but DB write failed)
 }
 
 export function emptySailingResult(): SailingRunResult {
@@ -57,6 +60,8 @@ export function emptySailingResult(): SailingRunResult {
     list_details_skipped_enriched: 0,
     list_details_errors: 0,
     list_details_deferred: 0,
+    catalog_upserted: 0,
+    catalog_errors: 0,
   };
 }
 
@@ -77,6 +82,8 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
   into.list_details_skipped_enriched += one.list_details_skipped_enriched;
   into.list_details_errors += one.list_details_errors;
   into.list_details_deferred += one.list_details_deferred;
+  into.catalog_upserted += one.catalog_upserted;
+  into.catalog_errors += one.catalog_errors;
 }
 
 // #827 — per-sailing detail (cruise.json) enrichment.
@@ -274,8 +281,13 @@ export async function processSailingHtml(
       }
       if (cruiseShipId) {
         const sailingId = await persistSailing(db, cruiseShipId, mapped);
-        if (sailingId && mapped.portsOfCall.length > 0) {
-          await persistPortCalls(db, sailingId, mapped.portsOfCall);
+        if (sailingId) {
+          result.catalog_upserted += 1;
+          if (mapped.portsOfCall.length > 0) {
+            await persistPortCalls(db, sailingId, mapped.portsOfCall);
+          }
+        } else {
+          result.catalog_errors += 1;
         }
       }
     } else {
@@ -382,8 +394,13 @@ export async function processSailingHtml(
         }
         if (cruiseShipId) {
           const sailingId = await persistSailing(db, cruiseShipId, listMapped);
-          if (sailingId && detail && detail.portsOfCall.length > 0) {
-            await persistPortCalls(db, sailingId, detail.portsOfCall);
+          if (sailingId) {
+            result.catalog_upserted += 1;
+            if (detail && detail.portsOfCall.length > 0) {
+              await persistPortCalls(db, sailingId, detail.portsOfCall);
+            }
+          } else {
+            result.catalog_errors += 1;
           }
         }
       }),
