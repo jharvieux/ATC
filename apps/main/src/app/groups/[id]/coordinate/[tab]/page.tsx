@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BroadcastComposerClient } from "@/components/groups/BroadcastComposerClient";
 import { InviteesTabClient } from "@/components/groups/InviteesTabClient";
+import { ForumTabClient } from "@/components/groups/ForumTabClient";
 
 const VALID_TABS = ["overview", "invitees", "edit", "preview-email", "forum"] as const;
 type Tab = (typeof VALID_TABS)[number];
@@ -159,16 +160,8 @@ function PreviewEmailTab({ groupId }: { groupId: string }): React.ReactElement {
 function ForumTab({ groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
-      <h2 className="text-[18px] font-bold mb-2">Group Forum</h2>
-      <p className="text-muted-foreground mb-4 text-[14px]">
-        Coordinator view — all message statuses visible. Use the message actions to hide, unhide, or flag content.
-      </p>
-
-      {/* §19.7 coordinator privileges: all statuses visible with action buttons */}
-      {/* TODO(BP20/§19): embed live forum component with coordinator=true prop */}
-      <div className="p-6 bg-muted rounded-lg text-center text-muted-foreground">
-        Forum view for group <strong>{groupId}</strong> — forum component loads here.
-      </div>
+      <h2 className="text-[18px] font-bold mb-4">Group Forum</h2>
+      <ForumTabClient groupId={groupId} />
     </section>
   );
 }

@@ -1,5 +1,9 @@
 // §19.3–19.4 — Forum message post with fail-closed Haiku moderation contract.
 //
+// GET /api/forums/:forumId/threads/:threadId/messages
+//   Returns all messages in the thread. Coordinators see every status;
+//   non-coordinators see only status='visible'.
+//
 // POST /api/forums/:forumId/threads/:threadId/messages
 //   Body: { content, parent_message_id? }
 //
@@ -21,6 +25,46 @@ import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { decideModerationStatus } from "@/lib/forums/moderation-status";
 import { respondToAuthError } from "@/lib/auth/respond";
+
+type RouteProps = { params: Promise<{ forumId: string; threadId: string }> };
+
+export async function GET(req: Request, { params }: RouteProps): Promise<Response> {
+  try {
+    const { ctx, user } = await assertPermission(req, { resource: "forums", action: "post_message" });
+    const svc = createServiceRoleClient();
+    const { forumId, threadId } = await params;
+
+    const { data: forum, error: forumErr } = await svc
+      .from("forums")
+      .select("coordinator_user_id, tenant_id")
+      .eq("id", forumId)
+      .eq("tenant_id", ctx.tenant_id)
+      .maybeSingle();
+    if (forumErr) return Response.json({ error: forumErr.message }, { status: 500 });
+    if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
+
+    const isCoordinator = forum.coordinator_user_id === user.id;
+
+    // Build base query; apply status filter before .order() so the Supabase
+    // builder chain terminates cleanly regardless of coordinator status.
+    let baseQuery = svc
+      .from("forum_messages")
+      .select("id, content, status, user_id, parent_message_id, created_at")
+      .eq("thread_id", threadId)
+      .eq("forum_id", forumId)
+      .eq("tenant_id", ctx.tenant_id);
+
+    if (!isCoordinator) {
+      baseQuery = baseQuery.eq("status", "visible");
+    }
+
+    const { data: messages, error } = await baseQuery.order("created_at", { ascending: true });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ messages: messages ?? [], is_coordinator: isCoordinator });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
+}
 
 interface ModerationScores {
   spam: number;
