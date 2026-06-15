@@ -468,6 +468,95 @@ describe("proxy()", () => {
     });
   });
 
+  // -- Login gate (§#1050) -----------------------------------------------
+
+  describe("login gate — /signup/complete and /onboarding/*", () => {
+    // Explicitly reset to unauthenticated after each prior describe block
+    // that may have called mocks.getUser.mockResolvedValue (vi.clearAllMocks
+    // resets call counts but not implementations).
+    beforeEach(() => {
+      mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    });
+
+    it("redirects unauthenticated request to /signup/complete → /auth/reauth on platform domain", async () => {
+      const res = await proxy(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/signup/complete" }),
+      );
+      expect(res.status).toBe(307);
+      const location = res.headers.get("location") ?? "";
+      expect(location).toContain("/auth/reauth");
+      expect(location).toContain(encodeURIComponent("/signup/complete"));
+    });
+
+    it("lets authenticated user through /signup/complete", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      const res = await proxy(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/signup/complete" }),
+      );
+      expect(res.status).not.toBe(307);
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
+    it("redirects unauthenticated request to /onboarding/profile on tenant subdomain → /auth/reauth", async () => {
+      // authUser === null is the deep-link case: a session on the platform domain
+      // is not available on the tenant subdomain (separate cookie scope).
+      const res = await proxy(
+        makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          pathname: "/onboarding/profile",
+        }),
+      );
+      expect(res.status).toBe(307);
+      const location = res.headers.get("location") ?? "";
+      expect(location).toContain("/auth/reauth");
+      expect(location).toContain(encodeURIComponent("/onboarding/profile"));
+    });
+
+    it("lets authenticated user through /onboarding/branding on tenant subdomain", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantBySlug.mockResolvedValue(payingTenant());
+      const res = await proxy(
+        makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          pathname: "/onboarding/branding",
+        }),
+      );
+      expect(res.status).not.toBe(307);
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("encodes query params in the return path when present", async () => {
+      // makeReq doesn't support a query string param directly; construct the
+      // request manually with a search param.
+      const url = "http://ai-travelconcierge.com/signup/complete?step=2";
+      const headers = new Headers();
+      headers.set("host", "ai-travelconcierge.com");
+      const req = new NextRequest(url, { headers });
+      const res = await proxy(req);
+      expect(res.status).toBe(307);
+      const location = res.headers.get("location") ?? "";
+      expect(location).toContain(encodeURIComponent("/signup/complete?step=2"));
+    });
+
+    it("does NOT gate non-gated platform paths when unauthenticated", async () => {
+      const res = await proxy(
+        makeReq({ host: "ai-travelconcierge.com", pathname: "/for-agencies" }),
+      );
+      expect(res.status).not.toBe(307);
+    });
+
+    it("gates /onboarding exact path (no trailing slash)", async () => {
+      const res = await proxy(
+        makeReq({
+          host: "atc-tenant1.ai-travelconcierge.com",
+          pathname: "/onboarding",
+        }),
+      );
+      expect(res.status).toBe(307);
+      expect(res.headers.get("location") ?? "").toContain("/auth/reauth");
+    });
+  });
+
   // -- Test bypass (Tier-2 E2E) -------------------------------------------
 
   describe("test bypass", () => {

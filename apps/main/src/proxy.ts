@@ -149,6 +149,18 @@ function isAdminPagePath(pathname: string): boolean {
   );
 }
 
+// §#1050 — pages that require an active session regardless of domain.
+// /signup/complete lives on the platform domain; /onboarding/* lives on
+// tenant subdomains. Both are "use client" pages with no server-side gate —
+// unauthenticated deep-links silently fail at submit without this check.
+function isLoginGatedPath(pathname: string): boolean {
+  return (
+    pathname === "/signup/complete" ||
+    pathname === "/onboarding" ||
+    pathname.startsWith("/onboarding/")
+  );
+}
+
 function hasSupabaseAuthCookie(req: NextRequest): boolean {
   for (const c of req.cookies.getAll()) {
     if (/^sb-.+-auth-token(\.\d+)?$/.test(c.name)) return true;
@@ -266,6 +278,20 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     (hostname !== primaryDomain || !hasSupabaseAuthCookie(req))
   ) {
     return applyRefreshedSession(notFound());
+  }
+
+  // 1d. Login gate (§#1050) — redirect unauthenticated visitors on gated paths
+  //     to /auth/reauth with a safe return path. Runs before tenant resolution
+  //     so unauthenticated deep-links skip the DB lookup entirely. Applies on
+  //     all domains: /signup/complete on the platform domain, /onboarding/* on
+  //     tenant subdomains. The /auth/reauth page renders relative OAuth links
+  //     so it establishes the session on whatever domain serves it.
+  if (isLoginGatedPath(pathname) && !authUser) {
+    const returnTo = pathname + (req.nextUrl.search || "");
+    const url = req.nextUrl.clone();
+    url.pathname = "/auth/reauth";
+    url.search = `?return=${encodeURIComponent(returnTo)}`;
+    return applyRefreshedSession(NextResponse.redirect(url));
   }
 
   // 2. Platform admin domain — passes through with "platform" sentinel.
