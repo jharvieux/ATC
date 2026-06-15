@@ -308,22 +308,30 @@ async function sendGroupInvitationEmail(args: {
       html,
     }),
   });
+
+  let resendMessageId: string | null = null;
+  let logStatus: "sent" | "rejected" = "rejected";
   if (resendResp.ok) {
     const resendData = await resendResp.json() as { id?: string };
-    await safeAwait(
-      args.svc.from("email_log").insert({
-        tenant_id: args.tenantId,
-        to_email: inv.invitee_email,
-        from_email: fromAddress,
-        subject: resolved.subject,
-        template_id: "group_invitation",
-        email_category: "group_invitation",
-        status: "sent",
-        sent_at: new Date().toISOString(),
-        resend_message_id: resendData.id ?? null,
-        related_group_id: args.group.id,
-      }),
-      "email_log.insert.group_invitation",
-    );
+    resendMessageId = resendData.id ?? null;
+    logStatus = "sent";
+  } else {
+    console.error(`[group-invitation] Resend returned ${resendResp.status} for inv=${args.invitationId}`);
   }
+
+  await safeAwait(
+    args.svc.from("email_log").insert({
+      tenant_id: args.tenantId,
+      to_email: inv.invitee_email,
+      from_email: fromAddress,
+      subject: resolved.subject,
+      template_id: "group_invitation",
+      email_category: "group_invitation",
+      status: logStatus,
+      sent_at: logStatus === "sent" ? new Date().toISOString() : null,
+      resend_message_id: resendMessageId,
+      related_group_id: args.group.id,
+    }),
+    "email_log.insert.group_invitation",
+  );
 }
