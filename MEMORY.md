@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-228 — 2026-06-15 — Resource-centric admin area gates (#1003)
+
+**Decision:** Replaced per-route `assertPlatformRole(req, [...])` with `assertPlatformAdminArea(req, "area")` backed by a single `ADMIN_AREA_GRANTS` matrix in `platform-admin-roles.ts`. Three scope narrowings per user decision: (1) `abuse`, `tenants`, `personas`, `persona_safety` → superadmin-only (reviewer removed); (2) `resource_util` → finance-only (support removed); (3) no other role changes. All ~45 API routes and 19 admin pages converted. Sidebar role guards synced. 9 new gate tests cover all narrowings. Shipped PR #1077.
+
+**Why:** User said: "they shouldn't see tenants or abuse or personas, everything else is ok; go resources centric; more restrictive." ADMIN_AREA_GRANTS is now the single source of truth — no role logic scattered across 65 files. TypeScript's `AdminArea = keyof typeof ADMIN_AREA_GRANTS` prevents a mistyped area string from compiling.
+
+**Rejected:** Keeping the role-array pattern (too scattered, too easy to create drift between route and page guards). Adding a `"service"` grant to non-RAG areas (service bearer is intentionally contained to `rag` only).
+
+**Related:** #1003 (issue), #1077 (PR). Follow-up: #1079 (Platform Admins sidebar item has no requiredRoles — pre-existing, separate fix). #1078 (retire db-migrate).
+
+---
+
 ## D-227 — 2026-06-14 — OAuth initiation forces account chooser (prompt=select_account); beta053 cut
 
 **Decision:** Added `queryParams: { prompt: "select_account" }` to the `signInWithOAuth` options in `oauth-initiate/route.ts` (PR #1049). Then cut `release/beta053` from dev carrying two fixes: #1048 (onboarding RBAC grants → fixes "forbidden" on legal accept) and #1049 (OAuth account chooser).
