@@ -151,7 +151,7 @@ beforeEach(() => {
     data: { id: "msg-1", thread_id: THREAD_ID, tenant_id: TENANT_ID, content: "Hello world!" },
     error: null,
   });
-  mocks.safeAwait.mockResolvedValue([{ id: "msg-1" }]);
+  mocks.safeAwait.mockResolvedValue(undefined);
   mocks.inngestSend.mockResolvedValue(undefined);
   mocks.writeAuditLog.mockResolvedValue(undefined);
 
@@ -224,6 +224,7 @@ describe("POST /api/forums/:forumId/threads/:threadId/messages — gate checks (
     const res = await POST(postReq(), PARAMS);
 
     expect(res.status).toBe(410);
+    expect((await res.json() as { error: string }).error).toBe("forum_read_only_post_sailing");
     expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
   });
 
@@ -242,6 +243,45 @@ describe("POST /api/forums/:forumId/threads/:threadId/messages — gate checks (
   it("permanently muted user → 403 before any write (canPost mute gate)", async () => {
     mocks.userStateMaybeSingle.mockResolvedValue({
       data: { is_muted: true, muted_until: null },
+      error: null,
+    });
+
+    const res = await POST(postReq(), PARAMS);
+
+    expect(res.status).toBe(403);
+    expect((await res.json() as { error: string }).error).toBe("posting_not_permitted");
+    expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
+  });
+
+  it("temporarily muted user (future expiry) → 403 before any write", async () => {
+    mocks.userStateMaybeSingle.mockResolvedValue({
+      data: { is_muted: true, muted_until: new Date(Date.now() + 3_600_000).toISOString() },
+      error: null,
+    });
+
+    const res = await POST(postReq(), PARAMS);
+
+    expect(res.status).toBe(403);
+    expect((await res.json() as { error: string }).error).toBe("posting_not_permitted");
+    expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
+  });
+
+  it("locked forum → 403 for non-coordinator (canPost forum lock gate)", async () => {
+    mocks.forumSingle.mockResolvedValue({
+      data: { ...OPEN_FORUM, is_locked: true },
+      error: null,
+    });
+
+    const res = await POST(postReq(), PARAMS);
+
+    expect(res.status).toBe(403);
+    expect((await res.json() as { error: string }).error).toBe("posting_not_permitted");
+    expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
+  });
+
+  it("locked thread → 403 for non-coordinator (canPost thread lock gate)", async () => {
+    mocks.threadSingle.mockResolvedValue({
+      data: { ...OPEN_THREAD, is_locked: true },
       error: null,
     });
 
