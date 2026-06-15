@@ -298,6 +298,21 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
     expect(mocks.messagesEqSpy).not.toHaveBeenCalledWith("status", "visible");
   });
 
+  it("returns 500 when forum lookup fails (not fail-open as non-coordinator)", async () => {
+    mocks.forumQuery.mockResolvedValue({
+      data: null,
+      error: { message: "db_error" },
+    });
+
+    const { GET } = await import("@/app/api/forums/[forumId]/threads/[threadId]/messages/route");
+    const res = await GET(
+      makeReq(`/api/forums/${FORUM_ID}/threads/${THREAD_ID}/messages`),
+      { params: Promise.resolve({ forumId: FORUM_ID, threadId: THREAD_ID }) },
+    );
+
+    expect(res.status).toBe(500);
+  });
+
   it("filters to visible-only for non-coordinator (route adds .eq(status, visible))", async () => {
     // Forum: user is NOT coordinator.
     mocks.forumQuery.mockResolvedValue({

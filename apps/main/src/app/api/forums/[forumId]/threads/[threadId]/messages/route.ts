@@ -34,12 +34,13 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     const svc = createServiceRoleClient();
     const { forumId, threadId } = await params;
 
-    const { data: forum } = await svc
+    const { data: forum, error: forumErr } = await svc
       .from("forums")
       .select("coordinator_user_id, tenant_id")
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
+    if (forumErr) return Response.json({ error: forumErr.message }, { status: 500 });
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     const isCoordinator = forum.coordinator_user_id === user.id;

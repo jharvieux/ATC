@@ -89,10 +89,14 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
       const res = await fetch(
         `/api/forums/${forum.forum_id}/threads/${thread.id}/messages`,
       );
-      if (res.ok) {
-        const data: { messages: Message[] } = await res.json();
-        setMessages(data.messages ?? []);
+      const data: { messages: Message[]; error?: string } = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? `Failed to load messages (${res.status})`);
+        return;
       }
+      setMessages(data.messages ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load messages");
     } finally {
       setMessagesLoading(false);
     }
