@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { BroadcastComposerClient } from "@/components/groups/BroadcastComposerClient";
+import { InviteesTabClient } from "@/components/groups/InviteesTabClient";
 
 const VALID_TABS = ["overview", "invitees", "edit", "preview-email", "forum"] as const;
 type Tab = (typeof VALID_TABS)[number];
@@ -88,33 +90,9 @@ function OverviewTab({ groupId }: { groupId: string }): React.ReactElement {
   );
 }
 
-function InviteesTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
-  return (
-    <section>
-      <h2 className="text-[18px] font-bold mb-4">Invitees</h2>
-      <p className="text-muted-foreground mb-4 text-[14px]">
-        Invitee management — mute, remove, or view RSVP status for each invited traveler.
-      </p>
-      <table className="w-full border-collapse text-[14px]">
-        <thead>
-          <tr className="border-b-2 border-border">
-            <th className="text-left px-3 py-2 text-foreground font-semibold">Name</th>
-            <th className="text-left px-3 py-2 text-foreground font-semibold">Email</th>
-            <th className="text-left px-3 py-2 text-foreground font-semibold">RSVP</th>
-            <th className="text-left px-3 py-2 text-foreground font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td colSpan={4} className="px-3 py-4 text-muted-foreground text-center">
-              {/* TODO(prompt-24): load invitees via /api/groups/:id/invitations */}
-              Loading invitees…
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-  );
+function InviteesTab({ groupId }: { groupId: string }): React.ReactElement {
+  // TODO(BP19/§18): full invitee management (mute via forum user state API)
+  return <InviteesTabClient groupId={groupId} />;
 }
 
 function EditTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
@@ -148,33 +126,33 @@ function EditTab({ groupId: _groupId }: { groupId: string }): React.ReactElement
   );
 }
 
-function PreviewEmailTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
+function PreviewEmailTab({ groupId }: { groupId: string }): React.ReactElement {
   return (
-    <section>
-      <h2 className="text-[18px] font-bold mb-4">Preview Invitation Email</h2>
-      <p className="text-muted-foreground mb-6 text-[14px]">
-        This is how the invitation email will appear to invitees.
-      </p>
+    <div className="flex flex-col gap-10">
+      <BroadcastComposerClient groupId={groupId} />
 
-      {/* Mounts the same GroupBroadcast template the broadcast send uses,
-          so the structural layout matches what recipients will see. The
-          live send fills in real branding + subject/message; here we
-          show placeholder strings. */}
-      <div className="border border-border rounded-lg bg-muted overflow-hidden">
-        <GroupBroadcast
-          branding={{}}
-          tenant_legal_name="[Your Agency]"
-          tenant_business_address="[Your mailing address]"
-          unsubscribe_url="/settings/notifications"
-          subject="You're invited to a group cruise!"
-          message={
-            "[Coordinator message will appear here]\n\nReply to this email or " +
-            "use the link in your invitation to RSVP."
-          }
-          group_name="[Cruise Line] — [Ship Name]"
-        />
-      </div>
-    </section>
+      <section>
+        <h2 className="text-[18px] font-bold mb-2">Email preview</h2>
+        <p className="text-muted-foreground mb-4 text-[14px]">
+          Layout your invitees will see (placeholder content).
+        </p>
+        {/* Same GroupBroadcast template the live send renders. */}
+        <div className="border border-border rounded-lg bg-muted overflow-hidden">
+          <GroupBroadcast
+            branding={{}}
+            tenant_legal_name="[Your Agency]"
+            tenant_business_address="[Your mailing address]"
+            unsubscribe_url="/settings/notifications"
+            subject="You're invited to a group cruise!"
+            message={
+              "[Coordinator message will appear here]\n\nReply to this email or " +
+              "use the link in your invitation to RSVP."
+            }
+            group_name="[Cruise Line] — [Ship Name]"
+          />
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -187,9 +165,9 @@ function ForumTab({ groupId }: { groupId: string }): React.ReactElement {
       </p>
 
       {/* §19.7 coordinator privileges: all statuses visible with action buttons */}
-      {/* TODO(prompt-24): embed live forum component with coordinator=true prop */}
+      {/* TODO(BP20/§19): embed live forum component with coordinator=true prop */}
       <div className="p-6 bg-muted rounded-lg text-center text-muted-foreground">
-        Forum view for group <strong>{groupId}</strong> — forum component loads here (prompt-24).
+        Forum view for group <strong>{groupId}</strong> — forum component loads here.
       </div>
     </section>
   );
