@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   threadsQuery: vi.fn(),
   threadInsert: vi.fn(),
   messagesQuery: vi.fn(),
+  messagesEqSpy: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/assert-permission", async () => {
@@ -82,10 +83,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
         };
       }
       if (table === "forum_messages") {
-        // Self-referential chain: .eq() returns itself; .order() is the terminal mock.
-        // Handles both 3-eq (coordinator) and 4-eq (non-coordinator + status filter) paths.
+        // Self-referential chain: .eq() records calls so tests can assert the
+        // status="visible" filter is applied for non-coordinators; .order() is terminal.
         const msgChain: Record<string, unknown> = {};
-        msgChain.eq = () => msgChain;
+        msgChain.eq = (col: string, val: unknown) => { mocks.messagesEqSpy(col, val); return msgChain; };
         msgChain.order = mocks.messagesQuery;
         return { select: () => msgChain };
       }
@@ -293,6 +294,8 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
     const body: { messages: unknown[]; is_coordinator: boolean } = await res.json();
     expect(body.is_coordinator).toBe(true);
     expect(body.messages).toHaveLength(2);
+    // Coordinator path must NOT add a status filter.
+    expect(mocks.messagesEqSpy).not.toHaveBeenCalledWith("status", "visible");
   });
 
   it("filters to visible-only for non-coordinator (route adds .eq(status, visible))", async () => {
@@ -301,7 +304,6 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
       data: { coordinator_user_id: "other-user", tenant_id: TENANT_ID },
       error: null,
     });
-    // Only visible message returned (filter applied at DB level).
     mocks.messagesQuery.mockResolvedValue({
       data: [{ id: "m1", content: "Hi", status: "visible", user_id: "u2", parent_message_id: null, created_at: "2026-01-01T00:00:00Z" }],
       error: null,
@@ -317,5 +319,7 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
     const body: { messages: unknown[]; is_coordinator: boolean } = await res.json();
     expect(body.is_coordinator).toBe(false);
     expect(body.messages).toHaveLength(1);
+    // Security-critical: non-coordinator path MUST apply .eq("status", "visible").
+    expect(mocks.messagesEqSpy).toHaveBeenCalledWith("status", "visible");
   });
 });
