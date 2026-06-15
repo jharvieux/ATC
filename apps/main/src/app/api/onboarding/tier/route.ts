@@ -7,18 +7,14 @@ import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { TIER_CODE } from "@/lib/stripe/tier-codes";
+import type { TenantType } from "@/lib/stripe/price-ids";
 
 interface TierSelectionBody {
   tier: "starter" | "pro" | "agency";
   billing_period: "monthly" | "annual";
   seat_count: number;
 }
-
-// Maps {tenant_type, tier} → tier_definitions.code per §3.3.
-const TIER_CODE: Record<string, Record<string, string>> = {
-  byo_host: { starter: "byo_research", pro: "byo_professional", agency: "byo_agency" },
-  sub_host: { starter: "sub_starter",  pro: "sub_pro",          agency: "sub_agency"  },
-};
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -50,7 +46,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
     if (tenantErr) return Response.json({ error: tenantErr.message }, { status: 500 });
 
-    const tierCode = TIER_CODE[tenantRow?.tenant_type ?? ""]?.[body.tier];
+    const tierCode = TIER_CODE[tenantRow?.tenant_type as TenantType]?.[body.tier];
     if (!tierCode) {
       return Response.json({ error: "invalid_tier_for_tenant_type" }, { status: 422 });
     }

@@ -13,23 +13,7 @@ import { withVendorHealthGate } from "@/lib/vendor-health/gate";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
-import type { TenantTierCode } from "@/lib/abuse/revenue";
-
-// Maps {tenant_type, tier} → tier_definitions.code (§3.3).
-const TIER_CODE: Record<TenantType, Record<Tier, TenantTierCode>> = {
-  byo_host: { starter: "byo_research", pro: "byo_professional", agency: "byo_agency" },
-  sub_host: { starter: "sub_starter",  pro: "sub_pro",          agency: "sub_agency" },
-};
-
-// Reverse: tier_definitions.code → bare Tier for priceIdFor.
-const CODE_TO_TIER: Record<string, Tier> = {
-  byo_research:     "starter",
-  byo_professional: "pro",
-  byo_agency:       "agency",
-  sub_starter:      "starter",
-  sub_pro:          "pro",
-  sub_agency:       "agency",
-};
+import { TIER_CODE, CODE_TO_TIER } from "@/lib/stripe/tier-codes";
 
 function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -212,7 +196,7 @@ export async function POST(req: Request): Promise<Response> {
       const { data: tierDef, error: tierErr } = await srDb.from("tier_definitions").select("code").eq("id", tenant.tier_id).maybeSingle();
       if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
       if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
-      const tier = CODE_TO_TIER[tierDef.code];
+      const tier = CODE_TO_TIER[tierDef.code as keyof typeof CODE_TO_TIER];
       if (!tier) return Response.json({ error: "unrecognized_tier_code" }, { status: 500 });
       const basePriceId = priceIdFor({ tenant_type: tenantType, tier, billing_period: "annual", line_item: "base" });
 

@@ -7,18 +7,9 @@ import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { priceIdFor } from "@/lib/stripe/price-ids";
-import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
+import type { TenantType, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
-
-// Maps tier_definitions.code (type-prefixed) → bare Tier for priceIdFor (§3.3 / §15.8).
-const CODE_TO_TIER: Record<string, Tier> = {
-  byo_research:     "starter",
-  byo_professional: "pro",
-  byo_agency:       "agency",
-  sub_starter:      "starter",
-  sub_pro:          "pro",
-  sub_agency:       "agency",
-};
+import { CODE_TO_TIER } from "@/lib/stripe/tier-codes";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -45,7 +36,7 @@ export async function POST(req: Request): Promise<Response> {
     if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
     if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
-    const tier = CODE_TO_TIER[tierDef.code];
+    const tier = CODE_TO_TIER[tierDef.code as keyof typeof CODE_TO_TIER];
     if (!tier) return Response.json({ error: "unrecognized_tier_code" }, { status: 500 });
     const tenantType = tenant.tenant_type as TenantType;
     const billingPeriod = (tenant.billing_period ?? "monthly") as BillingPeriod;
