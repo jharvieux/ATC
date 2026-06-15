@@ -237,8 +237,12 @@ describe("POST /api/tenant/billing §15.15", () => {
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "change_tier", tier: "pro" }));
     expect(res.status).toBe(200);
+    expect(vi.mocked(mockSafeAwait)).toHaveBeenCalled();
     expect(vi.mocked(mockInngestSend)).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "tenant.subscription_changed", data: expect.objectContaining({ change: "tier" }) }),
+      expect.objectContaining({
+        name: "tenant.subscription_changed",
+        data: expect.objectContaining({ change: "tier", new_tier: "pro" }),
+      }),
     );
   });
 
@@ -258,8 +262,12 @@ describe("POST /api/tenant/billing §15.15", () => {
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
     expect(res.status).toBe(200);
+    expect(vi.mocked(mockSafeAwait)).toHaveBeenCalled();
     expect(vi.mocked(mockInngestSend)).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "tenant.subscription_changed", data: expect.objectContaining({ change: "seats" }) }),
+      expect.objectContaining({
+        name: "tenant.subscription_changed",
+        data: expect.objectContaining({ change: "seats", new_seat_count: 3 }),
+      }),
     );
   });
 
@@ -280,8 +288,9 @@ describe("POST /api/tenant/billing §15.15", () => {
     const res = await POST(postRequest({ action: "switch_billing_period", billing_period: "monthly" }));
     expect(res.status).toBe(200);
     expect(vi.mocked(mockStripeSubscriptionsUpdate)).not.toHaveBeenCalled();
-    const body = await res.json() as { ok: boolean };
+    const body = await res.json() as { ok: boolean; billing_period: string };
     expect(body.ok).toBe(true);
+    expect(body.billing_period).toBe("monthly");
   });
 
   it("switch_billing_period: annual→monthly deferred to renewal — immediate downgrade not supported", async () => {
@@ -335,5 +344,6 @@ describe("POST /api/tenant/billing §15.15", () => {
       expect.objectContaining({ billing_period: "annual" }),
     );
     expect(vi.mocked(mockStripeSubscriptionsUpdate)).toHaveBeenCalled();
+    expect(vi.mocked(mockSafeAwait)).toHaveBeenCalled();
   });
 });
