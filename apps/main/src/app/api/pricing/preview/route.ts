@@ -5,18 +5,13 @@
 
 import { calculateAgencySeatPreviewCents } from "@/lib/stripe/price-ids";
 import type { BillingPeriod, Tier, TenantType } from "@/lib/stripe/price-ids";
+import { TIER_BASE_PRICE_CENTS } from "@/lib/abuse/revenue";
+import type { TenantTierCode } from "@/lib/abuse/revenue";
 
-const FLAT_RATES_MONTHLY_CENTS: Record<TenantType, Partial<Record<Tier, number>>> = {
-  sub_host: {
-    starter: 9900,  // $99/month placeholder — actual value from Stripe
-    pro:     19900, // $199/month placeholder
-    agency:  29900, // $299/month base placeholder
-  },
-  byo_host: {
-    starter: 4900,  // $49/month placeholder
-    pro:     9900,  // $99/month placeholder
-    agency:  19900, // $199/month placeholder
-  },
+// Maps {tenant_type, tier} → tier_definitions.code (§3.3 / TIER_CODE in tier/route.ts).
+const TIER_CODE: Record<TenantType, Record<Tier, TenantTierCode>> = {
+  byo_host: { starter: "byo_research", pro: "byo_professional", agency: "byo_agency" },
+  sub_host: { starter: "sub_starter",  pro: "sub_pro",          agency: "sub_agency" },
 };
 
 export async function GET(req: Request): Promise<Response> {
@@ -40,8 +35,10 @@ export async function GET(req: Request): Promise<Response> {
 
   const seatCount = isNaN(seats) || seats < 1 ? 1 : seats;
 
-  const baseMonthly = FLAT_RATES_MONTHLY_CENTS[tenantType]?.[tier] ?? 0;
-  const baseTotal = billingPeriod === "annual" ? baseMonthly * 10 : baseMonthly;
+  const tierCode = TIER_CODE[tenantType]?.[tier];
+  if (!tierCode) return Response.json({ error: "invalid_tier_for_tenant_type" }, { status: 422 });
+  const basePrices = TIER_BASE_PRICE_CENTS[tierCode];
+  const baseTotal = billingPeriod === "annual" ? basePrices.annual : basePrices.monthly;
 
   let additionalSeatCents = 0;
   if (tier === "agency" && seatCount > 1) {

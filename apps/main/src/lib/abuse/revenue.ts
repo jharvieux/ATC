@@ -28,7 +28,7 @@ export interface TenantRevenueSnapshot {
 
 // Per-tier base + ladder. Values in cents (BigInt-safe input).
 // Cents = dollars × 100.
-const TIER_BASE_PRICE_CENTS: Record<TenantTierCode, { monthly: number; annual: number }> = {
+export const TIER_BASE_PRICE_CENTS: Record<TenantTierCode, { monthly: number; annual: number }> = {
   byo_research:     { monthly:  1900, annual:  19000 },
   byo_professional: { monthly:  5900, annual:  59000 },
   byo_agency:       { monthly:  9900, annual:  99000 },
@@ -41,7 +41,7 @@ const TIER_BASE_PRICE_CENTS: Record<TenantTierCode, { monthly: number; annual: n
 // First seat is included in base; this ladder prices seats 2+.
 // Each entry is { upTo: inclusive seat number, monthlyCents, annualCents }.
 // "upTo: Infinity" is the final band.
-const SEAT_LADDER: Array<{ upTo: number; monthly: number; annual: number }> = [
+export const SEAT_LADDER: Array<{ upTo: number; monthly: number; annual: number }> = [
   { upTo:  4, monthly: 5900, annual: 59000 }, // users 2–4
   { upTo: 10, monthly: 4900, annual: 49000 }, // users 5–10
   { upTo: Infinity, monthly: 3900, annual: 39000 }, // users 11+

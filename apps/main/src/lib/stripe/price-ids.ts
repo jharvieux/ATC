@@ -4,6 +4,7 @@
 // Price IDs are loaded from env vars. All references go through priceIdFor().
 
 import { env } from "@/lib/env";
+import { SEAT_LADDER } from "@/lib/abuse/revenue";
 
 export type TenantType = "sub_host" | "byo_host";
 export type Tier = "starter" | "pro" | "agency";
@@ -50,32 +51,23 @@ export function priceIdFor(query: PriceIdQuery): string {
   return priceId;
 }
 
-/**
- * Preview pricing for the Agency tier seat ladder.
- * Per §3.3: $59/seat (1), $49/seat (2-5), $39/seat (6+) — monthly.
- * Annual: same ladder × 10 (2 months free).
- */
+// SEAT_LADDER is indexed by total seat number; this function receives the count of
+// ADDITIONAL seats (caller passes seatCount - 1, since seat 1 is covered by the base price).
 export function calculateAgencySeatPreviewCents(
-  seatCount: number,
+  additionalSeats: number,
   billingPeriod: BillingPeriod,
 ): number {
-  const BANDS = [
-    { upTo: 1,   rateMonthly: 5900 },  // $59/seat/month
-    { upTo: 5,   rateMonthly: 4900 },  // $49/seat/month
-    { upTo: Infinity, rateMonthly: 3900 }, // $39/seat/month
-  ];
-
-  let totalCents = 0;
-  let remaining = seatCount;
-  let prevThreshold = 0;
-
-  for (const band of BANDS) {
+  if (additionalSeats <= 0) return 0;
+  let total = 0;
+  let remaining = additionalSeats;
+  let prevTotalSeat = 1; // seat 1 is base; ladder bands start at seat 2
+  for (const band of SEAT_LADDER) {
     if (remaining <= 0) break;
-    const inBand = Math.min(remaining, band.upTo - prevThreshold);
-    totalCents += inBand * band.rateMonthly;
-    remaining -= inBand;
-    prevThreshold = band.upTo;
+    const capacity = band.upTo === Infinity ? remaining : band.upTo - prevTotalSeat;
+    const seatsInBand = Math.min(remaining, capacity);
+    total += seatsInBand * (billingPeriod === "annual" ? band.annual : band.monthly);
+    remaining -= seatsInBand;
+    if (band.upTo !== Infinity) prevTotalSeat = band.upTo;
   }
-
-  return billingPeriod === "annual" ? totalCents * 10 : totalCents;
+  return total;
 }
