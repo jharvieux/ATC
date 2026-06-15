@@ -64,6 +64,11 @@ export default function OnboardingIcaPage() {
 
     const data = await res.json();
     if (!res.ok) {
+      if (data.error === "reauth_required") {
+        setSubmitting(false);
+        router.push("/auth/reauth?return=/onboarding/ica");
+        return;
+      }
       const msg = data.error === "name_mismatch"
         ? "Name does not match your legal business name. Please type it exactly."
         : data.error ?? "Submission failed";

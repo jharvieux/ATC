@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-233 — 2026-06-15 — Supabase JWT uses amr[].timestamp, not auth_time (PR #1104)
+
+`readAuthTime` in `assert-permission.ts` read `auth_time` from the Supabase JWT, which GoTrue does not emit. GoTrue uses `amr[].timestamp` (Authentication Methods References, RFC 8176) as the authentication timestamp. This caused ALL sensitive routes to unconditionally return `reauth_required` even for brand-new sessions. Fixed by falling back to max `amr[].timestamp` when `auth_time` is absent. `auth_time` is still checked first for custom-hook forward-compatibility.
+
+Affected routes: `/api/onboarding/ica`, `/api/tenant/billing`, `/api/commissions`, `/api/user/data`.
+
+7 unit tests added: `test/unit/auth/read-auth-time.test.ts`.
+
+---
+
 ## D-232 — 2026-06-15 — group.invitations permission matrix gap (issue #1091, PR #1096)
 
 `group.invitations:list` and `group.invitations:manage` were never added to `permission-grants.ts` when the invitations API routes were built. `isPermitted` returned `false` for every role → every coordinator got 403 on GET/POST to `/api/groups/:id/invitations`. Unit tests mocked `assertPermission` so the gap wasn't caught.

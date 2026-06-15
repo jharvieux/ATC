@@ -372,21 +372,40 @@ async function assertPermissionWithPAT(
 }
 
 /**
- * Reads the JWT `auth_time` claim (Unix seconds). Returns null if the
- * claim is missing or the JWT is malformed. We do NOT verify the signature
- * here — Supabase auth already did in getUser().
+ * Reads the authentication timestamp (Unix seconds) from a Supabase JWT.
+ * Supabase GoTrue does not emit `auth_time`; the equivalent is the most
+ * recent `amr[].timestamp` entry. We check `auth_time` first for forward
+ * compatibility with custom auth hooks that may set it explicitly.
+ * Returns null if neither is present or the JWT is malformed.
+ * We do NOT verify the signature — Supabase auth already did in getUser().
  */
-function readAuthTime(jwt: string): number | null {
+export function readAuthTime(jwt: string): number | null {
   const parts = jwt.split(".");
   if (parts.length !== 3) return null;
   try {
     const payload = JSON.parse(
       Buffer.from(parts[1]!, "base64").toString("utf8"),
     ) as Record<string, unknown>;
+
     const auth_time = payload.auth_time;
-    return typeof auth_time === "number" && Number.isFinite(auth_time)
-      ? auth_time
-      : null;
+    if (typeof auth_time === "number" && Number.isFinite(auth_time)) {
+      return auth_time;
+    }
+
+    // Supabase uses amr[].timestamp — take the most recent entry.
+    const amr = payload.amr;
+    if (Array.isArray(amr) && amr.length > 0) {
+      let latest = 0;
+      for (const entry of amr) {
+        if (entry && typeof entry === "object") {
+          const ts = (entry as Record<string, unknown>).timestamp;
+          if (typeof ts === "number" && ts > latest) latest = ts;
+        }
+      }
+      if (latest > 0) return latest;
+    }
+
+    return null;
   } catch {
     return null;
   }
