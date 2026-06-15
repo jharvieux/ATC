@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "@atc/config": "workspace:*",
-    "@tailwindcss/postcss": "^4.3.0",
+    "@tailwindcss/postcss": "^4.3.1",
     "@types/big.js": "^7.0.0",
     "@types/node": "^25.9.3",
     "@types/react": "^18.3.18",
@@ -64,7 +64,7 @@
     "eslint-config-next": "^16.2.9",
     "eslint-plugin-atc": "workspace:*",
     "postcss": "^8.5.1",
-    "tailwindcss": "^4.3.0",
+    "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3"
   }
 }

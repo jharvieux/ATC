@@ -70,7 +70,7 @@
     "@vitest/coverage-v8": "^4.1.8",
     "inngest": "^4.5.1",
     "jsdom": "^29.1.1",
-    "jscpd": "^5.0.7",
+    "jscpd": "^5.0.9",
     "knip": "^6.16.1",
     "lighthouse": "^13.4.0",
     "msw": "^2.14.6",
