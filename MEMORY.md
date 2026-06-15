@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-235 — 2026-06-15 — tier_not_found on plan selection — dual bug fix (PR #1109)
+
+`/api/onboarding/tier` had two bugs causing `tier_not_found` for all tenants:
+1. Queried `tier_definitions` by `.eq("slug", body.tier)` — column `slug` doesn't exist; the column is `code`.
+2. Passed bare tier names (`agency`) as the code value — `tier_definitions.code` uses type-prefixed slugs (`byo_agency`, `sub_agency`) per §3.3.
+
+**Decision**: Added `TIER_CODE` map (`Record<tenant_type, Record<tier, code>>`) at module scope; route reads `tenant_type` from `tenants`, resolves the prefixed code, then queries `tier_definitions.eq("code", tierCode)`. Also switched from service-role client to `tenantClient` and wrapped the `tenants.update` in `safeAwaitRowCount(..., 1)` per D-091.
+
+**Deferred**: Unit test coverage for this route — tracked in issue #1110.
+
+**What was rejected**: Looked up `tier_definitions` by primary key (would require storing tier IDs client-side) and adding a `slug` column as a denorm alias (unnecessary given the code column already carries unique values).
+
+---
+
 ## D-234 — 2026-06-15 — BYO hosts skip ica/tax_form/connect_setup onboarding stages (PR #1107)
 
 BYO tenants (`byo_host`) are independent agents with their own host agency. They have no ICA contract, no W-9/tax requirement, and no Stripe Connect payout setup. Routing them through sub-host-only stages produced `internal_error` on the Stripe Connect link call.

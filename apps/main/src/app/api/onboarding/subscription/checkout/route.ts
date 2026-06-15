@@ -5,11 +5,20 @@
 
 import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
-import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { priceIdFor } from "@/lib/stripe/price-ids";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
+
+// Maps tier_definitions.code (type-prefixed) → bare Tier for priceIdFor (§3.3 / §15.8).
+const CODE_TO_TIER: Record<string, Tier> = {
+  byo_research:     "starter",
+  byo_professional: "pro",
+  byo_agency:       "agency",
+  sub_starter:      "starter",
+  sub_pro:          "pro",
+  sub_agency:       "agency",
+};
 
 const FAR_FUTURE_TRIAL_END = 4102444800; // 2099-12-31 UTC
 
@@ -29,13 +38,17 @@ export async function POST(req: Request): Promise<Response> {
 
     if (error || !tenant) return Response.json({ error: error?.message ?? "not_found" }, { status: 500 });
 
-    const { data: tierDef } = await srDb
+    const { data: tierDef, error: tierErr } = await srDb
       .from("tier_definitions")
-      .select("slug")
+      .select("code")
       .eq("id", tenant.tier_id)
       .maybeSingle();
 
-    const tier = (tierDef?.slug ?? "starter") as Tier;
+    if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
+    if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
+
+    const tier = CODE_TO_TIER[tierDef.code];
+    if (!tier) return Response.json({ error: "unrecognized_tier_code" }, { status: 500 });
     const tenantType = tenant.tenant_type as TenantType;
     const billingPeriod = (tenant.billing_period ?? "monthly") as BillingPeriod;
     const seatCount = tenant.seat_count ?? 1;
@@ -53,9 +66,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const stripe = new Stripe(stripeKey);
 
-    const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-      ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin
-      : "https://localhost:3000";
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
     const sessionParams: Parameters<typeof stripe.checkout.sessions.create>[0] = {
       mode: "subscription",
