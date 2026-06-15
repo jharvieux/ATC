@@ -28,9 +28,11 @@ vi.mock("@/lib/auth/assert-permission", () => ({
 }));
 
 vi.mock("@/lib/auth/respond", () => ({
-  respondToAuthError: vi.fn((err: unknown) =>
-    Response.json({ error: String(err) }, { status: 401 }),
-  ),
+  respondToAuthError: vi.fn((err: unknown) => {
+    const msg = String(err);
+    const isAuthError = msg.includes("auth") || msg.includes("forbidden") || msg.includes("consent");
+    return Response.json({ error: msg }, { status: isAuthError ? 401 : 500 });
+  }),
 }));
 
 vi.mock("@/lib/onboarding/state-machine", () => ({
@@ -157,13 +159,13 @@ describe("POST /api/onboarding/tier §15.8", () => {
     expect(body.error).toBe("tier_definition_missing");
   });
 
-  it("safeAwaitRowCount throw propagates — zero-row update must surface, not be swallowed", async () => {
+  it("safeAwaitRowCount throw propagates as 500 — zero-row update must surface, not be swallowed", async () => {
     tenantData = { tenant_type: "byo_host" };
     tierData = { id: "tier-1" };
     mockSafeAwaitRowCount.mockRejectedValueOnce(new Error("row_count_mismatch"));
     const { POST } = await import("@/app/api/onboarding/tier/route");
     const res = await POST(postRequest());
-    expect(res.status).not.toBe(200);
+    expect(res.status).toBe(500);
     expect(vi.mocked(mockProgressTo)).not.toHaveBeenCalled();
   });
 
