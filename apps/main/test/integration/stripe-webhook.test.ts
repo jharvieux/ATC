@@ -32,6 +32,7 @@ function buildSignedEvent(
   secret: string,
   eventType: string,
   eventId: string,
+  dataObject: Record<string, unknown> = {},
 ): { body: string; signature: string } {
   const timestamp = Math.floor(Date.now() / 1000);
   const event = {
@@ -40,7 +41,7 @@ function buildSignedEvent(
     type: eventType,
     api_version: "2024-04-10",
     created: timestamp,
-    data: { object: {} },
+    data: { object: dataObject },
     livemode: false,
     pending_webhooks: 0,
     request: { id: null, idempotency_key: null },
@@ -131,6 +132,41 @@ describeIf("Stripe webhook handler", () => {
       STRIPE_WEBHOOK_SECRET!,
       "some.unknown.event.type",
       eventId,
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    const { data, error } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+
+    expect(error).toBeNull();
+    expect(data?.processing_outcome).toBe("unhandled");
+  });
+
+  it("transfer.reversed for an unknown transfer reverses 0 rows → outcome 'unhandled', 200", async () => {
+    // §14.9 — the reversal UPDATE is guarded by stripe_transfer_id + status='paid'.
+    // A transfer id that matches no payout_records row must NOT throw (which would
+    // make Stripe retry the clawback forever); 0 rows matched → outcome 'unhandled'
+    // → 200. Asserting against the real DB proves the guarded UPDATE is benign.
+    const eventId = `evt_reversed_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: `tr_nonexistent_${randomUUID().slice(0, 8)}` },
     );
 
     const req = new Request("http://localhost/api/webhooks/stripe/platform", {

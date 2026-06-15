@@ -21,8 +21,12 @@ const mocks = vi.hoisted(() => ({
   tenantRow: { stripe_connect_account_id: "acct_test_1" } as { stripe_connect_account_id: string | null } | null,
   /** Whether tryAcquirePayoutLock should succeed. */
   lockAcquired: true,
-  /** Whether the post-Stripe DB update (stripe_transfer_id write) returns an error. */
-  postTransferUpdateError: null as { code?: string; message: string } | null,
+  /** Payloads captured from every payout_records.update() call. */
+  updatePayloads: [] as Array<Record<string, unknown>>,
+  /** Rows the post-transfer settle CAS chain reports as updated. */
+  settleRows: [{ id: "payout-1" }] as Array<{ id: string }>,
+  /** Error the settle CAS chain returns (drives safeAwait throw). */
+  settleError: null as { message: string } | null,
   /** Whether Stripe's transfers.create throws. */
   stripeThrows: false,
 }));
@@ -45,9 +49,12 @@ vi.mock("@/lib/db/service-role-client", () => ({
             };
             return chain;
           },
-          // CAS lock + post-transfer update both come through here.
-          update(_payload: unknown) {
-            void _payload;
+          // Two CAS chains come through here, both .update().eq().eq().select("id"):
+          //   - lock acquire: { status: "processing" }
+          //   - settle:       { status: "paid", stripe_transfer_id, settled_at }
+          // The Stripe-error → 'failed' write resolves via .then() (no .select).
+          update(payload: Record<string, unknown>) {
+            mocks.updatePayloads.push(payload);
             const chain: Record<string, unknown> = {
               eq(_col: string, _val: string) {
                 void _col; void _val;
@@ -55,15 +62,16 @@ vi.mock("@/lib/db/service-role-client", () => ({
               },
               select(_cols: string) {
                 void _cols;
-                // CAS lock path: tryAcquirePayoutLock chains .select("id").
+                if (payload.status === "paid") {
+                  return Promise.resolve({ data: mocks.settleRows, error: mocks.settleError });
+                }
                 return Promise.resolve({
                   data: mocks.lockAcquired ? [{ id: "payout-1" }] : [],
                   error: null,
                 });
               },
               then(resolve: (v: { data: unknown; error: unknown }) => unknown) {
-                // Non-CAS update path (the post-Stripe write).
-                return resolve({ data: null, error: mocks.postTransferUpdateError });
+                return resolve({ data: null, error: null });
               },
             };
             return chain;
@@ -135,7 +143,9 @@ beforeEach(() => {
   ];
   mocks.tenantRow = { stripe_connect_account_id: "acct_test_1" };
   mocks.lockAcquired = true;
-  mocks.postTransferUpdateError = null;
+  mocks.updatePayloads = [];
+  mocks.settleRows = [{ id: "payout-1" }];
+  mocks.settleError = null;
   mocks.stripeThrows = false;
 });
 
@@ -160,6 +170,27 @@ describe("runPayoutsExecuteTransfer — Pattern 1 (DB-fail on stripe_transfer_id
     const result = await runPayoutsExecuteTransfer();
     expect(result.processed).toBe(1);
     expect(result.failed).toBe(0);
+    expect(result.total).toBe(1);
+  });
+
+  it("settles the row to 'paid' in the same step as the transfer (§14.7, no transfer.paid)", async () => {
+    await runPayoutsExecuteTransfer();
+    const settle = mocks.updatePayloads.find((p) => p.status === "paid");
+    expect(settle).toBeDefined();
+    expect(settle).toMatchObject({ status: "paid", stripe_transfer_id: "tr_test_1" });
+    expect(typeof settle?.settled_at).toBe("string");
+  });
+
+  it("0-row settle (concurrent reconcile won the race) does NOT throw, still counts processed", async () => {
+    mocks.settleRows = [];
+    const result = await runPayoutsExecuteTransfer();
+    expect(result.processed).toBe(1);
+  });
+
+  it("genuine DB error during settle is caught (leave in 'processing') — not counted as processed", async () => {
+    mocks.settleError = { message: "deadlock detected" };
+    const result = await runPayoutsExecuteTransfer();
+    expect(result.processed).toBe(0);
     expect(result.total).toBe(1);
   });
 

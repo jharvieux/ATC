@@ -53,6 +53,16 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const chain = {
             eq() { return chain; },
             in() { return chain; },
+            // transfer.reversed settles via .update().eq().eq().select("id");
+            // tenant updates resolve the chain directly via .then().
+            select(_cols: string) {
+              void _cols;
+              return {
+                then(resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) {
+                  return resolve(dbBehavior.updateResult);
+                },
+              };
+            },
             then(resolve: (v: { data: unknown; error: { message: string } | null }) => unknown) {
               return resolve(dbBehavior.updateResult);
             },
@@ -149,12 +159,10 @@ const FIXED_HANDLER_EVENTS: Array<{
   prep?: () => void;
 }> = [
   {
-    type: "transfer.paid",
+    // transfer.reversed settles via .update().eq().eq().select("id") — its DB
+    // error surfaces through the update chain, not a pre-SELECT.
+    type: "transfer.reversed",
     data: { id: "tr_1" },
-    // transfer.paid finds rows via select(...).eq().eq() and the array thenable.
-    prep: () => {
-      dbBehavior.selectResult["array"] = { data: [{ id: "p-1" }], error: null };
-    },
   },
   {
     type: "checkout.session.completed",
@@ -232,11 +240,4 @@ describe("Stripe webhook — D-091 P1 #1 error propagation", () => {
       expect(res.status, `${type} SELECT error should return 500`).toBe(500);
     });
   }
-
-  it("#717: returns 500 when payout_records SELECT fails on transfer.paid", async () => {
-    setEvent("transfer.paid", { id: "tr_1" });
-    dbBehavior.selectResult["array"] = { data: null, error: { message: "synthetic SELECT error on transfer.paid" } };
-    const res = await handleStripeWebhook(makeRequest(), "platform");
-    expect(res.status, "transfer.paid payout_records SELECT error should return 500").toBe(500);
-  });
 });

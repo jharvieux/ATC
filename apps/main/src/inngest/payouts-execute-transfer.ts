@@ -1,9 +1,16 @@
 // §14.7 — Stripe Connect transfer job with deterministic idempotency contract.
 //
-// CRITICAL ORDER: DB write FIRST, then Stripe call. This is NOT a preference.
-// If DB write fails → return early, no Stripe call.
-// If Stripe call fails with network timeout → leave row in 'processing'.
-//   The reconciliation cron (payouts-reconcile-processing) is the recovery path.
+// CRITICAL ORDER: DB write FIRST (lock to 'processing'), then Stripe call. This
+// is NOT a preference. If the lock write fails → skip, no Stripe call. If the
+// Stripe call fails with a network timeout → leave the row in 'processing'; the
+// reconciliation cron (payouts-reconcile-processing) is the recovery path.
+//
+// SETTLEMENT IS SYNCHRONOUS. In Stripe's separate charges-and-transfers model a
+// Transfer settles the instant transfers.create() returns — modern Stripe never
+// delivers a transfer.paid webhook. So once the transfer is created we move the
+// row 'processing' → 'paid' (settled_at=now) in the SAME step, guarded by
+// .eq("status","processing") so a concurrent reconcile/admin path can't be
+// clobbered. transfer.reversed (clawback) is the only transfer webhook now wired.
 //
 // Idempotency key format: payout-{payoutRecord.id}-gen{attempt_generation}
 // attempt_generation is NEVER auto-incremented by reconciliation — only by operator reset.
@@ -152,11 +159,27 @@ export async function runPayoutsExecuteTransfer(): Promise<{ processed: number; 
           { idempotencyKey },
         );
 
-        // Step 3: Write stripe_transfer_id; leave status='processing' for webhook
-        await safeAwait(db
+        // Step 3: Transfer has settled synchronously — record the transfer id and
+        // move the row 'processing' → 'paid' in one write. The .eq("status",
+        // "processing") guard means a concurrent reconcile/admin path that already
+        // settled this row is not clobbered: 0 rows matched is benign (the transfer
+        // succeeded under its idempotency key either way), so log and do NOT throw.
+        // safeAwait still throws on a genuine DB error.
+        const settled = await safeAwait(db
           .from("payout_records")
-          .update({ stripe_transfer_id: transfer.id })
-          .eq("id", row.id), "payout_records.update");
+          .update({
+            stripe_transfer_id: transfer.id,
+            status: "paid",
+            settled_at: new Date().toISOString(),
+          })
+          .eq("id", row.id)
+          .eq("status", "processing")
+          .select("id"), "payout_records.update.settle");
+        if (!settled || settled.length === 0) {
+          console.info(
+            `payouts-execute-transfer: payout ${row.id} no longer 'processing' at settle (transfer ${transfer.id}) — already settled by another path`,
+          );
+        }
 
         processed++;
       } catch (err) {
