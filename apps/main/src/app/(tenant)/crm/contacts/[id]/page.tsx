@@ -4,6 +4,7 @@
 
 import { useState, useEffect, use } from "react";
 import { dobDisplayLabel } from "@/lib/contacts/dob-display";
+import { RelationshipsPanel } from "@/components/crm/RelationshipsPanel";
 
 interface Contact {
   id: string;
@@ -99,7 +100,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
 
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <h2 className="text-sm font-medium text-gray-500 mb-3">Relationships</h2>
-          <p className="text-sm text-gray-400">Relationship graph — coming soon.</p>
+          <RelationshipsPanel contactId={id} />
         </div>
       </div>
 

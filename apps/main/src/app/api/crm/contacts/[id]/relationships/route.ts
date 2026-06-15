@@ -1,4 +1,4 @@
-// §12.2 — Add a contact relationship edge.
+// §12.2 — List and add contact relationship edges.
 
 import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
@@ -12,6 +12,28 @@ const RelationshipCreateSchema = z.object({
   source: z.enum(["manual", "ai_inferred"]).optional(),
   confidence: z.number().min(0).max(1).optional(),
 });
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  try {
+    const { ctx } = await assertPermission(req, { resource: "contacts", action: "read" });
+    const db = tenantClient(ctx);
+    const { id: from_contact_id } = await params;
+
+    const { data, error } = await db
+      .from("contact_relationships")
+      .select("id, to_contact_id, relationship_type, notes, source, confidence, created_at")
+      .eq("from_contact_id", from_contact_id)
+      .order("created_at", { ascending: true });
+
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ relationships: data ?? [] });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
+}
 
 export async function POST(
   req: Request,
