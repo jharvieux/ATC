@@ -81,14 +81,6 @@ function postRequest(body: object = { tier: "starter", billing_period: "monthly"
   });
 }
 
-function badJsonRequest() {
-  return new Request("http://test/api/onboarding/tier", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "not-json{{{",
-  });
-}
-
 describe("POST /api/onboarding/tier §15.8", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -101,7 +93,11 @@ describe("POST /api/onboarding/tier §15.8", () => {
 
   it("returns 400 on invalid JSON — validates before any DB call", async () => {
     const { POST } = await import("@/app/api/onboarding/tier/route");
-    const res = await POST(badJsonRequest());
+    const res = await POST(new Request("http://test/api/onboarding/tier", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "not-json{{{",
+    }));
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
     expect(body.error).toBe("invalid_json");
@@ -176,6 +172,9 @@ describe("POST /api/onboarding/tier §15.8", () => {
     tierData = { id: "tier-2" };
     const { POST } = await import("@/app/api/onboarding/tier/route");
     await POST(postRequest({ tier: "starter", billing_period: "annual", seat_count: 1 }));
+    expect(vi.mocked(mockSafeAwaitRowCount)).toHaveBeenCalledTimes(1);
+    // mock.calls typed as [][] (no-param fn); cast to access the expectedRowCount arg.
+    expect((mockSafeAwaitRowCount.mock.calls as unknown as [[unknown, unknown, number]])[0][2]).toBe(1);
     expect(vi.mocked(mockProgressTo)).toHaveBeenCalledWith("t1", "subscription");
   });
 
@@ -196,7 +195,7 @@ describe("POST /api/onboarding/tier §15.8", () => {
     const { POST } = await import("@/app/api/onboarding/tier/route");
     const res = await POST(postRequest({ tier: "agency", billing_period: "monthly", seat_count: 0 }));
     expect(res.status).toBe(200);
-    // seat_count: 0 → Math.max(1, 0) = 1; update must store 1, not 0.
+    // update must store 1, not 0 — a zero-seat subscription is invalid.
     // mock.calls typed as [][] (unknown param fn); cast to actual runtime shape.
     const updateArg = (mockTenantUpdate.mock.calls as unknown as [[{ seat_count: number }]])[0][0];
     expect(updateArg.seat_count).toBe(1);
