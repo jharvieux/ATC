@@ -154,6 +154,23 @@ describe("POST /api/groups/[id]/invitations — revoke action (#1064)", () => {
     expect(body.action).toBe("revoked");
   });
 
+  it("returns 200 when invitation is already revoked (zero-row update, error null)", async () => {
+    // IS NULL guard means zero rows updated when already revoked — route returns ok:true regardless.
+    // This verifies the documented silent-success contract (intent #4).
+    mocks.updateQuery.mockResolvedValue({ error: null });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "revoke", invitation_id: "already-revoked-id" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body: { ok: boolean; action: string } = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.action).toBe("revoked");
+  });
+
   it("returns 400 for an unknown action", async () => {
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     const res = await POST(

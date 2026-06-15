@@ -1,8 +1,6 @@
 "use client";
 
 // §12.2 — Contact relationship panel.
-// Lists relationships, adds new ones (canonical type + target contact ID),
-// and removes them. Wired to GET/POST/DELETE /api/crm/contacts/[id]/relationships.
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -33,14 +31,11 @@ export function RelationshipsPanel({ contactId }: { contactId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Add form state
   const [adding, setAdding] = useState(false);
   const [toContactId, setToContactId] = useState("");
   const [relType, setRelType] = useState<string>(RELATIONSHIP_TYPES[0]);
   const [addError, setAddError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  // Remove state
   const [removing, setRemoving] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
 

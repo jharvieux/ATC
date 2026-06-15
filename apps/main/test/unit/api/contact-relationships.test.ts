@@ -119,6 +119,17 @@ describe("GET /api/crm/contacts/[id]/relationships", () => {
     const body: { relationships: unknown[] } = await res.json();
     expect(body.relationships).toEqual([]);
   });
+
+  it("returns 500 when the DB query errors", async () => {
+    mocks.dbSelect.mockResolvedValue({ data: null, error: { message: "db timeout" } });
+
+    const { GET } = await import("@/app/api/crm/contacts/[id]/relationships/route");
+    const res = await GET(makeGetReq(CONTACT_ID), {
+      params: Promise.resolve({ id: CONTACT_ID }),
+    });
+
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("POST /api/crm/contacts/[id]/relationships", () => {
@@ -184,5 +195,15 @@ describe("DELETE /api/crm/contacts/[id]/relationships/[rel_id]", () => {
       params: Promise.resolve({ id: CONTACT_ID, rel_id: REL_ID }),
     });
     expect(res.status).toBe(204);
+  });
+
+  it("returns 500 when the DB delete errors", async () => {
+    mocks.dbDelete.mockResolvedValue({ error: { message: "db error" } });
+
+    const { DELETE } = await import("@/app/api/crm/contacts/[id]/relationships/[rel_id]/route");
+    const res = await DELETE(makeDeleteReq(CONTACT_ID, REL_ID), {
+      params: Promise.resolve({ id: CONTACT_ID, rel_id: REL_ID }),
+    });
+    expect(res.status).toBe(500);
   });
 });

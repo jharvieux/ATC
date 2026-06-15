@@ -1,9 +1,6 @@
 "use client";
 
 // §18 / BP19 — Coordinator invitees tab.
-// Fetches the invitation roster from /api/groups/:id/invitations and
-// invitation_counts from /api/groups/:id. Shows RSVP-state summary chips
-// and a per-invitee table with a revoke (remove) action.
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
