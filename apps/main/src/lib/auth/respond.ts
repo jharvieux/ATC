@@ -89,6 +89,12 @@ export function respondToAuthError(err: unknown): Response {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
   // Truly unknown error — server bug, DB failure, etc. Log + 500.
-  console.error("[respondToAuthError] unhandled error:", err);
-  return Response.json({ error: "internal_error" }, { status: 500 });
+  // Stamp a short correlation ref into BOTH the server log and the client
+  // response so a failure can be traced to its log line without echoing the
+  // raw error (which can leak Postgres/RLS internals). The user reports the
+  // ref; the operator greps logs for it. This is what turns the opaque
+  // "internal_error" into a diagnosable failure.
+  const ref = crypto.randomUUID().slice(0, 8);
+  console.error(`[respondToAuthError] unhandled error [ref=${ref}]:`, err);
+  return Response.json({ error: "internal_error", ref }, { status: 500 });
 }

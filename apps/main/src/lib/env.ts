@@ -512,8 +512,16 @@ export function verifyEnvAtBoot(): Env {
 }
 
 export function env(): Env {
-  if (!_env) {
-    throw new Error("env() called before verifyEnvAtBoot()");
-  }
-  return _env;
+  if (_env) return _env;
+  // instrumentation.ts calls verifyEnvAtBoot() in register() at boot, but that
+  // runs in a module instance Next bundles SEPARATELY from route handlers — the
+  // _env singleton it populates is not reliably visible to the env.ts instance a
+  // route's dependency graph imports (e.g. priceIdFor → env()). When a request
+  // lands in such an instance, _env is undefined and the old throw produced a
+  // bare 500 ("env() called before verifyEnvAtBoot()") on billing/onboarding.
+  // verifyEnvAtBoot() is idempotent and re-reads process.env (populated at
+  // runtime), so verify lazily here; the boot call stays as the deploy-time
+  // fail-fast. A genuinely missing required var still throws the full aggregated
+  // validation error instead of the old cryptic message.
+  return verifyEnvAtBoot();
 }

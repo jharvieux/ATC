@@ -15,10 +15,13 @@ export default function OnboardingSubscriptionPage() {
     setError(null);
 
     const res = await fetch("/api/onboarding/subscription/checkout", { method: "POST" });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.url) {
-      setError(data.error ?? "Failed to create checkout session");
+      const base = data.error ?? "Failed to create checkout session";
+      // Surface the server correlation ref when present so support can trace
+      // the exact log line instead of guessing from a bare "internal_error".
+      setError(data.ref ? `${base} (ref: ${data.ref})` : base);
       setLoading(false);
       return;
     }
