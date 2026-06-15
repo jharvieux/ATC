@@ -5,7 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
-import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 
 interface TierSelectionBody {
@@ -42,8 +42,8 @@ export async function POST(req: Request): Promise<Response> {
     const seatCount = body.tier === "agency" ? Math.max(1, body.seat_count ?? 1) : 1;
 
     // Read tenant_type to resolve the correct prefixed tier code (§3.3).
-    const readDb = tenantClient(ctx);
-    const { data: tenantRow, error: tenantErr } = await readDb
+    const db = tenantClient(ctx);
+    const { data: tenantRow, error: tenantErr } = await db
       .from("tenants")
       .select("tenant_type")
       .eq("id", ctx.tenant_id)
@@ -55,31 +55,24 @@ export async function POST(req: Request): Promise<Response> {
       return Response.json({ error: "invalid_tier_for_tenant_type" }, { status: 422 });
     }
 
-    // Resolve tier_id from tier_definitions by code.
-    const srDb = createServiceRoleClient();
-    const { data: tierDef, error: tierErr } = await srDb
+    // tier_definitions is PLATFORM_READABLE — tenantClient reads it unscoped.
+    const { data: tierDef, error: tierErr } = await db
       .from("tier_definitions")
       .select("id")
       .eq("code", tierCode)
       .maybeSingle();
 
-    if (tierErr || !tierDef) {
-      return Response.json({ error: "tier_not_found" }, { status: 500 });
-    }
+    if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
+    if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
-    const db = tenantClient(ctx);
-    const { error } = await db
-      .from("tenants")
-      .update({
-        tier_id: tierDef.id,
-        seat_count: seatCount,
-        billing_period: body.billing_period,
-      })
-      .eq("id", ctx.tenant_id);
-
-    if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
-    }
+    await safeAwaitRowCount(
+      db.from("tenants")
+        .update({ tier_id: tierDef.id, seat_count: seatCount, billing_period: body.billing_period })
+        .eq("id", ctx.tenant_id)
+        .select("id"),
+      "tenants.update.tier_selection",
+      1,
+    );
 
     await progressTo(ctx.tenant_id, "subscription");
 
