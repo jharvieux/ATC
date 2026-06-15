@@ -4,6 +4,14 @@ Newest entries on top.
 
 ---
 
+## D-229 — 2026-06-15 — Retire db:migrate; psql loops replace custom migration ledger (#1078)
+
+**Decision:** Deleted `scripts/db-migrate.ts` (maintained a custom `public.schema_migrations` table separate from Supabase CLI's `supabase_migrations.schema_migrations`). In CI (`e2e.yml`), replaced `pnpm db:migrate` with bare psql glob loops (`for f in apps/main/supabase/migrations/*.sql`). In `scripts/db-reset.ts`, replaced `execSync("pnpm db:migrate")` with `readdirSync` + per-file `psql`. CI uses a fresh PostgreSQL container per run so no idempotency guard needed. Bundled fix: sidebar Platform Admins item missing `requiredRoles: ["superadmin"]` (#1079). Shipped PR #1081.
+
+**Rejected:** Using `supabase db push --local` — not viable in CI (no Supabase local stack running).
+
+---
+
 ## D-228 — 2026-06-15 — Resource-centric admin area gates (#1003)
 
 **Decision:** Replaced per-route `assertPlatformRole(req, [...])` with `assertPlatformAdminArea(req, "area")` backed by a single `ADMIN_AREA_GRANTS` matrix in `platform-admin-roles.ts`. Three scope narrowings per user decision: (1) `abuse`, `tenants`, `personas`, `persona_safety` → superadmin-only (reviewer removed); (2) `resource_util` → finance-only (support removed); (3) no other role changes. All ~45 API routes and 19 admin pages converted. Sidebar role guards synced. 9 new gate tests cover all narrowings. Shipped PR #1077.
