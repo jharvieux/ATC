@@ -231,6 +231,12 @@ export const refreshCruisemapperSailings = inngest.createFunction(
       }
     }
 
+    if (sailing.catalog_errors > 0) {
+      await step.run("catalog-errors-alert", () =>
+        alertCatalogErrors(sailing.catalog_errors, sailing.catalog_upserted),
+      );
+    }
+
     return {
       ship_pages_attempted: shipUrls.length,
       ferries_skipped: allShipUrls.length - shipUrls.length,
@@ -292,6 +298,16 @@ export async function runSailingWindow(
     if (now() >= deadline) break;
   }
   return { nextIndex: i, attempted, sailing, fetch_unchanged, fetch_errors, parse_failed };
+}
+
+export async function alertCatalogErrors(errors: number, upserted: number): Promise<{ alerted: true }> {
+  await sendOperatorAlert({
+    severity: "low",
+    signal: "cruisemapper_catalog_write_errors",
+    detail: `${errors} sailing catalog write(s) failed during ingest; ${upserted} upserted successfully.`,
+    payload: { catalog_errors: errors, catalog_upserted: upserted },
+  });
+  return { alerted: true };
 }
 
 export async function alertSailingHalt(attempted: number, parseFailures: number, reason: string): Promise<{ alerted: true }> {
