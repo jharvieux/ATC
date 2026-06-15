@@ -146,10 +146,11 @@ jobs:
         env:
           PGUSER: postgres
           PGHOST: localhost
+          PGPORT: 5432
         run: |
           set -eux
-          for f in $(ls apps/main/supabase/migrations/*.sql | sort); do psql -d atc_main_test -f "$f"; done
-          for f in $(ls apps/rag/supabase/migrations/*.sql  | sort); do psql -d atc_rag_test  -f "$f"; done
+          for f in apps/main/supabase/migrations/*.sql; do psql -d atc_main_test -f "$f"; done
+          for f in apps/rag/supabase/migrations/*.sql;  do psql -d atc_rag_test  -f "$f"; done
 
       - name: Apply Tier-2.5 grants
         env:
