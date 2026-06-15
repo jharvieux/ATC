@@ -98,6 +98,16 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     expect(body.error).toBe("tier_definition_missing");
   });
 
+  it("returns 500 for unrecognized tier code — fail-closed on unexpected DB value", async () => {
+    tenantData = { id: "t1", tenant_type: "byo_host", tier_id: "tier-x", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
+    tierData = { code: "unknown_code" };
+    const { POST } = await import("@/app/api/onboarding/subscription/checkout/route");
+    const res = await POST(postRequest());
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("unrecognized_tier_code");
+  });
+
   it("maps byo_host + byo_agency code → agency tier for priceIdFor", async () => {
     tenantData = { id: "t1", tenant_type: "byo_host", tier_id: "tier-1", seat_count: 1, billing_period: "annual", stripe_customer_id: null };
     tierData = { code: "byo_agency" };
