@@ -88,6 +88,16 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     expect(res.status).toBe(500);
   });
 
+  it("returns 500 on tier_definitions DB error — fail-closed", async () => {
+    tenantData = { id: "t1", tenant_type: "byo_host", tier_id: "tier-1", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
+    tierError = { message: "db_timeout" };
+    const { POST } = await import("@/app/api/onboarding/subscription/checkout/route");
+    const res = await POST(postRequest());
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("db_timeout");
+  });
+
   it("returns 500 when tier_definition not found — corrupted tenant state", async () => {
     tenantData = { id: "t1", tenant_type: "byo_host", tier_id: "missing-id", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
     tierData = null;
