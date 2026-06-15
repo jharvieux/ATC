@@ -184,7 +184,7 @@ async function lookupCruiseShipId(db: SupabaseClient, shipUrl: string): Promise<
     .eq("cruisemapper_slug", slug)
     .maybeSingle();
   if (error) {
-    console.warn("[sailing-ingest] cruise_ships lookup failed", { shipUrl, slug, error: error.message });
+    console.error("[sailing-ingest] cruise_ships lookup failed", { shipUrl, slug, error: error.message });
     return null;
   }
   return (data as { id: string } | null)?.id ?? null;
@@ -215,7 +215,7 @@ async function persistSailing(
     .select("id")
     .single();
   if (error) {
-    console.warn("[sailing-ingest] cruise_sailings upsert failed",
+    console.error("[sailing-ingest] cruise_sailings upsert failed",
       { cruiseShipId, sailDate: mapped.key.sailDate, error: error.message });
     return null;
   }
@@ -234,7 +234,7 @@ async function persistPortCalls(
     .from("sailing_port_calls")
     .upsert(rows, { onConflict: "sailing_id,day_index" });
   if (error) {
-    console.warn("[sailing-ingest] sailing_port_calls upsert failed", { sailingId, error: error.message });
+    console.error("[sailing-ingest] sailing_port_calls upsert failed", { sailingId, error: error.message });
     return false;
   }
   return true;

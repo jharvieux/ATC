@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const TENANT_ID = "t-group-create";
 const GROUP_ID = "g-group-create";
-const SAILING_ID = "sail-uuid-abc";
+const SAILING_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
 const groupInsert = vi.fn();
 
@@ -119,5 +119,15 @@ describe("POST /api/groups — sailing_id FK (#783)", () => {
     expect(groupInsert).toHaveBeenCalledTimes(1);
     const row = groupInsert.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(row).not.toHaveProperty("sailing_id");
+  });
+
+  it("returns 400 when sailing_id is present but not a valid UUID", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({ ...BASE_BODY, sailing_id: "not-a-uuid" }));
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("UUID");
+    expect(groupInsert).not.toHaveBeenCalled();
   });
 });

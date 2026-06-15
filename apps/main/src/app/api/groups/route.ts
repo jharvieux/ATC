@@ -58,6 +58,10 @@ export async function POST(req: Request): Promise<Response> {
     if (invitees.length > 50) {
       return Response.json({ error: "Maximum 50 invitees per group" }, { status: 400 });
     }
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (sailing_id !== undefined && !UUID_RE.test(sailing_id)) {
+      return Response.json({ error: "sailing_id must be a valid UUID" }, { status: 400 });
+    }
 
     const svc = createServiceRoleClient();
 
