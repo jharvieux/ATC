@@ -65,6 +65,7 @@ export default function OnboardingIcaPage() {
     const data = await res.json();
     if (!res.ok) {
       if (data.error === "reauth_required") {
+        setSubmitting(false);
         router.push("/auth/reauth?return=/onboarding/ica");
         return;
       }
