@@ -110,6 +110,10 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_line_aliases TO service_ro
 GRANT SELECT ON public.cruise_lines TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_lines TO service_role;
 
+-- TABLE: public.cruise_sailings
+GRANT SELECT ON public.cruise_sailings TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_sailings TO service_role;
+
 -- TABLE: public.cruise_ship_aliases
 GRANT SELECT ON public.cruise_ship_aliases TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.cruise_ship_aliases TO service_role;
@@ -334,6 +338,10 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.reconciliation_review_queue TO se
 
 -- TABLE: public.request_idempotency
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.request_idempotency TO service_role;
+
+-- TABLE: public.sailing_port_calls
+GRANT SELECT ON public.sailing_port_calls TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.sailing_port_calls TO service_role;
 
 -- TABLE: public.schema_migrations
 -- (no DML grants to anon/authenticated/service_role)
