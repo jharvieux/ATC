@@ -2,7 +2,7 @@
 // Toggle is_active; optionally update ship_class.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError, type PlatformAdminContext } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError, type PlatformAdminContext } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 const SHIP_COLS = "id, cruise_line_id, slug, canonical_name, ship_class, is_active, cruisemapper_slug, created_at";
@@ -19,7 +19,7 @@ export async function PATCH(
   const { id } = await params;
   let ctx: PlatformAdminContext;
   try {
-    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
+    ctx = await assertPlatformAdminArea(req, "cruise_catalog");
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

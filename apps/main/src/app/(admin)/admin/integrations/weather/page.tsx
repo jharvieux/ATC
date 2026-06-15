@@ -2,11 +2,11 @@
 // Redirect so any existing bookmarks continue to work.
 
 import { redirect } from "next/navigation";
-import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminAreaPage } from "@/lib/auth/assert-platform-admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function WeatherPageRedirect() {
-  await assertPlatformRolePage(["superadmin"]);
+  await assertPlatformAdminAreaPage("integrations");
   redirect("/admin/resources");
 }

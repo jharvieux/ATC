@@ -22,6 +22,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 import {
   assertPlatformAdmin,
   assertPlatformRole,
+  assertPlatformAdminArea,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 
@@ -144,5 +145,67 @@ describe("assertPlatformRole", () => {
     await expect(
       assertPlatformRole(req(), ["superadmin", "reviewer"]),
     ).rejects.toMatchObject({ status: 401, code: "invalid_session" });
+  });
+});
+
+// assertPlatformAdminArea — area-gate narrowings from #1003
+describe("assertPlatformAdminArea", () => {
+  function sessionReq(role: string) {
+    mockAuthGetUser.mockResolvedValue({ data: { user: { id: "uid" } }, error: null });
+    mockFromMaybeSingle.mockResolvedValue({ data: { auth_user_id: "uid", role }, error: null });
+    return req();
+  }
+
+  it("allows superadmin access to every area", async () => {
+    const ctx = await assertPlatformAdminArea(sessionReq("superadmin"), "abuse");
+    expect(ctx.role).toBe("superadmin");
+  });
+
+  it("rejects reviewer from abuse (superadmin-only per #1003)", async () => {
+    await expect(
+      assertPlatformAdminArea(sessionReq("reviewer"), "abuse"),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
+  });
+
+  it("rejects reviewer from tenants (superadmin-only per #1003)", async () => {
+    await expect(
+      assertPlatformAdminArea(sessionReq("reviewer"), "tenants"),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
+  });
+
+  it("rejects reviewer from personas (superadmin-only per #1003)", async () => {
+    await expect(
+      assertPlatformAdminArea(sessionReq("reviewer"), "personas"),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
+  });
+
+  it("rejects support from resource_util (finance-only per #1003)", async () => {
+    await expect(
+      assertPlatformAdminArea(sessionReq("support"), "resource_util"),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
+  });
+
+  it("allows reviewer access to rag (which reviewer retains)", async () => {
+    const ctx = await assertPlatformAdminArea(sessionReq("reviewer"), "rag");
+    expect(ctx.role).toBe("reviewer");
+  });
+
+  it("allows finance access to reconciliation", async () => {
+    const ctx = await assertPlatformAdminArea(sessionReq("finance"), "reconciliation");
+    expect(ctx.role).toBe("finance");
+  });
+
+  it("allows service bearer access to rag", async () => {
+    const ctx = await assertPlatformAdminArea(
+      req({ Authorization: "Bearer service-secret-key" }),
+      "rag",
+    );
+    expect(ctx.role).toBe("service");
+  });
+
+  it("rejects service bearer from areas without 'service' in the grants (e.g. chunks)", async () => {
+    await expect(
+      assertPlatformAdminArea(req({ Authorization: "Bearer service-secret-key" }), "chunks"),
+    ).rejects.toMatchObject({ status: 403, code: "insufficient_role" });
   });
 });

@@ -306,6 +306,7 @@ vi.mock("@/lib/auth/assert-platform-admin", async () => {
     ...actual,
     assertPlatformAdmin: vi.fn(gate),
     assertPlatformRole: vi.fn(gate),
+    assertPlatformAdminArea: vi.fn(gate),
   };
 });
 

@@ -18,7 +18,7 @@
 // job lands, or composite scoring will use stale weights.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 type WeightKey = "match" | "authority" | "recency" | "feedback";
 const WEIGHT_KEYS: readonly WeightKey[] = ["match", "authority", "recency", "feedback"];
@@ -63,7 +63,7 @@ async function loadCurrent(
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "retrieval_weights")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -86,7 +86,7 @@ export async function GET(req: Request): Promise<Response> {
 export async function PUT(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "retrieval_weights")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

@@ -20,7 +20,7 @@ import { z } from "zod";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;
@@ -44,7 +44,7 @@ type ParsedLineItem = z.infer<typeof ParsedLineItemSchema>;
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "finance"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "reconciliation")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

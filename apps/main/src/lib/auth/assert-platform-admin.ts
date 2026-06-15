@@ -28,9 +28,9 @@ import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
-import { type PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
+import { type PlatformAdminRole, type AdminArea, ADMIN_AREA_GRANTS } from "@/lib/auth/platform-admin-roles";
 
-export type { PlatformAdminRole };
+export type { PlatformAdminRole, AdminArea };
 
 export interface PlatformAdminContext {
   /** auth_user_id from Supabase (human admin), or "service:bearer" for the service-to-service bearer path. */
@@ -161,6 +161,25 @@ export async function assertPlatformRole(
   return ctx;
 }
 
+// ─── Resource-centric area gates ─────────────────────────────────────────────
+
+/** Route-level area gate. Checks ADMIN_AREA_GRANTS[area] from the matrix. */
+export async function assertPlatformAdminArea(
+  req: Request,
+  area: AdminArea,
+): Promise<PlatformAdminContext> {
+  const ctx = await assertPlatformAdmin(req);
+  const allowed = ADMIN_AREA_GRANTS[area] as readonly string[];
+  if (!allowed.includes(ctx.role)) {
+    throw new PlatformAdminError(
+      403,
+      "insufficient_role",
+      `Area "${area}" requires one of: ${allowed.join(", ")}.`,
+    );
+  }
+  return ctx;
+}
+
 // ─── React.cache helpers for server-component pages ───────────────────────────
 // Follows the same pattern as get-cached-user.ts: one DB lookup per request
 // shared between (admin)/layout.tsx and any page that calls getCachedAdminContext().
@@ -219,6 +238,18 @@ export async function assertPlatformRolePage(
     notFound();
     // notFound() throws internally in Next.js (NEXT_NOT_FOUND) — this
     // line is unreachable but satisfies TypeScript's control-flow analysis.
+    throw new Error("unreachable");
+  }
+  return ctx;
+}
+
+/** Page-level area gate using the ADMIN_AREA_GRANTS matrix. */
+export async function assertPlatformAdminAreaPage(area: AdminArea): Promise<PlatformAdminContext> {
+  const { notFound } = await import("next/navigation");
+  const ctx = await getCachedAdminContext();
+  const allowed = ADMIN_AREA_GRANTS[area] as readonly string[];
+  if (!ctx || !allowed.includes(ctx.role)) {
+    notFound();
     throw new Error("unreachable");
   }
   return ctx;

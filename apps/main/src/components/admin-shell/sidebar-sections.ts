@@ -29,8 +29,8 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
   {
     heading: "Tenants & Access",
     items: [
-      { href: "/admin/tenants/review-queue", label: "Tenant Review Queue", requiredRoles: ["superadmin", "reviewer"] },
-      { href: "/admin/abuse-monitoring",     label: "Abuse Monitoring",    requiredRoles: ["superadmin", "reviewer"] },
+      { href: "/admin/tenants/review-queue", label: "Tenant Review Queue", requiredRoles: ["superadmin"] },
+      { href: "/admin/abuse-monitoring",     label: "Abuse Monitoring",    requiredRoles: ["superadmin"] },
       { href: "/admin/denylist",             label: "Content Deny-list",   requiredRoles: ["superadmin", "reviewer"] },
       { href: "/admin/admins",               label: "Platform Admins" },
     ],
@@ -39,7 +39,7 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
     heading: "Content & Knowledge",
     requiredRoles: ["superadmin", "reviewer"],
     items: [
-      { href: "/admin/personas",                label: "Personas" },
+      { href: "/admin/personas",                label: "Personas",                   requiredRoles: ["superadmin"] },
       { href: "/admin/rag/authority",           label: "RAG Authority Overrides" },
       { href: "/admin/retrieval-weights",       label: "Retrieval Weights" },
       { href: "/admin/chunks/post-termination", label: "Post-termination Chunks" },
@@ -57,7 +57,7 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
     items: [
       { href: "/admin/help-triage",           label: "Help Triage",               requiredRoles: ["superadmin", "support"] },
       { href: "/admin/reconciliation",        label: "Commission Reconciliation",  requiredRoles: ["superadmin", "finance"] },
-      { href: "/admin/resources",             label: "Cost & Resource Monitoring", requiredRoles: ["superadmin", "finance", "support"] },
+      { href: "/admin/resources",             label: "Cost & Resource Monitoring", requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/vendor-status",         label: "Vendor Status",             requiredRoles: ["superadmin", "support"] },
       { href: "/admin/email-samples",         label: "Email Samples",             requiredRoles: ["superadmin", "support", "reviewer"] },
       { href: "/admin/integrations/weather",  label: "Weather Integration",       requiredRoles: ["superadmin"] },

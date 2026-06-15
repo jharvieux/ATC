@@ -1,4 +1,4 @@
-import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminAreaPage } from "@/lib/auth/assert-platform-admin";
 import ClientPage from "./_client";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +8,6 @@ export default async function AbuseTenantDrilldownPage({
 }: {
   params: Promise<{ tenant_id: string }>;
 }) {
-  await assertPlatformRolePage(["superadmin", "reviewer"]);
+  await assertPlatformAdminAreaPage("abuse");
   return <ClientPage params={params} />;
 }

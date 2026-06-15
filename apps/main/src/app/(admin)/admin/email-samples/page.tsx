@@ -1,9 +1,9 @@
-import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminAreaPage } from "@/lib/auth/assert-platform-admin";
 import ClientPage from "./_client";
 
 export const dynamic = "force-dynamic";
 
 export default async function EmailSamplesPage() {
-  await assertPlatformRolePage(["superadmin", "support", "reviewer"]);
+  await assertPlatformAdminAreaPage("email_samples");
   return <ClientPage />;
 }

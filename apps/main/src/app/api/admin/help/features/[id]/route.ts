@@ -1,7 +1,7 @@
 // BP31 §32.6.5 — Platform admin decision on a feature request.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 const DECISIONS = new Set(["accepted", "rejected", "deferred", "duplicate"]);
 
@@ -9,7 +9,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
   const params = await props.params;
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "support"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "help")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
