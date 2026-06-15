@@ -1,8 +1,8 @@
 "use client";
 
 // §24 — Production chat surface, extracted as a reusable client component
-// so both /chat (default agent) and /chat/[slug] (per-agent, Phase 5c)
-// can render it. When `personaSlug` is passed, it's forwarded on every
+// so both /chat (default agent) and /chat/[slug] (per-agent) can render
+// it. When `personaSlug` is passed, it's forwarded on every
 // POST /api/chat call — the API already accepts an optional `persona_slug`
 // in the request body and resolves the matching persona via
 // resolveActivePersonaSlug.

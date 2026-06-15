@@ -1,6 +1,4 @@
-// Chat-now CTA points at /chat/[slug], a route Phase 5c will add. The
-// link is intentionally live now so no follow-up wiring is needed when
-// that phase lands.
+// Agent profile page. "Chat now" CTA links to /chat/[slug] (live route).
 //
 // ISR with a 60s window: the page is statically generated at build time
 // for all 6 catalog slugs (generateStaticParams), then re-fetched at

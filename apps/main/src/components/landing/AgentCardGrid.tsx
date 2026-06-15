@@ -1,10 +1,7 @@
 // Agent showcase grid for the landing page. Renders the 6 agents from
-// AGENT_CATALOG as cards (photo + name + specialty + tagline). The
-// per-card CTAs are placeholders today: "Chat now" routes through
-// /signup until Phase 5c wires per-agent chat at /chat/[slug], and
-// "Full profile" goes to /agents/[slug] (which 404s until Phase 5b
-// builds the profile page). Both links work after their phases ship —
-// no follow-up wiring needed here.
+// AGENT_CATALOG as cards (photo + name + specialty + tagline). "Chat now"
+// routes to /chat/[slug] (per-agent chat) and "Full profile" goes to
+// /agents/[slug] — both routes are live.
 
 import * as React from "react";
 import Image from "next/image";
