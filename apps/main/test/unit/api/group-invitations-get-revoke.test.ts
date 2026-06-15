@@ -9,7 +9,7 @@
 //      client should treat this as "already removed").
 //   5. POST with an unknown action returns 400.
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const COORDINATOR_ID = "user-coord-1";
 const GROUP_ID = "g-111";
@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   inviteRsvpSelectQuery: vi.fn(),
   tenantQuery: vi.fn(),
   brandingQuery: vi.fn(),
-  emailLogInsertQuery: vi.fn(),
+  sendEmail: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/assert-permission", async () => {
@@ -96,11 +96,6 @@ vi.mock("@/lib/db/service-role-client", () => ({
           select: () => ({ eq: () => ({ maybeSingle: mocks.brandingQuery }) }),
         };
       }
-      if (table === "email_log") {
-        return {
-          insert: (data: unknown) => mocks.emailLogInsertQuery(data),
-        };
-      }
       return {};
     },
   }),
@@ -124,6 +119,10 @@ vi.mock("react-dom/server", () => ({
 
 vi.mock("@/emails/GroupInvitation", () => ({
   GroupInvitation: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock("@/lib/email/send", () => ({
+  sendEmail: (...args: unknown[]) => mocks.sendEmail(...args),
 }));
 
 function getReq(groupId: string) {
@@ -248,7 +247,6 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.RESEND_API_KEY = "re_test_key";
     process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
 
     mocks.assertPermission.mockResolvedValue({
@@ -263,23 +261,24 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     });
     mocks.inviteRsvpSelectQuery.mockResolvedValue({ data: [], error: null });
     mocks.tenantQuery.mockResolvedValue({
-      data: { id: TENANT_ID, legal_name: "Acme Travel", mailing_address: "123 Main St" },
+      data: {
+        id: TENANT_ID,
+        legal_name: "Acme Travel",
+        mailing_address: "123 Main St",
+        email_send_pattern: "platform_resend",
+        tenant_resend_api_key_encrypted: null,
+        email_from_address: null,
+        email_from_name: null,
+        email_from_domain: null,
+        email_from_domain_verified_at: null,
+      },
       error: null,
     });
     mocks.brandingQuery.mockResolvedValue({ data: null, error: null });
-    mocks.emailLogInsertQuery.mockResolvedValue({ data: null, error: null });
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
+    mocks.sendEmail.mockResolvedValue({ status: "sent", resend_message_id: "resend-msg-id" });
   });
 
   it("creates the invitation row and returns 200 with invitation_id", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ id: "resend-msg-id" }),
-    }));
-
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     const res = await POST(
       postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
@@ -292,33 +291,26 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     expect(body.invitation_id).toBeDefined();
   });
 
-  it("writes a sent email_log row when Resend returns 200", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ id: "resend-msg-id" }),
-    }));
-
+  it("routes the invitation through sendEmail with the group_invitation category", async () => {
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     await POST(
       postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
       { params: Promise.resolve({ id: GROUP_ID }) },
     );
 
-    expect(mocks.emailLogInsertQuery).toHaveBeenCalledWith(
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "sent",
+        to: "bob@example.com",
         template_id: "group_invitation",
-        to_email: "bob@example.com",
-        resend_message_id: "resend-msg-id",
+        category: "group_invitation",
+        related_group_id: GROUP_ID,
+        tenant: expect.objectContaining({ id: TENANT_ID, email_send_pattern: "platform_resend" }),
       }),
     );
   });
 
-  it("writes a rejected email_log row when Resend returns non-2xx", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: false,
-      status: 422,
-    }));
+  it("returns 200 even when sendEmail does not deliver (suppressed / rate-limited)", async () => {
+    mocks.sendEmail.mockResolvedValue({ status: "suppressed", reason: "unsubscribe_all" });
 
     const { POST } = await import("@/app/api/groups/[id]/invitations/route");
     const res = await POST(
@@ -326,13 +318,25 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
       { params: Promise.resolve({ id: GROUP_ID }) },
     );
 
+    // The invitation row is already committed; a non-delivered email must not
+    // roll it back or fail the request — it is logged and the caller gets 200.
     expect(res.status).toBe(200);
-    expect(mocks.emailLogInsertQuery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "rejected",
-        template_id: "group_invitation",
-        resend_message_id: null,
-      }),
+    expect(mocks.sendEmail).toHaveBeenCalledOnce();
+  });
+
+  it("returns 200 when sendEmail reports a hard failure (key/vendor error)", async () => {
+    mocks.sendEmail.mockResolvedValue({ status: "failed", reason: "platform_resend_key_not_set" });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
     );
+
+    // A failed send is logged at error level but still must not roll back the
+    // committed invitation row — the coordinator can reissue later.
+    expect(res.status).toBe(200);
+    const body: { ok: boolean; invitation_id: string } = await res.json();
+    expect(body.ok).toBe(true);
   });
 });
