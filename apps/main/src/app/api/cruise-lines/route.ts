@@ -14,7 +14,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, error } = await db
       .from("cruise_lines")
-      .select("id, display_name, tier")
+      .select("id, display_name")
       .eq("is_active", true)
       .order("display_name", { ascending: true });
 

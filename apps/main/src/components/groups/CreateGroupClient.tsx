@@ -15,7 +15,6 @@ import { Textarea } from "@/components/ui/textarea";
 interface CruiseLine {
   id: string;
   display_name: string;
-  tier: string | null;
 }
 
 interface CruiseShip {
@@ -62,7 +61,7 @@ export function CreateGroupClient(): React.ReactElement {
 
   const loadLines = useCallback(async () => {
     const res = await fetch("/api/cruise-lines");
-    if (!res.ok) return;
+    if (!res.ok) { setError(`Could not load cruise lines (${res.status})`); return; }
     const json = await res.json() as { lines: CruiseLine[] };
     setLines(json.lines ?? []);
   }, []);
@@ -74,7 +73,7 @@ export function CreateGroupClient(): React.ReactElement {
     setLoadingShips(true);
     try {
       const res = await fetch(`/api/cruise-ships?cruise_line_id=${encodeURIComponent(lineId)}`);
-      if (!res.ok) return;
+      if (!res.ok) { setError(`Could not load ships (${res.status})`); return; }
       const json = await res.json() as { ships: CruiseShip[] };
       setShips(json.ships ?? []);
     } finally {
@@ -87,7 +86,7 @@ export function CreateGroupClient(): React.ReactElement {
     setLoadingSailings(true);
     try {
       const res = await fetch(`/api/cruise-sailings?cruise_ship_id=${encodeURIComponent(shipId)}`);
-      if (!res.ok) return;
+      if (!res.ok) { setError(`Could not load sailings (${res.status})`); return; }
       const json = await res.json() as { sailings: CruiseSailing[] };
       setSailings(json.sailings ?? []);
     } finally {
