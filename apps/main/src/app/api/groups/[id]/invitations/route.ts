@@ -7,6 +7,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { sendEmail } from "@/lib/email/send";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 import { respondToAuthError } from "@/lib/auth/respond";
 
@@ -226,16 +227,13 @@ async function sendGroupInvitationEmail(args: {
   ] = await Promise.all([
     // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted above.
     args.svc.from("invitations").select("id,invitee_email,invitee_name").eq("id", args.invitationId).single(),
-    args.svc.from("tenants").select("id,legal_name,mailing_address").eq("id", args.tenantId).single(),
+    args.svc.from("tenants").select("id,legal_name,mailing_address,email_send_pattern,tenant_resend_api_key_encrypted,email_from_address,email_from_name,email_from_domain,email_from_domain_verified_at").eq("id", args.tenantId).single(),
     args.svc.from("tenant_branding").select("logo_url,primary_color,secondary_color,accent_color,slogan").eq("tenant_id", args.tenantId).maybeSingle(),
     // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by group_id which was verified .eq("tenant_id", ctx.tenant_id) above.
     args.svc.from("invitations").select("rsvp_state").eq("group_id", args.group.id).is("token_revoked_at", null),
   ]);
 
   if (!inv || !tenant) return;
-
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return;
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
   const { generateToken: genToken } = await import("@/lib/groups/invitation-token");
@@ -297,41 +295,33 @@ async function sendGroupInvitationEmail(args: {
         invite_url: inviteUrl,
       }));
 
-  const fromAddress = "trips@ai-travelconcierge.com";
-  const resendResp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: fromAddress,
-      to: inv.invitee_email,
-      subject: resolved.subject,
-      html,
-    }),
+  // Route through the shared send helper so suppression, rate-limiting,
+  // tenant from-address resolution (§16.4), and the email_log write all
+  // apply consistently. HTML is rendered above; sendEmail expects it pre-built.
+  const result = await sendEmail({
+    db: args.svc,
+    tenant: {
+      id: tenant.id,
+      legal_name: tenant.legal_name ?? "Travel Agency",
+      mailing_address: tenant.mailing_address,
+      email_send_pattern: tenant.email_send_pattern,
+      tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted,
+      email_from_address: tenant.email_from_address,
+      email_from_name: tenant.email_from_name,
+      email_from_domain: tenant.email_from_domain,
+      email_from_domain_verified_at: tenant.email_from_domain_verified_at,
+    },
+    to: inv.invitee_email,
+    subject: resolved.subject,
+    template_id: "group_invitation",
+    category: "group_invitation",
+    html,
+    related_group_id: args.group.id,
   });
 
-  let resendMessageId: string | null = null;
-  let logStatus: "sent" | "rejected" = "rejected";
-  if (resendResp.ok) {
-    const resendData = await resendResp.json() as { id?: string };
-    resendMessageId = resendData.id ?? null;
-    logStatus = "sent";
-  } else {
-    console.error(`[group-invitation] Resend returned ${resendResp.status} for inv=${args.invitationId}`);
+  if (result.status !== "sent") {
+    console.error(
+      `[group-invitation] send not delivered for inv=${args.invitationId}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
+    );
   }
-
-  await safeAwait(
-    args.svc.from("email_log").insert({
-      tenant_id: args.tenantId,
-      to_email: inv.invitee_email,
-      from_email: fromAddress,
-      subject: resolved.subject,
-      template_id: "group_invitation",
-      email_category: "group_invitation",
-      status: logStatus,
-      sent_at: logStatus === "sent" ? new Date().toISOString() : null,
-      resend_message_id: resendMessageId,
-      related_group_id: args.group.id,
-    }),
-    "email_log.insert.group_invitation",
-  );
 }
