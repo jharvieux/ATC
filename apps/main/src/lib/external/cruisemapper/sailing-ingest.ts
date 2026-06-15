@@ -227,15 +227,17 @@ async function persistPortCalls(
   db: SupabaseClient,
   sailingId: string,
   portsOfCall: string[],
-): Promise<void> {
-  if (portsOfCall.length === 0) return;
+): Promise<boolean> {
+  if (portsOfCall.length === 0) return true;
   const rows = portsOfCall.map((port_name, day_index) => ({ sailing_id: sailingId, port_name, day_index }));
   const { error } = await db
     .from("sailing_port_calls")
     .upsert(rows, { onConflict: "sailing_id,day_index" });
   if (error) {
     console.warn("[sailing-ingest] sailing_port_calls upsert failed", { sailingId, error: error.message });
+    return false;
   }
+  return true;
 }
 
 /**
@@ -284,7 +286,8 @@ export async function processSailingHtml(
         if (sailingId) {
           result.catalog_upserted += 1;
           if (mapped.portsOfCall.length > 0) {
-            await persistPortCalls(db, sailingId, mapped.portsOfCall);
+            const ok = await persistPortCalls(db, sailingId, mapped.portsOfCall);
+            if (!ok) result.catalog_errors += 1;
           }
         } else {
           result.catalog_errors += 1;
@@ -397,7 +400,8 @@ export async function processSailingHtml(
           if (sailingId) {
             result.catalog_upserted += 1;
             if (detail && detail.portsOfCall.length > 0) {
-              await persistPortCalls(db, sailingId, detail.portsOfCall);
+              const ok = await persistPortCalls(db, sailingId, detail.portsOfCall);
+              if (!ok) result.catalog_errors += 1;
             }
           } else {
             result.catalog_errors += 1;
