@@ -14,6 +14,8 @@ import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
+import { sendEmail } from "@/lib/email/send";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { GroupReminder } from "@/emails/GroupReminder";
@@ -79,7 +81,7 @@ export const groupReminderCadence = inngest.createFunction(
     // reminder shipped bare HTML with no footer at all.
     const tenantIds = [...new Set([...groupMap.values()].map((g) => g.tenant_id))];
     const [{ data: tenantRows, error: tenantErr }, { data: brandingRows, error: brandingErr }] = await Promise.all([
-      svc.from("tenants").select("id, legal_name, mailing_address").in("id", tenantIds),
+      svc.from("tenants").select("id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at").in("id", tenantIds),
       svc
         .from("tenant_branding")
         .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan")
@@ -90,7 +92,17 @@ export const groupReminderCadence = inngest.createFunction(
     // path exists to provide. Throw so the Inngest run retries instead.
     if (tenantErr) throw new Error(`tenants.select failed: ${tenantErr.message}`);
     if (brandingErr) throw new Error(`tenant_branding.select failed: ${brandingErr.message}`);
-    type TenantRow = { id: string; legal_name: string | null; mailing_address: string | null };
+    type TenantRow = {
+      id: string;
+      legal_name: string | null;
+      mailing_address: string | null;
+      email_send_pattern: "platform_resend" | "tenant_resend";
+      tenant_resend_api_key_encrypted: string | null;
+      email_from_address: string | null;
+      email_from_name: string | null;
+      email_from_domain: string | null;
+      email_from_domain_verified_at: string | null;
+    };
     type BrandingRow = {
       tenant_id: string;
       logo_url: string | null;
@@ -130,9 +142,6 @@ export const groupReminderCadence = inngest.createFunction(
         .eq("email_category", "group_invitation")
         .gte("sent_at", windowStart.toISOString());
       if ((recentLog?.length ?? 0) >= 3) { skipped++; continue; }
-
-      const apiKey = process.env.RESEND_API_KEY;
-      if (!apiKey) { skipped++; continue; }
 
       // #963 — tenant subject/body override → platform default. Fail loud
       // per-recipient: a failed override read or render skips this send
@@ -200,35 +209,42 @@ export const groupReminderCadence = inngest.createFunction(
         continue;
       }
 
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: "trips@ai-travelconcierge.com",
-          to: inv.invitee_email,
-          subject,
-          html,
-        }),
+      // Route through the shared helper so suppression (an unsubscribed or
+      // bounced invitee is skipped), §16.4 tenant from-address resolution, and
+      // the email_log write all apply. The 3-per-24h cadence guard above is the
+      // rate limit; sendEmail's limiter is a no-op for the group_invitation
+      // category, so there's no double-throttling.
+      const result = await sendEmail({
+        db: svc,
+        tenant: {
+          id: group.tenant_id,
+          legal_name: tenant?.legal_name ?? "Travel Agency",
+          mailing_address: tenant?.mailing_address ?? null,
+          email_send_pattern: tenant?.email_send_pattern ?? "platform_resend",
+          tenant_resend_api_key_encrypted: tenant?.tenant_resend_api_key_encrypted ?? null,
+          email_from_address: tenant?.email_from_address ?? null,
+          email_from_name: tenant?.email_from_name ?? null,
+          email_from_domain: tenant?.email_from_domain ?? null,
+          email_from_domain_verified_at: tenant?.email_from_domain_verified_at ?? null,
+        },
+        to: inv.invitee_email,
+        subject,
+        template_id: "group_reminder",
+        category: "group_invitation",
+        html,
+        related_group_id: group.id,
       });
 
-      if (res.ok) {
-        const resendBody = await res.json() as { id?: string };
-        await Promise.all([
-          svc.from("email_log").insert({
-            tenant_id: group.tenant_id,
-            to_email: inv.invitee_email,
-            from_email: "trips@ai-travelconcierge.com",
-            subject,
-            template_id: "group_reminder",
-            email_category: "group_invitation",
-            status: "sent",
-            sent_at: now.toISOString(),
-            ...(resendBody.id ? { resend_message_id: resendBody.id } : {}),
-            ...(group.id ? { related_group_id: group.id } : {}),
-          }),
+      if (result.status === "sent") {
+        // Only stamp last_email_sent_at on a real send so the cadence interval
+        // advances. Suppressed/rate-limited/failed leave it untouched.
+        await safeAwait(
           svc.from("invitations").update({ last_email_sent_at: now.toISOString() }).eq("id", inv.id),
-        ]);
+          "invitations.update.last_email_sent_at",
+        );
         sent++;
+      } else {
+        skipped++;
       }
     }
 
