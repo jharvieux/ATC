@@ -5,11 +5,23 @@
 // When Stripe fires account.updated with details_submitted=true, the webhook
 // advances the stage automatically and the tenant is redirected to stage 6.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function OnboardingTaxFormPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // BYO hosts skip tax_form — advance stage and redirect away immediately.
+  const advanceByo = useCallback(async () => {
+    const res = await fetch("/api/onboarding/byo/advance", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      router.replace(data.redirect_to);
+    }
+  }, [router]);
+  useEffect(() => { void advanceByo(); }, [advanceByo]);
 
   async function handleRedirectToStripe() {
     setLoading(true);

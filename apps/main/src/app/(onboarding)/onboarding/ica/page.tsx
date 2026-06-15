@@ -8,7 +8,7 @@
 // Pixel slop used by both the mount check and the live scroll handler.
 const SCROLL_BOTTOM_TOLERANCE_PX = 10;
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 // TODO(legal-attorney): replace placeholder text with final ICA per §15.14.6.
@@ -32,6 +32,16 @@ export default function OnboardingIcaPage() {
   const [typedName, setTypedName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // BYO hosts skip ica — advance stage and redirect away immediately.
+  const advanceByo = useCallback(async () => {
+    const res = await fetch("/api/onboarding/byo/advance", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      router.replace(data.redirect_to);
+    }
+  }, [router]);
+  useEffect(() => { void advanceByo(); }, [advanceByo]);
 
   // If the ICA content is shorter than the container (no scrollbar appears),
   // the onScroll handler never fires and the input stays permanently disabled.

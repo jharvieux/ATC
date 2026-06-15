@@ -1,7 +1,12 @@
 // §15.1–15.2 — Onboarding stage state machine.
 //
 // Stages advance strictly forward through the §15.1 diagram.
-// No stage can be skipped except 'branding' (explicitly skippable per §15.10).
+// Allowed forward skips (multi-step advances):
+//   - connect_setup → review_submitted  (branding is optional per §15.10)
+//   - legal → state_of_operation        (BYO hosts skip ica + tax_form)
+//   - ica → state_of_operation          (BYO recovery: stuck at ica)
+//   - tax_form → state_of_operation     (BYO recovery: stuck at tax_form)
+//   - subscription → branding           (BYO hosts skip connect_setup)
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
@@ -164,8 +169,15 @@ export async function progressTo(
   const nextIdx = stageIndex(nextStageValue);
   const currentIdx = stageIndex(current);
 
-  const isAllowedSkip =
-    current === "connect_setup" && nextStageValue === "review_submitted";
+  // BYO hosts skip ica/tax_form/connect_setup (§3.1 tenant_type="byo_host").
+  const ALLOWED_FORWARD_SKIPS = new Set([
+    "connect_setup→review_submitted", // branding optional
+    "legal→state_of_operation",        // BYO: skip ica + tax_form
+    "ica→state_of_operation",          // BYO recovery
+    "tax_form→state_of_operation",     // BYO recovery
+    "subscription→branding",           // BYO: skip connect_setup
+  ]);
+  const isAllowedSkip = ALLOWED_FORWARD_SKIPS.has(`${current}→${nextStageValue}`);
 
   if (!isAllowedSkip && nextIdx !== currentIdx + 1) {
     throw new InvalidStageTransitionError(current, nextStageValue);

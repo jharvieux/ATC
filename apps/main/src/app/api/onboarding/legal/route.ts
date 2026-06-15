@@ -84,9 +84,17 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    await progressTo(ctx.tenant_id, "ica");
+    // BYO hosts skip ica + tax_form (sub-host-only steps).
+    const { data: tenantRow } = await readDb
+      .from("tenants")
+      .select("tenant_type")
+      .eq("id", ctx.tenant_id)
+      .single();
+    const nextStageName = tenantRow?.tenant_type === "byo_host" ? "state_of_operation" : "ica";
 
-    return Response.json({ ok: true, next_stage: "ica" });
+    await progressTo(ctx.tenant_id, nextStageName);
+
+    return Response.json({ ok: true, next_stage: nextStageName });
   } catch (err) {
     return respondToAuthError(err);
   }
