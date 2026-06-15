@@ -265,9 +265,8 @@ describe("progressTo — BYO host forward skips", () => {
     expect(updateCalls[0]!.filters).toContainEqual(["onboarding_stage", "subscription"]);
   });
 
-  it("REJECTS legal → ica (normal next step, not a BYO skip target)", async () => {
-    // Sanity: BYO logic does not disable normal one-step forward either.
-    // legal → ica is nextIdx === currentIdx + 1, so it should still be allowed.
+  it("ALLOWS legal → ica (normal one-step forward unaffected by BYO skip logic)", async () => {
+    // Sanity: adding BYO skip entries must not break normal single-step advances.
     currentBehavior = { selectStage: "legal", updateRows: [{ id: "t1" }] };
     await expect(progressTo("t1", "ica")).resolves.toBeUndefined();
   });

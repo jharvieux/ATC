@@ -141,6 +141,16 @@ export function assertValidRevertTarget(
   return null;
 }
 
+// BYO hosts skip ica/tax_form/connect_setup (§3.1 tenant_type="byo_host").
+// These are the only multi-step forward advances that progressTo permits.
+const ALLOWED_FORWARD_SKIPS = new Set([
+  "connect_setup→review_submitted", // branding optional
+  "legal→state_of_operation",        // BYO: skip ica + tax_form
+  "ica→state_of_operation",          // BYO recovery
+  "tax_form→state_of_operation",     // BYO recovery
+  "subscription→branding",           // BYO: skip connect_setup
+]);
+
 export async function progressTo(
   tenantId: string,
   nextStageValue: OnboardingStage,
@@ -169,14 +179,6 @@ export async function progressTo(
   const nextIdx = stageIndex(nextStageValue);
   const currentIdx = stageIndex(current);
 
-  // BYO hosts skip ica/tax_form/connect_setup (§3.1 tenant_type="byo_host").
-  const ALLOWED_FORWARD_SKIPS = new Set([
-    "connect_setup→review_submitted", // branding optional
-    "legal→state_of_operation",        // BYO: skip ica + tax_form
-    "ica→state_of_operation",          // BYO recovery
-    "tax_form→state_of_operation",     // BYO recovery
-    "subscription→branding",           // BYO: skip connect_setup
-  ]);
   const isAllowedSkip = ALLOWED_FORWARD_SKIPS.has(`${current}→${nextStageValue}`);
 
   if (!isAllowedSkip && nextIdx !== currentIdx + 1) {

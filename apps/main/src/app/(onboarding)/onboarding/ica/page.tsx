@@ -33,12 +33,15 @@ export default function OnboardingIcaPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // BYO hosts skip ica — advance stage and redirect away immediately.
+  // §3.1: BYO hosts use their own payment infrastructure — skip sub-host-only stages.
   const advanceByo = useCallback(async () => {
     const res = await fetch("/api/onboarding/byo/advance", { method: "POST" });
     if (res.ok) {
       const data = await res.json();
       router.replace(data.redirect_to);
+    } else if (res.status !== 409) {
+      // 409 = non-BYO tenant or stage already correct — page renders normally.
+      setError("Failed to load page — please refresh");
     }
   }, [router]);
   useEffect(() => { void advanceByo(); }, [advanceByo]);

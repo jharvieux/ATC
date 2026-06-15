@@ -136,6 +136,23 @@ describe("POST /api/onboarding/legal — §15.4 / §17.4", () => {
     expect(vi.mocked(progressTo)).toHaveBeenCalledWith("t1", "state_of_operation");
   });
 
+  it("returns 500 when tenant_type fetch fails after consent insert — fail-closed, stage must not advance on DB error", async () => {
+    mockTenantFrom.mockImplementation((table: string) => {
+      if (table === "legal_documents") return makeChain(DOCS);
+      return makeChain(null, { message: "connection timeout" });
+    });
+    mockServiceFrom.mockImplementation(() => ({
+      insert: () => Promise.resolve({ data: null, error: null }),
+    }));
+    const { POST } = await import("@/app/api/onboarding/legal/route");
+    const res = await POST(postRequest("/api/onboarding/legal", { accepted_types: FULL_DOC_TYPES }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("connection timeout");
+    const { progressTo } = await import("@/lib/onboarding/state-machine");
+    expect(vi.mocked(progressTo)).not.toHaveBeenCalled();
+  });
+
   it("duplicate accept (23505) is idempotent — returns 200 not 500", async () => {
     mockTenantFrom.mockImplementation((table: string) => {
       if (table === "legal_documents") return makeChain(DOCS);
