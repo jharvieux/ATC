@@ -4,6 +4,49 @@ Newest entries on top.
 
 ---
 
+## D-239 — 2026-06-15 — Stripe Checkout trial_end capped at 729 days (PR #1116)
+
+`FAR_FUTURE_TRIAL_END = 4102444800` (2099-12-31 UTC, ~27,000 days) in the `onboarding/subscription/checkout` route caused every subscription checkout to return `internal_error`. Stripe Checkout rejects `subscription_data[trial_end]` > 730 days.
+
+**Decision**: Replace the static constant with `Math.floor(Date.now() / 1000) + 729 * 24 * 60 * 60` computed at request time. 729 days stays within Stripe's cap and still functions as a far-future placeholder until admin approval resets it to NOW+30d.
+
+**Why**: The 730-day limit is documented on the Stripe Checkout free-trials page; the comment in the original code said "epoch 2099 placeholder" without noting the cap.
+
+**Added test**: `subscription-checkout.test.ts` now asserts `trial_end` falls within `[before+728d, after+730d]` — would catch regression to any far-future epoch.
+
+---
+
+## D-238 — 2026-06-15 — TIER_CODE/CODE_TO_TIER duplication across three routes (issue #1114)
+
+Three routes independently define `TIER_CODE` (`{tenant_type, tier} → TenantTierCode`) and `CODE_TO_TIER` (reverse) maps: `onboarding/tier`, `onboarding/subscription/checkout`, and `tenant/billing`. Adding a new tier requires editing all three.
+
+**Decision**: Deferred extraction to a shared module (`lib/stripe/tier-codes.ts`) — tracked as #1114. The maps were introduced independently during the slug/code bug family fixes (PRs #1109, #1111, #1113); consolidation is a follow-up refactor.
+
+**Why accepted**: All three are identical; a missed edit would silently route to the wrong Stripe price. #1114 is the durable handle to track this.
+
+---
+
+## D-237 — 2026-06-15 — Pricing canonical single source of truth (PR #1112)
+
+`calculateAgencySeatPreviewCents` in `price-ids.ts` had a hardcoded BANDS array that diverged from `SEAT_LADDER` in `abuse/revenue.ts` (the documented §3.3 canonical source per D-060). `FLAT_RATES_MONTHLY_CENTS` in `pricing/preview/route.ts` had stale placeholder values that didn't match `TIER_BASE_PRICE_CENTS`.
+
+**Decision**: Exported `SEAT_LADDER` and `TIER_BASE_PRICE_CENTS` from `abuse/revenue.ts`; `price-ids.ts` now imports and reuses `SEAT_LADDER`; `pricing/preview/route.ts` now derives from `TIER_BASE_PRICE_CENTS`. One source, three consumers.
+
+**Seat ladder semantics**: `calculateAgencySeatPreviewCents` receives `additionalSeats` (totalSeats - 1). `SEAT_LADDER.upTo` is indexed by *total seat number* (e.g. upTo=4 means seats 2–4), so capacity per band = `band.upTo - prevTotalSeat`.
+
+---
+
+## D-236 — 2026-06-15 — internal_error on subscription checkout — triple bug fix (PR #1111)
+
+`/api/onboarding/subscription/checkout` had three bugs:
+1. `.eq("slug", ...)` on `tier_definitions` — column is `code`; always returned null
+2. `tierDef?.slug` (always undefined) passed to `priceIdFor` → threw → `respondToAuthError` → `internal_error`
+3. `success_url`/`cancel_url` used `NEXT_PUBLIC_SUPABASE_URL` instead of `NEXT_PUBLIC_APP_URL`
+
+**Decision**: Added `CODE_TO_TIER` reverse map; query by `.eq("code", ...)`; explicit 500 for missing/unrecognized tier; `baseUrl` from `NEXT_PUBLIC_APP_URL`. 9 unit tests added covering all error paths.
+
+---
+
 ## D-235 — 2026-06-15 — tier_not_found on plan selection — dual bug fix (PR #1109)
 
 `/api/onboarding/tier` had two bugs causing `tier_not_found` for all tenants:
