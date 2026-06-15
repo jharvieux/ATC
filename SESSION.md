@@ -1,26 +1,23 @@
-# Session state — last updated 2026-06-15 12:10 UTC
+# Session state — last updated 2026-06-15 14:15 UTC
 
 ## Just completed
-- Investigated "reauth_required" error on ICA acceptance during onboarding
-- Found two bugs:
-  1. Root cause: `readAuthTime` in `assert-permission.ts` always returned null because Supabase GoTrue JWTs use `amr[].timestamp` (not `auth_time`) for the authentication timestamp. This caused ALL sensitive routes (/api/onboarding/ica, /api/tenant/billing, /api/commissions, /api/user/data) to reject unconditionally.
-  2. ICA page's `handleSubmit` showed raw "reauth_required" string instead of redirecting to /auth/reauth.
-- Fixed both bugs in PR #1104 (fix/ica-reauth-redirect):
-  - `readAuthTime` now falls back to max `amr[].timestamp`; exported for testing
-  - Added 7 unit tests in `test/unit/auth/read-auth-time.test.ts`
-  - ICA page redirects to `/auth/reauth?return=/onboarding/ica` + resets submitting state
-- All CI checks pass except pr-audit-section-check awaiting re-run (hash mismatch from timing; agents re-ran, body edit triggered re-check)
+- Merged PR #1104 (reauth timer fix for ICA stage) — prior session
+- Cut and pushed `release/0.4.2` to trigger prod pipeline — prior session
+- PR #1107: BYO vs sub-host onboarding split — merged to dev
+  - state-machine ALLOWED_FORWARD_SKIPS (module scope), legal/route BYO branch, webhook BYO branch
+  - byo/advance endpoint + page guards on ica/tax-form/connect pages
+  - Full test coverage (375 files, 3,702 tests); two D-091 + pre-pr audit rounds; all checks green
+  - MEMORY D-234 written
 
 ## In flight
-- PR #1104 (fix/ica-reauth-redirect) — waiting for pr-audit-section-check to pass, then merge
+Nothing in flight — clean checkpoint
 
 ## Next step
-- Merge PR #1104 once pr-audit-section-check goes green
-- Delete feature branch after merge
-- Note: this fix unblocks the entire sensitive-routes system — billing, commissions, user data deletion were ALL broken with the same reauth_required error
+Verify `release/0.4.2` pipeline completed (prod deploy + tag). Check GitHub Actions for the release workflow status if needed.
 
 ## Blocked on user
-- Nothing
+Nothing
 
 ## Open questions
-- Other sensitive routes (billing, commissions, user/data) should now work too — worth a smoke test post-merge
+- pre-pr-reviewer flagged: `webhook-handler-branches.test.ts` has no test for `tenant_type: null` (legacy rows) falling through to `connect_setup`. Safe behavior (null !== "byo_host"), low priority follow-up.
+- Post-merge smoke test from #1104: `/api/tenant/billing`, `/api/commissions`, `/api/user/data` gated by same broken `readAuthTime` — worth a manual check that fresh logins can reach those routes.

@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-234 — 2026-06-15 — BYO hosts skip ica/tax_form/connect_setup onboarding stages (PR #1107)
+
+BYO tenants (`byo_host`) are independent agents with their own host agency. They have no ICA contract, no W-9/tax requirement, and no Stripe Connect payout setup. Routing them through sub-host-only stages produced `internal_error` on the Stripe Connect link call.
+
+**Decision**: Three-layer guard:
+1. State machine: `ALLOWED_FORWARD_SKIPS` module-level Set permits multi-stage forward jumps for BYO paths (`legal→state_of_operation`, `ica→state_of_operation`, `tax_form→state_of_operation`, `subscription→branding`).
+2. Route-layer: `legal/route.ts` reads `tenant_type` after consent writes and routes BYO to `state_of_operation`; `webhook-handler.ts` routes BYO `checkout.session.completed` to `branding` (not `connect_setup`).
+3. Page-layer: `byo/advance` endpoint + `useEffect` guard on each skippable page — redirects BYO tenants immediately on load (handles tenants stuck mid-flow).
+
+**Rejected**: Single-point fix (just skip the stage in one place). Multiple touch points needed because tenants could be routed there from routes, webhooks, or direct URL navigation.
+
+**Related artifacts**: PR #1107, `apps/main/src/app/api/onboarding/byo/advance/route.ts`, `apps/main/src/lib/onboarding/state-machine.ts` (ALLOWED_FORWARD_SKIPS).
+
+---
+
 ## D-233 — 2026-06-15 — Supabase JWT uses amr[].timestamp, not auth_time (PR #1104)
 
 `readAuthTime` in `assert-permission.ts` read `auth_time` from the Supabase JWT, which GoTrue does not emit. GoTrue uses `amr[].timestamp` (Authentication Methods References, RFC 8176) as the authentication timestamp. This caused ALL sensitive routes to unconditionally return `reauth_required` even for brand-new sessions. Fixed by falling back to max `amr[].timestamp` when `auth_time` is absent. `auth_time` is still checked first for custom-hook forward-compatibility.
