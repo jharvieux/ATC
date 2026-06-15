@@ -28,11 +28,9 @@ vi.mock("@/lib/auth/assert-permission", () => ({
 }));
 
 vi.mock("@/lib/auth/respond", () => ({
-  respondToAuthError: vi.fn((err: unknown) => {
-    const msg = String(err);
-    const isAuthError = msg.includes("auth") || msg.includes("forbidden") || msg.includes("consent");
-    return Response.json({ error: msg }, { status: isAuthError ? 401 : 500 });
-  }),
+  respondToAuthError: vi.fn(() =>
+    Response.json({ error: "internal_error" }, { status: 500 }),
+  ),
 }));
 
 vi.mock("@/lib/onboarding/state-machine", () => ({
