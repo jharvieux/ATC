@@ -2,7 +2,7 @@
 
 // §18 / BP19 — Coordinator invitees tab.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 
 type RsvpState = "pending" | "interested" | "not_going" | "booked";
@@ -38,6 +38,12 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [personalNote, setPersonalNote] = useState("");
+  const [visibilityChoice, setVisibilityChoice] = useState("no_opinion");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +95,39 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
     }
   }
 
+  async function inviteSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setInviting(true);
+    setInviteError(null);
+    try {
+      const res = await fetch(`/api/groups/${groupId}/invitations`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "invite",
+          invitee_email: inviteEmail,
+          invitee_name: inviteName || undefined,
+          personal_note: personalNote || undefined,
+          visibility_choice: visibilityChoice,
+        }),
+      });
+      if (!res.ok) {
+        const d: { error?: string } = await res.json();
+        setInviteError(d.error ?? `Error ${res.status}`);
+        return;
+      }
+      setInviteEmail("");
+      setInviteName("");
+      setPersonalNote("");
+      setVisibilityChoice("no_opinion");
+      await load();
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Invite failed");
+    } finally {
+      setInviting(false);
+    }
+  }
+
   if (loading) {
     return (
       <section>
@@ -113,6 +152,54 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
           Refresh
         </Button>
       </div>
+
+      <form
+        onSubmit={inviteSubmit}
+        className="mb-5 rounded-lg border border-border bg-muted/30 p-4 flex flex-col gap-3"
+      >
+        <p className="text-[13px] font-semibold">Add Invitee</p>
+        <div className="flex gap-3">
+          <input
+            type="email"
+            required
+            placeholder="Email address"
+            value={inviteEmail}
+            onChange={(e) => setInviteEmail(e.target.value)}
+            className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-[14px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <input
+            type="text"
+            placeholder="Name (optional)"
+            value={inviteName}
+            onChange={(e) => setInviteName(e.target.value)}
+            className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-[14px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+        <textarea
+          placeholder="Personal note (optional)"
+          value={personalNote}
+          onChange={(e) => setPersonalNote(e.target.value)}
+          rows={2}
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-[14px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+        />
+        <div className="flex items-center gap-3">
+          <select
+            value={visibilityChoice}
+            onChange={(e) => setVisibilityChoice(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-[14px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <option value="no_opinion">No preference</option>
+            <option value="be_anonymous">Keep me anonymous</option>
+            <option value="show_me_anyway">Show coordinator info</option>
+          </select>
+          <Button type="submit" disabled={inviting} className="h-9">
+            {inviting ? "Sending…" : "Send Invite"}
+          </Button>
+        </div>
+        {inviteError && (
+          <p className="text-[13px] text-destructive">{inviteError}</p>
+        )}
+      </form>
 
       {countChips.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-5">

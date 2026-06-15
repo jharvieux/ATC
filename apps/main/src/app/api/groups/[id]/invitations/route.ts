@@ -297,14 +297,41 @@ async function sendGroupInvitationEmail(args: {
         invite_url: inviteUrl,
       }));
 
-  await fetch("https://api.resend.com/emails", {
+  const fromAddress = "trips@ai-travelconcierge.com";
+  const resendResp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: "trips@ai-travelconcierge.com",
+      from: fromAddress,
       to: inv.invitee_email,
       subject: resolved.subject,
       html,
     }),
   });
+
+  let resendMessageId: string | null = null;
+  let logStatus: "sent" | "rejected" = "rejected";
+  if (resendResp.ok) {
+    const resendData = await resendResp.json() as { id?: string };
+    resendMessageId = resendData.id ?? null;
+    logStatus = "sent";
+  } else {
+    console.error(`[group-invitation] Resend returned ${resendResp.status} for inv=${args.invitationId}`);
+  }
+
+  await safeAwait(
+    args.svc.from("email_log").insert({
+      tenant_id: args.tenantId,
+      to_email: inv.invitee_email,
+      from_email: fromAddress,
+      subject: resolved.subject,
+      template_id: "group_invitation",
+      email_category: "group_invitation",
+      status: logStatus,
+      sent_at: logStatus === "sent" ? new Date().toISOString() : null,
+      resend_message_id: resendMessageId,
+      related_group_id: args.group.id,
+    }),
+    "email_log.insert.group_invitation",
+  );
 }

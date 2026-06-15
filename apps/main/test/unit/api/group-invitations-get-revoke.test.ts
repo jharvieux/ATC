@@ -9,7 +9,7 @@
 //      client should treat this as "already removed").
 //   5. POST with an unknown action returns 400.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const COORDINATOR_ID = "user-coord-1";
 const GROUP_ID = "g-111";
@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
   groupQuery: vi.fn(),
   invitationsQuery: vi.fn(),
   updateQuery: vi.fn(),
+  inviteInsertQuery: vi.fn(),
+  inviteEmailSingleQuery: vi.fn(),
+  inviteRsvpSelectQuery: vi.fn(),
+  tenantQuery: vi.fn(),
+  brandingQuery: vi.fn(),
+  emailLogInsertQuery: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/assert-permission", async () => {
@@ -56,10 +62,20 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       if (table === "invitations") {
         return {
-          select: () => ({
-            eq: () => ({
-              order: () => mocks.invitationsQuery(),
-            }),
+          select: (cols: string) => {
+            if (cols.includes("token_revoked_at")) {
+              // GET list query — ends with .eq().order()
+              return { eq: () => ({ order: () => mocks.invitationsQuery() }) };
+            }
+            if (cols === "rsvp_state") {
+              // rsvp count inside sendGroupInvitationEmail — ends with .eq().is()
+              return { eq: () => ({ is: () => mocks.inviteRsvpSelectQuery() }) };
+            }
+            // Single lookup inside sendGroupInvitationEmail — ends with .eq().single()
+            return { eq: () => ({ single: mocks.inviteEmailSingleQuery }) };
+          },
+          insert: (data: unknown) => ({
+            select: () => mocks.inviteInsertQuery(data),
           }),
           update: () => ({
             eq: () => ({
@@ -70,9 +86,44 @@ vi.mock("@/lib/db/service-role-client", () => ({
           }),
         };
       }
+      if (table === "tenants") {
+        return {
+          select: () => ({ eq: () => ({ single: mocks.tenantQuery }) }),
+        };
+      }
+      if (table === "tenant_branding") {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: mocks.brandingQuery }) }),
+        };
+      }
+      if (table === "email_log") {
+        return {
+          insert: (data: unknown) => mocks.emailLogInsertQuery(data),
+        };
+      }
       return {};
     },
   }),
+}));
+
+vi.mock("@/lib/email/unsubscribe-token", () => ({
+  signUnsubscribeToken: vi.fn().mockReturnValue("unsub-tok"),
+}));
+
+vi.mock("@/lib/email/template-resolve", () => ({
+  resolveEmailContent: vi.fn().mockResolvedValue({
+    subject: "You're invited!",
+    overrideBodyText: null,
+  }),
+  renderOverrideBodyInLayout: vi.fn(),
+}));
+
+vi.mock("react-dom/server", () => ({
+  renderToStaticMarkup: vi.fn().mockReturnValue("<html>invite-email</html>"),
+}));
+
+vi.mock("@/emails/GroupInvitation", () => ({
+  GroupInvitation: vi.fn().mockReturnValue(null),
 }));
 
 function getReq(groupId: string) {
@@ -179,5 +230,109 @@ describe("POST /api/groups/[id]/invitations — revoke action (#1064)", () => {
     );
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
+  const FULL_GROUP = {
+    id: GROUP_ID,
+    coordinator_user_id: COORDINATOR_ID,
+    tenant_id: TENANT_ID,
+    cruise_line: "Royal Caribbean",
+    ship_name: "Harmony of the Seas",
+    sailing_date: "2026-09-01",
+    departure_port: "Miami, FL",
+    coordinator_message: "Can't wait!",
+    hero_image_url: null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
+
+    mocks.assertPermission.mockResolvedValue({
+      ctx: { tenant_id: TENANT_ID },
+      user: { id: COORDINATOR_ID },
+    });
+    mocks.groupQuery.mockResolvedValue({ data: FULL_GROUP, error: null });
+    mocks.inviteInsertQuery.mockResolvedValue({ data: [{ id: "new-inv-id" }], error: null });
+    mocks.inviteEmailSingleQuery.mockResolvedValue({
+      data: { id: "new-inv-id", invitee_email: "bob@example.com", invitee_name: "Bob" },
+      error: null,
+    });
+    mocks.inviteRsvpSelectQuery.mockResolvedValue({ data: [], error: null });
+    mocks.tenantQuery.mockResolvedValue({
+      data: { id: TENANT_ID, legal_name: "Acme Travel", mailing_address: "123 Main St" },
+      error: null,
+    });
+    mocks.brandingQuery.mockResolvedValue({ data: null, error: null });
+    mocks.emailLogInsertQuery.mockResolvedValue({ data: null, error: null });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("creates the invitation row and returns 200 with invitation_id", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ id: "resend-msg-id" }),
+    }));
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body: { ok: boolean; invitation_id: string } = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.invitation_id).toBeDefined();
+  });
+
+  it("writes a sent email_log row when Resend returns 200", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ id: "resend-msg-id" }),
+    }));
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(mocks.emailLogInsertQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "sent",
+        template_id: "group_invitation",
+        to_email: "bob@example.com",
+        resend_message_id: "resend-msg-id",
+      }),
+    );
+  });
+
+  it("writes a rejected email_log row when Resend returns non-2xx", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+    }));
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.emailLogInsertQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "rejected",
+        template_id: "group_invitation",
+        resend_message_id: null,
+      }),
+    );
   });
 });
