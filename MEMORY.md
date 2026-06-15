@@ -4,6 +4,14 @@ Newest entries on top.
 
 ---
 
+## D-240 — 2026-06-15 — TIER_CODE + CODE_TO_TIER extracted to shared lib/stripe/tier-codes.ts (PR #1118)
+
+Both maps were copy-pasted across 4 routes (`onboarding/tier`, `onboarding/subscription/checkout`, `tenant/billing`, `pricing/preview`). Extracted to `apps/main/src/lib/stripe/tier-codes.ts` as single source of truth with correct `Record<TenantType, Record<Tier, TenantTierCode>>` / `Record<TenantTierCode, Tier>` types. Access sites cast `tenantRow.tenant_type as TenantType` and `tierDef.code as keyof typeof CODE_TO_TIER` because DB queries return `string`. No round-trip unit test shipped with the refactor — deferred to issue #1121. Unit tests for the affected routes shipped in PRs #1119 (#1110) and #1120 (#1115). update_seats Stripe branch not covered — deferred to issue #1122.
+
+**Related**: Issues #1114 (extraction), #1121 (round-trip test), #1122 (update_seats Stripe branch test).
+
+---
+
 ## D-239 — 2026-06-15 — Stripe Checkout trial_end capped at 729 days (PR #1116)
 
 `FAR_FUTURE_TRIAL_END = 4102444800` (2099-12-31 UTC, ~27,000 days) in the `onboarding/subscription/checkout` route caused every subscription checkout to return `internal_error`. Stripe Checkout rejects `subscription_data[trial_end]` > 730 days.
