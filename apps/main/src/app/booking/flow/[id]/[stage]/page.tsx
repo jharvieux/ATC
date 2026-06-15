@@ -1,5 +1,5 @@
-// §20.2 — Platform-native fallback booking flow, 4-stage stub.
-// §20.4 — AI co-pilot panel placeholder.
+// §20.2 — Platform-native fallback booking flow, 4 stages.
+// §20.4 — AI co-pilot panel (CustomerContextChatPanel, wired).
 // §20.8 — No-anonymous-bookings: anonymous users are redirected to /signup.
 //
 // Stages: 1=trip-details, 2=passenger-details, 3=options, 4=review.
