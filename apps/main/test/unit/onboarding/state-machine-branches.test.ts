@@ -235,6 +235,56 @@ describe("assertStageComplete", () => {
 });
 
 // ---------------------------------------------------------------------------
+// progressTo — BYO forward skips (§3.1 tenant_type="byo_host").
+// These multi-stage advances are business-critical: BYO hosts must not be
+// routed through sub-host-only stages (ICA, tax form, Connect setup).
+// ---------------------------------------------------------------------------
+
+describe("progressTo — BYO host forward skips", () => {
+  it("legal → state_of_operation allowed (BYO skips ica + tax_form)", async () => {
+    currentBehavior = { selectStage: "legal", updateRows: [{ id: "t1" }] };
+    await expect(progressTo("t1", "state_of_operation")).resolves.toBeUndefined();
+    expect(updateCalls[0]!.filters).toContainEqual(["onboarding_stage", "legal"]);
+  });
+
+  it("ica → state_of_operation allowed (BYO recovery path)", async () => {
+    currentBehavior = { selectStage: "ica", updateRows: [{ id: "t1" }] };
+    await expect(progressTo("t1", "state_of_operation")).resolves.toBeUndefined();
+    expect(updateCalls[0]!.filters).toContainEqual(["onboarding_stage", "ica"]);
+  });
+
+  it("tax_form → state_of_operation allowed (BYO recovery path)", async () => {
+    currentBehavior = { selectStage: "tax_form", updateRows: [{ id: "t1" }] };
+    await expect(progressTo("t1", "state_of_operation")).resolves.toBeUndefined();
+    expect(updateCalls[0]!.filters).toContainEqual(["onboarding_stage", "tax_form"]);
+  });
+
+  it("subscription → branding allowed (BYO skips connect_setup)", async () => {
+    currentBehavior = { selectStage: "subscription", updateRows: [{ id: "t1" }] };
+    await expect(progressTo("t1", "branding")).resolves.toBeUndefined();
+    expect(updateCalls[0]!.filters).toContainEqual(["onboarding_stage", "subscription"]);
+  });
+
+  it("ALLOWS legal → ica (normal one-step forward unaffected by BYO skip logic)", async () => {
+    // Sanity: adding BYO skip entries must not break normal single-step advances.
+    currentBehavior = { selectStage: "legal", updateRows: [{ id: "t1" }] };
+    await expect(progressTo("t1", "ica")).resolves.toBeUndefined();
+  });
+
+  it("REJECTS legal → complete (unsanctioned multi-step skip)", async () => {
+    currentBehavior = { selectStage: "legal", updateRows: [] };
+    await expect(progressTo("t1", "complete")).rejects.toBeInstanceOf(InvalidStageTransitionError);
+    expect(updateCalls).toHaveLength(0);
+  });
+
+  it("REJECTS subscription → review_submitted (multi-step forward not in ALLOWED_FORWARD_SKIPS)", async () => {
+    currentBehavior = { selectStage: "subscription", updateRows: [] };
+    await expect(progressTo("t1", "review_submitted")).rejects.toBeInstanceOf(InvalidStageTransitionError);
+    expect(updateCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // progressTo — connect_setup → review_submitted skip (L167-168).
 // ---------------------------------------------------------------------------
 

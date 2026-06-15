@@ -197,7 +197,7 @@ export async function handleStripeWebhook(
           if (tenantId) {
             const { data: tenant, error: tenantSelectErr } = await db
               .from("tenants")
-              .select("onboarding_stage")
+              .select("onboarding_stage, tenant_type")
               .eq("id", tenantId)
               .maybeSingle();
             if (tenantSelectErr) throw new Error(`checkout.session.completed tenant select failed: ${tenantSelectErr.message}`);
@@ -212,7 +212,9 @@ export async function handleStripeWebhook(
 
             if (tenant?.onboarding_stage === "subscription") {
               const { progressTo } = await import("@/lib/onboarding/state-machine");
-              await progressTo(tenantId, "connect_setup");
+              // BYO hosts skip connect_setup (sub-host payout setup).
+              const nextStage = tenant.tenant_type === "byo_host" ? "branding" : "connect_setup";
+              await progressTo(tenantId, nextStage);
             }
             processingOutcome = "success";
           }

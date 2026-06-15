@@ -171,6 +171,7 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("onboarding", "tax_form:start"),
   key("onboarding", "subscription:setup"),
   key("onboarding", "review:submit"),
+  key("onboarding", "byo:advance"),
   // Tenant settings (owner-only)
   key("host_config", "write"),
   key("tenant_branding", "write"),

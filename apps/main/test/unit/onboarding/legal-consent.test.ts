@@ -102,7 +102,7 @@ describe("POST /api/onboarding/legal — §15.4 / §17.4", () => {
     expect(body.error).toBe("legal_documents_not_found");
   });
 
-  it("happy path: inserts consent rows and advances to ica stage", async () => {
+  it("happy path: inserts consent rows and advances to ica stage for sub_host", async () => {
     setupHappyPath();
     const { progressTo } = await import("@/lib/onboarding/state-machine");
     vi.mocked(progressTo).mockResolvedValue(undefined);
@@ -114,6 +114,43 @@ describe("POST /api/onboarding/legal — §15.4 / §17.4", () => {
     expect(body.ok).toBe(true);
     expect(body.next_stage).toBe("ica");
     expect(vi.mocked(progressTo)).toHaveBeenCalledWith("t1", "ica");
+  });
+
+  it("BYO host skips ica + tax_form and advances to state_of_operation — §3.1", async () => {
+    mockTenantFrom.mockImplementation((table: string) => {
+      if (table === "legal_documents") return makeChain(DOCS);
+      if (table === "tenants") return makeChain({ tenant_type: "byo_host" });
+      return makeChain([]);
+    });
+    mockServiceFrom.mockImplementation(() => ({
+      insert: () => Promise.resolve({ data: null, error: null }),
+    }));
+    const { progressTo } = await import("@/lib/onboarding/state-machine");
+    vi.mocked(progressTo).mockResolvedValue(undefined);
+
+    const { POST } = await import("@/app/api/onboarding/legal/route");
+    const res = await POST(postRequest("/api/onboarding/legal", { accepted_types: FULL_DOC_TYPES }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; next_stage: string };
+    expect(body.next_stage).toBe("state_of_operation");
+    expect(vi.mocked(progressTo)).toHaveBeenCalledWith("t1", "state_of_operation");
+  });
+
+  it("returns 500 when tenant_type fetch fails after consent insert — fail-closed, stage must not advance on DB error", async () => {
+    mockTenantFrom.mockImplementation((table: string) => {
+      if (table === "legal_documents") return makeChain(DOCS);
+      return makeChain(null, { message: "connection timeout" });
+    });
+    mockServiceFrom.mockImplementation(() => ({
+      insert: () => Promise.resolve({ data: null, error: null }),
+    }));
+    const { POST } = await import("@/app/api/onboarding/legal/route");
+    const res = await POST(postRequest("/api/onboarding/legal", { accepted_types: FULL_DOC_TYPES }));
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("connection timeout");
+    const { progressTo } = await import("@/lib/onboarding/state-machine");
+    expect(vi.mocked(progressTo)).not.toHaveBeenCalled();
   });
 
   it("duplicate accept (23505) is idempotent — returns 200 not 500", async () => {

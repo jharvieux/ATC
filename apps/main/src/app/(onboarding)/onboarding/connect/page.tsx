@@ -4,11 +4,26 @@
 // Redirects to Stripe Connect onboarding (identity, bank account, address).
 // account.updated webhook with payouts_enabled=true advances the stage.
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function OnboardingConnectPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // §3.1: BYO hosts use their own payment infrastructure — skip sub-host-only stages.
+  const advanceByo = useCallback(async () => {
+    const res = await fetch("/api/onboarding/byo/advance", { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      router.replace(data.redirect_to);
+    } else if (res.status !== 409) {
+      // 409 = non-BYO tenant or stage already correct — page renders normally.
+      setError("Failed to load page — please refresh");
+    }
+  }, [router]);
+  useEffect(() => { void advanceByo(); }, [advanceByo]);
 
   async function handleConnect() {
     setLoading(true);
