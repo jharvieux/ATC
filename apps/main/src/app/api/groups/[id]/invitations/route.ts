@@ -297,14 +297,33 @@ async function sendGroupInvitationEmail(args: {
         invite_url: inviteUrl,
       }));
 
-  await fetch("https://api.resend.com/emails", {
+  const fromAddress = "trips@ai-travelconcierge.com";
+  const resendResp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: "trips@ai-travelconcierge.com",
+      from: fromAddress,
       to: inv.invitee_email,
       subject: resolved.subject,
       html,
     }),
   });
+  if (resendResp.ok) {
+    const resendData = await resendResp.json() as { id?: string };
+    await safeAwait(
+      args.svc.from("email_log").insert({
+        tenant_id: args.tenantId,
+        to_email: inv.invitee_email,
+        from_email: fromAddress,
+        subject: resolved.subject,
+        template_id: "group_invitation",
+        email_category: "group_invitation",
+        status: "sent",
+        sent_at: new Date().toISOString(),
+        resend_message_id: resendData.id ?? null,
+        related_group_id: args.group.id,
+      }),
+      "email_log.insert.group_invitation",
+    );
+  }
 }
