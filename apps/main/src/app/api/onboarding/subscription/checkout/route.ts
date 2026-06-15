@@ -1,5 +1,5 @@
 // §15.8 — Stripe Checkout session for subscription setup.
-// trial_end is set to far-future (epoch 2099) placeholder per §15.8.
+// trial_end is set to 729 days from now (Stripe's max is 730) as a placeholder per §15.8.
 // Admin approval resets it to NOW + 30 days.
 // payment_behavior = 'allow_incomplete' so billing doesn't run pre-activation.
 
@@ -19,8 +19,6 @@ const CODE_TO_TIER: Record<string, Tier> = {
   sub_pro:          "pro",
   sub_agency:       "agency",
 };
-
-const FAR_FUTURE_TRIAL_END = 4102444800; // 2099-12-31 UTC
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -65,6 +63,8 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const stripe = new Stripe(stripeKey);
+    // Stripe Checkout max trial is 730 days; use 729 as placeholder until admin approval resets to NOW+30d.
+    const trialEnd = Math.floor(Date.now() / 1000) + 729 * 24 * 60 * 60;
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
@@ -73,7 +73,7 @@ export async function POST(req: Request): Promise<Response> {
       line_items: lineItems,
       ...(tenant.stripe_customer_id ? { customer: tenant.stripe_customer_id } : {}),
       subscription_data: {
-        trial_end: FAR_FUTURE_TRIAL_END,
+        trial_end: trialEnd,
         metadata: { tenant_id: ctx.tenant_id },
       },
       metadata: { tenant_id: ctx.tenant_id },

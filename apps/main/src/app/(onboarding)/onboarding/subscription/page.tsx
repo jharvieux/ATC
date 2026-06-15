@@ -1,7 +1,7 @@
 "use client";
 
 // §15.8 — Onboarding Stage 8: Stripe subscription setup via Checkout.
-// Creates a Checkout session with trial_end set to far-future placeholder.
+// Creates a Checkout session with trial_end set to now+729d (Stripe's 730-day max).
 // Actual trial start (NOW+30d) is applied at admin approval.
 
 import { useState } from "react";
