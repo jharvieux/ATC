@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-241 — 2026-06-15 — env() lazy-inits instead of throwing; Stripe redirect base-URL fails loud (PR #1124)
+
+**Decision:** Three coupled fixes for the "internal_error on the Set Up Billing screen" bug.
+
+1. `env()` (apps/main/src/lib/env.ts) no longer throws `"env() called before verifyEnvAtBoot()"` when the `_env` singleton is unset — it now lazily calls the idempotent `verifyEnvAtBoot()` (re-reads `process.env`) and returns the result.
+2. `respondToAuthError` now stamps an 8-char correlation `ref` into BOTH the 500 body and the server log (still never echoes `err.message`). `tenant/billing` POST's catch was switched from echoing raw `err.message` to `respondToAuthError` (matches GET, fixes wrong status codes for auth errors, satisfies the `check-auth-error-adoption` CI gate).
+3. New `lib/platform-url.ts` `platformBaseUrl()` — precedence `NEXT_PUBLIC_APP_URL` → `PLATFORM_PRIMARY_DOMAIN` → throw. Wired into all three Stripe redirect routes (subscription/checkout, connect/link, tax-form/stripe-link), replacing hardcoded `localhost` fallbacks.
+
+**Why:** Root cause was a Next.js bundling fact, NOT a missing env var: `instrumentation.ts` runs `verifyEnvAtBoot()` in `register()`, but Next bundles that module instance separately from route-handler chunks, so the `_env` a route's dep graph imports (`priceIdFor → env()`) was undefined at request time. The boot call stays as the deploy-time fail-fast; lazy verify is the request-time safety net. The localhost fallbacks were fail-open (Stripe would send a paying user to a dead URL with no error) — fail-loud is correct per D-091.
+
+**Precedence judgment call (flagged to user):** connect/link + tax-form previously used `PLATFORM_PRIMARY_DOMAIN` FIRST. If prod has BOTH `NEXT_PUBLIC_APP_URL` and `PLATFORM_PRIMARY_DOMAIN` set AND they differ, those two routes' redirect host now changes to `NEXT_PUBLIC_APP_URL`. If `NEXT_PUBLIC_APP_URL` is unset in prod, behavior is identical to before. Operator should confirm.
+
+**Rejected:** (a) setting `_env` from a shared module / global — fragile across Next's bundling; lazy idempotent verify is simpler and self-healing. (b) Fixing the inline DB-error early-returns in tenant/billing POST that still echo raw `*.message` — they're test-asserted (#1120); deferred to issue #1125 (security label) as a broader leak-vs-UX cleanup.
+
+**Artifacts:** PR #1124; issue #1125 (deferred inline-leak cleanup); tests env-lazy-init.test.ts, respond.test.ts, platform-url.test.ts.
+
+---
+
 ## D-240 — 2026-06-15 — TIER_CODE + CODE_TO_TIER extracted to shared lib/stripe/tier-codes.ts (PR #1118)
 
 Both maps were copy-pasted across 4 routes (`onboarding/tier`, `onboarding/subscription/checkout`, `tenant/billing`, `pricing/preview`). Extracted to `apps/main/src/lib/stripe/tier-codes.ts` as single source of truth with correct `Record<TenantType, Record<Tier, TenantTierCode>>` / `Record<TenantTierCode, Tier>` types. Access sites cast `tenantRow.tenant_type as TenantType` and `tierDef.code as keyof typeof CODE_TO_TIER` because DB queries return `string`. No round-trip unit test shipped with the refactor — deferred to issue #1121. Unit tests for the affected routes shipped in PRs #1119 (#1110) and #1120 (#1115). update_seats Stripe branch not covered — deferred to issue #1122.
