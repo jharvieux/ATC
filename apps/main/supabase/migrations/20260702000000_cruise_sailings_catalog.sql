@@ -26,9 +26,6 @@ CREATE TABLE public.cruise_sailings (
   UNIQUE (cruise_ship_id, departure_date)
 );
 
-CREATE INDEX cruise_sailings_ship_date_idx
-  ON public.cruise_sailings (cruise_ship_id, departure_date);
-
 ALTER TABLE public.cruise_sailings ENABLE ROW LEVEL SECURITY;
 
 -- Authenticated users can read (cascading dropdowns in group-booking creation).
@@ -47,9 +44,6 @@ CREATE TABLE public.sailing_port_calls (
   day_index   int   NOT NULL,
   UNIQUE (sailing_id, day_index)
 );
-
-CREATE INDEX sailing_port_calls_sailing_idx
-  ON public.sailing_port_calls (sailing_id, day_index);
 
 ALTER TABLE public.sailing_port_calls ENABLE ROW LEVEL SECURITY;
 
