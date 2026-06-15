@@ -319,8 +319,14 @@ async function sendGroupInvitationEmail(args: {
     related_group_id: args.group.id,
   });
 
-  if (result.status !== "sent") {
+  if (result.status === "failed") {
+    // Something broke (key missing/malformed, Resend 5xx) — actionable.
     console.error(
+      `[group-invitation] send failed for inv=${args.invitationId}: ${result.reason ?? "unknown"}`,
+    );
+  } else if (result.status !== "sent") {
+    // suppressed / rate_limited — expected, not an error.
+    console.warn(
       `[group-invitation] send not delivered for inv=${args.invitationId}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
     );
   }

@@ -323,4 +323,20 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     expect(res.status).toBe(200);
     expect(mocks.sendEmail).toHaveBeenCalledOnce();
   });
+
+  it("returns 200 when sendEmail reports a hard failure (key/vendor error)", async () => {
+    mocks.sendEmail.mockResolvedValue({ status: "failed", reason: "platform_resend_key_not_set" });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    // A failed send is logged at error level but still must not roll back the
+    // committed invitation row — the coordinator can reissue later.
+    expect(res.status).toBe(200);
+    const body: { ok: boolean; invitation_id: string } = await res.json();
+    expect(body.ok).toBe(true);
+  });
 });
