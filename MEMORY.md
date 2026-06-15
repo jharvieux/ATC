@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-231 — 2026-06-15 — #783 Phase 3 — Sailing catalog + cascade-dropdown group creation (PR #1093)
+
+Connected group-booking via sailing catalog is live. Key decisions:
+- `cruise_sailings` / `sailing_port_calls` have no `tenant_id` — placed in `PLATFORM_READABLE_TABLES` (same pattern as `cruise_lines` / `cruise_ships` from D-203).
+- `persistPortCalls` returns `boolean` (not void) so callers can increment `catalog_errors` counter without catching exceptions — keeps the failure path explicit.
+- `sailing_id` FK on `groups` is nullable (legacy free-text groups have NULL); UUID validated at the API boundary before INSERT.
+- Redundant explicit indexes removed — UNIQUE constraints already create btree indexes on `(cruise_ship_id, departure_date)` and `(sailing_id, day_index)`.
+- RLS snapshot committed without the new table entries (test DB doesn't have the migration yet); post-deploy follow-up needed to regenerate snapshot after migration applies.
+- `catalog_errors` alerting deferred to issue #1094.
+
+**Why**: Phase 3 of #783 — coordinators can now select a sailing from a cascade dropdown (line → ship → sailing) instead of typing free-text, linking the group booking to a structured catalog entry.
+
+**How to apply**: When adding future catalog tables without `tenant_id`, follow same pattern: `PLATFORM_READABLE_TABLES` + RLS SELECT for authenticated. RLS snapshot must be regenerated after migration applies to the live DB.
+
+---
+
 ## D-230 — 2026-06-15 — Login gate for /signup/complete and /onboarding/* redirects to /auth/reauth (#1050)
 
 Unauthenticated deep-links to `/signup/complete` (platform domain) and `/onboarding/*` (tenant subdomains) redirect to `/auth/reauth?return=<path>`. Implemented in `proxy.ts` section 1d, before tenant resolution.

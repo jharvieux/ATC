@@ -33,6 +33,7 @@
 -- public.conversations (rls_enabled)
 -- public.cruise_line_aliases (rls_enabled)
 -- public.cruise_lines (rls_enabled)
+-- public.cruise_sailings (rls_enabled)
 -- public.cruise_ship_aliases (rls_enabled)
 -- public.cruise_ships (rls_enabled)
 -- public.cruisemapper_url_inventory (rls_enabled)
@@ -94,6 +95,7 @@
 -- public.rag_submissions (rls_enabled)
 -- public.reconciliation_review_queue (rls_enabled)
 -- public.request_idempotency (rls_enabled)
+-- public.sailing_port_calls (rls_enabled)
 -- public.schema_migrations (rls_enabled)
 -- public.security_incidents (rls_enabled)
 -- public.staging_cron_skips (rls_enabled)
@@ -498,6 +500,11 @@ CREATE POLICY "cruise_line_aliases_read" ON public.cruise_line_aliases
 
 -- TABLE: public.cruise_lines
 CREATE POLICY "cruise_lines_read" ON public.cruise_lines
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
+
+-- TABLE: public.cruise_sailings
+CREATE POLICY "cruise_sailings_read" ON public.cruise_sailings
   FOR SELECT TO PUBLIC
   USING (auth.uid() IS NOT NULL);
 
@@ -1220,6 +1227,11 @@ CREATE POLICY "request_idempotency_no_user_select" ON public.request_idempotency
 CREATE POLICY "request_idempotency_no_user_update" ON public.request_idempotency
   FOR UPDATE TO PUBLIC
   USING (false);
+
+-- TABLE: public.sailing_port_calls
+CREATE POLICY "sailing_port_calls_read" ON public.sailing_port_calls
+  FOR SELECT TO PUBLIC
+  USING (auth.uid() IS NOT NULL);
 
 -- TABLE: public.security_incidents
 CREATE POLICY "security_incidents_delete_service" ON public.security_incidents
