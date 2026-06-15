@@ -9,7 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseSailingPage, parseShipIdentity, type ParsedSailingDay } from "./parsers/sailing-parser";
 import { parseSailingList, type SailingListItem } from "./parsers/sailing-list-parser";
 import { parseCruiseExpand } from "./parsers/cruise-expand-parser";
-import { mapSailing, mapSailingListItem } from "./itinerary-mapper";
+import { mapSailing, mapSailingListItem, type MappedItinerary } from "./itinerary-mapper";
 import { ingestItineraryToRag } from "./rag-itinerary-ingest";
 import { fetchCruiseMapperPage } from "./diy-fetcher";
 import { upsertPriceQuote } from "@/lib/pricing/pricing-cache";
@@ -40,6 +40,9 @@ export interface SailingRunResult {
   // reached (1 req/sec would push the Vercel function past maxDuration). The ship
   // is NOT stamped complete; the next run resumes it (already-enriched ones skip).
   list_details_deferred: number;
+  // #783 — structured catalog (cruise_sailings + sailing_port_calls) persistence.
+  catalog_upserted: number;   // sailing row written/updated this run
+  catalog_errors: number;     // upsert failed (ship found in catalog but DB write failed)
 }
 
 export function emptySailingResult(): SailingRunResult {
@@ -57,6 +60,8 @@ export function emptySailingResult(): SailingRunResult {
     list_details_skipped_enriched: 0,
     list_details_errors: 0,
     list_details_deferred: 0,
+    catalog_upserted: 0,
+    catalog_errors: 0,
   };
 }
 
@@ -77,6 +82,8 @@ export function mergeSailing(into: SailingRunResult, one: SailingRunResult): voi
   into.list_details_skipped_enriched += one.list_details_skipped_enriched;
   into.list_details_errors += one.list_details_errors;
   into.list_details_deferred += one.list_details_deferred;
+  into.catalog_upserted += one.catalog_upserted;
+  into.catalog_errors += one.catalog_errors;
 }
 
 // #827 — per-sailing detail (cruise.json) enrichment.
@@ -148,6 +155,91 @@ async function markSailingDetailEnriched(db: SupabaseClient, detailUrl: string):
   );
 }
 
+// #783 — Structured sailing catalog persistence (cruise_sailings + sailing_port_calls).
+//
+// These three helpers run best-effort alongside RAG ingest: failures are logged
+// but never abort the ingest. The catalog is populated from already-computed
+// MappedItinerary fields, so no extra parsing is needed.
+
+// Last path segment of a /ships/<slug> URL.
+function extractCruisemapperSlug(shipUrl: string): string | null {
+  try {
+    const segments = new URL(shipUrl).pathname.split("/").filter(Boolean);
+    if (segments.length >= 2 && segments[0] === "ships") return segments[1] ?? null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Resolve the cruise_ships.id for a ship page URL. Returns null when the ship
+// is not yet in the catalog (newly-discovered ships are inserted by the static
+// refresh step; the sailing ingest runs after it, so a miss is rare).
+async function lookupCruiseShipId(db: SupabaseClient, shipUrl: string): Promise<string | null> {
+  const slug = extractCruisemapperSlug(shipUrl);
+  if (!slug) return null;
+  const { data, error } = await db
+    .from("cruise_ships")
+    .select("id")
+    .eq("cruisemapper_slug", slug)
+    .maybeSingle();
+  if (error) {
+    console.error("[sailing-ingest] cruise_ships lookup failed", { shipUrl, slug, error: error.message });
+    return null;
+  }
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+// Upsert one sailing row. Conflict target: UNIQUE(cruise_ship_id, departure_date).
+// Returns the row ID so port calls can reference it, or null on failure.
+async function persistSailing(
+  db: SupabaseClient,
+  cruiseShipId: string,
+  mapped: MappedItinerary,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("cruise_sailings")
+    .upsert(
+      {
+        cruise_ship_id: cruiseShipId,
+        departure_date: mapped.key.sailDate,
+        departure_port: mapped.key.departurePort,
+        duration_nights: mapped.key.durationNights,
+        region: mapped.region,
+        starting_price: mapped.startingPriceUsd,
+        source_url: mapped.sourceUrl,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "cruise_ship_id,departure_date" },
+    )
+    .select("id")
+    .single();
+  if (error) {
+    console.error("[sailing-ingest] cruise_sailings upsert failed",
+      { cruiseShipId, sailDate: mapped.key.sailDate, error: error.message });
+    return null;
+  }
+  return (data as { id: string }).id;
+}
+
+// Bulk-upsert port calls for a sailing. Conflict: UNIQUE(sailing_id, day_index).
+async function persistPortCalls(
+  db: SupabaseClient,
+  sailingId: string,
+  portsOfCall: string[],
+): Promise<boolean> {
+  if (portsOfCall.length === 0) return true;
+  const rows = portsOfCall.map((port_name, day_index) => ({ sailing_id: sailingId, port_name, day_index }));
+  const { error } = await db
+    .from("sailing_port_calls")
+    .upsert(rows, { onConflict: "sailing_id,day_index" });
+  if (error) {
+    console.error("[sailing-ingest] sailing_port_calls upsert failed", { sailingId, error: error.message });
+    return false;
+  }
+  return true;
+}
+
 /**
  * Parse the current sailing + upcoming-sailings list from already-fetched HTML
  * and ingest both to RAG. Price quotes from the list are also written to the
@@ -168,6 +260,8 @@ export async function processSailingHtml(
   // deadline (the static-page path / tests don't fetch details under time pressure).
   deadlineMs: number = Number.POSITIVE_INFINITY,
 ): Promise<void> {
+  const cruiseShipId = await lookupCruiseShipId(db, shipUrl);
+
   // Current sailing (with full day_by_day) — may be ABSENT for a future/
   // unlaunched, river, or retired ship. That is NOT a parse failure as long as
   // the page is a recognizable ship page (has an <h1>): we still ingest its
@@ -186,6 +280,18 @@ export async function processSailingHtml(
         result.current_ingested += 1;
       } else {
         result.current_errors += 1;
+      }
+      if (cruiseShipId) {
+        const sailingId = await persistSailing(db, cruiseShipId, mapped);
+        if (sailingId) {
+          result.catalog_upserted += 1;
+          if (mapped.portsOfCall.length > 0) {
+            const ok = await persistPortCalls(db, sailingId, mapped.portsOfCall);
+            if (!ok) result.catalog_errors += 1;
+          }
+        } else {
+          result.catalog_errors += 1;
+        }
       }
     } else {
       result.current_errors += 1;
@@ -288,6 +394,18 @@ export async function processSailingHtml(
           }
         } else {
           result.list_errors += 1;
+        }
+        if (cruiseShipId) {
+          const sailingId = await persistSailing(db, cruiseShipId, listMapped);
+          if (sailingId) {
+            result.catalog_upserted += 1;
+            if (detail && detail.portsOfCall.length > 0) {
+              const ok = await persistPortCalls(db, sailingId, detail.portsOfCall);
+              if (!ok) result.catalog_errors += 1;
+            }
+          } else {
+            result.catalog_errors += 1;
+          }
         }
       }),
     );
