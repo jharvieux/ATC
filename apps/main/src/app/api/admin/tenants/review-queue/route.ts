@@ -1,6 +1,6 @@
 // §15.11 — Admin review queue: pending tenant applications.
 // GET: paginated list of tenants in review_decision = 'pending'.
-// Visible only to superadmin and reviewer roles.
+// Visible only to superadmin (reviewer access removed per #1003).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
