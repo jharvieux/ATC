@@ -89,7 +89,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
         table === "invitations" ? { data: invitationsPool, error: null }
         : table === "groups" ? { data: groupsPool, error: null }
         : table === "tenants" ? { data: tenantsPool, error: null }
-        : { data: [], error: null }; // tenant_branding + email_log (count 0)
+        : table === "email_log" ? { data: [], error: null } // 3-per-24h count = 0 → not rate-limited
+        : { data: [], error: null }; // tenant_branding
 
       const builder: Record<string, unknown> = {
         select() { return builder; },
