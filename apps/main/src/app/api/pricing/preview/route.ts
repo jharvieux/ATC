@@ -6,13 +6,7 @@
 import { calculateAgencySeatPreviewCents } from "@/lib/stripe/price-ids";
 import type { BillingPeriod, Tier, TenantType } from "@/lib/stripe/price-ids";
 import { TIER_BASE_PRICE_CENTS } from "@/lib/abuse/revenue";
-import type { TenantTierCode } from "@/lib/abuse/revenue";
-
-// Maps {tenant_type, tier} → tier_definitions.code (§3.3 / TIER_CODE in tier/route.ts).
-const TIER_CODE: Record<TenantType, Record<Tier, TenantTierCode>> = {
-  byo_host: { starter: "byo_research", pro: "byo_professional", agency: "byo_agency" },
-  sub_host: { starter: "sub_starter",  pro: "sub_pro",          agency: "sub_agency" },
-};
+import { TIER_CODE } from "@/lib/stripe/tier-codes";
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
