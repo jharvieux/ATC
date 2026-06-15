@@ -35,7 +35,7 @@
     "geist": "^1.7.2",
     "inngest": "^4.5.1",
     "jose": "^6.2.3",
-    "lucide-react": "^1.17.0",
+    "lucide-react": "^1.18.0",
     "mammoth": "^1.12.0",
     "next": "^16.2.9",
     "next-themes": "^0.4.6",
@@ -48,14 +48,14 @@
     "rehype-stringify": "^10.0.1",
     "remark": "^15.0.1",
     "remark-rehype": "^11.1.2",
-    "stripe": "^22.2.0",
+    "stripe": "^22.2.1",
     "tailwind-merge": "^3.6.0",
     "tesseract.js": "^7.0.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@atc/config": "workspace:*",
-    "@tailwindcss/postcss": "^4.3.0",
+    "@tailwindcss/postcss": "^4.3.1",
     "@types/big.js": "^7.0.0",
     "@types/node": "^25.9.3",
     "@types/react": "^18.3.18",
@@ -64,7 +64,7 @@
     "eslint-config-next": "^16.2.9",
     "eslint-plugin-atc": "workspace:*",
     "postcss": "^8.5.1",
-    "tailwindcss": "^4.3.0",
+    "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3"
   }
 }
