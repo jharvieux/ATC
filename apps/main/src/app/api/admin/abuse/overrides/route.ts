@@ -10,7 +10,7 @@
 //   Lists active overrides for a tenant.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 const DIMENSIONS = new Set(["ai_cost", "rag_cap", "chat_volume", "email_volume", "group_invite"]);
@@ -29,7 +29,7 @@ function defaultExpiryDate(days: number): string {
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "abuse")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -110,7 +110,7 @@ export async function POST(req: Request): Promise<Response> {
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "abuse")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

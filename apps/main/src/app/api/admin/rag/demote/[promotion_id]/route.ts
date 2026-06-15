@@ -14,7 +14,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface Body {
   mode?: "to_tenant_scope" | "hard_delete";
@@ -26,7 +26,7 @@ export async function POST(
 ): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer", "service"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "rag")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

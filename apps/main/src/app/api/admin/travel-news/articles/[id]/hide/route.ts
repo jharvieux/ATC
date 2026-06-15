@@ -4,7 +4,7 @@
 // PATCH → set is_hidden = false (restore to ticker)
 
 import {
-  assertPlatformRole,
+  assertPlatformAdminArea,
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
@@ -17,7 +17,7 @@ async function setHidden(
 ): Promise<Response> {
   let ctx;
   try {
-    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
+    ctx = await assertPlatformAdminArea(req, "travel_news");
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

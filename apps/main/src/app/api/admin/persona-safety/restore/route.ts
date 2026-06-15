@@ -8,7 +8,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import {
-  assertPlatformRole,
+  assertPlatformAdminArea,
   PlatformAdminError,
   type PlatformAdminContext,
 } from "@/lib/auth/assert-platform-admin";
@@ -19,7 +19,7 @@ import { clearPersonaRepositoryCaches } from "@/lib/personas/persona-repository"
 export async function POST(req: Request): Promise<Response> {
   let ctx: PlatformAdminContext;
   try {
-    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
+    ctx = await assertPlatformAdminArea(req, "persona_safety");
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

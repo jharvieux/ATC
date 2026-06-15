@@ -29,6 +29,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 vi.mock("@/lib/auth/assert-platform-admin", () => ({
   assertPlatformAdmin: mocks.assertPlatformAdmin,
   assertPlatformRole: mocks.assertPlatformAdmin,
+  assertPlatformAdminArea: mocks.assertPlatformAdmin,
   PlatformAdminError: class extends Error {
     toResponse() {
       return Response.json({ error: "forbidden" }, { status: 403 });

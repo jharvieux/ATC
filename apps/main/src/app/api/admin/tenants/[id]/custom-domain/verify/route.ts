@@ -6,7 +6,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { lookupCname, lookupTxt } from "@/lib/dns/doh-resolver";
 import { vercelAddDomain, CrownJewelGuardError } from "@/lib/vercel/domain-client";
 import { writeAuditLog } from "@/lib/audit/write";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function POST(
@@ -15,7 +15,7 @@ export async function POST(
 ): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "tenants")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

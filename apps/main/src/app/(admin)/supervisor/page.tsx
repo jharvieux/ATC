@@ -12,7 +12,7 @@
 import React from "react";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
-import { assertPlatformRolePage } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminAreaPage } from "@/lib/auth/assert-platform-admin";
 
 interface KillSwitchState {
   global_paused: boolean;
@@ -211,7 +211,7 @@ const thCls = "text-left px-2 py-2 border-b border-border";
 const tdCls = "px-2 py-2 border-b border-muted";
 
 export default async function SupervisorDashboardPage(): Promise<React.ReactElement> {
-  await assertPlatformRolePage(["superadmin", "reviewer", "finance", "support"]);
+  await assertPlatformAdminAreaPage("supervisor");
   const [escalations, flaggedMessages, personaMetrics, killSwitch, regenExhausted, drift] =
     await Promise.all([
       getOpenEscalations(),

@@ -3,7 +3,7 @@
 // POST: publish a new version (supersedes prior current version, flags affected users).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 function escapeHtml(s: string): string {
@@ -22,7 +22,7 @@ const VALID_TYPES = ["tou","privacy_policy","ai_disclaimer","cookie_policy","ica
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "legal_docs")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -52,7 +52,7 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "legal_docs")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

@@ -4,7 +4,7 @@
 
 import crypto from "node:crypto";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 interface InitBody {
   custom_domain: string;
@@ -31,7 +31,7 @@ export async function POST(
 ): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "tenants")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

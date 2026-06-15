@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 function escapeReviewHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -112,7 +112,7 @@ export async function POST(
 ): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "tenants")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

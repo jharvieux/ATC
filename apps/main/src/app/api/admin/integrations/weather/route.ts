@@ -11,7 +11,7 @@
 // admin routes).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import {
   parseDailyCap,
   OPEN_METEO_FREE_TIER_CEILING,
@@ -33,7 +33,7 @@ const HISTORY_DAYS = 30;
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "integrations")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -114,7 +114,7 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "integrations")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

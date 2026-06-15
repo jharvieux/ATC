@@ -4,7 +4,7 @@
 // POST /api/admin/cruise-catalog/lines  → { line } (create)
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError, type PlatformAdminContext } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError, type PlatformAdminContext } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 const LINE_COLS = "id, slug, canonical_name, display_name, tier, is_active, cruisemapper_slug, website_url, created_at";
@@ -12,7 +12,7 @@ const LINE_COLS = "id, slug, canonical_name, display_name, tier, is_active, crui
 export async function GET(req: Request): Promise<Response> {
   let ctx: PlatformAdminContext;
   try {
-    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
+    ctx = await assertPlatformAdminArea(req, "cruise_catalog");
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
@@ -45,7 +45,7 @@ interface CreateLineBody {
 export async function POST(req: Request): Promise<Response> {
   let ctx: PlatformAdminContext;
   try {
-    ctx = await assertPlatformRole(req, ["superadmin", "reviewer"]);
+    ctx = await assertPlatformAdminArea(req, "cruise_catalog");
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

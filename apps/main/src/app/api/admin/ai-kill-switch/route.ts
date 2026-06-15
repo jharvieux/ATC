@@ -14,12 +14,12 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import type { PlatformAdminReason } from "@/lib/db/platform-admin-reasons";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "ai_kill_switch")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;

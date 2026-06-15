@@ -15,14 +15,14 @@
 // Pagination via ?page=N.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { assertPlatformRole, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 
 const PAGE_SIZE = 25;
 
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
   try {
-    adminUserId = (await assertPlatformRole(req, ["superadmin", "reviewer", "service"])).admin_user_id;
+    adminUserId = (await assertPlatformAdminArea(req, "rag")).admin_user_id;
   } catch (e) {
     if (e instanceof PlatformAdminError) return e.toResponse();
     throw e;
