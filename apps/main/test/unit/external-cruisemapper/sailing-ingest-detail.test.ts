@@ -50,29 +50,78 @@ const SHIP_HTML = `<!doctype html><html><body>
 
 const SHIP_URL = "https://www.cruisemapper.com/ships/Norwegian-Prima-2216";
 
-// Inventory db mock: select(...).eq.eq.maybeSingle resolves the enriched status;
-// upsert records the mark-enriched calls.
-function makeDb(enrichedStatus: string | null) {
+// Inventory db mock: dispatches on table name.
+// - cruise_ships: single-eq lookup (slug → id). Pass shipId to simulate a catalog hit.
+// - cruise_sailings: upsert captured in sailingUpserts; failSailingUpsert simulates a write error.
+// - sailing_port_calls: upsert rows captured in portCallUpserts.
+// - cruisemapper_url_inventory: two-eq lookup for enrichment status + upsert for mark-enriched.
+function makeDb(
+  enrichedStatus: string | null,
+  options?: { shipId?: string; failSailingUpsert?: boolean },
+) {
   const upserts: Array<Record<string, unknown>> = [];
+  const sailingUpserts: Array<Record<string, unknown>> = [];
+  const portCallUpserts: Array<unknown[]> = [];
+  const shipId = options?.shipId ?? null;
+  const failSailingUpsert = options?.failSailingUpsert ?? false;
+
   const db = {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
+    from: (table: string) => {
+      if (table === "cruise_ships") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: shipId ? { id: shipId } : null,
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === "cruise_sailings") {
+        return {
+          upsert: (row: Record<string, unknown>) => {
+            sailingUpserts.push(row);
+            return {
+              select: () => ({
+                single: async () =>
+                  failSailingUpsert
+                    ? { data: null, error: { message: "upsert_fail" } }
+                    : { data: { id: "sail-stub" }, error: null },
+              }),
+            };
+          },
+        };
+      }
+      if (table === "sailing_port_calls") {
+        return {
+          upsert: (rows: unknown[]) => {
+            portCallUpserts.push(rows);
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      // cruisemapper_url_inventory — enrichment check + mark-enriched upsert.
+      return {
+        select: () => ({
           eq: () => ({
-            maybeSingle: async () => ({
-              data: enrichedStatus ? { last_ingest_status: enrichedStatus } : null,
-              error: null,
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: enrichedStatus ? { last_ingest_status: enrichedStatus } : null,
+                error: null,
+              }),
             }),
           }),
         }),
-      }),
-      upsert: (row: Record<string, unknown>) => {
-        upserts.push(row);
-        return Promise.resolve({ error: null });
-      },
-    }),
+        upsert: (row: Record<string, unknown>) => {
+          upserts.push(row);
+          return Promise.resolve({ error: null });
+        },
+      };
+    },
   } as unknown as Parameters<typeof processSailingHtml>[0];
-  return { db, upserts };
+  return { db, upserts, sailingUpserts, portCallUpserts };
 }
 
 function listItemIngest(): MappedItinerary | undefined {
@@ -195,5 +244,78 @@ describe("processSailingHtml — no current sailing (future/river ship)", () => 
     expect(result.current_errors).toBe(1); // genuine break — feeds the halt
     expect(result.no_current_sailing).toBe(0);
     expect(result.list_items).toBe(0);
+  });
+});
+
+describe("processSailingHtml — catalog persistence (#783)", () => {
+  const SHIP_ID = "cruise-ship-uuid-123";
+
+  it("upserts cruise_sailings for current sailing and list item when ship is in catalog", async () => {
+    const { db, sailingUpserts } = makeDb(null, { shipId: SHIP_ID });
+    const result = emptySailingResult();
+    await processSailingHtml(db, SHIP_HTML, SHIP_URL, result);
+
+    // current sailing (2026-05-30, Seattle) + list item (2026-05-31, Port Canaveral)
+    expect(sailingUpserts).toHaveLength(2);
+    expect(sailingUpserts[0]).toMatchObject({
+      cruise_ship_id: SHIP_ID,
+      departure_date: "2026-05-30",
+      departure_port: "Seattle, Washington",
+      duration_nights: 7,
+    });
+    expect(sailingUpserts[1]).toMatchObject({
+      cruise_ship_id: SHIP_ID,
+      departure_date: "2026-05-31",
+      departure_port: "Port Canaveral",
+      duration_nights: 7,
+    });
+    expect(result.catalog_upserted).toBe(2);
+    expect(result.catalog_errors).toBe(0);
+  });
+
+  it("upserts sailing_port_calls with correctly ordered rows when detail is fetched", async () => {
+    vi.stubEnv("CRUISEMAPPER_DETAIL_FETCH_ENABLED", "true");
+    mocks.fetchPage.mockResolvedValue({ status: "ok", body: JSON.stringify({ result: FRAGMENT }) });
+    const { db, portCallUpserts } = makeDb(null, { shipId: SHIP_ID });
+    const result = emptySailingResult();
+    await processSailingHtml(db, SHIP_HTML, SHIP_URL, result);
+    vi.unstubAllEnvs();
+
+    // Detail was fetched for the one list item (current sailing has ports from parser).
+    // At least one port-call upsert must have fired for the detail-enriched list item.
+    expect(portCallUpserts.length).toBeGreaterThan(0);
+    const rows = portCallUpserts[0] as Array<{ sailing_id: string; port_name: string; day_index: number }>;
+    // day_index must be strictly ascending and start at 0.
+    expect(rows[0]?.day_index).toBe(0);
+    rows.forEach((r, i) => {
+      expect(r.sailing_id).toBe("sail-stub");
+      expect(r.day_index).toBe(i);
+      expect(typeof r.port_name).toBe("string");
+    });
+  });
+
+  it("skips catalog persistence when ship is not in catalog (null cruiseShipId)", async () => {
+    const { db, sailingUpserts } = makeDb(null); // no shipId → lookup returns null
+    const result = emptySailingResult();
+    await processSailingHtml(db, SHIP_HTML, SHIP_URL, result);
+
+    expect(sailingUpserts).toHaveLength(0);
+    expect(result.catalog_upserted).toBe(0);
+    expect(result.catalog_errors).toBe(0);
+    // RAG ingest is unaffected — still fires for current + list item.
+    expect(result.current_ingested).toBe(1);
+    expect(result.list_ingested).toBe(1);
+  });
+
+  it("increments catalog_errors and does NOT abort RAG ingest when cruise_sailings upsert fails", async () => {
+    const { db } = makeDb(null, { shipId: SHIP_ID, failSailingUpsert: true });
+    const result = emptySailingResult();
+    await processSailingHtml(db, SHIP_HTML, SHIP_URL, result);
+
+    expect(result.catalog_errors).toBeGreaterThan(0);
+    expect(result.catalog_upserted).toBe(0);
+    // RAG ingest still completes — catalog failure is non-fatal.
+    expect(result.current_ingested).toBe(1);
+    expect(result.list_ingested).toBe(1);
   });
 });

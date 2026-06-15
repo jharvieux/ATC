@@ -171,6 +171,9 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   "cruise_line_aliases",
   "cruise_ships",
   "cruise_ship_aliases",
+  // #783 — sailing catalog (no tenant_id). RLS SELECT for authenticated.
+  "cruise_sailings",
+  "sailing_port_calls",
   // #1054 — the following five have NO tenant_id column and were wrongly listed
   // in TENANT_SCOPED_TABLES, where the proxy would inject `.eq("tenant_id", …)`
   // and Postgres would hard-error ("column <t>.tenant_id does not exist").

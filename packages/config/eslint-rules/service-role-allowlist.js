@@ -187,6 +187,10 @@ module.exports = [
   "/inngest/group-reminder-cadence.ts",
   // BP19: Hero image — reads destination_images and writes cache. §18.3.
   "/lib/groups/hero-image.ts",
+  // BP20: Forum threads list + create — reads/writes forum_threads. §19.7.
+  // Service-role matches the established pattern in the forum subsystem (sibling messages
+  // route); explicit .eq("tenant_id") provides app-layer isolation on all queries.
+  "/app/api/forums/[forumId]/threads/route.ts",
   // BP20: Forum message post — writes forum_messages + calls Haiku inline. §19.3.
   "/app/api/forums/[forumId]/threads/[threadId]/messages/route.ts",
   // BP20: Forum message patch (coordinator hide/edit) — reads/writes forum_messages. §19.7.

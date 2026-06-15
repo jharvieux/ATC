@@ -180,6 +180,21 @@ async function recordStripeFixtures(): Promise<void> {
     }
 
     {
+      // Attach Stripe's built-in test card to the freshly-created customer and
+      // set it as the invoice default so the subscription create below succeeds.
+      // pm_card_visa is a Stripe-provided test payment method ID that is always
+      // available in test mode — no fixture is recorded for this setup step.
+      const customerId = subs.cus_test_placeholder as string;
+      await stripeFetch("POST", `/v1/payment_methods/pm_card_visa/attach`, {
+        customer: customerId,
+      });
+      await stripeFetch("POST", `/v1/customers/${customerId}`, {
+        invoice_settings: { default_payment_method: "pm_card_visa" },
+      });
+      console.log(`Stripe: attached test payment method to ${customerId}`);
+    }
+
+    {
       const fixture = readFixture("stripe/subscriptions/create-success.json");
       const body = substitutePlaceholders(fixture.request.body ?? {}, subs);
       const { status, body: respBody } = await stripeFetch(

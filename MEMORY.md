@@ -4,6 +4,36 @@ Newest entries on top.
 
 ---
 
+## D-231 — 2026-06-15 — #783 Phase 3 — Sailing catalog + cascade-dropdown group creation (PR #1093)
+
+Connected group-booking via sailing catalog is live. Key decisions:
+- `cruise_sailings` / `sailing_port_calls` have no `tenant_id` — placed in `PLATFORM_READABLE_TABLES` (same pattern as `cruise_lines` / `cruise_ships` from D-203).
+- `persistPortCalls` returns `boolean` (not void) so callers can increment `catalog_errors` counter without catching exceptions — keeps the failure path explicit.
+- `sailing_id` FK on `groups` is nullable (legacy free-text groups have NULL); UUID validated at the API boundary before INSERT.
+- Redundant explicit indexes removed — UNIQUE constraints already create btree indexes on `(cruise_ship_id, departure_date)` and `(sailing_id, day_index)`.
+- RLS snapshot committed without the new table entries (test DB doesn't have the migration yet); post-deploy follow-up needed to regenerate snapshot after migration applies.
+- `catalog_errors` alerting deferred to issue #1094.
+
+**Why**: Phase 3 of #783 — coordinators can now select a sailing from a cascade dropdown (line → ship → sailing) instead of typing free-text, linking the group booking to a structured catalog entry.
+
+**How to apply**: When adding future catalog tables without `tenant_id`, follow same pattern: `PLATFORM_READABLE_TABLES` + RLS SELECT for authenticated. RLS snapshot must be regenerated after migration applies to the live DB.
+
+---
+
+## D-230 — 2026-06-15 — Login gate for /signup/complete and /onboarding/* redirects to /auth/reauth (#1050)
+
+Unauthenticated deep-links to `/signup/complete` (platform domain) and `/onboarding/*` (tenant subdomains) redirect to `/auth/reauth?return=<path>`. Implemented in `proxy.ts` section 1d, before tenant resolution.
+
+**Why `/auth/reauth` rather than `/signup`**: The reauth page shows multi-provider OAuth buttons with relative URLs, so it works on any domain and establishes a session on the correct domain. `/signup` says "Create your account" (wrong UX for returning users) and doesn't accept a `redirect_to` param. A custom `/login` page would have been equivalent but was extra scope — the existing reauth page covers it.
+
+**Why before tenant resolution**: Saves the DB slug/domain lookup for unauthenticated hits. Gate fires before sections 2/3/4.
+
+**Fail-closed**: `getUser()` returns `{ data: { user: null } }` on Supabase error → authUser is null → redirect fires (gate fails closed, not open).
+
+**Not fixed**: The `/signup/complete` page still has a JS-level `if (res.status === 401) { window.location.href = "/signup"; }` on form submit — harmless now that the middleware gate fires first, but left in place as defense-in-depth. Not worth removing.
+
+---
+
 ## D-229 — 2026-06-15 — Retire db:migrate; psql loops replace custom migration ledger (#1078)
 
 **Decision:** Deleted `scripts/db-migrate.ts` (maintained a custom `public.schema_migrations` table separate from Supabase CLI's `supabase_migrations.schema_migrations`). In CI (`e2e.yml`), replaced `pnpm db:migrate` with bare psql glob loops (`for f in apps/main/supabase/migrations/*.sql`). In `scripts/db-reset.ts`, replaced `execSync("pnpm db:migrate")` with `readdirSync` + per-file `psql`. CI uses a fresh PostgreSQL container per run so no idempotency guard needed. Bundled fix: sidebar Platform Admins item missing `requiredRoles: ["superadmin"]` (#1079). Shipped PR #1081.
