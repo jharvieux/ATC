@@ -13,6 +13,23 @@ import { withVendorHealthGate } from "@/lib/vendor-health/gate";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import type { TenantTierCode } from "@/lib/abuse/revenue";
+
+// Maps {tenant_type, tier} → tier_definitions.code (§3.3).
+const TIER_CODE: Record<TenantType, Record<Tier, TenantTierCode>> = {
+  byo_host: { starter: "byo_research", pro: "byo_professional", agency: "byo_agency" },
+  sub_host: { starter: "sub_starter",  pro: "sub_pro",          agency: "sub_agency" },
+};
+
+// Reverse: tier_definitions.code → bare Tier for priceIdFor.
+const CODE_TO_TIER: Record<string, Tier> = {
+  byo_research:     "starter",
+  byo_professional: "pro",
+  byo_agency:       "agency",
+  sub_starter:      "starter",
+  sub_pro:          "pro",
+  sub_agency:       "agency",
+};
 
 function getStripe(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -130,11 +147,15 @@ export async function POST(req: Request): Promise<Response> {
         });
       }
 
-      // Resolve new tier_id.
-      const { data: tierDef } = await srDb.from("tier_definitions").select("id").eq("slug", body.tier).maybeSingle();
+      // Resolve new tier_id via type-prefixed code (§3.3).
+      const newTierCode = TIER_CODE[tenantType]?.[body.tier as Tier];
+      if (!newTierCode) return Response.json({ error: "invalid_tier_for_tenant_type" }, { status: 422 });
+      const { data: newTierDef, error: newTierErr } = await srDb.from("tier_definitions").select("id").eq("code", newTierCode).maybeSingle();
+      if (newTierErr) return Response.json({ error: newTierErr.message }, { status: 500 });
+      if (!newTierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
       const db = tenantClient(ctx);
-      await safeAwait(db.from("tenants").update({ tier_id: tierDef?.id ?? tenant.tier_id, seat_count: newSeatCount }).eq("id", ctx.tenant_id), "tenants.update");
+      await safeAwait(db.from("tenants").update({ tier_id: newTierDef.id, seat_count: newSeatCount }).eq("id", ctx.tenant_id), "tenants.update");
 
       await inngest.send({ name: "tenant.subscription_changed", data: { tenant_id: ctx.tenant_id, change: "tier", new_tier: body.tier } });
     } else if (body.action === "update_seats") {
@@ -188,8 +209,11 @@ export async function POST(req: Request): Promise<Response> {
 
       // Monthly → annual: immediate proration upgrade.
       const tenantType = tenant.tenant_type as TenantType;
-      const { data: tierDef } = await srDb.from("tier_definitions").select("slug").eq("id", tenant.tier_id).maybeSingle();
-      const tier = (tierDef?.slug ?? "starter") as Tier;
+      const { data: tierDef, error: tierErr } = await srDb.from("tier_definitions").select("code").eq("id", tenant.tier_id).maybeSingle();
+      if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
+      if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
+      const tier = CODE_TO_TIER[tierDef.code];
+      if (!tier) return Response.json({ error: "unrecognized_tier_code" }, { status: 500 });
       const basePriceId = priceIdFor({ tenant_type: tenantType, tier, billing_period: "annual", line_item: "base" });
 
       if (tenant.stripe_subscription_id) {
