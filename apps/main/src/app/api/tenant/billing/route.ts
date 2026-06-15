@@ -215,7 +215,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return respondToAuthError(err);
   }
 }
