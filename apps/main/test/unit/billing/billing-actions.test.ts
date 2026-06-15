@@ -237,7 +237,7 @@ describe("POST /api/tenant/billing §15.15", () => {
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "change_tier", tier: "pro" }));
     expect(res.status).toBe(200);
-    expect(vi.mocked(mockSafeAwait)).toHaveBeenCalled();
+    expect(mockSafeAwait).toHaveBeenCalled();
     expect(vi.mocked(mockInngestSend)).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "tenant.subscription_changed",
@@ -262,7 +262,7 @@ describe("POST /api/tenant/billing §15.15", () => {
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "update_seats", seat_count: 3 }));
     expect(res.status).toBe(200);
-    expect(vi.mocked(mockSafeAwait)).toHaveBeenCalled();
+    expect(mockSafeAwait).toHaveBeenCalled();
     expect(vi.mocked(mockInngestSend)).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "tenant.subscription_changed",
@@ -302,7 +302,19 @@ describe("POST /api/tenant/billing §15.15", () => {
     expect(body.deferred).toBe(true);
     expect(body.effective_at).toBeTruthy();
     // Stripe subscriptions.update must NOT be called (no immediate change).
-    expect(vi.mocked(mockStripeSubscriptionsUpdate)).not.toHaveBeenCalled();
+    expect(mockStripeSubscriptionsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("switch_billing_period: annual→monthly Stripe unavailable — defers with null effective_at rather than blocking", async () => {
+    tenantData = { ...activeTenant()!, billing_period: "annual", stripe_subscription_id: "sub_1" };
+    mockStripeSubscriptionsRetrieve.mockRejectedValueOnce(new Error("stripe_unavailable"));
+    const { POST } = await import("@/app/api/tenant/billing/route");
+    const res = await POST(postRequest({ action: "switch_billing_period", billing_period: "monthly" }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; deferred: boolean; effective_at: null };
+    expect(body.deferred).toBe(true);
+    // effective_at is null when Stripe is unreachable; the DB records null rather than a wrong date.
+    expect(body.effective_at).toBeNull();
   });
 
   it("switch_billing_period: monthly→annual tier_definitions DB error → 500", async () => {
@@ -344,6 +356,6 @@ describe("POST /api/tenant/billing §15.15", () => {
       expect.objectContaining({ billing_period: "annual" }),
     );
     expect(vi.mocked(mockStripeSubscriptionsUpdate)).toHaveBeenCalled();
-    expect(vi.mocked(mockSafeAwait)).toHaveBeenCalled();
+    expect(mockSafeAwait).toHaveBeenCalled();
   });
 });
