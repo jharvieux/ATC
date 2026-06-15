@@ -181,4 +181,19 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     const body = await res.json() as { url: string };
     expect(body.url).toBe("https://checkout.stripe.com/test");
   });
+
+  it("trial_end is within Stripe's 730-day cap — never sends far-future epoch", async () => {
+    tenantData = { id: "t1", tenant_type: "sub_host", tier_id: "tier-6", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
+    tierData = { code: "sub_starter" };
+    const { POST } = await import("@/app/api/onboarding/subscription/checkout/route");
+    const before = Math.floor(Date.now() / 1000);
+    await POST(postRequest());
+    const after = Math.floor(Date.now() / 1000);
+    const call = mockSessionCreate.mock.calls[0][0] as { subscription_data: { trial_end: number } };
+    const trialEnd = call.subscription_data.trial_end;
+    const maxAllowed = after + 730 * 24 * 60 * 60;
+    const minExpected = before + 728 * 24 * 60 * 60;
+    expect(trialEnd).toBeGreaterThanOrEqual(minExpected);
+    expect(trialEnd).toBeLessThanOrEqual(maxAllowed);
+  });
 });
