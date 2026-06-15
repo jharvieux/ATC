@@ -47,6 +47,7 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("feature_request", "read"),
   key("groups", "list"),
   key("groups", "read"),
+  key("group.invitations", "list"),
   key("help_docs", "read"),
   key("host_config", "read"),
   key("persona_addendum", "read"),
@@ -105,6 +106,7 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("groups", "broadcast"),
   key("groups", "create"),
   key("groups", "invite"),
+  key("group.invitations", "manage"),
   // Price watches
   key("price_watches", "create"),
   key("price_watches", "rearm"),
