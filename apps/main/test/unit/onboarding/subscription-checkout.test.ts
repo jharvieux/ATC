@@ -189,7 +189,8 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     const before = Math.floor(Date.now() / 1000);
     await POST(postRequest());
     const after = Math.floor(Date.now() / 1000);
-    const call = mockSessionCreate.mock.calls[0][0] as { subscription_data: { trial_end: number } };
+    // mock.calls typed as [][] (no-param fn); cast to actual runtime shape.
+    const call = (mockSessionCreate.mock.calls as unknown as [[{ subscription_data: { trial_end: number } }]])[0][0];
     const trialEnd = call.subscription_data.trial_end;
     const maxAllowed = after + 730 * 24 * 60 * 60;
     const minExpected = before + 728 * 24 * 60 * 60;
