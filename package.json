@@ -43,7 +43,6 @@
     "test:security": "vitest run tests/security",
     "fixtures:load": "tsx scripts/load-fixtures.ts",
     "fixtures:dry-run": "tsx scripts/load-fixtures.ts --dry-run",
-    "db:migrate": "tsx scripts/db-migrate.ts",
     "db:reset": "tsx scripts/db-reset.ts",
     "lint:migrations": "tsx scripts/lint-migrations.ts",
     "knip": "knip",

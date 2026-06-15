@@ -145,10 +145,12 @@ jobs:
       - name: Apply migrations
         env:
           PGUSER: postgres
+          PGHOST: localhost
+          PGPORT: 5432
         run: |
           set -eux
-          SUPABASE_DB_URL="postgresql://postgres@localhost:5432/atc_main_test" pnpm db:migrate
-          SUPABASE_DB_URL="postgresql://postgres@localhost:5432/atc_rag_test" MIGRATIONS_DIR=apps/rag/supabase/migrations pnpm db:migrate
+          for f in apps/main/supabase/migrations/*.sql; do psql -d atc_main_test -f "$f"; done
+          for f in apps/rag/supabase/migrations/*.sql;  do psql -d atc_rag_test  -f "$f"; done
 
       - name: Apply Tier-2.5 grants
         env:

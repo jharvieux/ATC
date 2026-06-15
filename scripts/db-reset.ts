@@ -1,5 +1,7 @@
 import postgres from "postgres";
 import { execSync } from "node:child_process";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 const dbUrl = process.env.SUPABASE_DB_URL;
 const allowed = process.env.ALLOW_DB_RESET === "true";
@@ -47,8 +49,14 @@ async function main(): Promise<void> {
     await sql.end();
   }
 
-  console.log("Reapplying migrations...");
-  execSync("pnpm db:migrate", { stdio: "inherit" });
+  const migrationsDir = join(process.cwd(), "apps/main/supabase/migrations");
+  const migrations = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  console.log(`Reapplying ${migrations.length} migrations...`);
+  for (const file of migrations) {
+    execSync(`psql "${dbUrl}" -f "${join(migrationsDir, file)}"`, { stdio: "inherit" });
+  }
 }
 
 main().catch((err) => {
