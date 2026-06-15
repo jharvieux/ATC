@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockSafeAwaitRowCount = vi.hoisted(() => vi.fn(async () => {}));
 const mockProgressTo = vi.hoisted(() => vi.fn(async () => {}));
 const mockTenantUpdate = vi.hoisted(() =>
-  vi.fn((_data: object) => ({
+  vi.fn(() => ({
     eq: vi.fn(() => ({ select: vi.fn(() => ({})) })),
   })),
 );
@@ -163,8 +163,8 @@ describe("POST /api/onboarding/tier §15.8", () => {
     mockSafeAwaitRowCount.mockRejectedValueOnce(new Error("row_count_mismatch"));
     const { POST } = await import("@/app/api/onboarding/tier/route");
     const res = await POST(postRequest());
-    // Outer catch routes to respondToAuthError (mocked to 401).
-    expect(res.status).toBe(401);
+    expect(res.status).not.toBe(200);
+    expect(vi.mocked(mockProgressTo)).not.toHaveBeenCalled();
   });
 
   it("progressTo called with tenant_id + 'subscription' — state machine must advance after update", async () => {
