@@ -1,24 +1,26 @@
-# Session state — last updated 2026-06-15 09:30 UTC
+# Session state — last updated 2026-06-15 12:10 UTC
 
 ## Just completed
-- Merged PR #1093: feat(#783): Phase 3 — sailing catalog + cascade-dropdown group creation
-- Merged PR #1095: chore/783-rls-snapshot-restore — applied migration to prod, restored RLS + grants snapshot
-- Merged PR #1089: chore(#1066) — retired stale stub/placeholder/Phase-5b/5c comments
-- Merged PR #1096: fix(#1091) — added group.invitations list+manage to permission matrix; closes #1091
-- Merged PR #1097: feat(#1094) — catalog_errors alert in sailing ingest; closes #1094
-- Closed issues #783, #1061, #1064, #1065, #1091, #1094
+- Investigated "reauth_required" error on ICA acceptance during onboarding
+- Found two bugs:
+  1. Root cause: `readAuthTime` in `assert-permission.ts` always returned null because Supabase GoTrue JWTs use `amr[].timestamp` (not `auth_time`) for the authentication timestamp. This caused ALL sensitive routes (/api/onboarding/ica, /api/tenant/billing, /api/commissions, /api/user/data) to reject unconditionally.
+  2. ICA page's `handleSubmit` showed raw "reauth_required" string instead of redirecting to /auth/reauth.
+- Fixed both bugs in PR #1104 (fix/ica-reauth-redirect):
+  - `readAuthTime` now falls back to max `amr[].timestamp`; exported for testing
+  - Added 7 unit tests in `test/unit/auth/read-auth-time.test.ts`
+  - ICA page redirects to `/auth/reauth?return=/onboarding/ica` + resets submitting state
+- All CI checks pass except pr-audit-section-check awaiting re-run (hash mismatch from timing; agents re-ran, body edit triggered re-check)
 
 ## In flight
-- Nothing in flight — clean checkpoint
+- PR #1104 (fix/ica-reauth-redirect) — waiting for pr-audit-section-check to pass, then merge
 
 ## Next step
-- #822: post-deploy re-ingest CruiseMapper itineraries — manual ops task, needs human trigger once catalog data and sailings are confirmed in prod
-- #979: group reminder email needs RSVP CTA — deferred until invite landing page ships
+- Merge PR #1104 once pr-audit-section-check goes green
+- Delete feature branch after merge
+- Note: this fix unblocks the entire sensitive-routes system — billing, commissions, user data deletion were ALL broken with the same reauth_required error
 
 ## Blocked on user
 - Nothing
 
 ## Open questions
-- #979: group reminder email needs RSVP CTA — deferred, needs invite landing page first
-- #965: post-approval onboarding checklist — deferred
-- #822: post-deploy re-ingest CruiseMapper itineraries — ops task awaiting human trigger
+- Other sensitive routes (billing, commissions, user/data) should now work too — worth a smoke test post-merge
