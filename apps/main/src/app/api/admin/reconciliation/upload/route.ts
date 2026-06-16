@@ -171,7 +171,7 @@ If amounts appear to be in dollars, multiply by 100 to convert to cents.`;
           try {
             await processLineItem(db, tenantId, line, "manual_upload", counts, recordQuery);
           } catch (err) {
-            console.error("[reconciliation] processLineItem failed", { tenantId, line, error: String(err) });
+            console.error("[reconciliation] processLineItem failed", { tenantId, provider_booking_ref: line.provider_booking_ref, amount_cents: line.received_amount_cents, error: String(err) });
             counts.errors++;
           }
         }
