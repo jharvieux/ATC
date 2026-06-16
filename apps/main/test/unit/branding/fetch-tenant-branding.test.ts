@@ -139,6 +139,67 @@ describe("fetchTenantBranding — DB branches (issue #655)", () => {
     });
   });
 
+  it("returns display_name with nulls when PostgREST returns null for tenant_branding (1-to-1 FK, no row)", async () => {
+    // Why: the production crash on lisa-travel — PostgREST detected a unique
+    // constraint on the tenant_id FK column and returned null (not []) when
+    // there is no branding row. The old code did `row.tenant_branding[0]`,
+    // which threw `TypeError: Cannot read properties of null (reading '0')`.
+    mockMaybeSingle.mockResolvedValueOnce({
+      data: {
+        display_name: "Lisa Travel",
+        status: "active",
+        tenant_branding: null,
+      },
+      error: null,
+    });
+
+    const result = await fetchTenantBranding("lisa-travel");
+    expect(result).toEqual({
+      display_name: "Lisa Travel",
+      logo_url: null,
+      logo_dark_url: null,
+      favicon_url: null,
+      slogan: null,
+      primary_color: null,
+      secondary_color: null,
+      accent_color: null,
+      font_family: null,
+    });
+  });
+
+  it("returns branding when PostgREST returns a plain object for tenant_branding (1-to-1 FK, row present)", async () => {
+    // Why: when PostgREST detects a 1-to-1 constraint AND the row exists, it
+    // returns the embed as a plain object, not an array. Without the
+    // Array.isArray guard, `Array.isArray(obj)` is false and the old code
+    // would fall through (pre-fix: this path was unhandled; post-fix: it
+    // goes to the `tb ?? null` branch, returning the object directly).
+    mockMaybeSingle.mockResolvedValueOnce({
+      data: {
+        display_name: "Object Travel",
+        status: "active",
+        tenant_branding: {
+          logo_url: "https://obj.example.com/logo.svg",
+          logo_dark_url: null,
+          favicon_url: null,
+          slogan: "Just a test",
+          primary_color: "#111111",
+          secondary_color: null,
+          accent_color: null,
+          font_family: null,
+        },
+      },
+      error: null,
+    });
+
+    const result = await fetchTenantBranding("object-travel");
+    expect(result).toMatchObject({
+      display_name: "Object Travel",
+      logo_url: "https://obj.example.com/logo.svg",
+      slogan: "Just a test",
+      primary_color: "#111111",
+    });
+  });
+
   it("throws on a DB/network error so the landing 500s instead of silently degrading", async () => {
     // Why: a real DB failure (connection refused, PostgREST 500, RLS
     // misconfig) should be loud, not silently rendered as the platform
