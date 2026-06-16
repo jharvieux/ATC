@@ -11,7 +11,7 @@ ALTER TABLE public.reconciliation_review_queue
 
 -- 2. Atomic transfer reversal handler. Executes in a single transaction:
 --    a. CAS flip payout_records paid→reversed (returns matched rows)
---    b. Credits payout_balances.available_cents for each row
+--    b. Deducts from payout_balances.available_cents for each row (clawback)
 --    c. Marks the linked commission 'disputed' and opens a clawback review row
 --    Returns the count of payout_records rows processed (0 = not ours / already reversed).
 --
