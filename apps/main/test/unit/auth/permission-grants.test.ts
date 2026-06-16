@@ -221,6 +221,11 @@ const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["rag_submissions", "approve"],
   ["rag_submissions", "reject"],
   ["rag_submissions", "review"],
+  // §27.11 — usage dashboard + override workflow (owner-only Administration nav).
+  // #1173 sub-fix: these were absent from the matrix and 403'd the Usage page.
+  ["TenantUsage", "read"],
+  ["TenantOverrideRequest", "list"],
+  ["TenantOverrideRequest", "create"],
 ];
 
 describe("permission-grants — exhaustive matrix", () => {

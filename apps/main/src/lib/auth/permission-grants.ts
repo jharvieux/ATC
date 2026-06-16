@@ -230,6 +230,16 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   // remain owner-only.
   key("api_tokens", "create"),
   key("api_tokens", "revoke"),
+  // §27.11 — Tenant usage dashboard + threshold-override workflow. Surfaced
+  // only under the owner-only "Administration" nav section (nav-sections.ts),
+  // so these are owner grants. assertPermission IS the route auth gate.
+  // #1170-class gap (#1173): absent from the matrix → fail-closed 403'd the
+  // /settings/usage page ("forbidden") for everyone, owners included.
+  // Covers /api/tenant/usage, /api/tenant/ai-config/cost-projection (read),
+  // and /api/tenant/override-requests (list + create).
+  key("TenantUsage", "read"),
+  key("TenantOverrideRequest", "list"),
+  key("TenantOverrideRequest", "create"),
 ]);
 
 const GRANTS_BY_ROLE: Record<UserRole, ReadonlySet<GrantKey>> = {

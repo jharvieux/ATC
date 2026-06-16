@@ -4,6 +4,32 @@ Newest entries on top.
 
 ---
 
+## D-249 — 2026-06-16 — TenantUsage:read + TenantOverrideRequest:list/create granted to tenant_owner; first of the #1173 backlog fixed as a live bug
+
+**Decision:** Added `TenantUsage:read`, `TenantOverrideRequest:list`, `TenantOverrideRequest:create` to `OWNER_GRANTS` only (not agent/viewer). Pinned in `permission-grants.test.ts` via `OWNER_ONLY_PAIRS` (owner granted; agent + viewer + unknown-role denied).
+
+**Why:** "Usage" under the Administration nav 403'd ("forbidden") — same root cause as D-248/#1170: the pairs were never in the RBAC matrix, so fail-closed `isPermitted` denied everyone once enforcement became real. Audience is unambiguous and did NOT need a user judgement call: `nav-sections.ts` gates the entire "Administration" section to `OWNER_ONLY` ("Administration maps to owner-only grants"), and the only UI caller of `/api/tenant/usage`, `/api/tenant/override-requests`, and `/api/tenant/ai-config/cost-projection` (all 4 ops) is the owner-only `/settings/usage` page (cost-projection via the owner-only Settings hub). Granting owner-only matches the declared audience and keeps least-privilege (agents/viewers can't see the link, so they shouldn't reach the API).
+
+**What was rejected:** Granting to agent too — would contradict the nav (agents never see Administration) and over-permit. Folding in the rest of #1173 — still needs per-pair decisions; only the usage surface was a reported live bug.
+
+**Artifacts:** `apps/main/src/lib/auth/permission-grants.ts` (OWNER_GRANTS); `apps/main/test/unit/auth/permission-grants.test.ts` (OWNER_ONLY_PAIRS); updated issue #1173 (these 3 pairs now resolved); see [[D-248]] for the sibling chat-grants fix and the matrix structure.
+
+---
+
+## D-248 — 2026-06-16 — Chat + customer self-service ops granted to all roles via shared SELF_SERVICE_GRANTS; 68 other ungranted pairs deferred to #1173 (PR #1174)
+
+**Decision:** Created a `SELF_SERVICE_GRANTS` set in `permission-grants.ts` — operations every authenticated member performs on their OWN data — inherited by all three roles (`viewer`, `agent`, `tenant_owner`). It holds the 6 chat ops (`Chat conversations:list`, `Get conversation:get`, `Update conversation:patch`, `Switch persona:post`, `Chat feedback:post`, `Escalate conversation:post`) plus the 7 customer-write keys (`CustomerMemory:update/delete/opt_out`, `UserProfile:update`, `SessionTransfer:commit/discard/undo`) moved out of `AGENT_GRANTS`. New hierarchy: `VIEWER_GRANTS = READ ∪ SELF_SERVICE`; `AGENT_GRANTS = VIEWER ∪ agent-only`; `OWNER_GRANTS = AGENT ∪ owner-only`.
+
+**Why:** The chat sidebar 403'd ("Couldn't load history: HTTP 403") because the 6 chat ops were never in the RBAC matrix. When the 2026-05-25 audit (Finding 5) flipped `assertPermission` from a logged-and-proceed stub to real fail-closed enforcement, `isPermitted` returned false for these pairs → hard 403 for every role. The tier-2 E2E test bypass forces `role='tenant_owner'`, so route tests never exercise `isPermitted` and the gap shipped untested. The customer-write keys had the same root cause but were mis-placed in `AGENT_GRANTS`, so customers (`role='viewer'`, #969) couldn't reach them either. Scope = user's chosen Option 1 (full customer self-service) + explicit "must work for owners and TAs using TA chat." TA `[id]` routes are shared and gated per-row by `guardConversationAccess` (404, fail-closed), so admitting all three roles at the coarse RBAC layer is correct and safe.
+
+**What was rejected:** (a) Granting only `viewer` — would re-break owners/TAs on the shared `[id]` routes, contradicting the explicit requirement. (b) Folding in the other 68 ungranted pairs found by the same sweep (quotes:read, bookings line-items/resources/itinerary, reports.*, imports.*, CRM, tenant config/billing/safety, RAG chunks, privacy/consent/legal/gmail) — each needs a deliberate per-role security decision; silently expanding scope was rejected in favor of issue #1173. `quotes:read` confirmed genuinely broken by reading the route.
+
+**How to apply:** New chat/self-service ops on a member's own data go in `SELF_SERVICE_GRANTS`, not a single role. Regression coverage for grants MUST assert via `isPermitted` directly (`permission-grants.test.ts`), never via route tests — the tier-2 bypass hides RBAC gaps. Per #1091, grants ship in the same PR as the route.
+
+**Artifacts:** `apps/main/src/lib/auth/permission-grants.ts`; `apps/main/test/unit/auth/permission-grants.test.ts` (added `SELF_SERVICE_PAIRS`, all-roles assertions, relabeled stale viewer describe); issue #1173 (the 68-pair backlog + proposed CI guard); PR #1174.
+
+---
+
 ## D-247 — 2026-06-16 — PostgREST 1-to-1 embed returns null (not []) for missing rows — production 500 on lisa-travel (#1167/#1168, release/beta062)
 
 **Decision:** Guard `tenant_branding` embed access with `Array.isArray` to handle all three PostgREST shapes: `null` (1-to-1 constraint detected, no row), `[{...}]` (many-relation, pick `[0]`), `{...}` (1-to-1 with row, use directly).
