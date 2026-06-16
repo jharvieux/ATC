@@ -186,6 +186,27 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["voice_profile", "write"],
 ];
 
+// #1170 — self-service pairs: every role (viewer/agent/owner) gets these.
+// The chat ops were never in the matrix and 403'd for everyone once RBAC
+// enforcement went live ("Couldn't load history: HTTP 403"); the customer
+// writes were mis-scoped to agent-only so viewers (customers) couldn't reach
+// them. Both classes now live in the shared SELF_SERVICE_GRANTS set.
+const SELF_SERVICE_PAIRS: ReadonlyArray<[string, string]> = [
+  ["Chat conversations", "list"],
+  ["Get conversation", "get"],
+  ["Update conversation", "patch"],
+  ["Switch persona", "post"],
+  ["Chat feedback", "post"],
+  ["Escalate conversation", "post"],
+  ["CustomerMemory", "update"],
+  ["CustomerMemory", "delete"],
+  ["CustomerMemory", "opt_out"],
+  ["UserProfile", "update"],
+  ["SessionTransfer", "commit"],
+  ["SessionTransfer", "discard"],
+  ["SessionTransfer", "undo"],
+];
+
 const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["host_config", "write"],
   ["tenant_branding", "write"],
@@ -203,7 +224,7 @@ const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
 ];
 
 describe("permission-grants — exhaustive matrix", () => {
-  describe("viewer is granted exactly the READ pairs", () => {
+  describe("viewer is granted READ pairs and denied AGENT_ONLY / OWNER_ONLY pairs", () => {
     for (const [resource, action] of READ_PAIRS) {
       it(`grants viewer ${resource}:${action}`, () => {
         expect(isPermitted("viewer", resource, action)).toBe(true);
@@ -257,8 +278,27 @@ describe("permission-grants — exhaustive matrix", () => {
     }
   });
 
+  // #1170 — every role gets the self-service pairs. This is the regression
+  // pin: the chat ops 403'd for ALL roles (viewer/agent/owner) once RBAC
+  // enforcement went live, and the customer writes 403'd for viewers. If a
+  // future refactor drops any of these from any role, these tests fail.
+  describe("all roles are granted the self-service pairs", () => {
+    for (const role of ["viewer", "agent", "tenant_owner"] as const) {
+      for (const [resource, action] of SELF_SERVICE_PAIRS) {
+        it(`grants ${role} ${resource}:${action}`, () => {
+          expect(isPermitted(role, resource, action)).toBe(true);
+        });
+      }
+    }
+  });
+
   describe("unknown role denies every known pair", () => {
-    const allPairs = [...READ_PAIRS, ...AGENT_ONLY_PAIRS, ...OWNER_ONLY_PAIRS];
+    const allPairs = [
+      ...READ_PAIRS,
+      ...SELF_SERVICE_PAIRS,
+      ...AGENT_ONLY_PAIRS,
+      ...OWNER_ONLY_PAIRS,
+    ];
     for (const [resource, action] of allPairs) {
       it(`denies unknown-role ${resource}:${action}`, () => {
         expect(isPermitted("hacker", resource, action)).toBe(false);
