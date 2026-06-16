@@ -12,8 +12,17 @@ export default function OnboardingBrandingPage() {
 
   async function handleSkip() {
     setSkipping(true);
-    await fetch("/api/onboarding/branding-skip", { method: "POST" });
-    router.push("/onboarding/review-submitted");
+    const res = await fetch("/api/onboarding/branding-skip", { method: "POST" });
+    if (!res.ok) {
+      setSkipping(false);
+      return;
+    }
+    const body = (await res.json()) as { next_stage?: string };
+    // BYO hosts skip review and go straight to the dashboard; sub-hosts land
+    // on the awaiting-review screen.
+    router.push(
+      body.next_stage === "complete" ? "/crm/contacts" : "/onboarding/review-submitted",
+    );
   }
 
   return (

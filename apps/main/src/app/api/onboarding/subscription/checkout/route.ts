@@ -1,7 +1,8 @@
 // §15.8 — Stripe Checkout session for subscription setup.
-// trial_end is set to 729 days from now (Stripe's max is 730) as a placeholder per §15.8.
-// Admin approval resets it to NOW + 30 days.
-// payment_behavior = 'allow_incomplete' so billing doesn't run pre-activation.
+// trial_end is NOW + 30 days for all tenant types. BYO hosts self-activate at
+// checkout, so this is their real trial clock. Sub-hosts wait for platform review,
+// so admin approval re-sets trial_end to NOW + 30 days at activation to absorb the
+// review delay. The trial is what keeps Stripe from billing before activation.
 
 import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
@@ -56,8 +57,9 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const stripe = new Stripe(stripeKey);
-    // Stripe Checkout max trial is 730 days; use 729 as placeholder until admin approval resets to NOW+30d.
-    const trialEnd = Math.floor(Date.now() / 1000) + 729 * 24 * 60 * 60;
+    // 30-day trial for all tenant types. BYO self-activates (real clock); sub-host
+    // admin approval re-sets this to NOW + 30 days at activation (admin review route).
+    const trialEnd = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
 
     // Tenant host, not the platform origin — Stripe must redirect back to the
     // subdomain/custom domain so onboarding APIs resolve the real tenant_id.

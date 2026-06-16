@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-246 — 2026-06-16 — Onboarding trial_end is 30 days for ALL tenant types at checkout; BYO self-activation gated to the `branding` stage — supersedes D-239 (PR #1162)
+
+**Decision:** Three coupled changes in the BYO-skip-approval PR:
+
+1. **`subscription/checkout`** sets `trial_end = NOW + 30 days` for *every* tenant type, replacing D-239's `NOW + 729 days` placeholder.
+2. **sub_hosts** still get `trial_end` re-set to `NOW + 30 days` again at admin approval (admin review route) to absorb the review delay.
+3. **BYO hosts** self-activate at checkout (no admin review — this same PR removes BYO platform review): `branding-skip` flips them to `status='active'` / `onboarding_stage='complete'`, CAS-guarded on the `branding` stage.
+
+**Why supersede D-239:** D-239's 729-day placeholder was safe *only because* it assumed admin approval would reset the trial to 30d before Stripe billed. That holds for sub_hosts (they pass through review), but this PR lets BYO hosts **self-activate at checkout** — they never hit the admin-approval reset. A 729-day `trial_end` would therefore become a real ~2-year free trial for every BYO host. Setting 30d at checkout closes that for all types; the sub_host approval-time re-set stays as a top-up. The trial is what keeps Stripe from billing before activation, so the number can't be left as a far-future placeholder once a tenant type activates without the reset step.
+
+**Billing-bypass guard (D-091 Pattern 10, found by d091-reviewer on this PR):** BYO self-activation validates the *source* stage at the route boundary. `branding` is the only stage reachable post-checkout (subscription→branding `success_url`), so the route requires `onboarding_stage==='branding'` before activating; an already-`complete` host is an idempotent 200; any earlier stage is 409. Without this, a `byo_host` admin could POST `/api/onboarding/branding-skip` from signup/subscription and activate a tenant that never completed Stripe checkout. Sub_hosts get this guard for free from `progressTo`; the BYO branch must enforce it explicitly. The activation update is CAS'd via `safeAwaitRowCount(... .eq("onboarding_stage","branding").select("id"), 1)` so a concurrent advance yields zero rows → throw, not a silent double-activation.
+
+**Rejected:** (a) Keep 729d and add a BYO-specific reset — there is no admin step in the BYO path to hang it on, and any client-driven reset is bypassable. (b) A duration other than 30d — 30d already matches the sub_host policy in the admin route; one number, one mental model. (c) Leave BYO activation CAS'd on the just-read stage (the PR's original form) — always-true for a single caller, which *is* the billing bypass above.
+
+**Artifacts:** PR #1162. Trial change: `subscription/checkout/route.ts` (cc7d8215). Billing-bypass guard: `branding-skip/route.ts` (cca9079b). Tests: `subscription-checkout.test.ts` ("trial_end is NOW + 30 days" on a BYO host — a revert to the long placeholder fails CI); `branding-skip.test.ts` (409 from a pre-branding stage, idempotent 200 when already complete, zero-row CAS throws). Data backfill migration `20260703000002_byo_skip_review_backfill.sql` moves byo_host tenants parked in review → complete+active (**NOT auto-applied to prod**). Follow-ups: #1163 (extract shared `activateTenant()` helper for admin-approve + BYO), #1164 (BYO activation lifecycle event / welcome email), #1165 (sub_host trial can lapse if admin review > 30 days → premature charge).
+
+---
+
 ## D-244 — 2026-06-15 — Onboarding Stripe redirect URLs use the tenant request origin, not platformBaseUrl() — reverses D-241 §3 (PR #1133)
 
 **Decision:** The three onboarding Stripe redirect routes (`subscription/checkout`, `connect/link`, `tax-form/stripe-link`) build their `success_url` / `refresh_url` / `return_url` from `tenantOriginFromRequest(req)` — the host the request actually arrived on (tenant subdomain or custom domain) — **not** from `platformBaseUrl()` (`NEXT_PUBLIC_APP_URL` → `PLATFORM_PRIMARY_DOMAIN`). This **reverses the wiring D-241 §3 introduced** for these three routes.
