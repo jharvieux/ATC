@@ -5,7 +5,7 @@ import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { platformBaseUrl } from "@/lib/platform-url";
+import { tenantOriginFromRequest } from "@/lib/platform-url";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -26,7 +26,8 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const stripe = new Stripe(stripeKey);
-    const baseUrl = platformBaseUrl();
+    // Tenant host, not the platform origin — see tenantOriginFromRequest.
+    const baseUrl = tenantOriginFromRequest(req);
 
     const link = await stripe.accountLinks.create({
       account: tenant.stripe_connect_account_id,
