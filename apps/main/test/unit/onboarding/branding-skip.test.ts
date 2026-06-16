@@ -6,9 +6,14 @@
 //   review_submitted / pending_review — that's the whole point of the change.
 // - Sub-hosts still advance to review_submitted to await platform approval.
 // - A DB error on the tenant_type fetch must 500 (fail-closed, don't guess).
-// - The BYO activation is CAS-guarded on the current stage: a zero-row result
-//   (concurrent writer / double-click on an already-moved tenant) must throw,
-//   not silently succeed.
+// - The BYO activation is CAS-guarded on the `branding` stage: a zero-row
+//   result (concurrent writer / double-click on an already-moved tenant) must
+//   throw, not silently succeed.
+// - `branding` is the ONLY stage from which a BYO host may self-activate. A POST
+//   from an earlier stage (e.g. subscription) must be refused (409) — otherwise
+//   a direct call activates a tenant that never completed Stripe checkout.
+// - An already-complete BYO host re-POSTing is an idempotent no-op (200, no
+//   re-activation write).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -121,6 +126,31 @@ describe("POST /api/onboarding/branding-skip §15.10", () => {
     const { POST } = await import("@/app/api/onboarding/branding-skip/route");
     const res = await POST(postRequest());
     expect(res.status).toBe(500);
+  });
+
+  it("refuses (409) a BYO host that is not yet at branding — no activation without checkout", async () => {
+    // A BYO host only reaches `branding` AFTER Stripe checkout (subscription→
+    // branding success_url). A direct POST from an earlier stage must NOT flip
+    // them to active — that would activate a tenant that never paid. This is the
+    // billing-bypass guard the raw CAS-on-current-stage version lacked.
+    tenantData = { tenant_type: "byo_host", onboarding_stage: "subscription" };
+    const { POST } = await import("@/app/api/onboarding/branding-skip/route");
+    const res = await POST(postRequest());
+    expect(res.status).toBe(409);
+    // Critically: no activation write happened.
+    expect(lastUpdatePayload).toBeNull();
+  });
+
+  it("is idempotent for an already-complete BYO host — 200, no re-activation write", async () => {
+    // Post-success double-click: the tenant is already active+complete. Return
+    // ok without re-stamping activated_at or 500-ing a legitimate retry.
+    tenantData = { tenant_type: "byo_host", onboarding_stage: "complete" };
+    const { POST } = await import("@/app/api/onboarding/branding-skip/route");
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; next_stage: string };
+    expect(body.next_stage).toBe("complete");
+    expect(lastUpdatePayload).toBeNull();
   });
 
   it("advances a sub-host to review_submitted — they still await platform approval", async () => {

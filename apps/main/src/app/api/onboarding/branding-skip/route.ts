@@ -28,13 +28,29 @@ export async function POST(req: Request): Promise<Response> {
     if (error) return dbErrorResponse(error);
 
     if (tenant?.tenant_type === "byo_host") {
-      // Self-activation — no admin approval. CAS-guarded on the current stage
-      // so a concurrent writer (or a double-click) can't flip an already-moved
-      // tenant; row count must be exactly 1. The `tenants` table is passed
-      // through by tenantClient (its PK *is* the tenant id), so the tenant
-      // boundary is the explicit `.eq("id", ctx.tenant_id)` on this
-      // service-role query — the DB-layer constraint D-091 accepts. The
-      // `.eq("onboarding_stage", ...)` is the CAS guard, not isolation.
+      // Self-activation — no admin approval. `branding` is the ONLY legitimate
+      // source stage: a BYO host reaches it via subscription→branding (§15.8
+      // success_url) only AFTER Stripe checkout, so requiring it here is what
+      // stops a direct POST from an earlier stage (signup/subscription/…) from
+      // activating a tenant that never paid. The sub-host branch gets this
+      // forward-transition guard for free from progressTo; the BYO branch must
+      // enforce it explicitly (D-091: validate transitions at the boundary,
+      // don't trust the caller's stage).
+      if (tenant.onboarding_stage === "complete") {
+        // Already activated (post-success double-click): idempotent no-op —
+        // don't re-stamp activated_at or 500 a legitimate retry. Mirrors
+        // progressTo's isAtOrPast short-circuit.
+        return Response.json({ ok: true, next_stage: "complete" });
+      }
+      if (tenant.onboarding_stage !== "branding") {
+        return Response.json({ error: "invalid_onboarding_stage" }, { status: 409 });
+      }
+      // CAS-guarded on `branding` so a concurrent writer / double-click that
+      // already advanced the stage yields a zero-row mismatch (→ throw), not a
+      // silent second activation. The tenant boundary is the explicit
+      // `.eq("id", ctx.tenant_id)` — `tenants`' PK *is* the tenant id and
+      // tenantClient passes it through, so this is the DB-layer constraint
+      // D-091 requires; `.eq("onboarding_stage", "branding")` is the CAS guard.
       await safeAwaitRowCount(
         db
           .from("tenants")
@@ -44,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
             onboarding_stage: "complete",
           })
           .eq("id", ctx.tenant_id)
-          .eq("onboarding_stage", tenant.onboarding_stage)
+          .eq("onboarding_stage", "branding")
           .select("id"),
         "tenants.update.byo_activate_on_branding_skip",
         1,
