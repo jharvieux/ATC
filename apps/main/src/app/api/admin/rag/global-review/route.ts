@@ -82,13 +82,10 @@ export async function GET(req: Request): Promise<Response> {
         q = q.order("created_at", { ascending: false }).range(from, to);
         const { data, count, error } = await q;
         if (error) {
-
           const ref = crypto.randomUUID();
-
           console.error("[db-error] ref=%s", ref, error);
 
           return { error: "db_error", ref };
-
         }
 
         let items = (data ?? []) as Array<{ id: string; chunk_id_created: string | null }>;

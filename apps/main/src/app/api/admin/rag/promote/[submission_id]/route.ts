@@ -63,13 +63,10 @@ export async function POST(
           .eq("id", submission_id)
           .maybeSingle();
         if (subErr) {
-
           const ref = crypto.randomUUID();
-
           console.error("[db-error] ref=%s", ref, subErr);
 
           return { error: "db_error", ref };
-
         }
         if (!sub) return { error: "submission_not_found" };
 
@@ -121,13 +118,10 @@ export async function POST(
           .select("id")
           .single();
         if (promoErr) {
-
           const ref = crypto.randomUUID();
-
           console.error("[db-error] ref=%s", ref, promoErr);
 
           return { error: "db_error", ref };
-
         }
 
         return {

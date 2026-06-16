@@ -64,13 +64,10 @@ export async function POST(
           .eq("id", promotion_id)
           .maybeSingle();
         if (promoErr) {
-
           const ref = crypto.randomUUID();
-
           console.error("[db-error] ref=%s", ref, promoErr);
 
           return { error: "db_error", ref };
-
         }
         if (!promo) return { error: "promotion_not_found" };
 
@@ -109,13 +106,10 @@ export async function POST(
           })
           .eq("id", promotion_id);
         if (updErr) {
-
           const ref = crypto.randomUUID();
-
           console.error("[db-error] ref=%s", ref, updErr);
 
           return { error: "db_error", ref };
-
         }
 
         return { status: "demoted", mode };
