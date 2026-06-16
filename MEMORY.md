@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-242 — 2026-06-15 — Payout settlement is synchronous; drop transfer.paid, add transfer.reversed (PR #1128)
+
+**Decision:** Platform payout settlement no longer waits on a `transfer.paid` webhook. In Stripe's **separate charges-and-transfers** model a Transfer settles the instant `transfers.create()` returns, so `transfer.paid` is never delivered. Four coupled changes (spec §14.7 settlement, §14.9 reversal):
+
+1. **`payouts-execute-transfer.ts`** — after `transfers.create()` succeeds, settle the row `processing` → `paid` (+`settled_at`) in the **same step** via a CAS-guarded `.eq("status","processing").select("id")` update. 0 rows matched (a concurrent reconcile won the race) → `console.info`, do **not** throw; `processed` not incremented only on genuine DB-error throw (caught by the generic `else`, row left in `processing`).
+2. **`payouts-reconcile-processing.ts`** — safety net for the lost-response (network-timeout) case; **both** the "existing transfer found" and "create one" branches settle the row the same guarded way via the `settleReconciledRow` helper.
+3. **`webhook-handler.ts`** — remove `case "transfer.paid"`; add `case "transfer.reversed"` (status → `reversed` + `reversed_at`, guarded on `status='paid'`). Reversal of a transfer matching no `paid` row must **not** throw (would make Stripe retry the clawback forever) → 0 rows leaves outcome `unhandled` → 200; genuine DB error throws → 500 → retry.
+4. **Migration `20260703000000`** — add `reversed` to `payout_records_status_check` + nullable `reversed_at`. **Expand-only** (CHECK widen + nullable column), safe in one PR per BP38 (no contract drop).
+
+**Why:** A settlement path waiting on `transfer.paid` leaves every payout stuck in `processing` forever, because that webhook never arrives under this Connect model. Settling synchronously in the transfer step (with the reconcile cron as the lost-response safety net) is the only correct design.
+
+**Rejected:** (a) Depending on the `transfer.paid` webhook for settlement — never emitted in separate charges-and-transfers; this was the root bug. (b) Subscribing to `payout.paid` — that's the Connect account's bank payout, not the platform→tenant transfer; wrong signal. (c) Throwing on a 0-row settle/reversal — would trigger infinite Stripe retries on a benign race / not-ours transfer.
+
+**No-code follow-up:** The platform webhook endpoint must subscribe to `transfer.reversed` (optionally `transfer.created`) instead of `transfer.paid` at deploy time — Dashboard/API config, not in the diff. If not enabled, clawbacks silently never arrive. Tracked as **#1129**.
+
+**Artifacts:** PR #1128; issue #1127 (deferred §14.9 ledger unwind — handler is status-only by scope cut); issue #1129 (endpoint subscription config). Both audit agents (d091-reviewer Opus, pre-pr-reviewer) returned clean, hash-bound to diff `806273e5…705dc`.
+
+---
+
 ## D-241 — 2026-06-15 — env() lazy-inits instead of throwing; Stripe redirect base-URL fails loud (PR #1124)
 
 **Decision:** Three coupled fixes for the "internal_error on the Set Up Billing screen" bug.
