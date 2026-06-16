@@ -384,6 +384,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Apply Supabase migrations
+        working-directory: apps/main
         run: |
           if [ -z "$DB_URL" ]; then
             echo "::error::DB_URL secret is not set in the 'staging' GitHub environment. Aborting."
