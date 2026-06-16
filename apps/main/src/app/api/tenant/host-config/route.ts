@@ -97,6 +97,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     if (upsertError) {
+      console.error("[host-config] credential upsert failed", { tenant_id: ctx.tenant_id, adapter_id, error: upsertError.message });
       return Response.json({ error: "Failed to save credentials." }, { status: 500 });
     }
 
@@ -106,7 +107,8 @@ export async function POST(req: Request): Promise<Response> {
       const adapter = await getAdapter(adapter_id);
       const health = await adapter.healthCheck();
       newStatus = health.ok ? "verified" : "rejected";
-    } catch {
+    } catch (err) {
+      console.error("[host-config] adapter healthCheck failed", { adapter_id, error: String(err) });
       newStatus = "rejected";
     }
 

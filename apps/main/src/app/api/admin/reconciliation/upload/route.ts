@@ -170,7 +170,8 @@ If amounts appear to be in dollars, multiply by 100 to convert to cents.`;
         for (const line of parsed.line_items as ParsedLineItem[]) {
           try {
             await processLineItem(db, tenantId, line, "manual_upload", counts, recordQuery);
-          } catch {
+          } catch (err) {
+            console.error("[reconciliation] processLineItem failed", { tenantId, line, error: String(err) });
             counts.errors++;
           }
         }
