@@ -10,7 +10,7 @@ import { priceIdFor } from "@/lib/stripe/price-ids";
 import type { TenantType, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { CODE_TO_TIER } from "@/lib/stripe/tier-codes";
-import { platformBaseUrl } from "@/lib/platform-url";
+import { tenantOriginFromRequest } from "@/lib/platform-url";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -58,7 +58,9 @@ export async function POST(req: Request): Promise<Response> {
     // Stripe Checkout max trial is 730 days; use 729 as placeholder until admin approval resets to NOW+30d.
     const trialEnd = Math.floor(Date.now() / 1000) + 729 * 24 * 60 * 60;
 
-    const baseUrl = platformBaseUrl();
+    // Tenant host, not the platform origin — Stripe must redirect back to the
+    // subdomain/custom domain so onboarding APIs resolve the real tenant_id.
+    const baseUrl = tenantOriginFromRequest(req);
 
     const sessionParams: Parameters<typeof stripe.checkout.sessions.create>[0] = {
       mode: "subscription",

@@ -12,7 +12,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
-import { platformBaseUrl } from "@/lib/platform-url";
+import { tenantOriginFromRequest } from "@/lib/platform-url";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -43,7 +43,8 @@ export async function POST(req: Request): Promise<Response> {
       await safeAwait(db.from("tenants").update({ stripe_connect_account_id: connectAccountId }).eq("id", ctx.tenant_id), "tenants.update");
     }
 
-    const baseUrl = platformBaseUrl();
+    // Tenant host, not the platform origin — see tenantOriginFromRequest.
+    const baseUrl = tenantOriginFromRequest(req);
 
     const link = await stripe.accountLinks.create({
       account: connectAccountId,
