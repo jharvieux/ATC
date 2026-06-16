@@ -32,6 +32,12 @@ const mocks = vi.hoisted(() => ({
   existingTransferMatches: false,
   /** Whether stripe.transfers.list throws. */
   listThrows: false,
+  /** Payloads captured from every payout_records.update() call. */
+  updatePayloads: [] as Array<Record<string, unknown>>,
+  /** Rows the settle CAS chain (.eq().eq().select("id")) reports as updated. */
+  settleRows: [{ id: "payout-1" }] as Array<{ id: string }>,
+  /** Error the settle CAS chain returns (drives safeAwait throw). */
+  settleError: null as { message: string } | null,
 }));
 
 vi.mock("@/lib/db/service-role-client", () => ({
@@ -50,11 +56,15 @@ vi.mock("@/lib/db/service-role-client", () => ({
             };
             return chain;
           },
-          // Update of stripe_transfer_id after recovery.
-          update(_payload: unknown) {
-            void _payload;
+          // settleReconciledRow writes via .update().eq().eq().select("id").
+          update(payload: Record<string, unknown>) {
+            mocks.updatePayloads.push(payload);
             const chain: Record<string, unknown> = {
               eq() { return chain; },
+              select(_cols: string) {
+                void _cols;
+                return Promise.resolve({ data: mocks.settleRows, error: mocks.settleError });
+              },
               then(resolve: (v: { data: null; error: null }) => unknown) {
                 return resolve({ data: null, error: null });
               },
@@ -121,6 +131,9 @@ beforeEach(() => {
   mocks.tenantRow = { stripe_connect_account_id: "acct_test_1" };
   mocks.existingTransferMatches = false;
   mocks.listThrows = false;
+  mocks.updatePayloads = [];
+  mocks.settleRows = [{ id: "payout-1" }];
+  mocks.settleError = null;
 });
 
 afterEach(() => {
@@ -169,6 +182,44 @@ describe("runPayoutsReconcileProcessing — happy paths", () => {
 
   it("skips row when tenant has no stripe_connect_account_id", async () => {
     mocks.tenantRow = { stripe_connect_account_id: null };
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(0);
+    expect(result.total_processing).toBe(1);
+  });
+});
+
+describe("runPayoutsReconcileProcessing — settle CAS write (§14.7, no transfer.paid)", () => {
+  it("existing-transfer branch settles the row to 'paid' with the recovered transfer id", async () => {
+    mocks.existingTransferMatches = true;
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(1);
+    const settle = mocks.updatePayloads.find((p) => p.status === "paid");
+    expect(settle).toBeDefined();
+    expect(settle).toMatchObject({ status: "paid", stripe_transfer_id: "tr_recovered" });
+    expect(typeof settle?.settled_at).toBe("string");
+  });
+
+  it("create-transfer branch settles the row to 'paid' with the newly created transfer id", async () => {
+    // Default: no existing transfer → re-call transfers.create → settle.
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(1);
+    const settle = mocks.updatePayloads.find((p) => p.status === "paid");
+    expect(settle).toMatchObject({ status: "paid", stripe_transfer_id: "tr_new" });
+    expect(typeof settle?.settled_at).toBe("string");
+  });
+
+  it("0-row settle (concurrent execute-transfer won the race) does NOT throw", async () => {
+    // The .eq("status","processing") guard matches nothing → settleReconciledRow
+    // logs and returns; the sweep still completes and counts the row recovered.
+    mocks.existingTransferMatches = true;
+    mocks.settleRows = [];
+    const result = await runPayoutsReconcileProcessing();
+    expect(result.recovered).toBe(1);
+  });
+
+  it("genuine DB error during settle is caught per-row and not counted as recovered", async () => {
+    mocks.existingTransferMatches = true;
+    mocks.settleError = { message: "deadlock detected" };
     const result = await runPayoutsReconcileProcessing();
     expect(result.recovered).toBe(0);
     expect(result.total_processing).toBe(1);

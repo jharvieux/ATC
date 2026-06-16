@@ -64,7 +64,7 @@ describe("stripe-webhook-incomplete-reconcile cron", () => {
   it("[review gap-fill #719] stalled rows: alerts AND clears exactly the stalled ids (was alert-only)", async () => {
     mocks.selectResult = {
       data: [
-        { id: "r1", stripe_event_id: "evt_1", event_type: "transfer.paid", processing_started_at: "2026-06-07T00:00:00Z" },
+        { id: "r1", stripe_event_id: "evt_1", event_type: "transfer.reversed", processing_started_at: "2026-06-07T00:00:00Z" },
         { id: "r2", stripe_event_id: "evt_2", event_type: "customer.subscription.updated", processing_started_at: "2026-06-07T00:00:00Z" },
       ],
       error: null,
@@ -77,7 +77,7 @@ describe("stripe-webhook-incomplete-reconcile cron", () => {
 
   it("throws (fail-loud) if clearing the stalled rows errors — does not silently leave zombies", async () => {
     mocks.selectResult = {
-      data: [{ id: "r1", stripe_event_id: "evt_1", event_type: "transfer.paid", processing_started_at: "2026-06-07T00:00:00Z" }],
+      data: [{ id: "r1", stripe_event_id: "evt_1", event_type: "transfer.reversed", processing_started_at: "2026-06-07T00:00:00Z" }],
       error: null,
     };
     mocks.deleteResult = { error: { message: "db unavailable" } };

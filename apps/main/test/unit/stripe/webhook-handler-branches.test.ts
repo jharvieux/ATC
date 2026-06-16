@@ -32,7 +32,7 @@ let updateSelectResult: { data: unknown[]; error: { message: string } | null } |
 let selectMaybeSingle: { data: unknown; error: null } = { data: null, error: null };
 let selectArray: { data: unknown[]; error: null } = { data: [], error: null };
 
-let mockEventType = "transfer.paid";
+let mockEventType = "transfer.reversed";
 let mockEventData: Record<string, unknown> = { id: "tr_1" };
 
 vi.mock("@/lib/db/service-role-client", () => ({
@@ -135,7 +135,7 @@ beforeEach(() => {
   updateSelectResult = null;
   selectMaybeSingle = { data: null, error: null };
   selectArray = { data: [], error: null };
-  mockEventType = "transfer.paid";
+  mockEventType = "transfer.reversed";
   mockEventData = { id: "tr_1" };
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_fake";
@@ -158,7 +158,7 @@ function findUpdate(table: string): Record<string, unknown> | undefined {
 
 describe("Stripe webhook — header: idempotency insert", () => {
   it("inserts a stripe_webhook_events row with event_type, endpoint='platform', and tenant_id=null", async () => {
-    mockEventType = "transfer.paid";
+    mockEventType = "transfer.reversed";
     mockEventData = { id: "tr_1" };
     selectArray = { data: [], error: null };
     await handleStripeWebhook(makeReq(), "platform");
@@ -167,14 +167,14 @@ describe("Stripe webhook — header: idempotency insert", () => {
       (c) => c.table === "stripe_webhook_events" && c.op === "insert",
     )?.payload as Record<string, unknown> | undefined;
     expect(ins).toBeDefined();
-    expect(ins!.event_type).toBe("transfer.paid");
+    expect(ins!.event_type).toBe("transfer.reversed");
     expect(ins!.endpoint).toBe("platform");
     expect(ins!.tenant_id).toBeNull();
     expect(ins!.processing_started_at).toEqual(expect.any(String));
   });
 
   it("inserts with endpoint='connect' when the connect handler is invoked", async () => {
-    mockEventType = "transfer.paid";
+    mockEventType = "transfer.reversed";
     await handleStripeWebhook(makeReq(), "connect");
     const ins = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "insert",
@@ -183,7 +183,7 @@ describe("Stripe webhook — header: idempotency insert", () => {
   });
 
   it("writes the outcome row with processing_completed_at set on success", async () => {
-    mockEventType = "transfer.paid";
+    mockEventType = "transfer.reversed";
     selectArray = { data: [{ id: "p-1" }], error: null };
     await handleStripeWebhook(makeReq(), "platform");
     const u = findUpdate("stripe_webhook_events");
@@ -193,7 +193,7 @@ describe("Stripe webhook — header: idempotency insert", () => {
   });
 
   it("writes outcome='error' with error_detail when a branch throws", async () => {
-    mockEventType = "transfer.paid";
+    mockEventType = "transfer.reversed";
     selectArray = { data: [{ id: "p-1" }], error: null };
     updateResult = { data: null, error: { message: "synthetic" } };
     const res = await handleStripeWebhook(makeReq(), "platform");
@@ -207,60 +207,65 @@ describe("Stripe webhook — header: idempotency insert", () => {
 });
 
 // ---------------------------------------------------------------------------
-// transfer.paid
+// transfer.reversed (§14.9 clawback)
+//
+// Settlement ('processing' → 'paid') is NO LONGER a webhook concern — it is
+// synchronous in payouts-execute-transfer (modern Stripe never delivers
+// transfer.paid). The only transfer webhook now wired is transfer.reversed,
+// which moves a settled row 'paid' → 'reversed'. It is a single guarded UPDATE
+// by stripe_transfer_id (no multi-row .in(ids)/row-count-throw): 0 matched rows
+// is benign (not ours / already reversed) → outcome 'unhandled' → 200, so Stripe
+// stops retrying. A genuine DB error throws → 500 → Stripe retries.
 // ---------------------------------------------------------------------------
 
-describe("Stripe webhook — transfer.paid", () => {
-  it("updates payout_records.status='paid' + settled_at when a processing row is found", async () => {
-    mockEventType = "transfer.paid";
+describe("Stripe webhook — transfer.reversed", () => {
+  it("updates payout_records.status='reversed' + reversed_at when a paid row is found", async () => {
+    mockEventType = "transfer.reversed";
     mockEventData = { id: "tr_abc" };
-    selectArray = { data: [{ id: "p-1" }, { id: "p-2" }], error: null };
+    selectArray = { data: [{ id: "p-1" }], error: null };
     await handleStripeWebhook(makeReq(), "platform");
     const u = findUpdate("payout_records");
     expect(u).toBeDefined();
-    expect(u!.status).toBe("paid");
-    expect(u!.settled_at).toEqual(expect.any(String));
+    expect(u!.status).toBe("reversed");
+    expect(u!.reversed_at).toEqual(expect.any(String));
   });
 
-  it("returns 200 with outcome='unhandled' when no payout_records row matches the transfer", async () => {
-    mockEventType = "transfer.paid";
+  it("returns 200 with outcome='unhandled' when no paid payout_records row matches the transfer", async () => {
+    mockEventType = "transfer.reversed";
     selectArray = { data: [], error: null };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
-    expect(dbCalls.some((c) => c.table === "payout_records" && c.op === "update")).toBe(false);
     const outcome = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
     expect(outcome!.processing_outcome).toBe("unhandled");
   });
 
-  it("returns 500 outcome='error' when the update affects fewer rows than were selected (TOCTOU)", async () => {
-    // #394 — two processing rows were SELECTed, but a concurrent reconcile
-    // moved one to 'paid' first, so the .in(ids) update touches only one. The
-    // row-count assert must fire (→ throw → 500 → Stripe retries) instead of
-    // reporting success on a partial write.
-    mockEventType = "transfer.paid";
-    mockEventData = { id: "tr_race" };
-    selectArray = { data: [{ id: "p-1" }, { id: "p-2" }], error: null };
-    updateSelectResult = { data: [{ id: "p-1" }], error: null };
+  it("returns 500 outcome='error' when the reversal UPDATE fails (genuine DB error)", async () => {
+    mockEventType = "transfer.reversed";
+    mockEventData = { id: "tr_dberr" };
+    updateSelectResult = { data: [], error: { message: "deadlock detected" } };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(500);
     const outcome = dbCalls.find(
       (c) => c.table === "stripe_webhook_events" && c.op === "update",
     )?.payload as Record<string, unknown> | undefined;
     expect(outcome!.processing_outcome).toBe("error");
-    expect(outcome!.error_detail).toEqual(expect.stringContaining("1 of 2"));
+    expect(outcome!.error_detail).toEqual(expect.stringContaining("deadlock detected"));
   });
 
-  it("#744: UPDATE predicate includes .eq('status','processing') guard", async () => {
-    // Without this guard, an admin-reset row (processing→available) would be set
-    // to 'paid' by .in("id", ids) alone, and the count check would still pass.
-    mockEventType = "transfer.paid";
+  it("matches by stripe_transfer_id and guards on .eq('status','paid')", async () => {
+    // The reversal must only touch the row whose transfer was reversed, and
+    // only if it is still 'paid' — never clobber a row already moved elsewhere.
+    mockEventType = "transfer.reversed";
     mockEventData = { id: "tr_status_guard" };
     selectArray = { data: [{ id: "p-1" }], error: null };
     await handleStripeWebhook(makeReq(), "platform");
     const payoutEqs = updateEqCalls.filter((c) => c.table === "payout_records");
-    expect(payoutEqs).toContainEqual(expect.objectContaining({ col: "status", val: "processing" }));
+    expect(payoutEqs).toContainEqual(expect.objectContaining({ col: "status", val: "paid" }));
+    expect(payoutEqs).toContainEqual(
+      expect.objectContaining({ col: "stripe_transfer_id", val: "tr_status_guard" }),
+    );
   });
 });
 

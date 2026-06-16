@@ -9,7 +9,7 @@
 //      - 200 on duplicate only after prior processing completed successfully
 //      - 500 and clear stale row when duplicate is incomplete/error so Stripe retries
 //   3. Dispatch to event-type handler. Currently wired:
-//        - transfer.paid                       (§14.7  payout settlement)
+//        - transfer.reversed                   (§14.9  payout clawback)
 //        - checkout.session.completed          (§15.8  subscription IDs + stage)
 //        - account.updated                     (§15.6 / §15.9 tax form + Connect)
 //        - customer.subscription.created       (§15.16 initial subscription state)
@@ -141,49 +141,40 @@ export async function handleStripeWebhook(
 
   try {
     // Step 3: Dispatch to event-type handler
-    // transfer.paid is a valid Stripe event but absent from some SDK type unions.
-    // Cast to string to allow matching it alongside the known exhaustive union.
+    // transfer.reversed is a valid Stripe event but absent from some SDK type
+    // unions. Cast to string to match it alongside the known exhaustive union.
+    //
+    // NOTE: payout SETTLEMENT ('processing' → 'paid') is NOT handled here. In
+    // Stripe's separate charges-and-transfers model a Transfer settles the
+    // instant transfers.create() returns and no transfer.paid webhook is ever
+    // delivered, so settlement happens synchronously in payouts-execute-transfer
+    // (and payouts-reconcile-processing as the recovery path). §14.7.
     switch (event.type as string) {
-      case "transfer.paid": {
-        // §14.7 — Stripe transfer paid: transition payout_records 'processing' → 'paid'
+      case "transfer.reversed": {
+        // §14.9 — Stripe transfer reversed (clawback): move the settled payout
+        // 'paid' → 'reversed'. We do NOT throw when 0 rows match: the transfer
+        // may not be ours, or a prior delivery / admin action already reversed
+        // it — throwing would make Stripe retry the reversal forever. A genuine
+        // DB error DOES throw (→500→Stripe retries).
         const transfer = (event as { data: { object: Stripe.Transfer } }).data.object;
-        // #717: surface DB errors so Stripe retries (non-200) instead of silently
-        // stranding a payout_record in 'processing' and acknowledging the event.
-        const { data: payoutRows, error: payoutSelectErr } = await db
+        const { data: reversedRows, error: reverseErr } = await db
           .from("payout_records")
-          .select("id")
+          .update({ status: "reversed", reversed_at: new Date().toISOString() })
           .eq("stripe_transfer_id", transfer.id)
-          .eq("status", "processing");
-        if (payoutSelectErr) throw new Error(`transfer.paid select failed: ${payoutSelectErr.message}`);
+          .eq("status", "paid")
+          .select("id");
+        if (reverseErr) throw new Error(`transfer.reversed update failed: ${reverseErr.message}`);
 
-        if (payoutRows && payoutRows.length > 0) {
-          const ids = payoutRows.map((r) => (r as { id: string }).id);
-          // D-091 P1 #1 — every Supabase mutation must check error.
-          // Silent failure here = payout stuck in 'processing' + 200 to Stripe
-          // = Stripe never retries = lost reconciliation.
-          // #744: .eq("status","processing") closes the TOCTOU gap — without it,
-          // .in("id",ids) matches an admin-reset row and count check still passes.
-          const { data: updatedRows, error: updateErr } = await db
-            .from("payout_records")
-            .update({ status: "paid", settled_at: new Date().toISOString() })
-            .in("id", ids)
-            .eq("status", "processing")
-            .select("id");
-          if (updateErr) {
-            throw new Error(`transfer.paid update failed: ${updateErr.message}`);
-          }
-          // ids were just SELECTed for status='processing'; a short count means
-          // a concurrent reconcile/admin action moved some rows first (TOCTOU). Throw
-          // → non-200 → Stripe retries; the retry's SELECT converges (D-091).
-          if ((updatedRows ?? []).length !== ids.length) {
-            throw new Error(
-              `transfer.paid updated ${(updatedRows ?? []).length} of ${ids.length} expected rows`,
-            );
-          }
+        if (reversedRows && reversedRows.length > 0) {
+          // TODO(#1127): §14.9 clawback ledger unwind. The status transition
+          // above is done, but §14.9 does not prescribe the payout_balances /
+          // commission money movement for a post-payout reversal. Implement the
+          // balance/ledger effect here once the spec owner confirms it. Until
+          // then this handler is status-only by deliberate scope cut.
           processingOutcome = "success";
         } else {
           console.warn(
-            "[stripe-webhook] transfer.paid: no payout_records row for transfer %s",
+            "[stripe-webhook] transfer.reversed: no 'paid' payout_records row for transfer %s (not ours or already reversed)",
             transfer.id,
           );
         }

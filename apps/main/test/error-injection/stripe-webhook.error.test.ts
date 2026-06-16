@@ -19,13 +19,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Behavior toggles. Names prefixed with `mock` so vitest's vi.mock factory
 // hoist-safety static check allows the closures below to reference them.
 let mockInsertResult: { error: { code?: string; message: string } | null } = { error: null };
-let mockEventType = "transfer.paid";
+let mockEventType = "transfer.reversed";
 let mockEventData: Record<string, unknown> = { id: "tr_1" };
 let mockConstructEventThrows = false;
 let mockInsertCallCount = 0;
 let mockDeleteCallCount = 0;
 let mockArraySelectResult: { data: unknown[]; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
-// [review gap-fill #719] result of the transfer.paid `.update(...).in(...).select("id")`
+// [review gap-fill #719] result of the transfer.reversed `.update(...).eq().eq().select("id")`
 // chain — lets a test drive the handler into outcome='error' to exercise Step 5's clear.
 let mockUpdateSelectResult: { data: unknown[] | null; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
@@ -129,7 +129,7 @@ beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_fake";
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_fake_connect";
-  mockEventType = "transfer.paid";
+  mockEventType = "transfer.reversed";
   mockEventData = { id: "tr_1" };
   mockInsertResult = { error: null };
   mockConstructEventThrows = false;
@@ -220,7 +220,7 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
   });
 
   it("[review gap-fill #719] clears the dedup row when the handler errors mid-dispatch (Step 5), so Stripe retries", async () => {
-    // Fresh delivery (insert OK), but the transfer.paid update fails → outcome
+    // Fresh delivery (insert OK), but the transfer.reversed update fails → outcome
     // 'error' → Step 5 must DELETE the row + 500 so the next delivery reprocesses
     // instead of the row sticking around and short-circuiting to a duplicate 200.
     // Regression guard: dropping clearStripeWebhookEventRow in Step 5 fails this.

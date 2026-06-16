@@ -61,7 +61,7 @@ beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_fake";
   dbOpts = {};
-  mockEvent = makeMockStripeEvent("transfer.paid", { id: "tr_1" });
+  mockEvent = makeMockStripeEvent("transfer.reversed", { id: "tr_1" });
 });
 
 afterEach(() => {
@@ -69,10 +69,10 @@ afterEach(() => {
 });
 
 describe("Stripe webhook — error injection", () => {
-  it("returns 500 when update fails on transfer.paid (Pattern 1)", async () => {
+  it("returns 500 when update fails on transfer.reversed (Pattern 1)", async () => {
     const counter = { value: 0 };
     dbOpts = { fail: ["update"], selectResult: { data: [{ id: "p-1" }] }, callCount: counter };
-    const res = await handleStripeWebhook(makeMockStripeWebhookRequest("transfer.paid"), "platform");
+    const res = await handleStripeWebhook(makeMockStripeWebhookRequest("transfer.reversed"), "platform");
     expect(res.status).toBe(500);
     expect(counter.value).toBeGreaterThan(0);
   });
