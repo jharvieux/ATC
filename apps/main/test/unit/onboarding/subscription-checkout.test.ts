@@ -221,9 +221,14 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     expect(body.url).toBe("https://checkout.stripe.com/test");
   });
 
-  it("trial_end is within Stripe's 730-day cap — never sends far-future epoch", async () => {
-    tenantData = { id: "t1", tenant_type: "sub_host", tier_id: "tier-6", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
-    tierData = { code: "sub_starter" };
+  it("trial_end is NOW + 30 days, asserted on a BYO host (its real trial clock)", async () => {
+    // 30 days for all tenant types. BYO hosts self-activate at checkout, so this
+    // is their real and only trial clock — the prior long-placeholder scheme
+    // depended on an admin-approval reset that BYO hosts never hit, so a revert
+    // to it would silently hand BYO hosts a multi-year free trial. Sub-hosts get
+    // trial_end re-set to NOW+30d again at admin approval (admin review route).
+    tenantData = { id: "t1", tenant_type: "byo_host", tier_id: "tier-6", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
+    tierData = { code: "byo_agency" };
     const { POST } = await import("@/app/api/onboarding/subscription/checkout/route");
     const before = Math.floor(Date.now() / 1000);
     await POST(postRequest());
@@ -231,9 +236,8 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     // mock.calls typed as [][] (no-param fn); cast to actual runtime shape.
     const call = (mockSessionCreate.mock.calls as unknown as [[{ subscription_data: { trial_end: number } }]])[0][0];
     const trialEnd = call.subscription_data.trial_end;
-    const maxAllowed = after + 730 * 24 * 60 * 60;
-    const minExpected = before + 728 * 24 * 60 * 60;
-    expect(trialEnd).toBeGreaterThanOrEqual(minExpected);
-    expect(trialEnd).toBeLessThanOrEqual(maxAllowed);
+    const thirtyDays = 30 * 24 * 60 * 60;
+    expect(trialEnd).toBeGreaterThanOrEqual(before + thirtyDays);
+    expect(trialEnd).toBeLessThanOrEqual(after + thirtyDays);
   });
 });
