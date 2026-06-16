@@ -44,7 +44,7 @@ export async function GET(req: Request): Promise<Response> {
       .limit(1)
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     if (!data) return Response.json({ pending: null });
 

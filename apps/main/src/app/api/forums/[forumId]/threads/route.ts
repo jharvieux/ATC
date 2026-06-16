@@ -26,7 +26,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (fErr) return Response.json({ error: fErr.message }, { status: 500 });
+    if (fErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     const { data: threads, error } = await svc
@@ -38,7 +38,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       .order("is_pinned", { ascending: false })
       .order("created_at", { ascending: false });
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ threads: threads ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -57,7 +57,7 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (fErr) return Response.json({ error: fErr.message }, { status: 500 });
+    if (fErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
     if (forum.is_locked) return Response.json({ error: "forum_locked" }, { status: 403 });
 
@@ -77,7 +77,7 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
       .single();
 
     if (insertErr || !thread) {
-      return Response.json({ error: insertErr?.message ?? "insert_failed" }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     return Response.json(thread, { status: 201 });
   } catch (err) {

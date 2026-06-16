@@ -39,7 +39,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, error } = await query.order("created_at", { ascending: false });
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ tokens: data ?? [], is_owner: isOwner });
   } catch (err) {
     return respondToAuthError(err);
@@ -85,7 +85,7 @@ export async function POST(req: Request): Promise<Response> {
           .eq("status", "active")
           .maybeSingle();
 
-        if (lookupErr) return Response.json({ error: lookupErr.message }, { status: 500 });
+        if (lookupErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
         if (!member) {
           return Response.json(
             { error: "user_id is not an active member of this tenant" },
@@ -113,7 +113,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id, name, scopes, created_at")
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // Return the plaintext token once — it is never readable again.
     return Response.json({ token: rawToken, ...data }, { status: 201 });

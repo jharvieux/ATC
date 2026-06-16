@@ -34,7 +34,7 @@ export async function PATCH(
       .from("contacts")
       .update({ notes: body.notes, updated_at: new Date().toISOString() })
       .eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ ok: true });
   } catch (err) {

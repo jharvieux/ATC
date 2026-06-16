@@ -28,7 +28,7 @@ export async function DELETE(
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
 
-    if (readErr) return Response.json({ error: readErr.message }, { status: 500 });
+    if (readErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!existing) return Response.json({ error: "Token not found" }, { status: 404 });
     if ((existing as { revoked_at: string | null }).revoked_at) {
       return Response.json({ error: "Token is already revoked" }, { status: 409 });

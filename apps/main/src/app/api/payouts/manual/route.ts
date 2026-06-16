@@ -34,7 +34,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .maybeSingle();
     if (tenantErr) {
-      return Response.json({ error: tenantErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     const stripeAccountId = (tenantRow as { stripe_connect_account_id?: string | null } | null)
       ?.stripe_connect_account_id;
@@ -59,7 +59,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("amount_cents")
       .eq("status", "available");
     if (balErr) {
-      return Response.json({ error: balErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     let availableCents = 0n;
     for (const r of (rows ?? []) as PayoutSumRow[]) {

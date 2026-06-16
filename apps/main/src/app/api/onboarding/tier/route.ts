@@ -44,7 +44,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("tenant_type")
       .eq("id", ctx.tenant_id)
       .single();
-    if (tenantErr) return Response.json({ error: tenantErr.message }, { status: 500 });
+    if (tenantErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const tierCode = TIER_CODE[tenantRow?.tenant_type as TenantType]?.[body.tier];
     if (!tierCode) {
@@ -58,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("code", tierCode)
       .maybeSingle();
 
-    if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
+    if (tierErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
     await safeAwaitRowCount(

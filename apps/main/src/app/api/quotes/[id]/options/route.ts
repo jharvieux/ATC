@@ -45,7 +45,7 @@ export async function GET(
       .select("*")
       .eq("quote_id", quoteId)
       .order("option_index", { ascending: true });
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ options: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -119,7 +119,7 @@ export async function POST(
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

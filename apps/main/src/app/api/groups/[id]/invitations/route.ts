@@ -51,7 +51,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
       .eq("group_id", params.id)
       .order("created_at", { ascending: true });
 
-    if (invErr) return Response.json({ error: invErr.message }, { status: 500 });
+    if (invErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ invitations });
   } catch (err) {
     return respondToAuthError(err);
@@ -154,7 +154,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         .eq("id", body.invitation_id)
         .eq("group_id", params.id)
         .is("token_revoked_at", null);
-      if (error) return Response.json({ error: error.message }, { status: 500 });
+      if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
       return Response.json({ ok: true, action: "revoked" });
     }
 
@@ -164,7 +164,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         .update({ token_revoked_at: now, token_revoked_reason: "suspected_compromise" })
         .eq("id", body.invitation_id)
         .eq("group_id", params.id);
-      if (error) return Response.json({ error: error.message }, { status: 500 });
+      if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
       return Response.json({ ok: true, action: "revoked_suspected_compromise" });
     }
 
@@ -177,7 +177,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         .eq("group_id", params.id)
         .is("token_revoked_at", null);
 
-      if (fetchErr) return Response.json({ error: fetchErr.message }, { status: 500 });
+      if (fetchErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
       // Revoke existing.
       await safeAwait(svc
@@ -201,7 +201,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
           };
         });
         const { error: insertErr } = await svc.from("invitations").insert(newRows);
-        if (insertErr) return Response.json({ error: insertErr.message }, { status: 500 });
+        if (insertErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
       }
 
       return Response.json({ ok: true, action: "reissued", count: active?.length ?? 0 });

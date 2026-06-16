@@ -40,7 +40,7 @@ export async function GET(req: Request): Promise<Response> {
     if (startTo) q = q.lte("start_date", startTo);
 
     const { data, count, error } = await q;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ items: data ?? [], total: count ?? 0 });
   } catch (err) {
     return respondToAuthError(err);

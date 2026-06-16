@@ -56,7 +56,7 @@ export async function GET(req: Request): Promise<Response> {
     if (bookingId) q = q.eq("booking_id", bookingId);
 
     const { data, count, error } = await q;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ tasks: data ?? [], total: count ?? 0 });
   } catch (err) {
     return respondToAuthError(err);
@@ -92,7 +92,7 @@ export async function POST(req: Request): Promise<Response> {
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // Reminders.
     const created = data as { id: string; due_at: string | null };

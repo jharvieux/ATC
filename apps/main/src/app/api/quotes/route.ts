@@ -74,7 +74,7 @@ export async function GET(req: Request): Promise<Response> {
       .from("quotes")
       .select("id, status, created_at")
       .order("created_at", { ascending: false });
-    if (quotesErr) return Response.json({ error: quotesErr.message }, { status: 500 });
+    if (quotesErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const quotes = (quoteRows ?? []) as Array<{ id: string; status: string; created_at: string }>;
     if (quotes.length === 0) return Response.json({ quotes: [] });
@@ -86,7 +86,7 @@ export async function GET(req: Request): Promise<Response> {
       )
       .in("quote_id", quotes.map((q) => q.id))
       .order("option_index", { ascending: true });
-    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+    if (optionsErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const byQuote = new Map<string, QuoteListOption[]>();
     for (const row of (optionRows ?? []) as QuoteListOption[]) {
@@ -138,7 +138,7 @@ export async function POST(req: Request): Promise<Response> {
       .insert({ ...containerFields, user_id: user.id, status: "draft" })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const quoteId = (quote as { id: string }).id;
 

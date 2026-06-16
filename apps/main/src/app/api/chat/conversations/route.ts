@@ -27,7 +27,7 @@ export async function GET(req: Request): Promise<Response> {
         .select("id")
         .eq("auth_user_id", authUserId)
         .maybeSingle();
-      if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+      if (uErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
       publicUserId = (urow as { id: string } | null)?.id ?? null;
     }
 
@@ -49,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
       .limit(50);
 
     const { data, error } = await q;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ conversations: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);

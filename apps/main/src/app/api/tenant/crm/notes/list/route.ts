@@ -38,7 +38,7 @@ export async function GET(req: Request): Promise<Response> {
       data: Array<Record<string, unknown>> | null;
       error: { message: string } | null;
     }>);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ rows: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);

@@ -41,7 +41,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (tenantErr) {
-      return Response.json({ error: tenantErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!tenant?.legal_name) {
       return Response.json({ error: "complete_profile_first" }, { status: 409 });
@@ -61,7 +61,7 @@ export async function POST(req: Request): Promise<Response> {
       .limit(2);
 
     if (icaDocsErr) {
-      return Response.json({ error: icaDocsErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!icaDocs || icaDocs.length === 0) {
       return Response.json({ error: "ica_document_not_found" }, { status: 500 });
@@ -90,7 +90,7 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     if (consentErr && !consentErr.code?.includes("23505")) {
-      return Response.json({ error: consentErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     const { error } = await serviceDb
@@ -99,7 +99,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     console.info("[onboarding/ica] ICA accepted tenant=%s user=%s", ctx.tenant_id, user.id);

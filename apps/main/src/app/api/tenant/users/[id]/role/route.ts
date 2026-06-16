@@ -63,7 +63,7 @@ export async function PATCH(
       .maybeSingle();
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!updated) {
       return Response.json({ error: "user_not_found_in_tenant" }, { status: 404 });

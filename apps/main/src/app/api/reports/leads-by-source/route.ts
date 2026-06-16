@@ -27,7 +27,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id)
       .gte("day", filters.start)
       .lte("day", filters.end);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // Roll up to the dimensional grain (the MV pre-aggregates by day; we
     // re-aggregate dropping the day dimension for the leads-by-source view).

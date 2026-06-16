@@ -28,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
     if (authUserId) {
       const { data: urow, error: uErr } = await db
         .from("users").select("id, role").eq("auth_user_id", authUserId).maybeSingle();
-      if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+      if (uErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
       publicUserId = (urow as { id: string } | null)?.id ?? null;
       const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -38,7 +38,7 @@ export async function GET(req: Request): Promise<Response> {
       const { data: own, error: ownErr } = await (
         publicUserId ? ownBase.eq("user_id", publicUserId) : ownBase.is("user_id", null)
       );
-      if (ownErr) return Response.json({ error: ownErr.message }, { status: 500 });
+      if (ownErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
       // Owners also see the house-style samples.
       let house: unknown[] = [];
@@ -48,7 +48,7 @@ export async function GET(req: Request): Promise<Response> {
           .select("id, body, source_label, created_at")
           .is("user_id", null)
           .order("created_at", { ascending: true });
-        if (houseErr) return Response.json({ error: houseErr.message }, { status: 500 });
+        if (houseErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
         house = houseRows ?? [];
       }
 
@@ -105,7 +105,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: urow, error: uErr } = await db
       .from("users").select("id, role").eq("auth_user_id", authUserId ?? "").maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -128,7 +128,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (insErr || !inserted) {
-      return Response.json({ error: insErr?.message ?? "insert failed" }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     // Dispatch extraction event (event-driven, idle-free per D-192).

@@ -57,8 +57,9 @@ describe("POST /api/onboarding/byo/advance §3.1 / §15", () => {
     const { POST } = await import("@/app/api/onboarding/byo/advance/route");
     const res = await POST(postRequest("/api/onboarding/byo/advance"));
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("connection timeout");
+    const body = await res.json() as { error: string; ref?: string };
+    expect(body.error).toBe("db_error");
+    expect(body.ref).toBeTruthy();
   });
 
   it("returns 409 for non-BYO tenant — sub-host page renders normally, no redirect", async () => {

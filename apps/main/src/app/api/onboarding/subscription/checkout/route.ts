@@ -26,7 +26,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error || !tenant) return Response.json({ error: error?.message ?? "not_found" }, { status: 500 });
+    if (error || !tenant) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const { data: tierDef, error: tierErr } = await srDb
       .from("tier_definitions")
@@ -34,7 +34,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", tenant.tier_id)
       .maybeSingle();
 
-    if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
+    if (tierErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
     const tier = CODE_TO_TIER[tierDef.code as keyof typeof CODE_TO_TIER];

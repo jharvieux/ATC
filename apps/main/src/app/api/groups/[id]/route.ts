@@ -43,7 +43,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return Response.json({ error: groupErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -56,7 +56,7 @@ export async function GET(
       .select("rsvp_state")
       .eq("group_id", id);
     if (invErr) {
-      return Response.json({ error: invErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     const counts: Record<string, number> = {};
     for (const r of (invRows ?? []) as InvitationCountRow[]) {

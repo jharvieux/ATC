@@ -60,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("auth_user_id", authUserId ?? "")
       .eq("status", "active")
       .maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     if (!publicUserId) return Response.json({ error: "member_not_found" }, { status: 403 });
 

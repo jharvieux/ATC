@@ -49,7 +49,7 @@ export async function POST(req: Request): Promise<Response> {
       })
       .select("id, requested_at, status")
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ ok: true, request: data });
   } catch (err) {
     return respondToAuthError(err);

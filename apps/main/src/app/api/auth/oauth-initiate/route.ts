@@ -62,7 +62,7 @@ export async function GET(req: NextRequest): Promise<Response> {
 
   if (error || !data.url) {
     return NextResponse.json(
-      { error: error?.message ?? "Could not initiate OAuth" },
+      { error: "db_error", ref: crypto.randomUUID() },
       { status: 500 },
     );
   }

@@ -48,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
         feedback_reason: body.reason?.toString().slice(0, 1000) ?? null,
       })
       .eq("id", messageId);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // §6.10 — Propagate to RAG. Best-effort: failure here doesn't fail
     // the parent write. The signal_direction maps from -1/+1 only;

@@ -52,7 +52,7 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (insertErr || !row) {
-    return Response.json({ error: insertErr?.message ?? "insert_failed" }, { status: 500 });
+    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   }
 
   const exportRequestId = (row as { id: string }).id;

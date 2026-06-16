@@ -34,7 +34,7 @@ export async function GET(req: Request): Promise<Response> {
       .is("archived_at", null)
       .order("name");
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ subcontractors: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -80,7 +80,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id, name, share_rate, created_at")
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ subcontractor: data }, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

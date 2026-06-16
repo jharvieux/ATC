@@ -24,7 +24,7 @@ export async function DELETE(
 
     const { data: urow, error: uErr } = await db // d091-allow:service-role-tenant — db is tenantClient(ctx) not svc; proxy auto-injects tenant_id
       .from("users").select("id, role").eq("auth_user_id", authUserId ?? "").maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -34,7 +34,7 @@ export async function DELETE(
       .select("id, tenant_id, user_id")
       .eq("id", id)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (loadErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!sample) return Response.json({ error: "not_found" }, { status: 404 });
 
     const s = sample as { id: string; tenant_id: string; user_id: string | null };

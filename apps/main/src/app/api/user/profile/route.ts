@@ -33,7 +33,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!data) return Response.json({ error: "profile_not_found" }, { status: 404 });
 
     return Response.json(data);

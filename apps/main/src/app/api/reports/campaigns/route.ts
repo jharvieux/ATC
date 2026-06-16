@@ -27,7 +27,7 @@ export async function GET(req: Request): Promise<Response> {
       .gte("day", filters.start)
       .lte("day", filters.end)
       .not("first_touch_utm_campaign", "is", null);
-    if (rollupErr) return Response.json({ error: rollupErr.message }, { status: 500 });
+    if (rollupErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // Aggregate by campaign.
     const byCampaign = new Map<string, { leads: number; bookings: number; gross: number; net: number }>();
@@ -52,7 +52,7 @@ export async function GET(req: Request): Promise<Response> {
       .from("campaigns")
       .select("utm_campaign, display_name, campaign_cost_cents, currency")
       .eq("tenant_id", ctx.tenant_id);
-    if (cErr) return Response.json({ error: cErr.message }, { status: 500 });
+    if (cErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     const costByCampaign = new Map<string, { cost: number | null; display: string | null; currency: string }>();
     for (const c of (campaignRows ?? []) as Array<{
       utm_campaign: string;
@@ -133,7 +133,7 @@ export async function POST(req: Request): Promise<Response> {
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

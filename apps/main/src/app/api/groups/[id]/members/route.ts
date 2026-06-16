@@ -55,7 +55,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return Response.json({ error: groupErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -91,7 +91,7 @@ export async function POST(
     // was verified tenant-owned by the tenant-scoped groups query above.
     const { error: insertErr } = await db.from("invitations").insert(rows);
     if (insertErr) {
-      return Response.json({ error: insertErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     return Response.json(

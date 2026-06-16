@@ -30,7 +30,7 @@ export async function GET(
       .is("superseded_at", null)
       .limit(2);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!docs || docs.length === 0) {
       return Response.json({ error: "document_not_found" }, { status: 404 });
     }

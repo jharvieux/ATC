@@ -36,7 +36,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .select("id, tenant_id, status, document_type")
       .eq("id", queueRowId)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (loadErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
     const row = rowData as { tenant_id: string; status: string; document_type: string | null };
     if (row.tenant_id !== ctx.tenant_id) return Response.json({ error: "forbidden" }, { status: 403 });

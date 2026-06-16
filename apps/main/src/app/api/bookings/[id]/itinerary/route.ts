@@ -24,7 +24,7 @@ export async function GET(
       .eq("tenant_id", ctx.tenant_id)
       .eq("booking_id", bookingId)
       .maybeSingle();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!data) return Response.json({ itinerary: null });
     return Response.json({ itinerary: data });
   } catch (err) {
@@ -72,7 +72,7 @@ export async function POST(
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ itinerary: created, created: true }, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

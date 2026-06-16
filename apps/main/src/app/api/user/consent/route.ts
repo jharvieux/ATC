@@ -62,7 +62,7 @@ export async function POST(req: Request): Promise<Response> {
     .eq("document_type", body.document_type)
     .limit(2);
 
-  if (pendingErr) return Response.json({ error: pendingErr.message }, { status: 500 });
+  if (pendingErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   if (!pendingRows || pendingRows.length === 0) {
     return Response.json({ error: "no_pending_consent_for_type" }, { status: 404 });
   }
@@ -103,7 +103,7 @@ export async function POST(req: Request): Promise<Response> {
     user_agent: req.headers.get("user-agent") ?? "",
   });
 
-  if (insertErr) return Response.json({ error: insertErr.message }, { status: 500 });
+  if (insertErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
   // Remove the pending row now that consent is recorded.
   await safeAwait(db

@@ -66,7 +66,7 @@ export async function POST(
     .single();
 
   if (error || !row) {
-    return Response.json({ error: error?.message ?? "upsert_failed" }, { status: 500 });
+    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   }
 
   const addendumId = (row as { id: string }).id;
@@ -101,6 +101,6 @@ export async function GET(
     .eq("persona_slug", personaSlug)
     .maybeSingle();
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   return Response.json({ addendum: data ?? null });
 }

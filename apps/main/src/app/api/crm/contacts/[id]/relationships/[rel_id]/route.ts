@@ -19,7 +19,7 @@ export async function DELETE(
       .eq("id", rel_id)
       .eq("from_contact_id", from_contact_id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return new Response(null, { status: 204 });
   } catch (err) {
     return respondToAuthError(err);

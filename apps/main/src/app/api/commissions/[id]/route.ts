@@ -24,7 +24,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!data) {
       // Either doesn't exist or RLS hid a cross-tenant row — same shape

@@ -107,7 +107,7 @@ export async function POST(
       });
       return Response.json({ error: "non_production_binding_refused" }, { status: 403 });
     }
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    console.error("[custom-domain/verify] error ref=", err);
+    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   }
 }

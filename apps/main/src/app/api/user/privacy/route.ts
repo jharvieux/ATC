@@ -34,7 +34,7 @@ export async function GET(req: Request): Promise<Response> {
       .select(FLAGS.join(", "))
       .eq("id", userId)
       .maybeSingle();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ preferences: data ?? {} });
   } catch (err) {
     return respondToAuthError(err);
@@ -61,7 +61,7 @@ export async function PUT(req: Request): Promise<Response> {
 
     const db = tenantClient(ctx);
     const { error } = await db.from("users").update(update).eq("id", userId);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ ok: true, updated: update });
   } catch (err) {
     return respondToAuthError(err);

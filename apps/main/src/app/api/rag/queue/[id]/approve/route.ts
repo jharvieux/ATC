@@ -55,7 +55,7 @@ export async function POST(
       )
       .eq("id", id)
       .maybeSingle();
-    if (fetchErr) return Response.json({ error: fetchErr.message }, { status: 500 });
+    if (fetchErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!sub) return Response.json({ error: "not_found" }, { status: 404 });
 
     const row = sub as {
@@ -180,7 +180,7 @@ export async function POST(
       .eq("review_status", "ready_for_review")
       .select("id");
     if (updateErr) {
-      return Response.json({ error: updateErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if ((updatedRows ?? []).length === 0) {
       return Response.json({ error: "already_resolved" }, { status: 409 });

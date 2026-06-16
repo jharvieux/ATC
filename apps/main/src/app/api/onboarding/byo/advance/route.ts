@@ -26,7 +26,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     if (tenant?.tenant_type !== "byo_host") {
       return Response.json({ error: "not_byo_host" }, { status: 409 });

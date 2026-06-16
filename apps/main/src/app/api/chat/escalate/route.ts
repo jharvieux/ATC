@@ -32,7 +32,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id, audience, user_id")
       .eq("id", conversationId)
       .maybeSingle();
-    if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
+    if (convErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
     const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
     if (guard) return guard;
@@ -45,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
       initiated_by: "customer",
       initiated_reason: "customer_clicked_escalate",
     });
-    if (esErr) return Response.json({ error: esErr.message }, { status: 500 });
+    if (esErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     await safeAwait(db
       .from("conversations")

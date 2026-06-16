@@ -23,7 +23,7 @@ export async function GET(
       .eq("group_id", groupId)
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     return Response.json({

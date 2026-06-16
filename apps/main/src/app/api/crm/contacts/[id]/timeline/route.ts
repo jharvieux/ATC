@@ -21,7 +21,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
 
-    if (contactErr) return Response.json({ error: contactErr.message }, { status: 500 });
+    if (contactErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!contact) return Response.json({ error: "not_found" }, { status: 404 });
 
     // Fetch related conversations, quotes, bookings in parallel

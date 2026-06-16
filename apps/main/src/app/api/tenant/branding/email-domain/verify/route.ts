@@ -161,7 +161,7 @@ export async function GET(req: Request): Promise<Response> {
     .from("tenant_branding")
     .select("email_from_domain, email_from_domain_verified_at, email_from_domain_dns_records, resend_domain_id")
     .maybeSingle();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   if (!data) return Response.json({ status: "not_configured" });
 
   const row = data as BrandingRow;

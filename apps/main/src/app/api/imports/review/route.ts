@@ -51,7 +51,7 @@ export async function GET(req: Request): Promise<Response> {
     if (submittedBy) query = query.eq("submitted_by_user_id", submittedBy);
 
     const { data, count, error } = await query;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({
       items: data ?? [],

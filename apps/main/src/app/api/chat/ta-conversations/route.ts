@@ -33,7 +33,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("auth_user_id", userId)
       .maybeSingle();
     if (uErr) {
-      return Response.json({ error: uErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     if (!publicUserId) {
@@ -48,7 +48,7 @@ export async function GET(req: Request): Promise<Response> {
       .order("last_message_at", { ascending: false })
       .limit(50);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ conversations: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);

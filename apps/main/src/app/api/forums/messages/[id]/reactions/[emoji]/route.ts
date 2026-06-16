@@ -18,7 +18,7 @@ export async function DELETE(req: Request, props: { params: Promise<{ id: string
       .eq("emoji", params.emoji)
       .eq("tenant_id", ctx.tenant_id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ ok: true });
   } catch (err) {

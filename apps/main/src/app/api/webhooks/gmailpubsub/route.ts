@@ -75,7 +75,7 @@ export async function POST(req: Request): Promise<Response> {
     .select("tenant_id, encrypted_refresh_token, encryption_key_version, pubsub_history_id, health_status")
     .eq("connected_email", payload.emailAddress)
     .maybeSingle();
-  if (tokenErr) return Response.json({ error: tokenErr.message }, { status: 500 });
+  if (tokenErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   if (!tokenRowData) {
     // Pub/Sub may push for an address we don't recognise (eg after a
     // disconnect raced with a queued push). Ack 200 so Pub/Sub doesn't

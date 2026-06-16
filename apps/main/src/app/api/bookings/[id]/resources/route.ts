@@ -20,7 +20,7 @@ export async function GET(
       .eq("tenant_id", ctx.tenant_id)
       .eq("booking_id", bookingId)
       .maybeSingle();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ resources: data ?? null });
   } catch (err) {
     return respondToAuthError(err);
@@ -47,7 +47,7 @@ export async function POST(
       .eq("id", bookingId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (bookingErr) return Response.json({ error: bookingErr.message }, { status: 500 });
+    if (bookingErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!booking) return Response.json({ error: "not_found" }, { status: 404 });
 
     const { data: existing } = await svc
@@ -96,7 +96,7 @@ export async function POST(
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ resources: created, created: true }, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

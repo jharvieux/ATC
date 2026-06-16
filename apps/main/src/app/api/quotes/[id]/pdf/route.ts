@@ -36,7 +36,7 @@ export async function GET(
 
     const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
-      return Response.json({ error: loaded.message }, { status: loaded.status });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: loaded.status });
     }
     const enriched = await buildRenderInputFromQuote({
       ctx,
@@ -44,7 +44,7 @@ export async function GET(
       quote: loaded.quote,
     });
     if (!enriched.ok) {
-      return Response.json({ error: enriched.message }, { status: enriched.status });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: enriched.status });
     }
 
     const buf = await renderQuotePdf(enriched.input);

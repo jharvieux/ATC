@@ -30,7 +30,7 @@ export async function GET(
       .select("id, title, status, active_persona_id, last_message_at, message_count, audience, user_id")
       .eq("id", id)
       .maybeSingle();
-    if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
+    if (convErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
     const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
     if (guard) return guard;
@@ -41,7 +41,7 @@ export async function GET(
       .eq("conversation_id", id)
       .order("created_at", { ascending: true })
       .limit(500);
-    if (msgErr) return Response.json({ error: msgErr.message }, { status: 500 });
+    if (msgErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ conversation: conv, messages: msgs ?? [] });
   } catch (err) {
@@ -70,7 +70,7 @@ export async function PATCH(
       .select("id, audience, user_id")
       .eq("id", id)
       .maybeSingle();
-    if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
+    if (convErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
     const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
     if (guard) return guard;
@@ -79,7 +79,7 @@ export async function PATCH(
       .from("conversations")
       .update({ title: body.title })
       .eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ ok: true });
   } catch (err) {
     return respondToAuthError(err);

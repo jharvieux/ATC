@@ -36,7 +36,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, count, error } = await q;
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     return Response.json({

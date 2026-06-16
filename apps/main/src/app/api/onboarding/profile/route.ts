@@ -37,7 +37,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("legal_name, display_name, slug, mailing_address, support_email, support_phone, timezone")
       .eq("id", ctx.tenant_id)
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);
@@ -95,7 +95,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     // Advance to "legal". If still at "signup", go through "profile" first —

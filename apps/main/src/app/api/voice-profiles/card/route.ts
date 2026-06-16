@@ -29,7 +29,7 @@ export async function PATCH(req: Request): Promise<Response> {
 
     const { data: urow, error: uErr } = await db
       .from("users").select("id, role").eq("auth_user_id", authUserId ?? "").maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -48,7 +48,7 @@ export async function PATCH(req: Request): Promise<Response> {
         ? existingBase.is("user_id", null)
         : existingBase.eq("user_id", targetUserId)
     ).maybeSingle();
-    if (existErr) return Response.json({ error: existErr.message }, { status: 500 });
+    if (existErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const existingId = (existing as { id: string } | null)?.id ?? null;
 

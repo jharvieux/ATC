@@ -27,7 +27,7 @@ export async function GET(req: Request): Promise<Response> {
   const { data, error } = await db
     .from("tenant_email_templates")
     .select("email_type, subject_template, body_template, updated_at");
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
   const overrides = new Map(((data ?? []) as OverrideRow[]).map((r) => [r.email_type, r]));
 

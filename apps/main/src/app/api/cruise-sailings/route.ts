@@ -28,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
       .gte("departure_date", today)
       .order("departure_date", { ascending: true });
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const sailings = (data ?? []).map((s) => ({
       id: s.id,

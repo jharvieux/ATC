@@ -41,7 +41,7 @@ export async function GET(req: Request): Promise<Response> {
 
   const db = tenantClient(ctx);
   const { data, error } = await db.from("tenant_branding").select("*").maybeSingle();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   return Response.json({ branding: data ?? null });
 }
 
@@ -115,7 +115,7 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (error || !data) {
-    return Response.json({ error: error?.message ?? "upsert_failed" }, { status: 500 });
+    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   }
 
   return Response.json({ ok: true, branding_id: (data as { id: string }).id, show_powered_by: showPoweredBy });

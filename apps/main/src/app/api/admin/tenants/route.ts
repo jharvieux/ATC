@@ -28,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
     .select("id, status, tenant_type, display_name, source_revision");
 
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
   }
 
   return Response.json({ tenants: data });

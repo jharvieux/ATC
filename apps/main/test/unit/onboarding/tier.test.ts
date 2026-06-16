@@ -124,8 +124,9 @@ describe("POST /api/onboarding/tier §15.8", () => {
     const { POST } = await import("@/app/api/onboarding/tier/route");
     const res = await POST(postRequest());
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("connection_timeout");
+    const body = await res.json() as { error: string; ref?: string };
+    expect(body.error).toBe("db_error");
+    expect(body.ref).toBeTruthy();
   });
 
   it("returns 422 for unrecognized tenant_type — inserting unmapped tier code corrupts billing", async () => {
@@ -143,8 +144,9 @@ describe("POST /api/onboarding/tier §15.8", () => {
     const { POST } = await import("@/app/api/onboarding/tier/route");
     const res = await POST(postRequest());
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("db_timeout");
+    const body = await res.json() as { error: string; ref?: string };
+    expect(body.error).toBe("db_error");
+    expect(body.ref).toBeTruthy();
   });
 
   it("returns 500 when tier_definition not found — corrupted platform data; no tier_id to store", async () => {

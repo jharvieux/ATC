@@ -38,7 +38,7 @@ export async function POST(req: Request): Promise<Response> {
       .is("superseded_at", null);
 
     if (docsErr) {
-      return Response.json({ error: docsErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!docs || docs.length === 0) {
       return Response.json({ error: "legal_documents_not_found" }, { status: 500 });
@@ -80,7 +80,7 @@ export async function POST(req: Request): Promise<Response> {
     if (insertErr) {
       // 23505 = unique violation: user already accepted this version — idempotent.
       if (!insertErr.code?.includes("23505")) {
-        return Response.json({ error: insertErr.message }, { status: 500 });
+        return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
       }
     }
 
@@ -90,7 +90,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("tenant_type")
       .eq("id", ctx.tenant_id)
       .single();
-    if (tenantErr) return Response.json({ error: tenantErr.message }, { status: 500 });
+    if (tenantErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     const nextStageName = tenantRow?.tenant_type === "byo_host" ? "state_of_operation" : "ica";
 
     await progressTo(ctx.tenant_id, nextStageName);

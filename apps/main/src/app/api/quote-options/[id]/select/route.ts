@@ -33,7 +33,7 @@ export async function POST(
       .select("id, tenant_id, quote_id")
       .eq("id", optionId)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (loadErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!row || (row as { tenant_id: string }).tenant_id !== ctx.tenant_id) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -53,7 +53,7 @@ export async function POST(
       .update({ customer_selected: true, customer_selected_at: now })
       .eq("id", optionId)
       .eq("tenant_id", ctx.tenant_id);
-    if (updErr) return Response.json({ error: updErr.message }, { status: 500 });
+    if (updErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // Transition the quote container.
     await safeAwait(svc

@@ -28,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
       .not("status", "in", "(cancelled,draft)")
       .gte("created_at", filters.start)
       .lte("created_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     type Row = {
       conversion_touch_channel: string | null;

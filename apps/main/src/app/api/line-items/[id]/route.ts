@@ -91,7 +91,7 @@ export async function PATCH(
       .eq("id", id)
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);
@@ -107,7 +107,7 @@ export async function DELETE(
     const { id } = await params;
     const db = tenantClient(ctx);
     const { error } = await db.from("booking_line_items").delete().eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ deleted: true });
   } catch (err) {
     return respondToAuthError(err);

@@ -40,7 +40,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (forumErr) return Response.json({ error: forumErr.message }, { status: 500 });
+    if (forumErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     const isCoordinator = forum.coordinator_user_id === user.id;
@@ -59,7 +59,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     }
 
     const { data: messages, error } = await baseQuery.order("created_at", { ascending: true });
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ messages: messages ?? [], is_coordinator: isCoordinator });
   } catch (err) {
     return respondToAuthError(err);

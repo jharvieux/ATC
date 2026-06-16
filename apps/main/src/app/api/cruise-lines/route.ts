@@ -18,7 +18,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("is_active", true)
       .order("display_name", { ascending: true });
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ lines: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);

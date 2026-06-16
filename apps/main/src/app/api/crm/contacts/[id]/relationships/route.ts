@@ -28,7 +28,7 @@ export async function GET(
       .eq("from_contact_id", from_contact_id)
       .order("created_at", { ascending: true });
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ relationships: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -60,7 +60,7 @@ export async function POST(
       if (error.code === "23505") {
         return Response.json({ error: "relationship_already_exists" }, { status: 409 });
       }
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     return Response.json(data, { status: 201 });

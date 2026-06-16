@@ -71,7 +71,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .select("id, tenant_id, status, raw_extracted_fields, document_type")
       .eq("id", queueRowId)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (loadErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
     const row = rowData as {
       id: string;
@@ -96,7 +96,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .select("*")
       .eq("id", body.target_contact_id)
       .maybeSingle();
-    if (contactErr) return Response.json({ error: contactErr.message }, { status: 500 });
+    if (contactErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!contactData) return Response.json({ error: "target_contact_not_found" }, { status: 404 });
     const contact = contactData as Record<string, unknown>;
     if (contact.tenant_id !== ctx.tenant_id) {
@@ -148,7 +148,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .from("contacts")
       .update({ ...update, updated_at: new Date().toISOString() })
       .eq("id", body.target_contact_id);
-    if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
+    if (updateErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     await markQueueRowMerged(svc, queueRowId, user.id, body.target_contact_id, filled);
 

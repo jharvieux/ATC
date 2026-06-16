@@ -42,7 +42,7 @@ export async function GET(
       .select("id, contact_id, status, custom_notes, show_breakdown_to_customer, created_at")
       .eq("id", id)
       .maybeSingle();
-    if (quoteErr) return Response.json({ error: quoteErr.message }, { status: 500 });
+    if (quoteErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!quote) return Response.json({ error: "not_found" }, { status: 404 });
 
     const { data: optionRows, error: optionsErr } = await db
@@ -52,7 +52,7 @@ export async function GET(
       )
       .eq("quote_id", id)
       .order("option_index", { ascending: true });
-    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+    if (optionsErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const options = (optionRows ?? []) as DetailOption[];
     const option = selectRepresentativeOption(options);

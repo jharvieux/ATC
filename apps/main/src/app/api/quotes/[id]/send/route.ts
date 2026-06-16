@@ -37,7 +37,7 @@ export async function POST(
     // tenant + platform_settings lookups.
     const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
-      return Response.json({ error: loaded.message }, { status: loaded.status });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: loaded.status });
     }
     const { quote } = loaded;
 
@@ -60,14 +60,14 @@ export async function POST(
       .eq("id", id)
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // Now enrich with tenant + host for the render. Shared with /pdf so
     // the agent download and the customer-attachment PDF stay
     // byte-equivalent.
     const enriched = await buildRenderInputFromQuote({ ctx, adminDb, quote });
     if (!enriched.ok) {
-      return Response.json({ error: enriched.message }, { status: enriched.status });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: enriched.status });
     }
     const renderInput = enriched.input;
 

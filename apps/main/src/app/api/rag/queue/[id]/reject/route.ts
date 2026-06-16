@@ -41,7 +41,7 @@ export async function POST(
       .select("id, tenant_id")
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!data) return Response.json({ error: "not_found_or_not_pending" }, { status: 404 });
 
     await inngest.send({

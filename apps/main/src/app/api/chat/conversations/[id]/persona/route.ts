@@ -37,7 +37,7 @@ export async function POST(
       .select("id, audience, user_id")
       .eq("id", id)
       .maybeSingle();
-    if (convErr) return Response.json({ error: convErr.message }, { status: 500 });
+    if (convErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!conv) return Response.json({ error: "not_found" }, { status: 404 });
     const guard = await guardConversationAccess(db, ctx, conv as ConversationAccessRow);
     if (guard) return guard;
@@ -55,7 +55,7 @@ export async function POST(
       .eq("kind", "travel_concierge")
       .eq("is_active", true)
       .maybeSingle();
-    if (lookupError) return Response.json({ error: lookupError.message }, { status: 500 });
+    if (lookupError) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!personaRow) {
       return Response.json({ error: "unknown_persona_slug" }, { status: 400 });
     }
@@ -71,7 +71,7 @@ export async function POST(
       .from("conversations")
       .update({ active_persona_id: personaRow.id, updated_at: new Date().toISOString() })
       .eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ ok: true, active_persona_slug: slug });
   } catch (err) {

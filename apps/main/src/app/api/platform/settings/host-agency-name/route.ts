@@ -11,7 +11,7 @@ export async function GET(): Promise<Response> {
     .eq("key", "host_agency_legal_name")
     .maybeSingle();
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
   const name = data?.value ? String(data.value).replace(/^"|"$/g, "") : null;
   return Response.json({ name });

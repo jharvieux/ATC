@@ -29,7 +29,7 @@ export async function GET(req: Request): Promise<Response> {
     .select("document_type, document_id_pending, flagged_at")
     .eq("auth_user_id", authUserId);
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
   if (!rows || rows.length === 0) {
     return Response.json({ pending: [] });

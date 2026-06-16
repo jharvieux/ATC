@@ -41,7 +41,7 @@ export async function PATCH(
       .select("id, name, share_rate")
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!data) return Response.json({ error: "Subcontractor not found" }, { status: 404 });
     return Response.json({ subcontractor: data });
   } catch (err) {
@@ -64,7 +64,7 @@ export async function DELETE(
       .eq("id", id)
       .is("archived_at", null);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ ok: true });
   } catch (err) {
     return respondToAuthError(err);

@@ -64,7 +64,7 @@ export async function GET(req: Request): Promise<Response> {
       .order("last_name", { ascending: true })
       .range(offset, offset + limit - 1);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     return Response.json({ contacts: data, total: count, limit, offset });
   } catch (err) {
     return respondToAuthError(err);
@@ -92,7 +92,7 @@ export async function POST(req: Request): Promise<Response> {
       .select()
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     // §35.4.3 — write a touch row for the freshly-created contact.
     // Manual entry path is source_origin='agent_set' with editor_user_id set.

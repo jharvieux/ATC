@@ -116,7 +116,7 @@ export async function PUT(req: Request): Promise<Response> {
             },
             { onConflict: "key" },
           );
-        if (catalogErr) return { error: catalogErr.message };
+        if (catalogErr) return { error: "db_error", ref: crypto.randomUUID() };
 
         await safeAwait(db
           .from("platform_settings")

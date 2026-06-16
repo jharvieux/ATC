@@ -20,7 +20,7 @@ export async function POST(req: Request): Promise<Response> {
       .update({ memory_opt_out: true })
       .eq("id", user.id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,

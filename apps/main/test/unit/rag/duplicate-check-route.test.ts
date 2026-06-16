@@ -62,7 +62,9 @@ describe("GET duplicate-check — surfaces matches read error (#393)", () => {
     mocks.matches = { data: null, error: { message: "db boom" } };
     const res = await callGet();
     expect(res.status).toBe(500);
-    await expect(res.json()).resolves.toEqual({ error: "db boom" });
+    const json = await res.json() as { error: string; ref?: string };
+    expect(json.error).toBe("db_error");
+    expect(json.ref).toBeTruthy();
   });
 
   it("returns duplicate:false when there are genuinely no matches (happy path intact)", async () => {

@@ -62,7 +62,7 @@ export async function POST(req: Request): Promise<Response> {
     .eq("auth_user_id", authUserId)
     .eq("tenant_id", tenantId);
 
-  if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
+  if (updateErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
   return Response.json({ ok: true });
 }

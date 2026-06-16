@@ -38,7 +38,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     if (error?.code === "23505") {
       return Response.json({ error: "already_reacted" }, { status: 409 });
     }
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ ok: true }, { status: 201 });
   } catch (err) {

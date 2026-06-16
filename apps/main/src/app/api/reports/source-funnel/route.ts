@@ -24,7 +24,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id)
       .gte("day", filters.start)
       .lte("day", filters.end);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     const buckets = new Map<string, { channel: string | null; contacts: number; quotes: number; bookings: number }>();
     for (const row of (data ?? []) as Array<{

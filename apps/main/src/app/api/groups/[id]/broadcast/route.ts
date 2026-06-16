@@ -95,7 +95,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return Response.json({ error: groupErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -123,7 +123,7 @@ export async function POST(
       .eq("group_id", id)
       .in("rsvp_state", recipientStates);
     if (memberErr) {
-      return Response.json({ error: memberErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     const recipients = ((memberRows ?? []) as MemberRow[])
       .map((m) => m.invitee_email)
@@ -144,7 +144,7 @@ export async function POST(
       .eq("id", ctx.tenant_id)
       .maybeSingle();
     if (tenantErr) {
-      return Response.json({ error: tenantErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     const { data: brandingRow, error: brandingErr } = await db
       .from("tenant_branding")
@@ -152,7 +152,7 @@ export async function POST(
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
     if (brandingErr) {
-      return Response.json({ error: brandingErr.message }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
     const tenant = (tenantRow ?? null) as TenantRow | null;
     const branding = (brandingRow ?? null) as BrandingRow | null;

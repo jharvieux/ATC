@@ -101,8 +101,9 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     const { POST } = await import("@/app/api/onboarding/subscription/checkout/route");
     const res = await POST(postRequest());
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("db_timeout");
+    const body = await res.json() as { error: string; ref?: string };
+    expect(body.error).toBe("db_error");
+    expect(body.ref).toBeTruthy();
   });
 
   it("returns 500 when tier_definition not found — corrupted tenant state", async () => {

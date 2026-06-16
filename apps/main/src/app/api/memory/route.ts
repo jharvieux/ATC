@@ -36,7 +36,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     if (!data) return Response.json(null, { status: 200 });
 
     return Response.json(data);
@@ -71,7 +71,7 @@ export async function PATCH(req: Request): Promise<Response> {
       .select("id, updated_at")
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
@@ -116,7 +116,7 @@ export async function DELETE(req: Request): Promise<Response> {
       })
       .eq("user_id", user.id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,

@@ -38,7 +38,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("status", "cancelled")
       .gte("cancelled_at", filters.start)
       .lte("cancelled_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     type Row = {
       cancellation_reason_category: string | null;

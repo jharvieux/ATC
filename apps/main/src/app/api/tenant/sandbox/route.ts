@@ -19,7 +19,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ is_sandbox: data.is_sandbox });
   } catch (err) {
@@ -57,7 +57,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (fetchErr || !tenant) {
-      return Response.json({ error: fetchErr?.message ?? "not_found" }, { status: 500 });
+      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
     }
 
     // No-op if already in desired state.
@@ -93,7 +93,7 @@ export async function POST(req: Request): Promise<Response> {
       .update({ is_sandbox: body.enable })
       .eq("id", ctx.tenant_id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
 
     return Response.json({ is_sandbox: body.enable });
   } catch (err) {
