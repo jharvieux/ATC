@@ -106,7 +106,7 @@ export async function getTenantRole(
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("users")
-    .select("role, tenant_id, tenants(onboarding_stage, status)")
+    .select("role, tenant_id, tenants!users_tenant_id_fkey(onboarding_stage, status)")
     .eq("auth_user_id", authUserId)
     .eq("tenant_id", tenantId)
     .eq("status", "active");
@@ -157,7 +157,7 @@ export async function resolvePostLoginDestination(
   // working context.
   const { data: rows, error: rowsErr } = await db
     .from("users")
-    .select("role, tenant_id, status, tenants(onboarding_stage, status)")
+    .select("role, tenant_id, status, tenants!users_tenant_id_fkey(onboarding_stage, status)")
     .eq("auth_user_id", authUserId)
     .eq("status", "active");
   if (rowsErr) {
