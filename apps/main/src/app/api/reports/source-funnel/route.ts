@@ -6,6 +6,7 @@ import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
 import { respondCsvOrJson } from "@/lib/reporting/csv";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -24,7 +25,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id)
       .gte("day", filters.start)
       .lte("day", filters.end);
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     const buckets = new Map<string, { channel: string | null; contacts: number; quotes: number; bookings: number }>();
     for (const row of (data ?? []) as Array<{

@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function DELETE(
   req: Request,
@@ -28,7 +29,7 @@ export async function DELETE(
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
 
-    if (readErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (readErr) return dbErrorResponse(readErr);
     if (!existing) return Response.json({ error: "Token not found" }, { status: 404 });
     if ((existing as { revoked_at: string | null }).revoked_at) {
       return Response.json({ error: "Token is already revoked" }, { status: 409 });

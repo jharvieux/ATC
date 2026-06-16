@@ -15,6 +15,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface PayoutSumRow {
   amount_cents: string | number | null;
@@ -34,7 +35,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .maybeSingle();
     if (tenantErr) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     const stripeAccountId = (tenantRow as { stripe_connect_account_id?: string | null } | null)
       ?.stripe_connect_account_id;
@@ -59,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("amount_cents")
       .eq("status", "available");
     if (balErr) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     let availableCents = 0n;
     for (const r of (rows ?? []) as PayoutSumRow[]) {

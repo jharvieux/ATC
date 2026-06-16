@@ -11,6 +11,7 @@ import { getMaxOptionsForTenant } from "@/lib/quotes/tier-gate";
 import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const OptionCreateSchema = z.object({
   label: z.string().optional(),
@@ -45,7 +46,7 @@ export async function GET(
       .select("*")
       .eq("quote_id", quoteId)
       .order("option_index", { ascending: true });
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ options: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -119,7 +120,7 @@ export async function POST(
       })
       .select()
       .single();
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

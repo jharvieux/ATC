@@ -7,6 +7,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { COMMISSIONS_READ_COLUMNS } from "@/lib/commissions/columns";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const QuerySchema = z.object({
   status: z.enum(["expected", "received", "paid", "clawed_back"]).optional(),
@@ -42,7 +43,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, error, count } = await q;
     if (error) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
 
     return Response.json({

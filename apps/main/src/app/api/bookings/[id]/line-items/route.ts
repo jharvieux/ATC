@@ -7,6 +7,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertLineItemsAvailable } from "@/lib/line-items/tier-gate";
 import { computeExpectedCommissionCents, validateLineItem, type ItemType } from "@/lib/line-items/validate";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const LineItemCreateSchema = z.object({
   item_type: z.enum(["flight", "hotel", "transfer", "excursion", "insurance", "other"]),
@@ -39,7 +40,7 @@ export async function GET(
       .select("*")
       .eq("booking_id", bookingId)
       .order("start_date", { ascending: true, nullsFirst: false });
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ items: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -95,7 +96,7 @@ export async function POST(
       })
       .select()
       .single();
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

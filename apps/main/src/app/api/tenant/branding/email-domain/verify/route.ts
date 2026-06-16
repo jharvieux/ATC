@@ -18,6 +18,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const RESEND_DOMAINS_URL = "https://api.resend.com/domains";
 
@@ -161,7 +162,7 @@ export async function GET(req: Request): Promise<Response> {
     .from("tenant_branding")
     .select("email_from_domain, email_from_domain_verified_at, email_from_domain_dns_records, resend_domain_id")
     .maybeSingle();
-  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+  if (error) return dbErrorResponse(error);
   if (!data) return Response.json({ status: "not_configured" });
 
   const row = data as BrandingRow;

@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_TYPES = new Set(["flight", "hotel", "transfer", "excursion", "insurance", "other"]);
 const VALID_STATUSES = new Set(["planned", "booked", "confirmed", "cancelled", "completed"]);
@@ -40,7 +41,7 @@ export async function GET(req: Request): Promise<Response> {
     if (startTo) q = q.lte("start_date", startTo);
 
     const { data, count, error } = await q;
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ items: data ?? [], total: count ?? 0 });
   } catch (err) {
     return respondToAuthError(err);

@@ -19,6 +19,7 @@ import {
   buildRenderInputFromQuote,
 } from "@/lib/quotes/build-render-input";
 import { triggerMatchingSequences } from "@/lib/tasks/sequence-engine";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 const QUOTE_PDF_BUCKET = "quote-pdfs";
@@ -37,7 +38,10 @@ export async function POST(
     // tenant + platform_settings lookups.
     const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: loaded.status });
+      if (loaded.status !== 500) {
+        return Response.json({ error: loaded.message }, { status: loaded.status });
+      }
+      return dbErrorResponse(loaded.message);
     }
     const { quote } = loaded;
 
@@ -60,15 +64,13 @@ export async function POST(
       .eq("id", id)
       .select()
       .single();
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     // Now enrich with tenant + host for the render. Shared with /pdf so
     // the agent download and the customer-attachment PDF stay
     // byte-equivalent.
     const enriched = await buildRenderInputFromQuote({ ctx, adminDb, quote });
-    if (!enriched.ok) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: enriched.status });
-    }
+    if (!enriched.ok) return dbErrorResponse(enriched.message);
     const renderInput = enriched.input;
 
     let pdfUrl: string | null = null;

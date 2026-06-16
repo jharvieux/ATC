@@ -5,6 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
   const authHeader = req.headers.get("authorization");
@@ -52,7 +53,7 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (insertErr || !row) {
-    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    return dbErrorResponse();
   }
 
   const exportRequestId = (row as { id: string }).id;

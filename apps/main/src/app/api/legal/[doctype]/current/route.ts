@@ -4,6 +4,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_TYPES = [
   "tou", "privacy_policy", "ai_disclaimer", "cookie_policy",
@@ -30,7 +31,7 @@ export async function GET(
       .is("superseded_at", null)
       .limit(2);
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!docs || docs.length === 0) {
       return Response.json({ error: "document_not_found" }, { status: 404 });
     }

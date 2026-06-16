@@ -11,6 +11,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 type RouteProps = { params: Promise<{ forumId: string }> };
 
@@ -26,7 +27,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (fErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (fErr) return dbErrorResponse(fErr);
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     const { data: threads, error } = await svc
@@ -38,7 +39,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       .order("is_pinned", { ascending: false })
       .order("created_at", { ascending: false });
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ threads: threads ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -57,7 +58,7 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (fErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (fErr) return dbErrorResponse(fErr);
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
     if (forum.is_locked) return Response.json({ error: "forum_locked" }, { status: 403 });
 
@@ -77,7 +78,7 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
       .single();
 
     if (insertErr || !thread) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     return Response.json(thread, { status: 201 });
   } catch (err) {

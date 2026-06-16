@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { EMAIL_TEMPLATE_REGISTRY, EMAIL_TEMPLATE_TYPES, type EmailTemplateSpec } from "@/lib/email/template-registry";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface OverrideRow {
   email_type: string;
@@ -27,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
   const { data, error } = await db
     .from("tenant_email_templates")
     .select("email_type, subject_template, body_template, updated_at");
-  if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+  if (error) return dbErrorResponse(error);
 
   const overrides = new Map(((data ?? []) as OverrideRow[]).map((r) => [r.email_type, r]));
 

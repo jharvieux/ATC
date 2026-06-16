@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -28,7 +29,7 @@ export async function GET(req: Request): Promise<Response> {
       .gte("departure_date", today)
       .order("departure_date", { ascending: true });
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     const sailings = (data ?? []).map((s) => ({
       id: s.id,

@@ -12,6 +12,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(
   req: Request,
@@ -27,7 +28,7 @@ export async function GET(
       .select("content_hash")
       .eq("id", id)
       .maybeSingle();
-    if (curErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (curErr) return dbErrorResponse(curErr);
     if (!cur) return Response.json({ error: "not_found" }, { status: 404 });
 
     const hash = (cur as { content_hash: string | null }).content_hash;
@@ -43,7 +44,7 @@ export async function GET(
       .neq("id", id)
       .order("created_at", { ascending: false })
       .limit(5);
-    if (matchErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (matchErr) return dbErrorResponse(matchErr);
 
     const list = (matches ?? []) as Array<{
       id: string;

@@ -12,6 +12,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { generateToken } from "@/lib/groups/invitation-token";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const InviteeSchema = z
   .object({
@@ -55,7 +56,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -91,7 +92,7 @@ export async function POST(
     // was verified tenant-owned by the tenant-scoped groups query above.
     const { error: insertErr } = await db.from("invitations").insert(rows);
     if (insertErr) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
 
     return Response.json(

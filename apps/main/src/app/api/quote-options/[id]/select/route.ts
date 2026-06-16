@@ -13,6 +13,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(
   req: Request,
@@ -33,7 +34,7 @@ export async function POST(
       .select("id, tenant_id, quote_id")
       .eq("id", optionId)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (loadErr) return dbErrorResponse(loadErr);
     if (!row || (row as { tenant_id: string }).tenant_id !== ctx.tenant_id) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -53,7 +54,7 @@ export async function POST(
       .update({ customer_selected: true, customer_selected_at: now })
       .eq("id", optionId)
       .eq("tenant_id", ctx.tenant_id);
-    if (updErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (updErr) return dbErrorResponse(updErr);
 
     // Transition the quote container.
     await safeAwait(svc

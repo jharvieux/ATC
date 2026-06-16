@@ -8,6 +8,7 @@
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   const apiKey = process.env.MAIN_APP_ADMIN_API_KEY;
@@ -28,7 +29,7 @@ export async function GET(req: Request): Promise<Response> {
     .select("id, status, tenant_type, display_name, source_revision");
 
   if (error) {
-    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    return dbErrorResponse();
   }
 
   return Response.json({ tenants: data });

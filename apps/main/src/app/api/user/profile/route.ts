@@ -12,6 +12,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const ProfilePatchSchema = z.object({
   first_name: z.string().max(120).nullable().optional(),
@@ -33,7 +34,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "profile_not_found" }, { status: 404 });
 
     return Response.json(data);

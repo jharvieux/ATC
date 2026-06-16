@@ -9,6 +9,7 @@ import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
 import { respondCsvOrJson } from "@/lib/reporting/csv";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -28,7 +29,7 @@ export async function GET(req: Request): Promise<Response> {
       .not("status", "in", "(cancelled,draft)")
       .gte("created_at", filters.start)
       .lte("created_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     type Row = {
       conversion_touch_channel: string | null;

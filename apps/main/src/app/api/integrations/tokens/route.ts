@@ -14,6 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_SCOPES = new Set(["rag_submissions:create"]);
 
@@ -39,7 +40,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, error } = await query.order("created_at", { ascending: false });
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ tokens: data ?? [], is_owner: isOwner });
   } catch (err) {
     return respondToAuthError(err);
@@ -85,7 +86,7 @@ export async function POST(req: Request): Promise<Response> {
           .eq("status", "active")
           .maybeSingle();
 
-        if (lookupErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+        if (lookupErr) return dbErrorResponse(lookupErr);
         if (!member) {
           return Response.json(
             { error: "user_id is not an active member of this tenant" },
@@ -113,7 +114,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id, name, scopes, created_at")
       .single();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     // Return the plaintext token once — it is never readable again.
     return Response.json({ token: rawToken, ...data }, { status: 201 });

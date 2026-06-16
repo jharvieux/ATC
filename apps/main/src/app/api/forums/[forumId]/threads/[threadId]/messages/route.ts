@@ -25,6 +25,7 @@ import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { decideModerationStatus } from "@/lib/forums/moderation-status";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 type RouteProps = { params: Promise<{ forumId: string; threadId: string }> };
 
@@ -40,7 +41,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (forumErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (forumErr) return dbErrorResponse(forumErr);
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     const isCoordinator = forum.coordinator_user_id === user.id;
@@ -59,7 +60,7 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
     }
 
     const { data: messages, error } = await baseQuery.order("created_at", { ascending: true });
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ messages: messages ?? [], is_coordinator: isCoordinator });
   } catch (err) {
     return respondToAuthError(err);

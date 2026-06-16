@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { computeExpectedCommissionCents, validateLineItem, type ItemType } from "@/lib/line-items/validate";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const PatchSchema = z.object({
   description: z.string().optional(),
@@ -91,7 +92,7 @@ export async function PATCH(
       .eq("id", id)
       .select()
       .single();
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);
@@ -107,7 +108,7 @@ export async function DELETE(
     const { id } = await params;
     const db = tenantClient(ctx);
     const { error } = await db.from("booking_line_items").delete().eq("id", id);
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ deleted: true });
   } catch (err) {
     return respondToAuthError(err);

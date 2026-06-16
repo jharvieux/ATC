@@ -4,6 +4,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -24,7 +25,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("user_id", user.id)
       .is("dismissed_at", null);
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ ok: true });
   } catch (err) {
     return respondToAuthError(err);

@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(
   req: Request,
@@ -23,7 +24,7 @@ export async function GET(
       .eq("group_id", groupId)
       .maybeSingle();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     return Response.json({

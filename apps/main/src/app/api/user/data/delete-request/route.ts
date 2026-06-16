@@ -12,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface DeleteBody {
   email_confirmation: string;
@@ -87,7 +88,7 @@ export async function POST(req: Request): Promise<Response> {
     .eq("auth_user_id", authUserId)
     .eq("tenant_id", tenantId);
 
-  if (updateErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+  if (updateErr) return dbErrorResponse(updateErr);
 
   // Schedule purge job after 30 days.
   await inngest.send({

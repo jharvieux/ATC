@@ -3,6 +3,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function DELETE(
   req: Request,
@@ -19,7 +20,7 @@ export async function DELETE(
       .eq("id", rel_id)
       .eq("from_contact_id", from_contact_id);
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return new Response(null, { status: 204 });
   } catch (err) {
     return respondToAuthError(err);

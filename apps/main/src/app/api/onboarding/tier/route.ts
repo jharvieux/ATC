@@ -9,6 +9,7 @@ import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { TIER_CODE } from "@/lib/stripe/tier-codes";
 import type { TenantType } from "@/lib/stripe/price-ids";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface TierSelectionBody {
   tier: "starter" | "pro" | "agency";
@@ -44,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("tenant_type")
       .eq("id", ctx.tenant_id)
       .single();
-    if (tenantErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (tenantErr) return dbErrorResponse(tenantErr);
 
     const tierCode = TIER_CODE[tenantRow?.tenant_type as TenantType]?.[body.tier];
     if (!tierCode) {
@@ -58,7 +59,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("code", tierCode)
       .maybeSingle();
 
-    if (tierErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (tierErr) return dbErrorResponse(tierErr);
     if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
     await safeAwaitRowCount(

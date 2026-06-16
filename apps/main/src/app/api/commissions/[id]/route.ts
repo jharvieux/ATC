@@ -5,6 +5,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { COMMISSIONS_READ_COLUMNS } from "@/lib/commissions/columns";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(
   req: Request,
@@ -24,7 +25,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
     if (error) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     if (!data) {
       // Either doesn't exist or RLS hid a cross-tenant row — same shape

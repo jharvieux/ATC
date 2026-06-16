@@ -8,6 +8,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface PayoutSumRow {
   amount_cents: string | number | null;
@@ -27,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("amount_cents, status")
       .in("status", ["pending", "available"]);
     if (error) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
 
     // Read raw rows and sum app-side; see file header.

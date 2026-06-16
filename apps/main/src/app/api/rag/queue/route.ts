@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const PAGE_SIZE = 25;
 
@@ -36,7 +37,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, count, error } = await q;
     if (error) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
 
     return Response.json({

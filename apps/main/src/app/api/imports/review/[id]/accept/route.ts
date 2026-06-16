@@ -20,6 +20,7 @@ import type { CommissionStatementFields } from "@/lib/import/extractors/types";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 type Body = {
   edited_fields?: Record<string, unknown>;
@@ -41,7 +42,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .select("id, tenant_id, status, raw_extracted_fields, document_type")
       .eq("id", queueRowId)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (loadErr) return dbErrorResponse(loadErr);
     if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
     const row = rowData as { id: string; tenant_id: string; status: string; raw_extracted_fields: Record<string, unknown> | null; document_type: string | null };
     if (row.tenant_id !== ctx.tenant_id) return Response.json({ error: "forbidden" }, { status: 403 });

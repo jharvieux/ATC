@@ -4,6 +4,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const ContactPatchSchema = z.object({
   first_name: z.string().optional(),
@@ -37,7 +38,7 @@ export async function GET(
 
     const { data, error } = await db.from("contacts").select("*").eq("id", id).maybeSingle();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json(data);
   } catch (err) {
@@ -67,7 +68,7 @@ export async function PATCH(
       .select()
       .single();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json(data);
   } catch (err) {

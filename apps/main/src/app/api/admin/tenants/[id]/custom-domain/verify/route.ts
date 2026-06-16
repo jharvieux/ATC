@@ -8,6 +8,7 @@ import { vercelAddDomain, CrownJewelGuardError } from "@/lib/vercel/domain-clien
 import { writeAuditLog } from "@/lib/audit/write";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(
   req: Request,
@@ -107,7 +108,6 @@ export async function POST(
       });
       return Response.json({ error: "non_production_binding_refused" }, { status: 403 });
     }
-    console.error("[custom-domain/verify] error ref=", err);
-    return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

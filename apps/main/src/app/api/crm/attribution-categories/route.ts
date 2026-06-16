@@ -7,6 +7,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const CUSTOMISATION_BLOCKED_TIERS: ReadonlySet<string> = new Set(["byo_research"]);
 
@@ -30,7 +31,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("id, category_label, display_order, is_active")
       .eq("is_active", true)
       .order("display_order", { ascending: true });
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ categories: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -62,7 +63,7 @@ export async function POST(req: Request): Promise<Response> {
       })
       .select()
       .single();
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

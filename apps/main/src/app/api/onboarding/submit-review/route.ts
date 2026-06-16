@@ -6,6 +6,7 @@ import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -18,7 +19,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
 
     await progressTo(ctx.tenant_id, "review_submitted");

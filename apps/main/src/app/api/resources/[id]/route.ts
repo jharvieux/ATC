@@ -6,6 +6,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { newAccessToken } from "@/lib/deliverables/token";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const PatchSchema = z.object({
   sections: z.array(z.unknown()).optional(),
@@ -57,7 +58,7 @@ export async function PATCH(
       .eq("id", id)
       .select()
       .single();
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     if (parsed.data.publish) {
       await writeAuditLog({

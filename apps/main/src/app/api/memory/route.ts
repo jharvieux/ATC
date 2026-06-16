@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const MemoryPatchSchema = z.object({
   preferences: z.record(z.unknown()).nullable().optional(),
@@ -36,7 +37,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json(null, { status: 200 });
 
     return Response.json(data);
@@ -71,7 +72,7 @@ export async function PATCH(req: Request): Promise<Response> {
       .select("id, updated_at")
       .single();
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
@@ -116,7 +117,7 @@ export async function DELETE(req: Request): Promise<Response> {
       })
       .eq("user_id", user.id);
 
-    if (error) return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,

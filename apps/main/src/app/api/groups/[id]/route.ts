@@ -8,6 +8,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const GROUP_COLUMNS =
   "id, tenant_id, coordinator_user_id, status, cruise_line, ship_name, " +
@@ -43,7 +44,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -56,7 +57,7 @@ export async function GET(
       .select("rsvp_state")
       .eq("group_id", id);
     if (invErr) {
-      return Response.json({ error: "db_error", ref: crypto.randomUUID() }, { status: 500 });
+      return dbErrorResponse();
     }
     const counts: Record<string, number> = {};
     for (const r of (invRows ?? []) as InvitationCountRow[]) {
