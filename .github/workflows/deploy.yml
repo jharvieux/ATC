@@ -385,6 +385,10 @@ jobs:
 
       - name: Apply Supabase migrations
         run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL secret is not set in the 'staging' GitHub environment. Aborting."
+            exit 1
+          fi
           npx supabase db push --db-url "$DB_URL"
 
       - name: Vercel deploy (preview)
@@ -457,10 +461,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # TODO(#534): restore when DB_URL secret is configured in the production GitHub environment.
       - name: Apply Supabase migrations to production
-        if: ${{ false }}
         run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL secret is not set in the 'production' GitHub environment. Aborting."
+            exit 1
+          fi
           npx supabase db push --db-url "$DB_URL"
 
       # #851 — model canary gate. Refuses to ship a config that references a
