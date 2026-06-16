@@ -26,7 +26,7 @@ CREATE OR REPLACE FUNCTION public.process_transfer_reversal(
 ) RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   r                  RECORD;
@@ -34,7 +34,7 @@ DECLARE
   v_count            INTEGER := 0;
 BEGIN
   FOR r IN
-    UPDATE payout_records
+    UPDATE public.payout_records
     SET    status      = 'reversed',
            reversed_at = NOW()
     WHERE  stripe_transfer_id = p_transfer_id
@@ -45,8 +45,8 @@ BEGIN
     -- look it up from the tenant's tier so the INSERT branch is valid.
     SELECT td.hold_period_days
     INTO   v_hold_period_days
-    FROM   tenants t
-    JOIN   tier_definitions td ON td.id = t.tier_id
+    FROM   public.tenants t
+    JOIN   public.tier_definitions td ON td.id = t.tier_id
     WHERE  t.id = r.tenant_id;
 
     IF v_hold_period_days IS NULL THEN
@@ -55,7 +55,7 @@ BEGIN
 
     -- Deduct from available: reversal is a clawback, not a credit (§14.9).
     -- Passing -p_this_reversal_cents keeps the ON CONFLICT arithmetic sign-consistent.
-    INSERT INTO payout_balances (
+    INSERT INTO public.payout_balances (
       tenant_id, available_cents, pending_cents, in_transit_cents,
       hold_period_days, updated_at
     ) VALUES (
@@ -63,16 +63,16 @@ BEGIN
       v_hold_period_days, NOW()
     )
     ON CONFLICT (tenant_id) DO UPDATE
-      SET available_cents = payout_balances.available_cents + EXCLUDED.available_cents,
+      SET available_cents = public.payout_balances.available_cents + EXCLUDED.available_cents,
           updated_at      = NOW();
 
     IF r.commission_id IS NOT NULL THEN
-      UPDATE commissions
+      UPDATE public.commissions
       SET    status = 'disputed'
       WHERE  id        = r.commission_id
         AND  tenant_id = r.tenant_id;
 
-      INSERT INTO reconciliation_review_queue (
+      INSERT INTO public.reconciliation_review_queue (
         commission_id, tenant_id, variance_cents, source_path, status, notes
       ) VALUES (
         r.commission_id,
