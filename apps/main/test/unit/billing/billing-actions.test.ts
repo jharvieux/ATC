@@ -288,6 +288,7 @@ describe("POST /api/tenant/billing §15.15", () => {
     );
     expect(vi.mocked(mockInngestSend)).toHaveBeenCalledWith(
       expect.objectContaining({
+        name: "tenant.subscription_changed",
         data: expect.objectContaining({ change: "seats", new_seat_count: 4 }),
       }),
     );
