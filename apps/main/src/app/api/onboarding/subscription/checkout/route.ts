@@ -69,7 +69,11 @@ export async function POST(req: Request): Promise<Response> {
         metadata: { tenant_id: ctx.tenant_id },
       },
       metadata: { tenant_id: ctx.tenant_id },
-      success_url: `${baseUrl}/onboarding/connect`,
+      // BYO hosts skip connect_setup (payouts are sub-host-only); send them
+      // straight to branding. Routing them to /onboarding/connect stranded
+      // them on the Set Up Payouts page (advanceByo only rescues the
+      // connect_setup stage, which BYO hosts never reach).
+      success_url: `${baseUrl}/onboarding/${tenantType === "byo_host" ? "branding" : "connect"}`,
       cancel_url: `${baseUrl}/onboarding/subscription`,
     };
 
