@@ -28,6 +28,9 @@ let mockArraySelectResult: { data: unknown[]; error: { message: string } | null 
 // [review gap-fill #719] result of the transfer.reversed `.update(...).eq().eq().select("id")`
 // chain — lets a test drive the handler into outcome='error' to exercise Step 5's clear.
 let mockUpdateSelectResult: { data: unknown[] | null; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
+// Result returned by db.rpc() — default data=1 (one row processed). Override to inject errors
+// into the process_transfer_reversal RPC path.
+let mockRpcResult: { data: unknown; error: { message: string } | null } = { data: 1, error: null };
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
   data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
   error: null,
@@ -93,7 +96,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
     },
     async rpc(_fn: string, _args?: unknown) {
       void _fn; void _args;
-      return { data: null, error: null };
+      return mockRpcResult;
     },
   }),
 }));
@@ -141,6 +144,7 @@ beforeEach(() => {
   mockDeleteCallCount = 0;
   mockArraySelectResult = { data: [{ id: "p-1" }], error: null };
   mockUpdateSelectResult = { data: [{ id: "p-1" }], error: null };
+  mockRpcResult = { data: 1, error: null };
   mockMaybeSingleResult = {
     data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
     error: null,
@@ -224,12 +228,12 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
   });
 
   it("[review gap-fill #719] clears the dedup row when the handler errors mid-dispatch (Step 5), so Stripe retries", async () => {
-    // Fresh delivery (insert OK), but the transfer.reversed update fails → outcome
+    // Fresh delivery (insert OK), but the process_transfer_reversal RPC fails → outcome
     // 'error' → Step 5 must DELETE the row + 500 so the next delivery reprocesses
     // instead of the row sticking around and short-circuiting to a duplicate 200.
     // Regression guard: dropping clearStripeWebhookEventRow in Step 5 fails this.
     mockInsertResult = { error: null };
-    mockUpdateSelectResult = { data: null, error: { message: "synthetic update failure" } };
+    mockRpcResult = { data: null, error: { message: "synthetic update failure" } };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("Handler error");

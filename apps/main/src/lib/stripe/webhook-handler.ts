@@ -25,7 +25,6 @@
 
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { safeAwait } from "@/lib/db/safe-mutation";
 import { STALE_WEBHOOK_PROCESSING_MS } from "./webhook-constants";
 
 export type WebhookEndpoint = "platform" | "connect";
@@ -152,11 +151,13 @@ export async function handleStripeWebhook(
     // (and payouts-reconcile-processing as the recovery path). §14.7.
     switch (event.type as string) {
       case "transfer.reversed": {
-        // §14.9 — Stripe transfer reversed (clawback): move the settled payout
-        // 'paid' → 'reversed'. We do NOT throw when 0 rows match: the transfer
-        // may not be ours, or a prior delivery / admin action already reversed
-        // it — throwing would make Stripe retry the reversal forever. A genuine
-        // DB error DOES throw (→500→Stripe retries).
+        // §14.9 — Stripe transfer reversed (clawback). process_transfer_reversal()
+        // atomically: flips payout_records paid→reversed, credits
+        // payout_balances.available_cents, marks the commission disputed, and
+        // opens a reconciliation_review_queue row. Single RPC prevents the
+        // crash window that would exist between a multi-call sequence (D-091 P8).
+        // Returns 0 when no paid row matched — not ours or already reversed —
+        // so we do NOT throw on 0: Stripe retrying forever is the worse outcome.
         const rawEvent = event as {
           data: {
             object: Stripe.Transfer;
@@ -165,55 +166,17 @@ export async function handleStripeWebhook(
         };
         const transfer = rawEvent.data.object;
 
-        // Partial reversal: amount_reversed on the Transfer object is cumulative.
-        // Subtract the previous value to get only what changed in this delivery.
+        // Partial reversal: amount_reversed is cumulative; delta is this delivery's amount.
         const prevAmountReversed = rawEvent.data.previous_attributes?.amount_reversed ?? 0;
         const thisReversalCents = transfer.amount_reversed - prevAmountReversed;
 
-        const { data: reversedRows, error: reverseErr } = await db
-          .from("payout_records")
-          .update({ status: "reversed", reversed_at: new Date().toISOString() })
-          .eq("stripe_transfer_id", transfer.id)
-          .eq("status", "paid")
-          .select("id, tenant_id, commission_id, amount_cents");
-        if (reverseErr) throw new Error(`transfer.reversed update failed: ${reverseErr.message}`);
+        const { data: processedCount, error: reversalErr } = await db.rpc("process_transfer_reversal", {
+          p_transfer_id: transfer.id,
+          p_this_reversal_cents: thisReversalCents,
+        });
+        if (reversalErr) throw new Error(`process_transfer_reversal failed: ${reversalErr.message}`);
 
-        if (reversedRows && reversedRows.length > 0) {
-          for (const row of reversedRows as {
-            id: string;
-            tenant_id: string;
-            commission_id: string | null;
-            amount_cents: string;
-          }[]) {
-            // Credit the reversed amount back to available balance.
-            const { error: rpcErr } = await db.rpc("credit_payout_balance_available", {
-              p_tenant_id: row.tenant_id,
-              p_amount_cents: thisReversalCents,
-            });
-            if (rpcErr) throw new Error(`credit_payout_balance_available failed: ${rpcErr.message}`);
-
-            if (row.commission_id) {
-              await safeAwait(
-                db.from("commissions").update({ status: "disputed" }).eq("id", row.commission_id).eq("tenant_id", row.tenant_id),
-                "commissions.update.clawback",
-              );
-              await safeAwait(
-                db.from("reconciliation_review_queue").insert({
-                  commission_id: row.commission_id,
-                  tenant_id: row.tenant_id,
-                  variance_cents: thisReversalCents,
-                  source_path: "automated",
-                  status: "clawback",
-                  notes: JSON.stringify({
-                    stripe_transfer_id: transfer.id,
-                    reversed_cents: thisReversalCents,
-                    payout_record_id: row.id,
-                  }),
-                }),
-                "reconciliation_review_queue.insert.clawback",
-              );
-            }
-          }
+        if ((processedCount as number) > 0) {
           processingOutcome = "success";
         } else {
           console.warn(
