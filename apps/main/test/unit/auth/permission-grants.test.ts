@@ -224,7 +224,7 @@ const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
 ];
 
 describe("permission-grants — exhaustive matrix", () => {
-  describe("viewer is granted exactly the READ pairs", () => {
+  describe("viewer is granted READ pairs and denied AGENT_ONLY / OWNER_ONLY pairs", () => {
     for (const [resource, action] of READ_PAIRS) {
       it(`grants viewer ${resource}:${action}`, () => {
         expect(isPermitted("viewer", resource, action)).toBe(true);
