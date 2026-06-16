@@ -278,7 +278,6 @@ describe("Stripe webhook — transfer.reversed", () => {
     expect(call!.args).toEqual(
       expect.objectContaining({ p_transfer_id: "tr_partial", p_this_reversal_cents: 15000 }),
     );
-    mockEventPreviousAttributes = undefined;
   });
 });
 

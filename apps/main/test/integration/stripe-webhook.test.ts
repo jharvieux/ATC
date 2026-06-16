@@ -192,6 +192,82 @@ describeIf("Stripe webhook handler", () => {
     expect(data?.processing_outcome).toBe("unhandled");
   });
 
+  it("transfer.reversed replay: second delivery for same transfer does NOT double-credit available_cents", async () => {
+    // The RPC's status='paid' CAS guard means a second transfer.reversed delivery
+    // for a transfer that is already 'reversed' returns 0 rows processed → outcome
+    // 'unhandled' → 200. This proves available_cents is only credited once even when
+    // Stripe re-delivers or a second partial-reversal event arrives for the same record.
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_replay_${randomUUID().slice(0, 8)}`;
+    const eventId1 = `evt_replay1_${randomUUID().slice(0, 8)}`;
+    const eventId2 = `evt_replay2_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId1, eventId2);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Replay Test", legal_name: "Replay Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 20000,
+    });
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+    });
+
+    const makeEvent = (eventId: string) => {
+      const { body, signature } = buildSignedEvent(
+        stripe,
+        STRIPE_WEBHOOK_SECRET!,
+        "transfer.reversed",
+        eventId,
+        { id: transferId, amount_reversed: 20000 },
+      );
+      return new Request("http://localhost/api/webhooks/stripe/platform", {
+        method: "POST",
+        body,
+        headers: { "stripe-signature": signature },
+      });
+    };
+
+    // First delivery: reverses the row, credits balance
+    const res1 = await handleStripeWebhook(makeEvent(eventId1), "platform");
+    expect(res1.status).toBe(200);
+
+    // Second delivery (different event ID, same transfer): RPC returns 0 — no double-credit
+    const res2 = await handleStripeWebhook(makeEvent(eventId2), "platform");
+    expect(res2.status).toBe(200);
+
+    // Balance must equal a single deduction, not 2× (clawback — §14.9)
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(-20000);
+
+    // Second delivery's outcome is 'unhandled' (0 rows matched the CAS guard)
+    const { data: ev2 } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId2)
+      .single();
+    expect(ev2?.processing_outcome).toBe("unhandled");
+
+    // Cleanup
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
   // §14.9 clawback ledger tests — seed a real payout chain and verify all
   // downstream effects fire atomically.
 
@@ -274,13 +350,13 @@ describeIf("Stripe webhook handler", () => {
       .single();
     expect(pr?.status).toBe("reversed");
 
-    // payout_balances credited
+    // payout_balances debited (reversal is a clawback — §14.9)
     const { data: bal } = await admin
       .from("payout_balances")
       .select("available_cents")
       .eq("tenant_id", tenantId)
       .single();
-    expect(Number(bal?.available_cents)).toBe(40000);
+    expect(Number(bal?.available_cents)).toBe(-40000);
 
     // commission → disputed
     const { data: comm } = await admin
@@ -379,13 +455,13 @@ describeIf("Stripe webhook handler", () => {
     const res = await handleStripeWebhook(req, "platform");
     expect(res.status).toBe(200);
 
-    // Only the delta (15000) should be credited, not the full 40000
+    // Only the delta (15000) should be deducted, not the full 40000 (§14.9 clawback)
     const { data: bal } = await admin
       .from("payout_balances")
       .select("available_cents")
       .eq("tenant_id", tenantId)
       .single();
-    expect(Number(bal?.available_cents)).toBe(15000);
+    expect(Number(bal?.available_cents)).toBe(-15000);
 
     // Queue row reflects the partial reversal amount
     const { data: queue } = await admin
@@ -448,13 +524,13 @@ describeIf("Stripe webhook handler", () => {
     const res = await handleStripeWebhook(req, "platform");
     expect(res.status).toBe(200);
 
-    // Balance credited
+    // Balance debited (clawback — §14.9)
     const { data: bal } = await admin
       .from("payout_balances")
       .select("available_cents")
       .eq("tenant_id", tenantId)
       .single();
-    expect(Number(bal?.available_cents)).toBe(25000);
+    expect(Number(bal?.available_cents)).toBe(-25000);
 
     // No reconciliation_review_queue row created
     const { data: queue } = await admin

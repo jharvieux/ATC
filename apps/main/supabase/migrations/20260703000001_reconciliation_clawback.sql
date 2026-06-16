@@ -53,11 +53,13 @@ BEGIN
       v_hold_period_days := 7;  -- conservative default if tenant has no tier
     END IF;
 
+    -- Deduct from available: reversal is a clawback, not a credit (§14.9).
+    -- Passing -p_this_reversal_cents keeps the ON CONFLICT arithmetic sign-consistent.
     INSERT INTO payout_balances (
       tenant_id, available_cents, pending_cents, in_transit_cents,
       hold_period_days, updated_at
     ) VALUES (
-      r.tenant_id, p_this_reversal_cents, 0, 0,
+      r.tenant_id, -p_this_reversal_cents, 0, 0,
       v_hold_period_days, NOW()
     )
     ON CONFLICT (tenant_id) DO UPDATE
