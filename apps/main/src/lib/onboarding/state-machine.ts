@@ -189,9 +189,13 @@ export async function progressTo(
   // concurrent writers. If 0 rows matched, someone else advanced the stage
   // between our read and write; surface as StaleStageError so the caller
   // can decide whether to retry.
+  const updatePayload: Record<string, string> = { onboarding_stage: nextStageValue };
+  if (nextStageValue === "review_submitted") {
+    updatePayload.review_submitted_at = new Date().toISOString();
+  }
   const baseQuery = db
     .from("tenants")
-    .update({ onboarding_stage: nextStageValue })
+    .update(updatePayload)
     .eq("id", tenantId);
   const casQuery = current === null
     ? baseQuery.is("onboarding_stage", null)

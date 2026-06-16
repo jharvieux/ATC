@@ -36,6 +36,11 @@ vi.mock("@/lib/onboarding/state-machine", () => ({
   progressTo: vi.fn(async () => undefined),
 }));
 
+const mockSendTenantNotification = vi.fn(async () => ({ status: "sent" }));
+vi.mock("@/lib/email/notifications", () => ({
+  sendTenantNotification: mockSendTenantNotification,
+}));
+
 type TenantRow = { tenant_type: string; onboarding_stage: string } | null;
 let tenantData: TenantRow = null;
 let tenantError: { message: string } | null = null;
@@ -51,11 +56,12 @@ let lastUpdatePayload: Record<string, unknown> | null = null;
 
 vi.mock("@/lib/db/tenant-client", () => ({
   tenantClient: () => ({
-    from: () => ({
+    from: (table: string) => ({
       select: () => ({
-        eq: () => ({
-          single: () => Promise.resolve({ data: tenantData, error: tenantError }),
-        }),
+        eq: () =>
+          table === "users"
+            ? { eq: () => Promise.resolve({ data: [{ email: "owner@example.com" }], error: null }) }
+            : { single: () => Promise.resolve({ data: tenantData, error: tenantError }) },
       }),
       update: (payload: Record<string, unknown>) => {
         lastUpdatePayload = payload;
@@ -165,5 +171,31 @@ describe("POST /api/onboarding/branding-skip §15.10", () => {
     expect(vi.mocked(progressTo)).toHaveBeenCalledWith("t1", "review_submitted");
     // Sub-hosts must NOT be activated directly.
     expect(lastUpdatePayload).toBeNull();
+  });
+
+  it("fires a welcome email to BYO host users after self-activation — business relationship is thanked", async () => {
+    // The welcome email is the first touchpoint after activation and signals
+    // the commercial relationship. It must be attempted; failure is best-effort
+    // (does not block the 200 response) but the attempt itself must happen.
+    tenantData = { tenant_type: "byo_host", onboarding_stage: "branding" };
+    const { POST } = await import("@/app/api/onboarding/branding-skip/route");
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+    // Allow the fire-and-forget promise to settle.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockSendTenantNotification).toHaveBeenCalledOnce();
+    const call = (mockSendTenantNotification.mock.calls as unknown[][])[0]![0] as Record<string, unknown>;
+    expect(call.template_id).toBe("byo_host_welcome");
+    expect(call.to).toBe("owner@example.com");
+    // Subject must convey activation, not review — BYO hosts skip review entirely.
+    expect(String(call.subject)).toContain("live");
+  });
+
+  it("does NOT send a welcome email to sub-hosts — they are still pending review", async () => {
+    tenantData = { tenant_type: "sub_host", onboarding_stage: "branding" };
+    const { POST } = await import("@/app/api/onboarding/branding-skip/route");
+    await POST(postRequest());
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mockSendTenantNotification).not.toHaveBeenCalled();
   });
 });

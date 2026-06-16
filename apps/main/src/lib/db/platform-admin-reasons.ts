@@ -16,6 +16,7 @@ export const PLATFORM_ADMIN_REASONS = [
   "tenant_status_change",
   "tenant_termination_processing",
   "tenant_suspension_processing",
+  "tenant_review_sla_enforcement",
 
   // RAG content moderation
   "rag_chunk_promotion_to_global",
