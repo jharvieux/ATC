@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-247 — 2026-06-16 — PostgREST 1-to-1 embed returns null (not []) for missing rows — production 500 on lisa-travel (#1167/#1168, release/beta062)
+
+**Decision:** Guard `tenant_branding` embed access with `Array.isArray` to handle all three PostgREST shapes: `null` (1-to-1 constraint detected, no row), `[{...}]` (many-relation, pick `[0]`), `{...}` (1-to-1 with row, use directly).
+
+**Why:** PostgREST detects a unique constraint on `tenant_branding.tenant_id` and treats the embed as 1-to-1, returning `null` instead of `[]` when there is no row. The old code did `row.tenant_branding[0]`, which threw `TypeError: Cannot read properties of null (reading '0')` — the production 500 digest `1620832870` on `lisa-travel.ai-travelconcierge.com`.
+
+**What was rejected:** Typing the embed as `BrandingFields[]` only — would miss the null/object shapes PostgREST emits on 1-to-1 relations. Also rejected: `.select("*")` which bypasses the issue but pulls unnecessary fields.
+
+**How to apply:** Any PostgREST nested select (`.select("parent(child_fields)")`) can return null OR a plain object (not an array) when PostgREST detects a unique constraint on the join column. Never assume array shape — always guard with `Array.isArray`.
+
+**Artifacts:** `apps/main/src/lib/branding/fetch-tenant-branding.ts` lines 70-78; test `apps/main/test/unit/branding/fetch-tenant-branding.test.ts` — 2 regression tests added for null and plain-object shapes.
+
+---
+
 ## D-246 — 2026-06-16 — Onboarding trial_end is 30 days for ALL tenant types at checkout; BYO self-activation gated to the `branding` stage — supersedes D-239 (PR #1162)
 
 **Decision:** Three coupled changes in the BYO-skip-approval PR:

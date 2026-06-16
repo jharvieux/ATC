@@ -1,38 +1,26 @@
-# Session state — last updated 2026-06-15 21:45 PT
+# Session state — last updated 2026-06-16 15:00 UTC
 
 ## Just completed
-- **Login 500 fix (#1135) merged to dev** (commit d3a2b86f). Root cause: reverse FKs
-  `tenants_review_decided_by_user_id_fkey` + `tenants_termination_initiated_by_user_id_fkey`
-  plus forward `users_tenant_id_fkey` = 3 users↔tenants relationships → ambiguous
-  `tenants(...)` embed → PostgREST HTTP 300 → throw → 500 (ERROR 101242302, hit Lisa Travel).
-  Fix: pin both embeds in `resolve-post-login.ts` to `tenants!users_tenant_id_fkey(...)`.
-  Regression guard: `resolve-post-login-embed.test.ts`. Logged as MEMORY D-243.
-- **Return-URL fix (#1133) merged to dev** (commit cd48be30). Onboarding Stripe redirect
-  routes (subscription/checkout, connect/link, tax-form/stripe-link) now use
-  `tenantOriginFromRequest(req)` not `platformBaseUrl()` — fixes #1132 ("Failed to load page"
-  that stranded Lisa Travel on branding). Reverses D-241 §3. Logged as MEMORY D-244.
-  Both audit agents clean (Sonnet, hash-bound). Added first-time-Connect-account branch
-  test to tax-form-stripe-link.test.ts (D-094 coverage).
-- Opened **#1136** (connect/link first-time-account branch test gap — deferred from #1133).
-- Opened **#1137** (migration-history drift: 20260701000000_cruise_fk_expand +
-  ...000002 absent from supabase-main applied history despite the columns being live;
-  env not confirmed prod — needs verification before any action).
+- Diagnosed production 500 on lisa-travel.ai-travelconcierge.com: `null[0]` in `fetchTenantBranding` — PostgREST returns null (not []) for 1-to-1 embed with no row
+- Fixed `fetch-tenant-branding.ts` with Array.isArray guard covering all three PostgREST embed shapes
+- Added 2 regression tests (null embed = lisa-travel crash path; plain-object embed = 1-to-1 with row)
+- Merged fix to dev as PR #1168 (squash); backport hotfix PR #1167 to release/beta061 closed as superseded
+- Cut release/beta062 from dev HEAD — pipeline queued and will deploy to prod
+- Added MEMORY entry D-247 for PostgREST 1-to-1 embed behavior
+- Also merged PR #1166 earlier (BYO welcome email + SLA monitor, issues #1164/#1165 closed)
 
 ## In flight
-- Nothing in flight — clean checkpoint. On `dev`, up to date with origin, working tree clean
-  except untracked `apps/main/stripe-sandbox-price-ids.env` (do NOT stage — standing rule).
+- release/beta062 pipeline running — monitor at https://github.com/jharvieux/ATC/actions/runs/27643665196
+  - On success: prod gets the branding fix, BYO email, SLA monitor, and all prior dev changes
 
 ## Next step
-- Await user's call on a PROD RELEASE. Both fixes (#1135 login, #1133 return-url) are in
-  **dev only** — Lisa Travel's login 500 and onboarding stranding are STILL LIVE in prod.
-  A single release should carry both. Standing rule: no prod deploy without per-instance
-  operator approval. This is the user's decision.
+- Confirm release/beta062 deploys successfully and lisa-travel.ai-travelconcierge.com loads without 500
+- Delete hotfix branch: `git push origin --delete hotfix/fetch-branding-null-guard`
 
 ## Blocked on user
-- **Prod release decision** for #1135 + #1133 (see Next step). The dev-merge pipeline does
-  NOT auto-deploy to prod ("Deploy to Production" is gated behind manual release approval).
+- Nothing
 
 ## Open questions
-- #1137 — which environment does the supabase-main MCP target (prod/staging/dev)? Need
-  confirmation before reconciling the migration ledger or applying anything. Columns exist
-  in that DB; ledger rows for 000000/000002 don't.
+- d091-reviewer nit (from #1166): duplicated `esc()` helper in branding-skip/route.ts + sub-host-review-sla-monitor.ts (~10 others in codebase). Could extract to `lib/email/escape.ts` as a follow-up.
+- WARNING from prior review: `.limit(200)` on SLA candidate query — silent cap if >200 tenants breach per night. Acceptable for current scale.
+- WARNING from prior review: `tenant.terminated` dispatch after CAS write — crash between them strands side-effects. Matches manual-reject pattern; low risk at current scale.
