@@ -16,6 +16,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { fromCents, type Cents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const Body = z.object({
   quote_id: z.string().uuid(),
@@ -103,9 +104,7 @@ export async function POST(req: Request): Promise<Response> {
     .select("id, tenant_id, status, custom_notes, valid_until")
     .eq("id", body.quote_id)
     .maybeSingle();
-  if (quoteErr) {
-    return Response.json({ error: "quote_lookup_failed", detail: quoteErr.message }, { status: 500 });
-  }
+  if (quoteErr) return dbErrorResponse(quoteErr);
   if (!containerData) {
     return Response.json({ error: "quote_not_found" }, { status: 404 });
   }
@@ -122,9 +121,7 @@ export async function POST(req: Request): Promise<Response> {
     )
     .eq("quote_id", body.quote_id)
     .order("option_index", { ascending: true });
-  if (optionsErr) {
-    return Response.json({ error: "quote_options_lookup_failed", detail: optionsErr.message }, { status: 500 });
-  }
+  if (optionsErr) return dbErrorResponse(optionsErr);
   const option = selectRepresentativeOption((optionRows ?? []) as CopilotOptionRow[]);
 
   const quote: QuoteRow = {

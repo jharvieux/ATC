@@ -12,6 +12,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const DIMENSIONS = new Set(["ai_cost", "rag_cap", "chat_volume", "email_volume", "group_invite"]);
 const TIER_OVERRIDES = new Set(["soft1", "soft2", "hard", "base_cap"]);
@@ -71,7 +72,7 @@ export async function POST(req: Request): Promise<Response> {
           })
           .select("id")
           .single();
-        if (error) throw new Error(error.message);
+        if (error) throw error;
         const overrideId = (data as { id: string }).id;
         recordQuery({ op: "insert", table: "tenant_usage_overrides", row_count: 1 });
 
@@ -103,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, override: created });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -134,6 +135,6 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json({ ok: true, items });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

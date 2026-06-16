@@ -9,6 +9,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
   let adminUserId: string;
@@ -55,6 +56,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
       return Response.json({ error: "already_reviewed" }, { status: 409 });
     }
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

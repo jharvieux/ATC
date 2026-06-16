@@ -8,6 +8,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
   let adminUserId: string;
@@ -54,6 +55,9 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     });
     return Response.json({ ok: true });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    if (err instanceof Error && err.message === "override_not_found") {
+      return Response.json({ error: "override_not_found" }, { status: 404 });
+    }
+    return dbErrorResponse(err);
   }
 }
