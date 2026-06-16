@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { fromCents, type Cents } from "@/lib/money";
 import { isStatusPatchable, isFieldPatchable } from "@/lib/bookings/patchable-fields";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
@@ -62,9 +63,7 @@ export async function GET(
     .eq("id", id)
     .maybeSingle();
 
-  if (bookingErr) {
-    return Response.json({ error: "booking_lookup_failed", detail: bookingErr.message }, { status: 500 });
-  }
+  if (bookingErr) return dbErrorResponse(bookingErr);
   if (!bookingData) {
     return Response.json({ error: "not_found" }, { status: 404 });
   }
@@ -116,12 +115,7 @@ export async function PATCH(
     .select("id, status")
     .eq("id", id)
     .maybeSingle();
-  if (currentErr) {
-    return Response.json(
-      { error: "booking_lookup_failed", detail: currentErr.message },
-      { status: 500 },
-    );
-  }
+  if (currentErr) return dbErrorResponse(currentErr);
   if (!currentData) {
     return Response.json({ error: "not_found" }, { status: 404 });
   }
