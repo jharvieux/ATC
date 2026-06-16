@@ -53,24 +53,29 @@ export async function fetchTenantBranding(
   if (error) throw new Error(`fetchTenantBranding: ${error.message}`);
   if (!data || data.status !== "active") return null;
 
-  // Supabase nested-select returns the joined table as an array even
-  // for a 1:1 relation. tenant_branding is uniqued on tenant_id so
-  // there's at most one row; pick [0].
+  // PostgREST returns the nested embed as an array when it can't detect
+  // a 1-to-1 constraint, and as a plain object (or null) when it can.
+  // Guard both: null (no branding row), array (many-relation), object
+  // (1-to-1 detected). Never index null — that is the crash being fixed.
+  type BrandingFields = {
+    logo_url: string | null;
+    logo_dark_url: string | null;
+    favicon_url: string | null;
+    slogan: string | null;
+    primary_color: string | null;
+    secondary_color: string | null;
+    accent_color: string | null;
+    font_family: string | null;
+  };
   const row = data as unknown as {
     display_name: string;
     status: string;
-    tenant_branding: Array<{
-      logo_url: string | null;
-      logo_dark_url: string | null;
-      favicon_url: string | null;
-      slogan: string | null;
-      primary_color: string | null;
-      secondary_color: string | null;
-      accent_color: string | null;
-      font_family: string | null;
-    }>;
+    tenant_branding: BrandingFields[] | BrandingFields | null;
   };
-  const branding = row.tenant_branding[0] ?? null;
+  const tb = row.tenant_branding;
+  const branding: BrandingFields | null = Array.isArray(tb)
+    ? (tb[0] ?? null)
+    : (tb ?? null);
   return {
     display_name: row.display_name,
     logo_url: branding?.logo_url ?? null,
