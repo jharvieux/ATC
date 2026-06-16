@@ -385,6 +385,10 @@ jobs:
 
       - name: Apply Supabase migrations
         run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL secret is not set in the 'staging' GitHub environment. Aborting."
+            exit 1
+          fi
           npx supabase db push --db-url "$DB_URL"
 
       - name: Vercel deploy (preview)
