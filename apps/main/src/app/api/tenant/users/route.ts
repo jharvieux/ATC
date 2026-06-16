@@ -39,7 +39,7 @@ export async function GET(req: Request): Promise<Response> {
       .order("created_at", { ascending: true });
 
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     return Response.json({

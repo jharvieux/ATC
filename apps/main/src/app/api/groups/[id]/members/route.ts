@@ -56,7 +56,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(groupErr);
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -92,7 +92,7 @@ export async function POST(
     // was verified tenant-owned by the tenant-scoped groups query above.
     const { error: insertErr } = await db.from("invitations").insert(rows);
     if (insertErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(insertErr);
     }
 
     return Response.json(

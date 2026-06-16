@@ -64,7 +64,7 @@ export async function PATCH(
       .maybeSingle();
 
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
     if (!updated) {
       return Response.json({ error: "user_not_found_in_tenant" }, { status: 404 });

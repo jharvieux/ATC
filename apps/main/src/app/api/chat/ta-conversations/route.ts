@@ -34,7 +34,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("auth_user_id", userId)
       .maybeSingle();
     if (uErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(uErr);
     }
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     if (!publicUserId) {

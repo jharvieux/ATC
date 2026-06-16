@@ -24,7 +24,7 @@ export async function GET(req: Request): Promise<Response> {
     .maybeSingle();
 
   if (error) {
-    return dbErrorResponse();
+    return dbErrorResponse(error);
   }
 
   return Response.json({ available: data === null });

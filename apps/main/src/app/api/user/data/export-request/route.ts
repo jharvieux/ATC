@@ -53,7 +53,7 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (insertErr || !row) {
-    return dbErrorResponse();
+    return dbErrorResponse(insertErr);
   }
 
   const exportRequestId = (row as { id: string }).id;

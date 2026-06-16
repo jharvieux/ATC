@@ -116,7 +116,15 @@ export async function PUT(req: Request): Promise<Response> {
             },
             { onConflict: "key" },
           );
-        if (catalogErr) return { error: "db_error", ref: crypto.randomUUID() };
+        if (catalogErr) {
+
+          const ref = crypto.randomUUID();
+
+          console.error("[db-error] ref=%s", ref, catalogErr);
+
+          return { error: "db_error", ref };
+
+        }
 
         await safeAwait(db
           .from("platform_settings")

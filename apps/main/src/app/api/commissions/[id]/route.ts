@@ -25,7 +25,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
     if (!data) {
       // Either doesn't exist or RLS hid a cross-tenant row — same shape

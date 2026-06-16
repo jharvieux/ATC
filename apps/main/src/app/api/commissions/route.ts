@@ -43,7 +43,7 @@ export async function GET(req: Request): Promise<Response> {
 
     const { data, error, count } = await q;
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     return Response.json({

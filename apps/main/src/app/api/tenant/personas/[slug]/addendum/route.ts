@@ -67,7 +67,7 @@ export async function POST(
     .single();
 
   if (error || !row) {
-    return dbErrorResponse();
+    return dbErrorResponse(error);
   }
 
   const addendumId = (row as { id: string }).id;

@@ -49,9 +49,9 @@ export async function GET(
         .limit(50),
     ]);
 
-    if (convResult.error) return Response.json({ error: convResult.error.message }, { status: 500 });
-    if (quotesResult.error) return Response.json({ error: quotesResult.error.message }, { status: 500 });
-    if (bookingsResult.error) return Response.json({ error: bookingsResult.error.message }, { status: 500 });
+    if (convResult.error) return dbErrorResponse(convResult.error);
+    if (quotesResult.error) return dbErrorResponse(quotesResult.error);
+    if (bookingsResult.error) return dbErrorResponse(bookingsResult.error);
 
     const timeline = [
       ...(convResult.data ?? []).map((c) => ({ type: "conversation", ...c })),

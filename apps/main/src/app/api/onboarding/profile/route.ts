@@ -96,7 +96,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     // Advance to "legal". If still at "signup", go through "profile" first —

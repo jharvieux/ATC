@@ -27,7 +27,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error || !tenant) return dbErrorResponse();
+    if (error || !tenant) return dbErrorResponse(error);
 
     const { data: tierDef, error: tierErr } = await srDb
       .from("tier_definitions")

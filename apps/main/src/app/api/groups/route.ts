@@ -104,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (groupErr || !group) {
-      return dbErrorResponse();
+      return dbErrorResponse(groupErr);
     }
 
     // Generate HMAC tokens and insert invitations.
@@ -124,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
 
       const { error: invErr } = await svc.from("invitations").insert(rows);
       if (invErr) {
-        return dbErrorResponse();
+        return dbErrorResponse(invErr);
       }
 
       // BP27 §27.4 — bump the group-invitees counter. Non-fatal on

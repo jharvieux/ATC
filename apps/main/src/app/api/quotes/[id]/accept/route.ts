@@ -237,7 +237,7 @@ export async function POST(
       if (error.code === "PGRST116") {
         return Response.json({ error: "quote_status_changed_during_accept" }, { status: 409 });
       }
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     // §37.4.2 — fan-out task sequences whose trigger_event='quote_accepted'.

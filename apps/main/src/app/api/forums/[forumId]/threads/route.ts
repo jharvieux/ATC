@@ -78,7 +78,7 @@ export async function POST(req: Request, { params }: RouteProps): Promise<Respon
       .single();
 
     if (insertErr || !thread) {
-      return dbErrorResponse();
+      return dbErrorResponse(insertErr);
     }
     return Response.json(thread, { status: 201 });
   } catch (err) {

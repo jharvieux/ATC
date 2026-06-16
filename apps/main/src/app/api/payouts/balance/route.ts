@@ -28,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("amount_cents, status")
       .in("status", ["pending", "available"]);
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     // Read raw rows and sum app-side; see file header.

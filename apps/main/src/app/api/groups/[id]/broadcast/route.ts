@@ -96,7 +96,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(groupErr);
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -124,7 +124,7 @@ export async function POST(
       .eq("group_id", id)
       .in("rsvp_state", recipientStates);
     if (memberErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(memberErr);
     }
     const recipients = ((memberRows ?? []) as MemberRow[])
       .map((m) => m.invitee_email)
@@ -145,7 +145,7 @@ export async function POST(
       .eq("id", ctx.tenant_id)
       .maybeSingle();
     if (tenantErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(tenantErr);
     }
     const { data: brandingRow, error: brandingErr } = await db
       .from("tenant_branding")
@@ -153,7 +153,7 @@ export async function POST(
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
     if (brandingErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(brandingErr);
     }
     const tenant = (tenantRow ?? null) as TenantRow | null;
     const branding = (brandingRow ?? null) as BrandingRow | null;

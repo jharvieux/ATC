@@ -48,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     await progressTo(ctx.tenant_id, "tier_select");

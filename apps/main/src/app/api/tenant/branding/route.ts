@@ -116,7 +116,7 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (error || !data) {
-    return dbErrorResponse();
+    return dbErrorResponse(error);
   }
 
   return Response.json({ ok: true, branding_id: (data as { id: string }).id, show_powered_by: showPoweredBy });

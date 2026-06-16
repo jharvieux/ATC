@@ -29,7 +29,7 @@ export async function GET(req: Request): Promise<Response> {
     .select("id, status, tenant_type, display_name, source_revision");
 
   if (error) {
-    return dbErrorResponse();
+    return dbErrorResponse(error);
   }
 
   return Response.json({ tenants: data });

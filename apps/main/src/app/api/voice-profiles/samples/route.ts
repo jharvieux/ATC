@@ -129,7 +129,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (insErr || !inserted) {
-      return dbErrorResponse();
+      return dbErrorResponse(insErr);
     }
 
     // Dispatch extraction event (event-driven, idle-free per D-192).

@@ -61,7 +61,7 @@ export async function POST(
       if (error.code === "23505") {
         return Response.json({ error: "relationship_already_exists" }, { status: 409 });
       }
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     return Response.json(data, { status: 201 });

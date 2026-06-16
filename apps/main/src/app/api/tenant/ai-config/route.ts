@@ -103,7 +103,7 @@ export async function PATCH(req: Request): Promise<Response> {
       .single();
 
     if (error) {
-      return dbErrorResponse();
+      return dbErrorResponse(error);
     }
 
     await writeAuditLog({

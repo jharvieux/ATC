@@ -10,6 +10,7 @@
 // Providers: Google, Microsoft (azure), Facebook. Apple is deferred (§17.1).
 
 import { NextResponse, type NextRequest } from "next/server";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { createRouteHandlerClient } from "@/lib/auth/ssr-client";
 import { safeNextFor } from "@/lib/auth/safe-redirect";
 
@@ -61,10 +62,7 @@ export async function GET(req: NextRequest): Promise<Response> {
   });
 
   if (error || !data.url) {
-    return NextResponse.json(
-      { error: "db_error", ref: crypto.randomUUID() },
-      { status: 500 },
-    );
+    return dbErrorResponse(error);
   }
 
   // applyAuthCookies attaches the PKCE code_verifier cookie that

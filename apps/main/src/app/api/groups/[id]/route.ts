@@ -44,7 +44,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(groupErr);
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -57,7 +57,7 @@ export async function GET(
       .select("rsvp_state")
       .eq("group_id", id);
     if (invErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(invErr);
     }
     const counts: Record<string, number> = {};
     for (const r of (invRows ?? []) as InvitationCountRow[]) {

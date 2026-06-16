@@ -181,7 +181,7 @@ export async function POST(
       .eq("review_status", "ready_for_review")
       .select("id");
     if (updateErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(updateErr);
     }
     if ((updatedRows ?? []).length === 0) {
       return Response.json({ error: "already_resolved" }, { status: 409 });

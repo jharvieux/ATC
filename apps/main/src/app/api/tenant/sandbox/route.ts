@@ -58,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (fetchErr || !tenant) {
-      return dbErrorResponse();
+      return dbErrorResponse(fetchErr);
     }
 
     // No-op if already in desired state.

@@ -39,7 +39,7 @@ export async function POST(req: Request): Promise<Response> {
       .is("superseded_at", null);
 
     if (docsErr) {
-      return dbErrorResponse();
+      return dbErrorResponse(docsErr);
     }
     if (!docs || docs.length === 0) {
       return Response.json({ error: "legal_documents_not_found" }, { status: 500 });
@@ -81,7 +81,7 @@ export async function POST(req: Request): Promise<Response> {
     if (insertErr) {
       // 23505 = unique violation: user already accepted this version — idempotent.
       if (!insertErr.code?.includes("23505")) {
-        return dbErrorResponse();
+        return dbErrorResponse(insertErr);
       }
     }
 
