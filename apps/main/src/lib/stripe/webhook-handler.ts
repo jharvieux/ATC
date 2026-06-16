@@ -63,6 +63,12 @@ export async function handleStripeWebhook(
   const rawBody = await req.text();
   const sig = req.headers.get("stripe-signature");
 
+  // Stripe signs webhooks with HMAC-SHA256; the `stripe-signature` header is
+  // `t=<unix-ts>,v1=<hex-digest>` — the digest is HEX, not base64/base64url.
+  // constructEvent recomputes the digest over `<t>.<rawBody>` and enforces the
+  // default 5-min timestamp tolerance, so the RAW request body must be passed
+  // unmodified (any re-serialization breaks the digest). The hex round-trip is
+  // exercised by buildSignedEvent in test/integration/stripe-webhook.test.ts.
   let event: Stripe.Event;
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig ?? "", webhookSecret);

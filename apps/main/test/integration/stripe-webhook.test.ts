@@ -221,6 +221,7 @@ describeIf("Stripe webhook handler", () => {
       available_cents: 0,
       pending_cents: 0,
       in_transit_cents: 0,
+      hold_period_days: 7,
     });
 
     const makeEvent = (eventId: string) => {
@@ -323,6 +324,7 @@ describeIf("Stripe webhook handler", () => {
       available_cents: 0,
       pending_cents: 0,
       in_transit_cents: 0,
+      hold_period_days: 7,
     });
 
     const { body, signature } = buildSignedEvent(
@@ -434,6 +436,7 @@ describeIf("Stripe webhook handler", () => {
       available_cents: 0,
       pending_cents: 0,
       in_transit_cents: 0,
+      hold_period_days: 7,
     });
 
     // Partial reversal: 15000 cents reversed this time (cumulative 15000, prev 0)
@@ -505,6 +508,7 @@ describeIf("Stripe webhook handler", () => {
       available_cents: 0,
       pending_cents: 0,
       in_transit_cents: 0,
+      hold_period_days: 7,
     });
 
     const { body, signature } = buildSignedEvent(
