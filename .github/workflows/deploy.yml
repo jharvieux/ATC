@@ -457,9 +457,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # TODO(#534): restore when DB_URL secret is configured in the production GitHub environment.
       - name: Apply Supabase migrations to production
-        if: ${{ false }}
         run: |
           npx supabase db push --db-url "$DB_URL"
 
