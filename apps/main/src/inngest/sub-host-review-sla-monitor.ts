@@ -16,7 +16,7 @@
 import Stripe from "stripe";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
-import { safeAwait, safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { sendOperatorNotification } from "@/lib/email/notifications";
 
 const WARN_DAYS = 25;
@@ -88,9 +88,8 @@ export const subHostReviewSlaMonitor = inngest.createFunction(
             .eq("tenant_type", "sub_host")
             .eq("onboarding_stage", "review_submitted")
             .eq("is_platform_internal", false)
-            // COALESCE(review_submitted_at, created_at) < warn cutoff
-            // PostgREST doesn't support COALESCE in filters; use review_submitted_at
-            // (backfilled from created_at in migration 20260704000000).
+            // review_submitted_at is always set for review_submitted tenants
+            // (stamped by progressTo; backfilled from created_at in migration 20260704000000).
             .lt("review_submitted_at", warnCutoff)
             .limit(200),
           "tenants.select.sub_host_review_sla_candidates",
@@ -103,7 +102,7 @@ export const subHostReviewSlaMonitor = inngest.createFunction(
           (r) => r.review_submitted_at && r.review_submitted_at < declineCutoff,
         );
         const toWarn = rows.filter(
-          (r) => !r.review_submitted_at || r.review_submitted_at >= declineCutoff,
+          (r) => r.review_submitted_at && r.review_submitted_at >= declineCutoff,
         );
 
         // — Day-25 operator alert ——————————————————————————————————————————

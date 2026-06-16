@@ -179,6 +179,31 @@ describe("progressTo — D-091 P1 #39 CAS update", () => {
     await expect(progressTo("t1", "complete")).rejects.toBeInstanceOf(InvalidStageTransitionError);
     expect(updateCalls).toHaveLength(0); // no UPDATE issued
   });
+
+  it("stamps review_submitted_at in the update payload when advancing to review_submitted — SLA cron reads this field", async () => {
+    // The 30-day SLA monitor (sub-host-review-sla-monitor) filters on
+    // review_submitted_at. If progressTo fails to stamp it, every sub-host
+    // that goes through branding-skip gets silently excluded from the cron.
+    currentBehavior = {
+      selectStage: "branding",
+      updateRows: [{ id: "t1" }],
+    };
+    await expect(progressTo("t1", "review_submitted")).resolves.toBeUndefined();
+    expect(updateCalls[0]!.payload).toMatchObject({
+      onboarding_stage: "review_submitted",
+      review_submitted_at: expect.any(String),
+    });
+    expect(new Date(updateCalls[0]!.payload["review_submitted_at"] as string).getTime()).toBeGreaterThan(0);
+  });
+
+  it("does NOT stamp review_submitted_at for other stage transitions", async () => {
+    currentBehavior = {
+      selectStage: "profile",
+      updateRows: [{ id: "t1" }],
+    };
+    await expect(progressTo("t1", "legal")).resolves.toBeUndefined();
+    expect(updateCalls[0]!.payload).not.toHaveProperty("review_submitted_at");
+  });
 });
 
 // ─── revertTo validation + CAS ───────────────────────────────────────────

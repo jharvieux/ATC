@@ -150,8 +150,10 @@ export async function POST(req: Request): Promise<Response> {
         "tenants.update.byo_activate_on_branding_skip",
         1,
       );
-      // Best-effort — failure must not block the activation response.
-      sendBYOWelcomeEmail(db, ctx.tenant_id).catch((err) => {
+      // allow-void-async: welcome email is best-effort post-activation; a
+      // dropped send is acceptable and the failure is logged. Retry safety:
+      // the email helper is idempotent at the Resend layer.
+      void sendBYOWelcomeEmail(db, ctx.tenant_id).catch((err) => {
         console.warn("[branding-skip] welcome email failed: %s", err instanceof Error ? err.message : String(err));
       });
       return Response.json({ ok: true, next_stage: "complete" });
