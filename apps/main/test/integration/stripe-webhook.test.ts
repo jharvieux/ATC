@@ -352,7 +352,9 @@ describeIf("Stripe webhook handler", () => {
       .single();
     expect(pr?.status).toBe("reversed");
 
-    // payout_balances debited (reversal is a clawback — §14.9)
+    // payout_balances debited: a §14.9 clawback deducts the reversed amount
+    // from funds already settled to the tenant, so available_cents can go
+    // negative — this is the money being pulled back, not a balance error.
     const { data: bal } = await admin
       .from("payout_balances")
       .select("available_cents")
@@ -367,6 +369,21 @@ describeIf("Stripe webhook handler", () => {
       .eq("id", commissionId)
       .single();
     expect(comm?.status).toBe("disputed");
+
+    // audit_log row written for the clawback transition — this RPC is the only
+    // commission status change outside the app-layer state machine, so without
+    // this row the §14.9 transition would leave no audit trail, while every
+    // other commission transition logs one via transitionCommissionState.
+    const { data: audit } = await admin
+      .from("audit_log")
+      .select("action, changes")
+      .eq("resource_type", "commission")
+      .eq("resource_id", commissionId)
+      .single();
+    expect(audit?.action).toBe("commission.state_transition");
+    const auditChanges = audit?.changes as { to?: string; reason?: string } | null;
+    expect(auditChanges?.to).toBe("disputed");
+    expect(auditChanges?.reason).toBe("transfer_reversed");
 
     // reconciliation_review_queue → clawback row
     const { data: queue } = await admin
@@ -383,6 +400,10 @@ describeIf("Stripe webhook handler", () => {
     await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
     await admin.from("commissions").delete().eq("id", commissionId);
     await admin.from("bookings").delete().eq("id", booking!.id);
+    // audit_log FK→tenants has no ON DELETE CASCADE; the clawback writes an
+    // audit row, so it must be cleared before the tenant delete or that delete
+    // FK-violates (silently, since the cleanup result isn't checked).
+    await admin.from("audit_log").delete().eq("tenant_id", tenantId);
     await admin.from("tenants").delete().eq("id", tenantId);
   });
 
@@ -479,6 +500,10 @@ describeIf("Stripe webhook handler", () => {
     await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
     await admin.from("commissions").delete().eq("id", commissionId);
     await admin.from("bookings").delete().eq("id", booking!.id);
+    // audit_log FK→tenants has no ON DELETE CASCADE; the clawback writes an
+    // audit row, so it must be cleared before the tenant delete or that delete
+    // FK-violates (silently, since the cleanup result isn't checked).
+    await admin.from("audit_log").delete().eq("tenant_id", tenantId);
     await admin.from("tenants").delete().eq("id", tenantId);
   });
 

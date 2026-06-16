@@ -29,9 +29,10 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
-  r                  RECORD;
-  v_hold_period_days INTEGER;
-  v_count            INTEGER := 0;
+  r                       RECORD;
+  v_hold_period_days      INTEGER;
+  v_old_commission_status TEXT;
+  v_count                 INTEGER := 0;
 BEGIN
   FOR r IN
     UPDATE public.payout_records
@@ -67,10 +68,37 @@ BEGIN
           updated_at      = NOW();
 
     IF r.commission_id IS NOT NULL THEN
+      -- Capture the pre-transition status so the audit row records from→to,
+      -- mirroring the app-layer state machine (transitionCommissionState).
+      SELECT status
+      INTO   v_old_commission_status
+      FROM   public.commissions
+      WHERE  id        = r.commission_id
+        AND  tenant_id = r.tenant_id;
+
       UPDATE public.commissions
       SET    status = 'disputed'
       WHERE  id        = r.commission_id
         AND  tenant_id = r.tenant_id;
+
+      -- This RPC is the only commission status change outside the app-layer
+      -- state machine; without this row the §14.9 clawback transition would
+      -- leave no audit trail, while every other transition logs one.
+      INSERT INTO public.audit_log (
+        tenant_id, actor_type, action, resource_type, resource_id, changes
+      ) VALUES (
+        r.tenant_id,
+        'system',
+        'commission.state_transition',
+        'commission',
+        r.commission_id,
+        jsonb_build_object(
+          'from',               v_old_commission_status,
+          'to',                 'disputed',
+          'reason',             'transfer_reversed',
+          'stripe_transfer_id', p_transfer_id
+        )
+      );
 
       INSERT INTO public.reconciliation_review_queue (
         commission_id, tenant_id, variance_cents, source_path, status, notes
