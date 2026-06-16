@@ -1,7 +1,8 @@
 // §15.15 — POST /api/tenant/billing (change_tier, update_seats, switch_billing_period)
 //
 // Tests verify WHY behavior matters:
-// - Tenant DB error → 500 (fail-closed; can't trust any subsequent DB or Stripe op without tenant state).
+// - Tenant DB error → 500 + stable code "tenant_fetch_failed" + ref (raw message logged server-side only).
+// - tier_definitions DB error → 500 + stable code "tier_lookup_failed" + ref (same pattern; #1125).
 // - pending_review / suspended → 403 (billing changes blocked until admin approval / reactivation).
 // - unknown_action → 422 (fail on unexpected input; prevents silent no-op).
 // - change_tier: invalid_tier_for_tenant_type → 422 (unmapped code would corrupt billing).
@@ -155,13 +156,14 @@ describe("POST /api/tenant/billing §15.15", () => {
     expect(body.error).toBe("invalid_json");
   });
 
-  it("returns 500 on tenant DB error — fail-closed; can't operate without tenant state", async () => {
+  it("returns 500 on tenant DB error — stable code + ref; raw message logged server-side only (#1125)", async () => {
     tenantError = { message: "connection_timeout" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "change_tier", tier: "pro" }));
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("connection_timeout");
+    const body = await res.json() as { error: string; ref: string };
+    expect(body.error).toBe("tenant_fetch_failed");
+    expect(body.ref).toBeTruthy();
   });
 
   it("returns 403 for pending_review status — billing changes blocked pending admin approval", async () => {
@@ -211,14 +213,15 @@ describe("POST /api/tenant/billing §15.15", () => {
     expect(body.error).toBe("invalid_tier_for_tenant_type");
   });
 
-  it("change_tier: returns 500 on tier_definitions DB error — fail-closed", async () => {
+  it("change_tier: returns 500 on tier_definitions DB error — stable code + ref, not raw DB message (#1125)", async () => {
     tenantData = activeTenant();
     tierDefIdError = { message: "tier_db_timeout" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "change_tier", tier: "pro" }));
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("tier_db_timeout");
+    const body = await res.json() as { error: string; ref: string };
+    expect(body.error).toBe("tier_lookup_failed");
+    expect(body.ref).toBeTruthy();
   });
 
   it("change_tier: returns 500 when tier_definition missing — corrupted platform state", async () => {
@@ -340,14 +343,15 @@ describe("POST /api/tenant/billing §15.15", () => {
     expect(body.effective_at).toBeNull();
   });
 
-  it("switch_billing_period: monthly→annual tier_definitions DB error → 500", async () => {
+  it("switch_billing_period: monthly→annual tier_definitions DB error → stable code + ref, not raw message (#1125)", async () => {
     tenantData = { ...activeTenant()!, billing_period: "monthly" };
     tierDefCodeError = { message: "tier_code_timeout" };
     const { POST } = await import("@/app/api/tenant/billing/route");
     const res = await POST(postRequest({ action: "switch_billing_period", billing_period: "annual" }));
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("tier_code_timeout");
+    const body = await res.json() as { error: string; ref: string };
+    expect(body.error).toBe("tier_lookup_failed");
+    expect(body.ref).toBeTruthy();
   });
 
   it("switch_billing_period: monthly→annual tier_definition missing → 500", async () => {

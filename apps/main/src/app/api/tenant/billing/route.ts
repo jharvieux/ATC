@@ -31,7 +31,11 @@ export async function GET(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) {
+      const ref = crypto.randomUUID();
+      console.error(`[billing] tenant_fetch_failed ref=${ref}:`, error.message);
+      return Response.json({ error: "tenant_fetch_failed", ref }, { status: 500 });
+    }
 
     let invoices: unknown[] = [];
     if (tenant.stripe_customer_id) {
@@ -96,7 +100,9 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (fetchErr || !tenant) {
-      return Response.json({ error: fetchErr?.message ?? "not_found" }, { status: 500 });
+      const ref = crypto.randomUUID();
+      console.error(`[billing] tenant_fetch_failed ref=${ref}:`, fetchErr?.message ?? "not_found");
+      return Response.json({ error: "tenant_fetch_failed", ref }, { status: 500 });
     }
 
     if (["pending_review", "suspended"].includes(tenant.status ?? "")) {
@@ -135,7 +141,11 @@ export async function POST(req: Request): Promise<Response> {
       const newTierCode = TIER_CODE[tenantType]?.[body.tier as Tier];
       if (!newTierCode) return Response.json({ error: "invalid_tier_for_tenant_type" }, { status: 422 });
       const { data: newTierDef, error: newTierErr } = await srDb.from("tier_definitions").select("id").eq("code", newTierCode).maybeSingle();
-      if (newTierErr) return Response.json({ error: newTierErr.message }, { status: 500 });
+      if (newTierErr) {
+        const ref = crypto.randomUUID();
+        console.error(`[billing] tier_lookup_failed ref=${ref}:`, newTierErr.message);
+        return Response.json({ error: "tier_lookup_failed", ref }, { status: 500 });
+      }
       if (!newTierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
       const db = tenantClient(ctx);
@@ -194,7 +204,11 @@ export async function POST(req: Request): Promise<Response> {
       // Monthly → annual: immediate proration upgrade.
       const tenantType = tenant.tenant_type as TenantType;
       const { data: tierDef, error: tierErr } = await srDb.from("tier_definitions").select("code").eq("id", tenant.tier_id).maybeSingle();
-      if (tierErr) return Response.json({ error: tierErr.message }, { status: 500 });
+      if (tierErr) {
+        const ref = crypto.randomUUID();
+        console.error(`[billing] tier_lookup_failed ref=${ref}:`, tierErr.message);
+        return Response.json({ error: "tier_lookup_failed", ref }, { status: 500 });
+      }
       if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
       const tier = CODE_TO_TIER[tierDef.code as keyof typeof CODE_TO_TIER];
       if (!tier) return Response.json({ error: "unrecognized_tier_code" }, { status: 500 });

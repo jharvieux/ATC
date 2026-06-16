@@ -1,9 +1,11 @@
 // §15.9 — Generate Stripe Connect account link for Connect setup stage.
-// Returns a fresh account_link URL to the existing Connect account.
+// Creates or retrieves a Connect account and returns an account_link URL.
 
 import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
+import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantOriginFromRequest } from "@/lib/platform-url";
 
@@ -21,16 +23,28 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (!tenant?.stripe_connect_account_id) {
-      return Response.json({ error: "connect_account_not_created" }, { status: 409 });
+    const stripe = new Stripe(stripeKey);
+    let connectAccountId = tenant?.stripe_connect_account_id;
+
+    if (!connectAccountId) {
+      const account = await stripe.accounts.create({
+        type: "express",
+        metadata: { tenant_id: ctx.tenant_id },
+      });
+      connectAccountId = account.id;
+
+      const db = tenantClient(ctx);
+      await safeAwait(
+        db.from("tenants").update({ stripe_connect_account_id: connectAccountId }).eq("id", ctx.tenant_id),
+        "tenants.update",
+      );
     }
 
-    const stripe = new Stripe(stripeKey);
     // Tenant host, not the platform origin — see tenantOriginFromRequest.
     const baseUrl = tenantOriginFromRequest(req);
 
     const link = await stripe.accountLinks.create({
-      account: tenant.stripe_connect_account_id,
+      account: connectAccountId,
       refresh_url: `${baseUrl}/onboarding/connect`,
       return_url: `${baseUrl}/onboarding/branding`,
       type: "account_onboarding",
