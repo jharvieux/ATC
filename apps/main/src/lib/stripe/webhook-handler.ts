@@ -25,6 +25,7 @@
 
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { STALE_WEBHOOK_PROCESSING_MS } from "./webhook-constants";
 
 export type WebhookEndpoint = "platform" | "connect";
@@ -156,21 +157,63 @@ export async function handleStripeWebhook(
         // may not be ours, or a prior delivery / admin action already reversed
         // it — throwing would make Stripe retry the reversal forever. A genuine
         // DB error DOES throw (→500→Stripe retries).
-        const transfer = (event as { data: { object: Stripe.Transfer } }).data.object;
+        const rawEvent = event as {
+          data: {
+            object: Stripe.Transfer;
+            previous_attributes?: { amount_reversed?: number };
+          };
+        };
+        const transfer = rawEvent.data.object;
+
+        // Partial reversal: amount_reversed on the Transfer object is cumulative.
+        // Subtract the previous value to get only what changed in this delivery.
+        const prevAmountReversed = rawEvent.data.previous_attributes?.amount_reversed ?? 0;
+        const thisReversalCents = transfer.amount_reversed - prevAmountReversed;
+
         const { data: reversedRows, error: reverseErr } = await db
           .from("payout_records")
           .update({ status: "reversed", reversed_at: new Date().toISOString() })
           .eq("stripe_transfer_id", transfer.id)
           .eq("status", "paid")
-          .select("id");
+          .select("id, tenant_id, commission_id, amount_cents");
         if (reverseErr) throw new Error(`transfer.reversed update failed: ${reverseErr.message}`);
 
         if (reversedRows && reversedRows.length > 0) {
-          // TODO(#1127): §14.9 clawback ledger unwind. The status transition
-          // above is done, but §14.9 does not prescribe the payout_balances /
-          // commission money movement for a post-payout reversal. Implement the
-          // balance/ledger effect here once the spec owner confirms it. Until
-          // then this handler is status-only by deliberate scope cut.
+          for (const row of reversedRows as {
+            id: string;
+            tenant_id: string;
+            commission_id: string | null;
+            amount_cents: string;
+          }[]) {
+            // Credit the reversed amount back to available balance.
+            const { error: rpcErr } = await db.rpc("credit_payout_balance_available", {
+              p_tenant_id: row.tenant_id,
+              p_amount_cents: thisReversalCents,
+            });
+            if (rpcErr) throw new Error(`credit_payout_balance_available failed: ${rpcErr.message}`);
+
+            if (row.commission_id) {
+              await safeAwait(
+                db.from("commissions").update({ status: "disputed" }).eq("id", row.commission_id).eq("tenant_id", row.tenant_id),
+                "commissions.update.clawback",
+              );
+              await safeAwait(
+                db.from("reconciliation_review_queue").insert({
+                  commission_id: row.commission_id,
+                  tenant_id: row.tenant_id,
+                  variance_cents: thisReversalCents,
+                  source_path: "automated",
+                  status: "clawback",
+                  notes: JSON.stringify({
+                    stripe_transfer_id: transfer.id,
+                    reversed_cents: thisReversalCents,
+                    payout_record_id: row.id,
+                  }),
+                }),
+                "reconciliation_review_queue.insert.clawback",
+              );
+            }
+          }
           processingOutcome = "success";
         } else {
           console.warn(

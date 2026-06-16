@@ -33,6 +33,7 @@ function buildSignedEvent(
   eventType: string,
   eventId: string,
   dataObject: Record<string, unknown> = {},
+  previousAttributes?: Record<string, unknown>,
 ): { body: string; signature: string } {
   const timestamp = Math.floor(Date.now() / 1000);
   const event = {
@@ -41,7 +42,10 @@ function buildSignedEvent(
     type: eventType,
     api_version: "2024-04-10",
     created: timestamp,
-    data: { object: dataObject },
+    data: {
+      object: dataObject,
+      ...(previousAttributes ? { previous_attributes: previousAttributes } : {}),
+    },
     livemode: false,
     pending_webhooks: 0,
     request: { id: null, idempotency_key: null },
@@ -186,5 +190,281 @@ describeIf("Stripe webhook handler", () => {
 
     expect(error).toBeNull();
     expect(data?.processing_outcome).toBe("unhandled");
+  });
+
+  // §14.9 clawback ledger tests — seed a real payout chain and verify all
+  // downstream effects fire atomically.
+
+  it("transfer.reversed (full): credits available balance, marks commission disputed, opens clawback queue row", async () => {
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_full_${randomUUID().slice(0, 8)}`;
+    const eventId = `evt_full_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    // Seed: tenant → booking → commission → payout_record
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Webhook Test", legal_name: "Webhook Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    const { data: booking } = await admin
+      .from("bookings")
+      .insert({ tenant_id: tenantId })
+      .select("id")
+      .single();
+
+    const { data: commission } = await admin
+      .from("commissions")
+      .insert({
+        tenant_id: tenantId,
+        booking_id: booking!.id,
+        commissionable_fare_cents: 500000,
+        commission_rate: 0.1,
+        platform_split_rate: 0.2,
+        gross_commission_cents: 50000,
+        host_booking_fee_cents: 0,
+        net_commission_cents: 50000,
+        platform_retained_cents: 10000,
+        subhost_payable_cents: 40000,
+      })
+      .select("id")
+      .single();
+    const commissionId = commission!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      commission_id: commissionId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 40000,
+    });
+
+    // Seed a starting payout_balance so we can assert the credit delta.
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+    });
+
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: transferId, amount_reversed: 40000 },
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    // payout_record → reversed
+    const { data: pr } = await admin
+      .from("payout_records")
+      .select("status")
+      .eq("stripe_transfer_id", transferId)
+      .single();
+    expect(pr?.status).toBe("reversed");
+
+    // payout_balances credited
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(40000);
+
+    // commission → disputed
+    const { data: comm } = await admin
+      .from("commissions")
+      .select("status")
+      .eq("id", commissionId)
+      .single();
+    expect(comm?.status).toBe("disputed");
+
+    // reconciliation_review_queue → clawback row
+    const { data: queue } = await admin
+      .from("reconciliation_review_queue")
+      .select("status, variance_cents")
+      .eq("commission_id", commissionId)
+      .single();
+    expect(queue?.status).toBe("clawback");
+    expect(Number(queue?.variance_cents)).toBe(40000);
+
+    // Cleanup seeded data (stripe_webhook_events cleaned by afterEach)
+    await admin.from("reconciliation_review_queue").delete().eq("commission_id", commissionId);
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("commissions").delete().eq("id", commissionId);
+    await admin.from("bookings").delete().eq("id", booking!.id);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  it("transfer.reversed (partial): credits only the delta amount, not the full payout", async () => {
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_partial_${randomUUID().slice(0, 8)}`;
+    const eventId = `evt_partial_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Webhook Test", legal_name: "Webhook Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    const { data: booking } = await admin
+      .from("bookings")
+      .insert({ tenant_id: tenantId })
+      .select("id")
+      .single();
+
+    const { data: commission } = await admin
+      .from("commissions")
+      .insert({
+        tenant_id: tenantId,
+        booking_id: booking!.id,
+        commissionable_fare_cents: 500000,
+        commission_rate: 0.1,
+        platform_split_rate: 0.2,
+        gross_commission_cents: 50000,
+        host_booking_fee_cents: 0,
+        net_commission_cents: 50000,
+        platform_retained_cents: 10000,
+        subhost_payable_cents: 40000,
+      })
+      .select("id")
+      .single();
+    const commissionId = commission!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      commission_id: commissionId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 40000,
+    });
+
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+    });
+
+    // Partial reversal: 15000 cents reversed this time (cumulative 15000, prev 0)
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: transferId, amount_reversed: 15000 },
+      { amount_reversed: 0 },
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    // Only the delta (15000) should be credited, not the full 40000
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(15000);
+
+    // Queue row reflects the partial reversal amount
+    const { data: queue } = await admin
+      .from("reconciliation_review_queue")
+      .select("variance_cents")
+      .eq("commission_id", commissionId)
+      .single();
+    expect(Number(queue?.variance_cents)).toBe(15000);
+
+    await admin.from("reconciliation_review_queue").delete().eq("commission_id", commissionId);
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("commissions").delete().eq("id", commissionId);
+    await admin.from("bookings").delete().eq("id", booking!.id);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  it("transfer.reversed with no commission_id: credits balance but skips commission update and queue row", async () => {
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_nocomm_${randomUUID().slice(0, 8)}`;
+    const eventId = `evt_nocomm_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Webhook Test", legal_name: "Webhook Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      commission_id: null,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 25000,
+    });
+
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+    });
+
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: transferId, amount_reversed: 25000 },
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    // Balance credited
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(25000);
+
+    // No reconciliation_review_queue row created
+    const { data: queue } = await admin
+      .from("reconciliation_review_queue")
+      .select("id")
+      .eq("tenant_id", tenantId);
+    expect(queue).toHaveLength(0);
+
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
   });
 });

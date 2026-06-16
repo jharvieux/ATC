@@ -91,6 +91,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
         },
       };
     },
+    async rpc(_fn: string, _args?: unknown) {
+      void _fn; void _args;
+      return { data: null, error: null };
+    },
   }),
 }));
 
