@@ -1,15 +1,19 @@
 // §15.6 — POST /api/onboarding/tax-form/stripe-link
 //
 // WHY: the tax-form account-link refresh_url/return_url must point at the
-// tenant's own host, not a platform origin (issue #1132). Tenant already has a
-// Connect account here, so the accounts.create + DB-write branch is skipped and
-// the test isolates the redirect-origin behavior.
+// tenant's own host, not a platform origin (issue #1132). Two branches matter:
+// an existing Connect account (skip create) and a first-time account (create +
+// persist via safeAwait) — both must still build the redirect from the request
+// origin, and the create branch must surface a DB-write failure (D-094).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockAccountLinksCreate = vi.hoisted(() =>
-  vi.fn(async () => ({ url: "https://connect.stripe.com/setup/acct_1" })),
-);
+const h = vi.hoisted(() => ({
+  accountLinksCreate: vi.fn(async () => ({ url: "https://connect.stripe.com/setup/acct_1" })),
+  accountsCreate: vi.fn(async () => ({ id: "acct_new" })),
+  safeAwait: vi.fn(async () => undefined),
+  state: { connectAccountId: "acct_1" as string | null },
+}));
 
 vi.mock("@/lib/auth/assert-permission", () => ({
   assertPermission: vi.fn(async () => ({ ctx: { tenant_id: "t1" } })),
@@ -22,8 +26,8 @@ vi.mock("@/lib/auth/respond", () => ({
 vi.mock("stripe", () => ({
   default: vi.fn(function StripeConstructor() {
     return {
-      accountLinks: { create: mockAccountLinksCreate },
-      accounts: { create: vi.fn(async () => ({ id: "acct_new" })) },
+      accountLinks: { create: h.accountLinksCreate },
+      accounts: { create: h.accountsCreate },
     };
   }),
 }));
@@ -34,7 +38,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
       select: () => ({
         eq: () => ({
           single: async () => ({
-            data: { stripe_connect_account_id: "acct_1", support_email: null, display_name: null },
+            data: { stripe_connect_account_id: h.state.connectAccountId, support_email: null, display_name: null },
             error: null,
           }),
         }),
@@ -44,7 +48,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 }));
 
 vi.mock("@/lib/db/tenant-client", () => ({ tenantClient: () => ({ from: () => ({ update: () => ({ eq: () => Promise.resolve({ error: null }) }) }) }) }));
-vi.mock("@/lib/db/safe-mutation", () => ({ safeAwait: vi.fn(async () => undefined) }));
+vi.mock("@/lib/db/safe-mutation", () => ({ safeAwait: h.safeAwait }));
 
 function postRequest(origin: string) {
   return new Request(`${origin}/api/onboarding/tax-form/stripe-link`, { method: "POST" });
@@ -53,16 +57,35 @@ function postRequest(origin: string) {
 describe("POST /api/onboarding/tax-form/stripe-link §15.6", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    h.state.connectAccountId = "acct_1";
     process.env.STRIPE_SECRET_KEY = "sk_test_key";
   });
 
   it("refresh_url/return_url use the tenant request origin (subdomain)", async () => {
     const { POST } = await import("@/app/api/onboarding/tax-form/stripe-link/route");
     await POST(postRequest("https://lisa-travel.ai-travelconcierge.com"));
-    expect(mockAccountLinksCreate).toHaveBeenCalledWith(
+    expect(h.accountsCreate).not.toHaveBeenCalled();
+    expect(h.safeAwait).not.toHaveBeenCalled();
+    expect(h.accountLinksCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         refresh_url: "https://lisa-travel.ai-travelconcierge.com/onboarding/tax-form",
         return_url: "https://lisa-travel.ai-travelconcierge.com/onboarding/tax-form",
+      }),
+    );
+  });
+
+  it("first-time account: creates the Connect account, persists it via safeAwait, still redirects to the tenant origin", async () => {
+    h.state.connectAccountId = null;
+    const { POST } = await import("@/app/api/onboarding/tax-form/stripe-link/route");
+    await POST(postRequest("https://book.lisatravel.com"));
+    expect(h.accountsCreate).toHaveBeenCalledOnce();
+    // The DB write of the new account id must go through safeAwait (D-094) — a
+    // silent failure here would strand the tenant without a Connect account.
+    expect(h.safeAwait).toHaveBeenCalledOnce();
+    expect(h.accountLinksCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: "acct_new",
+        return_url: "https://book.lisatravel.com/onboarding/tax-form",
       }),
     );
   });

@@ -4,6 +4,32 @@ Newest entries on top.
 
 ---
 
+## D-244 — 2026-06-15 — Onboarding Stripe redirect URLs use the tenant request origin, not platformBaseUrl() — reverses D-241 §3 (PR #1133)
+
+**Decision:** The three onboarding Stripe redirect routes (`subscription/checkout`, `connect/link`, `tax-form/stripe-link`) build their `success_url` / `refresh_url` / `return_url` from `tenantOriginFromRequest(req)` — the host the request actually arrived on (tenant subdomain or custom domain) — **not** from `platformBaseUrl()` (`NEXT_PUBLIC_APP_URL` → `PLATFORM_PRIMARY_DOMAIN`). This **reverses the wiring D-241 §3 introduced** for these three routes.
+
+**Why:** Onboarding API routes resolve `tenant_id` from the request `Host`. Sending a tenant back to the platform origin after a Stripe hop lands them on a host that resolves to the `"platform"` sentinel, and the returning onboarding page throws ("Failed to load page" — issue #1132). The redirect host must match the tenant host the user is mid-onboarding on. D-241's `platformBaseUrl()` fixed the localhost-fallback fail-open correctly for platform-level redirects, but it was the wrong source for these tenant-scoped onboarding redirects. `tenantOriginFromRequest` still fails loud on a missing/invalid origin (no localhost fallback), so the D-091 fail-loud property D-241 added is preserved.
+
+**Rejected:** (a) Keeping `platformBaseUrl()` and special-casing the platform sentinel downstream — pushes the bug to every returning page instead of fixing it at the source. (b) A per-route env override — the request Host is already the authoritative tenant signal; an env var would drift.
+
+**Artifacts:** PR #1133; issue #1132 (root bug). Tests: `subscription-checkout.test.ts`, `connect-link.test.ts`, `tax-form-stripe-link.test.ts` each pin the redirect host to the request origin (subdomain + custom-domain cases) so a revert to `platformBaseUrl()` fails CI. `tax-form-stripe-link.test.ts` also covers the first-time-account branch (Connect account created + persisted via `safeAwait`, D-094).
+
+---
+
+## D-243 — 2026-06-15 — Login 500 (ERROR 101242302) was a PostgREST embed ambiguity; pin users→tenants embed to the FK constraint (PR #1135)
+
+**Decision:** Both `users→tenants` foreign-table embeds in `resolve-post-login.ts` (`getTenantRole` and `resolvePostLoginDestination`) are pinned to the explicit FK constraint: `.select("...tenants!users_tenant_id_fkey(onboarding_stage, status)")`, replacing the bare `tenants(...)` form.
+
+**Why:** Recent migrations added two **reverse** FKs from `tenants` back to `users` (`tenants_review_decided_by_user_id_fkey` in `20260526000000_onboarding.sql`, `tenants_termination_initiated_by_user_id_fkey` in `20260527000001_termination.sql`). Combined with the existing forward `users_tenant_id_fkey`, that is **three** relationships between the two tables, so a bare `tenants(...)` embed is ambiguous → PostgREST returns **HTTP 300 Multiple Choices** → supabase-js surfaces it as `error` → the route's `if (error) throw` → uncaught Server Component throw → Vercel platform 500. Smoking gun (Supabase api log): `GET | 300 | /rest/v1/users?select=role,tenant_id,status,tenants(onboarding_stage,status)&auth_user_id=eq.…&status=eq.active`. **tsc cannot see inside the embed string**, so adding the reverse FKs broke login with zero compile-time signal.
+
+**Blast radius:** scoped to exactly these two embeds. Other `users`/`tenants` embeds elsewhere (e.g. `trip_itineraries`, `quotes`) are single-FK and unaffected — confirmed before shipping.
+
+**Rejected:** (a) Dropping/renaming the reverse FKs — they're legitimate audit columns; the embed, not the schema, was wrong. (b) Catching the 300 and retrying unhinted — masks the ambiguity, still returns wrong/empty data.
+
+**Artifacts:** PR #1135; issue #1134. Regression guard `resolve-post-login-embed.test.ts` asserts both embeds emit `tenants!users_tenant_id_fkey(` and never the bare `tenants(`, so a future revert fails CI instead of re-500'ing prod. **NOT yet deployed to prod** — dev merge only; prod fix needs a release (operator approval, per standing rule).
+
+---
+
 ## D-242 — 2026-06-15 — Payout settlement is synchronous; drop transfer.paid, add transfer.reversed (PR #1128)
 
 **Decision:** Platform payout settlement no longer waits on a `transfer.paid` webhook. In Stripe's **separate charges-and-transfers** model a Transfer settles the instant `transfers.create()` returns, so `transfer.paid` is never delivered. Four coupled changes (spec §14.7 settlement, §14.9 reversal):
