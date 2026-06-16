@@ -172,6 +172,21 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     );
   });
 
+  it("BYO host success_url goes to branding, never the payouts page", async () => {
+    // Payouts (connect_setup) are sub-host-only. Routing a BYO host to
+    // /onboarding/connect stranded them on Set Up Payouts because advanceByo
+    // only rescues the connect_setup stage, which BYO hosts skip.
+    tenantData = { id: "t1", tenant_type: "byo_host", tier_id: "tier-7", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
+    tierData = { code: "byo_research" };
+    const { POST } = await import("@/app/api/onboarding/subscription/checkout/route");
+    await POST(postRequest());
+    expect(mockSessionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success_url: "https://app.example.com/onboarding/branding",
+      }),
+    );
+  });
+
   it("returns 200 with Stripe checkout URL on success", async () => {
     tenantData = { id: "t1", tenant_type: "sub_host", tier_id: "tier-5", seat_count: 1, billing_period: "monthly", stripe_customer_id: null };
     tierData = { code: "sub_starter" };
