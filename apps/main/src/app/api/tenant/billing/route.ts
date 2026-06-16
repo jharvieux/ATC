@@ -57,8 +57,9 @@ export async function GET(req: Request): Promise<Response> {
           period_end: i.period_end,
           hosted_invoice_url: i.hosted_invoice_url,
         }));
-      } catch {
-        // Invoice fetch failure is non-fatal; return empty list.
+      } catch (err) {
+        console.error("[billing] Stripe invoice fetch failed", { tenant_id: ctx.tenant_id, error: String(err) });
+        // non-fatal — return empty list
       }
     }
 
@@ -193,7 +194,10 @@ export async function POST(req: Request): Promise<Response> {
               stripe.subscriptions.retrieve(tenant.stripe_subscription_id as string),
             );
             effectiveAt = new Date((sub as unknown as { current_period_end: number }).current_period_end * 1000).toISOString();
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            console.error("[billing] Stripe subscription retrieval failed", { tenant_id: ctx.tenant_id, stripe_subscription_id: tenant.stripe_subscription_id, error: String(err) });
+            // non-fatal — effective_at falls back to inferred date
+          }
         }
 
         await safeAwait(db.from("tenants").update({ pending_billing_period_change_effective_at: effectiveAt }).eq("id", ctx.tenant_id), "tenants.update");
