@@ -274,6 +274,29 @@ describe("POST /api/tenant/billing §15.15", () => {
     );
   });
 
+  it("update_seats: calls stripe.subscriptions.update with seat price + quantity:n-1 when subscription active (#1122)", async () => {
+    // activeTenant() has stripe_subscription_id: null so the Stripe guard skips.
+    // This case exercises the live-subscription path that a regression in the
+    // seat-price calculation would break — wrong price ID or wrong quantity offset
+    // would silently mis-bill the tenant.
+    tenantData = { ...activeTenant()!, stripe_subscription_id: "sub_test_1" };
+    const { POST } = await import("@/app/api/tenant/billing/route");
+    const res = await POST(postRequest({ action: "update_seats", seat_count: 4 }));
+    expect(res.status).toBe(200);
+    expect(vi.mocked(mockStripeSubscriptionsUpdate)).toHaveBeenCalledWith(
+      "sub_test_1",
+      expect.objectContaining({
+        items: [expect.objectContaining({ price: "price_test_123", quantity: 3 })],
+      }),
+    );
+    expect(vi.mocked(mockInngestSend)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "tenant.subscription_changed",
+        data: expect.objectContaining({ change: "seats", new_seat_count: 4 }),
+      }),
+    );
+  });
+
   // ── switch_billing_period ───────────────────────────────────────────────────
 
   it("switch_billing_period: returns 422 when billing_period is missing", async () => {
