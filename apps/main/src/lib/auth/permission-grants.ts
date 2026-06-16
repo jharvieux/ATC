@@ -15,7 +15,9 @@
 //     gets every grant in the matrix.
 //   - `agent` gets day-to-day operational rights. Cannot touch tenant
 //     settings (branding, host_config, persona_addendum, tenant_branding).
-//   - `viewer` gets read/list only.
+//   - `viewer` gets read/list plus self-service writes on its OWN data
+//     (chat, CustomerMemory, UserProfile, SessionTransfer). End customers
+//     default to `viewer` (#969), so this is the customer-facing surface.
 //
 // To grant a new permission: add an entry under the appropriate role(s).
 // To restrict an existing permission: remove it from `agent` / `viewer`.
@@ -78,11 +80,51 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   key("api_tokens", "list"),
 ]);
 
-// AGENT grants — operational. Includes READ_GRANTS plus the day-to-day
+// SELF-SERVICE grants — operations every authenticated member performs on
+// their OWN data, regardless of role. ALL THREE roles inherit these. The
+// routes scope to the caller's own user.id / own conversation (the chat
+// routes additionally run guardConversationAccess for per-row ownership),
+// so RBAC here is only the coarse "may this role use the feature" gate.
+//
+// #1170 — the chat history/feedback/escalate/persona ops were never in the
+// matrix. When the 2026-05-25 RBAC stub (Finding 5) became real enforcement,
+// every role started getting a hard 403 ("Couldn't load history: HTTP 403"),
+// hidden from route tests by the tier-2 test bypass. The CustomerMemory /
+// UserProfile / SessionTransfer writes had the same root cause but were
+// mis-placed in AGENT_GRANTS, so customers (role='viewer') couldn't reach
+// them either. Both are fixed by putting these in the shared set below.
+const SELF_SERVICE_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
+  // §24 — customer + TA chat (shared [id] routes; guardConversationAccess
+  // enforces per-row ownership, so owners/TAs reach their own threads too).
+  key("Chat conversations", "list"),
+  key("Get conversation", "get"),
+  key("Update conversation", "patch"),
+  key("Switch persona", "post"),
+  key("Chat feedback", "post"),
+  key("Escalate conversation", "post"),
+  // §11.3 / §25.3 / §11.6 — customer self-service writes (each route scopes
+  // to caller's own user.id). Moved out of AGENT_GRANTS so viewers reach them.
+  key("CustomerMemory", "update"),
+  key("CustomerMemory", "delete"),
+  key("CustomerMemory", "opt_out"),
+  key("UserProfile", "update"),
+  key("SessionTransfer", "commit"),
+  key("SessionTransfer", "discard"),
+  key("SessionTransfer", "undo"),
+]);
+
+// VIEWER grants — read/list + self-service on own data. End customers default
+// to role='viewer' (#969), so this is the customer-facing surface.
+const VIEWER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
+  ...READ_GRANTS,
+  ...SELF_SERVICE_GRANTS,
+]);
+
+// AGENT grants — operational. Includes VIEWER_GRANTS plus the day-to-day
 // mutations agents perform. Excludes tenant settings (host_config write,
 // tenant_branding write, persona_addendum write) — those are owner-only.
 const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
-  ...READ_GRANTS,
+  ...VIEWER_GRANTS,
   // Bookings
   key("bookings", "cancel"),
   key("bookings", "create"),
@@ -111,15 +153,6 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("price_watches", "create"),
   key("price_watches", "rearm"),
   key("price_watches", "update"),
-  // Customer self-service writes (§11.3 / §25.3 / §11.6 — each route
-  // scopes to caller's own user.id).
-  key("CustomerMemory", "update"),
-  key("CustomerMemory", "delete"),
-  key("CustomerMemory", "opt_out"),
-  key("UserProfile", "update"),
-  key("SessionTransfer", "commit"),
-  key("SessionTransfer", "discard"),
-  key("SessionTransfer", "undo"),
   // Forums — operational, not moderation
   key("forums", "edit_message"),
   key("forums", "post_message"),
@@ -202,7 +235,7 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
 const GRANTS_BY_ROLE: Record<UserRole, ReadonlySet<GrantKey>> = {
   tenant_owner: OWNER_GRANTS,
   agent: AGENT_GRANTS,
-  viewer: READ_GRANTS,
+  viewer: VIEWER_GRANTS,
 };
 
 /**
