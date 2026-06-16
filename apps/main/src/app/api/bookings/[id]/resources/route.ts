@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertDeliverablesAvailable } from "@/lib/deliverables/tier-gate";
 import { newAccessToken } from "@/lib/deliverables/token";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(
   req: Request,
@@ -20,7 +21,7 @@ export async function GET(
       .eq("tenant_id", ctx.tenant_id)
       .eq("booking_id", bookingId)
       .maybeSingle();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ resources: data ?? null });
   } catch (err) {
     return respondToAuthError(err);
@@ -47,7 +48,7 @@ export async function POST(
       .eq("id", bookingId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
-    if (bookingErr) return Response.json({ error: bookingErr.message }, { status: 500 });
+    if (bookingErr) return dbErrorResponse(bookingErr);
     if (!booking) return Response.json({ error: "not_found" }, { status: 404 });
 
     const { data: existing } = await svc
@@ -96,7 +97,7 @@ export async function POST(
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ resources: created, created: true }, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

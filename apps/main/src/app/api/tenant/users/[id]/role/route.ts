@@ -12,6 +12,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { isKnownRole } from "@/lib/auth/permission-grants";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface Body {
   role?: string;
@@ -63,7 +64,7 @@ export async function PATCH(
       .maybeSingle();
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
     if (!updated) {
       return Response.json({ error: "user_not_found_in_tenant" }, { status: 404 });

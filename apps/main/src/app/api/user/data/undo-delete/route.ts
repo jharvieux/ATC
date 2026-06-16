@@ -7,6 +7,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
   const authHeader = req.headers.get("authorization");
@@ -62,7 +63,7 @@ export async function POST(req: Request): Promise<Response> {
     .eq("auth_user_id", authUserId)
     .eq("tenant_id", tenantId);
 
-  if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
+  if (updateErr) return dbErrorResponse(updateErr);
 
   return Response.json({ ok: true });
 }

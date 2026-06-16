@@ -2,6 +2,7 @@
 // Used client-side before form submit; DB constraint enforces final uniqueness.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -23,7 +24,7 @@ export async function GET(req: Request): Promise<Response> {
     .maybeSingle();
 
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   return Response.json({ available: data === null });

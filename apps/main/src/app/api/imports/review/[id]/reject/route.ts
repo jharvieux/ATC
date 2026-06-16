@@ -11,6 +11,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const REJECT_RETENTION_HOURS = 24;
 const RETAIN_FOLLOWUP_HOURS = 7 * 24;
@@ -36,7 +37,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .select("id, tenant_id, status, document_type")
       .eq("id", queueRowId)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (loadErr) return dbErrorResponse(loadErr);
     if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
     const row = rowData as { tenant_id: string; status: string; document_type: string | null };
     if (row.tenant_id !== ctx.tenant_id) return Response.json({ error: "forbidden" }, { status: 403 });

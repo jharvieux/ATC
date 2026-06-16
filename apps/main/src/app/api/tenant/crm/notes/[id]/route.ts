@@ -9,6 +9,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function PATCH(
   req: Request,
@@ -34,7 +35,7 @@ export async function PATCH(
       .from("contacts")
       .update({ notes: body.notes, updated_at: new Date().toISOString() })
       .eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     return Response.json({ ok: true });
   } catch (err) {

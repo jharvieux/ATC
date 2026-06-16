@@ -9,6 +9,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const FLAGS = [
   "marketing_email_opt_in",
@@ -34,7 +35,7 @@ export async function GET(req: Request): Promise<Response> {
       .select(FLAGS.join(", "))
       .eq("id", userId)
       .maybeSingle();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ preferences: data ?? {} });
   } catch (err) {
     return respondToAuthError(err);
@@ -61,7 +62,7 @@ export async function PUT(req: Request): Promise<Response> {
 
     const db = tenantClient(ctx);
     const { error } = await db.from("users").update(update).eq("id", userId);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ ok: true, updated: update });
   } catch (err) {
     return respondToAuthError(err);

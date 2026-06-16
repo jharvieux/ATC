@@ -17,6 +17,7 @@ import { selectHeroImage } from "@/lib/groups/hero-image";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementGroupInvitees } from "@/lib/abuse/counters";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface InviteeInput {
   email: string;
@@ -103,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (groupErr || !group) {
-      return Response.json({ error: groupErr?.message ?? "Failed to create group" }, { status: 500 });
+      return dbErrorResponse(groupErr);
     }
 
     // Generate HMAC tokens and insert invitations.
@@ -123,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
 
       const { error: invErr } = await svc.from("invitations").insert(rows);
       if (invErr) {
-        return Response.json({ error: invErr.message }, { status: 500 });
+        return dbErrorResponse(invErr);
       }
 
       // BP27 §27.4 — bump the group-invitees counter. Non-fatal on
@@ -155,7 +156,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id)
       .order("sailing_date", { ascending: true });
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ groups: data });
   } catch (err) {
     return respondToAuthError(err);

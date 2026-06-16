@@ -147,7 +147,9 @@ describe("approve — review_status CAS row-count assert (#394)", () => {
     mocks.cas = { data: null, error: { message: "db boom" } };
     const res = await callApprove();
     expect(res.status).toBe(500);
-    await expect(res.json()).resolves.toEqual({ error: "db boom" });
+    const json = await res.json() as { error: string; ref?: string };
+    expect(json.error).toBe("db_error");
+    expect(json.ref).toBeTruthy();
   });
 
   // ── PII pipeline on reviewer edits (f012) ────────────────────────────────

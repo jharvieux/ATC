@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(
   req: Request,
@@ -41,7 +42,7 @@ export async function POST(
       .select("id, tenant_id")
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "not_found_or_not_pending" }, { status: 404 });
 
     await inngest.send({

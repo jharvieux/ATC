@@ -10,6 +10,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -33,7 +34,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("auth_user_id", userId)
       .maybeSingle();
     if (uErr) {
-      return Response.json({ error: uErr.message }, { status: 500 });
+      return dbErrorResponse(uErr);
     }
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     if (!publicUserId) {
@@ -48,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
       .order("last_message_at", { ascending: false })
       .limit(50);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ conversations: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);

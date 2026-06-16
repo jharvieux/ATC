@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const ALLOWED_EMOJI = new Set(["thumbs_up", "heart", "laugh", "surprised", "celebrate", "eyes"]);
 
@@ -38,7 +39,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     if (error?.code === "23505") {
       return Response.json({ error: "already_reacted" }, { status: 409 });
     }
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     return Response.json({ ok: true }, { status: 201 });
   } catch (err) {

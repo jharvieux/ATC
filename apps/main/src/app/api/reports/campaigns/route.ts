@@ -8,6 +8,7 @@ import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
 import { respondCsvOrJson } from "@/lib/reporting/csv";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -27,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
       .gte("day", filters.start)
       .lte("day", filters.end)
       .not("first_touch_utm_campaign", "is", null);
-    if (rollupErr) return Response.json({ error: rollupErr.message }, { status: 500 });
+    if (rollupErr) return dbErrorResponse(rollupErr);
 
     // Aggregate by campaign.
     const byCampaign = new Map<string, { leads: number; bookings: number; gross: number; net: number }>();
@@ -52,7 +53,7 @@ export async function GET(req: Request): Promise<Response> {
       .from("campaigns")
       .select("utm_campaign, display_name, campaign_cost_cents, currency")
       .eq("tenant_id", ctx.tenant_id);
-    if (cErr) return Response.json({ error: cErr.message }, { status: 500 });
+    if (cErr) return dbErrorResponse(cErr);
     const costByCampaign = new Map<string, { cost: number | null; display: string | null; currency: string }>();
     for (const c of (campaignRows ?? []) as Array<{
       utm_campaign: string;
@@ -133,7 +134,7 @@ export async function POST(req: Request): Promise<Response> {
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

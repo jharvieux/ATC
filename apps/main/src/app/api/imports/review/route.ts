@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_PATHS = new Set(["email", "document", "manual"]);
 const VALID_TYPES = new Set([
@@ -51,7 +52,7 @@ export async function GET(req: Request): Promise<Response> {
     if (submittedBy) query = query.eq("submitted_by_user_id", submittedBy);
 
     const { data, count, error } = await query;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     return Response.json({
       items: data ?? [],

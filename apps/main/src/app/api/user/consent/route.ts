@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface ConsentBody {
   document_type: string;
@@ -62,7 +63,7 @@ export async function POST(req: Request): Promise<Response> {
     .eq("document_type", body.document_type)
     .limit(2);
 
-  if (pendingErr) return Response.json({ error: pendingErr.message }, { status: 500 });
+  if (pendingErr) return dbErrorResponse(pendingErr);
   if (!pendingRows || pendingRows.length === 0) {
     return Response.json({ error: "no_pending_consent_for_type" }, { status: 404 });
   }
@@ -103,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
     user_agent: req.headers.get("user-agent") ?? "",
   });
 
-  if (insertErr) return Response.json({ error: insertErr.message }, { status: 500 });
+  if (insertErr) return dbErrorResponse(insertErr);
 
   // Remove the pending row now that consent is recorded.
   await safeAwait(db

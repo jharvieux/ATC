@@ -10,6 +10,7 @@ import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface ProfileBody {
   legal_name: string;
@@ -37,7 +38,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("legal_name, display_name, slug, mailing_address, support_email, support_phone, timezone")
       .eq("id", ctx.tenant_id)
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);
@@ -95,7 +96,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     // Advance to "legal". If still at "signup", go through "profile" first —

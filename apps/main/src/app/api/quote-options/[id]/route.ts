@@ -6,6 +6,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { validateLineItems, type LineItem } from "@/lib/quotes/line-items";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const OptionPatchSchema = z.object({
   label: z.string().optional(),
@@ -73,7 +74,7 @@ export async function PATCH(
       .eq("id", id)
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);
@@ -89,7 +90,7 @@ export async function DELETE(
     const { id } = await params;
     const db = tenantClient(ctx);
     const { error } = await db.from("quote_options").delete().eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ deleted: true });
   } catch (err) {
     return respondToAuthError(err);

@@ -20,6 +20,7 @@ import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { redactPii } from "@/lib/pii/redact";
 import { haikuPiiRedact } from "@/lib/rag-ingest/haiku-pii-redact";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface RagIngestResponse {
   queue_item_id?: string;
@@ -55,7 +56,7 @@ export async function POST(
       )
       .eq("id", id)
       .maybeSingle();
-    if (fetchErr) return Response.json({ error: fetchErr.message }, { status: 500 });
+    if (fetchErr) return dbErrorResponse(fetchErr);
     if (!sub) return Response.json({ error: "not_found" }, { status: 404 });
 
     const row = sub as {
@@ -180,7 +181,7 @@ export async function POST(
       .eq("review_status", "ready_for_review")
       .select("id");
     if (updateErr) {
-      return Response.json({ error: updateErr.message }, { status: 500 });
+      return dbErrorResponse(updateErr);
     }
     if ((updatedRows ?? []).length === 0) {
       return Response.json({ error: "already_resolved" }, { status: 409 });

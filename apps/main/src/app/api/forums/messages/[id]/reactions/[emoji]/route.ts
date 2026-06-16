@@ -3,6 +3,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function DELETE(req: Request, props: { params: Promise<{ id: string; emoji: string }> }): Promise<Response> {
   const params = await props.params;
@@ -18,7 +19,7 @@ export async function DELETE(req: Request, props: { params: Promise<{ id: string
       .eq("emoji", params.emoji)
       .eq("tenant_id", ctx.tenant_id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     return Response.json({ ok: true });
   } catch (err) {

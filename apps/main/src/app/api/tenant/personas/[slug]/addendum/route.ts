@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface AddendumBody {
   content: string;
@@ -66,7 +67,7 @@ export async function POST(
     .single();
 
   if (error || !row) {
-    return Response.json({ error: error?.message ?? "upsert_failed" }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   const addendumId = (row as { id: string }).id;
@@ -101,6 +102,6 @@ export async function GET(
     .eq("persona_slug", personaSlug)
     .maybeSingle();
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return dbErrorResponse(error);
   return Response.json({ addendum: data ?? null });
 }

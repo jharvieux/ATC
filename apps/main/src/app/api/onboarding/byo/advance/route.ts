@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const BYO_SKIP_MAP: Partial<Record<OnboardingStage, { target: OnboardingStage; redirectTo: string }>> = {
   ica:           { target: "state_of_operation", redirectTo: "/onboarding/state-of-operation" },
@@ -26,7 +27,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     if (tenant?.tenant_type !== "byo_host") {
       return Response.json({ error: "not_byo_host" }, { status: 409 });

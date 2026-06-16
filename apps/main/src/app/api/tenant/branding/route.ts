@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { resolveShowPoweredBy } from "@/lib/branding/powered-by";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface BrandingBody {
   logo_url?: string;
@@ -41,7 +42,7 @@ export async function GET(req: Request): Promise<Response> {
 
   const db = tenantClient(ctx);
   const { data, error } = await db.from("tenant_branding").select("*").maybeSingle();
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return dbErrorResponse(error);
   return Response.json({ branding: data ?? null });
 }
 
@@ -115,7 +116,7 @@ export async function POST(req: Request): Promise<Response> {
     .single();
 
   if (error || !data) {
-    return Response.json({ error: error?.message ?? "upsert_failed" }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   return Response.json({ ok: true, branding_id: (data as { id: string }).id, show_powered_by: showPoweredBy });

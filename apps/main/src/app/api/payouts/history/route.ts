@@ -5,6 +5,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const COLUMNS =
   "id, tenant_id, amount_cents, status, hold_release_at, commission_id, " +
@@ -44,7 +45,7 @@ export async function GET(req: Request): Promise<Response> {
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     return Response.json({

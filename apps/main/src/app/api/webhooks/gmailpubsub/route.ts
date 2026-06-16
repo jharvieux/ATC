@@ -25,6 +25,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { processGmailInboundMessage } from "@/lib/import/process-gmail-message";
 import { decryptCredential } from "@/lib/crypto/credential-cipher";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_ISS = ["https://accounts.google.com", "accounts.google.com"];
@@ -75,7 +76,7 @@ export async function POST(req: Request): Promise<Response> {
     .select("tenant_id, encrypted_refresh_token, encryption_key_version, pubsub_history_id, health_status")
     .eq("connected_email", payload.emailAddress)
     .maybeSingle();
-  if (tokenErr) return Response.json({ error: tokenErr.message }, { status: 500 });
+  if (tokenErr) return dbErrorResponse(tokenErr);
   if (!tokenRowData) {
     // Pub/Sub may push for an address we don't recognise (eg after a
     // disconnect raced with a queued push). Ack 200 so Pub/Sub doesn't

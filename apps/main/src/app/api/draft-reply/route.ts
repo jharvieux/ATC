@@ -20,6 +20,7 @@ import { buildSystemPrompt } from "@/lib/personas/build-system-prompt";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
 import { resolveVoiceProfile } from "@/lib/voice-profiles/resolve-voice-profile";
 import { enforceDraftReplyLimit } from "@/lib/draft/draft-reply-limit";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const DRAFT_MODEL = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
@@ -60,7 +61,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("auth_user_id", authUserId ?? "")
       .eq("status", "active")
       .maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return dbErrorResponse(uErr);
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     if (!publicUserId) return Response.json({ error: "member_not_found" }, { status: 403 });
 

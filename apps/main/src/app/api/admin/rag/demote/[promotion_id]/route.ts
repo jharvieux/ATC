@@ -63,7 +63,12 @@ export async function POST(
           .select("id, global_chunk_id, demoted_at")
           .eq("id", promotion_id)
           .maybeSingle();
-        if (promoErr) return { error: promoErr.message };
+        if (promoErr) {
+          const ref = crypto.randomUUID();
+          console.error("[db-error] ref=%s", ref, promoErr);
+
+          return { error: "db_error", ref };
+        }
         if (!promo) return { error: "promotion_not_found" };
 
         const row = promo as { id: string; global_chunk_id: string; demoted_at: string | null };
@@ -100,7 +105,12 @@ export async function POST(
             demote_mode: mode,
           })
           .eq("id", promotion_id);
-        if (updErr) return { error: updErr.message };
+        if (updErr) {
+          const ref = crypto.randomUUID();
+          console.error("[db-error] ref=%s", ref, updErr);
+
+          return { error: "db_error", ref };
+        }
 
         return { status: "demoted", mode };
       },

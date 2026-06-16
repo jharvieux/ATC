@@ -80,7 +80,8 @@ describe("GET /api/cruise-lines", () => {
     const json = await res.json() as { error: string };
 
     expect(res.status).toBe(500);
-    expect(json.error).toBe("db_fail");
+    expect(json.error).toBe("db_error");
+    expect((json as { error: string; ref?: string }).ref).toBeTruthy();
   });
 
   it("calls assertPermission with groups:create", async () => {
@@ -123,10 +124,11 @@ describe("GET /api/cruise-ships", () => {
 
     const { GET } = await import("@/app/api/cruise-ships/route");
     const res = await GET(makeRequest("/api/cruise-ships?cruise_line_id=l-1"));
-    const json = await res.json() as { error: string };
+    const json = await res.json() as { error: string; ref?: string };
 
     expect(res.status).toBe(500);
-    expect(json.error).toBe("db_fail");
+    expect(json.error).toBe("db_error");
+    expect(json.ref).toBeTruthy();
   });
 });
 
@@ -172,9 +174,10 @@ describe("GET /api/cruise-sailings", () => {
 
     const { GET } = await import("@/app/api/cruise-sailings/route");
     const res = await GET(makeRequest("/api/cruise-sailings?cruise_ship_id=s-1"));
-    const json = await res.json() as { error: string };
+    const json = await res.json() as { error: string; ref?: string };
 
     expect(res.status).toBe(500);
-    expect(json.error).toBe("db_fail");
+    expect(json.error).toBe("db_error");
+    expect(json.ref).toBeTruthy();
   });
 });

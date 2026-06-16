@@ -147,8 +147,9 @@ describe("POST /api/onboarding/legal — §15.4 / §17.4", () => {
     const { POST } = await import("@/app/api/onboarding/legal/route");
     const res = await POST(postRequest("/api/onboarding/legal", { accepted_types: FULL_DOC_TYPES }));
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("connection timeout");
+    const body = await res.json() as { error: string; ref?: string };
+    expect(body.error).toBe("db_error");
+    expect(body.ref).toBeTruthy();
     const { progressTo } = await import("@/lib/onboarding/state-machine");
     expect(vi.mocked(progressTo)).not.toHaveBeenCalled();
   });
@@ -317,8 +318,9 @@ describe("POST /api/onboarding/ica — §15.5 / §17.4", () => {
       scrolled_to_bottom: true,
     }));
     expect(res.status).toBe(500);
-    const body = await res.json() as { error: string };
-    expect(body.error).toBe("update failed");
+    const body = await res.json() as { error: string; ref?: string };
+    expect(body.error).toBe("db_error");
+    expect(body.ref).toBeTruthy();
   });
 });
 

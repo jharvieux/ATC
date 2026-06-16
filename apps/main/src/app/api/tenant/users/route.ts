@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface MemberRow {
   id: string;
@@ -38,7 +39,7 @@ export async function GET(req: Request): Promise<Response> {
       .order("created_at", { ascending: true });
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     return Response.json({

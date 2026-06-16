@@ -10,6 +10,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { inngest } from "@/inngest/client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function DELETE(
   req: Request,
@@ -24,7 +25,7 @@ export async function DELETE(
 
     const { data: urow, error: uErr } = await db // d091-allow:service-role-tenant — db is tenantClient(ctx) not svc; proxy auto-injects tenant_id
       .from("users").select("id, role").eq("auth_user_id", authUserId ?? "").maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return dbErrorResponse(uErr);
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -34,7 +35,7 @@ export async function DELETE(
       .select("id, tenant_id, user_id")
       .eq("id", id)
       .maybeSingle();
-    if (loadErr) return Response.json({ error: loadErr.message }, { status: 500 });
+    if (loadErr) return dbErrorResponse(loadErr);
     if (!sample) return Response.json({ error: "not_found" }, { status: 404 });
 
     const s = sample as { id: string; tenant_id: string; user_id: string | null };

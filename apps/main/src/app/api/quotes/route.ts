@@ -13,6 +13,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const QuoteCreateSchema = z.object({
   contact_id: z.string().uuid(),
@@ -74,7 +75,7 @@ export async function GET(req: Request): Promise<Response> {
       .from("quotes")
       .select("id, status, created_at")
       .order("created_at", { ascending: false });
-    if (quotesErr) return Response.json({ error: quotesErr.message }, { status: 500 });
+    if (quotesErr) return dbErrorResponse(quotesErr);
 
     const quotes = (quoteRows ?? []) as Array<{ id: string; status: string; created_at: string }>;
     if (quotes.length === 0) return Response.json({ quotes: [] });
@@ -86,7 +87,7 @@ export async function GET(req: Request): Promise<Response> {
       )
       .in("quote_id", quotes.map((q) => q.id))
       .order("option_index", { ascending: true });
-    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+    if (optionsErr) return dbErrorResponse(optionsErr);
 
     const byQuote = new Map<string, QuoteListOption[]>();
     for (const row of (optionRows ?? []) as QuoteListOption[]) {
@@ -138,7 +139,7 @@ export async function POST(req: Request): Promise<Response> {
       .insert({ ...containerFields, user_id: user.id, status: "draft" })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     const quoteId = (quote as { id: string }).id;
 

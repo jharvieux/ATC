@@ -11,6 +11,7 @@ import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
 import { respondCsvOrJson } from "@/lib/reporting/csv";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_SECONDARY = new Set(["channel", "cruise_line", "sail_quarter"]);
 
@@ -38,7 +39,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("status", "cancelled")
       .gte("cancelled_at", filters.start)
       .lte("cancelled_at", `${filters.end}T23:59:59.999Z`);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     type Row = {
       cancellation_reason_category: string | null;

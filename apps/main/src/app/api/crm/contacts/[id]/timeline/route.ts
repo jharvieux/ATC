@@ -4,6 +4,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(
   req: Request,
@@ -21,7 +22,7 @@ export async function GET(
       .eq("id", id)
       .maybeSingle();
 
-    if (contactErr) return Response.json({ error: contactErr.message }, { status: 500 });
+    if (contactErr) return dbErrorResponse(contactErr);
     if (!contact) return Response.json({ error: "not_found" }, { status: 404 });
 
     // Fetch related conversations, quotes, bookings in parallel
@@ -48,9 +49,9 @@ export async function GET(
         .limit(50),
     ]);
 
-    if (convResult.error) return Response.json({ error: convResult.error.message }, { status: 500 });
-    if (quotesResult.error) return Response.json({ error: quotesResult.error.message }, { status: 500 });
-    if (bookingsResult.error) return Response.json({ error: bookingsResult.error.message }, { status: 500 });
+    if (convResult.error) return dbErrorResponse(convResult.error);
+    if (quotesResult.error) return dbErrorResponse(quotesResult.error);
+    if (bookingsResult.error) return dbErrorResponse(bookingsResult.error);
 
     const timeline = [
       ...(convResult.data ?? []).map((c) => ({ type: "conversation", ...c })),

@@ -14,6 +14,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface Body {
   mode: "replace" | "add_with_supersedes" | "cancel";
@@ -55,7 +56,7 @@ export async function POST(
         .eq("id", id)
         .eq("review_status", "ready_for_review")
         .select("id");
-      if (error) return Response.json({ error: error.message }, { status: 500 });
+      if (error) return dbErrorResponse(error);
       if ((data ?? []).length === 0) {
         return Response.json({ error: "not_in_reviewable_state" }, { status: 409 });
       }
@@ -79,7 +80,7 @@ export async function POST(
         })
         .eq("id", id)
         .select("id");
-      if (error) return Response.json({ error: error.message }, { status: 500 });
+      if (error) return dbErrorResponse(error);
       if ((data ?? []).length === 0) {
         return Response.json({ error: "not_found" }, { status: 404 });
       }
@@ -97,7 +98,7 @@ export async function POST(
       .select("id, tenant_id, redacted_content, extracted_content, source_url, normalization_result")
       .eq("id", id)
       .maybeSingle();
-    if (fetchErr) return Response.json({ error: fetchErr.message }, { status: 500 });
+    if (fetchErr) return dbErrorResponse(fetchErr);
     if (!sub) return Response.json({ error: "not_found" }, { status: 404 });
 
     const row = sub as {
@@ -155,7 +156,7 @@ export async function POST(
       })
       .eq("id", id)
       .select("id");
-    if (updErr) return Response.json({ error: updErr.message }, { status: 500 });
+    if (updErr) return dbErrorResponse(updErr);
     // The RAG chunk was already swapped above, so a zero-row match here means
     // the submission was hard-deleted mid-flight. Surface 409 (the RAG side is
     // done — caller must reconcile) instead of a false { status: "replaced" }.

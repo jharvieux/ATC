@@ -12,6 +12,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 import { effectiveVisibility } from "@/lib/groups/visibility";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface Invitation {
   id: string;
@@ -249,7 +250,7 @@ export async function PATCH(req: Request, props: RouteProps): Promise<Response> 
   if (visibility_choice) updates.visibility_choice = visibility_choice;
 
   const { error } = await svc.from("invitations").update(updates).eq("id", invitation_id).is("token_revoked_at", null);
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return dbErrorResponse(error);
 
   return Response.json({ ok: true });
 }

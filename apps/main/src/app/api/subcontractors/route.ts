@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -34,7 +35,7 @@ export async function GET(req: Request): Promise<Response> {
       .is("archived_at", null)
       .order("name");
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ subcontractors: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
@@ -80,7 +81,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id, name, share_rate, created_at")
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ subcontractor: data }, { status: 201 });
   } catch (err) {
     return respondToAuthError(err);

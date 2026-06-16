@@ -12,6 +12,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface DetailOption {
   option_index: number;
@@ -42,7 +43,7 @@ export async function GET(
       .select("id, contact_id, status, custom_notes, show_breakdown_to_customer, created_at")
       .eq("id", id)
       .maybeSingle();
-    if (quoteErr) return Response.json({ error: quoteErr.message }, { status: 500 });
+    if (quoteErr) return dbErrorResponse(quoteErr);
     if (!quote) return Response.json({ error: "not_found" }, { status: 404 });
 
     const { data: optionRows, error: optionsErr } = await db
@@ -52,7 +53,7 @@ export async function GET(
       )
       .eq("quote_id", id)
       .order("option_index", { ascending: true });
-    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+    if (optionsErr) return dbErrorResponse(optionsErr);
 
     const options = (optionRows ?? []) as DetailOption[];
     const option = selectRepresentativeOption(options);

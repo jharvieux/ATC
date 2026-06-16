@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { publishChunkFeedback } from "@/lib/rag-sync/publish-chunk-feedback";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -48,7 +49,7 @@ export async function POST(req: Request): Promise<Response> {
         feedback_reason: body.reason?.toString().slice(0, 1000) ?? null,
       })
       .eq("id", messageId);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     // §6.10 — Propagate to RAG. Best-effort: failure here doesn't fail
     // the parent write. The signal_direction maps from -1/+1 only;

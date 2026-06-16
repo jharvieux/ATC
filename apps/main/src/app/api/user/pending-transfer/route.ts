@@ -13,6 +13,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -44,7 +45,7 @@ export async function GET(req: Request): Promise<Response> {
       .limit(1)
       .maybeSingle();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     if (!data) return Response.json({ pending: null });
 

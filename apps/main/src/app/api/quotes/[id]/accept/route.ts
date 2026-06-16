@@ -23,6 +23,7 @@ import { renderQuotePdfHtml } from "@/lib/quotes/render-pdf";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface QuoteRow {
   id: string;
@@ -70,7 +71,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
 
-    if (fetchErr) return Response.json({ error: fetchErr.message }, { status: 500 });
+    if (fetchErr) return dbErrorResponse(fetchErr);
     if (!existing) return Response.json({ error: "not_found" }, { status: 404 });
 
     const quote = existing as QuoteRow;
@@ -143,7 +144,7 @@ export async function POST(
       )
       .eq("quote_id", id)
       .order("option_index", { ascending: true });
-    if (optionsErr) return Response.json({ error: optionsErr.message }, { status: 500 });
+    if (optionsErr) return dbErrorResponse(optionsErr);
     const chosenOption = selectRepresentativeOption((optionRows ?? []) as AcceptOption[]);
 
     // Render the PDF HTML for the snapshot.
@@ -236,7 +237,7 @@ export async function POST(
       if (error.code === "PGRST116") {
         return Response.json({ error: "quote_status_changed_during_accept" }, { status: 409 });
       }
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     // §37.4.2 — fan-out task sequences whose trigger_event='quote_accepted'.

@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const US_STATE_CODES = new Set([
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -47,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id);
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     await progressTo(ctx.tenant_id, "tier_select");

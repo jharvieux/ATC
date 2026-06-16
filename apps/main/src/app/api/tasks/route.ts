@@ -7,6 +7,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertAssignmentAllowed } from "@/lib/tasks/tier-gate";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const TaskCreateSchema = z
   .object({
@@ -56,7 +57,7 @@ export async function GET(req: Request): Promise<Response> {
     if (bookingId) q = q.eq("booking_id", bookingId);
 
     const { data, count, error } = await q;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ tasks: data ?? [], total: count ?? 0 });
   } catch (err) {
     return respondToAuthError(err);
@@ -92,7 +93,7 @@ export async function POST(req: Request): Promise<Response> {
       })
       .select()
       .single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     // Reminders.
     const created = data as { id: string; due_at: string | null };

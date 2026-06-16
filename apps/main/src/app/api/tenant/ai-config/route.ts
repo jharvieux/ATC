@@ -7,6 +7,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { resolveAIBehavior, type AIMode } from "@/lib/personas/resolve-ai-behavior";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 // Cost range strings per §9.10.2 — real values land when §27.12 cost attribution lands
 // TODO(§27.12-cost-display): replace with real cost attribution data
@@ -102,7 +103,7 @@ export async function PATCH(req: Request): Promise<Response> {
       .single();
 
     if (error) {
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     await writeAuditLog({

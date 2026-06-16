@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -19,7 +20,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     return Response.json({ is_sandbox: data.is_sandbox });
   } catch (err) {
@@ -57,7 +58,7 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (fetchErr || !tenant) {
-      return Response.json({ error: fetchErr?.message ?? "not_found" }, { status: 500 });
+      return dbErrorResponse(fetchErr);
     }
 
     // No-op if already in desired state.
@@ -93,7 +94,7 @@ export async function POST(req: Request): Promise<Response> {
       .update({ is_sandbox: body.enable })
       .eq("id", ctx.tenant_id);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     return Response.json({ is_sandbox: body.enable });
   } catch (err) {

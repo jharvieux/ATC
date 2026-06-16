@@ -4,6 +4,7 @@ import { z } from "zod";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const TaskPatchSchema = z.object({
   title: z.string().optional(),
@@ -36,7 +37,7 @@ export async function PATCH(
     }
 
     const { data, error } = await db.from("tasks").update(update).eq("id", id).select().single();
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json(data);
   } catch (err) {
     return respondToAuthError(err);
@@ -52,7 +53,7 @@ export async function DELETE(
     const { id } = await params;
     const db = tenantClient(ctx);
     const { error } = await db.from("tasks").delete().eq("id", id);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ deleted: true });
   } catch (err) {
     return respondToAuthError(err);

@@ -62,7 +62,12 @@ export async function POST(
           .select("id, tenant_id, chunk_id_created, review_status")
           .eq("id", submission_id)
           .maybeSingle();
-        if (subErr) return { error: subErr.message };
+        if (subErr) {
+          const ref = crypto.randomUUID();
+          console.error("[db-error] ref=%s", ref, subErr);
+
+          return { error: "db_error", ref };
+        }
         if (!sub) return { error: "submission_not_found" };
 
         const row = sub as { id: string; tenant_id: string; chunk_id_created: string | null; review_status: string };
@@ -112,7 +117,12 @@ export async function POST(
           })
           .select("id")
           .single();
-        if (promoErr) return { error: promoErr.message };
+        if (promoErr) {
+          const ref = crypto.randomUUID();
+          console.error("[db-error] ref=%s", ref, promoErr);
+
+          return { error: "db_error", ref };
+        }
 
         return {
           promotion_id: (promo as { id: string }).id,

@@ -19,6 +19,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 import { sendTenantNotification } from "@/lib/email/notifications";
 import { GroupBroadcast } from "@/emails/GroupBroadcast";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 // invitations.rsvp_state CHECK values (apps/main/supabase/migrations/
 // 20260529000000_groups.sql). Keep in sync with that constraint.
@@ -95,7 +96,7 @@ export async function POST(
       .eq("id", id)
       .maybeSingle();
     if (groupErr) {
-      return Response.json({ error: groupErr.message }, { status: 500 });
+      return dbErrorResponse(groupErr);
     }
     if (!groupRow) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -123,7 +124,7 @@ export async function POST(
       .eq("group_id", id)
       .in("rsvp_state", recipientStates);
     if (memberErr) {
-      return Response.json({ error: memberErr.message }, { status: 500 });
+      return dbErrorResponse(memberErr);
     }
     const recipients = ((memberRows ?? []) as MemberRow[])
       .map((m) => m.invitee_email)
@@ -144,7 +145,7 @@ export async function POST(
       .eq("id", ctx.tenant_id)
       .maybeSingle();
     if (tenantErr) {
-      return Response.json({ error: tenantErr.message }, { status: 500 });
+      return dbErrorResponse(tenantErr);
     }
     const { data: brandingRow, error: brandingErr } = await db
       .from("tenant_branding")
@@ -152,7 +153,7 @@ export async function POST(
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
     if (brandingErr) {
-      return Response.json({ error: brandingErr.message }, { status: 500 });
+      return dbErrorResponse(brandingErr);
     }
     const tenant = (tenantRow ?? null) as TenantRow | null;
     const branding = (brandingRow ?? null) as BrandingRow | null;

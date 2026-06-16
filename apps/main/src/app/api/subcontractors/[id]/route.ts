@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function PATCH(
   req: Request,
@@ -41,7 +42,7 @@ export async function PATCH(
       .select("id, name, share_rate")
       .single();
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "Subcontractor not found" }, { status: 404 });
     return Response.json({ subcontractor: data });
   } catch (err) {
@@ -64,7 +65,7 @@ export async function DELETE(
       .eq("id", id)
       .is("archived_at", null);
 
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ ok: true });
   } catch (err) {
     return respondToAuthError(err);

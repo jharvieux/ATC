@@ -13,6 +13,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { inngest } from "@/inngest/client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -28,7 +29,7 @@ export async function GET(req: Request): Promise<Response> {
     if (authUserId) {
       const { data: urow, error: uErr } = await db
         .from("users").select("id, role").eq("auth_user_id", authUserId).maybeSingle();
-      if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+      if (uErr) return dbErrorResponse(uErr);
       publicUserId = (urow as { id: string } | null)?.id ?? null;
       const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -38,7 +39,7 @@ export async function GET(req: Request): Promise<Response> {
       const { data: own, error: ownErr } = await (
         publicUserId ? ownBase.eq("user_id", publicUserId) : ownBase.is("user_id", null)
       );
-      if (ownErr) return Response.json({ error: ownErr.message }, { status: 500 });
+      if (ownErr) return dbErrorResponse(ownErr);
 
       // Owners also see the house-style samples.
       let house: unknown[] = [];
@@ -48,7 +49,7 @@ export async function GET(req: Request): Promise<Response> {
           .select("id, body, source_label, created_at")
           .is("user_id", null)
           .order("created_at", { ascending: true });
-        if (houseErr) return Response.json({ error: houseErr.message }, { status: 500 });
+        if (houseErr) return dbErrorResponse(houseErr);
         house = houseRows ?? [];
       }
 
@@ -105,7 +106,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const { data: urow, error: uErr } = await db
       .from("users").select("id, role").eq("auth_user_id", authUserId ?? "").maybeSingle();
-    if (uErr) return Response.json({ error: uErr.message }, { status: 500 });
+    if (uErr) return dbErrorResponse(uErr);
     const publicUserId = (urow as { id: string } | null)?.id ?? null;
     const role = (urow as { role?: string } | null)?.role ?? "";
 
@@ -128,7 +129,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (insErr || !inserted) {
-      return Response.json({ error: insErr?.message ?? "insert failed" }, { status: 500 });
+      return dbErrorResponse(insErr);
     }
 
     // Dispatch extraction event (event-driven, idle-free per D-192).

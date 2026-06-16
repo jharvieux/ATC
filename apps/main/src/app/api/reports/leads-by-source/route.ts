@@ -9,6 +9,7 @@ import { assertReportsAccessible } from "@/lib/reporting/tier-gate";
 import { parseReportFilters } from "@/lib/reporting/parse-filters";
 import { respondCsvOrJson } from "@/lib/reporting/csv";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -27,7 +28,7 @@ export async function GET(req: Request): Promise<Response> {
       .eq("tenant_id", ctx.tenant_id)
       .gte("day", filters.start)
       .lte("day", filters.end);
-    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
 
     // Roll up to the dimensional grain (the MV pre-aggregates by day; we
     // re-aggregate dropping the day dimension for the leads-by-source view).

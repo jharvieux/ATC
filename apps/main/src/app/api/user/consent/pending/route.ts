@@ -2,6 +2,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   const authHeader = req.headers.get("authorization");
@@ -29,7 +30,7 @@ export async function GET(req: Request): Promise<Response> {
     .select("document_type, document_id_pending, flagged_at")
     .eq("auth_user_id", authUserId);
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return dbErrorResponse(error);
 
   if (!rows || rows.length === 0) {
     return Response.json({ pending: [] });
