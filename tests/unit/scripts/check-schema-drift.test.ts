@@ -31,12 +31,12 @@ describe("ledgerVersions", () => {
     expect(ledgerVersions(path.join(tmpDir, "nonexistent"))).toEqual([]);
   });
 
-  it("returns sorted version strings with .sql stripped", () => {
+  it("returns sorted bare version timestamps (no name suffix)", () => {
     fs.writeFileSync(path.join(tmpDir, "20240201120000_add_users.sql"), "");
     fs.writeFileSync(path.join(tmpDir, "20240101000000_initial.sql"), "");
     expect(ledgerVersions(tmpDir)).toEqual([
-      "20240101000000_initial",
-      "20240201120000_add_users",
+      "20240101000000",
+      "20240201120000",
     ]);
   });
 
@@ -45,7 +45,7 @@ describe("ledgerVersions", () => {
     fs.writeFileSync(path.join(tmpDir, "README.md"), "");
     fs.writeFileSync(path.join(tmpDir, "seed.ts"), "");
     expect(ledgerVersions(tmpDir)).toHaveLength(1);
-    expect(ledgerVersions(tmpDir)[0]).toBe("20240101_schema");
+    expect(ledgerVersions(tmpDir)[0]).toBe("20240101");
   });
 
   it("returns empty array for an existing but empty directory", () => {

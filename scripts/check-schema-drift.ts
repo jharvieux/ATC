@@ -63,7 +63,7 @@ export function ledgerVersions(dir: string): string[] {
     .readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
-    .map((f) => f.replace(/\.sql$/, ""));
+    .map((f) => f.replace(/\.sql$/, "").replace(/_.*$/, ""));
 }
 
 // Exported for tests — pure diff logic; no I/O.
