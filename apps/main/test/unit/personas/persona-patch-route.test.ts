@@ -7,7 +7,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  tierCode: "byo_agency" as string,
+  tierError: null as null | { message: string },
+  tierData: { code: "byo_agency" } as null | { code: string },
 }));
 
 vi.mock("@/lib/auth/assert-permission", () => ({
@@ -42,8 +43,8 @@ vi.mock("@/lib/db/tenant-client", () => ({
           select: () => ({
             eq: () => ({
               maybeSingle: async () => ({
-                data: { code: h.tierCode },
-                error: null,
+                data: h.tierData,
+                error: h.tierError,
               }),
             }),
           }),
@@ -82,7 +83,8 @@ const makeProps = (slug: string) => ({ params: Promise.resolve({ slug }) });
 
 describe("PATCH /api/tenant/personas/[slug] — #1183 regression", () => {
   beforeEach(() => {
-    h.tierCode = "byo_agency";
+    h.tierData = { code: "byo_agency" };
+    h.tierError = null;
   });
 
   it("returns 200 and resolves tier_id to tier code correctly", async () => {
@@ -98,11 +100,23 @@ describe("PATCH /api/tenant/personas/[slug] — #1183 regression", () => {
   });
 
   it("returns 422 when byo_research tier tries to set display_name_override", async () => {
-    h.tierCode = "byo_research";
+    h.tierData = { code: "byo_research" };
     const res = await PATCH(makeReq("marcus-cole", { display_name_override: "Bobby" }), makeProps("marcus-cole"));
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error).toMatch(/byo_research/);
+  });
+
+  it("returns 500 when tier_definitions lookup returns a DB error", async () => {
+    h.tierError = { message: "relation does not exist" };
+    const res = await PATCH(makeReq("marcus-cole", { display_name_override: "X" }), makeProps("marcus-cole"));
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 500 when tier_definitions row is missing (no row for tenant tier_id)", async () => {
+    h.tierData = null;
+    const res = await PATCH(makeReq("marcus-cole", { display_name_override: "X" }), makeProps("marcus-cole"));
+    expect(res.status).toBe(500);
   });
 
   it("returns 400 for invalid JSON body", async () => {
