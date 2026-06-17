@@ -222,7 +222,6 @@ const FROM_RE = /\.from\(\s*["'](?:public\.)?([a-z_][a-z0-9_]*)["']\s*\)/gi;
 // Match .select("...") including template literals and multi-line strings.
 // Captures the quote character (group 1) and content (group 2).
 const SELECT_RE = /\.select\(\s*(["'`])([\s\S]*?)\1\s*[,)]/g;
-const WINDOW_CHARS = 1500;
 
 export function findViolations(
   ambiguityMap: Map<string, Map<string, string[]>>,
@@ -245,7 +244,7 @@ export function findViolations(
       if (!innerMap) continue;
 
       const nextFrom = i + 1 < froms.length ? froms[i + 1].index : content.length;
-      const windowEnd = Math.min(nextFrom, index + WINDOW_CHARS, content.length);
+      const windowEnd = Math.min(nextFrom, index + 1500, content.length); // 1500-char lookahead per .from() chain
       const window = content.slice(index, windowEnd);
 
       SELECT_RE.lastIndex = 0;

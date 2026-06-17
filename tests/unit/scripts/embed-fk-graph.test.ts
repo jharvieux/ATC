@@ -114,7 +114,6 @@ describe("parseFKRelationships", () => {
       expect.arrayContaining([expect.objectContaining({ baseTable: "items", referencedTable: "users" })]),
     );
   });
-});
 
   it("removes prior FKs when DROP TABLE is encountered (provisional-table pattern)", () => {
     // Migration 1: CREATE TABLE email_log with 1 FK to tenants (provisional)
@@ -133,6 +132,7 @@ describe("parseFKRelationships", () => {
     const toTenants = fks.filter((f) => f.baseTable === "email_log" && f.referencedTable === "tenants");
     expect(toTenants).toHaveLength(1);
   });
+});
 
 // ────────────────────────────────────────────────────────────────────────────
 // buildAmbiguityMap
@@ -151,7 +151,7 @@ describe("buildAmbiguityMap", () => {
     expect(inner?.get("contacts")).toHaveLength(2);
   });
 
-  it("does NOT mark a table pair as ambiguous when only 1 FK exists", () => {
+  it("stores a single-FK pair with length 1 (findViolations decides ambiguity at >=2)", () => {
     const fks = parseFKRelationships([
       mig(`CREATE TABLE public.commissions (
         booking_id UUID REFERENCES public.bookings(id)
@@ -159,7 +159,7 @@ describe("buildAmbiguityMap", () => {
     ]);
     const map = buildAmbiguityMap(fks);
     const inner = map.get("commissions");
-    // bookings appears only once → not ambiguous
+    // bookings appears only once → stored as length 1; findViolations gates on length >= 2
     expect(inner?.get("bookings")?.length ?? 0).toBe(1);
   });
 });
