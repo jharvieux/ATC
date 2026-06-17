@@ -4,6 +4,14 @@ Newest entries on top.
 
 ---
 
+## D-252 — 2026-06-17 — Permission-matrix CI guard added (#1176); all 59 missing RBAC grants filled (#1173)
+
+Two-issue sequence completed in one session:
+1. **#1173** (PR #1180): Added all 59 `assertPermission` pairs missing from `permission-grants.ts` since the 2026-05-25 RBAC enforcement landed (Finding 5). Pairs split across READ_GRANTS (1), SELF_SERVICE_GRANTS (5), AGENT_GRANTS (35), OWNER_GRANTS (18). Exhaustive matrix in `permission-grants.test.ts` updated in parallel. Four low-confidence audience calls defaulted to least-privilege (documented in PR body for operator review): CRM notes list → owner, integrations.gmail:read → agent, tenant config reads → owner, bookings sub-resource reads → agent.
+2. **#1176** (PR #1181): Added `scripts/check-permission-matrix.ts` — static sweep that fails CI when any `assertPermission(req, { resource, action })` call in `apps/main/src/app/api/` has no matching `key()` in `permission-grants.ts`. Dual-regex handles both property orderings. `scripts/permission-matrix-baseline.txt` is empty (all #1173 gaps resolved). Wired into `package.json verify` and `.github/workflows/ci.yml` after D-091 step. CLAUDE.md updated with per-route workflow.
+
+Pre-existing gap not fixed: `bookings.passengers:read` and `bookings.options:read` are in READ_GRANTS but absent from READ_PAIRS in the test file — latent over-grant, deferred per #1173 scope.
+
 ## D-250 — 2026-06-16 — TA dashboard revamped to ChatGPT-style; Admin Console moved to a new (console) route group; platform branding on all TA-facing surfaces (PR #1177)
 
 **Decision:** Reworked the staff-only tenant-root surface (`[tenant]` root, seen only by `tenant_owner`/`agent`):
