@@ -24,13 +24,44 @@ const API_DIR = path.join(ROOT, "apps/main/src/app/api");
 const GRANTS_FILE = path.join(ROOT, "apps/main/src/lib/auth/permission-grants.ts");
 const BASELINE_FILE = path.join(ROOT, "scripts/permission-matrix-baseline.txt");
 
-// Matches: assertPermission(req, { resource: "X", action: "Y" })
-// [^{]*\{[^}]* handles both inline and multi-line object literals.
-const ASSERT_RE =
+// Matches assertPermission(req, { resource: "X", action: "Y" }) in either
+// property order. Two passes per call site: resource-first and action-first.
+// The codebase currently uses resource-first everywhere, but the dual-pass
+// makes the check order-independent so a future caller can't silently evade
+// it by writing { action: "Y", resource: "X" }.
+export const ASSERT_RESOURCE_FIRST =
   /assertPermission\([^{]*\{\s*[^}]*resource:\s*"([^"]+)"[^}]*action:\s*"([^"]+)"/g;
+export const ASSERT_ACTION_FIRST =
+  /assertPermission\([^{]*\{\s*[^}]*action:\s*"([^"]+)"[^}]*resource:\s*"([^"]+)"/g;
 
 // Matches: key("resource", "action") in permission-grants.ts
-const KEY_RE = /key\("([^"]+)",\s*"([^"]+)"\)/g;
+export const KEY_RE = /key\("([^"]+)",\s*"([^"]+)"\)/g;
+
+/**
+ * Extract all (resource, action) pairs from route file content.
+ * Handles both resource-first and action-first property ordering.
+ */
+export function extractAssertedPairs(content: string): Set<string> {
+  const pairs = new Set<string>();
+  for (const m of content.matchAll(new RegExp(ASSERT_RESOURCE_FIRST.source, "g"))) {
+    pairs.add(`${m[1]}:${m[2]}`);
+  }
+  for (const m of content.matchAll(new RegExp(ASSERT_ACTION_FIRST.source, "g"))) {
+    pairs.add(`${m[2]}:${m[1]}`);
+  }
+  return pairs;
+}
+
+/**
+ * Extract all granted (resource, action) pairs from permission-grants.ts content.
+ */
+export function extractGrantedPairs(content: string): Set<string> {
+  const pairs = new Set<string>();
+  for (const m of content.matchAll(new RegExp(KEY_RE.source, "g"))) {
+    pairs.add(`${m[1]}:${m[2]}`);
+  }
+  return pairs;
+}
 
 function walkTs(dir: string): string[] {
   const out: string[] = [];
@@ -69,10 +100,7 @@ function main(): void {
 
   // Build granted set from permission-grants.ts
   const grantsContent = fs.readFileSync(GRANTS_FILE, "utf8");
-  const granted = new Set<string>();
-  for (const m of grantsContent.matchAll(KEY_RE)) {
-    granted.add(`${m[1]}:${m[2]}`);
-  }
+  const granted = extractGrantedPairs(grantsContent);
   if (granted.size === 0) {
     console.error(
       `Permission-matrix check: 0 granted pairs found in ${path.relative(ROOT, GRANTS_FILE)}. Likely a regex mismatch or empty file.`,
@@ -95,8 +123,7 @@ function main(): void {
   const missing: { file: string; pair: string }[] = [];
   for (const file of apiFiles) {
     const content = fs.readFileSync(file, "utf8");
-    for (const m of content.matchAll(ASSERT_RE)) {
-      const pair = `${m[1]}:${m[2]}`;
+    for (const pair of extractAssertedPairs(content)) {
       if (!granted.has(pair) && !baseline.has(pair)) {
         missing.push({ file: path.relative(ROOT, file), pair });
       }
