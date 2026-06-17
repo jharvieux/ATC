@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-254 — 2026-06-17 — Three deploy.yml bugs found during beta release (PRs #1195 #1196 #1197)
+
+Three bugs in the migration drift gate surfaced across four beta release attempts (beta063–065 all failed):
+
+1. **`--include-all` missing from `supabase db push`** (PR #1195): migration `20260703000001_reconciliation_clawback` was in the ledger but had been skipped — it landed between two already-applied migrations. The CLI refuses to apply out-of-order migrations without `--include-all`. Added to both staging and production push steps. Safety net: drift gate still runs after push.
+
+2. **Bare `tsx` not on CI PATH** (PR #1196): the drift check steps added in #1193 used bare `tsx` instead of `pnpm tsx`. `tsx` isn't globally installed in CI; other scripts in deploy.yml already used `pnpm tsx` (line 491 — the model canary gate). Exit 127 every time.
+
+3. **`ledgerVersions` returned full filename stems, not bare timestamps** (PR #1197): `supabase db push` records version as the numeric timestamp prefix only (e.g., `20260521120000`); `ledgerVersions` was returning the full filename minus `.sql` (e.g., `20260521120000_tenancy_and_identity`). The two sets never intersected — drift gate always reported 100% UNAPPLIED + 100% ORPHANED regardless of actual state. Fixed with `.replace(/_.*$/, "")`. RAG DB confirmed irrelevant (uses psql, not supabase CLI, so `schema_migrations` is empty there — `--target=rag` correctly excluded from deploy.yml).
+
+**Why:** All three bugs passed 4 audit rounds in the original PR (#1193) because audits checked code structure, not against the live CI environment. Gate had never been exercised in a real deploy before.
+
+**How to apply:** When adding new CI gates, exercise them against a real release before closing the PR — unit tests verify logic, not CI path resolution or DB query format.
+
+---
+
 ## D-253 — 2026-06-17 — Migration ledger ↔ live DB drift gate (#1158, PR #1193)
 
 Added `scripts/check-schema-drift.ts` — a post-deploy gate that compares the committed migration ledger (`apps/*/supabase/migrations/*.sql`) against `supabase_migrations.schema_migrations` in the live DB after every `npx supabase db push`.
