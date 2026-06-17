@@ -2,7 +2,7 @@
 
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
-import { ragSyncRetry, ragSyncCleanup } from "@/inngest/rag-sync-retry";
+import { ragSyncCleanup } from "@/inngest/rag-sync-retry";
 import { extractMemory, extractMemoryFromBatchResult } from "@/inngest/extract-memory";
 import { extractVoiceProfile } from "@/inngest/extract-voice-profile";
 import { dobEstimateRepromptEligible } from "@/inngest/dob-estimate-reprompt-eligible";
@@ -11,8 +11,6 @@ import { reEncryptOldRecords, backupVerificationReminder } from "@/inngest/re-en
 import { commissionSplitOnReceived } from "@/inngest/commission-split-on-received";
 import { payoutsMarkAvailable } from "@/inngest/payouts-mark-available";
 import { payoutsExecuteTransfer } from "@/inngest/payouts-execute-transfer";
-import { payoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
-import { bookingsStuckSubmittingReconcile } from "@/inngest/bookings-stuck-submitting-reconcile";
 import { reconcileStatementAutomated } from "@/inngest/reconcile-statement-automated";
 import { complianceNightly } from "@/inngest/compliance-nightly";
 import { tenantTerminationScheduled, tenantOnTerminatedSideEffects } from "@/inngest/tenant-on-terminated";
@@ -82,8 +80,6 @@ import { auditLogRetentionPurge } from "@/inngest/audit-log-retention-purge";
 import { requestIdempotencyPurge } from "@/inngest/request-idempotency-purge";
 // #851: daily model canary — pings configured models so a retired one alerts early
 import { modelCanary } from "@/inngest/model-canary";
-// BP26: §26.6 monitoring crons
-import { crossTenantRlsBypassMonitor } from "@/inngest/cross-tenant-rls-bypass-monitor";
 // BP27: SaaS abuse monitoring + cost controls (§27)
 import { aiPricingCacheRefresh } from "@/inngest/ai-pricing-cache-refresh";
 import { emailBounceRateMonitor } from "@/inngest/email-bounce-rate-monitor";
@@ -147,7 +143,6 @@ const subhostingCronsDisabled = process.env.SUBHOSTING_CRONS_DISABLED === "true"
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    ragSyncRetry,
     ragSyncCleanup,
     extractMemory,
     extractMemoryFromBatchResult,
@@ -162,8 +157,6 @@ export const { GET, POST, PUT } = serve({
       ? []
       : [
           payoutsMarkAvailable,
-          payoutsReconcileProcessing,
-          bookingsStuckSubmittingReconcile,
           reconcileStatementAutomated,
           preCruiseEmailSchedulerT1,
           preCruiseEmailSchedulerMultiphase,
@@ -225,8 +218,6 @@ export const { GET, POST, PUT } = serve({
     requestIdempotencyPurge,
     // #851: daily model canary
     modelCanary,
-    // BP26: §26.6 monitoring crons
-    crossTenantRlsBypassMonitor,
     // BP27: SaaS abuse monitoring + cost controls (§27)
     aiPricingCacheRefresh,
     emailBounceRateMonitor,

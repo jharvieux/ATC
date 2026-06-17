@@ -47,8 +47,11 @@ module.exports = [
   // Vercel cron reconciliation job: background cron outside any user
   // session; service-role required to scan stripe_webhook_events. §7.9a.
   "/lib/cron/stripe-webhook-incomplete-reconcile.ts",
-  // RAG sync retry cron: background job, no user session. §8.7a.
+  // RAG sync retry: the daily ragSyncCleanup cron stays on Inngest; the
+  // 15-min ragSyncRetry moved to a Vercel cron (#894). Both need service-role
+  // (background job, no user session). §8.7a.
   "/inngest/rag-sync-retry.ts",
+  "/lib/cron/rag-sync-retry.ts",
   // DOB re-prompt cron: cross-tenant scan, no user session. §11.5.
   "/inngest/dob-estimate-reprompt-eligible.ts",
   // RAG sync publisher: fires after DB write commits, outside user request scope. §8.7.
@@ -80,11 +83,13 @@ module.exports = [
   "/inngest/payouts-mark-available.ts",
   // BP15: Payouts execute-transfer cron — Stripe transfer, no user session. §14.7.
   "/inngest/payouts-execute-transfer.ts",
-  // BP15: Payouts reconcile-processing cron — cross-tenant recovery scan. §14.7.
-  "/inngest/payouts-reconcile-processing.ts",
+  // BP15: Payouts reconcile-processing cron — cross-tenant recovery scan.
+  // Moved to a Vercel cron (#894). §14.7.
+  "/lib/cron/payouts-reconcile-processing.ts",
   // D-091 R3 #51 follow-up: bookings stuck-submitting reconcile cron —
-  // cross-tenant sweep of bookings stuck in 'submitting' state. §14.4.
-  "/inngest/bookings-stuck-submitting-reconcile.ts",
+  // cross-tenant sweep of bookings stuck in 'submitting' state. Moved to a
+  // Vercel cron (#894). §14.4.
+  "/lib/cron/bookings-stuck-submitting-reconcile.ts",
   // D-097 — help-AI message route needs service-role for the
   // loadTenantSnapshot + incrementChatMessages helpers (same pattern
   // as the customer chat route). All upstream queries already use
@@ -260,7 +265,7 @@ module.exports = [
   // BP26: §26.6 monitoring crons — cross-tenant scans, no user session.
   "/lib/cron/auth-failure-monitor.ts",
   "/lib/cron/permission-denied-monitor.ts",
-  "/inngest/cross-tenant-rls-bypass-monitor.ts",
+  "/lib/cron/cross-tenant-rls-bypass-monitor.ts",
   // BP27: AI call wrapper — writes ai_call_log + UPSERTs tenant_usage_metrics
   // for every Anthropic/OpenAI call. Constructs its own service-role db. §27.12.
   "/lib/ai/call-wrapper.ts",

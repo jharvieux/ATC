@@ -13,10 +13,10 @@ vi.mock("inngest/next", () => ({
   }),
 }));
 
+// payouts-reconcile-processing and bookings-stuck-submitting-reconcile moved
+// to Vercel crons (#894) — no longer Inngest-registered, so not gated here.
 const BOOKING_CRON_IDS = [
   "payouts-mark-available",
-  "payouts-reconcile-processing",
-  "bookings-stuck-submitting-reconcile",
   "reconcile-statement-automated",
   "pre-cruise-email-scheduler-t1",
   "pre-cruise-email-scheduler-multiphase",

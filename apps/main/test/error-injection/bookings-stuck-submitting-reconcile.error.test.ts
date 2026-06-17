@@ -55,7 +55,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
   }),
 }));
 
-import { runBookingsStuckSubmittingReconcile } from "@/inngest/bookings-stuck-submitting-reconcile";
+import { runBookingsStuckSubmittingReconcile } from "@/lib/cron/bookings-stuck-submitting-reconcile";
 
 beforeEach(() => {
   mocks.stuckRows = [];

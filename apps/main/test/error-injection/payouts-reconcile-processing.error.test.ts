@@ -110,7 +110,7 @@ vi.mock("stripe", () => {
   return { default: FakeStripe };
 });
 
-import { runPayoutsReconcileProcessing } from "@/inngest/payouts-reconcile-processing";
+import { runPayoutsReconcileProcessing } from "@/lib/cron/payouts-reconcile-processing";
 
 const ORIG = process.env.STRIPE_SECRET_KEY;
 const ORIG_BOOKING_CRONS = process.env.BOOKING_CRONS_DISABLED;

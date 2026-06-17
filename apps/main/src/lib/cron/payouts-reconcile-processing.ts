@@ -1,9 +1,10 @@
-// §14.7 — Reconciliation cron for 'processing' payout records.
+// §14.7 — Reconciliation cron for 'processing' payout records. Runs every
+// 5 minutes via Vercel cron (/api/cron/payouts-reconcile-processing).
 //
 // Recovery path for the "Stripe call succeeded but the response was lost"
 // (network timeout) case left behind by payouts-execute-transfer.
 //
-// Runs every 5 minutes. For each payout_records row in 'processing' older than 60s:
+// For each payout_records row in 'processing' older than 60s:
 //   1. Check Stripe by idempotency key (via transfer metadata lookup).
 //   2. Transfer found → write stripe_transfer_id AND settle 'processing' → 'paid'.
 //   3. Transfer not found → re-call Stripe with same key (idempotency cache
@@ -15,9 +16,10 @@
 //
 // CRITICAL: attempt_generation is NEVER auto-incremented here.
 // Auto-increment would produce duplicate transfers (§14.7 last "Calls Worth Flagging").
+//
+// Service-role import permitted: background cron, no user session. §5.4.4.
 
 import Stripe from "stripe";
-import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertSafeStripeAmount, type Cents } from "@/lib/money";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -59,8 +61,6 @@ async function settleReconciledRow(
   }
 }
 
-// D-091 / error-injection probe — inner body extracted for direct test
-// invocation.
 export async function runPayoutsReconcileProcessing(): Promise<{ recovered: number; total_processing: number }> {
   if (process.env.BOOKING_CRONS_DISABLED === "true") {
     return { recovered: 0, total_processing: 0 };
@@ -143,11 +143,3 @@ export async function runPayoutsReconcileProcessing(): Promise<{ recovered: numb
 
   return { recovered, total_processing: processing.length };
 }
-
-export const payoutsReconcileProcessing = inngest.createFunction(
-  {
-    id: "payouts-reconcile-processing",
-    triggers: [{ cron: "*/5 * * * *" }],
-  },
-  runPayoutsReconcileProcessing,
-);
