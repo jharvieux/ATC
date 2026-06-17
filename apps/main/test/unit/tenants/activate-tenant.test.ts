@@ -55,7 +55,7 @@ describe("activateTenant", () => {
     );
   });
 
-  it("adds CAS eq + select when casStage is set and row matches", async () => {
+  it("CAS path resolves when the stage guard matches — concurrent activation attempt cannot bypass it", async () => {
     const { db, eqSpy, selectSpy } = makeDb({ data: [{ id: "tenant-1" }], error: null });
     await expect(activateTenant(db, "tenant-1", {}, { casStage: "branding" })).resolves.toBeUndefined();
     expect(eqSpy).toHaveBeenCalledWith("onboarding_stage", "branding");

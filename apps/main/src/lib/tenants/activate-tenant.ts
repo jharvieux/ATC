@@ -1,9 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { safeAwait, safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { type OnboardingStage } from "@/lib/onboarding/state-machine";
 
 interface ActivateTenantOptions {
   /** When set, adds a CAS guard on onboarding_stage and asserts 1 row matched. */
-  casStage?: string;
+  casStage?: OnboardingStage;
 }
 
 export async function activateTenant(
@@ -32,6 +33,9 @@ export async function activateTenant(
       1,
     );
   } else {
+    // No CAS: PK isolation only. All non-CAS callers use a platform-admin
+    // service-role client scoped to a validated tenantId — the admin route
+    // verifies the session and the tenant row existence before calling here.
     await safeAwait(
       db.from("tenants").update(fields).eq("id", tenantId),
       "tenants.update.activate",
