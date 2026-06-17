@@ -135,9 +135,27 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
+  // When the OAuth flow originated from a tenant subdomain (set by oauth-initiate),
+  // redirect back there so the user lands on TenantShell instead of the platform
+  // root. The platform callback runs because only atcadventures.com is registered
+  // in Supabase Auth — tenant subdomain URLs would each need their own entry.
+  // Validation: must end with .PLATFORM_PRIMARY_DOMAIN and not equal the platform
+  // domain itself. Malformed values fall through to platform origin.
+  const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
+  const tenantHost = url.searchParams.get("tenant_host");
+  let redirectOrigin = url.origin;
+  if (tenantHost && primaryDomain && tenantHost !== primaryDomain && tenantHost.endsWith(`.${primaryDomain}`)) {
+    try {
+      new URL(`https://${tenantHost}`); // validate hostname is well-formed
+      redirectOrigin = `https://${tenantHost}`;
+    } catch {
+      // malformed host — fall through to platform origin
+    }
+  }
+
   const target = safe
-    ? new URL(safe.path, url.origin)
-    : new URL("/", url.origin);
+    ? new URL(safe.path, redirectOrigin)
+    : new URL("/", redirectOrigin);
   return applyAuthCookies(NextResponse.redirect(target, 302));
 }
 

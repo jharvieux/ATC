@@ -391,3 +391,56 @@ describe("GET /api/auth/callback", () => {
     await expect(get("?code=abc")).rejects.toThrow(/auth\.callback\.users\.upsert/);
   });
 });
+
+// tenant_host redirect — platform-callback subdomain fix.
+//
+// oauth-initiate always points redirectTo at the platform callback and carries
+// `tenant_host` as a param so the callback can redirect to the tenant subdomain
+// after session exchange, instead of landing the user on the platform root.
+describe("GET /api/auth/callback — tenant_host redirect", () => {
+  const PLATFORM = "tenant.example.com"; // matches the existing test fixture host
+
+  beforeEach(() => {
+    process.env.PLATFORM_PRIMARY_DOMAIN = PLATFORM;
+  });
+
+  afterEach(() => {
+    delete process.env.PLATFORM_PRIMARY_DOMAIN;
+  });
+
+  it("redirects to the tenant subdomain when tenant_host is a valid subdomain", async () => {
+    const res = await get("?code=abc&tenant_host=lisa-travel.tenant.example.com", {
+      "x-resolved-tenant-id": "platform",
+    });
+    expect(res.status).toBe(302);
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.host).toBe("lisa-travel.tenant.example.com");
+    expect(loc.pathname).toBe("/");
+  });
+
+  it("rejects tenant_host equal to the platform domain — stays on platform origin", async () => {
+    const res = await get("?code=abc&tenant_host=tenant.example.com", {
+      "x-resolved-tenant-id": "platform",
+    });
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.host).toBe("tenant.example.com");
+  });
+
+  it("rejects tenant_host from a foreign domain — stays on platform origin", async () => {
+    const res = await get("?code=abc&tenant_host=evil.com", {
+      "x-resolved-tenant-id": "platform",
+    });
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.host).toBe("tenant.example.com");
+  });
+
+  it("honors ?next= path relative to the tenant subdomain", async () => {
+    const res = await get(
+      "?code=abc&tenant_host=lisa-travel.tenant.example.com&next=%2Fcrm%2Fbookings",
+      { "x-resolved-tenant-id": "platform" },
+    );
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.host).toBe("lisa-travel.tenant.example.com");
+    expect(loc.pathname).toBe("/crm/bookings");
+  });
+});

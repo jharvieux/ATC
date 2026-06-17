@@ -33,8 +33,22 @@ export async function GET(req: NextRequest): Promise<Response> {
   // why this beats the prior startsWith-shape predicate.
   const safe = safeNextFor(url.searchParams.get("redirect_to"), url.origin);
 
-  const callbackUrl = new URL("/api/auth/callback", url.origin);
+  // Always build the callback on the platform domain so only one URL needs
+  // to be registered in Supabase Auth "Additional Redirect URLs". Each tenant
+  // subdomain variant would otherwise need its own entry — or a wildcard that
+  // Supabase only partially supports. When the login originated from a tenant
+  // subdomain we carry the hostname in `tenant_host` so the callback can
+  // redirect there after session exchange instead of landing on the platform
+  // root (the misdirect bug: lisa-travel owner landing at /crm/contacts).
+  const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
+  const platformOrigin = primaryDomain ? `https://${primaryDomain}` : url.origin;
+  const callbackUrl = new URL("/api/auth/callback", platformOrigin);
   if (safe) callbackUrl.searchParams.set("next", safe.path);
+
+  const reqHostname = new URL(req.url).hostname;
+  if (primaryDomain && reqHostname !== primaryDomain && reqHostname.endsWith(`.${primaryDomain}`)) {
+    callbackUrl.searchParams.set("tenant_host", reqHostname);
+  }
 
   const { supabase, applyAuthCookies } = createRouteHandlerClient(req);
 
