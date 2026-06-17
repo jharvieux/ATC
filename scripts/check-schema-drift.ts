@@ -63,6 +63,7 @@ export function ledgerVersions(dir: string): string[] {
     .readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
+    // DB records bare timestamps (e.g. "20260521120000"), not full filename stems.
     .map((f) => f.replace(/\.sql$/, "").replace(/_.*$/, ""));
 }
 

@@ -57,54 +57,54 @@ describe("ledgerVersions", () => {
 
 describe("computeDrift", () => {
   it("returns no drift when ledger and applied are identical", () => {
-    const ledger = ["20240101_init", "20240201_add_col"];
+    const ledger = ["20240101000000", "20240201120000"];
     expect(computeDrift(ledger, ledger)).toEqual({ unapplied: [], orphaned: [] });
   });
 
   it("detects UNAPPLIED when ledger has versions absent from DB", () => {
-    const ledger = ["20240101_init", "20240201_add_col", "20240301_new_table"];
-    const applied = ["20240101_init", "20240201_add_col"];
+    const ledger = ["20240101000000", "20240201120000", "20240301000000"];
+    const applied = ["20240101000000", "20240201120000"];
     const { unapplied, orphaned } = computeDrift(ledger, applied);
-    expect(unapplied).toEqual(["20240301_new_table"]);
+    expect(unapplied).toEqual(["20240301000000"]);
     expect(orphaned).toEqual([]);
   });
 
   it("detects ORPHANED when DB has versions absent from ledger", () => {
-    const ledger = ["20240101_init"];
-    const applied = ["20240101_init", "20240201_dashboard_hotfix"];
+    const ledger = ["20240101000000"];
+    const applied = ["20240101000000", "20240201000000"];
     const { unapplied, orphaned } = computeDrift(ledger, applied);
     expect(unapplied).toEqual([]);
-    expect(orphaned).toEqual(["20240201_dashboard_hotfix"]);
+    expect(orphaned).toEqual(["20240201000000"]);
   });
 
   it("detects both UNAPPLIED and ORPHANED simultaneously", () => {
-    const ledger = ["20240101_init", "20240301_new"];
-    const applied = ["20240101_init", "20240201_dashboard_hotfix"];
+    const ledger = ["20240101000000", "20240301000000"];
+    const applied = ["20240101000000", "20240201000000"];
     const { unapplied, orphaned } = computeDrift(ledger, applied);
-    expect(unapplied).toEqual(["20240301_new"]);
-    expect(orphaned).toEqual(["20240201_dashboard_hotfix"]);
+    expect(unapplied).toEqual(["20240301000000"]);
+    expect(orphaned).toEqual(["20240201000000"]);
   });
 
   it("returns all applied as ORPHANED when ledger is empty", () => {
     // An empty ledger should already be caught upstream (checkTarget returns drift),
     // but the pure function handles it gracefully.
-    const { unapplied, orphaned } = computeDrift([], ["20240101_init"]);
+    const { unapplied, orphaned } = computeDrift([], ["20240101000000"]);
     expect(unapplied).toEqual([]);
-    expect(orphaned).toEqual(["20240101_init"]);
+    expect(orphaned).toEqual(["20240101000000"]);
   });
 
   it("returns all ledger entries as UNAPPLIED when applied is empty", () => {
-    const { unapplied, orphaned } = computeDrift(["20240101_init"], []);
-    expect(unapplied).toEqual(["20240101_init"]);
+    const { unapplied, orphaned } = computeDrift(["20240101000000"], []);
+    expect(unapplied).toEqual(["20240101000000"]);
     expect(orphaned).toEqual([]);
   });
 
   it("handles multiple UNAPPLIED and multiple ORPHANED entries", () => {
-    const ledger = ["v1", "v2", "v3", "v5"];
-    const applied = ["v1", "v2", "v4", "v6"];
+    const ledger = ["20240101000000", "20240102000000", "20240103000000", "20240105000000"];
+    const applied = ["20240101000000", "20240102000000", "20240104000000", "20240106000000"];
     const { unapplied, orphaned } = computeDrift(ledger, applied);
-    expect(unapplied).toEqual(["v3", "v5"]);
-    expect(orphaned).toEqual(["v4", "v6"]);
+    expect(unapplied).toEqual(["20240103000000", "20240105000000"]);
+    expect(orphaned).toEqual(["20240104000000", "20240106000000"]);
   });
 });
 
