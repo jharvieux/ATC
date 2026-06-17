@@ -98,7 +98,6 @@ function main(): void {
     process.exit(1);
   }
 
-  // Build granted set from permission-grants.ts
   const grantsContent = fs.readFileSync(GRANTS_FILE, "utf8");
   const granted = extractGrantedPairs(grantsContent);
   if (granted.size === 0) {
@@ -110,7 +109,6 @@ function main(): void {
 
   const baseline = loadBaseline();
 
-  // Sweep API routes for assertPermission pairs
   const apiFiles = walkTs(API_DIR);
   if (apiFiles.length === 0) {
     console.error(
@@ -119,7 +117,6 @@ function main(): void {
     process.exit(1);
   }
 
-  // missing = not in granted AND not in baseline
   const missing: { file: string; pair: string }[] = [];
   for (const file of apiFiles) {
     const content = fs.readFileSync(file, "utf8");
