@@ -135,9 +135,33 @@ export async function GET(req: NextRequest): Promise<Response> {
     );
   }
 
+  // When the OAuth flow originated from a tenant subdomain (set by oauth-initiate),
+  // redirect back there so the user lands on TenantShell instead of the platform
+  // root. The platform callback runs because only atcadventures.com is registered
+  // in Supabase Auth — tenant subdomain URLs would each need their own entry.
+  // Security: parse first, then validate the PARSED hostname — never the raw param
+  // string. Suffix-checking the raw string allows path-injection bypass:
+  //   evil.com/.atcadventures.com  → endsWith check passes, URL host is evil.com
+  // Parsing first defeats this: new URL("https://evil.com/.atcadventures.com").hostname
+  // returns "evil.com", which fails the subdomain check.
+  const primaryDomain = process.env.PLATFORM_PRIMARY_DOMAIN ?? "";
+  const tenantHostRaw = url.searchParams.get("tenant_host");
+  let redirectOrigin = url.origin;
+  if (tenantHostRaw && primaryDomain) {
+    try {
+      const parsed = new URL(`https://${tenantHostRaw}`);
+      const parsedHostname = parsed.hostname; // normalized, path-injection-safe
+      if (parsedHostname !== primaryDomain && parsedHostname.endsWith(`.${primaryDomain}`)) {
+        redirectOrigin = `https://${parsedHostname}`;
+      }
+    } catch {
+      // malformed host — fall through to platform origin
+    }
+  }
+
   const target = safe
-    ? new URL(safe.path, url.origin)
-    : new URL("/", url.origin);
+    ? new URL(safe.path, redirectOrigin)
+    : new URL("/", redirectOrigin);
   return applyAuthCookies(NextResponse.redirect(target, 302));
 }
 

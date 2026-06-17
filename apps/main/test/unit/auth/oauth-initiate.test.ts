@@ -9,7 +9,7 @@
 //      are dropped so login can't be turned into an open redirect or bounced
 //      into the non-existent /auth/callback page.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const mockSignInWithOAuth = vi.fn();
@@ -139,5 +139,44 @@ describe("GET /api/auth/oauth-initiate", () => {
     mockSignInWithOAuth.mockResolvedValue({ data: { url: "https://example.com" }, error: null });
     await get("?provider=facebook");
     expect(oauthArg().options?.scopes).toBeUndefined();
+  });
+});
+
+// tenant_host — platform-callback misdirect fix.
+//
+// When a tenant-subdomain user logs in via Google, the OAuth callback must land
+// on the platform domain (only one URL registered in Supabase Auth), then redirect
+// to the tenant subdomain. The tenant hostname is carried through the OAuth round-
+// trip as `tenant_host` in the callbackUrl so the callback knows where to redirect.
+describe("GET /api/auth/oauth-initiate — tenant_host subdomain fix", () => {
+  function getFrom(origin: string, qs: string): Promise<Response> {
+    return GET(new NextRequest(`${origin}/api/auth/oauth-initiate${qs}`));
+  }
+
+  beforeEach(() => {
+    process.env.PLATFORM_PRIMARY_DOMAIN = "atcadventures.com";
+    mockSignInWithOAuth.mockResolvedValue({ data: { url: "https://example.com" }, error: null });
+  });
+
+  afterEach(() => {
+    delete process.env.PLATFORM_PRIMARY_DOMAIN;
+  });
+
+  it("callback URL uses platform domain, not the tenant subdomain", async () => {
+    await getFrom("https://lisa-travel.atcadventures.com", "?provider=google");
+    const redirectTo = new URL(oauthArg().options!.redirectTo!);
+    expect(redirectTo.host).toBe("atcadventures.com");
+  });
+
+  it("adds tenant_host param when request came from a tenant subdomain", async () => {
+    await getFrom("https://lisa-travel.atcadventures.com", "?provider=google");
+    const redirectTo = new URL(oauthArg().options!.redirectTo!);
+    expect(redirectTo.searchParams.get("tenant_host")).toBe("lisa-travel.atcadventures.com");
+  });
+
+  it("no tenant_host param when request came from the platform domain", async () => {
+    await getFrom("https://atcadventures.com", "?provider=google");
+    const redirectTo = new URL(oauthArg().options!.redirectTo!);
+    expect(redirectTo.searchParams.has("tenant_host")).toBe(false);
   });
 });
