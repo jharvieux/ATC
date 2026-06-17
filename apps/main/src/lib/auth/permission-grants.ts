@@ -78,6 +78,8 @@ const READ_GRANTS: ReadonlySet<GrantKey> = new Set([
   // #996 — any member can view PATs that act as them; the route scopes to
   // caller's own user_id for non-owners (same self-service pattern as above).
   key("api_tokens", "list"),
+  // #1173 — legal doc text (onboarding + Privacy & data page; not user-scoped).
+  key("legal_document", "read"),
 ]);
 
 // SELF-SERVICE grants — operations every authenticated member performs on
@@ -111,6 +113,13 @@ const SELF_SERVICE_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("SessionTransfer", "commit"),
   key("SessionTransfer", "discard"),
   key("SessionTransfer", "undo"),
+  // #1173 — "My account → Privacy & data" nav section (ALL_ROLES).
+  // Routes operate only on the caller's own identity/consent rows.
+  key("Get consent status", "get"),
+  key("Record consent", "post"),
+  key("Privacy preferences", "get"),
+  key("Privacy preferences update", "put"),
+  key("Cookie preferences", "post"),
 ]);
 
 // VIEWER grants — read/list + self-service on own data. End customers default
@@ -133,10 +142,30 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("bookings", "update"),
   key("bookings.passengers", "write"),
   key("bookings.options", "write"),
-  // Quotes
+  // #1173 — bookings sub-resource reads/writes (staff-only Bookings nav).
+  // Note: bookings.passengers:read and bookings.options:read live in
+  // READ_GRANTS (latent over-grant, out of scope per #1173). New sub-resource
+  // reads below are deliberately placed in AGENT_GRANTS to match staff-only.
+  key("bookings.itinerary", "read"),
+  key("bookings.itinerary", "create"),
+  key("bookings.itinerary", "update"),
+  key("bookings.line_items", "list"),
+  key("bookings.line_items", "create"),
+  key("bookings.line_items", "update"),
+  key("bookings.line_items", "delete"),
+  key("bookings.resources", "read"),
+  key("bookings.resources", "create"),
+  key("bookings.resources", "update"),
+  // Quotes (#1173 — quotes:read and options sub-resource absent from matrix)
+  key("quotes", "read"),
   key("quotes", "accept"),
   key("quotes", "create"),
   key("quotes", "send"),
+  key("quotes.options", "list"),
+  key("quotes.options", "create"),
+  key("quotes.options", "update"),
+  key("quotes.options", "delete"),
+  key("quotes.options", "select"),
   // Contacts
   key("contacts", "create"),
   key("contacts", "update"),
@@ -169,6 +198,30 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("notifications", "write"),
   // RAG submissions (operational — submit content; approve/reject is owner)
   key("rag_submissions", "create"),
+  // #1173 — RAG single-chunk and batch-submit endpoints (same audience as rag_submissions:create)
+  key("Submit knowledge chunk", "post"),
+  key("Batch submit knowledge chunks", "post"),
+  // #1173 — Reports (CRM → Reports, STAFF nav)
+  key("reports.bookings_by_source", "read"),
+  key("reports.campaigns", "read"),
+  key("reports.campaigns", "create"),
+  key("reports.cancellations", "read"),
+  key("reports.first_vs_last_touch", "read"),
+  key("reports.leads_by_source", "read"),
+  key("reports.source_funnel", "read"),
+  // #1173 — Imports (CRM → Imports, STAFF nav)
+  key("imports.manual", "create"),
+  key("imports.upload", "create"),
+  key("imports.review", "list"),
+  key("imports.review", "read"),
+  key("imports.review", "accept"),
+  key("imports.review", "reject"),
+  // #1173 — CRM (Contacts, STAFF nav)
+  key("crm.attribution_categories", "list"),
+  key("crm.attribution_categories", "create"),
+  key("crm.contacts", "edit_source"),
+  // #1173 — Gmail health status pill (CRM banner; agents need read; connect is owner-only)
+  key("integrations.gmail", "read"),
   // #902 — TA-mode dashboard chat (audience='tenant_member'). Viewers
   // (customers) are explicitly excluded — they only get customer chat.
   // Note: the create-side auth for sending TA messages is enforced by
@@ -240,6 +293,28 @@ const OWNER_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("TenantUsage", "read"),
   key("TenantOverrideRequest", "list"),
   key("TenantOverrideRequest", "create"),
+  // #1173 — tenant Administration settings (owner-only "Administration" nav)
+  key("tenant.ai-config", "read"),
+  key("tenant.ai-config", "tenant.config.update"),
+  key("tenant.billing", "read"),
+  key("tenant.billing", "manage"),
+  key("tenant.personas", "read"),
+  key("tenant.personas", "tenant.config.update"),
+  key("tenant.sandbox", "read"),
+  key("tenant.sandbox", "toggle"),
+  key("Tenant chat limits", "get"),
+  key("Tenant chat limits update", "put"),
+  key("Tenant safety settings", "get"),
+  key("Tenant safety add", "post"),
+  key("Tenant safety remove", "delete"),
+  // #1173 — CRM notes admin (/api/tenant/crm/notes — owner-only; PII redaction)
+  key("CRM notes list", "list"),
+  key("CRM note redaction", "patch"),
+  // #1173 — Gmail OAuth bootstrap (route comment: "redirects the tenant admin" to Google consent)
+  key("integrations.gmail", "connect"),
+  // #1173 — RAG content curation (mirrors rag_submissions:approve/reject/review lifecycle)
+  key("List knowledge chunks", "get"),
+  key("Update knowledge chunk", "patch"),
 ]);
 
 const GRANTS_BY_ROLE: Record<UserRole, ReadonlySet<GrantKey>> = {
