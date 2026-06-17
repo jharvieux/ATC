@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-253 — 2026-06-17 — Migration ledger ↔ live DB drift gate (#1158, PR #1193)
+
+Added `scripts/check-schema-drift.ts` — a post-deploy gate that compares the committed migration ledger (`apps/*/supabase/migrations/*.sql`) against `supabase_migrations.schema_migrations` in the live DB after every `npx supabase db push`.
+
+**Design decision: ledger-vs-applied comparison, not full schema dump.** A full dump comparison would require a throwaway Postgres instance in CI. The ledger-vs-applied approach catches the stated primary failure mode (#534: silent push failure) with zero additional infra.
+
+**Two failure modes detected:** UNAPPLIED (file in ledger, not applied to DB) and ORPHANED (applied to DB, no matching file).
+
+**Wiring:** Post-`db push` in both staging and production jobs in `deploy.yml`. Also added to `pnpm verify` (exits 0/SKIPPED when no DB URL set — safe in local dev and CI lint jobs). RAG not wired — RAG migrations are applied via psql, not `supabase db push` (see [[reference_rag_migrations_psql]]).
+
+**What was rejected:** Running `check:schema-drift` as a pre-push CI gate (not post-deploy) — rejected because the check requires a live DB URL, which CI lint/test jobs don't have.
+
+---
+
 ## D-252 — 2026-06-17 — Permission-matrix CI guard added (#1176); all 59 missing RBAC grants filled (#1173)
 
 Two-issue sequence completed in one session:
