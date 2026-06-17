@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-256 — 2026-06-17 — OAuth subdomain redirect + hamburger menu role-awareness (PRs #1199 #1201)
+
+Two related bugs: tenant-subdomain owners (e.g. lisa-travel) were (a) redirected to platform root after OAuth login instead of their subdomain, and (b) saw a generic hamburger menu with no Dashboard or Admin Console links even in the CRM area.
+
+**Fix 1 — OAuth redirect (PR #1201):** `oauth-initiate` always builds the Supabase callbackUrl on the platform domain (only one URL registered in Supabase Auth). When request comes from a tenant subdomain, adds `?tenant_host=<hostname>` to carry the subdomain through the OAuth round-trip. `callback` validates `tenant_host` by parsing with `new URL()` first and checking `parsed.hostname` — building `redirectOrigin` from the parsed hostname, never the raw string. Closed open-redirect: suffix-checking the raw string (`evil.com/.atcadventures.com`) bypasses endsWith; the WHATWG URL parser normalizes hostname to `evil.com`.
+
+**Fix 2 — Role-aware menu (PR #1199):** `getSiteHeaderProps()` now calls `getTenantRole(user.id, tenantId)` on tenant subdomains when authenticated (same as TenantShell's page.tsx), threads the `role` prop through `SiteHeader` → `SiteHeaderMenu`. `SiteHeaderMenu` renders `navSectionsForRole(role)` when role is present — same nav sections as TenantShell hamburger (Dashboard, Workspace, My account, Admin Console for owners).
+
+**What was rejected:** Registering wildcard subdomain URLs in Supabase Auth (`https://*.atcadventures.com/**`) — Supabase only partially supports wildcards and would need one entry per tenant or an overly broad wildcard.
+
+**Related:** Issue #1200 (CRM pages missing left-rail PanelLeft panel) deferred — the hamburger nav fix is surgical; PanelLeft requires broader TenantShell refactor.
+
+---
+
 ## D-254 — 2026-06-17 — Three deploy.yml bugs found during beta release (PRs #1195 #1196 #1197)
 
 Three bugs in the migration drift gate surfaced across four beta release attempts (beta063–065 all failed):

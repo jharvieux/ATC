@@ -1,26 +1,22 @@
 # Session state — last updated 2026-06-17 07:00 UTC
 
 ## Just completed
-
-- PR #1195: `--include-all` on `supabase db push` (out-of-order migration 20260703000001)
-- PR #1196: `pnpm tsx` instead of bare `tsx` in drift check steps
-- PR #1197: strip name suffix from `ledgerVersions` to match DB format — root cause of all drift gate failures (ledger had `20260521120000_tenancy_and_identity`, DB stored `20260521120000`)
-- `release/beta063`, `beta064`, `beta065` all failed (sequential bugs); each fix landed as a separate PR
-- `release/beta066` pushed — all three fixes included; pipeline running
+- PR #1201 (feature/fix-oauth-subdomain-redirect) — merged. OAuth post-login redirect now sends tenant-subdomain users back to their subdomain after Supabase's platform-domain callback. Included security fix for open-redirect via path-injection on raw tenant_host string.
+- All audit agents (D-091 + pre-pr-reviewer) completed clean on both PRs.
+- PR #1201 `pr-audit-section-check` passed, PR merged and branch deleted.
 
 ## In flight
-
-`release/beta066` deploy pipeline — monitor task `b0kf7yn7h` watching.
+- PR #1199 (feature/role-aware-site-header-menu) — CI running after update-branch (PR #1201 merge moved dev ahead). All checks expected to pass; audit hash unchanged by the merge commit. Waiting for CLEAN state to merge.
 
 ## Next step
-
-Wait for beta066. If success: `vbeta066` tag created, auto-merged to dev — done.
-If failure: read logs immediately.
+- Wait for CI on PR #1199 to complete (background task watching).
+- Merge PR #1199 once CLEAN.
+- Update MEMORY.md with session decisions.
+- End-of-session protocol.
 
 ## Blocked on user
-
-Nothing.
+- Nothing
 
 ## Open questions
-
-`release/beta063`, `beta064`, `beta065` stuck failed on remote — protected branches. User can delete manually via GitHub if desired.
+- Issue #1200 (CRM pages missing left-rail PanelLeft conversation panel) — deferred from PR #1199, tracked in the issue.
+- `release/beta063`, `beta064`, `beta065` stuck failed on remote — protected branches. User can delete manually via GitHub if desired.
