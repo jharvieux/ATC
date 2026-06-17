@@ -3,17 +3,21 @@
 // matrix in lib/auth/permission-grants.ts would 403 them anyway; hiding
 // the entries avoids dead links).
 //
+// Source of truth for the staff top-right hamburger dropdown (the left nav
+// rail was removed when the dashboard became a ChatGPT-style surface).
+//
 // Role rationale:
 //   - Home ("/") differs by role (#974 operator decision 2026-06-10):
-//     staff work in TA mode (trade topics, no customer guardrails), so
-//     their home IS the Concierge; viewers are end customers and keep
-//     the guardrailed support chat.
+//     staff land on the TA dashboard (trade topics, no customer guardrails),
+//     labelled "Dashboard"; viewers are end customers and keep the
+//     guardrailed support chat.
 //   - Workspace (CRM) is staff-only: ta_chat/quotes/bookings grants
 //     exclude viewers (#902).
 //   - My account is self-service (conversations, price watches, privacy)
 //     — READ_GRANTS territory, available to every role.
-//   - Administration maps to owner-only grants (tenant_branding write,
-//     team_members update_role, billing).
+//   - Admin Console is a single owner-only entry to /settings; its
+//     sub-pages now live in the console's own collapsible sidebar, so
+//     they are no longer enumerated here.
 
 import type { UserRole } from "@/lib/auth/permission-grants";
 
@@ -38,7 +42,7 @@ export const TENANT_NAV_SECTIONS: readonly TenantNavSection[] = [
   {
     heading: null,
     roles: STAFF,
-    items: [{ href: "/", label: "Concierge" }],
+    items: [{ href: "/", label: "Dashboard" }],
   },
   {
     heading: null,
@@ -66,12 +70,9 @@ export const TENANT_NAV_SECTIONS: readonly TenantNavSection[] = [
     ],
   },
   {
-    heading: "Administration",
+    heading: null,
     roles: OWNER_ONLY,
-    items: [
-      { href: "/settings", label: "Settings" },
-      { href: "/settings/usage", label: "Usage" },
-    ],
+    items: [{ href: "/settings", label: "Admin Console" }],
   },
 ];
 

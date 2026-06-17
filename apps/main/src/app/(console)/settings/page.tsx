@@ -41,7 +41,7 @@ const SECTIONS = [
 export default function SettingsHubPage() {
   return (
     <main className="px-6 py-10 max-w-[720px] mx-auto">
-      <h1 className="text-2xl font-bold mb-1">Settings</h1>
+      <h1 className="text-2xl font-bold mb-1">Admin Console</h1>
       <p className="text-muted-foreground text-[14px] mb-9">
         Manage your workspace configuration, team, and billing.
       </p>
