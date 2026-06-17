@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ledgerVersions, computeDrift } from "../../../scripts/check-schema-drift";
+import { ledgerVersions, computeDrift, checkTarget } from "../../../scripts/check-schema-drift";
 
 // ─── ledgerVersions ──────────────────────────────────────────────────────────
 
@@ -105,5 +105,36 @@ describe("computeDrift", () => {
     const { unapplied, orphaned } = computeDrift(ledger, applied);
     expect(unapplied).toEqual(["v3", "v5"]);
     expect(orphaned).toEqual(["v4", "v6"]);
+  });
+});
+
+// ─── checkTarget — empty-ledger gate ─────────────────────────────────────────
+// The DB connection (appliedVersions) is only reached after the ledger check,
+// so a fake dbUrl is safe here — the function returns before ever connecting.
+
+describe("checkTarget — empty migrations directory is drift, not skip", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "drift-ct-test-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it("returns drift when the migrations directory exists but contains no .sql files", async () => {
+    const result = await checkTarget("main", "postgres://fake-url-never-reached", tmpDir);
+    expect(result.status).toBe("drift");
+    expect(result.message).toMatch(/no migration files found/);
+  });
+
+  it("returns drift when the migrations directory does not exist at all", async () => {
+    const result = await checkTarget("rag", "postgres://fake-url-never-reached", path.join(tmpDir, "nonexistent"));
+    expect(result.status).toBe("drift");
+    expect(result.message).toMatch(/no migration files found/);
+  });
+
+  it("returns skipped (not drift) when no dbUrl is provided — env-var-missing is expected in local dev", async () => {
+    const result = await checkTarget("main", null, tmpDir);
+    expect(result.status).toBe("skipped");
   });
 });

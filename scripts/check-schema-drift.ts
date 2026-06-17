@@ -101,9 +101,13 @@ async function appliedVersions(dbUrl: string): Promise<string[]> {
   }
 }
 
-async function checkTarget(
+// Exported for tests: pass `overrideDir` to avoid touching the real repo tree.
+// The DB connection (appliedVersions) is never reached when ledger is empty,
+// so tests can pass a fake dbUrl alongside an empty temp dir.
+export async function checkTarget(
   target: Target,
   dbUrl: string | null,
+  overrideDir?: string,
 ): Promise<{ status: "ok" | "drift" | "skipped"; message: string }> {
   const resolvedUrl = dbUrl ?? process.env[envVarFor(target)] ?? null;
   if (!resolvedUrl) {
@@ -113,7 +117,7 @@ async function checkTarget(
     };
   }
 
-  const dir = migrationsDir(target);
+  const dir = overrideDir ?? migrationsDir(target);
   const ledger = ledgerVersions(dir);
   if (ledger.length === 0) {
     return {
