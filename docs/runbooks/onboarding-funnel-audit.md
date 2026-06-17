@@ -49,7 +49,7 @@ columns verified against `mcp__supabase-main list_tables` (264k snapshot, 2026-0
   (`{sub_agency, byo_agency}`), so it needs the type-prefixed tier *code*, not the
   bare tier name. Mirror the resolution already done correctly in
   `app/api/onboarding/subscription/checkout/route.ts:33-43`.
-- **Filed as:** _(GitHub issue — see PR/issue link once filed)_
+- **Filed as:** #1183
 
 ---
 
@@ -153,8 +153,7 @@ dropped. A guard that validates every `.select("…")` column-list against the l
 
 ## Follow-ups filed
 
-- **Finding 1** — persona PATCH 404 (own issue, file paths + repro above).
-- **Gate gap** — no static guard for nonexistent/misnamed `.select` columns (#1160 class);
-  proposal: extend the column guard to validate against live `information_schema`.
-
-_(Issue numbers added once filed — issue-filing is presented to the user first.)_
+- **#1183** — persona PATCH 404 (Finding 1; file paths + repro above).
+- **#1184** — gate gap: no static guard for nonexistent/misnamed `.select` columns
+  (#1160 class); proposal: extend the column guard to validate against live
+  `information_schema`.
