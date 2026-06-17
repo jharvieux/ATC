@@ -79,7 +79,7 @@ describe("SiteHeaderMenu — role-aware nav wiring (#1199)", () => {
     expect(html).not.toContain("Admin Console");
   });
 
-  it("viewer does not see Dashboard nav entry", () => {
+  it("viewer does not see Dashboard or Admin Console but does see self-service account links", () => {
     const html = render({
       isPlatformDomain: false,
       isAuthenticated: true,
@@ -87,6 +87,9 @@ describe("SiteHeaderMenu — role-aware nav wiring (#1199)", () => {
     });
     expect(html).not.toContain("Dashboard");
     expect(html).not.toContain("Admin Console");
+    // Viewers are end customers — they get account self-service (conversations,
+    // price-watches, privacy), not staff-only surfaces.
+    expect(html).toContain('href="/settings/conversations"');
   });
 
   it("null role shows generic fallback items instead of role nav", () => {
