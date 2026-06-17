@@ -367,6 +367,17 @@ STRINGS near their `.from`: a `.select("*")` + later `row.col`, or a column that
 was NEVER on the table, slips through. The gate is a backstop, not a substitute
 for step 2.
 
+### Permission grants belong with the route PR
+
+`pnpm check:permission-matrix` (CI step "Permission-matrix guard") fails any PR where a route under `apps/main/src/app/api/` calls `assertPermission(req, { resource: "X", action: "Y" })` with a pair absent from `apps/main/src/lib/auth/permission-grants.ts`. Root cause of issue #1173 (58 silent 403s). tsc cannot catch this class — resource and action are plain strings. E2E tests bypass `isPermitted` via `role='tenant_owner'`. Only this static sweep catches it.
+
+When you add a new route that calls `assertPermission`:
+1. Add the `key("resource", "action")` entry to the correct set in `permission-grants.ts` in the **same PR** as the route.
+2. Add the matching tuple to `permission-grants.test.ts` under the right array (`READ_PAIRS` / `SELF_SERVICE_PAIRS` / `AGENT_ONLY_PAIRS` / `OWNER_ONLY_PAIRS`).
+3. `pnpm check:permission-matrix` must pass before push.
+
+Pre-existing gaps tracked in `scripts/permission-matrix-baseline.txt` (issue #1173). Remove a baseline entry once the grant is added.
+
 ## Honesty about uncertainty
 
 **Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.  If unsure about what was in the spec re-read that section before assuming anything.
