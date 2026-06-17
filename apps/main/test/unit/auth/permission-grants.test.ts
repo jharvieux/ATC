@@ -147,6 +147,8 @@ const READ_PAIRS: ReadonlyArray<[string, string]> = [
   ["tenant_branding", "read"],
   // #996 — self-view for all roles (route scopes to caller's user_id for non-owners)
   ["api_tokens", "list"],
+  // #1173 — legal doc text (onboarding + Privacy page)
+  ["legal_document", "read"],
 ];
 
 const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
@@ -184,6 +186,48 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["draft_reply", "create"],
   ["voice_profile", "read"],
   ["voice_profile", "write"],
+  // #1173 — quotes sub-resources (staff-only Quotes nav)
+  ["quotes", "read"],
+  ["quotes.options", "list"],
+  ["quotes.options", "create"],
+  ["quotes.options", "update"],
+  ["quotes.options", "delete"],
+  ["quotes.options", "select"],
+  // #1173 — bookings sub-resources (staff-only Bookings nav)
+  ["bookings.itinerary", "read"],
+  ["bookings.itinerary", "create"],
+  ["bookings.itinerary", "update"],
+  ["bookings.line_items", "list"],
+  ["bookings.line_items", "create"],
+  ["bookings.line_items", "update"],
+  ["bookings.line_items", "delete"],
+  ["bookings.resources", "read"],
+  ["bookings.resources", "create"],
+  ["bookings.resources", "update"],
+  // #1173 — Reports (CRM nav, STAFF)
+  ["reports.bookings_by_source", "read"],
+  ["reports.campaigns", "read"],
+  ["reports.campaigns", "create"],
+  ["reports.cancellations", "read"],
+  ["reports.first_vs_last_touch", "read"],
+  ["reports.leads_by_source", "read"],
+  ["reports.source_funnel", "read"],
+  // #1173 — Imports (CRM nav, STAFF)
+  ["imports.manual", "create"],
+  ["imports.upload", "create"],
+  ["imports.review", "list"],
+  ["imports.review", "read"],
+  ["imports.review", "accept"],
+  ["imports.review", "reject"],
+  // #1173 — CRM contacts (STAFF)
+  ["crm.attribution_categories", "list"],
+  ["crm.attribution_categories", "create"],
+  ["crm.contacts", "edit_source"],
+  // #1173 — Gmail health banner (CRM; agents read; connect is owner-only)
+  ["integrations.gmail", "read"],
+  // #1173 — RAG submission endpoints (same audience as rag_submissions:create)
+  ["Submit knowledge chunk", "post"],
+  ["Batch submit knowledge chunks", "post"],
 ];
 
 // #1170 — self-service pairs: every role (viewer/agent/owner) gets these.
@@ -205,6 +249,12 @@ const SELF_SERVICE_PAIRS: ReadonlyArray<[string, string]> = [
   ["SessionTransfer", "commit"],
   ["SessionTransfer", "discard"],
   ["SessionTransfer", "undo"],
+  // #1173 — Privacy & data page (all roles; routes scope to caller's own identity)
+  ["Get consent status", "get"],
+  ["Record consent", "post"],
+  ["Privacy preferences", "get"],
+  ["Privacy preferences update", "put"],
+  ["Cookie preferences", "post"],
 ];
 
 const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
@@ -226,6 +276,28 @@ const OWNER_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["TenantUsage", "read"],
   ["TenantOverrideRequest", "list"],
   ["TenantOverrideRequest", "create"],
+  // #1173 — tenant Administration settings (owner-only Administration nav)
+  ["tenant.ai-config", "read"],
+  ["tenant.ai-config", "tenant.config.update"],
+  ["tenant.billing", "read"],
+  ["tenant.billing", "manage"],
+  ["tenant.personas", "read"],
+  ["tenant.personas", "tenant.config.update"],
+  ["tenant.sandbox", "read"],
+  ["tenant.sandbox", "toggle"],
+  ["Tenant chat limits", "get"],
+  ["Tenant chat limits update", "put"],
+  ["Tenant safety settings", "get"],
+  ["Tenant safety add", "post"],
+  ["Tenant safety remove", "delete"],
+  // #1173 — CRM notes admin (owner-only PII redaction)
+  ["CRM notes list", "list"],
+  ["CRM note redaction", "patch"],
+  // #1173 — Gmail OAuth bootstrap (tenant admin to Google consent)
+  ["integrations.gmail", "connect"],
+  // #1173 — RAG content curation (owner-only, mirrors rag_submissions lifecycle)
+  ["List knowledge chunks", "get"],
+  ["Update knowledge chunk", "patch"],
 ];
 
 describe("permission-grants — exhaustive matrix", () => {
