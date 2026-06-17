@@ -8,6 +8,7 @@
 import Stripe from "stripe";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { activateTenant } from "@/lib/tenants/activate-tenant";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
@@ -157,20 +158,12 @@ export async function POST(
 
         if (body.action === "approve") {
           recordQuery({ op: "update", table: "tenants" });
-          const { error } = await db
-            .from("tenants")
-            .update({
-              status: "active",
-              activated_at: new Date().toISOString(),
-              review_decision: "approved",
-              review_decision_reason: body.reason ?? null,
-              review_decided_at: new Date().toISOString(),
-              review_decided_by_user_id: adminUserId,
-              onboarding_stage: "complete",
-            })
-            .eq("id", tenantId);
-
-          if (error) throw new Error(error.message);
+          await activateTenant(db, tenantId, {
+            review_decision: "approved",
+            review_decision_reason: body.reason ?? null,
+            review_decided_at: new Date().toISOString(),
+            review_decided_by_user_id: adminUserId,
+          });
 
           // Reset Stripe trial to NOW + 30 days.
           if (tenant.stripe_subscription_id) {
