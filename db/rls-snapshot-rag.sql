@@ -14,7 +14,6 @@
 -- public.rag_media_assets (rls_enabled)
 -- public.rag_retrieval_log (rls_enabled)
 -- public.rag_retrieval_log_daily (rls_enabled)
--- public.schema_migrations (rls_enabled)
 -- public.tenant_registry_shadow (rls_enabled)
 
 -- Policies:

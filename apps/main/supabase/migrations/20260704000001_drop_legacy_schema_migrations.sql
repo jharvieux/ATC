@@ -1,0 +1,13 @@
+-- #1078 follow-up — retire public.schema_migrations.
+--
+-- public.schema_migrations was the ledger created by the old scripts/db-migrate.ts
+-- runner, retired in #1078 (860ffec6). Nothing creates it anymore — fresh DBs are
+-- built by applying migration files directly via psql, which never create it — and
+-- it has zero app/script readers. It is vestigial only on long-lived DBs (the ones
+-- that predate the retirement). Dropping it makes every DB match the committed RLS
+-- snapshot (db/rls-snapshot-main.sql no longer lists it).
+--
+-- IF EXISTS makes this a no-op on fresh DBs where the table was never created.
+-- Note: this is the custom ledger in the `public` schema; Supabase's own migration
+-- tracking lives in `supabase_migrations.schema_migrations` and is untouched.
+DROP TABLE IF EXISTS public.schema_migrations;
