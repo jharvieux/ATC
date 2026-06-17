@@ -46,6 +46,14 @@ jobs:
       - name: Dropped-column reader guard (BP38/#137)
         run: pnpm check:dropped-columns
 
+      - name: Static-column reader guard (#1160)
+        # Fails any PR where a .select() string names a column absent from that
+        # table's live schema (determined by parsing CREATE TABLE + ALTER TABLE ops
+        # from all migrations). Root cause of #1183 (tenants.tier, which doesn't
+        # exist; tenant tier is stored as tier_id FK). tsc cannot catch this class.
+        # Pre-existing violations baselined in db/column-reader-exceptions.txt (#1190).
+        run: pnpm check:column-readers
+
       - name: Duplication guard (jscpd)
         run: pnpm check:duplication
 

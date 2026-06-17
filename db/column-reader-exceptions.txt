@@ -1,0 +1,47 @@
+# Column-reader exceptions
+# Format: table.column # reason (reason is required)
+#
+# Add an entry here ONLY when a .select() references a column from a view,
+# a non-public schema, or a column that the migration parser cannot find
+# (e.g. added by an extension, trigger, or non-standard SQL pattern).
+#
+# For genuine bugs or wrong-table references, fix the code instead.
+#
+# Pre-existing violations baseline (gate shipped in PR #1160).
+# Each entry is tracked for investigation in GitHub issue #1190.
+# Remove an entry once the underlying code is corrected or confirmed legitimate.
+
+bookings.ai_paused_by_platform # pre-existing violation — tracked in #1190; column is on tenants not bookings
+bookings.customer_name # pre-existing violation — tracked in #1190; may be on contacts table
+bookings.group_id # pre-existing violation — tracked in #1190; FK col is group_booking_id not group_id
+bookings.host_booking_reference # pre-existing violation — tracked in #1190
+bookings.is_test # pre-existing violation — tracked in #1190; is_test added to conversations not bookings
+bookings.passenger_contact_email # pre-existing violation — tracked in #1190; may be on contacts table
+bookings.source # pre-existing violation — tracked in #1190; may be on conversations not bookings
+forums.coordinator_user_id # pre-existing violation — tracked in #1190
+host_booking_fee_configs.fee_cents # pre-existing violation — tracked in #1190
+host_booking_fee_configs.fee_rate # pre-existing violation — tracked in #1190
+host_booking_fee_configs.rule_ref # pre-existing violation — tracked in #1190
+knowledge_chunks.created_at # pre-existing violation — tracked in #1190; may be parser limitation
+knowledge_chunks.source_title # pre-existing violation — tracked in #1190
+legal_consents.accepted_at # pre-existing violation — tracked in #1190
+legal_consents.created_at # pre-existing violation — tracked in #1190; may be parser limitation
+legal_consents.doc_type # pre-existing violation — tracked in #1190
+legal_consents.doc_version # pre-existing violation — tracked in #1190
+messages.user_id # pre-existing violation — tracked in #1190
+tenant_host_fee_overrides.fee_cents # pre-existing violation — tracked in #1190
+tenant_host_fee_overrides.fee_rate # pre-existing violation — tracked in #1190
+tenant_host_fee_overrides.rule_ref # pre-existing violation — tracked in #1190
+tenant_settings.customer_bug_flow_enabled # pre-existing violation — tracked in #1190
+tenant_settings.import_auto_accept_threshold # pre-existing violation — tracked in #1190
+tenants.business_address # pre-existing violation — tracked in #1190
+tenants.email_from_address # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
+tenants.email_from_domain # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
+tenants.email_from_domain_verified_at # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
+tenants.email_from_name # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
+tenants.email_send_pattern # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
+tenants.legal_business_name # pre-existing violation — tracked in #1190
+tenants.name # pre-existing violation — tracked in #1190; should be legal_name?
+tenants.prong # pre-existing violation — tracked in #1190
+tenants.tenant_resend_api_key_encrypted # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
+users.full_name # pre-existing violation — tracked in #1190; may be first_name+last_name not a single column
