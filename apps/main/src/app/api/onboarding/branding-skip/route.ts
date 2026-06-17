@@ -12,7 +12,7 @@ import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { activateTenant } from "@/lib/tenants/activate-tenant";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function esc(s: string): string {
@@ -136,20 +136,7 @@ export async function POST(req: Request): Promise<Response> {
       // `.eq("id", ctx.tenant_id)` — `tenants`' PK *is* the tenant id and
       // tenantClient passes it through, so this is the DB-layer constraint
       // D-091 requires; `.eq("onboarding_stage", "branding")` is the CAS guard.
-      await safeAwaitRowCount(
-        db
-          .from("tenants")
-          .update({
-            status: "active",
-            activated_at: new Date().toISOString(),
-            onboarding_stage: "complete",
-          })
-          .eq("id", ctx.tenant_id)
-          .eq("onboarding_stage", "branding")
-          .select("id"),
-        "tenants.update.byo_activate_on_branding_skip",
-        1,
-      );
+      await activateTenant(db, ctx.tenant_id, {}, { casStage: "branding" });
       // allow-void-async: welcome email is best-effort post-activation; a
       // dropped send is acceptable and the failure is logged. Retry safety:
       // the email helper is idempotent at the Resend layer.
