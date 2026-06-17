@@ -76,6 +76,10 @@ BEGIN
       WHERE  id        = r.commission_id
         AND  tenant_id = r.tenant_id;
 
+      -- Skip if already disputed: two payout_records sharing a commission_id
+      -- (possible when payout_intent IS NULL) would otherwise produce a
+      -- spurious disputed→disputed audit row the app-layer state machine rejects.
+      IF v_old_commission_status IS DISTINCT FROM 'disputed' THEN
       UPDATE public.commissions
       SET    status = 'disputed'
       WHERE  id        = r.commission_id
@@ -114,7 +118,8 @@ BEGIN
           'payout_record_id',   r.id
         )::text
       );
-    END IF;
+      END IF;  -- IS DISTINCT FROM 'disputed'
+    END IF;  -- commission_id IS NOT NULL
 
     v_count := v_count + 1;
   END LOOP;

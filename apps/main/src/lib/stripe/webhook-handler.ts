@@ -176,6 +176,16 @@ export async function handleStripeWebhook(
         const prevAmountReversed = rawEvent.data.previous_attributes?.amount_reversed ?? 0;
         const thisReversalCents = transfer.amount_reversed - prevAmountReversed;
 
+        // Re-delivery with same cumulative amount_reversed and no previous_attributes:
+        // delta is zero — nothing new to process.
+        if (thisReversalCents <= 0) {
+          console.warn(
+            "[stripe-webhook] transfer.reversed: zero/negative delta for %s (possible re-delivery with same amount_reversed); skipping RPC",
+            transfer.id,
+          );
+          break;
+        }
+
         const { data: processedCount, error: reversalErr } = await db.rpc("process_transfer_reversal", {
           p_transfer_id: transfer.id,
           p_this_reversal_cents: thisReversalCents,

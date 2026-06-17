@@ -344,6 +344,14 @@ describeIf("Stripe webhook handler", () => {
     const res = await handleStripeWebhook(req, "platform");
     expect(res.status).toBe(200);
 
+    // stripe_webhook_events → success (guards against silent 'unhandled' fall-through)
+    const { data: evt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+    expect(evt?.processing_outcome).toBe("success");
+
     // payout_record → reversed
     const { data: pr } = await admin
       .from("payout_records")
@@ -479,6 +487,14 @@ describeIf("Stripe webhook handler", () => {
     const res = await handleStripeWebhook(req, "platform");
     expect(res.status).toBe(200);
 
+    // stripe_webhook_events → success (guards against silent 'unhandled' fall-through)
+    const { data: evt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+    expect(evt?.processing_outcome).toBe("success");
+
     // Only the delta (15000) should be deducted, not the full 40000 (§14.9 clawback)
     const { data: bal } = await admin
       .from("payout_balances")
@@ -552,6 +568,14 @@ describeIf("Stripe webhook handler", () => {
 
     const res = await handleStripeWebhook(req, "platform");
     expect(res.status).toBe(200);
+
+    // stripe_webhook_events → success (guards against silent 'unhandled' fall-through)
+    const { data: evt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+    expect(evt?.processing_outcome).toBe("success");
 
     // Balance debited (clawback — §14.9)
     const { data: bal } = await admin

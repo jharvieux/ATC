@@ -94,8 +94,9 @@ vi.mock("@/lib/db/service-role-client", () => ({
         },
       };
     },
-    async rpc(_fn: string, _args?: unknown) {
-      void _fn; void _args;
+    async rpc(fn: string, _args?: unknown) {
+      void _args;
+      if (fn !== "process_transfer_reversal") throw new Error(`Unexpected rpc: ${fn}`);
       return mockRpcResult;
     },
   }),
@@ -322,8 +323,9 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
             },
           };
         },
-        async rpc(_fn: string, _args?: unknown) {
-          void _fn; void _args;
+        async rpc(fn: string, _args?: unknown) {
+          void _args;
+          if (fn !== "process_transfer_reversal") throw new Error(`Unexpected rpc: ${fn}`);
           return { data: null, error: null };
         },
       } as never),
