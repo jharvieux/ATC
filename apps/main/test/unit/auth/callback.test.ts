@@ -434,6 +434,17 @@ describe("GET /api/auth/callback — tenant_host redirect", () => {
     expect(loc.host).toBe("tenant.example.com");
   });
 
+  it("rejects path-injection suffix bypass (evil.com/.tenant.example.com) — stays on platform origin", async () => {
+    // Raw endsWith("tenant.example.com") on "evil.com/.tenant.example.com" would
+    // pass — but URL.hostname normalizes to "evil.com". Fix: validate parsed hostname.
+    const res = await get(
+      "?code=abc&tenant_host=evil.com%2F.tenant.example.com",
+      { "x-resolved-tenant-id": "platform" },
+    );
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.host).toBe("tenant.example.com");
+  });
+
   it("honors ?next= path relative to the tenant subdomain", async () => {
     const res = await get(
       "?code=abc&tenant_host=lisa-travel.tenant.example.com&next=%2Fcrm%2Fbookings",
