@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-250 — 2026-06-16 — TA dashboard revamped to ChatGPT-style; Admin Console moved to a new (console) route group; platform branding on all TA-facing surfaces (PR #1177)
+
+**Decision:** Reworked the staff-only tenant-root surface (`[tenant]` root, seen only by `tenant_owner`/`agent`):
+1. **Dashboard = ChatGPT mock.** Removed `TenantShell`'s left nav rail; the only left rail is now `ConciergeExperience`'s conversation history, made collapsible via a top-bar `PanelLeft` toggle shared through a new `ConversationRailContext` (avoids prop-drilling through the server `page.tsx`). All app nav moved into the top-right hamburger, rendered generically from `nav-sections.ts` so role-gating is automatic.
+2. **Admin Console replaces "Settings".** New `(console)` route group with a collapsible, cookie-persisted left sidebar (`ConsoleShell`/`ConsoleSidebar`/`sidebar-sections.ts`, cloned from the `admin-shell/` trio) and a new overview page as the default `/settings` landing. `settings/*` and `tenant-admin/*` directories moved into `(console)`.
+3. **Platform branding everywhere TA-facing.** Staff dashboard + the whole `(tenant)` group (CRM, concierge) show the AI Travel Concierge logo, not tenant white-label — done via `tenantBranding={null}` in `(tenant)/layout.tsx`. White-label stays on end-customer surfaces only.
+
+**Why:** Operator decisions (4 AskUserQuestion answers, prior session): conversation-rail-only layout, platform logo everywhere TA-facing, new overview page as Admin Console default, rename `/` nav item to "Dashboard". The two-stacked-rails layout was visually muddled; Settings was a full-screen card hub instead of a console.
+
+**Key constraint — the route-group move is URL-invisible.** Route-group names in parens (`(console)`) don't appear in the URL, so every `/settings/*` and `/tenant-admin/*` URL is byte-identical pre/post. No redirects, no link updates. Per-page `assertPermission` gates moved with the files (behavior-preserving). Gotcha hit: a stale `.next/types/validator.ts` referenced the old `(tenant)/settings/*` paths after the move and broke `tsc`; `rm -rf apps/main/.next` regenerates it — it's a cache artifact, not a code error.
+
+**What was rejected:** Conditional layout keyed off pathname (no middleware in `apps/main` to inject one, and App Router can't let a child suppress the parent `(tenant)` SiteHeader) — the sibling route group is the clean solution. Re-shelling `app/settings/*` ("My account": profile, conversations, price-watches, privacy) into the console this round — left as-is (TenantTheme only), follow-up if needed. Merging `(tenant)/concierge/page.tsx` into the `/` dashboard — left in place, platform-branded via the layout change.
+
+**Scope guard:** Viewers (end customers) untouched — `app/page.tsx` branches on role; viewers keep `ChatExperience` + tenant `BrandLogo` and render outside the `ConversationRailContext` provider (`useConversationRail` returns an inert no-op default). Audits both clean (d091 PASS, pre-pr clean after adding `sidebar-sections.test.ts` for `filterConsoleNavForRole`). All 15 console + dashboard menu link targets verified to resolve — no 404s, no follow-up issues.
+
+**Artifacts:** `apps/main/src/components/tenant-shell/{TenantShell.tsx,nav-sections.ts,conversation-rail-context.tsx}`; `apps/main/src/components/concierge/ConciergeExperience.tsx`; `apps/main/src/components/tenant-console/{ConsoleShell,ConsoleSidebar,sidebar-sections,collapsed-cookie}.{tsx,ts}`; `apps/main/src/app/(console)/**`; `apps/main/src/app/(tenant)/layout.tsx`; tests `nav-sections.test.ts` + new `tenant-console/sidebar-sections.test.ts`.
+
+---
+
 ## D-249 — 2026-06-16 — TenantUsage:read + TenantOverrideRequest:list/create granted to tenant_owner; first of the #1173 backlog fixed as a live bug
 
 **Decision:** Added `TenantUsage:read`, `TenantOverrideRequest:list`, `TenantOverrideRequest:create` to `OWNER_GRANTS` only (not agent/viewer). Pinned in `permission-grants.test.ts` via `OWNER_ONLY_PAIRS` (owner granted; agent + viewer + unknown-role denied).
