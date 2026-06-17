@@ -1,38 +1,46 @@
 "use client";
 
-// #962 — Landing shell for authenticated SaaS users at the tenant
-// subdomain root. Left = collapsible role-filtered nav, right = the
-// default panel (the embedded support chat, passed as children by the
-// server page). Top bar: sidebar toggle + logo on the left, hamburger
-// menu (View profile / Admin / Sign out) on the right.
+// #962 / #974 — Landing shell for authenticated SaaS users at the tenant
+// subdomain root.
+//   - Staff (tenant_owner/agent): ChatGPT-style dashboard. Platform branding
+//     — this surface is staff-only, so it never shows tenant white-label
+//     (that stays on end-customer surfaces). App navigation lives in the
+//     top-right hamburger; the only left rail is the conversation history
+//     inside ConciergeExperience, whose collapse is driven by the PanelLeft
+//     toggle here, shared via ConversationRailContext.
+//   - Viewers (end customers): unchanged — tenant BrandLogo + ChatExperience,
+//     no conversation rail and no left-rail toggle.
 //
-// Mirrors the AdminShell/AdminSidebar chrome so the two app shells stay
-// visually consistent. Client component for the toggle + dropdown state;
-// role is resolved server-side in app/page.tsx and passed down — no
-// client-side auth lookup.
+// Client component for the toggle + dropdown state; role is resolved
+// server-side in app/page.tsx and passed down — no client-side auth lookup.
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { Menu, PanelLeft } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { BrandLogo, type BrandLogoBranding } from "@/components/branding/BrandLogo";
+import { Logo } from "@/components/branding/Logo";
+import { LogoMark } from "@/components/branding/LogoMark";
+import {
+  BrandLogo,
+  type BrandLogoBranding,
+} from "@/components/branding/BrandLogo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { performSignout } from "@/lib/auth/perform-signout";
-import { isActiveLink } from "@/components/admin-shell/is-active-link";
 import { navSectionsForRole } from "./nav-sections";
+import { ConversationRailContext } from "./conversation-rail-context";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface TenantShellProps {
   role: UserRole;
-  /** Tenant logo/name for the top bar (§16); null shows the platform logo. */
+  /** Tenant logo/name for the viewer top bar (§16). Ignored for staff, who
+   *  always get the platform logo. */
   branding?: BrandLogoBranding | null;
   children: React.ReactNode;
 }
@@ -42,109 +50,89 @@ export function TenantShell({
   branding = null,
   children,
 }: Readonly<TenantShellProps>): React.ReactElement {
-  // null = the visitor hasn't toggled yet → CSS-only default (closed
-  // below lg, open on lg+). The default can't live in useState because
-  // the viewport width is unknown during SSR; encoding it as Tailwind
-  // breakpoint classes keeps the first paint correct on both form
-  // factors with no hydration flash.
-  const [open, setOpen] = React.useState<boolean | null>(null);
-  const pathname = usePathname();
+  const isStaff = role === "tenant_owner" || role === "agent";
   const sections = navSectionsForRole(role);
 
-  const toggle = (): void =>
+  // Tri-state collapse for the staff conversation rail (ConciergeExperience),
+  // shared via context. null = visitor hasn't toggled → CSS-only default
+  // (closed below lg, open lg+) so the first paint has no hydration flash.
+  const [open, setOpen] = React.useState<boolean | null>(null);
+  const toggle = React.useCallback((): void => {
     setOpen((prev) =>
       prev === null
         ? !window.matchMedia("(min-width: 1024px)").matches
         : !prev,
     );
+  }, []);
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label="Toggle navigation"
-            className="rounded-md p-1.5 hover:bg-accent"
-          >
-            <PanelLeft className="h-5 w-5" />
-          </button>
-          <Link href="/" aria-label="Home">
-            <BrandLogo branding={branding} height={49} />
-          </Link>
-        </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              aria-label="Open menu"
-              className="h-10 w-10 px-0"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem asChild>
-              <Link href="/settings/profile">View profile</Link>
-            </DropdownMenuItem>
-            {role === "tenant_owner" && (
-              <DropdownMenuItem asChild>
-                <Link href="/settings">Admin</Link>
-              </DropdownMenuItem>
+    <ConversationRailContext.Provider value={{ open, toggle }}>
+      <div className="flex h-screen flex-col">
+        <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+          <div className="flex items-center gap-3">
+            {isStaff && (
+              <button
+                type="button"
+                onClick={toggle}
+                aria-label="Toggle conversation history"
+                className="rounded-md p-1.5 hover:bg-accent"
+              >
+                <PanelLeft className="h-5 w-5" />
+              </button>
             )}
-            <DropdownMenuSeparator />
-            {/* onSelect (not a nested <form>) so ENTER/SPACE on the
-                highlighted item fire the action — see SiteHeaderMenu (#664). */}
-            <DropdownMenuItem onSelect={performSignout}>
-              Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
-      <div className="flex min-h-0 flex-1">
-        <aside
-          className={cn(
-            "shrink-0 overflow-y-auto overflow-x-hidden border-r border-border bg-background transition-all",
-            open === null ? "w-0 lg:w-64" : open ? "w-64" : "w-0",
-          )}
-        >
-          {/* Fixed w-64 inner column so link text doesn't reflow while the
-              aside width animates. */}
-          <nav className="flex w-64 flex-col gap-4 px-3 py-6">
-            {sections.map((section) => (
-              <div key={section.heading ?? "top"}>
-                {section.heading && (
-                  <div className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {section.heading}
-                  </div>
-                )}
-                <ul className="mt-1 flex flex-col gap-0.5">
-                  {section.items.map((item) => {
-                    const active = isActiveLink(pathname, item.href);
-                    return (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          className={cn(
-                            "block rounded-md px-2 py-1.5 text-sm transition-colors",
-                            active
-                              ? "bg-accent text-accent-foreground font-medium"
-                              : "text-foreground/80 hover:bg-accent/60",
-                          )}
-                        >
-                          {item.label}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            ))}
-          </nav>
-        </aside>
-        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+            <Link href="/" aria-label="Home" className="flex items-center">
+              {isStaff ? (
+                <>
+                  <span className="hidden sm:inline-flex">
+                    <Logo height={49} />
+                  </span>
+                  <span className="sm:hidden">
+                    <LogoMark size={49} />
+                  </span>
+                </>
+              ) : (
+                <BrandLogo branding={branding} height={49} />
+              )}
+            </Link>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                aria-label="Open menu"
+                className="h-10 w-10 px-0"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {sections.map((section, i) => (
+                <React.Fragment key={section.heading ?? `home-${i}`}>
+                  {i > 0 && <DropdownMenuSeparator />}
+                  {section.heading && (
+                    <DropdownMenuLabel>{section.heading}</DropdownMenuLabel>
+                  )}
+                  {section.items.map((item) => (
+                    <DropdownMenuItem asChild key={item.href}>
+                      <Link href={item.href}>{item.label}</Link>
+                    </DropdownMenuItem>
+                  ))}
+                </React.Fragment>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/settings/profile">View profile</Link>
+              </DropdownMenuItem>
+              {/* onSelect (not a nested <form>) so ENTER/SPACE on the
+                  highlighted item fire the action — see SiteHeaderMenu (#664). */}
+              <DropdownMenuItem onSelect={performSignout}>
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </header>
+        <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
-    </div>
+    </ConversationRailContext.Provider>
   );
 }

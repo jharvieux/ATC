@@ -7,10 +7,13 @@
 // Access enforcement is server-side on every API call; 403 → access-denied UX.
 
 import { useCallback, useEffect, useState } from "react";
+import { Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { Button } from "@/components/ui/button";
+import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
 import {
   Select,
   SelectContent,
@@ -33,6 +36,10 @@ interface ConvMessages {
 }
 
 export function ConciergeExperience(): React.JSX.Element {
+  // Conversation-rail collapse is driven by the PanelLeft toggle in the
+  // TenantShell top bar, shared through context (no prop-drilling through
+  // the server page that renders this).
+  const { open } = useConversationRail();
   const [conversations, setConversations] = useState<TaConversation[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -116,56 +123,65 @@ export function ConciergeExperience(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-56 shrink-0 border-r border-border flex flex-col bg-card">
-        <div className="px-3 py-3 border-b border-border">
-          <h2 className="text-[13px] font-semibold text-foreground mb-2">Concierge</h2>
-          {/* #904 — draft composer entry point */}
-          <a
-            href="/concierge/draft"
-            className="block text-[12px] text-primary hover:underline mb-2"
-          >
-            ✉ Draft a reply
-          </a>
-          <Button
-            variant="outline"
-            className="w-full text-[12px] h-7"
-            onClick={startNew}
-          >
-            + New chat
-          </Button>
-        </div>
+    <div className="flex h-full overflow-hidden bg-background">
+      {/* Conversation-history rail (ChatGPT-style). Tri-state width driven by
+          the top-bar toggle via context: null = CSS default (closed below lg,
+          open lg+, no flash), true = open, false = closed. The inner column
+          stays a fixed width so the list doesn't reflow during the animation. */}
+      <aside
+        className={cn(
+          "shrink-0 overflow-hidden border-r border-border bg-card transition-all",
+          open === null ? "w-0 lg:w-72" : open ? "w-72" : "w-0",
+        )}
+      >
+        <div className="flex h-full w-72 flex-col">
+          <div className="px-3 py-3 border-b border-border">
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2 text-[13px] h-9"
+              onClick={startNew}
+            >
+              <Plus className="h-4 w-4" /> New chat
+            </Button>
+            {/* #904 — draft composer entry point */}
+            <a
+              href="/concierge/draft"
+              className="mt-2 block text-[12px] text-primary hover:underline"
+            >
+              ✉ Draft a reply
+            </a>
+          </div>
 
-        <nav className="flex-1 overflow-y-auto py-2 px-2">
-          {conversations === null ? (
-            <p className="text-[12px] text-muted-foreground px-1">Loading…</p>
-          ) : conversations.length === 0 ? (
-            <p className="text-[12px] text-muted-foreground px-1">No chats yet.</p>
-          ) : (
-            conversations.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => void openConversation(c.id)}
-                disabled={loadingConv}
-                className={`w-full text-left px-2 py-1.5 rounded text-[12px] mb-0.5 hover:bg-accent transition-colors truncate ${
-                  activeConvId === c.id
-                    ? "bg-accent font-medium text-foreground"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {c.title ?? "(untitled)"}
-                <span className="block text-[10px] opacity-60">
-                  {c.message_count ?? 0} msgs ·{" "}
-                  {c.last_message_at
-                    ? new Date(c.last_message_at).toLocaleDateString()
-                    : "—"}
-                </span>
-              </button>
-            ))
-          )}
-        </nav>
+          <nav className="flex-1 overflow-y-auto py-2 px-2">
+            {conversations === null ? (
+              <p className="text-[12px] text-muted-foreground px-1">Loading…</p>
+            ) : conversations.length === 0 ? (
+              <p className="text-[12px] text-muted-foreground px-1">No chats yet.</p>
+            ) : (
+              conversations.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => void openConversation(c.id)}
+                  disabled={loadingConv}
+                  className={`w-full text-left px-2 py-1.5 rounded text-[12px] mb-0.5 hover:bg-accent transition-colors truncate ${
+                    activeConvId === c.id
+                      ? "bg-accent font-medium text-foreground"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {c.title ?? "(untitled)"}
+                  <span className="block text-[10px] opacity-60">
+                    {c.message_count ?? 0} msgs ·{" "}
+                    {c.last_message_at
+                      ? new Date(c.last_message_at).toLocaleDateString()
+                      : "—"}
+                  </span>
+                </button>
+              ))
+            )}
+          </nav>
+        </div>
       </aside>
 
       {/* Main area */}

@@ -1,6 +1,12 @@
-// Shared chrome for every tenant-area page (crm/*, settings/*,
-// tenant-admin/*). Adds the SiteHeader on top so the logo, hamburger
-// menu, and login state are consistent across the tenant surface.
+// Shared chrome for the staff-only tenant-area pages (crm/*, concierge/*).
+// (settings/* and tenant-admin/* moved to the (console) group.) Adds the
+// SiteHeader on top so the hamburger menu and login state are consistent.
+//
+// Platform branding (#962 follow-up): this whole group is staff-facing, so
+// the header shows the AI Travel Concierge logo, never tenant white-label
+// (that stays on end-customer surfaces). We pass tenantBranding={null} to
+// force the platform logo while keeping isPlatformDomain/isAuthenticated.
+// TenantTheme still applies the tenant's colors/font — only the logo changes.
 //
 // Page-level auth is enforced per-page (server components call
 // assertPermission; client components hit APIs that 401). This layout
@@ -32,7 +38,7 @@ export default async function TenantAreaLayout({
   return (
     <>
       <TenantTheme />
-      <SiteHeader {...headerProps} />
+      <SiteHeader {...headerProps} tenantBranding={null} />
       <BrandingSetupBannerServer />
       {children}
     </>

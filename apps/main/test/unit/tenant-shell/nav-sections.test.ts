@@ -2,7 +2,7 @@
 // #974 — role-dependent default panel at the subdomain root.
 //
 // Intent: the nav must never show a link the role can't use. Viewers are
-// end customers — staff surfaces (CRM) and owner surfaces (Settings)
+// end customers — staff surfaces (CRM) and owner surfaces (Admin Console)
 // would 403 via assertPermission, so showing them is a dead link.
 // Every role keeps exactly one home entry at "/", but what it IS differs:
 // staff land in TA mode (operator decision 2026-06-10, #974) because their
@@ -35,10 +35,10 @@ describe("navSectionsForRole", () => {
   });
 
   it("home label matches what the role actually lands on (#974)", () => {
-    // Staff's "/" renders the TA concierge, viewers' renders the support
+    // Staff's "/" renders the TA dashboard, viewers' renders the support
     // chat — a label that says otherwise is a lying nav entry.
-    expect(homeLabel("tenant_owner")).toBe("Concierge");
-    expect(homeLabel("agent")).toBe("Concierge");
+    expect(homeLabel("tenant_owner")).toBe("Dashboard");
+    expect(homeLabel("agent")).toBe("Dashboard");
     expect(homeLabel("viewer")).toBe("Support chat");
   });
 
@@ -69,12 +69,18 @@ describe("navSectionsForRole", () => {
     expect(hrefs).not.toContain("/settings/usage");
   });
 
-  it("owners see workspace, account, and administration", () => {
+  it("owners see workspace, account, and the Admin Console entry", () => {
     const hrefs = hrefsFor("tenant_owner");
     expect(hrefs).toContain("/crm/contacts");
     expect(hrefs).toContain("/settings/conversations");
     expect(hrefs).toContain("/settings");
-    expect(hrefs).toContain("/settings/usage");
+  });
+
+  it("admin sub-pages are no longer enumerated in the nav — they live in the console sidebar", () => {
+    // The Administration group collapsed to a single Admin Console entry
+    // (/settings); /settings/usage and friends moved into the console's own
+    // sidebar, so the dropdown must not list them.
+    expect(hrefsFor("tenant_owner")).not.toContain("/settings/usage");
   });
 });
 
