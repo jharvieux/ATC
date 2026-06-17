@@ -52,12 +52,8 @@ function envVarFor(target: Target): string {
   return target === "main" ? "SUPABASE_DB_URL" : "SUPABASE_RAG_DB_URL";
 }
 
-function appDirFor(target: Target): string {
-  return target === "main" ? "main" : "rag";
-}
-
 export function migrationsDir(target: Target): string {
-  return path.join(REPO_ROOT, "apps", appDirFor(target), "supabase", "migrations");
+  return path.join(REPO_ROOT, "apps", target, "supabase", "migrations");
 }
 
 // Exported for tests — accepts any directory path; returns sorted version strings.
@@ -161,7 +157,7 @@ export async function checkTarget(
       "",
       `  ORPHANED (${orphaned.length}) — in DB, NOT in ledger:`,
       ...orphaned.map((v) => `    - ${v}`),
-      "  Fix: add a matching migration file to apps/" + appDirFor(target) + "/supabase/migrations/.",
+      "  Fix: add a matching migration file to apps/" + target + "/supabase/migrations/.",
     );
   }
   return { status: "drift", message: lines.join("\n") };

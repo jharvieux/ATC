@@ -10,7 +10,7 @@
 //   - No drift:  both sets identical → ok.
 //   - Empty ledger is an error (likely wrong cwd), not a silent skip.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -116,9 +116,13 @@ describe("checkTarget — empty migrations directory is drift, not skip", () => 
   let tmpDir: string;
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "drift-ct-test-"));
+    // Isolate from developer shell envs so URL-resolution is deterministic.
+    vi.stubEnv("SUPABASE_DB_URL", "");
+    vi.stubEnv("SUPABASE_RAG_DB_URL", "");
   });
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true });
+    vi.unstubAllEnvs();
   });
 
   it("returns drift when the migrations directory exists but contains no .sql files", async () => {
