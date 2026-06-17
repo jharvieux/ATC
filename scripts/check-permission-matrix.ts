@@ -34,12 +34,11 @@ export const ASSERT_RESOURCE_FIRST =
 export const ASSERT_ACTION_FIRST =
   /assertPermission\([^{]*\{\s*[^}]*action:\s*"([^"]+)"[^}]*resource:\s*"([^"]+)"/g;
 
-// Matches: key("resource", "action") in permission-grants.ts
 export const KEY_RE = /key\("([^"]+)",\s*"([^"]+)"\)/g;
 
 /**
- * Extract all (resource, action) pairs from route file content.
- * Handles both resource-first and action-first property ordering.
+ * Handles both resource-first and action-first property ordering so a
+ * future caller writing { action: "Y", resource: "X" } doesn't evade the check.
  */
 export function extractAssertedPairs(content: string): Set<string> {
   const pairs = new Set<string>();
@@ -52,9 +51,6 @@ export function extractAssertedPairs(content: string): Set<string> {
   return pairs;
 }
 
-/**
- * Extract all granted (resource, action) pairs from permission-grants.ts content.
- */
 export function extractGrantedPairs(content: string): Set<string> {
   const pairs = new Set<string>();
   for (const m of content.matchAll(new RegExp(KEY_RE.source, "g"))) {
