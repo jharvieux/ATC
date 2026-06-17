@@ -54,6 +54,12 @@ jobs:
         # Pre-existing violations baselined in db/column-reader-exceptions.txt (#1190).
         run: pnpm check:column-readers
 
+      - name: Ambiguous PostgREST embed guard (#1157)
+        # Fails when a .from("t").select("ref_table(cols)") embed is ambiguous
+        # because t has 2+ FK paths to ref_table and no !constraint_name hint
+        # is present. !inner and !left are join-type modifiers, not FK hints.
+        run: pnpm check:ambiguous-embeds
+
       - name: Duplication guard (jscpd)
         run: pnpm check:duplication
 
