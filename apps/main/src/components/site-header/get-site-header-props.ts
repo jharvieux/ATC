@@ -39,8 +39,8 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
   if (!isPlatformDomain && isAuthenticated && user && resolved) {
     try {
       role = await getTenantRole(user.id, resolved);
-    } catch {
-      // DB error — degrade gracefully; the nav sections just won't render.
+    } catch (err) {
+      console.error("[get-site-header-props] getTenantRole failed:", err);
     }
   }
 

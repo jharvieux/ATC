@@ -106,6 +106,8 @@ export function SiteHeaderMenu({
             <DropdownMenuItem asChild>
               <Link href="/settings/profile">View profile</Link>
             </DropdownMenuItem>
+            {/* onSelect (not a nested <form>) so ENTER/SPACE on the
+                highlighted item fires the action without a page reload (#664). */}
             <DropdownMenuItem onSelect={performSignout}>
               Sign out
             </DropdownMenuItem>
