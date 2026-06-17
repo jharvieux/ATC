@@ -6,6 +6,7 @@
 import { headers } from "next/headers";
 import { getCachedUser } from "@/lib/auth/get-cached-user";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+import { getTenantRole } from "@/lib/auth/resolve-post-login";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import type { SiteHeaderProps } from "./SiteHeader";
 
@@ -23,7 +24,7 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
   // Request-scoped memoization (#667): when this layout + its rendered
   // page both need auth state, share one Supabase JWT verification per
   // request rather than running it twice. See get-cached-user.ts.
-  const { isAuthenticated } = await getCachedUser();
+  const { isAuthenticated, user } = await getCachedUser();
 
   // §16 — tenant subdomains show the tenant's logo in the chrome.
   // Request-memoized alongside the theme injector and layout metadata.
@@ -31,5 +32,17 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
     ? null
     : await getRequestTenantBranding();
 
-  return { isPlatformDomain, isAuthenticated, tenantBranding };
+  // Role for the hamburger nav — only meaningful on tenant subdomains where
+  // the user has an active membership. Null on the platform domain, for
+  // anonymous visitors, or on DB error (fail-safe: shows generic menu).
+  let role: SiteHeaderProps["role"] = null;
+  if (!isPlatformDomain && isAuthenticated && user && resolved) {
+    try {
+      role = await getTenantRole(user.id, resolved);
+    } catch {
+      // DB error — degrade gracefully; the nav sections just won't render.
+    }
+  }
+
+  return { isPlatformDomain, isAuthenticated, tenantBranding, role };
 }
