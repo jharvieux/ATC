@@ -6,6 +6,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { upsertPersonaOverride, type PersonaOverrideInput } from "@/lib/personas/upsert-persona-override";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_SLUGS = new Set([
   "marcus-cole",
@@ -44,13 +45,23 @@ export async function PATCH(req: Request, props: { params: Promise<{ slug: strin
     const db = tenantClient(ctx);
     const { data: tenant, error: tenantErr } = await db
       .from("tenants")
-      .select("id, tier, background_ai_enabled")
+      .select("id, tier_id, background_ai_enabled")
       .eq("id", ctx.tenant_id)
       .single();
 
     if (tenantErr || !tenant) {
       return Response.json({ error: "tenant_not_found" }, { status: 404 });
     }
+
+    // Resolve tier code: tier_definitions is PLATFORM_READABLE so tenantClient reads it.
+    const { data: tierDef, error: tierErr } = await db
+      .from("tier_definitions")
+      .select("code")
+      .eq("id", tenant.tier_id as string)
+      .maybeSingle();
+
+    if (tierErr) return dbErrorResponse(tierErr);
+    if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
 
     const overrideInput: PersonaOverrideInput = {};
     if ("display_name_override" in body) overrideInput.display_name_override = body.display_name_override ?? null;
@@ -61,7 +72,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ slug: strin
     const result = await upsertPersonaOverride(
       {
         id: tenant.id as string,
-        tier: tenant.tier as string,
+        tier: tierDef.code as string,
         background_ai_enabled: (tenant.background_ai_enabled as boolean) ?? true,
       },
       slug,
