@@ -176,6 +176,20 @@ describe("Stripe webhook — resource-unavailable injection (Pattern 2)", () => 
   });
 });
 
+describe("Stripe webhook — transfer.reversed delta guard (Pattern 2)", () => {
+  it("returns 200 'OK' when transfer.reversed delta is zero (re-delivery, same amount_reversed) — guard skips RPC", async () => {
+    // delta = amount_reversed(0) - previous_attributes(absent→0) = 0
+    // Guard fires → break → processingOutcome stays 'unhandled' → 200 "OK"
+    // Without the guard: db.rpc() is not in the top-level mock → throws → handler catches → 500.
+    // A regression removing the guard changes this from 200 to 500.
+    mockEventType = "transfer.reversed";
+    mockEventData = { id: "tr_1", amount_reversed: 0 };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OK");
+  });
+});
+
 describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
   it("returns 200 ('Duplicate') when stripe_webhook_events insert hits 23505 unique-violation", async () => {
     // Stripe re-delivers a webhook → second insert hits the unique constraint
