@@ -1,33 +1,18 @@
-# Session state — last updated 2026-06-16 18:10 PT
+# Session state — last updated 2026-06-17 20:10 PT
 
 ## Just completed
-- **TA dashboard revamp shipped — PR #1177 merged to dev** (squash, branch deleted).
-  - Dashboard → ChatGPT-style mock: removed TenantShell nav rail; only left rail is the
-    collapsible conversation history in ConciergeExperience, driven by a top-bar PanelLeft
-    toggle shared via new ConversationRailContext.
-  - Admin Console replaces Settings: new `(console)` route group + collapsible cookie-persisted
-    sidebar (ConsoleShell/ConsoleSidebar/sidebar-sections, cloned from admin-shell trio) + new
-    overview page as default `/settings` landing. settings/* and tenant-admin/* moved in
-    (URL-invisible route-group rename — all URLs byte-identical).
-  - Platform branding on all TA-facing surfaces via `tenantBranding={null}` in (tenant)/layout.
-  - nav-sections: `/` item renamed "Dashboard", admin group collapsed to one owner-only entry.
-  - Added unit test for filterConsoleNavForRole (addressed pre-pr WARNING).
-  - Viewers untouched (scope guard verified). Both audits clean. All menu links resolve (no 404s).
-- MEMORY.md D-250 added.
+- PR #1180 merged: fix(#1173) — added all 59 missing RBAC assertPermission pairs to permission-grants.ts and exhaustive test matrix. Closes #1173.
+- PR #1181 merged: feat(#1176) — permission-matrix CI guard (scripts/check-permission-matrix.ts + baseline + ci.yml step + CLAUDE.md docs). Closes #1176.
 
 ## In flight
 - Nothing in flight — clean checkpoint. On `dev`, synced with origin.
 
 ## Next step
-- Manual dev verification when convenient (not blocking): as tenant_owner on a tenant subdomain —
-  ChatGPT dashboard + platform logo + collapsible rail + grouped hamburger; Admin Console sidebar
-  sections collapse/persist; mobile ~375px no horizontal scroll. As agent: no Admin Console item.
-  As viewer: `/` still tenant-branded support chat.
+- Check PR #1155 (feat: §14.9 transfer.reversed ledger unwind) — pr-audit-section-check was showing stale failure at end of prior session. Confirm it passes and merge.
 
 ## Blocked on user
 - Nothing.
 
 ## Open questions
-- Pre-existing untracked junk `apps/main/supabase/.temp/` is NOT gitignored (was present at session
-  start, unrelated to this work). Candidate for a .gitignore entry if it keeps reappearing — not
-  acted on this session.
+- #1156: multi-partial reversal gap — needs product decision on approach A/B/C.
+- bookings.passengers:read / bookings.options:read in READ_GRANTS have no test tuples in READ_PAIRS (pre-existing latent over-grant, flagged but deferred in #1173). Track as a separate issue?
