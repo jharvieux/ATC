@@ -1,32 +1,33 @@
-# Session state — last updated 2026-06-16 (usage 403 fix in flight)
+# Session state — last updated 2026-06-16 18:10 PT
 
 ## Just completed
-- Fixed the lisa-travel chat "Couldn't load history: HTTP 403" bug (#1170).
-  Added shared `SELF_SERVICE_GRANTS` inherited by all three roles. PR #1174
-  merged to dev, branch deleted. Logged D-248.
+- **TA dashboard revamp shipped — PR #1177 merged to dev** (squash, branch deleted).
+  - Dashboard → ChatGPT-style mock: removed TenantShell nav rail; only left rail is the
+    collapsible conversation history in ConciergeExperience, driven by a top-bar PanelLeft
+    toggle shared via new ConversationRailContext.
+  - Admin Console replaces Settings: new `(console)` route group + collapsible cookie-persisted
+    sidebar (ConsoleShell/ConsoleSidebar/sidebar-sections, cloned from admin-shell trio) + new
+    overview page as default `/settings` landing. settings/* and tenant-admin/* moved in
+    (URL-invisible route-group rename — all URLs byte-identical).
+  - Platform branding on all TA-facing surfaces via `tenantBranding={null}` in (tenant)/layout.
+  - nav-sections: `/` item renamed "Dashboard", admin group collapsed to one owner-only entry.
+  - Added unit test for filterConsoleNavForRole (addressed pre-pr WARNING).
+  - Viewers untouched (scope guard verified). Both audits clean. All menu links resolve (no 404s).
+- MEMORY.md D-250 added.
 
 ## In flight
-- Fix for "Usage under Administration → forbidden" (a #1173 pair surfacing live).
-  - Branch: `fix/tenant-usage-owner-grants` (off origin/dev).
-  - Root cause: `TenantUsage:read`, `TenantOverrideRequest:list`, `:create` absent
-    from the RBAC matrix → fail-closed 403 on /settings/usage for everyone.
-  - Fix: granted those 3 pairs to OWNER_GRANTS only (Administration nav is
-    OWNER_ONLY; only the owner-only /settings/usage page calls these endpoints).
-  - Files: `apps/main/src/lib/auth/permission-grants.ts`,
-    `apps/main/test/unit/auth/permission-grants.test.ts` (OWNER_ONLY_PAIRS).
-  - `pnpm verify` EXIT 0 (3865 tests pass). Logged D-249.
-  - Also carries the D-248 MEMORY entry (was uncommitted, not yet on dev).
-  - NEXT: push, open PR with ## Audit placeholder, run d091-reviewer +
-    pre-pr-reviewer (Sonnet — small diff, no Opus triggers), fill Audit block,
-    wait for CI, squash-merge, delete branch, update #1173.
+- Nothing in flight — clean checkpoint. On `dev`, synced with origin.
 
 ## Next step
-- Push `fix/tenant-usage-owner-grants` and open the PR (see In flight).
+- Manual dev verification when convenient (not blocking): as tenant_owner on a tenant subdomain —
+  ChatGPT dashboard + platform logo + collapsible rail + grouped hamburger; Admin Console sidebar
+  sections collapse/persist; mobile ~375px no horizontal scroll. As agent: no Admin Console item.
+  As viewer: `/` still tenant-branded support chat.
 
 ## Blocked on user
 - Nothing.
 
 ## Open questions
-- #1173 still has the remaining ungranted pairs (this fix resolves 3 of them).
-  Carry-over: confirm release/beta062 deployed + lisa-travel loads (D-247);
-  delete hotfix branch hotfix/fetch-branding-null-guard if still present.
+- Pre-existing untracked junk `apps/main/supabase/.temp/` is NOT gitignored (was present at session
+  start, unrelated to this work). Candidate for a .gitignore entry if it keeps reappearing — not
+  acted on this session.
