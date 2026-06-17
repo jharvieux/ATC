@@ -390,7 +390,7 @@ jobs:
             echo "::error::DB_URL secret is not set in the 'staging' GitHub environment. Aborting."
             exit 1
           fi
-          npx supabase db push --db-url "$DB_URL"
+          npx supabase db push --include-all --db-url "$DB_URL"
 
       - name: Migration drift check (#1158)
         # Fails if the migration ledger diverges from what the DB reports after
@@ -474,7 +474,7 @@ jobs:
             echo "::error::DB_URL secret is not set in the 'production' GitHub environment. Aborting."
             exit 1
           fi
-          npx supabase db push --db-url "$DB_URL"
+          npx supabase db push --include-all --db-url "$DB_URL"
 
       - name: Migration drift check (#1158)
         # Fails if the migration ledger diverges from what the DB reports after
