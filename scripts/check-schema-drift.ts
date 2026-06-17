@@ -21,12 +21,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 type Target = "main" | "rag";
 const ALL_TARGETS: readonly Target[] = ["main", "rag"];
 
-const APPS_DIR = "apps";
+// Anchored to the script file so the gate works regardless of cwd.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function parseArgs(argv: string[]): { target: Target | "all"; dbUrl: string | null } {
   const targetArg = argv.find((a) => a.startsWith("--target="));
@@ -54,14 +56,31 @@ function appDirFor(target: Target): string {
   return target === "main" ? "main" : "rag";
 }
 
-function ledgerVersions(target: Target): string[] {
-  const dir = path.join(APPS_DIR, appDirFor(target), "supabase", "migrations");
+export function migrationsDir(target: Target): string {
+  return path.join(REPO_ROOT, "apps", appDirFor(target), "supabase", "migrations");
+}
+
+// Exported for tests — accepts any directory path; returns sorted version strings.
+export function ledgerVersions(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((f) => f.replace(/\.sql$/, ""));
+}
+
+// Exported for tests — pure diff logic; no I/O.
+export function computeDrift(
+  ledger: string[],
+  applied: string[],
+): { unapplied: string[]; orphaned: string[] } {
+  const ledgerSet = new Set(ledger);
+  const appliedSet = new Set(applied);
+  return {
+    unapplied: ledger.filter((v) => !appliedSet.has(v)),
+    orphaned: applied.filter((v) => !ledgerSet.has(v)),
+  };
 }
 
 interface SchemaRow {
@@ -94,11 +113,14 @@ async function checkTarget(
     };
   }
 
-  const ledger = ledgerVersions(target);
+  const dir = migrationsDir(target);
+  const ledger = ledgerVersions(dir);
   if (ledger.length === 0) {
     return {
-      status: "skipped",
-      message: `[${target}] SKIPPED — no migration files found under ${APPS_DIR}/${appDirFor(target)}/supabase/migrations/`,
+      status: "drift",
+      message:
+        `[${target}] ERROR — no migration files found under ${dir}. ` +
+        `Invoke from the repo root or verify the migrations directory exists.`,
     };
   }
 
@@ -112,11 +134,7 @@ async function checkTarget(
     };
   }
 
-  const ledgerSet = new Set(ledger);
-  const appliedSet = new Set(applied);
-
-  const unapplied = ledger.filter((v) => !appliedSet.has(v));
-  const orphaned = applied.filter((v) => !ledgerSet.has(v));
+  const { unapplied, orphaned } = computeDrift(ledger, applied);
 
   if (unapplied.length === 0 && orphaned.length === 0) {
     return {
