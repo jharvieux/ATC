@@ -15,12 +15,13 @@ export async function runAuthFailureMonitor() {
   const svc = createServiceRoleClient();
   const since = new Date(Date.now() - WINDOW_MINUTES * 60 * 1000).toISOString();
 
-  const { data } = await svc
+  const { data, error } = await svc
     .from("auth_attempts")
     .select("ip")
     .eq("outcome", "failure")
     .gte("occurred_at", since)
     .limit(10000);
+  if (error) throw new Error(`auth_attempts select failed: ${error.message}`);
 
   const byIp = new Map<string, number>();
   for (const row of ((data ?? []) as Array<{ ip: string }>)) {

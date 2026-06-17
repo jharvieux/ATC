@@ -17,16 +17,17 @@ export async function runForumModerationTimeoutSweep() {
     now.getTime() - env.FORUM_MODERATION_RETRY_TIMEOUT_HOURS * 60 * 60 * 1000,
   );
 
-  const { data: stale } = await svc
+  const { data: stale, error: selectError } = await svc
     .from("forum_messages")
     .select("id,moderation_attempt_count")
     .eq("status", "pending_moderation")
     .lt("pending_moderation_since", cutoff.toISOString())
     .limit(100);
+  if (selectError) throw new Error(`forum_messages select failed: ${selectError.message}`);
 
   let escalated = 0;
   for (const msg of stale ?? []) {
-    const { data: updated } = await svc
+    const { data: updated, error: updateError } = await svc
       .from("forum_messages")
       .update({
         status: "flagged_review",
@@ -37,6 +38,7 @@ export async function runForumModerationTimeoutSweep() {
       .eq("id", msg.id)
       .eq("moderation_attempt_count", msg.moderation_attempt_count)
       .select("id");
+    if (updateError) throw new Error(`forum_messages update failed: ${updateError.message}`);
 
     if ((updated ?? []).length > 0) escalated++;
   }

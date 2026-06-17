@@ -16,12 +16,13 @@ export async function runPermissionDeniedMonitor() {
   const svc = createServiceRoleClient();
   const since = new Date(Date.now() - WINDOW_MINUTES * 60 * 1000).toISOString();
 
-  const { data } = await svc
+  const { data, error } = await svc
     .from("audit_log")
     .select("actor_user_id, action")
     .like("action", "%.permission_denied")
     .gte("occurred_at", since)
     .limit(10000);
+  if (error) throw new Error(`audit_log select failed: ${error.message}`);
 
   const byUser = new Map<string, number>();
   for (const row of ((data ?? []) as Array<{ actor_user_id: string | null }>)) {

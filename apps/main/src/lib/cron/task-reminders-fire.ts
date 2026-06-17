@@ -52,7 +52,7 @@ export async function runTaskRemindersFire() {
       .is("fired_at", null)
       .lte("remind_at", nowIso)
       .limit(BATCH_LIMIT);
-    if (error) return { error: error.message };
+    if (error) throw new Error(`task_reminders select failed: ${error.message}`);
 
     const rows = (data ?? []) as Row[];
     batches++;
