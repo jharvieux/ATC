@@ -392,6 +392,11 @@ jobs:
           fi
           npx supabase db push --db-url "$DB_URL"
 
+      - name: Migration drift check (#1158)
+        # Fails if the migration ledger diverges from what the DB reports after
+        # push — catches silent push failures and out-of-band dashboard changes.
+        run: tsx scripts/check-schema-drift.ts --target=main --db-url "$DB_URL"
+
       - name: Vercel deploy (preview)
         run: |
           vercel pull --environment=preview --yes --token=$VERCEL_TOKEN
@@ -470,6 +475,11 @@ jobs:
             exit 1
           fi
           npx supabase db push --db-url "$DB_URL"
+
+      - name: Migration drift check (#1158)
+        # Fails if the migration ledger diverges from what the DB reports after
+        # push — catches silent push failures and out-of-band dashboard changes.
+        run: tsx scripts/check-schema-drift.ts --target=main --db-url "$DB_URL"
 
       # #851 — model canary gate. Refuses to ship a config that references a
       # retired/unavailable Anthropic model. Self-guards: skips (non-fatal) when
