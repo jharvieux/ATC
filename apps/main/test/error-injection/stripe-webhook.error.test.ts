@@ -28,6 +28,9 @@ let mockArraySelectResult: { data: unknown[]; error: { message: string } | null 
 // [review gap-fill #719] result of the transfer.reversed `.update(...).eq().eq().select("id")`
 // chain — lets a test drive the handler into outcome='error' to exercise Step 5's clear.
 let mockUpdateSelectResult: { data: unknown[] | null; error: { message: string } | null } = { data: [{ id: "p-1" }], error: null };
+// Result returned by db.rpc() — default data=1 (one row processed). Override to inject errors
+// into the process_transfer_reversal RPC path.
+let mockRpcResult: { data: unknown; error: { message: string } | null } = { data: 1, error: null };
 let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } = {
   data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
   error: null,
@@ -91,6 +94,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
         },
       };
     },
+    async rpc(fn: string, _args?: unknown) {
+      void _args;
+      if (fn !== "process_transfer_reversal") throw new Error(`Unexpected rpc: ${fn}`);
+      return mockRpcResult;
+    },
   }),
 }));
 
@@ -137,6 +145,7 @@ beforeEach(() => {
   mockDeleteCallCount = 0;
   mockArraySelectResult = { data: [{ id: "p-1" }], error: null };
   mockUpdateSelectResult = { data: [{ id: "p-1" }], error: null };
+  mockRpcResult = { data: 1, error: null };
   mockMaybeSingleResult = {
     data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
     error: null,
@@ -164,6 +173,20 @@ describe("Stripe webhook — resource-unavailable injection (Pattern 2)", () => 
     delete process.env.STRIPE_SECRET_KEY;
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(500);
+  });
+});
+
+describe("Stripe webhook — transfer.reversed delta guard (Pattern 2)", () => {
+  it("returns 200 'OK' when transfer.reversed delta is zero (re-delivery, same amount_reversed) — guard skips RPC", async () => {
+    // delta = amount_reversed(0) - previous_attributes(absent→0) = 0
+    // Guard fires → break → processingOutcome stays 'unhandled' → 200 "OK"
+    // Without the guard: db.rpc() is not in the top-level mock → throws → handler catches → 500.
+    // A regression removing the guard changes this from 200 to 500.
+    mockEventType = "transfer.reversed";
+    mockEventData = { id: "tr_1", amount_reversed: 0 };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OK");
   });
 });
 
@@ -220,12 +243,12 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
   });
 
   it("[review gap-fill #719] clears the dedup row when the handler errors mid-dispatch (Step 5), so Stripe retries", async () => {
-    // Fresh delivery (insert OK), but the transfer.reversed update fails → outcome
+    // Fresh delivery (insert OK), but the process_transfer_reversal RPC fails → outcome
     // 'error' → Step 5 must DELETE the row + 500 so the next delivery reprocesses
     // instead of the row sticking around and short-circuiting to a duplicate 200.
     // Regression guard: dropping clearStripeWebhookEventRow in Step 5 fails this.
     mockInsertResult = { error: null };
-    mockUpdateSelectResult = { data: null, error: { message: "synthetic update failure" } };
+    mockRpcResult = { data: null, error: { message: "synthetic update failure" } };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("Handler error");
@@ -313,6 +336,11 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
               return d;
             },
           };
+        },
+        async rpc(fn: string, _args?: unknown) {
+          void _args;
+          if (fn !== "process_transfer_reversal") throw new Error(`Unexpected rpc: ${fn}`);
+          return { data: null, error: null };
         },
       } as never),
     );

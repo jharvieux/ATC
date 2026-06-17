@@ -63,6 +63,12 @@ export async function handleStripeWebhook(
   const rawBody = await req.text();
   const sig = req.headers.get("stripe-signature");
 
+  // Stripe signs webhooks with HMAC-SHA256; the `stripe-signature` header is
+  // `t=<unix-ts>,v1=<hex-digest>` — the digest is HEX, not base64/base64url.
+  // constructEvent recomputes the digest over `<t>.<rawBody>` and enforces the
+  // default 5-min timestamp tolerance, so the RAW request body must be passed
+  // unmodified (any re-serialization breaks the digest). The hex round-trip is
+  // exercised by buildSignedEvent in test/integration/stripe-webhook.test.ts.
   let event: Stripe.Event;
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig ?? "", webhookSecret);
@@ -151,26 +157,42 @@ export async function handleStripeWebhook(
     // (and payouts-reconcile-processing as the recovery path). §14.7.
     switch (event.type as string) {
       case "transfer.reversed": {
-        // §14.9 — Stripe transfer reversed (clawback): move the settled payout
-        // 'paid' → 'reversed'. We do NOT throw when 0 rows match: the transfer
-        // may not be ours, or a prior delivery / admin action already reversed
-        // it — throwing would make Stripe retry the reversal forever. A genuine
-        // DB error DOES throw (→500→Stripe retries).
-        const transfer = (event as { data: { object: Stripe.Transfer } }).data.object;
-        const { data: reversedRows, error: reverseErr } = await db
-          .from("payout_records")
-          .update({ status: "reversed", reversed_at: new Date().toISOString() })
-          .eq("stripe_transfer_id", transfer.id)
-          .eq("status", "paid")
-          .select("id");
-        if (reverseErr) throw new Error(`transfer.reversed update failed: ${reverseErr.message}`);
+        // §14.9 — Stripe transfer reversed (clawback). process_transfer_reversal()
+        // atomically: flips payout_records paid→reversed, credits
+        // payout_balances.available_cents, marks the commission disputed, and
+        // opens a reconciliation_review_queue row. Single RPC prevents the
+        // crash window that would exist between a multi-call sequence (D-091 P8).
+        // Returns 0 when no paid row matched — not ours or already reversed —
+        // so we do NOT throw on 0: Stripe retrying forever is the worse outcome.
+        const rawEvent = event as {
+          data: {
+            object: Stripe.Transfer;
+            previous_attributes?: { amount_reversed?: number };
+          };
+        };
+        const transfer = rawEvent.data.object;
 
-        if (reversedRows && reversedRows.length > 0) {
-          // TODO(#1127): §14.9 clawback ledger unwind. The status transition
-          // above is done, but §14.9 does not prescribe the payout_balances /
-          // commission money movement for a post-payout reversal. Implement the
-          // balance/ledger effect here once the spec owner confirms it. Until
-          // then this handler is status-only by deliberate scope cut.
+        // Partial reversal: amount_reversed is cumulative; delta is this delivery's amount.
+        const prevAmountReversed = rawEvent.data.previous_attributes?.amount_reversed ?? 0;
+        const thisReversalCents = transfer.amount_reversed - prevAmountReversed;
+
+        // Re-delivery with same cumulative amount_reversed and no previous_attributes:
+        // delta is zero — nothing new to process.
+        if (thisReversalCents <= 0) {
+          console.warn(
+            "[stripe-webhook] transfer.reversed: zero/negative delta for %s (possible re-delivery with same amount_reversed); skipping RPC",
+            transfer.id,
+          );
+          break;
+        }
+
+        const { data: processedCount, error: reversalErr } = await db.rpc("process_transfer_reversal", {
+          p_transfer_id: transfer.id,
+          p_this_reversal_cents: thisReversalCents,
+        });
+        if (reversalErr) throw new Error(`process_transfer_reversal failed: ${reversalErr.message}`);
+
+        if ((processedCount as number) > 0) {
           processingOutcome = "success";
         } else {
           console.warn(

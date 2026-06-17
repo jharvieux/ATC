@@ -16,7 +16,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 type DbCall = { table: string; op: "insert" | "update"; payload: unknown };
+type RpcCall = { fn: string; args: unknown };
 let dbCalls: DbCall[];
+let rpcCalls: RpcCall[];
 let progressToCalls: Array<{ tenantId: string; stage: string }>;
 // #744: tracks .eq(col,val) calls on payout_records update chains so tests can
 // assert the status='processing' guard is present.
@@ -31,9 +33,12 @@ let updateResult: { data: unknown; error: { message: string } | null } = { data:
 let updateSelectResult: { data: unknown[]; error: { message: string } | null } | null = null;
 let selectMaybeSingle: { data: unknown; error: null } = { data: null, error: null };
 let selectArray: { data: unknown[]; error: null } = { data: [], error: null };
+// Return value for db.rpc() calls. Default data=1 so transfer.reversed sees 1 row processed.
+let mockRpcResult: { data: unknown; error: { message: string } | null } = { data: 1, error: null };
 
 let mockEventType = "transfer.reversed";
 let mockEventData: Record<string, unknown> = { id: "tr_1" };
+let mockEventPreviousAttributes: Record<string, unknown> | undefined = undefined;
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
@@ -91,6 +96,10 @@ vi.mock("@/lib/db/service-role-client", () => ({
         },
       };
     },
+    async rpc(fn: string, args?: unknown) {
+      rpcCalls.push({ fn, args });
+      return mockRpcResult;
+    },
   }),
 }));
 
@@ -108,7 +117,10 @@ vi.mock("stripe", () => ({
         return {
           id: `evt_test_${mockEventType}`,
           type: mockEventType,
-          data: { object: mockEventData },
+          data: {
+            object: mockEventData,
+            ...(mockEventPreviousAttributes ? { previous_attributes: mockEventPreviousAttributes } : {}),
+          },
         };
       },
     };
@@ -128,6 +140,7 @@ function makeReq(): Request {
 
 beforeEach(() => {
   dbCalls = [];
+  rpcCalls = [];
   progressToCalls = [];
   updateEqCalls = [];
   insertResult = { error: null };
@@ -135,8 +148,10 @@ beforeEach(() => {
   updateSelectResult = null;
   selectMaybeSingle = { data: null, error: null };
   selectArray = { data: [], error: null };
+  mockRpcResult = { data: 1, error: null };
   mockEventType = "transfer.reversed";
   mockEventData = { id: "tr_1" };
+  mockEventPreviousAttributes = undefined;
   process.env.STRIPE_SECRET_KEY = "sk_test_fake";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_fake";
   process.env.STRIPE_CONNECT_WEBHOOK_SECRET = "whsec_fake_connect";
@@ -194,8 +209,7 @@ describe("Stripe webhook — header: idempotency insert", () => {
 
   it("writes outcome='error' with error_detail when a branch throws", async () => {
     mockEventType = "transfer.reversed";
-    selectArray = { data: [{ id: "p-1" }], error: null };
-    updateResult = { data: null, error: { message: "synthetic" } };
+    mockRpcResult = { data: null, error: { message: "synthetic" } };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(500);
     const outcomeUpdate = dbCalls.find(
@@ -209,30 +223,29 @@ describe("Stripe webhook — header: idempotency insert", () => {
 // ---------------------------------------------------------------------------
 // transfer.reversed (§14.9 clawback)
 //
-// Settlement ('processing' → 'paid') is NO LONGER a webhook concern — it is
-// synchronous in payouts-execute-transfer (modern Stripe never delivers
-// transfer.paid). The only transfer webhook now wired is transfer.reversed,
-// which moves a settled row 'paid' → 'reversed'. It is a single guarded UPDATE
-// by stripe_transfer_id (no multi-row .in(ids)/row-count-throw): 0 matched rows
-// is benign (not ours / already reversed) → outcome 'unhandled' → 200, so Stripe
-// stops retrying. A genuine DB error throws → 500 → Stripe retries.
+// The entire ledger unwind (status flip, balance credit, commission update,
+// review queue insert) is now handled by the atomic process_transfer_reversal()
+// RPC. The webhook handler calls db.rpc() once and checks the returned row count.
+// 0 rows → outcome 'unhandled' → 200 (not ours or already reversed; Stripe stops
+// retrying). RPC error → throws → outcome 'error' → 500 → Stripe retries.
 // ---------------------------------------------------------------------------
 
 describe("Stripe webhook — transfer.reversed", () => {
-  it("updates payout_records.status='reversed' + reversed_at when a paid row is found", async () => {
+  it("calls process_transfer_reversal RPC with transfer id and reversal amount", async () => {
     mockEventType = "transfer.reversed";
-    mockEventData = { id: "tr_abc" };
-    selectArray = { data: [{ id: "p-1" }], error: null };
+    mockEventData = { id: "tr_abc", amount_reversed: 40000 };
+    // mockRpcResult defaults to { data: 1, error: null } → 1 row processed → success
     await handleStripeWebhook(makeReq(), "platform");
-    const u = findUpdate("payout_records");
-    expect(u).toBeDefined();
-    expect(u!.status).toBe("reversed");
-    expect(u!.reversed_at).toEqual(expect.any(String));
+    const call = rpcCalls.find((c) => c.fn === "process_transfer_reversal");
+    expect(call).toBeDefined();
+    expect(call!.args).toEqual(
+      expect.objectContaining({ p_transfer_id: "tr_abc", p_this_reversal_cents: 40000 }),
+    );
   });
 
-  it("returns 200 with outcome='unhandled' when no paid payout_records row matches the transfer", async () => {
+  it("returns 200 with outcome='unhandled' when RPC returns 0 (no paid row matched)", async () => {
     mockEventType = "transfer.reversed";
-    selectArray = { data: [], error: null };
+    mockRpcResult = { data: 0, error: null };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
     const outcome = dbCalls.find(
@@ -241,10 +254,10 @@ describe("Stripe webhook — transfer.reversed", () => {
     expect(outcome!.processing_outcome).toBe("unhandled");
   });
 
-  it("returns 500 outcome='error' when the reversal UPDATE fails (genuine DB error)", async () => {
+  it("returns 500 outcome='error' when process_transfer_reversal RPC errors (genuine DB error)", async () => {
     mockEventType = "transfer.reversed";
-    mockEventData = { id: "tr_dberr" };
-    updateSelectResult = { data: [], error: { message: "deadlock detected" } };
+    mockEventData = { id: "tr_dberr", amount_reversed: 10000 };
+    mockRpcResult = { data: null, error: { message: "deadlock detected" } };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(500);
     const outcome = dbCalls.find(
@@ -254,17 +267,16 @@ describe("Stripe webhook — transfer.reversed", () => {
     expect(outcome!.error_detail).toEqual(expect.stringContaining("deadlock detected"));
   });
 
-  it("matches by stripe_transfer_id and guards on .eq('status','paid')", async () => {
-    // The reversal must only touch the row whose transfer was reversed, and
-    // only if it is still 'paid' — never clobber a row already moved elsewhere.
+  it("passes partial reversal delta (amount_reversed minus previous_attributes.amount_reversed) to RPC", async () => {
+    // Stripe delivers cumulative amount_reversed; the handler computes the delta so
+    // only the newly-reversed portion is credited, not the full transfer amount.
     mockEventType = "transfer.reversed";
-    mockEventData = { id: "tr_status_guard" };
-    selectArray = { data: [{ id: "p-1" }], error: null };
+    mockEventData = { id: "tr_partial", amount_reversed: 30000 };
+    mockEventPreviousAttributes = { amount_reversed: 15000 };
     await handleStripeWebhook(makeReq(), "platform");
-    const payoutEqs = updateEqCalls.filter((c) => c.table === "payout_records");
-    expect(payoutEqs).toContainEqual(expect.objectContaining({ col: "status", val: "paid" }));
-    expect(payoutEqs).toContainEqual(
-      expect.objectContaining({ col: "stripe_transfer_id", val: "tr_status_guard" }),
+    const call = rpcCalls.find((c) => c.fn === "process_transfer_reversal");
+    expect(call!.args).toEqual(
+      expect.objectContaining({ p_transfer_id: "tr_partial", p_this_reversal_cents: 15000 }),
     );
   });
 });

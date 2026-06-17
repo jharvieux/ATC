@@ -89,6 +89,22 @@ Pre-existing gap not fixed: `bookings.passengers:read` and `bookings.options:rea
 
 ---
 
+## D-245 — 2026-06-16 — §14.9 multi-step money movement → single atomic SECURITY DEFINER RPC (PR #1155)
+
+For the `transfer.reversed` clawback path, the initial design had four separate Supabase round-trips: (1) payout_records status flip, (2) payout_balances credit, (3) commissions → disputed, (4) reconciliation_review_queue insert. D-091 P8 prohibits this: a crash between step 1 and step 2 leaves the record permanently reversed with no balance credit.
+
+Decision: consolidate all four into a single `process_transfer_reversal(TEXT, BIGINT)` SECURITY DEFINER PL/pgSQL function. The FOR loop over the UPDATE…RETURNING makes the status flip and balance credit atomic within a single implicit transaction. Commission update and queue insert follow inside the same transaction. If the function crashes mid-loop, Postgres rolls back all changes for that iteration.
+
+**Rule derived**: Any webhook handler that does money movement + ledger update + status flip must run all writes inside a single transaction (DB-level function or RLS policy), not a sequence of application-layer round-trips. Three or more sequential Supabase calls where failure of step N orphans step N-1's effects always warrants a SECURITY DEFINER RPC.
+
+**What was rejected**: (a) try/catch with compensating transactions — too complex, still has async crash window; (b) Inngest step-level retries — adds infrastructure dependency for a synchronous operation; (c) accepting the crash window as low-probability — forbidden by D-091 P8.
+
+**Related**: `payout_balances.hold_period_days INTEGER NOT NULL` has no column default, which forced the RPC to look up the tenant's tier before the INSERT branch.
+
+**Follow-up**: #1156 — second partial reversal on same transfer silently no-ops (payout_record already 'reversed'); deferred from #1127 scope.
+
+---
+
 ## D-244 — 2026-06-15 — Onboarding Stripe redirect URLs use the tenant request origin, not platformBaseUrl() — reverses D-241 §3 (PR #1133)
 
 **Decision:** The three onboarding Stripe redirect routes (`subscription/checkout`, `connect/link`, `tax-form/stripe-link`) build their `success_url` / `refresh_url` / `return_url` from `tenantOriginFromRequest(req)` — the host the request actually arrived on (tenant subdomain or custom domain) — **not** from `platformBaseUrl()` (`NEXT_PUBLIC_APP_URL` → `PLATFORM_PRIMARY_DOMAIN`). This **reverses the wiring D-241 §3 introduced** for these three routes.

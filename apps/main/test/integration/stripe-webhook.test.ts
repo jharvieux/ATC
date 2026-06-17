@@ -33,6 +33,7 @@ function buildSignedEvent(
   eventType: string,
   eventId: string,
   dataObject: Record<string, unknown> = {},
+  previousAttributes?: Record<string, unknown>,
 ): { body: string; signature: string } {
   const timestamp = Math.floor(Date.now() / 1000);
   const event = {
@@ -41,7 +42,10 @@ function buildSignedEvent(
     type: eventType,
     api_version: "2024-04-10",
     created: timestamp,
-    data: { object: dataObject },
+    data: {
+      object: dataObject,
+      ...(previousAttributes ? { previous_attributes: previousAttributes } : {}),
+    },
     livemode: false,
     pending_webhooks: 0,
     request: { id: null, idempotency_key: null },
@@ -186,5 +190,410 @@ describeIf("Stripe webhook handler", () => {
 
     expect(error).toBeNull();
     expect(data?.processing_outcome).toBe("unhandled");
+  });
+
+  it("transfer.reversed replay: second delivery for same transfer does NOT double-credit available_cents", async () => {
+    // The RPC's status='paid' CAS guard means a second transfer.reversed delivery
+    // for a transfer that is already 'reversed' returns 0 rows processed → outcome
+    // 'unhandled' → 200. This proves available_cents is only credited once even when
+    // Stripe re-delivers or a second partial-reversal event arrives for the same record.
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_replay_${randomUUID().slice(0, 8)}`;
+    const eventId1 = `evt_replay1_${randomUUID().slice(0, 8)}`;
+    const eventId2 = `evt_replay2_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId1, eventId2);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Replay Test", legal_name: "Replay Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 20000,
+    });
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+      hold_period_days: 7,
+    });
+
+    const makeEvent = (eventId: string) => {
+      const { body, signature } = buildSignedEvent(
+        stripe,
+        STRIPE_WEBHOOK_SECRET!,
+        "transfer.reversed",
+        eventId,
+        { id: transferId, amount_reversed: 20000 },
+      );
+      return new Request("http://localhost/api/webhooks/stripe/platform", {
+        method: "POST",
+        body,
+        headers: { "stripe-signature": signature },
+      });
+    };
+
+    // First delivery: reverses the row, credits balance
+    const res1 = await handleStripeWebhook(makeEvent(eventId1), "platform");
+    expect(res1.status).toBe(200);
+
+    // Second delivery (different event ID, same transfer): RPC returns 0 — no double-credit
+    const res2 = await handleStripeWebhook(makeEvent(eventId2), "platform");
+    expect(res2.status).toBe(200);
+
+    // Balance must equal a single deduction, not 2× (clawback — §14.9)
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(-20000);
+
+    // Second delivery's outcome is 'unhandled' (0 rows matched the CAS guard)
+    const { data: ev2 } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId2)
+      .single();
+    expect(ev2?.processing_outcome).toBe("unhandled");
+
+    // Cleanup
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  // §14.9 clawback ledger tests — seed a real payout chain and verify all
+  // downstream effects fire atomically.
+
+  it("transfer.reversed (full): credits available balance, marks commission disputed, opens clawback queue row", async () => {
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_full_${randomUUID().slice(0, 8)}`;
+    const eventId = `evt_full_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    // Seed: tenant → booking → commission → payout_record
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Webhook Test", legal_name: "Webhook Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    const { data: booking } = await admin
+      .from("bookings")
+      .insert({ tenant_id: tenantId })
+      .select("id")
+      .single();
+
+    const { data: commission } = await admin
+      .from("commissions")
+      .insert({
+        tenant_id: tenantId,
+        booking_id: booking!.id,
+        commissionable_fare_cents: 500000,
+        commission_rate: 0.1,
+        platform_split_rate: 0.2,
+        gross_commission_cents: 50000,
+        host_booking_fee_cents: 0,
+        net_commission_cents: 50000,
+        platform_retained_cents: 10000,
+        subhost_payable_cents: 40000,
+      })
+      .select("id")
+      .single();
+    const commissionId = commission!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      commission_id: commissionId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 40000,
+    });
+
+    // Seed a starting payout_balance so we can assert the credit delta.
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+      hold_period_days: 7,
+    });
+
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: transferId, amount_reversed: 40000 },
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    // stripe_webhook_events → success (guards against silent 'unhandled' fall-through)
+    const { data: evt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+    expect(evt?.processing_outcome).toBe("success");
+
+    // payout_record → reversed
+    const { data: pr } = await admin
+      .from("payout_records")
+      .select("status")
+      .eq("stripe_transfer_id", transferId)
+      .single();
+    expect(pr?.status).toBe("reversed");
+
+    // payout_balances debited: a §14.9 clawback deducts the reversed amount
+    // from funds already settled to the tenant, so available_cents can go
+    // negative — this is the money being pulled back, not a balance error.
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(-40000);
+
+    // commission → disputed
+    const { data: comm } = await admin
+      .from("commissions")
+      .select("status")
+      .eq("id", commissionId)
+      .single();
+    expect(comm?.status).toBe("disputed");
+
+    // audit_log row written for the clawback transition — this RPC is the only
+    // commission status change outside the app-layer state machine, so without
+    // this row the §14.9 transition would leave no audit trail, while every
+    // other commission transition logs one via transitionCommissionState.
+    const { data: audit } = await admin
+      .from("audit_log")
+      .select("action, changes")
+      .eq("resource_type", "commission")
+      .eq("resource_id", commissionId)
+      .single();
+    expect(audit?.action).toBe("commission.state_transition");
+    const auditChanges = audit?.changes as { to?: string; reason?: string } | null;
+    expect(auditChanges?.to).toBe("disputed");
+    expect(auditChanges?.reason).toBe("transfer_reversed");
+
+    // reconciliation_review_queue → clawback row
+    const { data: queue } = await admin
+      .from("reconciliation_review_queue")
+      .select("status, variance_cents")
+      .eq("commission_id", commissionId)
+      .single();
+    expect(queue?.status).toBe("clawback");
+    expect(Number(queue?.variance_cents)).toBe(40000);
+
+    // Cleanup seeded data (stripe_webhook_events cleaned by afterEach)
+    await admin.from("reconciliation_review_queue").delete().eq("commission_id", commissionId);
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("commissions").delete().eq("id", commissionId);
+    await admin.from("bookings").delete().eq("id", booking!.id);
+    // audit_log FK→tenants has no ON DELETE CASCADE; the clawback writes an
+    // audit row, so it must be cleared before the tenant delete or that delete
+    // FK-violates (silently, since the cleanup result isn't checked).
+    await admin.from("audit_log").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  it("transfer.reversed (partial): credits only the delta amount, not the full payout", async () => {
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_partial_${randomUUID().slice(0, 8)}`;
+    const eventId = `evt_partial_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Webhook Test", legal_name: "Webhook Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    const { data: booking } = await admin
+      .from("bookings")
+      .insert({ tenant_id: tenantId })
+      .select("id")
+      .single();
+
+    const { data: commission } = await admin
+      .from("commissions")
+      .insert({
+        tenant_id: tenantId,
+        booking_id: booking!.id,
+        commissionable_fare_cents: 500000,
+        commission_rate: 0.1,
+        platform_split_rate: 0.2,
+        gross_commission_cents: 50000,
+        host_booking_fee_cents: 0,
+        net_commission_cents: 50000,
+        platform_retained_cents: 10000,
+        subhost_payable_cents: 40000,
+      })
+      .select("id")
+      .single();
+    const commissionId = commission!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      commission_id: commissionId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 40000,
+    });
+
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+      hold_period_days: 7,
+    });
+
+    // Partial reversal: 15000 cents reversed this time (cumulative 15000, prev 0)
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: transferId, amount_reversed: 15000 },
+      { amount_reversed: 0 },
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    // stripe_webhook_events → success (guards against silent 'unhandled' fall-through)
+    const { data: evt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+    expect(evt?.processing_outcome).toBe("success");
+
+    // Only the delta (15000) should be deducted, not the full 40000 (§14.9 clawback)
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(-15000);
+
+    // Queue row reflects the partial reversal amount
+    const { data: queue } = await admin
+      .from("reconciliation_review_queue")
+      .select("variance_cents")
+      .eq("commission_id", commissionId)
+      .single();
+    expect(Number(queue?.variance_cents)).toBe(15000);
+
+    await admin.from("reconciliation_review_queue").delete().eq("commission_id", commissionId);
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("commissions").delete().eq("id", commissionId);
+    await admin.from("bookings").delete().eq("id", booking!.id);
+    // audit_log FK→tenants has no ON DELETE CASCADE; the clawback writes an
+    // audit row, so it must be cleared before the tenant delete or that delete
+    // FK-violates (silently, since the cleanup result isn't checked).
+    await admin.from("audit_log").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  it("transfer.reversed with no commission_id: credits balance but skips commission update and queue row", async () => {
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_nocomm_${randomUUID().slice(0, 8)}`;
+    const eventId = `evt_nocomm_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Webhook Test", legal_name: "Webhook Test LLC", tenant_type: "sub_host" })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      commission_id: null,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 25000,
+    });
+
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+      hold_period_days: 7,
+    });
+
+    const { body, signature } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "transfer.reversed",
+      eventId,
+      { id: transferId, amount_reversed: 25000 },
+    );
+
+    const req = new Request("http://localhost/api/webhooks/stripe/platform", {
+      method: "POST",
+      body,
+      headers: { "stripe-signature": signature },
+    });
+
+    const res = await handleStripeWebhook(req, "platform");
+    expect(res.status).toBe(200);
+
+    // stripe_webhook_events → success (guards against silent 'unhandled' fall-through)
+    const { data: evt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventId)
+      .single();
+    expect(evt?.processing_outcome).toBe("success");
+
+    // Balance debited (clawback — §14.9)
+    const { data: bal } = await admin
+      .from("payout_balances")
+      .select("available_cents")
+      .eq("tenant_id", tenantId)
+      .single();
+    expect(Number(bal?.available_cents)).toBe(-25000);
+
+    // No reconciliation_review_queue row created
+    const { data: queue } = await admin
+      .from("reconciliation_review_queue")
+      .select("id")
+      .eq("tenant_id", tenantId);
+    expect(queue).toHaveLength(0);
+
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
   });
 });
