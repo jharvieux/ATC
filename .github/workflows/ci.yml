@@ -55,6 +55,13 @@ jobs:
         # existing debt is baselined in scripts/d091-baseline.txt.
         run: pnpm check:d091
 
+      - name: Permission-matrix guard (#1176)
+        # Fails any PR where a route calls assertPermission with a (resource, action)
+        # pair absent from permission-grants.ts. Root cause of #1173 and its instances.
+        # tsc cannot catch this class (resource/action are plain strings); E2E tests
+        # bypass it via role='tenant_owner'. Only this static sweep catches it.
+        run: pnpm check:permission-matrix
+
       - name: Typecheck
         run: pnpm -r typecheck
 

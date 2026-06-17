@@ -1,0 +1,11 @@
+# Permission-matrix baseline — known pre-existing gaps (issue #1173).
+# Each line is a "resource:action" pair that is gated by assertPermission
+# but absent from permission-grants.ts. The check only fails on NEW gaps
+# not in this list.
+#
+# ALL gaps from the original #1173 sweep were resolved in PR #1180.
+# This file is intentionally empty so that any new gap added to a route
+# without a matching grant will fail CI immediately.
+#
+# To add a temporary exemption: add "resource:action" below.
+# Remove the entry once the grant is added to permission-grants.ts.
