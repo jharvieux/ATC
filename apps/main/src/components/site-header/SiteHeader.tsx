@@ -14,6 +14,7 @@ import Link from "next/link";
 import { BrandLogo, type BrandLogoBranding } from "@/components/branding/BrandLogo";
 import { SiteHeaderMenu } from "./SiteHeaderMenu";
 import { Button } from "@/components/ui/button";
+import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface SiteHeaderProps {
   /** True when the request resolved to the platform domain (no tenant subdomain). */
@@ -22,12 +23,15 @@ export interface SiteHeaderProps {
   isAuthenticated: boolean;
   /** Tenant logo/name for tenant subdomains (§16); null shows the platform logo. */
   tenantBranding: BrandLogoBranding | null;
+  /** Resolved tenant membership role; null for anonymous visitors, platform domain, or DB error. */
+  role?: UserRole | null;
 }
 
 export function SiteHeader({
   isPlatformDomain,
   isAuthenticated,
   tenantBranding,
+  role = null,
 }: SiteHeaderProps) {
   return (
     <header className="w-full border-b border-border bg-background">
@@ -44,6 +48,7 @@ export function SiteHeader({
           <SiteHeaderMenu
             isPlatformDomain={isPlatformDomain}
             isAuthenticated={isAuthenticated}
+            role={role}
           />
         </div>
       </div>
