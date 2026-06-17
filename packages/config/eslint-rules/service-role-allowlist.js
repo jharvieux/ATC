@@ -44,9 +44,9 @@ module.exports = [
   // Stripe webhook handler: operates before any user session; service-role
   // required for the idempotency insert into stripe_webhook_events. §7.9a.
   "/lib/stripe/webhook-handler.ts",
-  // Inngest reconciliation job: background job running outside any user
+  // Vercel cron reconciliation job: background cron outside any user
   // session; service-role required to scan stripe_webhook_events. §7.9a.
-  "/inngest/stripe-webhook-incomplete-reconcile.ts",
+  "/lib/cron/stripe-webhook-incomplete-reconcile.ts",
   // RAG sync retry cron: background job, no user session. §8.7a.
   "/inngest/rag-sync-retry.ts",
   // DOB re-prompt cron: cross-tenant scan, no user session. §11.5.
@@ -209,7 +209,7 @@ module.exports = [
   // BP20: Forum moderation retry Inngest — background job, no user session. §19.3.
   "/inngest/forum-moderation-retry.ts",
   // BP20: Forum moderation timeout sweep — cross-tenant cron. §19.3.
-  "/inngest/forum-moderation-timeout-sweep.ts",
+  "/lib/cron/forum-moderation-timeout-sweep.ts",
   // BP20: Booking cancel (BP15 already listed above) — clawback + commission reversal.
   // BP20: Booking modify — reads bookings + calls host adapter. §20.9.
   "/app/api/bookings/[id]/modify/route.ts",
@@ -258,8 +258,8 @@ module.exports = [
   // §26.5: audit_log 7-year retention cron — service-role daily purge.
   "/inngest/audit-log-retention-purge.ts",
   // BP26: §26.6 monitoring crons — cross-tenant scans, no user session.
-  "/inngest/auth-failure-monitor.ts",
-  "/inngest/permission-denied-monitor.ts",
+  "/lib/cron/auth-failure-monitor.ts",
+  "/lib/cron/permission-denied-monitor.ts",
   "/inngest/cross-tenant-rls-bypass-monitor.ts",
   // BP27: AI call wrapper — writes ai_call_log + UPSERTs tenant_usage_metrics
   // for every Anthropic/OpenAI call. Constructs its own service-role db. §27.12.
@@ -314,7 +314,7 @@ module.exports = [
   "/app/api/imports/source-file/route.ts",
   "/app/api/integrations/gmail/health/route.ts",
   // BP37 task system.
-  "/inngest/task-reminders-fire.ts",
+  "/lib/cron/task-reminders-fire.ts",
   "/inngest/task-sequence-step-fire.ts",
   "/app/api/tasks/route.ts",
   // BP38 quote options.
@@ -436,10 +436,10 @@ module.exports = [
   // errors return null (no throw). Two-layer isolation satisfied by explicit
   // .eq("tenant_id", tenantId) on both queries. Read-only.
   "/components/branding-setup-banner/BrandingSetupBannerServer.tsx",
-  // #786 — Vendor health probe: 15-min cron that upserts durable status to
-  // the platform-wide `vendor_health` table. No tenant context; service-role
+  // #786 — Vendor health probe: 15-min Vercel cron that upserts durable status
+  // to the platform-wide `vendor_health` table. No tenant context; service-role
   // is the only viable client. §5.4.4.
-  "/inngest/vendor-health-probe.ts",
+  "/lib/cron/vendor-health-probe.ts",
   // #786 — Vendor status admin page: reads from the platform-wide `vendor_health`
   // table. No tenant context (cross-vendor platform data); gated by AdminLayout
   // assertPlatformAdmin. Same pattern as supervisor/page.tsx. Read-only.

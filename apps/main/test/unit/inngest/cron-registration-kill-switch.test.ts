@@ -29,9 +29,6 @@ const EVENT_DRIVEN_BOOKING_IDS = ["payouts-execute-transfer", "commission-split-
 // Unrelated functions that must stay registered no matter which flags are set —
 // guards against a refactor of the conditional spreads swallowing neighbors.
 const ALWAYS_REGISTERED_IDS = [
-  "stripe-webhook-incomplete-reconcile",
-  "vendor-health-probe",
-  "task-reminders-fire",
   "compliance-nightly",
 ];
 

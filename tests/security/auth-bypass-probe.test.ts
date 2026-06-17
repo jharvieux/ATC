@@ -66,6 +66,8 @@ const AUTH_TOKENS = [
   // in routes that perform DB operations; used standalone only for fire-and-forget dispatches
   // where the audit wrapper's DB callback isn't needed.
   "assertPlatformAdmin",
+  // Vercel cron routes verify Authorization: Bearer <CRON_SECRET> inline (§7.9a).
+  "CRON_SECRET",
 ] as const;
 
 /**

@@ -8,12 +8,6 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/inngest/client", () => ({
-  inngest: {
-    createFunction: (_cfg: unknown, handler: () => Promise<unknown>) => handler,
-  },
-}));
-
 const mockUpsertVendorHealth = vi.fn().mockResolvedValue({ prior_status: "healthy", new_status: "healthy", transitioned: false });
 vi.mock("@/lib/vendor-health/registry", () => ({
   upsertVendorHealth: (...args: unknown[]) => mockUpsertVendorHealth(...args),
@@ -42,8 +36,8 @@ vi.stubGlobal("fetch", async (url: string) => {
   };
 });
 
-import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
-const run = vendorHealthProbe as unknown as () => Promise<unknown>;
+import { runVendorHealthProbe } from "@/lib/cron/vendor-health-probe";
+const run = runVendorHealthProbe;
 
 beforeEach(() => {
   fetchResponses.clear();

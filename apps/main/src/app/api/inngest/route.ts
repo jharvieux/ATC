@@ -2,7 +2,6 @@
 
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
-import { stripeWebhookIncompleteReconcile } from "@/inngest/stripe-webhook-incomplete-reconcile";
 import { ragSyncRetry, ragSyncCleanup } from "@/inngest/rag-sync-retry";
 import { extractMemory, extractMemoryFromBatchResult } from "@/inngest/extract-memory";
 import { extractVoiceProfile } from "@/inngest/extract-voice-profile";
@@ -48,7 +47,6 @@ import { groupsMarkSailed } from "@/inngest/groups-mark-sailed";
 import { groupReminderCadence } from "@/inngest/group-reminder-cadence";
 // BP20: Forum moderation (§19)
 import { forumModerationRetry } from "@/inngest/forum-moderation-retry";
-import { forumModerationTimeoutSweep } from "@/inngest/forum-moderation-timeout-sweep";
 // BP21: Quote pricing discipline (§21.10.1)
 import { quoteEstimateExpirySweep } from "@/inngest/quote-estimate-expiry-sweep";
 // BP22: RAG ingestion pipeline (§22)
@@ -82,13 +80,9 @@ import { forensicsLogPurgeCron } from "@/inngest/forensics-log-purge-cron";
 import { auditLogRetentionPurge } from "@/inngest/audit-log-retention-purge";
 // §7.9 — request_idempotency expired-row purge (hourly)
 import { requestIdempotencyPurge } from "@/inngest/request-idempotency-purge";
-// BP26: Vendor health probe (§26.9)
-import { vendorHealthProbe } from "@/inngest/vendor-health-probe";
 // #851: daily model canary — pings configured models so a retired one alerts early
 import { modelCanary } from "@/inngest/model-canary";
 // BP26: §26.6 monitoring crons
-import { authFailureMonitor } from "@/inngest/auth-failure-monitor";
-import { permissionDeniedMonitor } from "@/inngest/permission-denied-monitor";
 import { crossTenantRlsBypassMonitor } from "@/inngest/cross-tenant-rls-bypass-monitor";
 // BP27: SaaS abuse monitoring + cost controls (§27)
 import { aiPricingCacheRefresh } from "@/inngest/ai-pricing-cache-refresh";
@@ -124,9 +118,8 @@ import { backfillCruiseFk } from "@/inngest/backfill-cruise-fk";
 import { deriveGeneralPriceRanges } from "@/inngest/derive-general-price-ranges";
 // BP40 §33.8 — Price-watch daily evaluator
 import { evaluatePriceWatches } from "@/inngest/evaluate-price-watches";
-// BP37 §37 — Tasks: sequence step firing + reminder cron
+// BP37 §37 — Tasks: sequence step firing
 import { taskSequenceStepFire } from "@/inngest/task-sequence-step-fire";
-import { taskRemindersFire } from "@/inngest/task-reminders-fire";
 // BP36 §36.6 — attribution_rollup nightly refresh
 import { attributionRollupRefresh } from "@/inngest/attribution-rollup-refresh";
 // §27.12 — Anthropic Message Batches integration.
@@ -154,7 +147,6 @@ const subhostingCronsDisabled = process.env.SUBHOSTING_CRONS_DISABLED === "true"
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    stripeWebhookIncompleteReconcile,
     ragSyncRetry,
     ragSyncCleanup,
     extractMemory,
@@ -204,7 +196,6 @@ export const { GET, POST, PUT } = serve({
     groupReminderCadence,
     // BP20: Forum moderation (§19)
     forumModerationRetry,
-    forumModerationTimeoutSweep,
     // BP21: Quote pricing discipline (§21.10.1)
     quoteEstimateExpirySweep,
     // BP22: RAG ingestion pipeline (§22)
@@ -232,13 +223,9 @@ export const { GET, POST, PUT } = serve({
     auditLogRetentionPurge,
     // §7.9 — request_idempotency expired-row purge
     requestIdempotencyPurge,
-    // BP26: Vendor health probe (§26.9)
-    vendorHealthProbe,
     // #851: daily model canary
     modelCanary,
     // BP26: §26.6 monitoring crons
-    authFailureMonitor,
-    permissionDeniedMonitor,
     crossTenantRlsBypassMonitor,
     // BP27: SaaS abuse monitoring + cost controls (§27)
     aiPricingCacheRefresh,
@@ -279,7 +266,6 @@ export const { GET, POST, PUT } = serve({
     evaluatePriceWatches,
     // BP37: Tasks & follow-up (§37)
     taskSequenceStepFire,
-    taskRemindersFire,
     // BP36: attribution_rollup nightly refresh (§36.6)
     attributionRollupRefresh,
     // §27.12 — AI Message Batches.
