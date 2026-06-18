@@ -529,15 +529,16 @@ describe("GET /api/tenant/override-requests", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns the list of override requests with expected shape", async () => {
+  it("returns items array with seeded override requests (confirms DB read wired)", async () => {
     h.tableData["tenant_override_requests"] = [
       { id: "req-1", dimension: "ai_cost", status: "pending", requested_at: "2026-06-18T12:00:00Z" },
     ];
     const res = await overrideGET(req("/api/tenant/override-requests"));
     expect(res.status).toBe(200);
-    const body = await res.json() as { requests?: unknown[] };
-    // Route returns the list keyed by whatever it names it — assert data is present.
-    expect(Object.keys(body).length).toBeGreaterThan(0);
+    const body = await res.json() as { items: Array<{ id: string; status: string }> };
+    expect(Array.isArray(body.items)).toBe(true);
+    expect(body.items[0]!.id).toBe("req-1");
+    expect(body.items[0]!.status).toBe("pending");
   });
 });
 
