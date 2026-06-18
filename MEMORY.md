@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-258 — 2026-06-18 — Vercel cron Phase 2a (#894) + retired public.schema_migrations (#1078)
+
+**Phase 2a (#1203).** Migrated 4 more sub-hourly Inngest crons to Vercel cron routes (same pattern as the Phase-1 six): `bookings-stuck-submitting-reconcile` + `payouts-reconcile-processing` (*/5), `rag-sync-retry` + `cross-tenant-rls-bypass-monitor` (*/15). `rag-sync-retry`'s daily `ragSyncCleanup` stays on Inngest. **Why:** Inngest free tier is 50k executions/mo; remaining crons run ~42k/mo (≈84% of cap, mostly 0-step), leaving no headroom for event-driven functions — moving schedule-driven work to Vercel reclaims the Inngest budget. Each: logic → `apps/main/src/lib/cron/<name>.ts`, thin `CRON_SECRET`-auth route, Inngest fn deleted + deregistered, `vercel.json` entry, service-role-allowlist + d091-baseline repointed. Also fixed two pre-existing #1203 CI blockers the prior session left: Playwright webServer boot (added `CRON_SECRET` placeholder to `e2e.yml` — #894 made it boot-required in `env.ts`), and the d091 gate (the Phase-1 file moves to `/lib/cron/` weren't repointed in `scripts/d091-baseline.txt`).
+
+**Retired `public.schema_migrations` (#1206, #1208).** The vestigial ledger from the old `scripts/db-migrate.ts` runner (deleted in #1078, `860ffec6`) — nothing recreates it, zero readers, no `tenant_id`. It was causing `RLS Snapshot Diff` failures (snapshots listed it; fresh DBs lack it). Dropped it from prod main + prod rag via `psql` (`DROP TABLE IF EXISTS`, 0 dependents), regenerated all four snapshots, added DROP migrations (main `20260704000001`, rag `0030`) + `IF EXISTS` guard on rag `0026`, removed the `rls-exceptions` entries. Distinct from Supabase's own `supabase_migrations.schema_migrations` (untouched).
+
+**KEY DB-CHECK TOPOLOGY (non-obvious — `deploy.yml`):** the "RLS Snapshot Diff" workflow runs TWO gates against DIFFERENT DBs — `rls:check` uses the **TEST** DBs (`SUPABASE_TEST_DB_URL` / `SUPABASE_RAG_TEST_DB_URL`), so `db/rls-snapshot-*.sql` tracks TEST; `grants:check` uses the **PROD** DBs (`SUPABASE_PROD_DB_URL` / `SUPABASE_RAG_PROD_DB_URL`), so `db/grants-snapshot-*.sql` tracks PROD. A table can legitimately differ between the two snapshots if test and prod diverge. The **RAG DB is a single DB serving both roles** (dropping prod-rag also cleaned the rls:check-rag target). Locally, `.env.local` `SUPABASE_DB_URL` = prod main (matches MCP project `mfaknjyqiwcjojukcnea`); `SUPABASE_TEST_DB_URL` = the test main DB. Regenerate a snapshot against the right DB: `rls:snapshot:*` ← TEST, `grants:snapshot:*` ← PROD.
+
+**Rejected:** bundling the destructive table-drop into the cron PR (BP38 — contract drop in its own PR); brute-forcing snapshot permutations through CI without understanding which DB each gate checks.
+
+---
+
 ## D-257 — 2026-06-17 — Staging/test Supabase DB provisioned
 
 New Supabase project created to serve as the dedicated test/staging DB (replaces pre-launch use of prod-serving atc-main for nightly suites). All 131 migrations from `apps/main/supabase/migrations/` applied via `db:reset`. Unblocks issues #533 and #386.

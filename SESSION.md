@@ -1,34 +1,26 @@
-# Session state — last updated 2026-06-17 13:30 UTC
+# Session state — last updated 2026-06-18 01:30 UTC
 
 ## Just completed
 
-- All 131 migrations applied to new staging/test Supabase DB via `db:reset`
-- PR #1203 merge conflict resolved (MEMORY.md + SESSION.md rebase conflict)
+- **Inngest 50k analysis** → migrated 4 more sub-hourly crons Inngest→Vercel (Phase 2a, **#1203 merged**): bookings-stuck-submitting-reconcile, payouts-reconcile-processing (*/5), rag-sync-retry, cross-tenant-rls-bypass-monitor (*/15). rag-sync-retry's daily cleanup stays on Inngest.
+- Fixed two pre-existing #1203 CI blockers: Playwright webServer boot (CRON_SECRET placeholder in `e2e.yml`) + d091 gate (baseline path repoints for Phase-1 `/lib/cron/` moves).
+- **Retired `public.schema_migrations`** (vestigial #1078 db-migrate ledger): **#1206 merged** (reconcile rls-snapshot-main) + **#1208 merged** (dropped it from prod main + prod rag via psql, regen all 4 snapshots, DROP migrations main `20260704000001` + rag `0030`, `0026` IF EXISTS guard, rls-exceptions removed). #1207 closed (resolved).
+- Filed #1205 (pre-existing fail-open read in cross-tenant-rls-bypass-monitor, carried from dev — D-094 gap).
+- Verified prod main + prod rag DBs: `public.schema_migrations` ABSENT.
 
 ## In flight
 
-PR #1203 — feature/894-vercel-cron-migration — rebase in progress, needs push after conflict resolution.
+Nothing in flight — clean checkpoint. On `dev`, up to date with origin/dev. MEMORY.md (D-258) + this SESSION.md update pending commit via a doc-only PR.
 
 ## Next step
 
-1. Push rebased PR #1203, wait for CI, then merge
-2. Wire new Supabase project credentials into GitHub secrets:
-   - Repo-level: `SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY`, `SUPABASE_TEST_SERVICE_KEY`, `SUPABASE_TEST_DB_URL` (session-mode pooler URL, port 5432)
-   - `staging` environment: `DB_URL` (new DB direct URL), `PROD_DB_URL` (prod direct URL)
-   - Repo variable: `STAGING_PIPELINE_ENABLED=true`
-3. Close issues #533 and #386 once secrets are set
-4. `workflow_dispatch` nightly-full-test.yml to validate
+- Open #1205 (cross-tenant-rls-bypass-monitor fail-open read) when convenient — align it with the 4 D-094-hardened sibling monitors (`{ data, error }` + throw).
+- Optional inert cleanup: stale `"schema_migrations"` literal in `scripts/check-d091-anti-patterns.ts:74` platform-tables allowlist (harmless; both audits flagged as no-action).
 
 ## Blocked on user
 
-- Provide from Supabase dashboard (Project Settings → API + Database):
-  - Project URL → `SUPABASE_TEST_URL`
-  - Anon key → `SUPABASE_TEST_ANON_KEY`
-  - Service role key → `SUPABASE_TEST_SERVICE_KEY`
-  - Session-mode pooler URL (Settings → Database → Connection string, Mode: Session, port 5432) → `SUPABASE_TEST_DB_URL`
-- CRON_SECRET still needs to be set in Vercel dashboard manually
+Nothing.
 
 ## Open questions
 
-- check:duplication fails at 5.97% (threshold 5%) — pre-existing on dev, not caused by #1203. Should threshold be raised?
-- Is this one DB serving both test/CI and staging pipeline roles, or will a second DB be created for staging?
+- `check:duplication` reports ~6% (threshold-related) but is non-gating in `pnpm verify` and CI — pre-existing, not from this session's work. Raise threshold or dedupe admin/console routes? (pre-existing question from prior session)
