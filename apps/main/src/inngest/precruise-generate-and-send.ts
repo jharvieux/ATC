@@ -285,10 +285,6 @@ interface EmailCtx {
     id: string;
     legal_name?: string;
     mailing_address?: string;
-    email_send_pattern?: string;
-    tenant_resend_api_key_encrypted?: string;
-    email_from_address?: string;
-    email_from_name?: string;
   };
   branding: {
     logo_url?: string;
@@ -296,6 +292,10 @@ interface EmailCtx {
     secondary_color?: string;
     accent_color?: string;
     slogan?: string;
+    email_send_pattern?: string;
+    tenant_resend_api_key_encrypted?: string;
+    email_from_address?: string;
+    email_from_name?: string;
   };
   customerName: string;
   shipName: string;
@@ -338,9 +338,8 @@ export async function loadEmailContext(args: {
 
   const { data: tenantRaw } = await svc
     .from("tenants")
-    .select(
-      "id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name",
-    )
+    // #1190: email_* / send-pattern / resend-key live on tenant_branding.
+    .select("id, legal_name, mailing_address")
     .eq("id", tenant_id)
     .maybeSingle();
   const tenant = tenantRaw as EmailCtx["tenant"] | null;
@@ -351,7 +350,7 @@ export async function loadEmailContext(args: {
 
   const { data: brandingRaw } = await svc
     .from("tenant_branding")
-    .select("logo_url, primary_color, secondary_color, accent_color, slogan")
+    .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
     .eq("tenant_id", tenant_id)
     .maybeSingle();
   const branding = (brandingRaw as EmailCtx["branding"] | null) ?? {};
@@ -510,12 +509,13 @@ async function buildAndSend(args: {
     id: emailCtx.tenant.id,
     legal_name: emailCtx.tenant.legal_name ?? "Travel Agency",
     mailing_address: emailCtx.tenant.mailing_address ?? null,
-    email_send_pattern: (emailCtx.tenant.email_send_pattern ?? "platform_resend") as
+    // #1190: email send config comes from tenant_branding.
+    email_send_pattern: (emailCtx.branding.email_send_pattern ?? "platform_resend") as
       | "platform_resend"
       | "tenant_resend",
-    tenant_resend_api_key_encrypted: emailCtx.tenant.tenant_resend_api_key_encrypted ?? null,
-    email_from_address: emailCtx.tenant.email_from_address ?? null,
-    email_from_name: emailCtx.tenant.email_from_name ?? null,
+    tenant_resend_api_key_encrypted: emailCtx.branding.tenant_resend_api_key_encrypted ?? null,
+    email_from_address: emailCtx.branding.email_from_address ?? null,
+    email_from_name: emailCtx.branding.email_from_name ?? null,
   };
 
   const result = await sendEmail({

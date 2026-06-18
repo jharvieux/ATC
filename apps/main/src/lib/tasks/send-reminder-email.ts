@@ -16,10 +16,6 @@ type TenantRow = {
   id: string;
   legal_name: string;
   mailing_address: string | null;
-  email_send_pattern: "platform_resend" | "tenant_resend";
-  tenant_resend_api_key_encrypted: string | null;
-  email_from_address: string | null;
-  email_from_name: string | null;
 };
 
 type UserRow = {
@@ -76,7 +72,8 @@ export async function sendTaskReminderEmail(args: {
 
   const { data: tenantData } = await svc
     .from("tenants")
-    .select("id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+    // #1190: email_* / send-pattern / resend-key live on tenant_branding.
+    .select("id, legal_name, mailing_address")
     .eq("id", tenant_id)
     .maybeSingle();
   if (!tenantData) return { status: "failed", reason: "tenant_not_found" };
@@ -84,7 +81,9 @@ export async function sendTaskReminderEmail(args: {
 
   const { data: brandingData } = await svc
     .from("tenant_branding")
-    .select("logo_url, primary_color, secondary_color, accent_color, slogan")
+    // #1190: email send config (send-pattern, resend key, from-address/name) is
+    // on tenant_branding, not tenants.
+    .select("logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
     .eq("tenant_id", tenant_id)
     .maybeSingle();
   const branding = (brandingData as {
@@ -93,7 +92,11 @@ export async function sendTaskReminderEmail(args: {
     secondary_color: string | null;
     accent_color: string | null;
     slogan: string | null;
-  } | null) ?? { logo_url: null, primary_color: null, secondary_color: null, accent_color: null, slogan: null };
+    email_send_pattern: "platform_resend" | "tenant_resend" | null;
+    tenant_resend_api_key_encrypted: string | null;
+    email_from_address: string | null;
+    email_from_name: string | null;
+  } | null) ?? { logo_url: null, primary_color: null, secondary_color: null, accent_color: null, slogan: null, email_send_pattern: null, tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null };
 
   const appUrl = process.env.PLATFORM_APP_URL ?? "https://app.example.com";
   const taskUrl = `${appUrl}/crm/tasks/${task.id}`;
@@ -163,10 +166,11 @@ export async function sendTaskReminderEmail(args: {
       id: tenant.id,
       legal_name: tenant.legal_name,
       mailing_address: tenant.mailing_address,
-      email_send_pattern: tenant.email_send_pattern,
-      tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted,
-      email_from_address: tenant.email_from_address,
-      email_from_name: tenant.email_from_name,
+      // #1190: email send config comes from tenant_branding.
+      email_send_pattern: branding.email_send_pattern ?? "platform_resend",
+      tenant_resend_api_key_encrypted: branding.tenant_resend_api_key_encrypted,
+      email_from_address: branding.email_from_address,
+      email_from_name: branding.email_from_name,
     },
     to: user.email,
     subject,

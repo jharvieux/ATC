@@ -67,7 +67,11 @@ async function runSweep(): Promise<unknown> {
   return fn.__handler();
 }
 
-const TENANT = { id: "t1", legal_name: "Test Agency", mailing_address: null, email_send_pattern: "platform_resend", tenant_resend_api_key_encrypted: null, email_from_address: null, email_from_name: null };
+const TENANT = { id: "t1", legal_name: "Test Agency", mailing_address: null };
+// #1190: email send config lives on tenant_branding, not tenants. Using
+// tenant_resend (distinct from the platform default) makes the sendEmail
+// assertion a real guard — a revert that reads tenant.* gets platform_resend.
+const BRANDING = { tenant_id: "t1", logo_url: null, primary_color: null, secondary_color: null, accent_color: null, slogan: null, email_send_pattern: "tenant_resend", tenant_resend_api_key_encrypted: "enc-key", email_from_address: "concierge@test.com", email_from_name: "Test Concierge" };
 const CONTACT = { id: "c1", first_name: "Jane", last_name: "Doe", email: "jane@example.com" };
 // §38 — the quotes container no longer carries trip columns; cruise_line/
 // ship_name now come from the representative quote_options row.
@@ -85,6 +89,7 @@ function setupHappyPathMocks(overrides: { updateResult?: { data: { id: string }[
     }
     if (table === "contacts") return makeSelectChain([CONTACT]);
     if (table === "tenants") return makeSelectChain([TENANT]);
+    if (table === "tenant_branding") return makeSelectChain([BRANDING]);
     if (table === "quote_options") return makeSelectChain([OPTION_ROW]);
     return makeSelectChain([]);
   });
@@ -108,6 +113,10 @@ describe("quoteEstimateExpirySweep — §21.10.1 / §23.10.1", () => {
     expect(call.to).toBe("jane@example.com");
     expect(call.category).toBe("transactional");
     expect(call.template_id).toBe("quote_estimate_expired");
+    // #1190: email send config must come from tenant_branding (tenant_resend).
+    const tenantArg = call.tenant as Record<string, unknown>;
+    expect(tenantArg.email_send_pattern).toBe("tenant_resend");
+    expect(tenantArg.email_from_address).toBe("concierge@test.com");
     // §38 — subject label is built from the representative quote_options row,
     // not the (now-dropped) quotes.cruise_line/ship_name columns.
     expect(call.subject).toContain("NCL — Bliss");

@@ -31,12 +31,3 @@ tenant_host_fee_overrides.fee_rate # pre-existing violation — tracked in #1190
 tenant_host_fee_overrides.rule_ref # pre-existing violation — tracked in #1190
 tenant_settings.customer_bug_flow_enabled # pre-existing violation — tracked in #1190
 tenant_settings.import_auto_accept_threshold # pre-existing violation — tracked in #1190
-tenants.business_address # pre-existing violation — tracked in #1190
-tenants.email_from_address # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
-tenants.email_from_domain # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
-tenants.email_from_domain_verified_at # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
-tenants.email_from_name # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
-tenants.email_send_pattern # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
-tenants.legal_business_name # pre-existing violation — tracked in #1190
-tenants.tenant_resend_api_key_encrypted # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
-users.full_name # pre-existing violation — tracked in #1190; may be first_name+last_name not a single column

@@ -4,6 +4,38 @@ Newest entries on top.
 
 ---
 
+## D-264 — 2026-06-18 — #1190 decision-free Severity C shipped (email config on tenant_branding); forums coordinator split out
+
+Shipped the decision-free Severity C subset: the "tenant email config lives on tenant_branding, not tenants" bug. Six files fixed — `abuse-state-transition-notify` (legal_business_name→legal_name, business_address→mailing_address, users.full_name→display_name), and FIVE email-send paths reading `email_send_pattern`/`tenant_resend_api_key_encrypted`/`email_from_*` off `tenants` (group invitations, group-reminder-cadence, quote-estimate-expiry-sweep, send-reminder-email, precruise) → moved to the `tenant_branding` row (each already queried branding for visuals; defaulted to `platform_resend` when no branding row). Removed 9 exceptions (29→20).
+
+**Key lesson:** a single exception masks EVERY reader of that column. Removing `tenants.email_*` surfaced 3 readers I hadn't found by grep (quote-estimate-expiry-sweep, send-reminder-email, precruise:341) — the gate found them once unsilenced. Always remove the exception and let the gate enumerate readers, don't trust the first grep.
+
+**Deferred (still tracked in #1190):** `forums.coordinator_user_id` turned out NOT to be a simple rename — it's read by ~7 forum routes (incl. `.select("*")` sites the gate can't see) and the coordinator lives on the linked `groups` row. That's a cross-cutting moderation-correctness fix on a different concern, so it gets its own focused PR rather than riding with the email renames. `precruise` bookings fields (customer_name/group_id/passenger_contact_email at :324) and the 2 Severity-B/C decision-blocked items (host-fee rule_ref, tenant_settings columns, GDPR export model) also remain.
+
+**Why split forums out:** bundling a 7-file moderation fix with email-config renames makes an unreviewable mixed-concern PR (CLAUDE.md surgical/focused). Decision-free in target ≠ small in blast radius.
+
+**Artifacts:** PR (Severity C email config), issue #1190 (umbrella + triage), `db/column-reader-exceptions.txt`.
+
+---
+
+## D-263 — 2026-06-18 — #1190 column-reader baseline was ~31 genuine runtime bugs, not false positives; Severity A shipped (#1244)
+
+Triaged the 34 baselined static-column-reader violations (`db/column-reader-exceptions.txt`) against the live schema + actual call sites. ~31 are genuine bugs (app code `.select()`s a column absent from the table → PostgREST 400 or silent-wrong), only `messages.user_id` is a clean parser false positive (embedded `conversations!inner(user_id)`). They were baselined to make CI green at gate-ship (#1160) rather than fixed.
+
+Shipped **Severity A** (routes that 400 today) in #1244: `bookings/[id]` GET (`provider_booking_ref`/`is_sandbox`, dropped unused `ai_paused_by_platform`), `bookings` list GET (`is_sandbox`), submit+modify (`tenants.prong`→`tenant_type`, mapped to the adapter's `prong` arg at the call site), quotes accept + `build-render-input` (`tenants.name`→`display_name`). Exceptions 34→29. Fixed with the real columns + in-code mapping (NOT PostgREST aliases) to keep response contracts and dodge the gate's alias bug.
+
+**Why no aliases:** the column-reader gate parses `alias:column` backwards (strips the alias, checks it as the column) — `scripts/lib/column-readers.ts` + its test encode `col:alias`. Opened **#1243**. Avoiding aliases kept this PR off the shared gate.
+
+**Severity B/C deferred** (tracked in #1190 with full call-site map). Three decisions are **blocked on the user** before those PRs: (1) host booking fee `rule_ref` has no column (drop vs migrate) — money path computing 0 today; (2) `tenant_settings.customer_bug_flow_enabled`/`import_auto_accept_threshold` never migrated (add columns vs remove the override read); (3) GDPR export user→bookings/chunks linkage (`bookings.source`/`auth_user_id` wrong) before rewriting privacy code.
+
+**Why:** the gate (#1160) did its job — caught a real latent-bug class — but the fix was deferred via baselining, so the bugs sat live on under-tested surfaces (Inngest jobs, booking detail, GDPR export). Sequenced Severity A first (user-facing 400s) per user direction; B/C need product/spec calls, so they wait rather than guessing at money/privacy semantics.
+
+**Rejected:** one mega-PR for all 31 (unreviewable, mixes money/privacy/comms); fixing the gate's alias bug inside #1244 (scope creep into shared CI + flips a passing test — issued as #1243 instead).
+
+**Artifacts:** PR #1244 (merged), issues #1190 (triage comment) + #1243, `db/column-reader-exceptions.txt`.
+
+---
+
 ## D-262 — 2026-06-18 — process_transfer_reversal RPC: 3-param signature with stripe_event_id (#1227)
 
 Migration 20260704000002 drops the old (TEXT, BIGINT) overload and creates (TEXT, BIGINT, TEXT) that threads `p_stripe_event_id` into both first-pass and second-pass `reconciliation_review_queue` INSERT notes. `CREATE OR REPLACE` with a different arg list creates a new overload rather than replacing the old one in Postgres — explicit DROP was required to avoid a phantom callable 2-param signature.

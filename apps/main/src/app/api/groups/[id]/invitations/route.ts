@@ -228,8 +228,10 @@ async function sendGroupInvitationEmail(args: {
   ] = await Promise.all([
     // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by invitation UUID just inserted above.
     args.svc.from("invitations").select("id,invitee_email,invitee_name").eq("id", args.invitationId).single(),
-    args.svc.from("tenants").select("id,legal_name,mailing_address,email_send_pattern,tenant_resend_api_key_encrypted,email_from_address,email_from_name,email_from_domain,email_from_domain_verified_at").eq("id", args.tenantId).single(),
-    args.svc.from("tenant_branding").select("logo_url,primary_color,secondary_color,accent_color,slogan").eq("tenant_id", args.tenantId).maybeSingle(),
+    // #1190: email_* / send-pattern / resend-key live on tenant_branding, not
+    // tenants — read them from the branding row below.
+    args.svc.from("tenants").select("id,legal_name,mailing_address").eq("id", args.tenantId).single(),
+    args.svc.from("tenant_branding").select("logo_url,primary_color,secondary_color,accent_color,slogan,email_send_pattern,tenant_resend_api_key_encrypted,email_from_address,email_from_name,email_from_domain,email_from_domain_verified_at").eq("tenant_id", args.tenantId).maybeSingle(),
     // d091-allow:service-role-tenant — invitations has no tenant_id column; scoped by group_id which was verified .eq("tenant_id", ctx.tenant_id) above.
     args.svc.from("invitations").select("rsvp_state").eq("group_id", args.group.id).is("token_revoked_at", null),
   ]);
@@ -305,12 +307,13 @@ async function sendGroupInvitationEmail(args: {
       id: tenant.id,
       legal_name: tenant.legal_name ?? "Travel Agency",
       mailing_address: tenant.mailing_address,
-      email_send_pattern: tenant.email_send_pattern,
-      tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted,
-      email_from_address: tenant.email_from_address,
-      email_from_name: tenant.email_from_name,
-      email_from_domain: tenant.email_from_domain,
-      email_from_domain_verified_at: tenant.email_from_domain_verified_at,
+      // #1190: email send config comes from tenant_branding.
+      email_send_pattern: branding?.email_send_pattern ?? "platform_resend",
+      tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
+      email_from_address: branding?.email_from_address ?? null,
+      email_from_name: branding?.email_from_name ?? null,
+      email_from_domain: branding?.email_from_domain ?? null,
+      email_from_domain_verified_at: branding?.email_from_domain_verified_at ?? null,
     },
     to: inv.invitee_email,
     subject: resolved.subject,

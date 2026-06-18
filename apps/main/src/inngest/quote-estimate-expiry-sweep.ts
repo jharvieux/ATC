@@ -86,7 +86,8 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
     const { data: tenantsRaw, error: tenantsErr } = await db
       .from("tenants")
-      .select("id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
+      // #1190: email_* / send-pattern / resend-key live on tenant_branding.
+      .select("id, legal_name, mailing_address")
       .in("id", tenantIds);
 
     if (tenantsErr) {
@@ -96,7 +97,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
 
     const { data: brandingsRaw, error: brandingsErr } = await db
       .from("tenant_branding")
-      .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan")
+      .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name")
       .in("tenant_id", tenantIds);
 
     if (brandingsErr) {
@@ -120,8 +121,8 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
     }
 
     type ContactRow = { id: string; first_name: string | null; last_name: string | null; email: string | null };
-    type TenantRow = { id: string; legal_name: string | null; mailing_address: unknown; email_send_pattern: string | null; tenant_resend_api_key_encrypted: string | null; email_from_address: string | null; email_from_name: string | null };
-    type BrandingRow = { tenant_id: string; logo_url: string | null; primary_color: string | null; secondary_color: string | null; accent_color: string | null; slogan: string | null };
+    type TenantRow = { id: string; legal_name: string | null; mailing_address: unknown };
+    type BrandingRow = { tenant_id: string; logo_url: string | null; primary_color: string | null; secondary_color: string | null; accent_color: string | null; slogan: string | null; email_send_pattern: string | null; tenant_resend_api_key_encrypted: string | null; email_from_address: string | null; email_from_name: string | null };
 
     const contactMap = new Map<string, ContactRow>(
       ((contactsRaw ?? []) as ContactRow[]).map((c) => [c.id, c]),
@@ -233,12 +234,13 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         id: r.tenant_id,
         legal_name: tenant.legal_name ?? "Travel Agency",
         mailing_address: tenant.mailing_address ? String(tenant.mailing_address) : null,
-        email_send_pattern: (tenant.email_send_pattern ?? "platform_resend") as
+        // #1190: email send config comes from tenant_branding.
+        email_send_pattern: ((branding as BrandingRow).email_send_pattern ?? "platform_resend") as
           | "platform_resend"
           | "tenant_resend",
-        tenant_resend_api_key_encrypted: tenant.tenant_resend_api_key_encrypted ?? null,
-        email_from_address: tenant.email_from_address ?? null,
-        email_from_name: tenant.email_from_name ?? null,
+        tenant_resend_api_key_encrypted: (branding as BrandingRow).tenant_resend_api_key_encrypted ?? null,
+        email_from_address: (branding as BrandingRow).email_from_address ?? null,
+        email_from_name: (branding as BrandingRow).email_from_name ?? null,
       };
 
       // Default subject comes from the template registry; when there's no
