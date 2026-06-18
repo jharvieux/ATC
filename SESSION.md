@@ -1,27 +1,26 @@
-# Session state — last updated 2026-06-17 (Stryker mutation sweep + triage complete)
+# Session state — last updated 2026-06-17 (Stryker sweep + Vercel preview diagnosis)
 
 ## Just completed
 
-- **Full-codebase Stryker mutation sweep** (broad `stryker.config.json`, 679 files / 52,152 mutants, concurrency 6, ~15 min). **Overall 27.85%** (58% covered-only; 26,488 NoCoverage dominates). Reports: `reports/mutation/mutation.html`, `reports/mutation/mutation.broad-full.json` (canonical; `mutation.json` restored to match).
-- **Fixed 3 Stryker tooling bugs** (uncommitted on `dev`, see below): sandbox-copy ENOTSUP crash on `.claude` symlink → `ignorePatterns`; baseline dry-run abort on the onboarding-grants introspection meta-test → new `vitest.stryker.config.ts`; broken `mutate:thorough` script (`--configFile` → positional).
-- **Confirmed perTest measurement artifact**: `permission-grants.ts` 6%→**83%** under `thorough`; `tier-codes.ts` 19%→88%. Did NOT misreport these as gaps.
-- **Filed triage to GitHub**: epic **#1219** + domain issues **#1211–#1218** + data comment on **#1204** (cron auth gates). See D-260.
+- **Stryker mutation sweep** (679 files / 52,152 mutants, 27.85% overall). Tooling fixes (ignorePatterns sandbox-copy crash, vitest.stryker.config.ts introspection-test exclude, mutate:thorough flag) + runbook shipped in **#1220 (merged)**. Triage filed: epic **#1219** + issues **#1211–#1218** + cron data comment on #1204. perTest artifact confirmed (permission-grants 6%→83% thorough). See D-260.
+- **Vercel "preview builds" investigation** → root-caused to our own middleware, not Vercel. Preview URLs 404 with "This site is not currently active" because `proxy.ts` resolves tenant by hostname and 404s `*.vercel.app`. Fix shipped in **#1221 (merged)**: `proxy.ts` step 5 maps non-prod preview hosts to `PLATFORM_DEFAULT_TENANT_ID` via new `getTenantById()`; 5 tests; both Opus audits clean. See D-261.
+- Empirically verified the merged fix still 404s on previews → runtime config gap. Opened **#1222** (ops: set `PLATFORM_DEFAULT_TENANT_ID` in Vercel Preview scope).
 
 ## In flight
 
-- **4 uncommitted files on `dev`** (additive tooling fixes, repo not broken): `stryker.config.json`, `stryker.thorough.config.json`, `vitest.stryker.config.ts` (new), `package.json` (mutate:thorough one-liner). MEMORY.md (D-260) + this SESSION.md also pending commit.
-- These need a PR into `dev` (never commit directly). Not yet branched.
+- This doc-only PR (D-261 + SESSION) on branch `chore/session-d261` — pending push + merge.
 
 ## Next step
 
-- **Open the Stryker-tooling PR**: branch `feature/stryker-sweep-fixes` off `dev` → `pnpm verify` → push → `gh pr create` with `## Audit` placeholder → run `d091-reviewer` + `pre-pr-reviewer` (diff is small: 3 config/json + 1 new ~25-line vitest config + a package.json one-liner → Sonnet is fine, no Opus trigger) → fill Audit block → merge when CI green. Consider adding a short `docs/testing/mutation-testing.md` runbook (how to run broad vs thorough, the perTest/RAG caveats) to the same PR.
-- Then the test-writing work itself is tracked across #1211–#1218 (not started; separate PRs, security/money first).
+- Merge the doc-only PR.
+- **User/ops action (#1222):** set `PLATFORM_DEFAULT_TENANT_ID` in Vercel Preview env scope (= Booking tenant UUID) and confirm that tenant exists in the preview DB, then re-open a PR preview to confirm it renders.
 
 ## Blocked on user
 
-- Awaiting go-ahead to open the tooling PR now vs. defer (offered at end of session). Everything else is done.
+- #1222 is an infra/config step in the user's lane (Vercel env var). Code side is done + merged.
 
 ## Open questions
 
-- #1218: RAG needs its own Stryker pass (`stryker.rag.config.json` pointing at `apps/rag/vitest.config.ts`) — do as part of the tooling PR or separately? Currently proposed as separate follow-up in the issue.
-- Pre-existing (prior session): `check:duplication` ~6% (non-gating); cross-tenant-rls-bypass-monitor fail-open read (#1205 to file).
+- Whether to relax Vercel Deployment Protection for external preview viewers — user chose to KEEP it on (team-only). Revisit only if external stakeholders need preview access.
+- Mutation test-writing for #1211–#1218 (not started; security/money first).
+- Pre-existing: `check:duplication` ~6% (non-gating); cross-tenant-rls-bypass-monitor fail-open read (#1205 to file).
