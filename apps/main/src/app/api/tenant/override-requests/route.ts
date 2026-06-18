@@ -64,11 +64,12 @@ export async function GET(req: Request): Promise<Response> {
       action: "list",
     });
     const db = tenantClient(ctx);
-    const { data } = await db
+    const { data, error } = await db
       .from("tenant_override_requests")
       .select("id, dimension, requested_threshold_kind, current_state, reason, requested_at, status, reviewed_at, deny_reason, resulting_override_id")
       .order("requested_at", { ascending: false })
       .limit(100);
+    if (error) return dbErrorResponse(error);
     return Response.json({ ok: true, items: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);
