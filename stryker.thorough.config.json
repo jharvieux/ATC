@@ -4,7 +4,7 @@
   "testRunner": "vitest",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "vitest": {
-    "configFile": "vitest.config.ts"
+    "configFile": "vitest.stryker.config.ts"
   },
   "reporters": ["html", "json", "clear-text", "progress"],
   "htmlReporter": {
@@ -19,6 +19,8 @@
   "timeoutFactor": 2,
   "concurrency": 2,
   "disableTypeChecks": "{apps,packages,tests}/**/*.{ts,tsx}",
+  "_comment_ignore": "Keep .claude (Claude Code worktrees + symlinked skills like .claude/skills/patch) and build outputs out of the sandbox copy. The patch symlink crashes the copy with ENOTSUP, and .claude/worktrees holds 11 full node_modules trees. ignorePatterns only affects what's copied into the sandbox, not what's mutated.",
+  "ignorePatterns": [".claude", ".next", "coverage", "reports"],
   "mutate": [
     "apps/main/src/lib/**/*.ts",
     "apps/main/src/inngest/**/*.ts",

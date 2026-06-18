@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-260 — 2026-06-17 — First full-codebase mutation-testing baseline (Stryker) + tooling fixes + perTest-artifact lesson
+
+**What happened.** Ran the broad `stryker.config.json` across both apps (679 files / 52,152 mutants). **Overall mutation score 27.85%** (58% on covered code; 26,488 NoCoverage dominates). Triaged into a roadmap epic **#1219** + 8 domain issues **#1211–#1218** (webhooks, tenant-isolation, auth/RBAC, booking lifecycle, commissions/pricing, abuse-gating, Inngest, RAG-config) + a data comment on existing **#1204** (cron auth gates).
+
+**Three tooling bugs fixed (uncommitted, headed to a PR) — anyone running Stryker from this repo hits all three:**
+1. Sandbox copy crashed `ENOTSUP` on the `.claude/skills/patch` symlink (and would copy 11 worktree `node_modules`). Fix: `ignorePatterns: [".claude",".next","coverage","reports"]` in both stryker configs (sandbox-copy only; does not change the mutate set).
+2. Baseline dry run aborted because `apps/main/test/unit/auth/onboarding-grants.test.ts` regex-parses route source that Stryker instruments. Fix: new `vitest.stryker.config.ts` excludes only that one introspection test under Stryker (still runs in CI); chose this over dropping the 11 onboarding routes from `mutate` so they stay measured.
+3. `mutate:thorough` script passed `--configFile`, which Stryker 9 rejects (config file is positional) — so thorough mode had been silently broken. Fixed to `stryker run stryker.thorough.config.json`.
+
+**Key methodology lesson (don't repeat the misread).** The broad config uses `coverageAnalysis: perTest`, which **under-measures module-load constants**: `permission-grants.ts` showed **6% (340 survived)** under perTest but **83% (60 survived)** under `thorough` (`coverageAnalysis: all`) — a measurement artifact, not a gap. Same for `stripe/tier-codes.ts` (19%→88%). Always re-measure Set/map-constant files with `pnpm mutate:thorough` before filing. Also: **mutation testing sees only the vitest suite** — Playwright E2E coverage is invisible, so "NoCoverage" ≠ "untested in CI" for routes with E2E. And **RAG was unmeasured** (#1218): broad config mutates `apps/rag/src` but root vitest excludes `apps/rag/test` → all RAG results are false NoCoverage; needs a separate RAG Stryker pass.
+
+**Rejected:** running the broad sweep at the committed `concurrency: 2` (too slow — user asked to raise it; ran at 6, ~15 min on a 10-core/16 GB Mac; capped at 6 not 10 for RAM headroom — left committed default at 2).
+
+---
+
 ## D-259 — 2026-06-18 — Reverses D-142: PR-time grants:check now runs against the TEST DB (premise changed in D-257)
 
 **Decision (#1210).** Split the `grants:check` deploy step so the **PR-time** check runs against the **TEST** DBs (`SUPABASE_TEST_DB_URL` / `SUPABASE_RAG_TEST_DB_URL`), not PROD; the **release/\*** check still runs against PROD, and the **dev-push warn** still runs against PROD. This **reverses D-142's design decision (1)** ("grants:check diffs against live PROD, not the test DB").

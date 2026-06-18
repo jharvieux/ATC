@@ -58,7 +58,7 @@
     "lh:home": "lighthouse http://localhost:3000/ --preset=desktop --chrome-flags=\"--headless=new\" --view",
     "lh:ci": "lhci autorun",
     "mutate": "stryker run",
-    "mutate:thorough": "stryker run --configFile stryker.thorough.config.json",
+    "mutate:thorough": "stryker run stryker.thorough.config.json",
     "mutate:abuse": "stryker run --mutate \"apps/main/src/lib/abuse/**/*.ts\"",
     "mutate:audit": "stryker run --mutate \"apps/main/src/lib/audit/**/*.ts\"",
     "mutate:auth": "stryker run --mutate \"apps/main/src/lib/auth/**/*.ts\"",
