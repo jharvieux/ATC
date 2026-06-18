@@ -190,6 +190,7 @@ export async function handleStripeWebhook(
         const { data: processedCount, error: reversalErr } = await db.rpc("process_transfer_reversal", {
           p_transfer_id: transfer.id,
           p_this_reversal_cents: thisReversalCents,
+          p_stripe_event_id: event.id,
         });
         if (reversalErr) throw new Error(`process_transfer_reversal failed: ${reversalErr.message}`);
 
