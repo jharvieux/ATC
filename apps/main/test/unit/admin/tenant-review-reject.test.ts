@@ -16,7 +16,17 @@ const mocks = vi.hoisted(() => ({
   send: vi.fn(async (_event: { name: string; data?: unknown }) => undefined),
   cancel: vi.fn(async () => ({})),
   subUpdate: vi.fn(async () => ({})),
-  update: vi.fn((_payload: Record<string, unknown>) => ({ eq: async () => ({ error: null }) })),
+  update: vi.fn((_payload: Record<string, unknown>) => {
+    // Supports both:
+    //   - non-CAS: .update().eq() awaited directly → { error: null }
+    //   - CAS (#1189): .update().eq().eq().select("id") → { data: [{ id }], error: null }
+    const chain: Record<string, unknown> = {};
+    chain.eq = () => chain;
+    chain.select = (_cols: string) => Promise.resolve({ data: [{ id: "t-1" }], error: null });
+    chain.then = (resolve: (v: { data: null; error: null }) => unknown) =>
+      Promise.resolve(resolve({ data: null, error: null }));
+    return chain;
+  }),
   sendNotification: vi.fn(async (_input: Record<string, unknown>) => ({ status: "sent" })),
   tenantRow: { id: "t-1", legal_name: "Acme Travel LLC", slug: "acme", stripe_subscription_id: "sub_1", stripe_customer_id: "cus_1", review_decision: null } as Record<string, unknown> | null,
   usersRows: [{ email: "owner@acme.test" }] as Array<{ email: string }>,

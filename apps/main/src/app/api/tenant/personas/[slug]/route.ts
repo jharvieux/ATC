@@ -49,9 +49,8 @@ export async function PATCH(req: Request, props: { params: Promise<{ slug: strin
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (tenantErr || !tenant) {
-      return Response.json({ error: "tenant_not_found" }, { status: 404 });
-    }
+    if (tenantErr) return dbErrorResponse(tenantErr);
+    if (!tenant) return Response.json({ error: "tenant_not_found" }, { status: 404 });
 
     // Resolve tier code: tier_definitions is PLATFORM_READABLE so tenantClient reads it.
     const { data: tierDef, error: tierErr } = await db
