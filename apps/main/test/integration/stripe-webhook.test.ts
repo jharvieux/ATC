@@ -192,16 +192,14 @@ describeIf("Stripe webhook handler", () => {
     expect(data?.processing_outcome).toBe("unhandled");
   });
 
-  it("transfer.reversed replay: second delivery for same transfer does NOT double-credit available_cents", async () => {
-    // The RPC's status='paid' CAS guard means a second transfer.reversed delivery
-    // for a transfer that is already 'reversed' returns 0 rows processed → outcome
-    // 'unhandled' → 200. This proves available_cents is only credited once even when
-    // Stripe re-delivers or a second partial-reversal event arrives for the same record.
+  it("transfer.reversed same-event re-delivery: dedup unique constraint returns 'Duplicate' — no double-credit", async () => {
+    // Stripe re-delivers the exact same event_id (network retry / at-least-once guarantee).
+    // The stripe_webhook_events unique constraint catches it before the RPC runs.
+    // Balance must reflect a single deduction, not 2×.
     const slug = `tw-${randomUUID().slice(0, 8)}`;
     const transferId = `tr_replay_${randomUUID().slice(0, 8)}`;
-    const eventId1 = `evt_replay1_${randomUUID().slice(0, 8)}`;
-    const eventId2 = `evt_replay2_${randomUUID().slice(0, 8)}`;
-    insertedEventIds.push(eventId1, eventId2);
+    const eventId = `evt_replay_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId);
 
     const { data: tenant } = await admin
       .from("tenants")
@@ -224,7 +222,7 @@ describeIf("Stripe webhook handler", () => {
       hold_period_days: 7,
     });
 
-    const makeEvent = (eventId: string) => {
+    const makeReq = () => {
       const { body, signature } = buildSignedEvent(
         stripe,
         STRIPE_WEBHOOK_SECRET!,
@@ -240,14 +238,15 @@ describeIf("Stripe webhook handler", () => {
     };
 
     // First delivery: reverses the row, credits balance
-    const res1 = await handleStripeWebhook(makeEvent(eventId1), "platform");
+    const res1 = await handleStripeWebhook(makeReq(), "platform");
     expect(res1.status).toBe(200);
 
-    // Second delivery (different event ID, same transfer): RPC returns 0 — no double-credit
-    const res2 = await handleStripeWebhook(makeEvent(eventId2), "platform");
+    // Re-delivery of SAME event_id → unique constraint fires → 'Duplicate'
+    const res2 = await handleStripeWebhook(makeReq(), "platform");
     expect(res2.status).toBe(200);
+    expect(await res2.text()).toBe("Duplicate");
 
-    // Balance must equal a single deduction, not 2× (clawback — §14.9)
+    // Balance must equal a single deduction, not 2×
     const { data: bal } = await admin
       .from("payout_balances")
       .select("available_cents")
@@ -255,13 +254,85 @@ describeIf("Stripe webhook handler", () => {
       .single();
     expect(Number(bal?.available_cents)).toBe(-20000);
 
-    // Second delivery's outcome is 'unhandled' (0 rows matched the CAS guard)
-    const { data: ev2 } = await admin
-      .from("stripe_webhook_events")
-      .select("processing_outcome")
-      .eq("stripe_event_id", eventId2)
+    // Cleanup
+    await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
+    await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  it("[#1156] transfer.reversed second partial: distinct event credits balance delta, opens second review row", async () => {
+    // Scenario: Stripe partially reverses a transfer in two steps.
+    // Event 1: amount_reversed=15000, no previous_attributes → first partial, delta=15000.
+    // Event 2: amount_reversed=40000, previous_attributes.amount_reversed=15000 → second partial, delta=25000.
+    // The RPC's second pass (FOR UPDATE on status='reversed') must credit the second delta
+    // and open a second reconciliation_review_queue clawback row. Total balance = -40000.
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const transferId = `tr_partial2_${randomUUID().slice(0, 8)}`;
+    const eventId1 = `evt_partial2_a_${randomUUID().slice(0, 8)}`;
+    const eventId2 = `evt_partial2_b_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventId1, eventId2);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({ slug, display_name: "Partial2 Test", legal_name: "Partial2 Test LLC", tenant_type: "sub_host" })
+      .select("id")
       .single();
-    expect(ev2?.processing_outcome).toBe("unhandled");
+    const tenantId = tenant!.id as string;
+
+    await admin.from("payout_records").insert({
+      tenant_id: tenantId,
+      stripe_transfer_id: transferId,
+      status: "paid",
+      amount_cents: 40000,
+    });
+    await admin.from("payout_balances").upsert({
+      tenant_id: tenantId,
+      available_cents: 0,
+      pending_cents: 0,
+      in_transit_cents: 0,
+      hold_period_days: 7,
+    });
+
+    // Event 1: first partial reversal — payout_record flips to 'reversed', balance -15000
+    const { body: body1, signature: sig1 } = buildSignedEvent(
+      stripe, STRIPE_WEBHOOK_SECRET!, "transfer.reversed", eventId1,
+      { id: transferId, amount_reversed: 15000 },
+    );
+    const res1 = await handleStripeWebhook(
+      new Request("http://localhost/api/webhooks/stripe/platform", {
+        method: "POST", body: body1, headers: { "stripe-signature": sig1 },
+      }),
+      "platform",
+    );
+    expect(res1.status).toBe(200);
+
+    // Event 2: second partial reversal — second pass credits delta=25000, balance -40000
+    const { body: body2, signature: sig2 } = buildSignedEvent(
+      stripe, STRIPE_WEBHOOK_SECRET!, "transfer.reversed", eventId2,
+      { id: transferId, amount_reversed: 40000 },
+      { amount_reversed: 15000 },
+    );
+    const res2 = await handleStripeWebhook(
+      new Request("http://localhost/api/webhooks/stripe/platform", {
+        method: "POST", body: body2, headers: { "stripe-signature": sig2 },
+      }),
+      "platform",
+    );
+    expect(res2.status).toBe(200);
+
+    // Both events must resolve as 'success' (one row processed each)
+    const { data: ev1 } = await admin.from("stripe_webhook_events")
+      .select("processing_outcome").eq("stripe_event_id", eventId1).single();
+    expect(ev1?.processing_outcome).toBe("success");
+
+    const { data: ev2 } = await admin.from("stripe_webhook_events")
+      .select("processing_outcome").eq("stripe_event_id", eventId2).single();
+    expect(ev2?.processing_outcome).toBe("success");
+
+    // Total balance: -15000 (first) + -25000 (second) = -40000
+    const { data: bal } = await admin.from("payout_balances")
+      .select("available_cents").eq("tenant_id", tenantId).single();
+    expect(Number(bal?.available_cents)).toBe(-40000);
 
     // Cleanup
     await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
