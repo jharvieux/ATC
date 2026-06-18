@@ -1,0 +1,260 @@
+// Unit tests for apps/main/src/app/api/auth/transfer-session/undo/route.ts
+//
+// D-091 critical path: impersonation-adjacent. The undo gate must verify:
+//   - caller owns the anonymous session (transferred_to_user_id === user.id)
+//   - the 24-hour window hasn't elapsed
+//   - the CAS update won the race against the finalize cron
+//
+// 94 NoCoverage mutants in Stryker — this file was entirely untested.
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// ── mocks ──────────────────────────────────────────────────────────────────
+
+const { MockSupabaseMutationError, h } = vi.hoisted(() => {
+  class MockSupabaseMutationError extends Error {
+    code: string;
+    constructor(_label: string, code: string, _actual: number, _expected: number) {
+      super("mutation error");
+      this.code = code;
+    }
+  }
+  return {
+    MockSupabaseMutationError,
+    h: {
+      permFails: false,
+      userId: "user-1",
+      tenantId: "tenant-1",
+      sessionRow: null as Record<string, unknown> | null,
+      sessionReadError: null as { message: string } | null,
+      safeAwaitRowCountShouldThrow: false as boolean | "ROW_COUNT_MISMATCH",
+      writeAuditCalled: false,
+    },
+  };
+});
+
+vi.mock("@/lib/auth/assert-permission", () => ({
+  assertPermission: async (_req: unknown, _opts: unknown) => {
+    if (h.permFails) throw new Error("forbidden");
+    return {
+      ctx: { tenant_id: h.tenantId, source: { kind: "http_request" as const, user_id: "auth-1" } },
+      user: { id: h.userId, auth_user_id: "auth-1", tenant_id: h.tenantId, status: "active", role: "viewer" },
+    };
+  },
+}));
+
+vi.mock("@/lib/auth/respond", () => ({
+  respondToAuthError: (_err: unknown) => Response.json({ error: "auth" }, { status: 403 }),
+}));
+
+vi.mock("@/lib/audit/write", () => ({
+  writeAuditLog: async () => { h.writeAuditCalled = true; },
+}));
+
+vi.mock("@/lib/db/safe-mutation", () => ({
+  safeAwaitRowCount: async () => {
+    if (h.safeAwaitRowCountShouldThrow === "ROW_COUNT_MISMATCH") {
+      throw new MockSupabaseMutationError("anonymous_sessions.undo_transfer", "ROW_COUNT_MISMATCH", 0, 1);
+    }
+    if (h.safeAwaitRowCountShouldThrow === true) throw new Error("generic DB failure");
+  },
+  SupabaseMutationError: MockSupabaseMutationError,
+}));
+
+vi.mock("@/lib/db/service-role-client", () => ({
+  createServiceRoleClient: () => ({
+    from: (_table: string) => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: h.sessionRow, error: h.sessionReadError }),
+          }),
+        }),
+      }),
+      update: () => ({
+        eq: () => ({ eq: () => ({ eq: () => ({ is: () => ({ not: () => ({ select: () => Promise.resolve({ data: [], error: null }) }) }) }) }) }),
+      }),
+    }),
+  }),
+}));
+
+import { POST } from "@/app/api/auth/transfer-session/undo/route";
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+const VALID_UUID = "00000000-0000-0000-0000-000000000001";
+
+function req(body?: unknown): Request {
+  return new Request("https://app.example.com/api/auth/transfer-session/undo", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : { body: JSON.stringify({ anonymous_session_id: VALID_UUID }) }),
+  });
+}
+
+function makeSession(overrides: Partial<{
+  id: string;
+  transferred_to_user_id: string | null;
+  transfer_soft_commit_at: string | null;
+  transfer_committed_at: string | null;
+  transfer_undo_count: number;
+}>  = {}): Record<string, unknown> {
+  return {
+    id: VALID_UUID,
+    transferred_to_user_id: h.userId,
+    transfer_soft_commit_at: new Date(Date.now() - 60_000).toISOString(), // 1 min ago
+    transfer_committed_at: null,
+    transfer_undo_count: 0,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  h.permFails = false;
+  h.userId = "user-1";
+  h.tenantId = "tenant-1";
+  h.sessionRow = makeSession();
+  h.sessionReadError = null;
+  h.safeAwaitRowCountShouldThrow = false;
+  h.writeAuditCalled = false;
+});
+
+// ── auth gate ──────────────────────────────────────────────────────────────
+
+describe("transfer-session undo — auth gate", () => {
+  it("returns 403 when assertPermission fails", async () => {
+    h.permFails = true;
+    const res = await POST(req());
+    expect(res.status).toBe(403);
+    expect(h.writeAuditCalled).toBe(false);
+  });
+});
+
+// ── input validation ───────────────────────────────────────────────────────
+
+describe("transfer-session undo — input validation", () => {
+  it("returns 400 when body is missing anonymous_session_id", async () => {
+    const res = await POST(req({}));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("invalid_body");
+  });
+
+  it("returns 400 when anonymous_session_id is not a UUID", async () => {
+    const res = await POST(req({ anonymous_session_id: "not-a-uuid" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when body is not valid JSON", async () => {
+    const res = await POST(new Request("https://app.example.com/api/auth/transfer-session/undo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    }));
+    expect(res.status).toBe(400);
+  });
+});
+
+// ── DB lookup ──────────────────────────────────────────────────────────────
+
+describe("transfer-session undo — DB lookup", () => {
+  it("returns 500 when DB read errors (fail-closed — not 404)", async () => {
+    h.sessionReadError = { message: "connection timeout" };
+    h.sessionRow = null;
+    const res = await POST(req());
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("session_lookup_failed");
+    expect(h.writeAuditCalled).toBe(false);
+  });
+
+  it("returns 404 when session row does not exist (or belongs to a different tenant)", async () => {
+    h.sessionRow = null;
+    const res = await POST(req());
+    expect(res.status).toBe(404);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("session_not_found");
+  });
+});
+
+// ── ownership + state guards ───────────────────────────────────────────────
+
+describe("transfer-session undo — ownership and state guards", () => {
+  it("returns 403 when caller did not own the transfer (not_owner guard)", async () => {
+    h.sessionRow = makeSession({ transferred_to_user_id: "different-user" });
+    const res = await POST(req());
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("not_owner");
+    expect(h.writeAuditCalled).toBe(false);
+  });
+
+  it("returns 409 when transfer is already finalized (transfer_committed_at set)", async () => {
+    h.sessionRow = makeSession({ transfer_committed_at: new Date().toISOString() });
+    const res = await POST(req());
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("transfer_already_finalized");
+    expect(h.writeAuditCalled).toBe(false);
+  });
+
+  it("returns 409 when transfer is not in soft-commit state (transfer_soft_commit_at is null)", async () => {
+    h.sessionRow = makeSession({ transfer_soft_commit_at: null });
+    const res = await POST(req());
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("transfer_not_in_soft_commit");
+    expect(h.writeAuditCalled).toBe(false);
+  });
+
+  it("returns 409 when 24h undo window has elapsed", async () => {
+    const overDue = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    h.sessionRow = makeSession({ transfer_soft_commit_at: overDue });
+    const res = await POST(req());
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("undo_window_elapsed");
+    expect(h.writeAuditCalled).toBe(false);
+  });
+
+  it("allows undo when soft_commit_at is just inside the 24h window", async () => {
+    const justInside = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString();
+    h.sessionRow = makeSession({ transfer_soft_commit_at: justInside });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+  });
+});
+
+// ── CAS race condition ─────────────────────────────────────────────────────
+
+describe("transfer-session undo — CAS race condition", () => {
+  it("returns 409 when safeAwaitRowCount throws ROW_COUNT_MISMATCH (finalize cron won the race)", async () => {
+    // The finalize Inngest job committed between pre-check and CAS update.
+    // Must return 409 (not 500 — the race is user-visible and actionable).
+    h.safeAwaitRowCountShouldThrow = "ROW_COUNT_MISMATCH";
+    const res = await POST(req());
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("transfer_already_finalized");
+    expect(h.writeAuditCalled).toBe(false);
+  });
+
+  it("propagates non-ROW_COUNT_MISMATCH errors (unexpected DB failure → 403 via respondToAuthError)", async () => {
+    h.safeAwaitRowCountShouldThrow = true;
+    const res = await POST(req());
+    expect(res.status).not.toBe(200);
+    expect(h.writeAuditCalled).toBe(false);
+  });
+});
+
+// ── happy path ─────────────────────────────────────────────────────────────
+
+describe("transfer-session undo — happy path", () => {
+  it("returns 200 and writes audit log when undo succeeds", async () => {
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(h.writeAuditCalled).toBe(true);
+  });
+});
