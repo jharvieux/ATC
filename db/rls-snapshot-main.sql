@@ -96,7 +96,6 @@
 -- public.reconciliation_review_queue (rls_enabled)
 -- public.request_idempotency (rls_enabled)
 -- public.sailing_port_calls (rls_enabled)
--- public.schema_migrations (rls_enabled)
 -- public.security_incidents (rls_enabled)
 -- public.staging_cron_skips (rls_enabled)
 -- public.stripe_webhook_events (rls_enabled)
