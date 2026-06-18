@@ -30,7 +30,7 @@ interface BookingRow {
   total_amount_cents: number | bigint | null;
   currency: string | null;
   primary_contact_id: string | null;
-  is_test: boolean | null;
+  is_sandbox: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -93,7 +93,9 @@ export async function GET(req: Request): Promise<Response> {
   let query = db
     .from("bookings")
     .select(
-      "id, status, cruise_line, ship_name, sailing_date, duration_nights, total_amount_cents, currency, primary_contact_id, is_test, created_at, updated_at, cruise_line_id, cruise_lines(display_name)",
+      // #1190: is_test is not a bookings column — the sandbox flag is is_sandbox
+      // (exposed as is_test in the response below).
+      "id, status, cruise_line, ship_name, sailing_date, duration_nights, total_amount_cents, currency, primary_contact_id, is_sandbox, created_at, updated_at, cruise_line_id, cruise_lines(display_name)",
       { count: "exact" },
     )
     .order("updated_at", { ascending: false })
@@ -145,7 +147,7 @@ export async function GET(req: Request): Promise<Response> {
           ? null
           : fromCents(BigInt(b.total_amount_cents) as Cents),
       currency: b.currency,
-      is_test: b.is_test ?? false,
+      is_test: b.is_sandbox ?? false,
       primary_contact: b.primary_contact_id
         ? contactsById.get(b.primary_contact_id) ?? null
         : null,

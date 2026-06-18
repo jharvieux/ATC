@@ -28,9 +28,8 @@ interface BookingRow {
   currency: string | null;
   primary_contact_id: string | null;
   host_adapter: string | null;
-  host_booking_reference: string | null;
-  ai_paused_by_platform: boolean | null;
-  is_test: boolean | null;
+  provider_booking_ref: string | null;
+  is_sandbox: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -58,7 +57,10 @@ export async function GET(
   const { data: bookingData, error: bookingErr } = await db
     .from("bookings")
     .select(
-      "id, tenant_id, status, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, departure_port, total_amount_cents, commissionable_fare_cents, currency, primary_contact_id, host_adapter, host_booking_reference, ai_paused_by_platform, is_test, created_at, updated_at",
+      // #1190: the columns are provider_booking_ref and is_sandbox (the response
+      // exposes them as host_booking_reference / is_test — see serializeBooking).
+      // ai_paused_by_platform is a tenants column, never consumed here — dropped.
+      "id, tenant_id, status, cruise_line, ship_name, sailing_date, duration_nights, cabin_category, departure_port, total_amount_cents, commissionable_fare_cents, currency, primary_contact_id, host_adapter, provider_booking_ref, is_sandbox, created_at, updated_at",
     )
     .eq("id", id)
     .maybeSingle();
@@ -184,9 +186,18 @@ export async function PATCH(
 // bigint isn't JSON-serializable; format via fromCents to a decimal string
 // the client renders directly (no client-side _cents arithmetic).
 function serializeBooking(b: BookingRow) {
-  const { total_amount_cents, commissionable_fare_cents, ...rest } = b;
+  const {
+    total_amount_cents,
+    commissionable_fare_cents,
+    provider_booking_ref,
+    is_sandbox,
+    ...rest
+  } = b;
   return {
     ...rest,
+    // #1190: expose the real columns under the names the detail UI consumes.
+    host_booking_reference: provider_booking_ref,
+    is_test: is_sandbox,
     total_amount: total_amount_cents === null ? null : fromCents(BigInt(total_amount_cents) as Cents),
     commissionable_fare:
       commissionable_fare_cents === null ? null : fromCents(BigInt(commissionable_fare_cents) as Cents),

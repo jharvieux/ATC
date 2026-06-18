@@ -98,7 +98,8 @@ beforeEach(() => {
   });
 
   mocks.tenantSingle.mockResolvedValue({
-    data: { prong: "nuo", is_sandbox: false },
+    // #1190: the real column is tenant_type (not prong).
+    data: { tenant_type: "nuo", is_sandbox: false },
     error: null,
   });
 

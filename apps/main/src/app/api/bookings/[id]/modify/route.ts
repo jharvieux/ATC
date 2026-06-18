@@ -46,7 +46,8 @@ export async function POST(
     // (would let a sandboxed tenant's modify reach a real host adapter).
     const { data: tenantRow, error: tenantErr } = await svc
       .from("tenants")
-      .select("prong, is_sandbox")
+      // #1190: column is tenant_type, not prong (prong was never a column).
+      .select("tenant_type, is_sandbox")
       .eq("id", ctx.tenant_id)
       .single();
 
@@ -57,13 +58,13 @@ export async function POST(
       );
     }
 
-    const tenantForAdapter = tenantRow as { prong: string; is_sandbox: boolean };
+    const tenantForAdapter = tenantRow as { tenant_type: string; is_sandbox: boolean };
 
     const correlation_id = crypto.randomUUID();
     const { adapter, ctx: hostCtx } = await selectAdapterForCall(
       {
         id: ctx.tenant_id,
-        prong: tenantForAdapter.prong,
+        prong: tenantForAdapter.tenant_type,
         is_sandbox: tenantForAdapter.is_sandbox,
       },
       { tenant_id: ctx.tenant_id, user_id: null, correlation_id },

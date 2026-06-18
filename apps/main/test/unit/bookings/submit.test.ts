@@ -203,7 +203,9 @@ beforeEach(() => {
   mocks.assertNoEstimatedDOBs.mockResolvedValue(undefined);
 
   mocks.tenantRow.mockResolvedValue({
-    data: { id: TENANT_ID, prong: "nuo", tier_id: TIER_ID, is_sandbox: false },
+    // #1190: the real column is tenant_type (not prong) — keying the mock on it
+    // guards against the reader reverting to the non-existent prong column.
+    data: { id: TENANT_ID, tenant_type: "nuo", tier_id: TIER_ID, is_sandbox: false },
     error: null,
   });
 
