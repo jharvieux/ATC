@@ -94,7 +94,8 @@ async function ensureAuthUser(
   });
   if (created?.user) return created.user.id;
 
-  // Any error other than "already registered" is unexpected — hard-fail.
+  // GoTrue returns HTTP 422 with message "User already registered" for duplicate
+  // email. Both checks guard against message-text changes across GoTrue versions.
   const alreadyExists =
     createErr?.message?.toLowerCase().includes("already registered") ||
     createErr?.message?.toLowerCase().includes("already exists") ||
@@ -118,7 +119,6 @@ async function ensureAuthUser(
       if (updateErr) throw new Error(`auth.admin.updateUserById failed for ${email}: ${updateErr.message}`);
       return existing.id;
     }
-    // nextPage is undefined / null when there are no more pages.
     const nextPage = (list as { nextPage?: number | null })?.nextPage;
     if (!nextPage) break;
     page++;
@@ -146,7 +146,8 @@ async function seedTenant(
   );
   if (tErr) throw new Error(`tenants.upsert failed (${spec.slug}): ${tErr.message}`);
 
-  // public.users tied to this tenant.
+  // public.users row required for the app to resolve tenant_id + role from the JWT.
+  // Without it, GoTrue sign-in succeeds but every API request returns 401.
   const { error: uErr } = await supabase.from("users").upsert(
     {
       id: spec.userPubId,
