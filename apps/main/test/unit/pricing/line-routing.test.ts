@@ -1,4 +1,6 @@
 // BP34 §33.3 / D-088 Apify-4 — line-routing unit tests.
+// mapSerculItem (outputMapper) is an internal function exposed only through
+// LINE_ROUTES[line].outputMapper. Tests exercise it via that path.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -198,5 +200,268 @@ describe("groupSailingsForBatch — one batch per line", () => {
     expect(batches).toHaveLength(2);
     const rcl = batches.find((b) => b.line === "RCL");
     expect(rcl!.sailings).toHaveLength(2);
+  });
+});
+
+// ── outputMapper (mapSerculItem) — via LINE_ROUTES[line].outputMapper ────────
+//
+// mapSerculItem is private but exposed through each line's outputMapper.
+// Tests exercise all branches: flat cabinPrices shape, cabins-array shape,
+// missing required fields → null, zero/negative price skipped, invalid
+// cabin class skipped, non-object input → null.
+
+describe("outputMapper — flat cabinPrices shape (sercul standard output)", () => {
+  const mapper = LINE_ROUTES.RCL!.outputMapper;
+
+  it("maps a valid flat-object item to a CachedPriceQuote", () => {
+    const item = {
+      ship: "symphony-of-the-seas",
+      sailDate: "2026-08-15",
+      departurePort: "MIA",
+      durationNights: 7,
+      cabinPrices: {
+        interior:  { amount: 1199, currency: "USD" },
+        balcony:   { amount: 2099, currency: "USD" },
+        oceanview: { amount: 1499, currency: "USD" },
+      },
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    expect(result!.key.line).toBe("RCL");
+    expect(result!.key.ship).toBe("symphony-of-the-seas");
+    expect(result!.cabinPrices.interior).toEqual({ amount: 1199, currency: "USD" });
+    expect(result!.cabinPrices.balcony).toEqual({ amount: 2099, currency: "USD" });
+    expect(result!.source).toBe("apify");
+  });
+
+  it("accepts departureDate as a sailDate fallback", () => {
+    const item = {
+      ship: "harmony-of-the-seas",
+      departureDate: "2026-09-01",
+      departurePort: "BCN",
+      durationNights: 14,
+      cabinPrices: { interior: { amount: 999, currency: "USD" } },
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    expect(result!.key.sailDate).toBe("2026-09-01");
+  });
+
+  it("accepts embarkPort as a departurePort fallback", () => {
+    const item = {
+      ship: "oasis-of-the-seas",
+      sailDate: "2026-10-10",
+      embarkPort: "PCN",
+      durationNights: 7,
+      cabinPrices: { suite: { amount: 5000, currency: "USD" } },
+    };
+    const result = mapper(item);
+    expect(result!.key.departurePort).toBe("PCN");
+  });
+
+  it("accepts nights as a durationNights fallback", () => {
+    const item = {
+      ship: "wonder-of-the-seas",
+      sailDate: "2026-11-01",
+      departurePort: "FLL",
+      nights: 5,
+      cabinPrices: { oceanview: { amount: 1300, currency: "USD" } },
+    };
+    const result = mapper(item);
+    expect(result!.key.durationNights).toBe(5);
+  });
+
+  it("skips a cabin whose amount is zero (zero-price entries are not usable)", () => {
+    const item = {
+      ship: "allure-of-the-seas",
+      sailDate: "2026-07-04",
+      departurePort: "MIA",
+      durationNights: 7,
+      cabinPrices: {
+        interior: { amount: 0, currency: "USD" },
+        balcony:  { amount: 1800, currency: "USD" },
+      },
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    expect(result!.cabinPrices.interior).toBeUndefined();
+    expect(result!.cabinPrices.balcony).toBeDefined();
+  });
+
+  it("returns null when all cabinPrices have zero or missing amounts", () => {
+    const item = {
+      ship: "adventure-of-the-seas",
+      sailDate: "2026-07-10",
+      departurePort: "SJU",
+      durationNights: 7,
+      cabinPrices: {
+        interior: { amount: 0, currency: "USD" },
+      },
+    };
+    expect(mapper(item)).toBeNull();
+  });
+
+  it("returns null when cabinPrices is absent and cabins array is absent", () => {
+    const item = {
+      ship: "explorer-of-the-seas",
+      sailDate: "2026-06-15",
+      departurePort: "MIA",
+      durationNights: 7,
+    };
+    expect(mapper(item)).toBeNull();
+  });
+});
+
+describe("outputMapper — missing required fields → null", () => {
+  const mapper = LINE_ROUTES.NCL!.outputMapper;
+
+  it("returns null when ship is missing", () => {
+    expect(mapper({
+      sailDate: "2026-08-01",
+      departurePort: "MIA",
+      durationNights: 7,
+      cabinPrices: { interior: { amount: 900, currency: "USD" } },
+    })).toBeNull();
+  });
+
+  it("returns null when sailDate and departureDate are both missing", () => {
+    expect(mapper({
+      ship: "breakaway",
+      departurePort: "NYC",
+      durationNights: 7,
+      cabinPrices: { interior: { amount: 900, currency: "USD" } },
+    })).toBeNull();
+  });
+
+  it("returns null when departurePort and embarkPort are both missing", () => {
+    expect(mapper({
+      ship: "bliss",
+      sailDate: "2026-09-01",
+      durationNights: 7,
+      cabinPrices: { interior: { amount: 900, currency: "USD" } },
+    })).toBeNull();
+  });
+
+  it("returns null when durationNights and nights are both missing", () => {
+    expect(mapper({
+      ship: "prima",
+      sailDate: "2026-09-15",
+      departurePort: "NYC",
+      cabinPrices: { interior: { amount: 900, currency: "USD" } },
+    })).toBeNull();
+  });
+
+  it("returns null for a non-object input (e.g., string)", () => {
+    expect(mapper("not-an-object")).toBeNull();
+  });
+
+  it("returns null for null input", () => {
+    expect(mapper(null)).toBeNull();
+  });
+
+  it("returns null for an array input", () => {
+    expect(mapper([1, 2, 3])).toBeNull();
+  });
+});
+
+describe("outputMapper — cabins-array shape (alternative sercul output format)", () => {
+  const mapper = LINE_ROUTES.CCL!.outputMapper;
+
+  it("maps items from a cabins array when cabinPrices object is absent", () => {
+    const item = {
+      ship: "celebration",
+      sailDate: "2026-12-01",
+      departurePort: "MIA",
+      durationNights: 7,
+      cabins: [
+        { cabinClass: "interior",  price: 799 },
+        { cabinClass: "balcony",   price: 1299 },
+        { cabinClass: "mini_suite", price: 1899 },
+      ],
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    expect(result!.cabinPrices.interior).toEqual({ amount: 799, currency: "USD" });
+    expect(result!.cabinPrices.balcony).toEqual({ amount: 1299, currency: "USD" });
+    expect(result!.cabinPrices.mini_suite).toEqual({ amount: 1899, currency: "USD" });
+  });
+
+  it("skips cabin array entries whose price is zero", () => {
+    const item = {
+      ship: "mardi-gras",
+      sailDate: "2026-11-10",
+      departurePort: "PCS",
+      durationNights: 7,
+      cabins: [
+        { cabinClass: "interior", price: 0 },
+        { cabinClass: "suite",    price: 3000 },
+      ],
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    expect(result!.cabinPrices.interior).toBeUndefined();
+    expect(result!.cabinPrices.suite).toBeDefined();
+  });
+
+  it("skips cabin array entries with an invalid cabinClass", () => {
+    const item = {
+      ship: "carnival-venezia",
+      sailDate: "2026-10-01",
+      departurePort: "NYC",
+      durationNights: 5,
+      cabins: [
+        { cabinClass: "penthouse", price: 5000 }, // not a valid CabinClass
+        { cabinClass: "oceanview", price: 1200 },
+      ],
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    // Only oceanview survived
+    expect(Object.keys(result!.cabinPrices)).toEqual(["oceanview"]);
+  });
+
+  it("returns null when the cabins array is empty", () => {
+    const item = {
+      ship: "paradise",
+      sailDate: "2026-08-20",
+      departurePort: "TPA",
+      durationNights: 4,
+      cabins: [],
+    };
+    expect(mapper(item)).toBeNull();
+  });
+
+  it("skips non-object entries in the cabins array", () => {
+    const item = {
+      ship: "elation",
+      sailDate: "2026-08-25",
+      departurePort: "JAX",
+      durationNights: 5,
+      cabins: [
+        "not-an-object",
+        null,
+        { cabinClass: "interior", price: 899 },
+      ],
+    };
+    const result = mapper(item);
+    expect(result).not.toBeNull();
+    expect(result!.cabinPrices.interior).toBeDefined();
+  });
+});
+
+describe("outputMapper — line code propagation", () => {
+  it("embeds the correct cruise-line code for each route", () => {
+    // RCL route should stamp key.line = "RCL", CCL → "CCL", etc.
+    for (const line of ["RCL", "CCL", "MSC", "HAL", "DSY"] as const) {
+      const mapper = LINE_ROUTES[line]!.outputMapper;
+      const result = mapper({
+        ship: "test-ship",
+        sailDate: "2026-08-01",
+        departurePort: "MIA",
+        durationNights: 7,
+        cabinPrices: { interior: { amount: 1000, currency: "USD" } },
+      });
+      expect(result?.key.line, `line mismatch for ${line}`).toBe(line);
+    }
   });
 });
