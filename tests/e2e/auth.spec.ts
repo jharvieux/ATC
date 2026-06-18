@@ -25,4 +25,10 @@ test("GET /api/auth/me with bogus Bearer → 401", async ({ request }) => {
 // TODO(#459): GoTrue / OAuth E2E flows not yet wired for local test runner.
 test.fixme("sign in with valid credentials", async () => {});
 test.fixme("sign out clears session", async () => {});
-test.fixme("unauthenticated access redirects to sign-in", async () => {});
+
+// proxy.ts §1d — isLoginGatedPath("/onboarding") → redirect to /auth/reauth
+// when no session cookie or bypass Bearer is present.
+test("unauthenticated access redirects to sign-in", async ({ page }) => {
+  await page.goto("/onboarding", { waitUntil: "commit" });
+  await expect(page).toHaveURL(/\/auth\/reauth/);
+});
