@@ -62,7 +62,8 @@
     "mutate:abuse": "stryker run --mutate \"apps/main/src/lib/abuse/**/*.ts\"",
     "mutate:audit": "stryker run --mutate \"apps/main/src/lib/audit/**/*.ts\"",
     "mutate:auth": "stryker run --mutate \"apps/main/src/lib/auth/**/*.ts\"",
-    "mutate:commissions": "stryker run --mutate \"apps/main/src/lib/commissions/**/*.ts\""
+    "mutate:commissions": "stryker run --mutate \"apps/main/src/lib/commissions/**/*.ts\"",
+    "mutate:rag": "stryker run stryker.rag.config.json"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

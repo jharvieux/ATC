@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Initial broad scan — mutate every TS file under both apps' src/ except UI surfaces (page.tsx/layout.tsx/components/**) which mostly contain composition, not testable business logic. Re-scope per-PR via the --mutate CLI flag.",
+  "_comment": "main-app-only broad scan. apps/rag/** is measured separately via stryker.rag.config.json + pnpm mutate:rag (see #1218). Re-scope per-PR via the --mutate CLI flag.",
   "testRunner": "vitest",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "vitest": {
@@ -28,16 +28,13 @@
     "apps/main/src/inngest/**/*.ts",
     "apps/main/src/app/api/**/route.ts",
     "apps/main/src/proxy.ts",
-    "apps/rag/src/lib/**/*.ts",
-    "apps/rag/src/app/api/**/route.ts",
     "packages/shared-types/src/**/*.ts",
     "!**/*.test.ts",
     "!**/*.spec.ts",
     "!**/__tests__/**",
     "!**/types.ts",
     "!**/*.d.ts",
-    "!apps/main/src/lib/env.ts",
-    "!apps/rag/src/lib/env.ts"
+    "!apps/main/src/lib/env.ts"
   ],
   "thresholds": {
     "high": 80,
