@@ -19,13 +19,18 @@ export async function runCrossTenantRlsBypassMonitor(): Promise<{ detected: numb
   // GIN partial index makes this lookup cheap for admin rows; for system
   // rows we don't have an index, accept the seq scan over the last 15
   // minutes — small window keeps it bounded.
-  const { data } = await svc
+  const { data, error } = await svc
     .from("audit_log")
     .select("id, tenant_id, actor_user_id, changes, occurred_at")
     .eq("actor_type", "system")
     .filter("changes->>rls_bypass_attempt", "eq", "true")
     .gte("occurred_at", since)
     .limit(100);
+
+  // Fail-closed: a DB error must surface as a thrown exception so the cron
+  // fails loudly (retryable, visible in logs) rather than returning detected:0
+  // and silently masking a critical-severity security event.
+  if (error) throw new Error(`cross-tenant-rls-bypass-monitor: audit_log read failed: ${error.message}`);
 
   const rows = (data ?? []) as Array<{ id: string; tenant_id: string | null }>;
   for (const row of rows) {

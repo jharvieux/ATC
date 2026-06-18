@@ -158,12 +158,16 @@ export async function POST(
 
         if (body.action === "approve") {
           recordQuery({ op: "update", table: "tenants" });
+          // CAS guard (#1189): only activates if onboarding_stage is still
+          // "review_submitted", so a concurrent second approval finds 0 rows
+          // and throws rather than double-stamping activated_at / re-firing
+          // tenant.activated.
           await activateTenant(db, tenantId, {
             review_decision: "approved",
             review_decision_reason: body.reason ?? null,
             review_decided_at: new Date().toISOString(),
             review_decided_by_user_id: adminUserId,
-          });
+          }, { casStage: "review_submitted" });
 
           // Reset Stripe trial to NOW + 30 days.
           if (tenant.stripe_subscription_id) {
