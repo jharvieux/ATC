@@ -68,8 +68,8 @@ function makeDb(rows: Row[]) {
           }),
         }),
       }),
-      upsert: (r: unknown) => {
-        mocks.upsertCapture(r);
+      upsert: (r: unknown, opts?: unknown) => {
+        mocks.upsertCapture(r, opts);
         return {};
       },
     }),
@@ -235,8 +235,13 @@ describe("upsertPriceQuote — row shaping", () => {
     expect(mocks.safeAwait).toHaveBeenCalledOnce();
     expect(mocks.safeAwait.mock.calls[0]![1]).toBe("pricing_cache.upsert");
 
-    // The upsert was called with the two rows
+    // Upsert must use the composite dedup key (prevents duplicate inserts on
+    // concurrent refreshes — the UNIQUE constraint is the idempotency mechanism).
     expect(mocks.upsertCapture).toHaveBeenCalledOnce();
+    const opts = mocks.upsertCapture.mock.calls[0]![1] as { onConflict?: string };
+    expect(opts?.onConflict).toBe(
+      "cruise_line,ship,sail_date,departure_port,duration_nights,cabin_class",
+    );
     const rows = mocks.upsertCapture.mock.calls[0]![0] as unknown[];
     expect(rows).toHaveLength(2);
     expect(rows).toEqual(
