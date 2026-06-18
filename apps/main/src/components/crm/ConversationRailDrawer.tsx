@@ -27,7 +27,6 @@ export function ConversationRailDrawer(): React.JSX.Element {
   const [conversations, setConversations] = React.useState<TaConversation[] | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
 
-  // Fetch on first open only.
   const hasFetched = React.useRef(false);
 
   React.useEffect(() => {
@@ -38,18 +37,19 @@ export function ConversationRailDrawer(): React.JSX.Element {
       try {
         const res = await fetch("/api/chat/ta-conversations");
         if (!res.ok) {
+          hasFetched.current = false; // allow retry on next open
           setLoadError(`Could not load conversations (HTTP ${res.status})`);
           return;
         }
         const data = (await res.json()) as { conversations: TaConversation[] };
         setConversations(data.conversations ?? []);
       } catch (e) {
+        hasFetched.current = false; // allow retry on next open
         setLoadError(e instanceof Error ? e.message : String(e));
       }
     })();
   }, [isOpen]);
 
-  // Close on Escape.
   React.useEffect(() => {
     if (!isOpen) return;
     function onKey(e: KeyboardEvent) {
@@ -61,7 +61,6 @@ export function ConversationRailDrawer(): React.JSX.Element {
 
   return (
     <>
-      {/* Toggle button — sits in the SiteHeader leftSlot */}
       <button
         type="button"
         onClick={() => setIsOpen((v) => !v)}
@@ -72,7 +71,6 @@ export function ConversationRailDrawer(): React.JSX.Element {
         <PanelLeft className="h-5 w-5" />
       </button>
 
-      {/* Backdrop */}
       {isOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/20"
@@ -81,7 +79,6 @@ export function ConversationRailDrawer(): React.JSX.Element {
         />
       )}
 
-      {/* Slide-in panel */}
       <div
         className={cn(
           "fixed left-0 top-0 z-50 flex h-full w-72 flex-col border-r border-border bg-card shadow-xl transition-transform duration-200",
