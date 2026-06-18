@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-262 — 2026-06-18 — process_transfer_reversal RPC: 3-param signature with stripe_event_id (#1227)
+
+Migration 20260704000002 drops the old (TEXT, BIGINT) overload and creates (TEXT, BIGINT, TEXT) that threads `p_stripe_event_id` into both first-pass and second-pass `reconciliation_review_queue` INSERT notes. `CREATE OR REPLACE` with a different arg list creates a new overload rather than replacing the old one in Postgres — explicit DROP was required to avoid a phantom callable 2-param signature.
+
+**Why:** ops need to correlate multiple partial-reversal queue rows via stripe_event_id when two partial-reversal events arrive on the same stripe_transfer_id (issue #1156 scenario).
+
+**Rejected:** adding a DEFAULT NULL to keep backward compat with the 2-param caller. The caller (webhook-handler.ts) is the only call site and was updated in the same PR — no backward compat window needed.
+
+---
+
 ## D-261 — 2026-06-17 — Vercel preview deploys now render via PLATFORM_DEFAULT_TENANT_ID (non-prod only)
 
 **Context.** "Re-enable preview builds" turned out to be a misdiagnosis: preview *builds* were never disabled (pushing a branch auto-creates a Vercel preview; `git.deploymentEnabled:{main:false,dev:false}` only blocks main/dev auto-deploy). The symptom — preview URL shows **"This site is not currently active"** — is served by our OWN middleware `apps/main/src/proxy.ts` (the message lives at proxy.ts), which resolves a tenant by hostname (platform domain → subdomain → custom domain) and 404s anything else. A `*.vercel.app` preview host matches none, so previews 404. Production works because it uses the custom domain. (Vercel Deployment Protection is also ON — a separate 401 wall for non-team visitors; the owner passes it and hits the 404.)
