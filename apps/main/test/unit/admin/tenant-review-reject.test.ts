@@ -22,10 +22,7 @@ const mocks = vi.hoisted(() => ({
     //   - CAS (#1189): .update().eq().eq().select("id") → { data: [{ id }], error: null }
     const chain: Record<string, unknown> = {};
     chain.eq = () => chain;
-    chain.select = (_cols: string) => {
-      void _cols;
-      return Promise.resolve({ data: [{ id: "t-1" }], error: null });
-    };
+    chain.select = (_cols: string) => Promise.resolve({ data: [{ id: "t-1" }], error: null });
     chain.then = (resolve: (v: { data: null; error: null }) => unknown) =>
       Promise.resolve(resolve({ data: null, error: null }));
     return chain;
