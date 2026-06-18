@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "RAG-app-only mutation sweep. Runs against apps/rag/vitest.config.ts so RAG tests are actually found (the root vitest.config.ts only includes apps/main/test/** — see issue #1218).",
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "vitest": {
+    "configFile": "apps/rag/vitest.config.ts"
+  },
+  "reporters": ["html", "json", "clear-text", "progress"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation-rag.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation-rag.json"
+  },
+  "coverageAnalysis": "perTest",
+  "timeoutMS": 60000,
+  "timeoutFactor": 2,
+  "concurrency": 2,
+  "disableTypeChecks": "apps/rag/**/*.{ts,tsx}",
+  "ignoreStatic": true,
+  "ignorePatterns": [".claude", ".next", "coverage", "reports"],
+  "_comment_mutate": "env.ts is regex-parsed by schema-discipline meta-tests; exclude to avoid bracket-guard parse failures.",
+  "mutate": [
+    "apps/rag/src/lib/**/*.ts",
+    "apps/rag/src/app/api/**/route.ts",
+    "!**/*.test.ts",
+    "!**/*.spec.ts",
+    "!**/__tests__/**",
+    "!**/types.ts",
+    "!**/*.d.ts",
+    "!apps/rag/src/lib/env.ts"
+  ],
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true,
+  "logLevel": "info"
+}
