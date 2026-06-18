@@ -86,25 +86,44 @@ async function ensureAuthUser(
   email: string,
   password: string,
 ): Promise<string> {
-  const { data: list } = await supabase.auth.admin.listUsers({ perPage: 1000 });
-  const existing = (list?.users ?? []).find((u) => u.email === email);
-
-  if (existing) {
-    // Reset password so sign-in always works regardless of prior state.
-    const { error } = await supabase.auth.admin.updateUserById(existing.id, { password });
-    if (error) throw new Error(`auth.admin.updateUserById failed for ${email}: ${error.message}`);
-    return existing.id;
-  }
-
-  const { data, error } = await supabase.auth.admin.createUser({
+  // Attempt create first — avoids a listUsers scan on every first run.
+  const { data: created, error: createErr } = await supabase.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
   });
-  if (error || !data.user) {
-    throw new Error(`auth.admin.createUser failed for ${email}: ${error?.message ?? "no user returned"}`);
+  if (created?.user) return created.user.id;
+
+  // Any error other than "already registered" is unexpected — hard-fail.
+  const alreadyExists =
+    createErr?.message?.toLowerCase().includes("already registered") ||
+    createErr?.message?.toLowerCase().includes("already exists") ||
+    createErr?.status === 422;
+  if (!alreadyExists) {
+    throw new Error(`auth.admin.createUser failed for ${email}: ${createErr?.message ?? "no user returned"}`);
   }
-  return data.user.id;
+
+  // User exists from a prior run — find them via paginated scan and reset password.
+  let page = 1;
+  for (;;) {
+    const { data: list, error: listErr } = await supabase.auth.admin.listUsers({
+      page,
+      perPage: 100,
+    });
+    if (listErr) throw new Error(`auth.admin.listUsers failed (page ${page}): ${listErr.message}`);
+    const existing = (list?.users ?? []).find((u) => u.email === email);
+    if (existing) {
+      // Reset password so sign-in always works regardless of prior state.
+      const { error: updateErr } = await supabase.auth.admin.updateUserById(existing.id, { password });
+      if (updateErr) throw new Error(`auth.admin.updateUserById failed for ${email}: ${updateErr.message}`);
+      return existing.id;
+    }
+    // nextPage is undefined / null when there are no more pages.
+    const nextPage = (list as { nextPage?: number | null })?.nextPage;
+    if (!nextPage) break;
+    page++;
+  }
+  throw new Error(`User ${email} not found after createUser reported conflict — possible GoTrue propagation delay`);
 }
 
 async function seedTenant(
@@ -143,7 +162,6 @@ async function seedTenant(
   );
   if (uErr) throw new Error(`users.upsert failed (${spec.slug}): ${uErr.message}`);
 
-  // Contact — available as a relatable resource for quote routes.
   const { error: cErr } = await supabase.from("contacts").upsert(
     {
       id: spec.contactId,
@@ -156,7 +174,6 @@ async function seedTenant(
   );
   if (cErr) throw new Error(`contacts.upsert failed (${spec.slug}): ${cErr.message}`);
 
-  // Booking — minimal draft record; no cruise details needed for the probe.
   const { error: bErr } = await supabase.from("bookings").upsert(
     {
       id: spec.bookingId,
@@ -170,7 +187,6 @@ async function seedTenant(
   );
   if (bErr) throw new Error(`bookings.upsert failed (${spec.slug}): ${bErr.message}`);
 
-  // Conversation — staff-audience chat thread.
   const { error: cvErr } = await supabase.from("conversations").upsert(
     {
       id: spec.convId,
