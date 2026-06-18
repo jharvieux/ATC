@@ -20,6 +20,7 @@ import { getSiteHeaderProps } from "@/components/site-header/get-site-header-pro
 import { BrandingSetupBannerServer } from "@/components/branding-setup-banner/BrandingSetupBannerServer";
 import { TenantTheme } from "@/components/branding/TenantTheme";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+import { ConversationRailDrawer } from "@/components/crm/ConversationRailDrawer";
 
 // §16 — tenant subdomains carry the tenant's name + favicon in the tab.
 export async function generateMetadata(): Promise<Metadata> {
@@ -35,10 +36,15 @@ export default async function TenantAreaLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): Promise<React.ReactElement> {
   const headerProps = await getSiteHeaderProps();
+  const isStaff = headerProps.role === "tenant_owner" || headerProps.role === "agent";
   return (
     <>
       <TenantTheme />
-      <SiteHeader {...headerProps} tenantBranding={null} />
+      <SiteHeader
+        {...headerProps}
+        tenantBranding={null}
+        leftSlot={isStaff ? <ConversationRailDrawer /> : undefined}
+      />
       <BrandingSetupBannerServer />
       {children}
     </>
