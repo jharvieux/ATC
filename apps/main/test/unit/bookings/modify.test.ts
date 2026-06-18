@@ -220,5 +220,11 @@ describe("POST /api/bookings/[id]/modify — happy path", () => {
       expect.anything(),
       "bookings.update",
     );
+    // #1190 regression: prong passed to the adapter selector comes from the real
+    // tenants.tenant_type column. A revert to tenant.prong passes undefined.
+    expect(mocks.selectAdapterForCall).toHaveBeenCalledWith(
+      expect.objectContaining({ prong: "nuo" }),
+      expect.anything(),
+    );
   });
 });
