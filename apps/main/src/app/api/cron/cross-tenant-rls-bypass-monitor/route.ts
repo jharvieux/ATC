@@ -2,14 +2,13 @@
 // Vercel sends Authorization: Bearer <CRON_SECRET> on every invocation.
 
 import { runCrossTenantRlsBypassMonitor } from "@/lib/cron/cross-tenant-rls-bypass-monitor";
+import { assertCronAuth } from "@/lib/cron/assert-cron-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  const authHeader = req.headers.get("authorization");
-  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authErr = assertCronAuth(req);
+  if (authErr) return authErr;
   const result = await runCrossTenantRlsBypassMonitor();
   return Response.json(result);
 }
