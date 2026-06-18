@@ -47,8 +47,16 @@ vi.mock("@/lib/db/service-role-client", () => ({
                   if (table === "tenants") {
                     return { data: { id: "t1", legal_name: "Anchor & Compass" }, error: null };
                   }
-                  // tenant_branding
-                  return { data: {}, error: null };
+                  // tenant_branding — #1190: email send config lives here.
+                  return {
+                    data: {
+                      email_send_pattern: "tenant_resend",
+                      tenant_resend_api_key_encrypted: "enc-key",
+                      email_from_address: "concierge@tenant.com",
+                      email_from_name: "Tenant Concierge",
+                    },
+                    error: null,
+                  };
                 },
               };
             },
@@ -111,6 +119,26 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
       phase: "t_90",
     });
     expect(ctx?.ports).toEqual([]);
+  });
+
+  it("#1190: reads tenant email send config from tenant_branding, not tenants", async () => {
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_1",
+    });
+    // Email config must flow from the branding row.
+    expect(ctx?.branding.email_send_pattern).toBe("tenant_resend");
+    expect(ctx?.branding.email_from_address).toBe("concierge@tenant.com");
+    // The tenants SELECT must not carry the email columns (they don't exist there).
+    const tenantsSelect = mocks.selectArgs.find((s) => s.startsWith("id, legal_name"));
+    expect(tenantsSelect).toBeDefined();
+    expect(tenantsSelect).not.toContain("email_send_pattern");
+    // The tenant_branding SELECT must carry them.
+    const brandingSelect = mocks.selectArgs.find((s) => s.includes("logo_url"));
+    expect(brandingSelect).toContain("email_send_pattern");
+    expect(brandingSelect).toContain("email_from_address");
   });
 
   it("omits departurePort when groups has none (no crash)", async () => {

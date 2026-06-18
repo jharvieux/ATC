@@ -81,10 +81,12 @@ export const groupReminderCadence = inngest.createFunction(
     // reminder shipped bare HTML with no footer at all.
     const tenantIds = [...new Set([...groupMap.values()].map((g) => g.tenant_id))];
     const [{ data: tenantRows, error: tenantErr }, { data: brandingRows, error: brandingErr }] = await Promise.all([
-      svc.from("tenants").select("id, legal_name, mailing_address, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at").in("id", tenantIds),
+      // #1190: the email_* / send-pattern / resend-key columns live on
+      // tenant_branding, not tenants — read them from the branding row below.
+      svc.from("tenants").select("id, legal_name, mailing_address").in("id", tenantIds),
       svc
         .from("tenant_branding")
-        .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan")
+        .select("tenant_id, logo_url, primary_color, secondary_color, accent_color, slogan, email_send_pattern, tenant_resend_api_key_encrypted, email_from_address, email_from_name, email_from_domain, email_from_domain_verified_at")
         .in("tenant_id", tenantIds),
     ]);
     // A failed read here would silently send every reminder with the placeholder
@@ -96,12 +98,6 @@ export const groupReminderCadence = inngest.createFunction(
       id: string;
       legal_name: string | null;
       mailing_address: string | null;
-      email_send_pattern: "platform_resend" | "tenant_resend";
-      tenant_resend_api_key_encrypted: string | null;
-      email_from_address: string | null;
-      email_from_name: string | null;
-      email_from_domain: string | null;
-      email_from_domain_verified_at: string | null;
     };
     type BrandingRow = {
       tenant_id: string;
@@ -110,6 +106,12 @@ export const groupReminderCadence = inngest.createFunction(
       secondary_color: string | null;
       accent_color: string | null;
       slogan: string | null;
+      email_send_pattern: "platform_resend" | "tenant_resend";
+      tenant_resend_api_key_encrypted: string | null;
+      email_from_address: string | null;
+      email_from_name: string | null;
+      email_from_domain: string | null;
+      email_from_domain_verified_at: string | null;
     };
     const tenantMap = new Map(((tenantRows ?? []) as TenantRow[]).map((t) => [t.id, t]));
     const brandingMap = new Map(((brandingRows ?? []) as BrandingRow[]).map((b) => [b.tenant_id, b]));
@@ -220,12 +222,13 @@ export const groupReminderCadence = inngest.createFunction(
           id: group.tenant_id,
           legal_name: tenant?.legal_name ?? "Travel Agency",
           mailing_address: tenant?.mailing_address ?? null,
-          email_send_pattern: tenant?.email_send_pattern ?? "platform_resend",
-          tenant_resend_api_key_encrypted: tenant?.tenant_resend_api_key_encrypted ?? null,
-          email_from_address: tenant?.email_from_address ?? null,
-          email_from_name: tenant?.email_from_name ?? null,
-          email_from_domain: tenant?.email_from_domain ?? null,
-          email_from_domain_verified_at: tenant?.email_from_domain_verified_at ?? null,
+          // #1190: email send config comes from tenant_branding.
+          email_send_pattern: branding?.email_send_pattern ?? "platform_resend",
+          tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
+          email_from_address: branding?.email_from_address ?? null,
+          email_from_name: branding?.email_from_name ?? null,
+          email_from_domain: branding?.email_from_domain ?? null,
+          email_from_domain_verified_at: branding?.email_from_domain_verified_at ?? null,
         },
         to: inv.invitee_email,
         subject,

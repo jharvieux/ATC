@@ -69,10 +69,24 @@ const tenantsPool = [
     id: "t-1",
     legal_name: "Acme Travel",
     mailing_address: "1 Main St",
-    email_send_pattern: "platform_resend",
-    tenant_resend_api_key_encrypted: null,
-    email_from_address: null,
-    email_from_name: null,
+  },
+];
+// #1190: email send config lives on tenant_branding, not tenants. Keying it
+// here (with tenant_resend, distinct from the platform default) makes the
+// sendEmail assertion below a real guard — a revert that reads tenant.* gets the
+// platform default and fails.
+const brandingPool = [
+  {
+    tenant_id: "t-1",
+    logo_url: null,
+    primary_color: null,
+    secondary_color: null,
+    accent_color: null,
+    slogan: null,
+    email_send_pattern: "tenant_resend",
+    tenant_resend_api_key_encrypted: "enc-key",
+    email_from_address: "concierge@acme.com",
+    email_from_name: "Acme Concierge",
     email_from_domain: null,
     email_from_domain_verified_at: null,
   },
@@ -90,7 +104,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
         : table === "groups" ? { data: groupsPool, error: null }
         : table === "tenants" ? { data: tenantsPool, error: null }
         : table === "email_log" ? { data: [], error: null } // 3-per-24h count = 0 → not rate-limited
-        : { data: [], error: null }; // tenant_branding
+        : table === "tenant_branding" ? { data: brandingPool, error: null }
+        : { data: [], error: null };
 
       const builder: Record<string, unknown> = {
         select() { return builder; },
@@ -129,7 +144,13 @@ describe("group-reminder-cadence — send path (#1102)", () => {
         template_id: "group_reminder",
         category: "group_invitation",
         related_group_id: "g-1",
-        tenant: expect.objectContaining({ id: "t-1", email_send_pattern: "platform_resend" }),
+        // #1190: email config must come from tenant_branding (tenant_resend),
+        // not the tenants row.
+        tenant: expect.objectContaining({
+          id: "t-1",
+          email_send_pattern: "tenant_resend",
+          email_from_address: "concierge@acme.com",
+        }),
       }),
     );
     expect(result.sent).toBe(1);

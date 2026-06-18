@@ -81,10 +81,12 @@ export const abuseStateTransitionNotify = inngest.createFunction(
         // 2. Lookup tenant branding + tenant admins.
         const { data: tRow } = await db
           .from("tenants")
-          .select("id, legal_business_name, business_address")
+          // #1190: real columns are legal_name / mailing_address (not
+          // legal_business_name / business_address, which never existed).
+          .select("id, legal_name, mailing_address")
           .eq("id", data.tenant_id)
           .maybeSingle();
-        const tenantRow = tRow as { id: string; legal_business_name?: string; business_address?: string } | null;
+        const tenantRow = tRow as { id: string; legal_name?: string; mailing_address?: string } | null;
         if (!tenantRow) return { skipped: "tenant-not-found" };
 
         const { data: bRow } = await db
@@ -107,11 +109,12 @@ export const abuseStateTransitionNotify = inngest.createFunction(
         // 3. Recipients: tenant admins.
         const { data: admins } = await db
           .from("users")
-          .select("id, email, full_name")
+          // #1190: real column is display_name (users has no full_name).
+          .select("id, email, display_name")
           .eq("tenant_id", data.tenant_id)
           .in("role", ["tenant_admin", "owner"])
           .limit(20);
-        const adminList = (admins ?? []) as Array<{ id: string; email: string; full_name?: string | null }>;
+        const adminList = (admins ?? []) as Array<{ id: string; email: string; display_name?: string | null }>;
         if (adminList.length === 0) {
           return { skipped: "no-tenant-admins" };
         }
@@ -133,11 +136,11 @@ export const abuseStateTransitionNotify = inngest.createFunction(
                   accent_color: branding?.accent_color ?? null,
                   slogan: branding?.slogan ?? null,
                 },
-                tenant_legal_name: tenantRow.legal_business_name ?? "Your tenant",
-                tenant_business_address: tenantRow.business_address ?? "",
+                tenant_legal_name: tenantRow.legal_name ?? "Your tenant",
+                tenant_business_address: tenantRow.mailing_address ?? "",
                 unsubscribe_url: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/email/unsubscribe?u=${admin.id}`,
               },
-              recipient_name: admin.full_name ?? "tenant administrator",
+              recipient_name: admin.display_name ?? "tenant administrator",
               dimension: data.dimension!,
               from_state: data.from_state ?? "ok",
               to_state: data.to_state!,
