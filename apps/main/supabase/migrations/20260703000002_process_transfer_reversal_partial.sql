@@ -108,12 +108,18 @@ BEGIN
   -- Runs only when the first pass matched no paid rows. Credits the balance delta
   -- and opens a second review row; does NOT re-flip status or re-mark the
   -- commission (already 'disputed' — state machine rejects disputed→disputed).
+  -- FOR UPDATE serializes concurrent calls that both reach this pass (e.g. two
+  -- distinct partial-reversal events delivered close together); without it two
+  -- concurrent transactions could read the same row and each apply their delta
+  -- in an uncoordinated window. Concurrent legitimate events are still both
+  -- credited (each applies its own p_this_reversal_cents) but in sequence.
   IF v_count = 0 THEN
     FOR r IN
       SELECT id, tenant_id, commission_id
       FROM   public.payout_records
       WHERE  stripe_transfer_id = p_transfer_id
         AND  status             = 'reversed'
+      FOR UPDATE
     LOOP
       SELECT td.hold_period_days
       INTO   v_hold_period_days
