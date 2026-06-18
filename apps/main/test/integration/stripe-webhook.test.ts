@@ -261,7 +261,8 @@ describeIf("Stripe webhook handler", () => {
   });
 
   it("[#1156] transfer.reversed second partial: distinct event credits balance delta, opens second review row", async () => {
-    // Scenario: Stripe partially reverses a transfer in two steps.
+    // Scenario: Stripe partially reverses a transfer in two steps (real Stripe behaviour:
+    // each step is a distinct event_id with previous_attributes.amount_reversed set).
     // Event 1: amount_reversed=15000, no previous_attributes → first partial, delta=15000.
     // Event 2: amount_reversed=40000, previous_attributes.amount_reversed=15000 → second partial, delta=25000.
     // The RPC's second pass (FOR UPDATE on status='reversed') must credit the second delta
@@ -272,6 +273,9 @@ describeIf("Stripe webhook handler", () => {
     const eventId2 = `evt_partial2_b_${randomUUID().slice(0, 8)}`;
     insertedEventIds.push(eventId1, eventId2);
 
+    // Seed: tenant → booking → commission → payout_record (with commission_id)
+    // Commission linkage is required so the second-pass review-queue INSERT fires
+    // (the RPC skips the INSERT when commission_id IS NULL, mirroring the first pass).
     const { data: tenant } = await admin
       .from("tenants")
       .insert({ slug, display_name: "Partial2 Test", legal_name: "Partial2 Test LLC", tenant_type: "sub_host" })
@@ -279,8 +283,33 @@ describeIf("Stripe webhook handler", () => {
       .single();
     const tenantId = tenant!.id as string;
 
+    const { data: booking } = await admin
+      .from("bookings")
+      .insert({ tenant_id: tenantId })
+      .select("id")
+      .single();
+
+    const { data: commission } = await admin
+      .from("commissions")
+      .insert({
+        tenant_id: tenantId,
+        booking_id: booking!.id,
+        commissionable_fare_cents: 500000,
+        commission_rate: 0.1,
+        platform_split_rate: 0.2,
+        gross_commission_cents: 50000,
+        host_booking_fee_cents: 0,
+        net_commission_cents: 50000,
+        platform_retained_cents: 10000,
+        subhost_payable_cents: 40000,
+      })
+      .select("id")
+      .single();
+    const commissionId = commission!.id as string;
+
     await admin.from("payout_records").insert({
       tenant_id: tenantId,
+      commission_id: commissionId,
       stripe_transfer_id: transferId,
       status: "paid",
       amount_cents: 40000,
@@ -334,9 +363,21 @@ describeIf("Stripe webhook handler", () => {
       .select("available_cents").eq("tenant_id", tenantId).single();
     expect(Number(bal?.available_cents)).toBe(-40000);
 
+    // Two clawback rows in reconciliation_review_queue: one per partial delivery
+    const { data: queueRows } = await admin.from("reconciliation_review_queue")
+      .select("status, variance_cents").eq("commission_id", commissionId);
+    expect(queueRows).toHaveLength(2);
+    expect(queueRows?.every((r) => r.status === "clawback")).toBe(true);
+    const deltas = queueRows?.map((r) => Number(r.variance_cents)).sort((a, b) => a - b);
+    expect(deltas).toEqual([15000, 25000]);
+
     // Cleanup
+    await admin.from("reconciliation_review_queue").delete().eq("commission_id", commissionId);
     await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
     await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("commissions").delete().eq("id", commissionId);
+    await admin.from("bookings").delete().eq("id", booking!.id);
+    await admin.from("audit_log").delete().eq("tenant_id", tenantId);
     await admin.from("tenants").delete().eq("id", tenantId);
   });
 
