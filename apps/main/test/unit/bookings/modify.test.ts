@@ -98,7 +98,8 @@ beforeEach(() => {
   });
 
   mocks.tenantSingle.mockResolvedValue({
-    data: { prong: "nuo", is_sandbox: false },
+    // #1190: the real column is tenant_type (not prong).
+    data: { tenant_type: "nuo", is_sandbox: false },
     error: null,
   });
 
@@ -218,6 +219,12 @@ describe("POST /api/bookings/[id]/modify — happy path", () => {
     expect(mocks.safeAwait).toHaveBeenCalledWith(
       expect.anything(),
       "bookings.update",
+    );
+    // #1190 regression: prong passed to the adapter selector comes from the real
+    // tenants.tenant_type column. A revert to tenant.prong passes undefined.
+    expect(mocks.selectAdapterForCall).toHaveBeenCalledWith(
+      expect.objectContaining({ prong: "nuo" }),
+      expect.anything(),
     );
   });
 });

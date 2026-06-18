@@ -117,11 +117,12 @@ export async function POST(
 
     // Tenant + host agency display info for the PDF render.
     const { data: tenantData } = await adminDb
+      // #1190: tenants has no "name" column — the display label is display_name.
       .from("tenants")
-      .select("name, support_email")
+      .select("display_name, support_email")
       .eq("id", ctx.tenant_id)
       .maybeSingle();
-    const tenantName = (tenantData as { name?: string } | null)?.name ?? "Sub-host";
+    const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? "Sub-host";
 
     const { data: hostNameRow } = await adminDb
       .from("platform_settings")

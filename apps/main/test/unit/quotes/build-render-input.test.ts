@@ -56,7 +56,10 @@ type OptionResult = {
 };
 
 function makeAdminDb(opts: {
-  tenant: { data: { name?: string } | null; error: { message: string } | null };
+  // #1190: the tenant display label is the display_name column (there is no
+  // "name" column on tenants). Keying the mock on the real column makes this a
+  // regression guard — reverting the reader to .name resolves to undefined here.
+  tenant: { data: { display_name?: string } | null; error: { message: string } | null };
   host: { data: { value?: unknown } | null; error: { message: string } | null };
   options: OptionResult;
 }) {
@@ -112,7 +115,7 @@ const BASE_OPTION = {
 };
 
 const okEnrich = {
-  tenant: { data: { name: "Acme Travel" }, error: null },
+  tenant: { data: { display_name: "Acme Travel" }, error: null },
   host: { data: { value: "Travel Pros LLC" }, error: null },
   options: { data: [BASE_OPTION], error: null },
 };
@@ -210,7 +213,7 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: { name: "T" }, error: null },
+        tenant: { data: { display_name: "T" }, error: null },
         host: { data: { value: "H" }, error: null },
         options: {
           data: [
@@ -233,7 +236,7 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: { name: "T" }, error: null },
+        tenant: { data: { display_name: "T" }, error: null },
         host: { data: { value: "H" }, error: null },
         options: { data: [{ ...BASE_OPTION, total_amount_cents: 9995 }], error: null },
       }),
@@ -248,7 +251,7 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: { name: "T" }, error: null },
+        tenant: { data: { display_name: "T" }, error: null },
         host: { data: { value: "H" }, error: null },
         options: { data: [], error: null },
       }),
@@ -264,7 +267,7 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: { name: "T" }, error: null },
+        tenant: { data: { display_name: "T" }, error: null },
         host: { data: { value: { value: "Wrapped Host Name" } }, error: null },
         options: { data: [BASE_OPTION], error: null },
       }),
@@ -312,7 +315,7 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: { name: "T" }, error: null },
+        tenant: { data: { display_name: "T" }, error: null },
         host: { data: null, error: { message: "platform_settings RLS" } },
         options: { data: [BASE_OPTION], error: null },
       }),
@@ -329,7 +332,7 @@ describe("buildRenderInputFromQuote — enrich with tenant + host + option", () 
     const result = await buildRenderInputFromQuote({
       ctx: CTX,
       adminDb: makeAdminDb({
-        tenant: { data: { name: "T" }, error: null },
+        tenant: { data: { display_name: "T" }, error: null },
         host: { data: { value: "H" }, error: null },
         options: { data: null, error: { message: "quote_options RLS" } },
       }),

@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => ({
   // adapter
   healthCheck: vi.fn(),
   submitBooking: vi.fn(),
+  selectAdapterForCall: vi.fn(),
   // dynamic imports
   assertNoEstimatedDOBs: vi.fn().mockResolvedValue(undefined),
   populateConversionTouch: vi.fn().mockResolvedValue(undefined),
@@ -144,17 +145,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 }));
 
 vi.mock("@/lib/host-adapters/select-adapter", () => ({
-  selectAdapterForCall: vi.fn().mockImplementation(() =>
-    Promise.resolve({
-      adapter: {
-        adapterId: "mock-adapter",
-        capabilities: { supports_commission_api: true },
-        healthCheck: mocks.healthCheck,
-        submitBooking: mocks.submitBooking,
-      },
-      ctx: { tenant_id: TENANT_ID, user_id: null, correlation_id: "test-corr" },
-    }),
-  ),
+  selectAdapterForCall: mocks.selectAdapterForCall,
 }));
 
 import { POST } from "@/app/api/bookings/[id]/submit/route";
@@ -203,13 +194,25 @@ beforeEach(() => {
   mocks.assertNoEstimatedDOBs.mockResolvedValue(undefined);
 
   mocks.tenantRow.mockResolvedValue({
-    data: { id: TENANT_ID, prong: "nuo", tier_id: TIER_ID, is_sandbox: false },
+    // #1190: the real column is tenant_type (not prong) — keying the mock on it
+    // guards against the reader reverting to the non-existent prong column.
+    data: { id: TENANT_ID, tenant_type: "nuo", tier_id: TIER_ID, is_sandbox: false },
     error: null,
   });
 
   mocks.tierRow.mockResolvedValue({
     data: { id: TIER_ID, platform_split_rate: 0.25, hold_period_days: 30 },
     error: null,
+  });
+
+  mocks.selectAdapterForCall.mockResolvedValue({
+    adapter: {
+      adapterId: "mock-adapter",
+      capabilities: { supports_commission_api: true },
+      healthCheck: mocks.healthCheck,
+      submitBooking: mocks.submitBooking,
+    },
+    ctx: { tenant_id: TENANT_ID, user_id: null, correlation_id: "test-corr" },
   });
 
   mocks.healthCheck.mockResolvedValue({ ok: true });
@@ -339,7 +342,7 @@ describe("POST /api/bookings/[id]/submit — commission rate (§14.4 fail-closed
 describe("POST /api/bookings/[id]/submit — platform split rate (§14.4 fail-closed)", () => {
   it("returns 503 + pending_host_review when tenant has no tier_id", async () => {
     mocks.tenantRow.mockResolvedValue({
-      data: { id: TENANT_ID, prong: "nuo", tier_id: null, is_sandbox: false },
+      data: { id: TENANT_ID, tenant_type: "nuo", tier_id: null, is_sandbox: false },
       error: null,
     });
     const res = await POST(makeReq(), PARAMS);
@@ -393,7 +396,7 @@ describe("POST /api/bookings/[id]/submit — commission record", () => {
 describe("POST /api/bookings/[id]/submit — sandbox (§15.12)", () => {
   it("skips commissions row for sandbox tenants but still returns submitted", async () => {
     mocks.tenantRow.mockResolvedValue({
-      data: { id: TENANT_ID, prong: "nuo", tier_id: TIER_ID, is_sandbox: true },
+      data: { id: TENANT_ID, tenant_type: "nuo", tier_id: TIER_ID, is_sandbox: true },
       error: null,
     });
     const res = await POST(makeReq(), PARAMS);
@@ -431,6 +434,13 @@ describe("POST /api/bookings/[id]/submit — happy path", () => {
       expect.objectContaining({
         changes: expect.objectContaining({ outcome: "success" }),
       }),
+    );
+
+    // #1190 regression: the adapter selector must receive prong derived from the
+    // real tenants.tenant_type column. A revert to tenant.prong passes undefined.
+    expect(mocks.selectAdapterForCall).toHaveBeenCalledWith(
+      expect.objectContaining({ prong: "nuo" }),
+      expect.anything(),
     );
   });
 

@@ -40,7 +40,7 @@ type BookingRow = {
 
 type TenantRow = {
   id: string;
-  prong: string;
+  tenant_type: string;
   tier_id: string | null;
   is_sandbox: boolean;
 };
@@ -157,7 +157,8 @@ async function submitBooking(
     // sandboxed tenant's booking reach a real host adapter).
     const { data: tenantData, error: tenantErr } = await adminDb
       .from("tenants")
-      .select("id, prong, tier_id, is_sandbox")
+      // #1190: the column is tenant_type, not prong (prong was never a column).
+      .select("id, tenant_type, tier_id, is_sandbox")
       .eq("id", ctx.tenant_id)
       .single();
 
@@ -194,7 +195,7 @@ async function submitBooking(
     const { adapter, ctx: hostCtx } = await selectAdapterForCall(
       {
         id: ctx.tenant_id,
-        prong: tenant.prong,
+        prong: tenant.tenant_type,
         is_sandbox: tenant.is_sandbox,
       },
       { tenant_id: ctx.tenant_id, user_id: null, correlation_id },

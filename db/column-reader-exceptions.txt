@@ -11,11 +11,8 @@
 # Each entry is tracked for investigation in GitHub issue #1190.
 # Remove an entry once the underlying code is corrected or confirmed legitimate.
 
-bookings.ai_paused_by_platform # pre-existing violation — tracked in #1190; column is on tenants not bookings
 bookings.customer_name # pre-existing violation — tracked in #1190; may be on contacts table
 bookings.group_id # pre-existing violation — tracked in #1190; FK col is group_booking_id not group_id
-bookings.host_booking_reference # pre-existing violation — tracked in #1190
-bookings.is_test # pre-existing violation — tracked in #1190; is_test added to conversations not bookings
 bookings.passenger_contact_email # pre-existing violation — tracked in #1190; may be on contacts table
 bookings.source # pre-existing violation — tracked in #1190; may be on conversations not bookings
 forums.coordinator_user_id # pre-existing violation — tracked in #1190
@@ -41,7 +38,5 @@ tenants.email_from_domain_verified_at # pre-existing violation — tracked in #1
 tenants.email_from_name # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
 tenants.email_send_pattern # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
 tenants.legal_business_name # pre-existing violation — tracked in #1190
-tenants.name # pre-existing violation — tracked in #1190; should be legal_name?
-tenants.prong # pre-existing violation — tracked in #1190
 tenants.tenant_resend_api_key_encrypted # pre-existing violation — tracked in #1190; column is on tenant_branding not tenants
 users.full_name # pre-existing violation — tracked in #1190; may be first_name+last_name not a single column

@@ -93,13 +93,14 @@ export async function buildRenderInputFromQuote(
 ): Promise<BuildInputResult> {
   const { data: tenantData, error: tenantErr } = await args.adminDb
     .from("tenants")
-    .select("name")
+    // #1190: tenants has no "name" column — the display label is display_name.
+    .select("display_name")
     .eq("id", args.ctx.tenant_id)
     .maybeSingle();
   if (tenantErr) {
     return { ok: false, status: 500, message: `tenant lookup: ${tenantErr.message}` };
   }
-  const tenantName = (tenantData as { name?: string } | null)?.name ?? "Sub-host";
+  const tenantName = (tenantData as { display_name?: string } | null)?.display_name ?? "Sub-host";
 
   // platform_settings.value historically ships as either a bare string or
   // a JSON object with .value — both forms are in the wild on dev, so the
