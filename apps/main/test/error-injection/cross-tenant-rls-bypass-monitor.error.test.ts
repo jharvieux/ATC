@@ -18,7 +18,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
     from(_table: string) {
-      void _table;
       return {
         select() {
           const chain: Record<string, unknown> = {
