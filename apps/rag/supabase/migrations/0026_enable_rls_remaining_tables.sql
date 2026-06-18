@@ -13,7 +13,10 @@
 -- No policies = service-role only (the established pattern; see 0023/0024).
 -- Regenerate db/rls-snapshot-rag.sql after applying.
 
-alter table public.schema_migrations enable row level security;
+-- #1078 follow-up: public.schema_migrations is the retired db-migrate ledger,
+-- dropped in 0030. Never created on fresh DBs (migration files don't create it),
+-- so guard with IF EXISTS to avoid erroring on fresh builds.
+alter table if exists public.schema_migrations enable row level security;
 alter table public.knowledge_chunks enable row level security;
 alter table public.knowledge_ingestion_queue enable row level security;
 alter table public.rag_retrieval_log enable row level security;

@@ -1,0 +1,13 @@
+-- #1078 follow-up — retire the vestigial public.schema_migrations ledger (main).
+--
+-- public.schema_migrations was created by the old scripts/db-migrate.ts runner,
+-- retired in #1078 (860ffec6). Nothing recreates it (fresh DBs apply migration
+-- files directly via psql, which never create it) and it has zero app/script
+-- readers. It was already dropped from the prod + test main DBs out-of-band; this
+-- migration makes the retirement durable for any other/long-lived main DB and for
+-- future fresh builds.
+--
+-- IF EXISTS makes this a no-op where the table was never created. This is the
+-- custom ledger in the `public` schema; Supabase's own migration tracking lives in
+-- `supabase_migrations.schema_migrations` and is untouched.
+DROP TABLE IF EXISTS public.schema_migrations;
