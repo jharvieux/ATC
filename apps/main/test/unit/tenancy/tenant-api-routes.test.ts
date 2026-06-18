@@ -529,6 +529,12 @@ describe("GET /api/tenant/override-requests", () => {
     expect(res.status).toBe(403);
   });
 
+  it("returns 500 when DB list query errors (fail-closed via dbErrorResponse)", async () => {
+    h.tableErrors["tenant_override_requests"] = { message: "replica lag" };
+    const res = await overrideGET(req("/api/tenant/override-requests"));
+    expect(res.status).toBe(500);
+  });
+
   it("returns items array with seeded override requests (confirms DB read wired)", async () => {
     h.tableData["tenant_override_requests"] = [
       { id: "req-1", dimension: "ai_cost", status: "pending", requested_at: "2026-06-18T12:00:00Z" },
