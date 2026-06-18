@@ -143,22 +143,26 @@ BEGIN
             updated_at      = NOW();
 
       -- Commission already disputed; skip re-mark and audit row.
-      -- Open a second review row so ops can reconcile the multi-step reversal.
-      INSERT INTO public.reconciliation_review_queue (
-        commission_id, tenant_id, variance_cents, source_path, status, notes
-      ) VALUES (
-        r.commission_id,
-        r.tenant_id,
-        p_this_reversal_cents,
-        'automated',
-        'clawback',
-        json_build_object(
-          'stripe_transfer_id', p_transfer_id,
-          'reversed_cents',     p_this_reversal_cents,
-          'payout_record_id',   r.id,
-          'partial_reversal_sequence', true
-        )::text
-      );
+      -- Open a second review row when commission is linked so ops can reconcile
+      -- the multi-step reversal. Mirrors first-pass null guard: rows without a
+      -- commission_id have no ledger entry to reconcile against.
+      IF r.commission_id IS NOT NULL THEN
+        INSERT INTO public.reconciliation_review_queue (
+          commission_id, tenant_id, variance_cents, source_path, status, notes
+        ) VALUES (
+          r.commission_id,
+          r.tenant_id,
+          p_this_reversal_cents,
+          'automated',
+          'clawback',
+          json_build_object(
+            'stripe_transfer_id', p_transfer_id,
+            'reversed_cents',     p_this_reversal_cents,
+            'payout_record_id',   r.id,
+            'partial_reversal_sequence', true
+          )::text
+        );
+      END IF;  -- commission_id IS NOT NULL
 
       v_count := v_count + 1;
     END LOOP;

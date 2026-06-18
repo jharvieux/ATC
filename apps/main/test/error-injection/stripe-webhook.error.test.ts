@@ -196,10 +196,9 @@ describe("Stripe webhook — transfer.reversed delta guard (Pattern 2)", () => {
   it("[#1156] returns 200 'OK' when RPC returns 1 on a subsequent partial reversal (second-pass handled)", async () => {
     // Scenario: first partial reversal already flipped payout_records to 'reversed'.
     // Stripe delivers a second partial: amount_reversed=40000, previous_attributes.amount_reversed=15000.
-    // delta = 25000 > 0 → guard does NOT fire → RPC is called.
-    // The DB-side second pass (FOR UPDATE loop on status='reversed' rows) credits balance
-    // and returns 1. Handler must treat count > 0 as success, not 'unhandled'.
-    // A regression that drops the second-pass SQL returns 0 → handler logs warn → outcome='unhandled'.
+    // delta = 25000 > 0 → delta guard does NOT fire → RPC is called → returns 1.
+    // This test pins the handler layer: count > 0 must resolve to 200 'OK', not 'unhandled'.
+    // Note: the RPC is fully mocked — this does not exercise the DB-side second-pass SQL.
     mockEventData = { id: "tr_1", amount_reversed: 40000 };
     mockEventPreviousAttributes = { amount_reversed: 15000 };
     mockRpcResult = { data: 1, error: null };
