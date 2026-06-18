@@ -162,8 +162,9 @@ export async function handleStripeWebhook(
         // payout_balances.available_cents, marks the commission disputed, and
         // opens a reconciliation_review_queue row. Single RPC prevents the
         // crash window that would exist between a multi-call sequence (D-091 P8).
-        // Returns 0 when no paid row matched — not ours or already reversed —
-        // so we do NOT throw on 0: Stripe retrying forever is the worse outcome.
+        // Returns 0 only when no payout_records row exists for this transfer
+        // (not ours). Subsequent partial reversals on an already-reversed row
+        // return > 0 (balance credited, second review row opened — #1156).
         const rawEvent = event as {
           data: {
             object: Stripe.Transfer;
@@ -196,7 +197,7 @@ export async function handleStripeWebhook(
           processingOutcome = "success";
         } else {
           console.warn(
-            "[stripe-webhook] transfer.reversed: no 'paid' payout_records row for transfer %s (not ours or already reversed)",
+            "[stripe-webhook] transfer.reversed: no payout_records row for transfer %s — not ours",
             transfer.id,
           );
         }
