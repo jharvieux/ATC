@@ -34,6 +34,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_retrieval_log TO service_role
 -- TABLE: public.rag_retrieval_log_daily
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.rag_retrieval_log_daily TO service_role;
 
+-- TABLE: public.schema_migrations
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.schema_migrations TO service_role;
+
 -- TABLE: public.tenant_registry_shadow
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.tenant_registry_shadow TO service_role;
 
