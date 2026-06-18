@@ -98,12 +98,16 @@ async function openDrawer() {
 
 describe("ConversationRailDrawer", () => {
   describe("initial state", () => {
-    it("drawer is closed on mount — toggle button is present but panel is collapsed", () => {
+    it("toggle button reports aria-expanded false before first open", () => {
       vi.stubGlobal("fetch", makeOkFetch());
       render(<ConversationRailDrawer />);
-      const btn = toggleButton();
-      expect(btn.getAttribute("aria-expanded")).toBe("false");
-      expect(screen.queryByRole("dialog")).toBeTruthy(); // exists in DOM, but off-screen
+      expect(toggleButton().getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("dialog panel is in the DOM on mount so screen-reader announcements work even when visually hidden via CSS transform", () => {
+      vi.stubGlobal("fetch", makeOkFetch());
+      render(<ConversationRailDrawer />);
+      expect(screen.queryByRole("dialog")).toBeTruthy();
     });
 
     it("fetch is NOT called on mount before the drawer is opened", () => {
