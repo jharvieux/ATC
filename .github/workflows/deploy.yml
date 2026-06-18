@@ -212,19 +212,37 @@ jobs:
       # Grant-drift (#546). The RLS snapshot above captures rowsecurity + policies
       # but NOT table GRANTs, so a table shipped without its service_role grant
       # (the #544 prod outage) produced no diff. These steps diff live GRANTs
-      # against the committed baseline. They MUST compare against the serving
-      # (prod) DB: standard test projects auto-grant service_role via default
-      # privileges that prod was provisioned without (see scripts/local-pg-grants.sql),
-      # so a prod-baseline diff against a test DB would be permanent false drift.
-      # The step-level env therefore overrides the job's TEST URLs with read-only
-      # PROD URLs. Requires SUPABASE_PROD_DB_URL / SUPABASE_RAG_PROD_DB_URL secrets.
-      - name: Check grants drift (fail on PR and release/*)
-        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
+      # against the committed baseline (db/grants-snapshot-{main,rag}.sql).
+      #
+      # PR-time check runs against the TEST DBs (same target as rls:check above).
+      # The dedicated test DB derives its grants from the migrations' per-table
+      # GRANTs — db:reset recreates the public schema (wiping Supabase's default
+      # ACLs) and the migrations restore grants — so the committed baseline matches
+      # it with no false drift (verified empirically), AND it still catches the #544
+      # class: a table shipped without its grant shows as missing on the
+      # migration-built DB. This keeps PR checks decoupled from prod state + prod
+      # secrets. Regenerate the baseline from the TEST DB: `pnpm grants:snapshot`.
+      # (The earlier "must compare against prod" rationale was stale — it described
+      #  a legacy test project that auto-granted via default privileges; the #257
+      #  dedicated test DB does not.)
+      - name: Check grants drift (fail on PR — vs test DB)
+        if: github.event_name == 'pull_request'
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
+          SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
+          # Dependabot runs don't receive secrets (empty URLs → no targets);
+          # allow that case to pass only for Dependabot, as with RLS above.
+          GRANTS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
+        run: pnpm grants:check
+
+      # Release gate additionally verifies PROD's live grants against the baseline,
+      # catching any out-of-band/manual grant change in prod that migrations (and
+      # therefore the test DB) would not surface. Read-only PROD URLs.
+      - name: Check grants drift (fail on release/* — vs prod DB)
+        if: startsWith(github.ref, 'refs/heads/release/')
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
           SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
-          # Dependabot runs don't receive secrets (empty URLs → no targets);
-          # allow that case to pass only for Dependabot, as with RLS above.
           GRANTS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
         run: pnpm grants:check
 
