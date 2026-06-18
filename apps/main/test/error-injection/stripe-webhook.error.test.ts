@@ -38,6 +38,9 @@ let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } 
 // Simulates Stripe's `data.previous_attributes` on a transfer.reversed event.
 // Absent by default (first reversal has no prior amount). Set to drive second-partial-reversal tests.
 let mockEventPreviousAttributes: Record<string, unknown> | undefined = undefined;
+// Captures the args object passed to db.rpc("process_transfer_reversal", args) so
+// tests can assert that p_stripe_event_id is forwarded from the Stripe event (#1227).
+let mockCapturedRpcArgs: Record<string, unknown> | null = null;
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
@@ -97,8 +100,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
         },
       };
     },
-    async rpc(fn: string, _args?: unknown) {
-      void _args;
+    async rpc(fn: string, args?: unknown) {
+      mockCapturedRpcArgs = args as Record<string, unknown>;
       if (fn !== "process_transfer_reversal") throw new Error(`Unexpected rpc: ${fn}`);
       return mockRpcResult;
     },
@@ -149,6 +152,7 @@ beforeEach(() => {
   mockArraySelectResult = { data: [{ id: "p-1" }], error: null };
   mockUpdateSelectResult = { data: [{ id: "p-1" }], error: null };
   mockRpcResult = { data: 1, error: null };
+  mockCapturedRpcArgs = null;
   mockEventPreviousAttributes = undefined;
   mockMaybeSingleResult = {
     data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
@@ -205,6 +209,16 @@ describe("Stripe webhook — transfer.reversed delta guard (Pattern 2)", () => {
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("OK");
+  });
+
+  it("[#1227] forwards the Stripe event.id to p_stripe_event_id in the RPC call", async () => {
+    // WHY: ops correlate multiple partial-reversal queue rows using stripe_event_id
+    // in the notes JSON. Without it they must manually join stripe_webhook_events
+    // on the transfer ID, which is non-obvious when two partial reversals share
+    // the same stripe_transfer_id. The Stripe mock always returns id='evt_test_transfer.reversed'.
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    expect(mockCapturedRpcArgs?.p_stripe_event_id).toBe(`evt_test_${mockEventType}`);
   });
 });
 
@@ -355,8 +369,8 @@ describe("Stripe webhook — concurrency / idempotency (Pattern 6)", () => {
             },
           };
         },
-        async rpc(fn: string, _args?: unknown) {
-          void _args;
+        async rpc(fn: string, args?: unknown) {
+          mockCapturedRpcArgs = args as Record<string, unknown>;
           if (fn !== "process_transfer_reversal") throw new Error(`Unexpected rpc: ${fn}`);
           return { data: null, error: null };
         },

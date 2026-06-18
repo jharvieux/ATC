@@ -1,28 +1,27 @@
-# Session state — last updated 2026-06-18 16:20 UTC
+# Session state — last updated 2026-06-18 16:50 UTC
 
 ## Just completed
-- **PR #1236** (auth E2E redirect test) — merged to dev
-- **PR #1237** (booking lifecycle tests #1214) — merged to dev
-- **PR #1238** (#1215 commissions + pricing mutation coverage) — merged to dev
-  - commissionable-line-items.test.ts (18 tests, was 0%)
-  - pricing-cache.test.ts (17 tests, was 3%)
-  - line-routing.test.ts (+39 outputMapper tests, was 23%)
-  - 73 total new tests; both audit agents clean
-- **PR #1239** (#1218 RAG Stryker config) — opened, audit agents running
+- **PR #1240** (#1233 ConversationRailDrawer tests) — merged to dev (17 tests: retry mechanic + isStaff gate)
+- **PR #1241** (#1227 stripe event_id RPC threading) — opened, both audit agents clean (d091 + pre-pr), CI running
+  - migration 20260704000002: DROP old (TEXT, BIGINT), CREATE OR REPLACE (TEXT, BIGINT, TEXT) with stripe_event_id in both INSERT notes
+  - webhook-handler.ts: pass event.id as p_stripe_event_id
+  - stripe-webhook.error.test.ts: capture rpc args + assert event_id forwarded
+- **Issue #1160** (column-reader guard) — closed; already implemented by check-column-readers.ts + pnpm check:column-readers
 
 ## In flight
-- PR #1239 — Stryker RAG config (stryker.rag.config.json + pnpm mutate:rag) — awaiting audit comments + CI
+- **PR #1241** (#1227) — CI running; audit-section-check queued after PR body edit; when green, merge with `gh pr merge 1241 --squash --delete-branch`
 
 ## Next step
-1. Wait for PR #1239 CI + audit agents → update PR body → merge
-2. Then: #1233 — ConversationRailDrawer unit tests (low priority)
-3. Opus queue (#1127, #1190, #1217) — deferred
+1. Merge PR #1241 once all CI checks pass
+2. Commit untracked `apps/main/.gitignore` (`.vercel` line, auto-created by Vercel CLI) directly on dev post-merge — trivial, no PR needed
+3. Opus queue (#1127, #1190, #1217) — next priority; requires /model claude-opus-4-8
 
 ## Blocked on user
 - #563 — set `APP_STAGING_URL` secret in GitHub (ops action)
 - #1222 — set `PLATFORM_DEFAULT_TENANT_ID` in Vercel Preview env scope (ops action)
+- #1127 — ledger unwind for transfer.reversed: spec §14.9 leaves post-payout money movement unspecified; needs spec owner input before implementing
 
 ## Open questions
 - #1235 — GoTrue browser session fixture infrastructure (25 remaining E2E fixmes from #709)
-- Opus queue (#1127, #1190, #1217) — deferred
-- #1233 — ConversationRailDrawer unit tests — low-priority
+- #890 — concierge from-address inbound handling; product decision (reply-to sufficient vs. full inbound routing)
+- Opus queue (#1127, #1190, #1217) — deferred (require /model claude-opus-4-8)
