@@ -35,6 +35,9 @@ let mockMaybeSingleResult: { data: unknown; error: { message: string } | null } 
   data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
   error: null,
 };
+// Simulates Stripe's `data.previous_attributes` on a transfer.reversed event.
+// Absent by default (first reversal has no prior amount). Set to drive second-partial-reversal tests.
+let mockEventPreviousAttributes: Record<string, unknown> | undefined = undefined;
 
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
@@ -113,7 +116,7 @@ vi.mock("stripe", () => ({
         return {
           id: `evt_test_${mockEventType}`,
           type: mockEventType,
-          data: { object: mockEventData },
+          data: { object: mockEventData, ...(mockEventPreviousAttributes ? { previous_attributes: mockEventPreviousAttributes } : {}) },
         };
       },
     };
@@ -146,6 +149,7 @@ beforeEach(() => {
   mockArraySelectResult = { data: [{ id: "p-1" }], error: null };
   mockUpdateSelectResult = { data: [{ id: "p-1" }], error: null };
   mockRpcResult = { data: 1, error: null };
+  mockEventPreviousAttributes = undefined;
   mockMaybeSingleResult = {
     data: { id: "t-1", non_paying_since: null, onboarding_stage: "subscription", subscription_status: null },
     error: null,
@@ -184,6 +188,21 @@ describe("Stripe webhook — transfer.reversed delta guard (Pattern 2)", () => {
     // A regression removing the guard changes this from 200 to 500.
     mockEventType = "transfer.reversed";
     mockEventData = { id: "tr_1", amount_reversed: 0 };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OK");
+  });
+
+  it("[#1156] returns 200 'OK' when RPC returns 1 on a subsequent partial reversal (second-pass handled)", async () => {
+    // Scenario: first partial reversal already flipped payout_records to 'reversed'.
+    // Stripe delivers a second partial: amount_reversed=40000, previous_attributes.amount_reversed=15000.
+    // delta = 25000 > 0 → guard does NOT fire → RPC is called.
+    // The DB-side second pass (FOR UPDATE loop on status='reversed' rows) credits balance
+    // and returns 1. Handler must treat count > 0 as success, not 'unhandled'.
+    // A regression that drops the second-pass SQL returns 0 → handler logs warn → outcome='unhandled'.
+    mockEventData = { id: "tr_1", amount_reversed: 40000 };
+    mockEventPreviousAttributes = { amount_reversed: 15000 };
+    mockRpcResult = { data: 1, error: null };
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("OK");
