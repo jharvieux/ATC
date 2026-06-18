@@ -56,12 +56,13 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Look up the email_log row
-  const { data: logRow } = await svc
+  const { data: logRow, error: logErr } = await svc
     .from("email_log")
     .select("id, tenant_id, to_email")
     .eq("resend_message_id", resendMessageId)
     .maybeSingle();
 
+  if (logErr) return new Response("DB error", { status: 500 });
   if (!logRow) {
     // Not found — could be a race or an email sent outside this system; ignore.
     return new Response("OK", { status: 200 });

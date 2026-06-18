@@ -157,8 +157,9 @@ describe("Gmail Pub/Sub webhook — auth layer", () => {
     expect(res.status).toBe(500);
     const body = await res.json() as { error?: string };
     expect(body.error).toBe("server_misconfig");
-    // Must NOT proceed past auth — no JWT verification attempt
+    // Must NOT proceed past auth — no JWT verification or DB calls
     expect(mockJwtVerify).not.toHaveBeenCalled();
+    expect(mockSafeAwaitLabels).toHaveLength(0);
   });
 
   it("returns 401 when jwtVerify throws (invalid / forged JWT)", async () => {
@@ -228,6 +229,16 @@ describe("Gmail Pub/Sub webhook — tenant lookup", () => {
     expect(res.status).toBe(200);
     const j = await res.json() as { skipped?: string };
     expect(j.skipped).toBe("unknown_address");
+  });
+
+  it("returns 500 when DB lookup for token row fails — fail-closed, not treated as 'unknown address'", async () => {
+    // A DB error must NOT be silently swallowed as "unknown address" (which would ack and drop the event).
+    // Fail-closed: surface the error so Pub/Sub retries later.
+    mockMaybeSingleResult = { data: null, error: { message: "DB connection timeout" } };
+    const res = await POST(makeReq(makeEnvelope("a@b.com", "20000")));
+    expect(res.status).toBe(500);
+    // No credential or downstream calls should fire after a DB error
+    expect(mockSafeAwaitLabels.filter((l) => l === "gmail_oauth_tokens.update")).toHaveLength(0);
   });
 
   it("returns 200 (skipped) when health_status is not 'connected'", async () => {

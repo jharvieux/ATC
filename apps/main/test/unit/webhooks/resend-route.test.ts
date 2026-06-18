@@ -92,6 +92,8 @@ describe("Resend webhook — auth layer", () => {
     delete process.env.RESEND_WEBHOOK_SECRET;
     const res = await POST(makeReq(makeBody("email.delivered")));
     expect(res.status).toBe(500);
+    // No DB calls must leak through before the secret check fails
+    expect(mockSafeAwaitCalls).toHaveLength(0);
   });
 
   it("returns 401 when signature verification fails (forged request)", async () => {
@@ -132,6 +134,17 @@ describe("Resend webhook — email_log lookup", () => {
     const res = await POST(makeReq(makeBody("email.delivered")));
     expect(res.status).toBe(200);
     // Must NOT attempt any mutation — nothing to update
+    expect(mockSafeAwaitCalls).toHaveLength(0);
+  });
+
+  it("returns 500 when email_log DB lookup errors (fail-closed — not treated as 'not found')", async () => {
+    // Pre-existing bug fix: the route was discarding `error` from maybySingle,
+    // silently treating a DB error as "row not found" and returning 200 OK.
+    // This test pins the corrected behavior: error → 500.
+    mockMaybeSingleResult = { data: null, error: { message: "connection timeout" } };
+    const res = await POST(makeReq(makeBody("email.delivered")));
+    expect(res.status).toBe(500);
+    // No mutation must fire on a DB error
     expect(mockSafeAwaitCalls).toHaveLength(0);
   });
 });
