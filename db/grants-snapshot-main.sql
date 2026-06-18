@@ -343,6 +343,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.request_idempotency TO service_ro
 GRANT SELECT ON public.sailing_port_calls TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.sailing_port_calls TO service_role;
 
+-- TABLE: public.schema_migrations
+-- (no DML grants to anon/authenticated/service_role)
+
 -- TABLE: public.security_incidents
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.security_incidents TO service_role;
 
