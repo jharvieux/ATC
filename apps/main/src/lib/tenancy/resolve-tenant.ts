@@ -39,6 +39,7 @@ type CacheEntry = { tenant: Tenant | null; expiresAt: number };
 const slugCache = new Map<string, CacheEntry>();
 const domainCache = new Map<string, CacheEntry>();
 const userTenantCache = new Map<string, CacheEntry>();
+const idCache = new Map<string, CacheEntry>();
 
 const TTL_MS = 60_000;
 
@@ -91,6 +92,31 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
 
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
   cacheSet(slugCache, slug, tenant);
+  return tenant;
+}
+
+/**
+ * Resolves a tenant by its id. Used by the middleware to map Vercel preview
+ * hostnames to the configured default tenant (PLATFORM_DEFAULT_TENANT_ID).
+ * Returns null for unknown ids or terminated tenants.
+ */
+export async function getTenantById(id: string): Promise<Tenant | null> {
+  const cached = cacheGet(idCache, id);
+  if (cached !== undefined) return cached;
+
+  const db = createServiceRoleClient();
+  const { data, error } = await db
+    .from("tenants")
+    .select(TENANT_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`getTenantById: ${error.message}`);
+  }
+
+  const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
+  cacheSet(idCache, id, tenant);
   return tenant;
 }
 
