@@ -38,13 +38,8 @@ vi.mock("@/lib/db/service-role-client", () => ({
   }),
 }));
 vi.mock("@/lib/monitoring/send-operator-alert", () => ({ sendOperatorAlert: mocks.alert }));
-vi.mock("@/inngest/client", () => ({
-  inngest: { createFunction: (config: unknown, handler: unknown) => ({ config, handler }) },
-}));
 
-import { stripeWebhookIncompleteReconcile } from "@/inngest/stripe-webhook-incomplete-reconcile";
-
-const fn = stripeWebhookIncompleteReconcile as unknown as { handler: () => Promise<unknown> };
+import { runStripeWebhookIncompleteReconcile } from "@/lib/cron/stripe-webhook-incomplete-reconcile";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -55,7 +50,7 @@ beforeEach(() => {
 
 describe("stripe-webhook-incomplete-reconcile cron", () => {
   it("no stalled rows: no alert, no delete", async () => {
-    const r = await fn.handler();
+    const r = await runStripeWebhookIncompleteReconcile();
     expect(r).toEqual({ stalled: 0 });
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(mocks.deletedIn).toHaveLength(0);
@@ -69,7 +64,7 @@ describe("stripe-webhook-incomplete-reconcile cron", () => {
       ],
       error: null,
     };
-    const r = await fn.handler();
+    const r = await runStripeWebhookIncompleteReconcile();
     expect(mocks.alert).toHaveBeenCalledTimes(1);
     expect(mocks.deletedIn).toEqual([["r1", "r2"]]); // cleared exactly the stalled rows
     expect(r).toEqual({ stalled: 2, cleared: 2 });
@@ -81,7 +76,7 @@ describe("stripe-webhook-incomplete-reconcile cron", () => {
       error: null,
     };
     mocks.deleteResult = { error: { message: "db unavailable" } };
-    await expect(fn.handler()).rejects.toThrow(/db unavailable/);
+    await expect(runStripeWebhookIncompleteReconcile()).rejects.toThrow(/db unavailable/);
     expect(mocks.alert).toHaveBeenCalledTimes(1); // alert still fires before the clear
   });
 });

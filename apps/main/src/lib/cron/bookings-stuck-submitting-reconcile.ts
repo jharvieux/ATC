@@ -1,5 +1,6 @@
 // §14.4 follow-up (D-091 R3 #50/#51) — reconcile bookings stuck in
-// 'submitting' state.
+// 'submitting' state. Runs every 5 minutes via Vercel cron
+// (/api/cron/bookings-stuck-submitting-reconcile).
 //
 // Background: PR #281 introduced a CAS lock `draft → submitting`
 // immediately before the host adapter call in /api/bookings/[id]/submit.
@@ -8,18 +9,16 @@
 // outcomes, the row stays in 'submitting' indefinitely — every retry
 // gets 409 from the CAS lock and the booking never moves forward.
 //
-// This cron runs every 5 minutes. Any booking in 'submitting' for
-// more than STUCK_THRESHOLD_MINUTES is reverted to 'draft' so the user
-// (or a retry) can submit again. A status-CAS update guards against
-// racing with a still-running submit attempt.
+// Any booking in 'submitting' for more than STUCK_THRESHOLD_MINUTES is
+// reverted to 'draft' so the user (or a retry) can submit again. A
+// status-CAS update guards against racing with a still-running submit.
 //
 // Bound (STUCK_THRESHOLD_MINUTES = 5) is intentionally short: a normal
 // host-adapter submit takes seconds; anything >5min is the route process
-// having died or hung. The submit route's own timeout (defaults to the
-// Vercel function ceiling, ~60s for hobby plan) typically lands well
-// inside this window.
+// having died or hung.
+//
+// Service-role import permitted: background cron, no user session. §5.4.4.
 
-import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -75,11 +74,3 @@ export async function runBookingsStuckSubmittingReconcile(): Promise<{
 
   return { reverted, total_stuck: stuck.length };
 }
-
-export const bookingsStuckSubmittingReconcile = inngest.createFunction(
-  {
-    id: "bookings-stuck-submitting-reconcile",
-    triggers: [{ cron: "*/5 * * * *" }],
-  },
-  runBookingsStuckSubmittingReconcile,
-);

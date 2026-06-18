@@ -26,6 +26,7 @@ beforeEach(() => {
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_key",
     STRIPE_WEBHOOK_SECRET: "whsec_test",
     STRIPE_CONNECT_WEBHOOK_SECRET: "whsec_connect_test",
+    CRON_SECRET: "cron-secret",
     INNGEST_SIGNING_KEY: "signkey",
     INNGEST_EVENT_KEY: "eventkey",
     SERVICE_JWT_PRIVATE_KEY: "privkey",

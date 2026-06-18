@@ -62,6 +62,8 @@ const envSchema = z.object({
   // Spec §28.7 — platform's own Stripe account ID (treated optional pending
   // operator provisioning; call sites that need it fail with a clearer error).
   STRIPE_PLATFORM_ACCOUNT_ID: z.string().optional(),
+  // Vercel cron authentication (§7.9a — secret Vercel sends in Authorization: Bearer)
+  CRON_SECRET: z.string().min(1),
   // Inngest
   INNGEST_SIGNING_KEY: z.string().min(1),
   INNGEST_EVENT_KEY: z.string().min(1),

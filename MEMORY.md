@@ -4,6 +4,41 @@ Newest entries on top.
 
 ---
 
+## D-257 — 2026-06-17 — Staging/test Supabase DB provisioned
+
+New Supabase project created to serve as the dedicated test/staging DB (replaces pre-launch use of prod-serving atc-main for nightly suites). All 131 migrations from `apps/main/supabase/migrations/` applied via `db:reset`. Unblocks issues #533 and #386.
+
+**Why:** The nightly DB-backed suites (rls, proxy, 4 cross-tenant inngest probes) run against `SUPABASE_TEST_DB_URL`. They invoke destructive global crons (billingPeriodRollover, abuseRecomputeNightly, purge crons) — safe on an empty pre-launch DB but dangerous once customer data exists (D-112 / issue #386).
+
+**What's still needed to activate:**
+- 4 GitHub secrets at repo level: `SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY`, `SUPABASE_TEST_SERVICE_KEY`, `SUPABASE_TEST_DB_URL` (must be **session-mode pooler URL port 5432**, not direct IPv6 URL)
+- `DB_URL` + `PROD_DB_URL` secrets in `staging` GitHub environment → enables staging pipeline (issue #533)
+- Repo variable `STAGING_PIPELINE_ENABLED=true` → activates db-copy + deploy-staging jobs
+
+---
+
+## D-255 — 2026-06-17 — Vercel cron migration (issue #894): pattern + env requirements
+
+6 high-frequency Inngest cron functions migrated to Vercel cron API routes (PR #1203, requires Vercel Pro).
+
+Chosen pattern:
+- Handler logic extracted to `src/lib/cron/<name>.ts` (plain `export async function run*()`)
+- Vercel cron routes at `src/app/api/cron/<name>/route.ts` with `Authorization: Bearer <CRON_SECRET>` gate
+- Schedules in `vercel.json` `"crons"` array
+- `CRON_SECRET` added as required var in `src/lib/env.ts` Zod schema
+
+**Why:** Saves ~109k+ Inngest executions/month. Extracting to lib/cron keeps handlers testable without Inngest client mock. Auth probe recognises `CRON_SECRET` as a valid auth token (all 6 routes checked).
+
+**What must be done post-deploy:** Set `CRON_SECRET` in Vercel dashboard → Settings → Environment Variables (`openssl rand -hex 32`).
+
+**Service-role allowlist:** must be updated when adding new cron handlers — `lib/cron/*.ts` entries in `packages/config/eslint-rules/service-role-allowlist.js`.
+
+**Test fixtures:** any test that calls `verifyEnvAtBoot()` needs `CRON_SECRET: "cron-secret"` in its `process.env` setup.
+
+**Known gap:** no behavioral test for the 401 auth gate paths — tracked in issue #1204.
+
+---
+
 ## D-256 — 2026-06-17 — OAuth subdomain redirect + hamburger menu role-awareness (PRs #1199 #1201)
 
 Two related bugs: tenant-subdomain owners (e.g. lisa-travel) were (a) redirected to platform root after OAuth login instead of their subdomain, and (b) saw a generic hamburger menu with no Dashboard or Admin Console links even in the CRM area.

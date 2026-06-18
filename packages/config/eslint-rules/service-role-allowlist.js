@@ -44,11 +44,14 @@ module.exports = [
   // Stripe webhook handler: operates before any user session; service-role
   // required for the idempotency insert into stripe_webhook_events. §7.9a.
   "/lib/stripe/webhook-handler.ts",
-  // Inngest reconciliation job: background job running outside any user
+  // Vercel cron reconciliation job: background cron outside any user
   // session; service-role required to scan stripe_webhook_events. §7.9a.
-  "/inngest/stripe-webhook-incomplete-reconcile.ts",
-  // RAG sync retry cron: background job, no user session. §8.7a.
+  "/lib/cron/stripe-webhook-incomplete-reconcile.ts",
+  // RAG sync retry: the daily ragSyncCleanup cron stays on Inngest; the
+  // 15-min ragSyncRetry moved to a Vercel cron (#894). Both need service-role
+  // (background job, no user session). §8.7a.
   "/inngest/rag-sync-retry.ts",
+  "/lib/cron/rag-sync-retry.ts",
   // DOB re-prompt cron: cross-tenant scan, no user session. §11.5.
   "/inngest/dob-estimate-reprompt-eligible.ts",
   // RAG sync publisher: fires after DB write commits, outside user request scope. §8.7.
@@ -80,11 +83,13 @@ module.exports = [
   "/inngest/payouts-mark-available.ts",
   // BP15: Payouts execute-transfer cron — Stripe transfer, no user session. §14.7.
   "/inngest/payouts-execute-transfer.ts",
-  // BP15: Payouts reconcile-processing cron — cross-tenant recovery scan. §14.7.
-  "/inngest/payouts-reconcile-processing.ts",
+  // BP15: Payouts reconcile-processing cron — cross-tenant recovery scan.
+  // Moved to a Vercel cron (#894). §14.7.
+  "/lib/cron/payouts-reconcile-processing.ts",
   // D-091 R3 #51 follow-up: bookings stuck-submitting reconcile cron —
-  // cross-tenant sweep of bookings stuck in 'submitting' state. §14.4.
-  "/inngest/bookings-stuck-submitting-reconcile.ts",
+  // cross-tenant sweep of bookings stuck in 'submitting' state. Moved to a
+  // Vercel cron (#894). §14.4.
+  "/lib/cron/bookings-stuck-submitting-reconcile.ts",
   // D-097 — help-AI message route needs service-role for the
   // loadTenantSnapshot + incrementChatMessages helpers (same pattern
   // as the customer chat route). All upstream queries already use
@@ -209,7 +214,7 @@ module.exports = [
   // BP20: Forum moderation retry Inngest — background job, no user session. §19.3.
   "/inngest/forum-moderation-retry.ts",
   // BP20: Forum moderation timeout sweep — cross-tenant cron. §19.3.
-  "/inngest/forum-moderation-timeout-sweep.ts",
+  "/lib/cron/forum-moderation-timeout-sweep.ts",
   // BP20: Booking cancel (BP15 already listed above) — clawback + commission reversal.
   // BP20: Booking modify — reads bookings + calls host adapter. §20.9.
   "/app/api/bookings/[id]/modify/route.ts",
@@ -258,9 +263,9 @@ module.exports = [
   // §26.5: audit_log 7-year retention cron — service-role daily purge.
   "/inngest/audit-log-retention-purge.ts",
   // BP26: §26.6 monitoring crons — cross-tenant scans, no user session.
-  "/inngest/auth-failure-monitor.ts",
-  "/inngest/permission-denied-monitor.ts",
-  "/inngest/cross-tenant-rls-bypass-monitor.ts",
+  "/lib/cron/auth-failure-monitor.ts",
+  "/lib/cron/permission-denied-monitor.ts",
+  "/lib/cron/cross-tenant-rls-bypass-monitor.ts",
   // BP27: AI call wrapper — writes ai_call_log + UPSERTs tenant_usage_metrics
   // for every Anthropic/OpenAI call. Constructs its own service-role db. §27.12.
   "/lib/ai/call-wrapper.ts",
@@ -314,7 +319,7 @@ module.exports = [
   "/app/api/imports/source-file/route.ts",
   "/app/api/integrations/gmail/health/route.ts",
   // BP37 task system.
-  "/inngest/task-reminders-fire.ts",
+  "/lib/cron/task-reminders-fire.ts",
   "/inngest/task-sequence-step-fire.ts",
   "/app/api/tasks/route.ts",
   // BP38 quote options.
@@ -436,10 +441,10 @@ module.exports = [
   // errors return null (no throw). Two-layer isolation satisfied by explicit
   // .eq("tenant_id", tenantId) on both queries. Read-only.
   "/components/branding-setup-banner/BrandingSetupBannerServer.tsx",
-  // #786 — Vendor health probe: 15-min cron that upserts durable status to
-  // the platform-wide `vendor_health` table. No tenant context; service-role
+  // #786 — Vendor health probe: 15-min Vercel cron that upserts durable status
+  // to the platform-wide `vendor_health` table. No tenant context; service-role
   // is the only viable client. §5.4.4.
-  "/inngest/vendor-health-probe.ts",
+  "/lib/cron/vendor-health-probe.ts",
   // #786 — Vendor status admin page: reads from the platform-wide `vendor_health`
   // table. No tenant context (cross-vendor platform data); gated by AdminLayout
   // assertPlatformAdmin. Same pattern as supervisor/page.tsx. Read-only.

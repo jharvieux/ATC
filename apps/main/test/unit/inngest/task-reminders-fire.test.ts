@@ -8,12 +8,6 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/inngest/client", () => ({
-  inngest: {
-    createFunction: (_cfg: unknown, handler: () => Promise<unknown>) => handler,
-  },
-}));
-
 vi.mock("@/lib/tasks/send-reminder-email", () => ({
   sendTaskReminderEmail: vi.fn(async () => ({ status: "sent" })),
 }));
@@ -77,12 +71,12 @@ function makeRow(id: string, overrides: Partial<PoolRow> = {}): PoolRow {
   };
 }
 
-import { taskRemindersFire } from "@/inngest/task-reminders-fire";
+import { runTaskRemindersFire } from "@/lib/cron/task-reminders-fire";
 import { sendTaskReminderEmail } from "@/lib/tasks/send-reminder-email";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 type FireResult = { processed: number; delivered: number; suppressed: number; failed: number; batches: number };
-const run = taskRemindersFire as unknown as () => Promise<FireResult>;
+const run = runTaskRemindersFire as unknown as () => Promise<FireResult>;
 
 beforeEach(() => {
   pool.length = 0;

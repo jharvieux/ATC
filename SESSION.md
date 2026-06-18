@@ -1,22 +1,34 @@
-# Session state — last updated 2026-06-17 07:00 UTC
+# Session state — last updated 2026-06-17 13:30 UTC
 
 ## Just completed
-- PR #1201 (feature/fix-oauth-subdomain-redirect) — merged. OAuth post-login redirect now sends tenant-subdomain users back to their subdomain after Supabase's platform-domain callback. Included security fix for open-redirect via path-injection on raw tenant_host string.
-- All audit agents (D-091 + pre-pr-reviewer) completed clean on both PRs.
-- PR #1201 `pr-audit-section-check` passed, PR merged and branch deleted.
+
+- All 131 migrations applied to new staging/test Supabase DB via `db:reset`
+- PR #1203 merge conflict resolved (MEMORY.md + SESSION.md rebase conflict)
 
 ## In flight
-- PR #1199 (feature/role-aware-site-header-menu) — CI running after update-branch (PR #1201 merge moved dev ahead). All checks expected to pass; audit hash unchanged by the merge commit. Waiting for CLEAN state to merge.
+
+PR #1203 — feature/894-vercel-cron-migration — rebase in progress, needs push after conflict resolution.
 
 ## Next step
-- Wait for CI on PR #1199 to complete (background task watching).
-- Merge PR #1199 once CLEAN.
-- Update MEMORY.md with session decisions.
-- End-of-session protocol.
+
+1. Push rebased PR #1203, wait for CI, then merge
+2. Wire new Supabase project credentials into GitHub secrets:
+   - Repo-level: `SUPABASE_TEST_URL`, `SUPABASE_TEST_ANON_KEY`, `SUPABASE_TEST_SERVICE_KEY`, `SUPABASE_TEST_DB_URL` (session-mode pooler URL, port 5432)
+   - `staging` environment: `DB_URL` (new DB direct URL), `PROD_DB_URL` (prod direct URL)
+   - Repo variable: `STAGING_PIPELINE_ENABLED=true`
+3. Close issues #533 and #386 once secrets are set
+4. `workflow_dispatch` nightly-full-test.yml to validate
 
 ## Blocked on user
-- Nothing
+
+- Provide from Supabase dashboard (Project Settings → API + Database):
+  - Project URL → `SUPABASE_TEST_URL`
+  - Anon key → `SUPABASE_TEST_ANON_KEY`
+  - Service role key → `SUPABASE_TEST_SERVICE_KEY`
+  - Session-mode pooler URL (Settings → Database → Connection string, Mode: Session, port 5432) → `SUPABASE_TEST_DB_URL`
+- CRON_SECRET still needs to be set in Vercel dashboard manually
 
 ## Open questions
-- Issue #1200 (CRM pages missing left-rail PanelLeft conversation panel) — deferred from PR #1199, tracked in the issue.
-- `release/beta063`, `beta064`, `beta065` stuck failed on remote — protected branches. User can delete manually via GitHub if desired.
+
+- check:duplication fails at 5.97% (threshold 5%) — pre-existing on dev, not caused by #1203. Should threshold be raised?
+- Is this one DB serving both test/CI and staging pipeline roles, or will a second DB be created for staging?

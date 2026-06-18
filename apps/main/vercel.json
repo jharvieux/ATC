@@ -4,5 +4,17 @@
       "main": false,
       "dev": false
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/cron/vendor-health-probe", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/task-reminders-fire", "schedule": "* * * * *" },
+    { "path": "/api/cron/auth-failure-monitor", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/permission-denied-monitor", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/forum-moderation-timeout-sweep", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/stripe-webhook-incomplete-reconcile", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/bookings-stuck-submitting-reconcile", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/payouts-reconcile-processing", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/rag-sync-retry", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/cross-tenant-rls-bypass-monitor", "schedule": "*/15 * * * *" }
+  ]
 }

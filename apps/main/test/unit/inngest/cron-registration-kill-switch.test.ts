@@ -13,10 +13,10 @@ vi.mock("inngest/next", () => ({
   }),
 }));
 
+// payouts-reconcile-processing and bookings-stuck-submitting-reconcile moved
+// to Vercel crons (#894) — no longer Inngest-registered, so not gated here.
 const BOOKING_CRON_IDS = [
   "payouts-mark-available",
-  "payouts-reconcile-processing",
-  "bookings-stuck-submitting-reconcile",
   "reconcile-statement-automated",
   "pre-cruise-email-scheduler-t1",
   "pre-cruise-email-scheduler-multiphase",
@@ -29,9 +29,6 @@ const EVENT_DRIVEN_BOOKING_IDS = ["payouts-execute-transfer", "commission-split-
 // Unrelated functions that must stay registered no matter which flags are set —
 // guards against a refactor of the conditional spreads swallowing neighbors.
 const ALWAYS_REGISTERED_IDS = [
-  "stripe-webhook-incomplete-reconcile",
-  "vendor-health-probe",
-  "task-reminders-fire",
   "compliance-nightly",
 ];
 

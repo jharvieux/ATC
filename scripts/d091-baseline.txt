@@ -44,14 +44,14 @@
 1	apps/main/src/app/q/[token]/page.tsx	cas-rowcount	.update({ status: "viewed", viewed_at: new Date().toISOString() })
 1	apps/main/src/app/q/[token]/page.tsx	service-role-tenant	.from("quotes")
 1	apps/main/src/inngest/abuse-recompute-nightly.ts	unbounded-limit	.limit(5000);
-1	apps/main/src/inngest/auth-failure-monitor.ts	service-role-tenant	.from("auth_attempts")
-1	apps/main/src/inngest/auth-failure-monitor.ts	unbounded-limit	.limit(10000);
+1	apps/main/src/lib/cron/auth-failure-monitor.ts	service-role-tenant	.from("auth_attempts")
+1	apps/main/src/lib/cron/auth-failure-monitor.ts	unbounded-limit	.limit(10000);
 1	apps/main/src/inngest/billing-period-rollover.ts	unbounded-limit	.limit(5000);
 1	apps/main/src/inngest/booking-commission-retention-purge.ts	service-role-tenant	.from("bookings")
 1	apps/main/src/inngest/booking-commission-retention-purge.ts	service-role-tenant	.from("commissions")
 1	apps/main/src/inngest/booking-commission-retention-purge.ts	service-role-tenant	await safeAwait(svc.from("commissions").delete().in("booking_id", deletable), "commissions.delete");
 1	apps/main/src/inngest/booking-commission-retention-purge.ts	unbounded-limit	.limit(2000);
-1	apps/main/src/inngest/bookings-stuck-submitting-reconcile.ts	service-role-tenant	.from("bookings")
+1	apps/main/src/lib/cron/bookings-stuck-submitting-reconcile.ts	service-role-tenant	.from("bookings")
 1	apps/main/src/inngest/compliance-nightly.ts	service-role-tenant	.from("legal_documents")
 1	apps/main/src/inngest/customer-chat-counter-recompute.ts	unbounded-limit	.limit(5000);
 1	apps/main/src/inngest/dob-estimate-reprompt-eligible.ts	service-role-tenant	.from("customer_memories")
@@ -66,7 +66,7 @@
 1	apps/main/src/inngest/groups-mark-sailed.ts	service-role-tenant	.from("groups")
 1	apps/main/src/inngest/invitation-tokens-natural-expiry-sweep.ts	service-role-tenant	.from("invitations")
 1	apps/main/src/inngest/payouts-mark-available.ts	service-role-tenant	.from("payout_records")
-1	apps/main/src/inngest/permission-denied-monitor.ts	unbounded-limit	.limit(10000);
+1	apps/main/src/lib/cron/permission-denied-monitor.ts	unbounded-limit	.limit(10000);
 1	apps/main/src/inngest/persona-addendum-screen.ts	service-role-tenant	.from("persona_addendums")
 1	apps/main/src/inngest/pre-cruise-email-scheduler.ts	service-role-tenant	.from("pre_cruise_email_content")
 1	apps/main/src/inngest/precruise-generate-and-send.ts	service-role-tenant	const byCode = await svc.from("port_info_chunks").select(PORT_COLS).eq("port_code", dp).maybeSingle();
@@ -75,7 +75,7 @@
 1	apps/main/src/inngest/quality-low-approval-signal.ts	unbounded-limit	.limit(50000);
 1	apps/main/src/inngest/quote-estimate-expiry-sweep.ts	service-role-tenant	.from("quotes")
 1	apps/main/src/inngest/rag-rejected-items-purge.ts	service-role-tenant	.from("rag_submissions")
-1	apps/main/src/inngest/task-reminders-fire.ts	service-role-tenant	.from("task_reminders")
+1	apps/main/src/lib/cron/task-reminders-fire.ts	service-role-tenant	.from("task_reminders")
 1	apps/main/src/inngest/transfer-finalize.ts	service-role-tenant	.from("anonymous_sessions")
 1	apps/main/src/inngest/transfer-finalize.ts	service-role-tenant	.from("conversations")
 1	apps/main/src/inngest/travel-news-refresh.ts	service-role-tenant	db.from("news_feeds").select("id, url, name").eq("is_active", true),
@@ -103,8 +103,8 @@
 2	apps/main/src/app/api/quotes/[id]/options/route.ts	service-role-tenant	.from("quote_options")
 2	apps/main/src/app/api/user/consent/route.ts	service-role-tenant	.from("user_consent_pending")
 2	apps/main/src/inngest/extract-memory.ts	service-role-tenant	.from("conversations")
-2	apps/main/src/inngest/forum-moderation-timeout-sweep.ts	service-role-tenant	.from("forum_messages")
-2	apps/main/src/inngest/payouts-reconcile-processing.ts	service-role-tenant	.from("payout_records")
+2	apps/main/src/lib/cron/forum-moderation-timeout-sweep.ts	service-role-tenant	.from("forum_messages")
+2	apps/main/src/lib/cron/payouts-reconcile-processing.ts	service-role-tenant	.from("payout_records")
 2	apps/main/src/inngest/persona-addendum-rescreen-nightly.ts	service-role-tenant	.from("persona_addendums")
 2	apps/main/src/lib/commissions/state-machine.ts	service-role-tenant	.from("commissions")
 2	apps/main/src/lib/import/promote.ts	service-role-tenant	.from("import_queue")
