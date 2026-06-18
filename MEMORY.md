@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-259 — 2026-06-18 — Reverses D-142: PR-time grants:check now runs against the TEST DB (premise changed in D-257)
+
+**Decision (#1210).** Split the `grants:check` deploy step so the **PR-time** check runs against the **TEST** DBs (`SUPABASE_TEST_DB_URL` / `SUPABASE_RAG_TEST_DB_URL`), not PROD; the **release/\*** check still runs against PROD, and the **dev-push warn** still runs against PROD. This **reverses D-142's design decision (1)** ("grants:check diffs against live PROD, not the test DB").
+
+**Why the reversal is valid (not a contradiction of D-142).** D-142 was correct when written (2026-06-03): the then-current test project auto-granted `service_role` on every table via `ALTER DEFAULT PRIVILEGES`, so a prod-baseline diff against it would false-drift. **D-257 (2026-06-17) replaced that with a dedicated test DB provisioned via `db:reset`, which `CREATE SCHEMA public` recreates — wiping Supabase's default ACLs.** Verified empirically this session: the test DB's `pg_default_acl` is **empty**, its grants are **migration-derived per-table `GRANT`s**, and `grants:check` against it shows **zero drift** vs the committed (varied) baseline — a blanket-granted DB could not match a varied snapshot. So D-142's premise no longer holds.
+
+**What's preserved / traded.** The #544 class (a table shipped without its `service_role` grant) is still caught — it shows as missing on the migration-built test DB. The only thing PR-time no longer catches is an **out-of-band/manual grant change made directly in prod** (outside migrations); that's retained at the **release gate** (fail) + **dev-push** (warn), both still PROD. Net: PR checks decoupled from prod state + prod secrets (which had caused friction — see D-258's schema_migrations retirement, where the prod-targeted grants:check forced a prod DDL touch).
+
+**Baseline source going forward:** regenerate `db/grants-snapshot-{main,rag}.sql` from the TEST DB (`pnpm grants:snapshot`). Today test == prod grants (zero drift both ways), so the current prod-regenerated baseline already matches.
+
+**Related:** [[D-142]] (original prod-target decision), [[D-258]] (its KEY DB-CHECK TOPOLOGY note said grants→PROD — now amended for the PR step), [[D-257]] (the test DB that changed the premise). #546, #544, PR #1210.
+
+---
+
 ## D-258 — 2026-06-18 — Vercel cron Phase 2a (#894) + retired public.schema_migrations (#1078)
 
 **Phase 2a (#1203).** Migrated 4 more sub-hourly Inngest crons to Vercel cron routes (same pattern as the Phase-1 six): `bookings-stuck-submitting-reconcile` + `payouts-reconcile-processing` (*/5), `rag-sync-retry` + `cross-tenant-rls-bypass-monitor` (*/15). `rag-sync-retry`'s daily `ragSyncCleanup` stays on Inngest. **Why:** Inngest free tier is 50k executions/mo; remaining crons run ~42k/mo (≈84% of cap, mostly 0-step), leaving no headroom for event-driven functions — moving schedule-driven work to Vercel reclaims the Inngest budget. Each: logic → `apps/main/src/lib/cron/<name>.ts`, thin `CRON_SECRET`-auth route, Inngest fn deleted + deregistered, `vercel.json` entry, service-role-allowlist + d091-baseline repointed. Also fixed two pre-existing #1203 CI blockers the prior session left: Playwright webServer boot (added `CRON_SECRET` placeholder to `e2e.yml` — #894 made it boot-required in `env.ts`), and the d091 gate (the Phase-1 file moves to `/lib/cron/` weren't repointed in `scripts/d091-baseline.txt`).
