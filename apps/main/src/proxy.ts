@@ -9,6 +9,7 @@ import {
   getTenantBySlug,
   getTenantByCustomDomain,
   getTenantByAuthUserId,
+  getTenantById,
   type Tenant,
 } from "@/lib/tenancy/resolve-tenant";
 import { derivePaymentState } from "@/lib/billing/payment-state";
@@ -365,6 +366,36 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     }
   } catch {
     // DB error — fall through to 404.
+  }
+
+  // 5. Vercel preview deploys — *.vercel.app hostnames belong to no tenant, so
+  //    steps 2-4 all miss and the deploy would 404. In NON-production only
+  //    (VERCEL_ENV !== "production"), map them to the configured default tenant
+  //    (PLATFORM_DEFAULT_TENANT_ID) so PR previews render a usable tenant
+  //    experience. Gated to non-production so production *.vercel.app URLs still
+  //    404 and the T7 test-auth-bypass surface (test-bypass.ts, also VERCEL_ENV-
+  //    gated) is unaffected. Previews stay behind Vercel Deployment Protection,
+  //    so this is reachable only by the Vercel team, not the public.
+  if (
+    process.env.VERCEL_ENV !== "production" &&
+    hostname.endsWith(".vercel.app")
+  ) {
+    const defaultTenantId = process.env.PLATFORM_DEFAULT_TENANT_ID;
+    if (defaultTenantId) {
+      try {
+        const tenant = await getTenantById(defaultTenantId);
+        if (tenant) {
+          const headers = cloneAndScrubHeaders(req);
+          headers.set(RESOLVED_TENANT_ID_HEADER, tenant.id);
+          headers.set(RESOLVED_TENANT_TYPE_HEADER, tenant.tenant_type);
+          const res = NextResponse.next({ request: { headers } });
+          applyAttributionCapture(res, req);
+          return applyRefreshedSession(applyPaymentGate(res, req, tenant));
+        }
+      } catch {
+        // DB error — fall through to 404. Don't leak DB error details.
+      }
+    }
   }
 
   return applyRefreshedSession(notFound());

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
   getTenantByCustomDomain: vi.fn(),
   getTenantByAuthUserId: vi.fn(),
+  getTenantById: vi.fn(),
   getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("@/lib/tenancy/resolve-tenant", () => ({
   getTenantBySlug: mocks.getTenantBySlug,
   getTenantByCustomDomain: mocks.getTenantByCustomDomain,
   getTenantByAuthUserId: mocks.getTenantByAuthUserId,
+  getTenantById: mocks.getTenantById,
 }));
 
 // Session refresh is exercised separately (proxy-session-refresh.test.ts);
@@ -392,6 +394,66 @@ describe("proxy()", () => {
     it("returns 404 when getTenantByCustomDomain throws", async () => {
       mocks.getTenantByCustomDomain.mockRejectedValue(new Error("rls denied"));
       const res = await proxy(makeReq({ host: "boom.example.com" }));
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // -- Vercel preview deploys → default tenant ----------------------------
+
+  describe("Vercel preview host → default tenant", () => {
+    const PREVIEW_HOST = "atc-main-abc123-jharvieux.vercel.app";
+
+    beforeEach(() => {
+      // A *.vercel.app host is never a custom domain — step 4 must miss so
+      // resolution reaches the preview branch.
+      mocks.getTenantByCustomDomain.mockResolvedValue(null);
+    });
+
+    it("maps a *.vercel.app preview host to PLATFORM_DEFAULT_TENANT_ID (non-production)", async () => {
+      process.env.VERCEL_ENV = "preview";
+      process.env.PLATFORM_DEFAULT_TENANT_ID = "booking-tenant-id";
+      mocks.getTenantById.mockResolvedValue(
+        payingTenant({ id: "booking-tenant-id", tenant_type: "platform_internal" }),
+      );
+      const res = await proxy(makeReq({ host: PREVIEW_HOST }));
+      expect(mocks.getTenantById).toHaveBeenCalledWith("booking-tenant-id");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("booking-tenant-id");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-type")).toBe("platform_internal");
+    });
+
+    it("does NOT map a preview host in production (VERCEL_ENV=production) → 404", async () => {
+      // Locks the VERCEL_ENV !== "production" gate. Production *.vercel.app URLs
+      // must keep 404ing — they must never be silently bound to a tenant, and
+      // this keeps the T7 test-bypass surface (also VERCEL_ENV-gated) inert.
+      process.env.VERCEL_ENV = "production";
+      process.env.PLATFORM_DEFAULT_TENANT_ID = "booking-tenant-id";
+      mocks.getTenantById.mockResolvedValue(payingTenant({ id: "booking-tenant-id" }));
+      const res = await proxy(makeReq({ host: PREVIEW_HOST }));
+      expect(res.status).toBe(404);
+      expect(mocks.getTenantById).not.toHaveBeenCalled();
+    });
+
+    it("404s when PLATFORM_DEFAULT_TENANT_ID is unset (no default configured)", async () => {
+      process.env.VERCEL_ENV = "preview";
+      delete process.env.PLATFORM_DEFAULT_TENANT_ID;
+      const res = await proxy(makeReq({ host: PREVIEW_HOST }));
+      expect(res.status).toBe(404);
+      expect(mocks.getTenantById).not.toHaveBeenCalled();
+    });
+
+    it("404s (fail-closed) when getTenantById throws", async () => {
+      process.env.VERCEL_ENV = "preview";
+      process.env.PLATFORM_DEFAULT_TENANT_ID = "booking-tenant-id";
+      mocks.getTenantById.mockRejectedValue(new Error("db down"));
+      const res = await proxy(makeReq({ host: PREVIEW_HOST }));
+      expect(res.status).toBe(404);
+    });
+
+    it("404s when the configured default tenant id resolves to no row", async () => {
+      process.env.VERCEL_ENV = "preview";
+      process.env.PLATFORM_DEFAULT_TENANT_ID = "missing-tenant";
+      mocks.getTenantById.mockResolvedValue(null);
+      const res = await proxy(makeReq({ host: PREVIEW_HOST }));
       expect(res.status).toBe(404);
     });
   });
