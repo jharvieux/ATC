@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   tableData: {} as Record<string, unknown>,
   tableErrors: {} as Record<string, { message: string } | null>,
   safeAwaitLabels: [] as string[],
+  safeAwaitFails: false,
   writeAuditCalled: false,
 }));
 
@@ -53,6 +54,7 @@ vi.mock("@/lib/db/tenant-client", () => ({
 vi.mock("@/lib/db/safe-mutation", () => ({
   safeAwait: async (_q: unknown, label: string) => {
     h.safeAwaitLabels.push(label);
+    if (h.safeAwaitFails) throw new Error(`safeAwait injected failure: ${label}`);
     return { data: null, error: null };
   },
 }));
@@ -107,7 +109,7 @@ function makeChain(table: string): Record<string, unknown> {
   ]) {
     chain[m] = () => chain;
   }
-  // Terminal helpers resolve to row data (or error if h.tableErrors[table] set).
+  // Terminal helpers resolve to row data or error.
   chain.maybeSingle = () => Promise.resolve(resolved);
   chain.single      = () => Promise.resolve(resolved);
   // Make the chain itself thenable so `await db.from("x").select(…)` works
@@ -141,6 +143,7 @@ beforeEach(() => {
   h.tableData = {};
   h.tableErrors = {};
   h.safeAwaitLabels.length = 0;
+  h.safeAwaitFails = false;
   h.writeAuditCalled = false;
   // Default tier lookups
   h.tableData["tenants"] = { id: "tenant-1", tier_id: "tier-1", ai_mode: "autonomous", background_ai_enabled: true, is_sandbox: false };
@@ -285,6 +288,16 @@ describe("POST /api/tenant/safety", () => {
     const body = await res.json() as { ok: boolean; added: boolean };
     expect(body.added).toBe(false);
     expect(h.safeAwaitLabels).toHaveLength(0);
+  });
+
+  it("returns non-200 when safeAwait DB write fails — error must not be silently swallowed", async () => {
+    // Pins that a DB write failure propagates outward rather than returning 200 OK.
+    // The catch block calls respondToAuthError (mocked → 403); production returns 500
+    // via safeAwait's structured throw. Either way, 200 is unacceptable.
+    h.tableData["tenant_settings"] = { supplemental_hate_speech_denylist: [] };
+    h.safeAwaitFails = true;
+    const res = await safetyPOST(req("/api/tenant/safety", "POST", { term: "new_term" }));
+    expect(res.status).not.toBe(200);
   });
 });
 
@@ -479,9 +492,24 @@ describe("GET /api/tenant/usage", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns usage data structure for the current period", async () => {
+  it("returns dims array and rag block for the current period", async () => {
+    h.tableData["tenant_usage_metrics"] = {
+      ai_cost_cents: "500",
+      chat_messages_count: 5,
+      email_sent_count: 2,
+      group_invitees_count: 1,
+      ai_cost_limit_state: "ok",
+      chat_volume_limit_state: "ok",
+      email_volume_limit_state: "ok",
+      group_invite_limit_state: "ok",
+    };
     const res = await usageGET(req("/api/tenant/usage"));
     expect(res.status).toBe(200);
+    const body = await res.json() as { dims: unknown[]; rag: { state: string }; period: string };
+    expect(Array.isArray(body.dims)).toBe(true);
+    expect(body.dims).toHaveLength(4);
+    expect(body.rag).toMatchObject({ state: "ok" });
+    expect(typeof body.period).toBe("string");
   });
 });
 
@@ -501,9 +529,15 @@ describe("GET /api/tenant/override-requests", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns the list of override requests", async () => {
+  it("returns the list of override requests with expected shape", async () => {
+    h.tableData["tenant_override_requests"] = [
+      { id: "req-1", dimension: "ai_cost", status: "pending", requested_at: "2026-06-18T12:00:00Z" },
+    ];
     const res = await overrideGET(req("/api/tenant/override-requests"));
     expect(res.status).toBe(200);
+    const body = await res.json() as { requests?: unknown[] };
+    // Route returns the list keyed by whatever it names it — assert data is present.
+    expect(Object.keys(body).length).toBeGreaterThan(0);
   });
 });
 

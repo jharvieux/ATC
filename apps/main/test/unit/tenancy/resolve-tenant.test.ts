@@ -92,13 +92,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Clear module-scope caches between tests so each test gets a fresh DB call.
-  // The caches are module-level Maps — reset by re-importing is not possible in
-  // vitest without full module reset, so we just ensure unique lookup keys in tests
-  // that need to exercise the cache, and accept that successful-result tests may
-  // hit the cache after the first run within a file. Unique slug/id per test avoids
-  // interference (a mutant that drops the cache would still be caught by the
-  // cache-miss path being exercised on the first call).
+  // vi.resetModules() does NOT clear the module-level cache Maps in resolve-tenant.ts
+  // because the module was statically imported at the top of this file.
+  // Cache isolation is achieved by using unique slug/id/domain per test instead.
   vi.resetModules();
 });
 
