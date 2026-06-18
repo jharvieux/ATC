@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-261 — 2026-06-17 — Vercel preview deploys now render via PLATFORM_DEFAULT_TENANT_ID (non-prod only)
+
+**Context.** "Re-enable preview builds" turned out to be a misdiagnosis: preview *builds* were never disabled (pushing a branch auto-creates a Vercel preview; `git.deploymentEnabled:{main:false,dev:false}` only blocks main/dev auto-deploy). The symptom — preview URL shows **"This site is not currently active"** — is served by our OWN middleware `apps/main/src/proxy.ts` (the message lives at proxy.ts), which resolves a tenant by hostname (platform domain → subdomain → custom domain) and 404s anything else. A `*.vercel.app` preview host matches none, so previews 404. Production works because it uses the custom domain. (Vercel Deployment Protection is also ON — a separate 401 wall for non-team visitors; the owner passes it and hits the 404.)
+
+**Decision (#1221 merged).** Added `proxy.ts` resolution step 5: when `VERCEL_ENV !== "production"` AND host ends `.vercel.app`, resolve `PLATFORM_DEFAULT_TENANT_ID` (the Booking demo tenant) via a new `getTenantById()` in `resolve-tenant.ts`, mirroring the subdomain success path. **Rejected:** mapping previews to the platform sentinel (user chose the demo-tenant experience over the bare platform landing); blanket `*.vercel.app`→tenant in all envs (T7 risk). **Kept Deployment Protection ON** (user chose team-only preview access — also the key T7 mitigation, so previews aren't public).
+
+**Safety.** Non-production gate keeps production `*.vercel.app` 404ing and leaves the VERCEL_ENV-gated test-auth-bypass (THREAT_MODEL T7) inert; binds only to one configured tenant; fails closed to 404 on unset env / missing tenant / DB error. Both Opus audits clean.
+
+**Open follow-up (#1222).** The fix fails safe and, verified empirically, previews STILL 404 after merge — because `PLATFORM_DEFAULT_TENANT_ID` must be set in the Vercel **Preview** env scope (env vars are per-scope; it's set for Production today) and the tenant must exist in the preview DB. This is an ops/config step, not code. Could not read the Preview env via CLI (outdated CLI v54.4.1 wouldn't link non-interactively).
+
+---
+
 ## D-260 — 2026-06-17 — First full-codebase mutation-testing baseline (Stryker) + tooling fixes + perTest-artifact lesson
 
 **What happened.** Ran the broad `stryker.config.json` across both apps (679 files / 52,152 mutants). **Overall mutation score 27.85%** (58% on covered code; 26,488 NoCoverage dominates). Triaged into a roadmap epic **#1219** + 8 domain issues **#1211–#1218** (webhooks, tenant-isolation, auth/RBAC, booking lifecycle, commissions/pricing, abuse-gating, Inngest, RAG-config) + a data comment on existing **#1204** (cron auth gates).
