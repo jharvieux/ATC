@@ -286,10 +286,13 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_TEST_SERVICE_KEY }}
       # APP_BASE_URL must point at the deployed Next.js app (e.g. preview URL),
-      # NOT the Supabase project URL. Required when CROSS_TENANT_FIXTURES=true.
-      # See issue #563. Leave unset (probe runs enumeration-only) until a
-      # stable staging deployment exists.
+      # NOT the Supabase project URL. See issue #563.
       APP_BASE_URL: ${{ secrets.APP_STAGING_URL }}
+      # Activates the live cross-tenant fixture probe. All three secrets above must
+      # resolve to non-empty strings for the probe to execute; if any is empty,
+      # FIXTURES_AVAILABLE evaluates to false and the suite falls back to
+      # enumeration-only mode (see tests/security/cross-tenant-probe.test.ts).
+      CROSS_TENANT_FIXTURES: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
