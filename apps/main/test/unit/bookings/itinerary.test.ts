@@ -1,6 +1,6 @@
 // §39.2 — GET + POST /api/bookings/[id]/itinerary.
 //
-// Covers: auth gate, tier gate (GET and POST), booking-not-found,
+// Covers: auth gate, tier gate (POST only — GET has no tier check), booking-not-found,
 // idempotent return of existing itinerary, happy-path create → 201.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

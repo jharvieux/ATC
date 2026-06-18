@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   lineItemsGate: vi.fn(),
   lineItemsList: vi.fn(),
+  lineItemsInsert: vi.fn(),
   lineItemsInsertSingle: vi.fn(),
 }));
 
@@ -36,9 +37,11 @@ vi.mock("@/lib/db/tenant-client", () => ({
           order: () => mocks.lineItemsList(),
         }),
       }),
-      insert: () => ({
-        select: () => ({ single: mocks.lineItemsInsertSingle }),
-      }),
+      // Capture insert row so tests can assert the computed include_in_itinerary value.
+      insert: (row: unknown) => {
+        mocks.lineItemsInsert(row);
+        return { select: () => ({ single: mocks.lineItemsInsertSingle }) };
+      },
     }),
   }),
 }));
@@ -89,10 +92,9 @@ beforeEach(() => {
   });
   mocks.lineItemsGate.mockResolvedValue({ ok: true });
   mocks.lineItemsList.mockResolvedValue({ data: [], error: null });
+  mocks.lineItemsInsert.mockImplementation(() => {});
   mocks.lineItemsInsertSingle.mockResolvedValue({ data: CREATED_ITEM, error: null });
 });
-
-// --- GET ---
 
 describe("GET /api/bookings/[id]/line-items — auth gate", () => {
   it("returns 401 when assertPermission throws", async () => {
@@ -117,8 +119,6 @@ describe("GET /api/bookings/[id]/line-items — list", () => {
     expect(body.items).toHaveLength(1);
   });
 });
-
-// --- POST ---
 
 describe("POST /api/bookings/[id]/line-items — auth gate", () => {
   it("returns 401 when assertPermission throws", async () => {
@@ -172,26 +172,24 @@ describe("POST /api/bookings/[id]/line-items — happy path", () => {
   });
 
   it("§40.6 — 'other' item_type defaults include_in_itinerary:false unless caller overrides", async () => {
-    // The validator defaults include_in_itinerary to false for 'other' type.
-    // A mutant that flips the default polarity would cause this item to be
-    // included in the itinerary, surfacing here via the insert spy.
-    mocks.lineItemsInsertSingle.mockImplementation(() => {
-      // Verify the shape passed to .insert() set include_in_itinerary:false for 'other'
-      return Promise.resolve({ data: { ...CREATED_ITEM, item_type: "other", include_in_itinerary: false }, error: null });
-    });
+    // A mutant flipping `item_type !== "other"` to `item_type === "other"` would
+    // insert include_in_itinerary:true. This assertion catches that mutation.
     const res = await POST(
       makePostReq({ item_type: "other", description: "Misc charge", customer_cost_cents: 500 }),
       PARAMS,
     );
     expect(res.status).toBe(201);
+    expect(mocks.lineItemsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ include_in_itinerary: false }),
+    );
   });
 
   it("non-'other' item_type defaults include_in_itinerary:true", async () => {
-    mocks.lineItemsInsertSingle.mockResolvedValue({
-      data: { ...CREATED_ITEM, include_in_itinerary: true },
-      error: null,
-    });
+    // Inverse of the §40.6 gate: non-'other' types should be included by default.
     const res = await POST(makePostReq({ ...VALID_BODY, item_type: "hotel", description: "Hotel" }), PARAMS);
     expect(res.status).toBe(201);
+    expect(mocks.lineItemsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ include_in_itinerary: true }),
+    );
   });
 });

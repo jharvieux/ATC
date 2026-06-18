@@ -180,14 +180,17 @@ describe("POST /api/bookings/[id]/modify — tenant lookup", () => {
 
 describe("POST /api/bookings/[id]/modify — adapter capability gate", () => {
   it("returns 409 when adapter does not support modification", async () => {
-    mocks.adapterInstance.capabilities.supports_modification = false;
+    // Override per-test so shared adapterInstance is never mutated (a failed
+    // assertion between set and restore would leave it broken for later tests).
+    mocks.selectAdapterForCall.mockResolvedValueOnce({
+      adapter: { ...mocks.adapterInstance, capabilities: { supports_modification: false } },
+      ctx: { tenant_id: TENANT_ID, user_id: null, correlation_id: "test-corr" },
+    });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(409);
     const body = await res.json() as { error: string; adapter: string };
     expect(body.error).toBe("adapter_does_not_support_modification");
     expect(body.adapter).toBe("mock-adapter");
-    // Restore for other tests
-    mocks.adapterInstance.capabilities.supports_modification = true;
   });
 });
 
