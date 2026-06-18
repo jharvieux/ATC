@@ -56,7 +56,6 @@ function makeDb(rowQueue: Array<unknown>): {
     lte: () => b,
     update: (d: unknown) => { updates.push(d); return b; },
     insert: (d: unknown) => { inserts.push(d); return b; },
-    upsert: (d: unknown) => { inserts.push(d); return b; },
     maybeSingle: () => Promise.resolve({ data: rowQueue[i++] ?? null, error: null }),
   };
 
