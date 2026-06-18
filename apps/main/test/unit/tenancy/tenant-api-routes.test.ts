@@ -15,10 +15,8 @@ const h = vi.hoisted(() => ({
   permFails: false,
   tenantId: "tenant-1",
   userId: "user-1",
-  // simulates the tier lookup returning a tier code
-  tierCode: "sub_pro" as string,
-  // controls what tables return
   tableData: {} as Record<string, unknown>,
+  tableErrors: {} as Record<string, { message: string } | null>,
   safeAwaitLabels: [] as string[],
   writeAuditCalled: false,
 }));
@@ -94,7 +92,12 @@ vi.mock("@/lib/abuse/thresholds", () => ({
 // `await builder.select(…).order(…).limit(N)` both work.
 
 function makeChain(table: string): Record<string, unknown> {
-  const resolved = { data: h.tableData[table] ?? null, error: null };
+  const tableError = h.tableErrors[table] ?? null;
+  const resolved = {
+    // Supabase never returns both data and error — error wins.
+    data: tableError ? null : (h.tableData[table] ?? null),
+    error: tableError,
+  };
   const chain: Record<string, unknown> = {};
   // All chainable methods return chain so multi-step builders compose.
   for (const m of [
@@ -104,10 +107,9 @@ function makeChain(table: string): Record<string, unknown> {
   ]) {
     chain[m] = () => chain;
   }
-  // Terminal helpers resolve to row data.
-  chain.maybySingle = () => Promise.resolve(resolved);
+  // Terminal helpers resolve to row data (or error if h.tableErrors[table] set).
   chain.maybeSingle = () => Promise.resolve(resolved);
-  chain.single     = () => Promise.resolve(resolved);
+  chain.single      = () => Promise.resolve(resolved);
   // Make the chain itself thenable so `await db.from("x").select(…)` works
   // without a trailing terminal method (used by list queries).
   chain.then = (resolve: (v: typeof resolved) => unknown) => resolve(resolved);
@@ -136,8 +138,8 @@ beforeEach(() => {
   h.permFails = false;
   h.tenantId = "tenant-1";
   h.userId = "user-1";
-  h.tierCode = "sub_pro";
   h.tableData = {};
+  h.tableErrors = {};
   h.safeAwaitLabels.length = 0;
   h.writeAuditCalled = false;
   // Default tier lookups
@@ -258,13 +260,22 @@ describe("POST /api/tenant/safety", () => {
     expect(h.safeAwaitLabels).toHaveLength(0);
   });
 
-  it("adds a new term and returns added=true", async () => {
+  it("adds a new term via UPDATE when row already exists", async () => {
     h.tableData["tenant_settings"] = { supplemental_hate_speech_denylist: [] };
     const res = await safetyPOST(req("/api/tenant/safety", "POST", { term: "new_term" }));
     expect(res.status).toBe(200);
     const body = await res.json() as { ok: boolean; added: boolean };
     expect(body.added).toBe(true);
     expect(h.safeAwaitLabels).toContain("tenant_settings.update");
+  });
+
+  it("adds a new term via INSERT when no tenant_settings row exists yet", async () => {
+    h.tableData["tenant_settings"] = null;
+    const res = await safetyPOST(req("/api/tenant/safety", "POST", { term: "new_term" }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; added: boolean };
+    expect(body.added).toBe(true);
+    expect(h.safeAwaitLabels).toContain("tenant_settings.insert");
   });
 
   it("returns added=false without a DB write when term is a duplicate (case-insensitive)", async () => {
@@ -378,12 +389,29 @@ describe("PUT /api/tenant/chat-limits", () => {
     expect(h.safeAwaitLabels).toHaveLength(0);
   });
 
-  it("upserts and writes audit log on a valid request", async () => {
+  it("updates existing override row and writes audit log", async () => {
     h.tableData["customer_chat_tenant_overrides"] = { tenant_id: "tenant-1" };
     const res = await chatLimitsPUT(req("/api/tenant/chat-limits", "PUT", { soft1_cap: 10, soft2_cap: 20, hard_cap: 30, booking_bonus_percent: 50 }));
     expect(res.status).toBe(200);
     expect(h.safeAwaitLabels).toContain("customer_chat_tenant_overrides.update");
     expect(h.writeAuditCalled).toBe(true);
+  });
+
+  it("inserts override row when none exists yet and writes audit log", async () => {
+    h.tableData["customer_chat_tenant_overrides"] = null;
+    const res = await chatLimitsPUT(req("/api/tenant/chat-limits", "PUT", { soft1_cap: 10, soft2_cap: 20, hard_cap: 30, booking_bonus_percent: 50 }));
+    expect(res.status).toBe(200);
+    expect(h.safeAwaitLabels).toContain("customer_chat_tenant_overrides.insert");
+    expect(h.writeAuditCalled).toBe(true);
+  });
+
+  it("returns 403 when tier lookup DB errors — fail-closed (no Pro+ access granted on error)", async () => {
+    // loadTier ignores DB errors and falls back to 'byo_research', which is non-Pro+.
+    // This test pins that a DB error on the tier query never accidentally grants access.
+    h.tableErrors["tenants"] = { message: "connection refused" };
+    const res = await chatLimitsPUT(req("/api/tenant/chat-limits", "PUT", { soft1_cap: 10, soft2_cap: 20, hard_cap: 30, booking_bonus_percent: 50 }));
+    expect(res.status).toBe(403);
+    expect(h.safeAwaitLabels).toHaveLength(0);
   });
 });
 
@@ -404,6 +432,14 @@ describe("GET /api/tenant/branding", () => {
     h.tableData["tenant_branding"] = null;
     const res = await brandingGET(req("/api/tenant/branding"));
     expect(res.status).toBe(200);
+    const body = await res.json() as { branding: null };
+    expect(body.branding).toBeNull();
+  });
+
+  it("returns 500 when DB read errors (fail-closed via dbErrorResponse)", async () => {
+    h.tableErrors["tenant_branding"] = { message: "replica lag" };
+    const res = await brandingGET(req("/api/tenant/branding"));
+    expect(res.status).toBe(500);
   });
 });
 
@@ -419,9 +455,14 @@ describe("POST /api/tenant/branding", () => {
     expect(res.status).toBe(422);
   });
 
-  it("upserts branding on a valid POST", async () => {
+  it("upserts branding and returns branding_id + show_powered_by (confirms upsert fired)", async () => {
+    // branding_id only appears in the response when the upsert returns a row.
+    // A mutant that strips the upsert call produces { data: null } → dbErrorResponse → not 200.
     const res = await brandingPOST(req("/api/tenant/branding", "POST", { slogan: "New tagline" }));
     expect(res.status).toBe(200);
+    const body = await res.json() as { branding_id: string; show_powered_by: boolean };
+    expect(body.branding_id).toBe("branding-1");
+    expect(typeof body.show_powered_by).toBe("boolean");
   });
 });
 
@@ -497,7 +538,10 @@ describe("POST /api/tenant/override-requests", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates the override request on a valid POST", async () => {
+  it("inserts override request and returns request body (confirms insert fired)", async () => {
+    // request.id only exists when the insert + select returns data.
+    // A mutant that strips the insert produces { data: null } → dbErrorResponse → not 200.
+    h.tableData["tenant_override_requests"] = { id: "req-1", requested_at: "2026-06-18T12:00:00Z", status: "pending" };
     const res = await overridePOST(req("/api/tenant/override-requests", "POST", {
       dimension: "ai_cost",
       requested_threshold_kind: "hard",
@@ -505,5 +549,8 @@ describe("POST /api/tenant/override-requests", () => {
       current_state: "At the hard cap daily",
     }));
     expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; request: { id: string; status: string } };
+    expect(body.request.id).toBe("req-1");
+    expect(body.request.status).toBe("pending");
   });
 });
