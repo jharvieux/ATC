@@ -70,6 +70,8 @@ describe("activateTenant", () => {
         review_decided_by_user_id: "admin-99",
       }),
     );
+    // The status change must still be announced to RAG on the extra-fields path.
+    expect(mocks.publishTenantEvent).toHaveBeenCalledTimes(1);
   });
 
   it("CAS path resolves when the stage guard matches — concurrent activation attempt cannot bypass it", async () => {

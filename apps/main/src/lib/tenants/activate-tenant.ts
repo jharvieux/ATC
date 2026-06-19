@@ -31,8 +31,11 @@ export async function activateTenant(
     status: "active",
     activated_at: new Date().toISOString(),
     onboarding_stage: "complete",
-    source_revision: sourceRevision,
     ...extraFields,
+    // After the spread on purpose: the emitted event's source_revision must
+    // equal what's persisted here, so a caller cannot override the monotonic
+    // stamp via extraFields and desync the RAG stale-revision guard.
+    source_revision: sourceRevision,
   };
 
   let row: ActivatedRow;

@@ -64,11 +64,36 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Queue an event for the rag-sync-retry cron to redeliver. Shared by the
+// missing-config and retries-exhausted paths so neither silently drops.
+async function queuePendingRagSync(event: TenantEvent, lastError: string | undefined): Promise<void> {
+  console.warn("[rag-sync] queuing tenant event for retry", {
+    tenant_id: event.tenant_id,
+    event_type: event.event_type,
+    last_error: lastError,
+  });
+  try {
+    const db = createServiceRoleClient();
+    await safeAwait(db.from("pending_rag_sync").insert({
+      tenant_id: event.tenant_id,
+      event_type: event.event_type,
+      payload: event.payload,
+      source_revision: event.source_revision,
+      last_error: lastError,
+    }), "pending_rag_sync.insert");
+  } catch (dbErr) {
+    console.error("[rag-sync] Failed to insert into pending_rag_sync:", dbErr);
+  }
+}
+
 export async function publishTenantEvent(event: TenantEvent): Promise<void> {
   const ragUrl = process.env.RAG_SERVICE_URL;
   const secret = process.env.RAG_WEBHOOK_SECRET;
   if (!ragUrl || !secret) {
-    console.error("[rag-sync] RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set");
+    // Missing config must NOT silently drop the event — queue it so the
+    // rag-sync-retry cron redelivers once config is restored.
+    console.error("[rag-sync] RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set — queuing for retry");
+    await queuePendingRagSync(event, "RAG_SERVICE_URL or RAG_WEBHOOK_SECRET not set");
     return;
   }
 
@@ -91,23 +116,6 @@ export async function publishTenantEvent(event: TenantEvent): Promise<void> {
     }
   }
 
-  // All retries failed — insert into pending_rag_sync
-  console.warn("[rag-sync] All retries failed for tenant event, queuing for retry", {
-    tenant_id: event.tenant_id,
-    event_type: event.event_type,
-    last_error: lastError,
-  });
-
-  try {
-    const db = createServiceRoleClient();
-    await safeAwait(db.from("pending_rag_sync").insert({
-      tenant_id: event.tenant_id,
-      event_type: event.event_type,
-      payload: event.payload,
-      source_revision: event.source_revision,
-      last_error: lastError,
-    }), "pending_rag_sync.insert");
-  } catch (dbErr) {
-    console.error("[rag-sync] Failed to insert into pending_rag_sync:", dbErr);
-  }
+  // All retries failed — queue for the rag-sync-retry cron.
+  await queuePendingRagSync(event, lastError);
 }
