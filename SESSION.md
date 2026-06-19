@@ -1,21 +1,28 @@
-# Session state — last updated 2026-06-19 19:05 ET
+# Session state — last updated 2026-06-19 20:20 ET
 
 ## Just completed
-- Diagnosed live "AI is temporarily unavailable" on the agent support chat (TA-concierge / Captain Dave, lisa-travel tenant).
-- Root cause: `ai_call_log.purpose` CHECK constraint drift. The Anthropic call succeeds; the post-call `ai_call_log` insert (call-wrapper.ts → safeAwait, throws per D-094) violated `ai_call_log_purpose_check` because the constraint (last set 2026-06-09, 16 purposes) never grew with the 23-value `AICallPurpose` union. 7 purposes rejected, incl. `ta_chat_main` (the TA-chat purpose). Hit every tenant's TA chat + draft-reply + quote co-pilot + public-token chat + import pipeline; customer `chat_main` was fine.
-- Migration `20260706000000_ai_call_log_purpose_sync.sql` widens the constraint to all 23 values. **Applied to prod via psql (user-approved) to unblock**, then PR #1270 merged to dev (squash 8cfa4147; both audits clean on Opus).
-- Opened follow-up #1271 (sonnet): static CI guard for AICallPurpose↔constraint drift.
-- Logged D-273 in MEMORY.md.
+Two production incidents diagnosed and fixed end-to-end.
+
+1. **"AI temporarily unavailable" (agent support chat)** — `ai_call_log.purpose` CHECK constraint drift (D-273). Anthropic call succeeded; the post-call `ai_call_log` insert rejected newer purposes (incl. `ta_chat_main`) → safeAwait threw → fallback message. Fixed: migration `20260706000000` widens the constraint to all 23 `AICallPurpose` values. Applied to prod via psql + PR #1270 merged. Guard issue #1271. Logged D-273.
+
+2. **RAG retrieval degraded (ungrounded concierge answers)** — `tenant_registry_shadow` drift (D-274). lisa-travel was `active` in main but `onboarding` in RAG → verifier 403 `tenant_inactive` → empty chunks. Root causes: (a) activation never emitted `tenant.status_changed` — fixed in PR #1275 (merged): `activateTenant` now emits, monotonic `source_revision`; (b) nightly reconcile dead since May because `MAIN_APP_URL`+`MAIN_APP_ADMIN_API_KEY` were missing from atc-rag and the key missing from atc-main too. Fixed: provisioned shared key on both + `MAIN_APP_URL=https://ai-travelconcierge.com` on atc-rag, redeployed both, verified handshake 200. Mitigated lisa-travel shadow row via psql. Logged D-274.
 
 ## In flight
-- Doc-only PR for D-273 (MEMORY.md) + this SESSION.md, on branch `feature/log-d273-ai-purpose-drift`. About to push + open + merge (audit-exempt doc-only).
+- Nothing in flight — clean checkpoint on `dev`. About to commit MEMORY (D-274) + this SESSION via a doc-only PR.
 
 ## Next step
-- Push branch, open doc-only PR into dev, merge once fast checks settle.
+- Ship the doc-only PR (D-274 + SESSION). Then optionally: confirm the concierge now cites real Bliss itinerary detail; pick up #1273 hardening.
 
 ## Blocked on user
-- Nothing. (Confirm the chat now works on your end — prod constraint verified to include `ta_chat_main`.)
+- Nothing. (Suggested: re-test Captain Dave / Marcus on Bliss 10/3/26 — should now be grounded.)
 
 ## Open questions
-- Prod is behind dev in the migration ledger: `supabase_migrations.schema_migrations` last records `20260704000000`, so `20260704000001`, `20260704000002`, `20260705000000`, and `20260706000000` are pending the next gated prod deploy. The constraint fix is already live (applied out-of-band); the formal migration is idempotent and will record cleanly on next deploy. Worth confirming the next prod deploy runs them in order.
-- Separately observed: RAG retrieval was degraded (operator-alerts on /api/chat — graceful, ungrounded answers). Not this incident; flag if it persists.
+- #1273 hardening: `verifyEnvAtBoot()` did not fail the RAG deploy despite required vars missing for months — investigate (instrumentation throw non-fatal on Vercel, or team-shared vars). Also add an operator alert when the reconcile run throws.
+- #1274: emit `tenant.status_changed` on suspend/terminate/reject (shadow stays `active` for non-active tenants — inverse leak).
+- Orphan shadow rows (2nd "Lisa Travel" c351…, "Bigfoot" 820b…) not in main — the now-working reconcile will warn; decide whether to prune.
+- Local `.env.local` has `RAG_SERVICE_URL`/`MAIN_APP_URL` pointing at `.vercel.app` vanity domains (redirect/strip auth); prod uses canonical. Worth fixing local + hardening the RAG fetches to fail loud on 3xx.
+
+## Issues opened this session
+- #1271 (sonnet) ai_call_log purpose↔constraint CI guard
+- #1273 (opus) reconcile hardening / boot-guard
+- #1274 (sonnet) emit status_changed on suspend/terminate/reject
