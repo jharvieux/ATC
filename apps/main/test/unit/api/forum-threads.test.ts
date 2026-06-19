@@ -111,7 +111,8 @@ describe("GET /api/groups/[id]/forum", () => {
 
   it("returns forum_id, is_locked, is_coordinator=true for the coordinator", async () => {
     mocks.forumQuery.mockResolvedValue({
-      data: { id: FORUM_ID, is_locked: false, coordinator_user_id: USER_ID },
+      // #1190: coordinator comes from the embedded group (object shape).
+      data: { id: FORUM_ID, is_locked: false, groups: { coordinator_user_id: USER_ID } },
       error: null,
     });
 
@@ -128,7 +129,8 @@ describe("GET /api/groups/[id]/forum", () => {
 
   it("returns is_coordinator=false for a non-coordinator", async () => {
     mocks.forumQuery.mockResolvedValue({
-      data: { id: FORUM_ID, is_locked: false, coordinator_user_id: "other-user" },
+      // #1190: coordinator comes from the embedded group (array shape).
+      data: { id: FORUM_ID, is_locked: false, groups: [{ coordinator_user_id: "other-user" }] },
       error: null,
     });
 
@@ -275,7 +277,8 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
   it("returns all message statuses for the coordinator", async () => {
     // Forum: user IS coordinator.
     mocks.forumQuery.mockResolvedValue({
-      data: { coordinator_user_id: USER_ID, tenant_id: TENANT_ID },
+      // #1190: coordinator comes from the embedded group (array shape).
+      data: { tenant_id: TENANT_ID, groups: [{ coordinator_user_id: USER_ID }] },
       error: null,
     });
     const msgs = [
@@ -316,7 +319,8 @@ describe("GET /api/forums/[forumId]/threads/[threadId]/messages", () => {
   it("filters to visible-only for non-coordinator (route adds .eq(status, visible))", async () => {
     // Forum: user is NOT coordinator.
     mocks.forumQuery.mockResolvedValue({
-      data: { coordinator_user_id: "other-user", tenant_id: TENANT_ID },
+      // #1190: coordinator comes from the embedded group (object shape).
+      data: { tenant_id: TENANT_ID, groups: { coordinator_user_id: "other-user" } },
       error: null,
     });
     mocks.messagesQuery.mockResolvedValue({

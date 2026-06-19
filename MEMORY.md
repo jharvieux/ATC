@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-265 — 2026-06-18 — #1190 forums.coordinator_user_id fixed via group embed; supabase forward-FK embeds may be object OR array
+
+Shipped the forums coordinator fix (deferred from D-264). `forums` has no `coordinator_user_id` — it's on the linked group (`forums.group_id`→`groups`, UNIQUE/NOT NULL). Six routes read it off the forum row (3 via `.select("*")` the gate can't see, 3 explicit) → coordinator never recognized → moderation silently broke for every coordinator. Fixed by embedding `groups(coordinator_user_id)` in each forums select and reading via a new shared helper `forumCoordinatorId()` in `lib/forums/permissions.ts`.
+
+**Reusable gotcha:** supabase-js returns a forward-FK embed as an OBJECT or a single-element ARRAY inconsistently — `q/[token]/page.tsx:122` already guards with `Array.isArray(x) ? x[0] : x`. `forumCoordinatorId` normalizes both; the route tests exercise both shapes end-to-end. Assuming object would have silently re-broken the exact bug. When embedding a to-one relation, ALWAYS normalize both shapes.
+
+**Why a shared helper (not inline):** 6 call sites + the object/array normalization is easy to get subtly wrong per-site. A 6-caller helper is DRY-justified, not slop. `canModerate`/`canPost` never actually used `forum.coordinator_user_id` (each route computes `is_coordinator` and passes it as `user.is_coordinator`), so only the per-route comparison needed repointing.
+
+**Artifacts:** PR (forums coordinator), `lib/forums/permissions.ts` (`forumCoordinatorId`), `db/column-reader-exceptions.txt` (forums entry removed, 20→19).
+
+---
+
 ## D-264 — 2026-06-18 — #1190 decision-free Severity C shipped (email config on tenant_branding); forums coordinator split out
 
 Shipped the decision-free Severity C subset: the "tenant email config lives on tenant_branding, not tenants" bug. Six files fixed — `abuse-state-transition-notify` (legal_business_name→legal_name, business_address→mailing_address, users.full_name→display_name), and FIVE email-send paths reading `email_send_pattern`/`tenant_resend_api_key_encrypted`/`email_from_*` off `tenants` (group invitations, group-reminder-cadence, quote-estimate-expiry-sweep, send-reminder-email, precruise) → moved to the `tenant_branding` row (each already queried branding for visuals; defaulted to `platform_resend` when no branding row). Removed 9 exceptions (29→20).

@@ -62,3 +62,15 @@ export function canModerate({
 }): boolean {
   return user.is_coordinator || user.role === "platform_admin";
 }
+
+// #1190: a forum has no coordinator_user_id column — the coordinator lives on
+// the linked group (forums.group_id → groups). Routes embed
+// `groups(coordinator_user_id)`; supabase-js may return a to-one relation as an
+// object or a single-element array, so normalize both shapes here.
+export function forumCoordinatorId(
+  forum: { groups?: unknown } | null | undefined,
+): string | null {
+  const rel = forum?.groups;
+  const group = Array.isArray(rel) ? rel[0] : rel;
+  return (group as { coordinator_user_id?: string | null } | null | undefined)?.coordinator_user_id ?? null;
+}
