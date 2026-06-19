@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-269 — 2026-06-18 — #1190 tenant_settings closes out the issue; 34 baselined exceptions → 0 genuine (1 documented FP)
+
+Final #1190 item, both per-user decisions:
+- **`import_auto_accept_threshold` (decision A — add the column):** `loadThreshold` (import/auto-accept.ts) always read this per-tenant override; it was never migrated, so every tenant silently fell through to the platform default. Added it via migration `20260705000000` — `NUMERIC`, nullable (NULL = no override → platform default, preserving behavior), CHECK [0,1]. No code change (the reader was already correct + already tested).
+- **`customer_bug_flow_enabled` (decision B — remove the dead read):** the bug-intent recognizer gated on a per-tenant opt-out column that was never migrated (so it always defaulted to opted-in anyway). Removed `tenantHasFeatureEnabled` + the gate call; the flow is now gated by the `PHASE_2_CUSTOMER_BUG_FLOW_ENABLED` platform flag only. Dropped the now-dead `tenant_id` from `RecognizerOpts` + the one caller (chat/route.ts).
+
+**#1190 is DONE.** The column-reader exceptions went 34 → 1, and that 1 (`messages.user_id`) is a documented false positive (embedded `conversations!inner(user_id)` mis-attributed by the gate — class tracked in #1243). ~30 genuine latent runtime bugs fixed across **7 merged PRs** (#1244/1245/1246/1248/1249/1250 + this) — user-facing 400s (booking/quote detail), $0 host fee, broken CCPA export, and silently-skipped customer-comms emails (abuse/group/precruise/reminders). Follow-ups still open: #1247 (host-fee tiered/min-threshold), #1243 (gate alias/embed parsing).
+
+**Artifacts:** PR (tenant_settings), migration `20260705000000_tenant_settings_import_auto_accept_threshold.sql`, `db/column-reader-exceptions.txt` (1 FP line).
+
+---
+
 ## D-268 — 2026-06-18 — #1190 precruise recipient fix completes the column-reader cleanup (only messages.user_id FP remains)
 
 Last decision-free #1190 item. Precruise emails were fully broken: `precruise-generate-and-send.ts` selected `customer_name`/`passenger_contact_email`/`group_id` from `bookings` (none exist) → the whole query 400'd → every precruise email silently skipped. Fix: recipient name + email come from the booking's contact (`primary_contact_id` → `contacts.first_name`/`email`, via a separate tenant-scoped query — D-091 two-layer, and avoids the embed object/array ambiguity); `group_id` → `group_booking_id`. Per product decision: **first name only** on the greeting.

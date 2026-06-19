@@ -503,7 +503,6 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     const bug = audience === "customer"
       ? await detectBugIntent({
           message: userMessage,
-          tenant_id: tenantId,
           db: svc,
         })
       : { triggered: false as const, matched_phrase: null, offer_message: null };
