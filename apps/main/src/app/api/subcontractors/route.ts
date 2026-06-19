@@ -1,5 +1,6 @@
-// §14.3a — Sub-host subcontractor CRUD.
-// Restricted to tenant_type = 'sub_host'. BYO-host tenants get 403.
+// §14.3a — Subcontractor CRUD.
+// Available to sub_host and byo_host tenants. The platform's own internal
+// agency is excluded; any other/unknown tenant_type fails closed (403).
 //
 // GET  /api/subcontractors — list active subcontractors
 // POST /api/subcontractors — create a subcontractor
@@ -9,6 +10,14 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+
+// Tenant types permitted to use subcontractor bookkeeping. Allowlist (not a
+// denylist) so an unrecognized tenant_type is denied, not silently allowed.
+const SUBCONTRACTOR_TENANT_TYPES: ReadonlySet<string> = new Set(["sub_host", "byo_host"]);
+
+const FORBIDDEN_BODY = {
+  error: "Subcontractor tracking is only available for host accounts.",
+} as const;
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -21,11 +30,8 @@ export async function GET(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (!tenant || (tenant as { tenant_type: string }).tenant_type !== "sub_host") {
-      return Response.json(
-        { error: "Subcontractor tracking is only available for sub-host tenants." },
-        { status: 403 },
-      );
+    if (!tenant || !SUBCONTRACTOR_TENANT_TYPES.has((tenant as { tenant_type: string }).tenant_type)) {
+      return Response.json(FORBIDDEN_BODY, { status: 403 });
     }
 
     const db = tenantClient(ctx);
@@ -53,11 +59,8 @@ export async function POST(req: Request): Promise<Response> {
       .eq("id", ctx.tenant_id)
       .single();
 
-    if (!tenant || (tenant as { tenant_type: string }).tenant_type !== "sub_host") {
-      return Response.json(
-        { error: "Subcontractor tracking is only available for sub-host tenants." },
-        { status: 403 },
-      );
+    if (!tenant || !SUBCONTRACTOR_TENANT_TYPES.has((tenant as { tenant_type: string }).tenant_type)) {
+      return Response.json(FORBIDDEN_BODY, { status: 403 });
     }
 
     const body = (await req.json()) as { name?: string; share_rate?: number };

@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-272 — 2026-06-19 — Subcontractor tracking opened to BYO hosts (overrides spec §14.3a sub_host-only gating)
+
+User asked, for a BYO agency in the tenant admin console, to make the Subcontractors feature (and the net-retained revenue forecast it powers) available — today it 403s with "only available for sub-host accounts." Approved as a deliberate product change even though the platform does not pay BYO subcontractors; tracking them is a tenant-side bookkeeping value-add.
+
+Audit of all account-type gating (not just the reported screen): the ONLY tenant-facing feature gated to `sub_host` is subcontractor tracking. The other `sub_host` references are platform-plumbing that is sub_host-by-nature, not features BYO is denied — commission-statement reconciliation (`reconcile-statement-automated`, reconciles real platform→sub-host Stripe Connect payouts; BYO gets none), the sub-host onboarding review SLA monitor, and host-adapter selection. Everything else BYO appears to "lack" (Reports, task sequences, line items, deliverables, advanced quotes, attribution) is **tier**-gated on the entry `byo_research` tier, not account-type gated — a BYO agency on any paid tier already has all of it. So "revenue recognition/forecasting" reduces to the subcontractor net-retained forecast; same feature.
+
+Change (PR pending, branch feature/byo-subcontractors): flip the `/api/subcontractors` GET+POST gate from `=== "sub_host"` to an allowlist `Set(["sub_host","byo_host"])` (platform + unknown types still 403, fail-closed); UI copy updated; new route test asserts byo_host allowed / platform+unknown denied. No DB migration — RLS on `sub_host_subcontractors` is already plain tenant-scoped (`auth_user_in_tenant`), so it permits BYO the moment the app gate opens. The `[id]` PATCH/DELETE never had a type gate (RLS-only), so they already worked for BYO.
+
+Spec amendment NOT yet applied: the `block-spec-memory-edits` PreToolUse hook hard-blocks ALL `specs/` edits regardless of in-chat approval, and bypassing it via shell would defeat an intentional protection. §14.3a still reads sub_host-only; surfaced to user to either edit it themselves or adjust the hook. The line to change is section-14-commissions-splits-payouts.html "UI gating: ... only for tenants with tenant_type = 'sub_host'." → include 'byo_host', keep the platform agency excluded.
+
+Rejected: opening the sub_host-by-nature plumbing (payout reconciliation, review SLA) to BYO — meaningless, there's no platform payout to BYO. Rejected: a denylist gate (`!== "platform"`) — an allowlist fails closed on unknown future tenant_types.
+
+---
+
 ## D-271 — 2026-06-19 — Voice-profile feature was dead: tables missing from TENANT_SCOPED_TABLES (same class as #1045/#1054)
 
 User reported "Load failed (HTTP 500)" on the tenant admin console → Voice Profile page. Root cause: `voice_samples` and `voice_profiles` were never registered in `TENANT_SCOPED_TABLES` (apps/main/src/lib/db/tenant-scoped-tables.ts). `tenantClient(ctx)` fails closed — `.from(table)` throws `UnregisteredTenantTableError` for any table in neither the scoped nor platform-readable set, BEFORE issuing a query — and `respondToAuthError` maps that unrecognized throw to a generic 500. PostgREST logs confirmed: the page's `users` query returned 200, but no `voice_*` query was ever issued.
