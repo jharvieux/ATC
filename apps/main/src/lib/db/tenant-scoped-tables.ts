@@ -113,6 +113,15 @@ export const TENANT_SCOPED_TABLES: ReadonlySet<string> = new Set([
   "forensics_log",                    // tenant forensics log (writes service-role only)
   "usage_limit_events",               // BP27/28 usage limit events
   "group_invite_pending_approval",    // BP19 group invite approvals
+  // #903 / D-193 — voice-profile feature. Both carry a tenant_id column and the
+  // full 4-policy RLS set (db/rls-snapshot-main.sql), but were never registered
+  // here, so every tenantClient.from("voice_*") threw UnregisteredTenantTableError
+  // → generic 500 ("Load failed (HTTP 500)" on the settings/voice page). The
+  // whole feature was dead: samples GET/POST, card PATCH, sample DELETE, the
+  // Inngest extractor, and resolve-voice-profile (draft-reply) all read these
+  // through tenantClient and threw at .from().
+  "voice_samples",                    // #903 voice samples
+  "voice_profiles",                   // #903 extracted style cards
 ]);
 
 // PLATFORM_READABLE_TABLES — accessible via tenantClient WITHOUT auto-scoping.
