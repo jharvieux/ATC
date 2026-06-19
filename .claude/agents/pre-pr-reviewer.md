@@ -1,6 +1,6 @@
 ---
 name: pre-pr-reviewer
-description: Read-only auditor that runs before opening a PR. Covers CLAUDE.md rules that are NOT D-091 — slop sweep, test-for-intent, surgical-changes discipline, honesty-about-uncertainty, codebase-convention drift, and stub-shaped code. Use proactively after a meaningful code change, before pushing the PR. Pairs with d091-reviewer (run that FIRST for D-091 anti-pattern coverage; this agent handles everything else). Its output is what the main agent pastes into the PR description's `## Audit` section to satisfy the audit-section enforcement check.
+description: Read-only auditor that runs before opening a PR. Covers CLAUDE.md rules that are NOT D-091 — slop sweep, test-for-intent, surgical-changes discipline, honesty-about-uncertainty, codebase-convention drift, and stub-shaped code. Use proactively after a meaningful code change, before pushing the PR. Pairs with d091-reviewer (run that FIRST for D-091 anti-pattern coverage; this agent handles everything else). It posts a hash-bound marker comment (the enforcement gate) and writes the combined `## Audit` summary into the PR body itself.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -50,7 +50,7 @@ If the diff is clean, output:
 **Tests**: <added=N, modified=M>
 ```
 
-The `Status` line is what the audit-section enforcement workflow reads to decide pass/fail. The exact strings `clean — no findings` or `N must-fix` are not required, but the line must be present and meaningful (not "TBD").
+The `Status` line is the at-a-glance verdict in the body summary. It is no longer gated by CI (the hash-bound comment is the gate), but always emit it — the user relies on it. The exact strings `clean — no findings` or `N must-fix` are not required, but the line must be present and meaningful (not "TBD").
 
 ## Patterns to check
 
@@ -204,12 +204,62 @@ sits next to the PR on GitHub (durable record + the
    gh pr comment "$PR" --body "$(cat "$BODY_TMP")"
    ```
 
-4. Report success back to the main agent: `"Posted as comment on PR #<N>."`
-   If `gh pr comment` fails (auth, rate-limit, network), report the error
-   verbatim — don't pretend the post succeeded.
+4. Write the combined `## Audit` summary into the **PR body** (you are the
+   single writer of this block — `d091-reviewer` only posts a comment). The
+   `pr-audit-section-check` workflow does NOT gate on this block anymore, so
+   it's advisory; it exists so the user (who does not read code) sees both
+   agents' findings on the PR at a glance. Because you run after
+   `d091-reviewer`, its comment already exists — pull its findings from there
+   and combine.
+
+   ```bash
+   # Latest d091 report (freshest comment carrying the d091 marker).
+   D091=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" \
+     | jq -r '[.[][] | select(.body | contains("<!-- d091-audit:v1"))] | last | .body // "_(d091-reviewer comment not found — run it first.)_"')
+
+   SECTION_TMP=$(mktemp); trap 'rm -f "$SECTION_TMP"' EXIT
+   {
+     echo '<!-- audit-body:start -->'
+     echo '## Audit'
+     echo
+     echo '_Auto-written by pre-pr-reviewer; gated on the hash-bound agent comments, not on this text._'
+     echo
+     echo '### pre-pr-reviewer'
+     # ...your report block verbatim (Scope / Findings / Tests / Status)...
+     echo
+     echo '### d091-reviewer'
+     printf '%s\n' "$D091"
+     echo '<!-- audit-body:end -->'
+   } > "$SECTION_TMP"
+
+   # Idempotent upsert: replace an existing delimited block, else append.
+   BODY_TMP=$(mktemp); trap 'rm -f "$BODY_TMP" "$SECTION_TMP"' EXIT
+   gh pr view "$PR" --json body --jq .body > "$BODY_TMP" || : > "$BODY_TMP"
+   if grep -q '<!-- audit-body:start -->' "$BODY_TMP"; then
+     awk '
+       /<!-- audit-body:start -->/ { print_block=1; while ((getline line < "'"$SECTION_TMP"'") > 0) print line; skip=1 }
+       /<!-- audit-body:end -->/   { skip=0; next }
+       !skip
+     ' "$BODY_TMP" > "$BODY_TMP.new" && mv "$BODY_TMP.new" "$BODY_TMP"
+   else
+     { echo; cat "$SECTION_TMP"; } >> "$BODY_TMP"
+   fi
+   gh pr edit "$PR" --body-file "$BODY_TMP"
+   ```
+
+   Editing the PR body re-triggers the audit check (it listens for `edited`),
+   which is harmless — the comment hash is what it verifies.
+
+5. Report success back to the main agent: `"Posted comment + updated body on PR #<N>."`
+   If `gh pr comment` or `gh pr edit` fails (auth, rate-limit, network), report
+   the error verbatim — don't pretend it succeeded.
 
 Re-running after new commits recomputes the hash and posts a **new**
 comment — the workflow picks up the freshest one matching the current
 diff. If the diff is unchanged (e.g. only a merge commit was added by
 update-branch), the hash is identical and the existing comment already
 satisfies the check; a new post is harmless but not required.
+
+> **Boundary note:** `gh pr edit --body-file` is allowed for the single
+> purpose above (upserting the delimited `## Audit` block). No other PR
+> mutations — no `gh pr merge`, no label/state changes, no source edits.

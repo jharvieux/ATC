@@ -5,6 +5,12 @@ on:
     branches: [dev, main]
   pull_request:
     branches: [dev]
+    # Doc-only PRs skip CodeQL on PRs. Not a required check, so a non-run can't
+    # strand the PR; the weekly schedule + dev-push run still cover doc merges.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "specs/**"
   schedule:
     # Weekly Monday 06:00 UTC — catches new GitHub-maintained rules.
     - cron: '0 6 * * 1'

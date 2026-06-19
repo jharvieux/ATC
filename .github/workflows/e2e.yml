@@ -5,6 +5,13 @@ on:
     branches:
       - dev
       - "release/*"
+    # Doc-only PRs (every changed path a doc) skip the ~20-min Playwright suite.
+    # Safe because E2E is not a required status check, so a non-run never strands
+    # the PR. paths-ignore skips the run only when ALL changed paths match.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "specs/**"
 
 jobs:
   e2e:

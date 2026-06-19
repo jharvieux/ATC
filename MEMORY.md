@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-270 — 2026-06-19 — PR gate streamlined: doc-only skip, audit gates on comments-only, agents run after CI, ci.yml guards now required
+
+The PR pipeline was slow/noisy and had an enforcement gap. Five coordinated changes (one PR, branch `feature/ci-doc-skip-audit-streamline`):
+
+- **Doc-only PRs skip the machine.** Non-required workflows `e2e.yml` (the ~20-min Playwright suite) and `codeql.yml` get `paths-ignore: ['**.md','docs/**','specs/**']` — safe because they aren't required checks (a non-run can't strand the PR). The **required** jobs can't use `paths-ignore` (a never-reported required check hangs the PR), so `deploy.yml` got a fast `detect-changes` job and each of its 8 PR-CI jobs gained `if: github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true'`. `ci.yml` got the same `detect-changes` + job-level gate. A doc-only PR skips all heavy jobs; **skipped required jobs are reported as passing by branch protection**, so the PR stays mergeable.
+
+- **Audit gate is now comments-only.** Removed the `## Audit` PR-body enforcement step from `pr-audit-section-check.yml` (the standalone-`Status:`/≥50-char/no-`TBD` checks that failed merges for formatting, not safety). The load-bearing guarantee — both subagents ran on the EXACT current diff — was always the hash-bound marker comments; that step stays. `pre-pr-reviewer` now writes the combined `## Audit` body itself (reads d091's posted comment, upserts a `<!-- audit-body:start/end -->` block via `gh pr edit`); the body is advisory.
+
+- **Agents run LAST, after required CI is green** (CLAUDE.md "Pull requests" rewrite). Stops an unrelated lint/type fix from re-staling the audit and forcing a second full agent run.
+
+- **Closed the guard gap (#guard-gap):** `ci.yml` ran security-relevant guards (`check:permission-matrix`, `check:d091`, dropped/static column readers, ambiguous embeds) + the only PR-time `build`, but was **not a required check** — a PR could merge with them red. De-duped its redundant `pnpm -r lint`/`typecheck` (covered by deploy.yml's required Lint/Typecheck), renamed the job to **`Guards & Build`**, and (after verification) added that context to `dev` branch protection.
+
+**Rejected:** (a) gating on the PR body — it adds failure modes without real assurance (could be fabricated without running the agents); (b) `paths-ignore` on required jobs — would strand doc PRs on a never-reported required check; (c) keeping `ci.yml` non-required — leaves the guard suite unenforced.
+
+**Deviation from approved plan:** plan had `ci.yml` use in-job *step*-gating as a skip-semantics-independent fallback; implemented as *job-level* skip (same as deploy.yml) for consistency, since the one throwaway-doc-PR verification covers all required jobs and if skip≠pass the doc PR is stranded regardless of ci.yml's mechanism. If verification shows skip≠pass, convert all required jobs to step-gating.
+
+**Verification gate (must hold before the branch-protection PATCH):** a throwaway doc-only PR must show the skipped required jobs as green and the PR mergeable. **Artifacts:** `.github/workflows/{ci,deploy,e2e,codeql,pr-audit-section-check}.yml`, `.claude/agents/pre-pr-reviewer.md`, CLAUDE.md "Pull requests", plan `twinkling-forging-waffle.md`.
+
+---
+
 ## D-269 — 2026-06-18 — #1190 tenant_settings closes out the issue; 34 baselined exceptions → 0 genuine (1 documented FP)
 
 Final #1190 item, both per-user decisions:

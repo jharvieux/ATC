@@ -455,9 +455,11 @@ If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-ex
 1. The work is complete (not a WIP).
 1. The merge isn’t into a protected release branch.
 
-**Mandatory `## Audit` section in every PR description.**
+**Mandatory hash-bound audit comments on every PR.**
 
-The `pr-audit-section-check` workflow requires BOTH a `## Audit` section in the PR body AND marker-stamped PR comments from each agent, **bound to the PR's current diff by hash** (#924 / D-200). Each agent embeds `diff:<sha256>` in its marker (`<!-- d091-audit:v1 diff:<hash> -->`, `<!-- prepr-audit:v1 diff:<hash> -->`), where the hash covers the PR's effective diff (sorted filename+patch pairs from the PR files API). The check recomputes the hash and passes only if a marker comment with the matching hash exists — comment timestamps are irrelevant. The agents post those comments themselves — do not post them manually.
+The `pr-audit-section-check` workflow gates on ONE thing: a marker-stamped PR comment from each agent, **bound to the PR's current diff by hash** (#924 / D-200; body-section enforcement removed D-2xx). Each agent embeds `diff:<sha256>` in its marker (`<!-- d091-audit:v1 diff:<hash> -->`, `<!-- prepr-audit:v1 diff:<hash> -->`), where the hash covers the PR's effective diff (sorted filename+patch pairs from the PR files API). The check recomputes the hash and passes only if a marker comment with the matching hash exists — comment timestamps are irrelevant. The agents post those comments themselves — do not post them manually.
+
+The PR-body `## Audit` block is **no longer gated**. `pre-pr-reviewer` writes it into the body automatically (combining both agents' findings); it's there for the user to read, not for CI. Don't hand-craft it, and don't let a missing/short/"TBD" body block worry you — only the hash-bound comments matter.
 
 What hash binding means in practice:
 
@@ -466,14 +468,15 @@ What hash binding means in practice:
 - **Editing the PR body re-triggers the check** (the workflow listens for `edited` events) — never push a no-op commit to refresh it. Empty commits are also walked over by the check, so they neither help nor hurt.
 - A legacy timestamp fallback still accepts pre-hash-era comments during the transition; its removal is tracked in #926. New audits always carry the hash.
 
-**Workflow (order matters):**
+**Workflow (order matters). Run the agents LAST — after required CI is green:**
 
 1. `pnpm verify` passes — clean typecheck, lint, tests, slop-check.
 2. Push the branch.
-3. **Open the PR first** (`gh pr create`) with a `## Audit` placeholder block in the body.
-4. **Then run both audit agents** (they resolve the PR number from the branch and self-post their marker comments):
-   - Invoke `d091-reviewer` for D-091 anti-pattern coverage.
-   - Invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
+3. **Open the PR** (`gh pr create`). No `## Audit` block needed — `pre-pr-reviewer` writes it.
+4. **Wait for the required CI checks to go green** (`Typecheck`, `Lint`, `Test`, `Guards & Build`, the security/contract jobs). If any fail, fix + push and let them re-run. Get CI clean BEFORE running the agents — this is the key change: it stops an unrelated lint/type fix from re-staling the audit and forcing a second full agent run.
+5. **Then run both audit agents** (they resolve the PR number from the branch, self-post their hash-bound marker comments, and `pre-pr-reviewer` writes the `## Audit` body):
+   - Invoke `d091-reviewer` FIRST for D-091 anti-pattern coverage.
+   - Then invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091. (It reads d091's comment to build the combined body, so order matters.)
 
    **Model selection.** Default is Sonnet. Override to Opus on the FIRST audit run (pass `model: "opus"` on the Agent tool call) when ANY of these apply:
    - Diff ≥ 10 files OR ≥ 500 net-added lines.
@@ -484,14 +487,13 @@ What hash binding means in practice:
 
    Re-runs after fix-commits use Sonnet, even if the original first-run used Opus — re-runs are checking known patterns, not exploring new surface area. Exception: if the fix-commit itself introduced one of the triggers above (rare), use Opus again.
 
-5. If either agent reports findings, fix them, push, and re-run that agent (its fresh comment embeds the new diff hash; the old comment's stale hash no longer matches and is ignored by the check).
-6. Update the `## Audit` block in the PR body with the combined findings summary and a standalone `Status:` line.
-7. Wait for CI to complete. If all checks pass, merge (squash merge by default). Delete the feature branch after merge.
+6. If either agent reports findings, fix them, push, **let CI go green again**, then re-run that agent (its fresh comment embeds the new diff hash; the old comment's stale hash no longer matches and is ignored by the check). You do NOT touch the `## Audit` body by hand — the agent rewrites it.
+7. Once all checks pass, merge (squash merge by default). Delete the feature branch after merge.
 
 The check is required to merge. **You cannot bypass it.** Two exemptions:
 
 - **Dependabot PRs** — version bumps with no code logic.
-- **Doc-only PRs** — every changed file matches `*.md`, `docs/**`, or `specs/**`. The workflow detects this automatically and short-circuits to success. Don't run the audit agents on these PRs — skip steps 4–6 of the workflow above and merge once non-audit checks pass. A single non-doc file in the diff disqualifies the PR from the exemption.
+- **Doc-only PRs** — every changed file matches `*.md`, `docs/**`, or `specs/**`. The audit check short-circuits to success, and the heavy workflows now skip too: `e2e`/CodeQL don't trigger at all, and the required `deploy.yml` jobs + `Guards & Build` skip via a `detect-changes` gate (skipped required jobs report as passing). Don't run the audit agents on doc-only PRs — merge once the (fast) checks settle. A single non-doc file in the diff disqualifies the PR from the exemption.
 
 **You may NOT:**
 

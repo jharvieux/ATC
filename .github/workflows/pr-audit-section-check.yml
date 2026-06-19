@@ -2,27 +2,28 @@
 # d091-reviewer and pre-pr-reviewer subagents — and that the audit
 # reflects the current head commit, not a stale earlier state.
 #
-# Two layers of evidence:
+# The gate is a single layer of evidence: hash-bound PR comments.
 #
-#   Layer 1 — PR body: `## Audit` block with a Status line. This is the
-#   human-readable summary the maintainer reads when reviewing the PR.
+#   Both subagents post their full report as a PR comment with a stable
+#   marker (`<!-- d091-audit:v1 diff:<hash> -->` and
+#   `<!-- prepr-audit:v1 diff:<hash> -->`). The `diff:<hash>` value is a
+#   sha256 of the PR's current effective diff (sorted filename+patch pairs).
+#   The check recomputes the hash from the PR files API and passes iff a
+#   marker comment with the matching hash exists — timestamps are
+#   irrelevant, so update-branch merge commits never stale the audit, while
+#   any commit that changes the effective diff requires a fresh audit.
 #
-#   Layer 2 — PR comments: both subagents post their full report as a
-#   PR comment with a stable marker (`<!-- d091-audit:v1 diff:<hash> -->`
-#   and `<!-- prepr-audit:v1 diff:<hash> -->`). The `diff:<hash>` value
-#   is a sha256 of the PR's current effective diff (sorted filename+patch
-#   pairs). The check recomputes the hash from the PR files API and passes
-#   iff a marker comment with the matching hash exists — timestamps become
-#   irrelevant, so update-branch merge commits never stale the audit.
+# This is the load-bearing guarantee: it forces the maintainer to either
+# invoke the subagent OR consciously type a fake comment. (The scheme isn't
+# unforgeable — any collaborator could paste the marker manually — but it
+# raises the bar well above editing prose.)
 #
-#
-# Layer 2 is the load-bearing part — Layer 1 alone could be fabricated
-# in the PR body without ever running the subagents. The marker-on-comment
-# scheme isn't unforgeable (any collaborator could post the marker
-# manually), but it does force the maintainer to either invoke the
-# subagent OR consciously type a fake comment — versus the current
-# Layer 1 where pasting text into the body is the path of least
-# resistance.
+# The PR-body `## Audit` block is NO LONGER ENFORCED here (was "Layer 1").
+# It was only a human-readable summary and a frequent source of
+# non-substantive failures (missing Status: line, <50 chars, TBD), and it
+# added no real assurance — it could be fabricated without running the
+# agents. The pre-pr-reviewer now writes that summary into the body itself;
+# it is advisory, not gated.
 #
 # Exemptions:
 #   - dependabot[bot] — version-only PRs, no code logic to review
@@ -117,65 +118,13 @@ jobs:
             echo "is_doc_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify ## Audit section is present and non-trivial
-        if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
-        env:
-          BODY: ${{ github.event.pull_request.body }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${BODY:-}" ]; then
-            echo "::error::PR body is empty — no Audit section."
-            echo ""
-            echo "Per CLAUDE.md, every PR description must include an '## Audit' block."
-            echo "Run d091-reviewer + pre-pr-reviewer subagents and paste their combined"
-            echo "output into the PR body under an '## Audit' heading."
-            exit 1
-          fi
-
-          # Extract from "## Audit" to next "## " (or EOF).
-          # awk: print lines between the marker and the next h2.
-          SECTION=$(printf '%s' "$BODY" | awk '
-            BEGIN { capture = 0 }
-            /^## Audit/ { capture = 1; next }
-            /^## / && capture { capture = 0 }
-            capture { print }
-          ')
-
-          if [ -z "$SECTION" ]; then
-            echo "::error::No '## Audit' section found in PR body."
-            echo ""
-            echo "Add an '## Audit' heading + the d091-reviewer + pre-pr-reviewer output."
-            echo "See CLAUDE.md 'Pull requests' for the mandatory format."
-            exit 1
-          fi
-
-          # TBD / placeholder rejection.
-          if printf '%s' "$SECTION" | grep -qiE "^[[:space:]]*(tbd|todo|to be done|n/a)[[:space:]]*$"; then
-            echo "::error::Audit section is a TBD placeholder — actually run the audit."
-            exit 1
-          fi
-
-          # Must contain a Status line — the subagent always emits one.
-          if ! printf '%s' "$SECTION" | grep -qE "^[[:space:]]*\*?\*?Status\*?\*?[[:space:]]*:"; then
-            echo "::error::Audit section is missing a 'Status:' line."
-            echo ""
-            echo "The pre-pr-reviewer subagent emits a Status line (e.g."
-            echo "'Status: clean — no findings' or 'Status: 2 must-fix')."
-            echo "Make sure you pasted the full subagent output, not just notes."
-            exit 1
-          fi
-
-          # Non-trivial content: at least 50 chars after the heading.
-          CHAR_COUNT=$(printf '%s' "$SECTION" | wc -c | tr -d ' ')
-          if [ "$CHAR_COUNT" -lt 50 ]; then
-            echo "::error::Audit section is too short ($CHAR_COUNT chars) — actually paste the audit output."
-            exit 1
-          fi
-
-          echo "✓ Audit section present (chars=$CHAR_COUNT)"
-          printf '%s' "$SECTION" | head -20
-
+      # NOTE (D-2xx): the PR-body "## Audit" section is no longer enforced here.
+      # The load-bearing guarantee — both subagents ran on the EXACT current diff —
+      # lives entirely in the hash-bound marker comments checked by the step below.
+      # The body block was only a human-readable summary and a frequent source of
+      # non-substantive failures (missing Status: line, <50 chars, TBD). The
+      # pre-pr-reviewer now writes that summary into the body itself; it's advisory,
+      # not gated. See CLAUDE.md "Pull requests".
       - name: Verify both subagent comments are bound to the current diff (hash-first, timestamp fallback)
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:
