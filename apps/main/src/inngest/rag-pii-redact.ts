@@ -19,7 +19,7 @@
 import { z } from "zod";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { detectZeroTolerancePII } from "@/lib/rag-ingest/pii-regex-prefilter";
+import { detectZeroTolerancePII, type ZeroToleranceCategory } from "@/lib/rag-ingest/pii-regex-prefilter";
 import { computeAggregation, type AggregationState } from "@/lib/rag-ingest/pii-quarantine-aggregator";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -56,83 +56,106 @@ URLs, prices, dates, ship names, port names. Do not summarize or rephrase.
 
 Output ONLY the redacted text. No explanation, no JSON, no code fences.`;
 
+export interface RedactSubmissionInput {
+  db: ReturnType<typeof createServiceRoleClient>;
+  tenant_id: string;
+  submission_id: string;
+}
+
+export type RedactSubmissionResult =
+  | { skipped: true; reason: string }
+  | { ok: false; reason: string }
+  | { ok: true; quarantined: true; categories: ZeroToleranceCategory[] }
+  | { ok: true; enqueued: true; request_id: string };
+
+// §22.4 Stage 2 core. Extracted from the Inngest handler so the zero-tolerance
+// quarantine gate is unit-testable: zero-tolerance PII (SSN / credit card /
+// passport) MUST quarantine and MUST NOT reach the Haiku enqueue. Empty content
+// quarantines; clean content enqueues for tolerable-PII redaction.
+export async function redactSubmission({
+  db,
+  tenant_id,
+  submission_id,
+}: RedactSubmissionInput): Promise<RedactSubmissionResult> {
+  // §15.16 — Skip past-grace tenants.
+  const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
+  if (!paymentCheck.ok) {
+    console.info("[rag-pii-redact] skipping past-grace tenant", { tenant_id, submission_id, reason: paymentCheck.reason });
+    return { skipped: true, reason: paymentCheck.reason ?? "past_grace" };
+  }
+
+  const { data: sub } = await db
+    .from("rag_submissions")
+    .select("extracted_content")
+    .eq("id", submission_id)
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+
+  const row = sub as { extracted_content: string | null } | null;
+  if (!row?.extracted_content) {
+    await safeAwait(db
+      .from("rag_submissions")
+      .update({
+        pii_redaction_status: "quarantined",
+        quarantine_categories: ["empty_content"],
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", submission_id), "rag_submissions.update");
+    return { ok: false, reason: "no_extracted_content" };
+  }
+
+  const content = row.extracted_content;
+  const regex = detectZeroTolerancePII(content);
+
+  if (regex.detected) {
+    await safeAwait(db
+      .from("rag_submissions")
+      .update({
+        pii_redaction_status: "quarantined",
+        quarantine_categories: regex.categories,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", submission_id), "rag_submissions.update");
+
+    await runAggregationAndAlert(db, tenant_id, regex.categories, submission_id);
+    return { ok: true, quarantined: true, categories: regex.categories };
+  }
+
+  // §27.12 — Enqueue Stage 2 (tolerable-PII Haiku redaction) into the
+  // batch pipeline. The submission stays at pii_redaction_status='pending'
+  // until the consumer (ragPiiRedactFromBatchResult) lands and writes
+  // the final status.
+  const { request_id } = await enqueueBatchRequest({
+    tenant_id,
+    purpose: "rag_pii_redaction",
+    request_params: {
+      model: HAIKU_MODEL,
+      max_tokens: Math.max(1024, Math.min(content.length * 2, 16000)),
+      system: REDACTION_PROMPT,
+      messages: [{ role: "user", content }],
+    },
+    caller_metadata: {
+      tenant_id,
+      submission_id,
+    },
+    db,
+  });
+
+  console.info("[rag-pii-redact] enqueued submission=%s request=%s", submission_id, request_id);
+  return { ok: true, enqueued: true, request_id };
+}
+
 export const ragPiiRedact = inngest.createFunction(
   {
     id: "rag-pii-redact",
     triggers: [{ event: "rag.submission_ready_for_pii_redaction" }],
   },
-  async ({ event }) => {
-    const submission_id = event.data.submission_id as string;
-    const tenant_id = event.data.tenant_id as string;
-    const db = createServiceRoleClient();
-
-    // §15.16 — Skip past-grace tenants.
-    const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
-    if (!paymentCheck.ok) {
-      console.info("[rag-pii-redact] skipping past-grace tenant", { tenant_id, submission_id, reason: paymentCheck.reason });
-      return { skipped: true, reason: paymentCheck.reason };
-    }
-
-    const { data: sub } = await db
-      .from("rag_submissions")
-      .select("extracted_content")
-      .eq("id", submission_id)
-      .eq("tenant_id", tenant_id)
-      .maybeSingle();
-
-    const row = sub as { extracted_content: string | null } | null;
-    if (!row?.extracted_content) {
-      await safeAwait(db
-        .from("rag_submissions")
-        .update({
-          pii_redaction_status: "quarantined",
-          quarantine_categories: ["empty_content"],
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", submission_id), "rag_submissions.update");
-      return { ok: false, reason: "no_extracted_content" };
-    }
-
-    const content = row.extracted_content;
-    const regex = detectZeroTolerancePII(content);
-
-    if (regex.detected) {
-      await safeAwait(db
-        .from("rag_submissions")
-        .update({
-          pii_redaction_status: "quarantined",
-          quarantine_categories: regex.categories,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", submission_id), "rag_submissions.update");
-
-      await runAggregationAndAlert(db, tenant_id, regex.categories, submission_id);
-      return { ok: true, quarantined: true, categories: regex.categories };
-    }
-
-    // §27.12 — Enqueue Stage 2 (tolerable-PII Haiku redaction) into the
-    // batch pipeline. The submission stays at pii_redaction_status='pending'
-    // until the consumer (ragPiiRedactFromBatchResult) lands and writes
-    // the final status.
-    const { request_id } = await enqueueBatchRequest({
-      tenant_id,
-      purpose: "rag_pii_redaction",
-      request_params: {
-        model: HAIKU_MODEL,
-        max_tokens: Math.max(1024, Math.min(content.length * 2, 16000)),
-        system: REDACTION_PROMPT,
-        messages: [{ role: "user", content }],
-      },
-      caller_metadata: {
-        tenant_id,
-        submission_id,
-      },
-      db,
-    });
-
-    console.info("[rag-pii-redact] enqueued submission=%s request=%s", submission_id, request_id);
-    return { ok: true, enqueued: true, request_id };
-  },
+  async ({ event }) =>
+    redactSubmission({
+      db: createServiceRoleClient(),
+      tenant_id: event.data.tenant_id as string,
+      submission_id: event.data.submission_id as string,
+    }),
 );
 
 // ── §27.12 batch consumer ────────────────────────────────────────────────────
