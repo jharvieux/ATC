@@ -61,7 +61,7 @@ type FeeConfigRow = {
 };
 
 // §12.6 host booking fee, locked at submission (§14.3). `flat` is a dollar
-// amount (NUMERIC → cents via toCents); `percent` is a fraction OF THE GROSS
+// amount (NUMERIC dollars → cents via dollarsToCents); `percent` is a fraction OF THE GROSS
 // COMMISSION (not the fare). `none` → 0. `tiered` + minimum_commission_threshold
 // are not yet implemented (#1247) and also resolve to 0 here. ruleRef snapshots
 // which config/override row was applied, for auditable re-derivation.
