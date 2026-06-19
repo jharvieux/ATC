@@ -22,6 +22,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
 
 const TerminationKindEnum = z.enum(["voluntary", "involuntary_content", "involuntary_other"]);
 
@@ -79,6 +80,11 @@ export const tenantOnTerminatedSideEffects = inngest.createFunction(
     const { tenant_id, kind } = parsed.data;
     const db = createServiceRoleClient();
     await onTerminated(db, tenant_id, kind as "voluntary" | "involuntary_content" | "involuntary_other");
+    // Single choke point for ALL termination paths (after-grace finalize,
+    // review-reject, and sub-host SLA monitor all send tenant.terminated → here).
+    // Flip the RAG shadow to 'terminated' so the verifier rejects retrieval for
+    // the cut-off tenant (§15.14.3, which assumes this transition happens).
+    await publishTenantShadowEvent(db, tenant_id, "tenant.terminated");
   },
 );
 

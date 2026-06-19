@@ -77,6 +77,13 @@ function makeUpdateChain(): Record<string, (...a: unknown[]) => unknown> {
   return chain;
 }
 
+// Isolate the RAG shadow emit (it runs its own tenants update; mocking it
+// keeps the update-call count assertions about the cron's own writes).
+const shadowEmitMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock("@/lib/rag-sync/publish-tenant-shadow-event", () => ({
+  publishTenantShadowEvent: shadowEmitMock,
+}));
+
 vi.mock("@/lib/db/platform-admin-client", () => ({
   withPlatformAdminAudit: vi.fn(
     async (
@@ -194,6 +201,9 @@ describe("onboardingStaleSuspend — CAS guard + audit gating", () => {
 
     // Audit fires ONLY for the row that actually transitioned.
     expect(auditInsertSpy).toHaveBeenCalledTimes(1);
+    // ...and that same row is announced to RAG so retrieval is cut off.
+    expect(shadowEmitMock).toHaveBeenCalledTimes(1);
+    expect(shadowEmitMock).toHaveBeenCalledWith(expect.anything(), "t-stuck-1", "tenant.status_changed");
     const auditPayload = auditInsertSpy.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(auditPayload.tenant_id).toBe("t-stuck-1");
     expect(auditPayload.action).toBe("tenant.auto_suspended_stale_onboarding");

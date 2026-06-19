@@ -19,6 +19,11 @@ const mocks = vi.hoisted(() => ({
   tenantUpdate: vi.fn(),
   slugCheckMaybeSingle: vi.fn(),
   progressTo: vi.fn(),
+  publishShadow: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/lib/rag-sync/publish-tenant-shadow-event", () => ({
+  publishTenantShadowEvent: mocks.publishShadow,
 }));
 
 vi.mock("@/lib/auth/assert-permission", async () => {
@@ -115,6 +120,8 @@ describe("POST /api/onboarding/profile", () => {
     const res = await POST(makeReq(VALID_BODY));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, next_stage: "legal" });
+    // display_name change is mirrored to RAG's shadow registry.
+    expect(mocks.publishShadow).toHaveBeenCalledWith(expect.anything(), TENANT_ID, "tenant.metadata_updated");
   });
 
   it("advances stage through profile then legal", async () => {
