@@ -48,9 +48,14 @@ export async function collectUserDbExport(
     )
     .eq("auth_user_id", auth_user_id);
 
-  const usersId = (userRows?.[0] as { id?: string } | undefined)?.id ?? null;
+  // users is UNIQUE(tenant_id, auth_user_id) — one auth identity can have a row
+  // per tenant it's a member of. Disclose bookings/conversations across ALL of
+  // them (CCPA = the user's full record), keyed on every matching users.id.
+  const userIds = ((userRows ?? []) as Array<{ id?: string }>)
+    .map((r) => r.id)
+    .filter((id): id is string => typeof id === "string");
 
-  const [{ data: convRows }, { data: bookingRows }] = usersId
+  const [{ data: convRows }, { data: bookingRows }] = userIds.length
     ? await Promise.all([
         db
           .from("conversations")
@@ -58,7 +63,7 @@ export async function collectUserDbExport(
             "id, status, active_persona_id, first_message_at, last_message_at, " +
               "message_count, created_at, updated_at",
           )
-          .eq("user_id", usersId),
+          .in("user_id", userIds),
         db
           .from("bookings")
           // #1190: real columns — bookings has no source/booked_at/sailed_at.
@@ -67,7 +72,7 @@ export async function collectUserDbExport(
               "total_amount_cents, currency, confirmed_at, submitted_at, " +
               "cancelled_at, created_at, updated_at",
           )
-          .eq("user_id", usersId),
+          .in("user_id", userIds),
       ])
     : [{ data: [] }, { data: [] }];
 

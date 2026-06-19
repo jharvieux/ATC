@@ -3,14 +3,16 @@
 // The bug: the export keyed bookings + conversations on auth_user_id, but those
 // tables link by user_id (= users.id). So every export returned zero bookings
 // and zero conversations. The fix resolves users.id first, then queries by
-// user_id; legal_consents keeps auth_user_id (it has that column). This pins
+// user_id; legal_consents keeps auth_user_id (it has that column). users is
+// UNIQUE(tenant_id, auth_user_id), so one identity can have a row per tenant —
+// the export discloses across ALL of them via .in(user_id, [...]). This pins
 // the linkage and the corrected column allowlists — a revert silently empties
 // a user's CCPA export.
 
 import { describe, it, expect } from "vitest";
 import { collectUserDbExport } from "@/inngest/user-data-export-build";
 
-type Call = { table: string; select?: string; col?: string; val?: unknown };
+type Call = { table: string; select?: string; op?: "eq" | "in"; col?: string; val?: unknown; vals?: unknown };
 
 function makeDb(rowsByTable: Record<string, unknown[]>, calls: Call[]) {
   return {
@@ -18,10 +20,15 @@ function makeDb(rowsByTable: Record<string, unknown[]>, calls: Call[]) {
       return {
         select(cols: string) {
           calls.push({ table, select: cols });
+          const result = Promise.resolve({ data: rowsByTable[table] ?? [] });
           return {
             eq(col: string, val: unknown) {
-              calls.push({ table, col, val });
-              return Promise.resolve({ data: rowsByTable[table] ?? [] });
+              calls.push({ table, op: "eq", col, val });
+              return result;
+            },
+            in(col: string, vals: unknown) {
+              calls.push({ table, op: "in", col, vals });
+              return result;
             },
           };
         },
@@ -45,17 +52,31 @@ describe("collectUserDbExport (#1190)", () => {
 
     const result = await collectUserDbExport(db, "auth-xyz");
 
-    const eqCalls = calls.filter((c) => c.col !== undefined);
-    expect(eqCalls).toContainEqual({ table: "users", col: "auth_user_id", val: "auth-xyz" });
+    const ops = calls.filter((c) => c.op !== undefined);
+    expect(ops).toContainEqual({ table: "users", op: "eq", col: "auth_user_id", val: "auth-xyz" });
     // The core fix: bookings + conversations key on the RESOLVED user_id,
     // never auth_user_id (which is not a column on those tables).
-    expect(eqCalls).toContainEqual({ table: "conversations", col: "user_id", val: "user-uuid-1" });
-    expect(eqCalls).toContainEqual({ table: "bookings", col: "user_id", val: "user-uuid-1" });
-    expect(eqCalls).toContainEqual({ table: "legal_consents", col: "auth_user_id", val: "auth-xyz" });
+    expect(ops).toContainEqual({ table: "conversations", op: "in", col: "user_id", vals: ["user-uuid-1"] });
+    expect(ops).toContainEqual({ table: "bookings", op: "in", col: "user_id", vals: ["user-uuid-1"] });
+    expect(ops).toContainEqual({ table: "legal_consents", op: "eq", col: "auth_user_id", val: "auth-xyz" });
 
     expect(result.bookings).toEqual([{ id: "b1" }]);
     expect(result.conversations).toEqual([{ id: "c1" }]);
     expect(result.legal_consents).toEqual([{ id: "lc1", document_type: "tos" }]);
+  });
+
+  it("discloses across all of a multi-tenant identity's users.id rows", async () => {
+    const calls: Call[] = [];
+    const db = makeDb(
+      { users: [{ id: "uid-a" }, { id: "uid-b" }], conversations: [], bookings: [], legal_consents: [] },
+      calls,
+    );
+
+    await collectUserDbExport(db, "auth-multi");
+
+    const ops = calls.filter((c) => c.op === "in");
+    expect(ops).toContainEqual({ table: "bookings", op: "in", col: "user_id", vals: ["uid-a", "uid-b"] });
+    expect(ops).toContainEqual({ table: "conversations", op: "in", col: "user_id", vals: ["uid-a", "uid-b"] });
   });
 
   it("selects the corrected columns — no non-existent source/doc_type/accepted_at", async () => {
