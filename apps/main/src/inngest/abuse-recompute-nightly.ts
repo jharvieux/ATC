@@ -150,12 +150,9 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
             .gte("created_at", periodStartIso)
             .lt("created_at", periodEndIso)
             .limit(50000);
-          let aiTrue = 0n;
-          for (const r of ((aiSumRows ?? []) as Array<{ cost_estimate_cents: string | number }>)) {
-            aiTrue += BigInt(r.cost_estimate_cents);
-          }
+          const aiTrue = sumCostCents((aiSumRows ?? []) as Array<{ cost_estimate_cents: string | number }>);
           const aiRt = BigInt(rt?.ai_cost_cents ?? 0);
-          if (rt && (aiTrue > aiRt ? aiTrue - aiRt : aiRt - aiTrue) > 1n) {
+          if (rt && driftExceedsTolerance(aiRt, aiTrue, 1n)) {
             await safeAwait(db.from("tenant_usage_metrics").update({ ai_cost_cents: aiTrue.toString() }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({ tenant_id: t.id, dimension: "ai_cost", real_time_value: aiRt, recomputed_value: aiTrue });
           }
@@ -171,7 +168,7 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
             .limit(50000);
           const chatTrue = Array.isArray(chatCountRows) ? chatCountRows.length : 0;
           const chatRt = rt?.chat_messages_count ?? 0;
-          if (rt && Math.abs(chatTrue - chatRt) > 0) {
+          if (rt && driftExceedsTolerance(BigInt(chatRt), BigInt(chatTrue), 0n)) {
             await safeAwait(db.from("tenant_usage_metrics").update({ chat_messages_count: chatTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({
               tenant_id: t.id,
@@ -190,10 +187,10 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
             .lt("created_at", periodEndIso)
             .limit(50000);
           const emailTrue = Array.isArray(emailCountRows)
-            ? emailCountRows.filter((r: { status: string }) => r.status !== "suppressed" && r.status !== "failed").length
+            ? countDeliverableEmails(emailCountRows as Array<{ status: string }>)
             : 0;
           const emailRt = rt?.email_sent_count ?? 0;
-          if (rt && Math.abs(emailTrue - emailRt) > 0) {
+          if (rt && driftExceedsTolerance(BigInt(emailRt), BigInt(emailTrue), 0n)) {
             await safeAwait(db.from("tenant_usage_metrics").update({ email_sent_count: emailTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({
               tenant_id: t.id,
@@ -213,7 +210,7 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
             .limit(50000);
           const inviteTrue = Array.isArray(inviteRows) ? inviteRows.length : 0;
           const inviteRt = rt?.group_invitees_count ?? 0;
-          if (rt && Math.abs(inviteTrue - inviteRt) > 0) {
+          if (rt && driftExceedsTolerance(BigInt(inviteRt), BigInt(inviteTrue), 0n)) {
             await safeAwait(db.from("tenant_usage_metrics").update({ group_invitees_count: inviteTrue }).eq("id", rt.id), "tenant_usage_metrics.update");
             drifts.push({
               tenant_id: t.id,
@@ -246,12 +243,8 @@ export async function runAbuseRecomputeNightly(): Promise<unknown> {
           const promotedRt = Number(quota?.promoted_chunks_count ?? 0);
           const chunksRt = Number(quota?.current_tenant_chunks_count ?? 0);
           const chunksTrue = ragChunkCounts.get(t.id);
-          const promotedDrifted = Math.abs(promotedTrue - promotedRt) > 0;
-          const chunksDrifted = chunksTrue !== undefined && Math.abs(chunksTrue - chunksRt) > 0;
+          const { promotedDrifted, chunksDrifted, update } = computeRagDrift({ promotedTrue, promotedRt, chunksTrue, chunksRt });
           if (promotedDrifted || chunksDrifted) {
-            const update: { promoted_chunks_count?: number; current_tenant_chunks_count?: number } = {};
-            if (promotedDrifted) update.promoted_chunks_count = promotedTrue;
-            if (chunksDrifted) update.current_tenant_chunks_count = chunksTrue;
             if (quota) {
               await safeAwait(db.from("tenant_rag_quotas").update(update).eq("tenant_id", t.id), "tenant_rag_quotas.update");
             } else {
@@ -310,6 +303,57 @@ export const abuseRecomputeNightly = inngest.createFunction(
   },
   runAbuseRecomputeNightly,
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recompute math (pure — pinned by abuse-recompute-drift-math.test.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Ground-truth AI cost = SUM of ai_call_log.cost_estimate_cents. Accumulated as
+// bigint so large monthly totals never lose precision to Number.
+export function sumCostCents(rows: Array<{ cost_estimate_cents: string | number }>): bigint {
+  let total = 0n;
+  for (const r of rows) total += BigInt(r.cost_estimate_cents);
+  return total;
+}
+
+// Drift gate. Returns true only when |recomputed - realTime| strictly exceeds
+// tolerance. ai_cost uses tolerance=1n (don't churn on sub-cent rounding);
+// the count dimensions use 0n (any difference is real drift).
+export function driftExceedsTolerance(realTime: bigint, recomputed: bigint, tolerance: bigint): boolean {
+  const delta = recomputed > realTime ? recomputed - realTime : realTime - recomputed;
+  return delta > tolerance;
+}
+
+// Deliverable email count = rows that were neither suppressed nor failed.
+// Bounced/sent/queued all count against the volume metric; suppressed + failed
+// never left the building.
+export function countDeliverableEmails(rows: Array<{ status: string }>): number {
+  return rows.filter((r) => r.status !== "suppressed" && r.status !== "failed").length;
+}
+
+// RAG drift decision. promoted_chunks_count is locally authoritative, so any
+// difference is drift. current_tenant_chunks_count is rag-side: when the rag
+// fetch failed, `chunksTrue` is undefined and we leave the stored count ALONE
+// (fail-safe) rather than zeroing it — so chunksDrifted stays false and the
+// column is omitted from the update.
+export function computeRagDrift(args: {
+  promotedTrue: number;
+  promotedRt: number;
+  chunksTrue: number | undefined;
+  chunksRt: number;
+}): {
+  promotedDrifted: boolean;
+  chunksDrifted: boolean;
+  update: { promoted_chunks_count?: number; current_tenant_chunks_count?: number };
+} {
+  const { promotedTrue, promotedRt, chunksTrue, chunksRt } = args;
+  const promotedDrifted = Math.abs(promotedTrue - promotedRt) > 0;
+  const chunksDrifted = chunksTrue !== undefined && Math.abs(chunksTrue - chunksRt) > 0;
+  const update: { promoted_chunks_count?: number; current_tenant_chunks_count?: number } = {};
+  if (promotedDrifted) update.promoted_chunks_count = promotedTrue;
+  if (chunksDrifted) update.current_tenant_chunks_count = chunksTrue;
+  return { promotedDrifted, chunksDrifted, update };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
