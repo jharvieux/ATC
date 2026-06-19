@@ -97,6 +97,15 @@ describe("computeRagDrift", () => {
     expect(r.update).toEqual({});
   });
 
+  // 0 is a legitimate recomputed count (tenant dropped to zero chunks), NOT a
+  // failed fetch — only `undefined` is the fetch-failed sentinel. Guards the
+  // `!== undefined` check against a mutation to `!= null` / `!== null`.
+  it("chunksTrue=0 with a non-zero stored count is real drift", () => {
+    const r = computeRagDrift({ promotedTrue: 3, promotedRt: 3, chunksTrue: 0, chunksRt: 5 });
+    expect(r.chunksDrifted).toBe(true);
+    expect(r.update).toEqual({ current_tenant_chunks_count: 0 });
+  });
+
   it("undefined chunksTrue still allows promoted drift to be corrected", () => {
     const r = computeRagDrift({ promotedTrue: 9, promotedRt: 3, chunksTrue: undefined, chunksRt: 40 });
     expect(r.promotedDrifted).toBe(true);
