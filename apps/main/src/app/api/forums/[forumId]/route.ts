@@ -4,7 +4,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { canModerate } from "@/lib/forums/permissions";
+import { canModerate, forumCoordinatorId } from "@/lib/forums/permissions";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 
@@ -16,7 +16,8 @@ export async function PATCH(req: Request, props: { params: Promise<{ forumId: st
 
     const { data: forum } = await svc
       .from("forums")
-      .select("*")
+      // #1190: coordinator lives on the linked group, not on forums.
+      .select("*, groups(coordinator_user_id)")
       .eq("id", params.forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
@@ -25,7 +26,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ forumId: st
     const userPerms = {
       id: user.id,
       role: "member",
-      is_coordinator: forum.coordinator_user_id === user.id,
+      is_coordinator: forumCoordinatorId(forum) === user.id,
     };
 
     if (!canModerate({ user: userPerms, forum })) {

@@ -15,7 +15,6 @@ bookings.customer_name # pre-existing violation — tracked in #1190; may be on 
 bookings.group_id # pre-existing violation — tracked in #1190; FK col is group_booking_id not group_id
 bookings.passenger_contact_email # pre-existing violation — tracked in #1190; may be on contacts table
 bookings.source # pre-existing violation — tracked in #1190; may be on conversations not bookings
-forums.coordinator_user_id # pre-existing violation — tracked in #1190
 host_booking_fee_configs.fee_cents # pre-existing violation — tracked in #1190
 host_booking_fee_configs.fee_rate # pre-existing violation — tracked in #1190
 host_booking_fee_configs.rule_ref # pre-existing violation — tracked in #1190

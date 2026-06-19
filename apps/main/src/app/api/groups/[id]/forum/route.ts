@@ -8,6 +8,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { forumCoordinatorId } from "@/lib/forums/permissions";
 
 export async function GET(
   req: Request,
@@ -20,7 +21,8 @@ export async function GET(
 
     const { data: forum, error } = await db
       .from("forums")
-      .select("id, is_locked, coordinator_user_id")
+      // #1190: coordinator lives on the linked group, not on forums.
+      .select("id, is_locked, groups(coordinator_user_id)")
       .eq("group_id", groupId)
       .maybeSingle();
 
@@ -30,7 +32,7 @@ export async function GET(
     return Response.json({
       forum_id: forum.id,
       is_locked: forum.is_locked,
-      is_coordinator: forum.coordinator_user_id === user.id,
+      is_coordinator: forumCoordinatorId(forum) === user.id,
     });
   } catch (err) {
     return respondToAuthError(err);

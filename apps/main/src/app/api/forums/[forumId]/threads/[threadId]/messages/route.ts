@@ -17,7 +17,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { canPost } from "@/lib/forums/permissions";
+import { canPost, forumCoordinatorId } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { inngest } from "@/inngest/client";
 import { verifyEnvAtBoot } from "@/lib/env";
@@ -37,14 +37,15 @@ export async function GET(req: Request, { params }: RouteProps): Promise<Respons
 
     const { data: forum, error: forumErr } = await svc
       .from("forums")
-      .select("coordinator_user_id, tenant_id")
+      // #1190: coordinator lives on the linked group, not on forums.
+      .select("tenant_id, groups(coordinator_user_id)")
       .eq("id", forumId)
       .eq("tenant_id", ctx.tenant_id)
       .maybeSingle();
     if (forumErr) return dbErrorResponse(forumErr);
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
-    const isCoordinator = forum.coordinator_user_id === user.id;
+    const isCoordinator = forumCoordinatorId(forum) === user.id;
 
     // Build base query; apply status filter before .order() so the Supabase
     // builder chain terminates cleanly regardless of coordinator status.
@@ -155,8 +156,8 @@ export async function POST(
 
     const { forumId, threadId } = params;
 
-    // Load forum + thread
-    const { data: forum } = await svc.from("forums").select("*").eq("id", forumId).eq("tenant_id", ctx.tenant_id).single();
+    // Load forum + thread (#1190: coordinator lives on the linked group).
+    const { data: forum } = await svc.from("forums").select("*, groups(coordinator_user_id)").eq("id", forumId).eq("tenant_id", ctx.tenant_id).single();
     if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
 
     // D-091 Pattern 5 — add tenant_id filter (forum_id was already filtered
@@ -214,7 +215,7 @@ export async function POST(
     const userPerms = {
       id: user.id,
       role: "member",
-      is_coordinator: forum.coordinator_user_id === user.id,
+      is_coordinator: forumCoordinatorId(forum) === user.id,
     };
 
     if (!canPost({ user: userPerms, forum, thread, muteState, invitation })) {

@@ -4,7 +4,7 @@
 // invitees spam threads. Coordinator-only actions must never allow invitees.
 
 import { describe, it, expect } from "vitest";
-import { canPost, canModerate } from "@/lib/forums/permissions";
+import { canPost, canModerate, forumCoordinatorId } from "@/lib/forums/permissions";
 
 const regularUser = { id: "u1", role: "customer", is_coordinator: false };
 const coordinator = { id: "u2", role: "customer", is_coordinator: true };
@@ -76,5 +76,36 @@ describe("canModerate — §19.2", () => {
 
   it("regular user cannot moderate", () => {
     expect(canModerate({ user: regularUser, forum: openForum })).toBe(false);
+  });
+});
+
+// #1190: forums has no coordinator_user_id column — it lives on the linked group
+// (forums.group_id → groups), embedded as groups(coordinator_user_id). A
+// forward-FK embed can come back as an object OR a single-element array
+// (supabase-js is inconsistent — see q/[token]/page.tsx), so both must resolve.
+// If this normalization breaks, every forum coordinator check silently returns
+// false and coordinators lose moderation — the exact bug #1190 fixed.
+describe("forumCoordinatorId — group-embedded coordinator (#1190)", () => {
+  it("reads the coordinator when the embed is a to-one object", () => {
+    expect(forumCoordinatorId({ groups: { coordinator_user_id: "u2" } })).toBe("u2");
+  });
+
+  it("reads the coordinator when the embed is a single-element array", () => {
+    expect(forumCoordinatorId({ groups: [{ coordinator_user_id: "u2" }] })).toBe("u2");
+  });
+
+  it("returns null when the group/coordinator is absent (no false coordinator match)", () => {
+    expect(forumCoordinatorId(null)).toBeNull();
+    expect(forumCoordinatorId({})).toBeNull();
+    expect(forumCoordinatorId({ groups: null })).toBeNull();
+    expect(forumCoordinatorId({ groups: [] })).toBeNull();
+    expect(forumCoordinatorId({ groups: { coordinator_user_id: null } })).toBeNull();
+  });
+
+  it("does not equate a null coordinator with a null/undefined user id", () => {
+    // Guards against `undefined === undefined` style false positives in callers.
+    const coordinatorId = forumCoordinatorId({ groups: {} });
+    expect(coordinatorId === "some-user").toBe(false);
+    expect(coordinatorId).toBeNull();
   });
 });

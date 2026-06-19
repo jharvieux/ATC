@@ -7,7 +7,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { canModerate } from "@/lib/forums/permissions";
+import { canModerate, forumCoordinatorId } from "@/lib/forums/permissions";
 import { recordStrike, checkStrikePatterns } from "@/lib/forums/strikes";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
@@ -56,7 +56,8 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
 
     const { data: forum } = await svc
       .from("forums")
-      .select("*")
+      // #1190: coordinator lives on the linked group, not on forums.
+      .select("*, groups(coordinator_user_id)")
       .eq("id", msg.forum_id)
       .eq("tenant_id", ctx.tenant_id)
       .single();
@@ -64,7 +65,7 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     const userPerms = {
       id: user.id,
       role: "member",
-      is_coordinator: forum?.coordinator_user_id === user.id,
+      is_coordinator: forumCoordinatorId(forum) === user.id,
     };
 
     // Coordinator actions — instance check (this specific forum's coordinator).

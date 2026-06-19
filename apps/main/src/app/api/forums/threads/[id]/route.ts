@@ -5,7 +5,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { canModerate } from "@/lib/forums/permissions";
+import { canModerate, forumCoordinatorId } from "@/lib/forums/permissions";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 
@@ -26,12 +26,13 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     // D-091 Pattern 5 — service-role bypasses RLS; filter the cross-table
     // forum lookup by tenant_id too. thread.forum_id was returned with the
     // tenant-scoped thread query above, so the filter is paranoid but cheap.
-    const { data: forum } = await svc.from("forums").select("*").eq("id", thread.forum_id).eq("tenant_id", ctx.tenant_id).single();
+    // #1190: coordinator lives on the linked group, not on forums.
+    const { data: forum } = await svc.from("forums").select("*, groups(coordinator_user_id)").eq("id", thread.forum_id).eq("tenant_id", ctx.tenant_id).single();
 
     const userPerms = {
       id: user.id,
       role: "member",
-      is_coordinator: forum?.coordinator_user_id === user.id,
+      is_coordinator: forumCoordinatorId(forum) === user.id,
     };
 
     if (!canModerate({ user: userPerms, forum: forum ?? { is_locked: false, coordinator_user_id: "" } })) {
