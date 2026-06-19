@@ -26,8 +26,9 @@ export function parseAICallPurposeUnion(src: string): Set<string> {
     const line = lines[i];
     const m = line.match(/\|\s*"([^"]+)"/);
     if (m) members.add(m[1]);
-    // The last union member line ends with `";` — stop there.
-    if (line.trim().endsWith('";')) break;
+    // Match only `| "value";` lines — a `";` inside a comment (e.g.
+    // `// see "foo";`) must not trigger early exit and drop later members.
+    if (/\|\s*"[^"]+";\s*$/.test(line)) break;
   }
   return members;
 }

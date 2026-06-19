@@ -42,11 +42,21 @@ describe("parseAICallPurposeUnion", () => {
     expect(parseAICallPurposeUnion("const x = 42;")).toEqual(new Set());
   });
 
-  it("ignores comments between union members, including comments with semicolons", () => {
+  it("ignores comments with mid-line semicolons", () => {
     const src = `
 export type AICallPurpose =
   | "a"
   // §38 — some note (TA-facing; same posture as other)
+  | "b";
+`;
+    expect(parseAICallPurposeUnion(src)).toEqual(new Set(["a", "b"]));
+  });
+
+  it("does not stop early when a comment line ends with a quoted semicolon", () => {
+    const src = `
+export type AICallPurpose =
+  | "a"
+  // matches the "foo"; pattern
   | "b";
 `;
     expect(parseAICallPurposeUnion(src)).toEqual(new Set(["a", "b"]));
