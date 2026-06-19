@@ -11,9 +11,9 @@
  *
  * Gated by:
  *   - PHASE_2_CUSTOMER_BUG_FLOW_ENABLED env var (false at launch)
- *   - tenant_settings.customer_bug_flow_enabled (default TRUE when
- *     platform flag is TRUE — tenants opt their customers out via
- *     setting this to false; reads at recognizer time)
+ *
+ * (#1190: the per-tenant `tenant_settings.customer_bug_flow_enabled` opt-out was
+ * never migrated and is dropped — the flow is gated by the platform flag only.)
  *
  * The trigger phrases are seeded here and extensible via the
  * platform_settings.bug_intent_phrases JSONB column (operator can refine
@@ -40,7 +40,6 @@ const SEED_PHRASES = [
 
 export interface RecognizerOpts {
   message: string;
-  tenant_id: string;
   db: SupabaseClient;
   /** Caller can pre-load extra phrases from platform_settings if cached;
    *  otherwise the recognizer reads them itself. */
@@ -67,26 +66,12 @@ async function loadExtraPhrases(db: SupabaseClient): Promise<string[]> {
   return [];
 }
 
-async function tenantHasFeatureEnabled(db: SupabaseClient, tenant_id: string): Promise<boolean> {
-  const { data } = await db
-    .from("tenant_settings")
-    .select("customer_bug_flow_enabled")
-    .eq("tenant_id", tenant_id)
-    .maybeSingle();
-  const value = (data as { customer_bug_flow_enabled?: boolean | null } | null)?.customer_bug_flow_enabled;
-  // Default TRUE when platform flag is TRUE — the column may not exist on
-  // existing tenant_settings rows, in which case `value` is undefined and
-  // we treat it as opted-in.
-  return value !== false;
-}
-
 /**
- * Returns true when the message looks like a bug-intent trigger AND both
- * gates pass (platform flag + tenant opt-in).
+ * Returns true when the message looks like a bug-intent trigger AND the
+ * platform flag is enabled.
  *
- * Pure-ish: only touches `platform_settings.bug_intent_phrases` and
- * `tenant_settings.customer_bug_flow_enabled` reads. Caller invokes per
- * customer message; budget the two reads (cheap).
+ * Pure-ish: only touches `platform_settings.bug_intent_phrases`. Caller invokes
+ * per customer message; budget the one read (cheap).
  */
 export async function detectBugIntent(opts: RecognizerOpts): Promise<{
   triggered: boolean;
@@ -94,9 +79,6 @@ export async function detectBugIntent(opts: RecognizerOpts): Promise<{
   offer_message?: string;
 }> {
   if (!env().PHASE_2_CUSTOMER_BUG_FLOW_ENABLED) {
-    return { triggered: false };
-  }
-  if (!(await tenantHasFeatureEnabled(opts.db, opts.tenant_id))) {
     return { triggered: false };
   }
   const haystack = opts.message.toLowerCase();

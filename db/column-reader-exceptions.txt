@@ -12,5 +12,3 @@
 # Remove an entry once the underlying code is corrected or confirmed legitimate.
 
 messages.user_id # CONFIRMED false positive (#1190) — readers select via the embedded `conversations!inner(user_id)`; the gate mis-attributes the embed's column to the base table. Related gate weakness: #1243.
-tenant_settings.customer_bug_flow_enabled # pre-existing violation — tracked in #1190
-tenant_settings.import_auto_accept_threshold # pre-existing violation — tracked in #1190
