@@ -30,18 +30,64 @@ function currentBillingPeriodRange(): string {
   return `[${start},${end})`;
 }
 
-function classifyAbuse(value: bigint, t: { soft1: bigint; soft2: bigint; hard: bigint }): "ok" | "soft1" | "soft2" | "hard" {
+export function classifyAbuse(value: bigint, t: { soft1: bigint; soft2: bigint; hard: bigint }): "ok" | "soft1" | "soft2" | "hard" {
   if (value >= t.hard) return "hard";
   if (value >= t.soft2) return "soft2";
   if (value >= t.soft1) return "soft1";
   return "ok";
 }
 
-function classifyRag(count: number, t: { approaching: number; effective: number }): "ok" | "approaching" | "at_cap" | "over_cap" {
+export function classifyRag(count: number, t: { approaching: number; effective: number }): "ok" | "approaching" | "at_cap" | "over_cap" {
   if (count > t.effective) return "over_cap";
   if (count === t.effective) return "at_cap";
   if (count >= t.approaching) return "approaching";
   return "ok";
+}
+
+export interface AbuseDimensionInput {
+  dim: AbuseDimension;
+  value: bigint;
+  t: { soft1: bigint; soft2: bigint; hard: bigint };
+  state_col: string;
+  changed_col: string;
+  currentState: string;
+}
+
+export interface AbuseTransition {
+  dim: AbuseDimension;
+  from: string;
+  to: string;
+  value: string;
+  threshold: string;
+}
+
+// Recompute core: re-classify each dimension against current thresholds and
+// emit a transition only when the state actually changes. Subscription change
+// is exogenous, so downgrades (e.g. "hard" → "ok" after a tier upgrade) are
+// emitted here too — the monotonic rule only applies inside a stable regime.
+// `nowIso` is injected so the timestamp column is deterministic under test.
+export function computeAbuseTransitions(
+  dimensions: AbuseDimensionInput[],
+  nowIso: string,
+): { updates: Record<string, string>; transitions: AbuseTransition[] } {
+  const updates: Record<string, string> = {};
+  const transitions: AbuseTransition[] = [];
+  for (const d of dimensions) {
+    const newState = classifyAbuse(d.value, d.t);
+    if (newState !== d.currentState) {
+      updates[d.state_col] = newState;
+      updates[d.changed_col] = nowIso;
+      const crossed = newState === "hard" ? d.t.hard : newState === "soft2" ? d.t.soft2 : newState === "soft1" ? d.t.soft1 : 0n;
+      transitions.push({
+        dim: d.dim,
+        from: d.currentState,
+        to: newState,
+        value: d.value.toString(),
+        threshold: crossed.toString(),
+      });
+    }
+  }
+  return { updates, transitions };
 }
 
 export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
@@ -115,18 +161,10 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
             }
           | null;
 
-        const updates: Record<string, string> = {};
-        const transitions: Array<{ dim: AbuseDimension; from: string; to: string; value: string; threshold: string }> = [];
+        const transitions: AbuseTransition[] = [];
 
         if (rt) {
-          const dimensions: Array<{
-            dim: AbuseDimension;
-            value: bigint;
-            t: { soft1: bigint; soft2: bigint; hard: bigint };
-            state_col: string;
-            changed_col: string;
-            currentState: string;
-          }> = [
+          const dimensions: AbuseDimensionInput[] = [
             {
               dim: "ai_cost", value: BigInt(rt.ai_cost_cents), t: thresholds.ai_cost_cents,
               state_col: "ai_cost_limit_state", changed_col: "ai_cost_state_changed_at",
@@ -152,21 +190,8 @@ export const thresholdRecomputeOnSubscriptionChange = inngest.createFunction(
             },
           ];
 
-          for (const d of dimensions) {
-            const newState = classifyAbuse(d.value, d.t);
-            if (newState !== d.currentState) {
-              updates[d.state_col] = newState;
-              updates[d.changed_col] = new Date().toISOString();
-              const crossed = newState === "hard" ? d.t.hard : newState === "soft2" ? d.t.soft2 : newState === "soft1" ? d.t.soft1 : 0n;
-              transitions.push({
-                dim: d.dim,
-                from: d.currentState,
-                to: newState,
-                value: d.value.toString(),
-                threshold: crossed.toString(),
-              });
-            }
-          }
+          const { updates, transitions: dimTransitions } = computeAbuseTransitions(dimensions, new Date().toISOString());
+          transitions.push(...dimTransitions);
 
           if (Object.keys(updates).length > 0) {
             await safeAwait(db.from("tenant_usage_metrics").update(updates).eq("id", rt.id), "tenant_usage_metrics.update");
