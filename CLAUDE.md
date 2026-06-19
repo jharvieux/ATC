@@ -38,6 +38,16 @@ For each issue:
 - **Customer/tenant-reported bug labels** (`customer-reported`, `tenant-admin-reported`) — DON'T auto-fix. Surface in the state summary; the user routes these.
 - **Any issue without a label** — DON'T auto-fix. Surface and ask.
 
+**Assign a model label (`opus` or `sonnet`) to every agent-doable engineering issue.** Any issue that an agent can implement without human judgement — i.e. NOT `customer-reported` / `tenant-admin-reported`, and NOT an unlabeled issue that needs routing — gets exactly one model label added with `gh issue edit <n> --add-label opus` (or `--add-label sonnet`). The label marks which model should pick the work up; it does not mean "fix it now." Choose with the same complexity heuristic as the PR-audit model selection below — apply `opus` when ANY of these hold:
+
+- The expected fix touches ≥ 10 files OR ≥ 500 net-added lines.
+- It involves a SQL migration (new tables, RLS policies, grants, column add/drop).
+- It adds a net-new API route under `apps/*/src/app/api/`, a new Inngest function, or a cron handler.
+- It touches webhook signature verification, idempotency rows, or state-machine transitions.
+- It adds a new service-role code path.
+
+Otherwise apply `sonnet`. When scope can't be estimated from the issue text, default to `opus` and say so in the state summary. Do NOT add a model label to issues that need a human (customer/tenant-reported, or unlabeled-and-needs-routing) — those are surfaced, not labeled. If an issue already carries an `opus`/`sonnet` label, leave it unless its scope has clearly changed.
+
 Fix-PRs opened during auto-triage carry the `auto-triaged` label and a comment referencing the source issue.
 
 ### Open PRs
@@ -74,6 +84,7 @@ Auto-triage:
 - Merged: #X, #Y
 - Update-branched: #Z
 - Opened fix PR for issue #N (auto-triaged)
+- Labeled for model: #A (opus), #B (sonnet)
 - Needs your call:
   - PR #M — <one line: what's blocking, what I'd do if I knew the answer>
   - Issue #P — <one line: why I can't auto-fix>
