@@ -237,7 +237,7 @@ sits next to the PR on GitHub (durable record + the
    gh pr view "$PR" --json body --jq .body > "$BODY_TMP" || : > "$BODY_TMP"
    if grep -q '<!-- audit-body:start -->' "$BODY_TMP"; then
      awk '
-       /<!-- audit-body:start -->/ { print_block=1; while ((getline line < "'"$SECTION_TMP"'") > 0) print line; skip=1 }
+       /<!-- audit-body:start -->/ { while ((getline line < "'"$SECTION_TMP"'") > 0) print line; skip=1 }
        /<!-- audit-body:end -->/   { skip=0; next }
        !skip
      ' "$BODY_TMP" > "$BODY_TMP.new" && mv "$BODY_TMP.new" "$BODY_TMP"
