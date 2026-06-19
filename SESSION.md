@@ -1,26 +1,29 @@
-# Session state — last updated 2026-06-18 20:45 UTC
+# Session state — last updated 2026-06-18 21:30 UTC
 
-## Just completed (all #1190)
-- **PR #1244 (merged)** — Severity A: booking/quote routes that 400'd.
-- **PR #1245 (merged)** — Severity C email config → tenant_branding (6 files).
-- **PR #1246 (merged)** — forums coordinator via linked group (forumCoordinatorId helper).
-- **PR #1248 (merged)** — Severity B host booking fee (was computing $0): filter host_adapter, dollars→cents (new dollarsToCents helper), percent-of-gross-commission, rule_ref=row id. Worked-example tests.
-- Issues opened: #1243 (gate alias-parse bug), #1247 (host fee tiered + min_threshold deferred).
-- MEMORY D-263..D-266. Exceptions: 34 → 13 remaining.
+## Just completed
+- **#1190 CLOSED — complete.** Triaged all 34 baselined column-reader violations; ~31 were genuine runtime bugs. Fixed across 7 merged PRs:
+  - #1244 Severity A (booking/quote routes that 400'd)
+  - #1245 tenant email config → tenant_branding (6 files)
+  - #1246 forums coordinator via linked group (forumCoordinatorId helper)
+  - #1248 host booking fee (was $0): filter/units/percent-base + dollarsToCents helper
+  - #1249 CCPA export user_id linkage + multi-tenant disclosure
+  - #1250 precruise recipient from contact (first name only)
+  - #1251 tenant_settings: add import_auto_accept_threshold column (migration 20260705000000) + drop dead bug-flow read
+- Exceptions 34 → 1 (messages.user_id = documented false positive).
+- MEMORY D-263 … D-269 added.
 
 ## In flight
-- On dev, clean (synced to 517792c5). About to start the GDPR export PR.
+- Nothing in flight — clean checkpoint on dev (synced to 34fa92fb).
 
-## Next step (user decisions captured — proceed)
-1. **#3 GDPR export** (`user-data-export-build.ts` + RAG `export-user-chunks`): resolve auth_user_id→users.id, repoint bookings/conversations to user_id, fix legal_consents columns (document_type/document_version/acted_at), RAG knowledge_chunks (ingested_at, drop source_title). Export the obvious set (profile, bookings, conversations, consents, chunks). Privacy — verify FKs from schema.
-2. **#2 tenant_settings**: add `import_auto_accept_threshold` column via migration (decision A); remove the dead `customer_bug_flow_enabled` read in bug-intent-recognizer.ts (decision B). Remove both exceptions.
-3. **#4 precruise**: bookings.group_id→group_booking_id; customer_name/passenger_contact_email via primary_contact_id→contacts (first_name only). Remove 3 exceptions.
+## Next step
+- #1217 (Inngest background-job test coverage, opus-labeled) is workable and needs no decisions — natural next pickup.
 
 ## Blocked on user
-- #1127 — transfer.reversed ledger unwind (spec §14.9 unspecified).
-- #563 (APP_STAGING_URL), #1222 (PLATFORM_DEFAULT_TENANT_ID Vercel Preview) — ops.
+- #1127 (opus) — transfer.reversed ledger unwind: spec §14.9 unspecified; needs spec owner.
+- #563 (APP_STAGING_URL), #1222 (PLATFORM_DEFAULT_TENANT_ID Vercel Preview) — ops actions.
 
-## Open questions
-- After the 3 remaining #1190 items, only messages.user_id (legit false positive) stays exceptioned → #1190 can close.
-- #1217 (Inngest test coverage, opus), #1235 (E2E GoTrue fixtures, sonnet) still open.
+## Open questions / follow-ups opened this session
+- #1243 — column-reader gate parses PostgREST alias:column + !inner embeds incorrectly (caused the 1 remaining FP).
+- #1247 — host booking fee: implement tiered fee_type + minimum_commission_threshold (unbuilt §12.6 features).
+- Open opus issues remaining: #1217 (test coverage), #1127 (blocked).
 - Session on Opus (user set it for opus work). Not reverted.
