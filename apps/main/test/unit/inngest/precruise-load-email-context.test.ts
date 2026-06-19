@@ -11,6 +11,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   selectArgs: [] as string[],
+  eqArgs: [] as Array<[string, unknown]>,
+  bookingPrimaryContactId: "contact-1" as string | null,
   groupsRow: {
     cruise_line: "Norwegian Cruise Line",
     ship_name: "Norwegian Bliss",
@@ -35,7 +37,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
                   tenant_id: "t1",
                   group_booking_id: "g1",
                   user_id: "u1",
-                  primary_contact_id: "contact-1",
+                  primary_contact_id: mocks.bookingPrimaryContactId,
                   groups: mocks.groupsRow,
                 },
                 error: null,
@@ -59,9 +61,13 @@ vi.mock("@/lib/db/service-role-client", () => ({
               error: null,
             };
           };
-          // Support both .eq().maybeSingle() and .eq().eq().maybeSingle().
-          const chain: { eq: () => typeof chain; maybeSingle: typeof maybeSingle } = {
-            eq: () => chain,
+          // Support both .eq().maybeSingle() and .eq().eq().maybeSingle();
+          // capture eq args so tests can assert tenant scoping.
+          const chain: { eq: (col: string, val: unknown) => typeof chain; maybeSingle: typeof maybeSingle } = {
+            eq: (col: string, val: unknown) => {
+              mocks.eqArgs.push([col, val]);
+              return chain;
+            },
             maybeSingle,
           };
           return chain;
@@ -81,6 +87,8 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 beforeEach(() => {
   mocks.selectArgs = [];
+  mocks.eqArgs = [];
+  mocks.bookingPrimaryContactId = "contact-1";
   mocks.groupsRow = {
     cruise_line: "Norwegian Cruise Line",
     ship_name: "Norwegian Bliss",
@@ -119,6 +127,21 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
     expect(ctx?.customerName).toBe("Jordan");
     // The contact must be looked up (no customer_name/email on bookings).
     expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(true);
+    // D-091 two-layer: both the bookings and contacts reads are tenant-scoped.
+    expect(mocks.eqArgs).toContainEqual(["tenant_id", "t1"]);
+  });
+
+  it("#1190: short-circuits to null when the booking has no primary contact", async () => {
+    mocks.bookingPrimaryContactId = null;
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_1",
+    });
+    expect(ctx).toBeNull();
+    // No contact id → the contacts query must not run.
+    expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(false);
   });
 
   it("maps groups.departure_port to ctx.departurePort", async () => {

@@ -57,6 +57,10 @@ async function scanAndEmit(args: {
   const svc = createServiceRoleClient();
   const nowMs = Date.now();
 
+  // D-091 Pattern 4: this scheduler is DELIBERATELY cross-tenant — it scans all
+  // confirmed group bookings platform-wide and fans out per booking, carrying
+  // booking.tenant_id into each downstream send. A tenant_id filter here would
+  // defeat the scheduler's purpose; tenant scoping happens at the per-send step.
   const { data: bookings, error } = await svc
     .from("bookings")
     // #1190: the FK column is group_booking_id, not group_id.
