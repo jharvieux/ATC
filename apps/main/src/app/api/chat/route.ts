@@ -495,8 +495,8 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // BP32 §32.10.1 — pre-LLM bug-intent check. Surfaces an offer for the
   // customer to file a bug; the regular chat flow still runs underneath
   // so the customer gets a normal response even if they ignore the offer.
-  // Gated by PHASE_2_CUSTOMER_BUG_FLOW_ENABLED + tenant_settings opt-out
-  // inside detectBugIntent.
+  // Gated by PHASE_2_CUSTOMER_BUG_FLOW_ENABLED inside detectBugIntent (#1190
+  // removed the per-tenant tenant_settings opt-out).
   try {
     // #902: customer-facing offer only — TA bug reporting lives in the help
     // flows, not as a chat interrupt.
