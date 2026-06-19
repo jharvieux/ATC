@@ -162,7 +162,7 @@ export default function SubcontractorsPage() {
               disabled={form.saving}
             />
             <p className="text-xs text-muted-foreground mt-1">
-              This percentage of your sub-host payout will be shown as owed to this subcontractor.
+              This percentage of your payout will be shown as owed to this subcontractor.
             </p>
           </div>
 
