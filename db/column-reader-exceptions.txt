@@ -15,9 +15,6 @@ bookings.customer_name # pre-existing violation — tracked in #1190; may be on 
 bookings.group_id # pre-existing violation — tracked in #1190; FK col is group_booking_id not group_id
 bookings.passenger_contact_email # pre-existing violation — tracked in #1190; may be on contacts table
 bookings.source # pre-existing violation — tracked in #1190; may be on conversations not bookings
-host_booking_fee_configs.fee_cents # pre-existing violation — tracked in #1190
-host_booking_fee_configs.fee_rate # pre-existing violation — tracked in #1190
-host_booking_fee_configs.rule_ref # pre-existing violation — tracked in #1190
 knowledge_chunks.created_at # pre-existing violation — tracked in #1190; may be parser limitation
 knowledge_chunks.source_title # pre-existing violation — tracked in #1190
 legal_consents.accepted_at # pre-existing violation — tracked in #1190
@@ -25,8 +22,5 @@ legal_consents.created_at # pre-existing violation — tracked in #1190; may be 
 legal_consents.doc_type # pre-existing violation — tracked in #1190
 legal_consents.doc_version # pre-existing violation — tracked in #1190
 messages.user_id # pre-existing violation — tracked in #1190
-tenant_host_fee_overrides.fee_cents # pre-existing violation — tracked in #1190
-tenant_host_fee_overrides.fee_rate # pre-existing violation — tracked in #1190
-tenant_host_fee_overrides.rule_ref # pre-existing violation — tracked in #1190
 tenant_settings.customer_bug_flow_enabled # pre-existing violation — tracked in #1190
 tenant_settings.import_auto_accept_threshold # pre-existing violation — tracked in #1190

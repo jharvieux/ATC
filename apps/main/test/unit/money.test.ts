@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   toCents,
+  dollarsToCents,
   fromCents,
   multiplyRate,
   subtractFee,
@@ -44,6 +45,28 @@ describe("toCents (§14.0.3 half-away-from-zero)", () => {
     expect(toCents("99.99")).toBe(100n); // 99.99 cents → 100n cents
     expect(toCents("0.01")).toBe(0n);    // 0.01 cents → 0n cents (rounds down)
     expect(toCents("0.50")).toBe(1n);    // 0.5 cents → 1n (half-up)
+  });
+});
+
+// ── dollarsToCents ───────────────────────────────────────────────────────────
+
+describe("dollarsToCents (dollar amount → integer cents)", () => {
+  it("multiplies dollars by 100 (distinct from toCents, which rounds cents)", () => {
+    expect(dollarsToCents("25.00")).toBe(2500n);
+    expect(dollarsToCents(25)).toBe(2500n);
+    expect(dollarsToCents("0.99")).toBe(99n);
+    expect(dollarsToCents("1234.56")).toBe(123456n);
+  });
+
+  it("is exact on 2-decimal values that float ×100 would corrupt", () => {
+    // 25.99 * 100 === 2598.9999999999995 in float; Big keeps it exact.
+    expect(dollarsToCents("25.99")).toBe(2599n);
+    expect(dollarsToCents("0.29")).toBe(29n);
+  });
+
+  it("half-away-from-zero on sub-cent dollar inputs", () => {
+    expect(dollarsToCents("0.005")).toBe(1n); // $0.005 → 0.5c → 1c
+    expect(dollarsToCents("0.004")).toBe(0n);
   });
 });
 

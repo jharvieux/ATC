@@ -69,6 +69,16 @@ export function toCents(amount: number | string): Cents {
 }
 
 /**
+ * Convert a DOLLAR-unit amount (e.g. a NUMERIC(12,2) host fee like "25.00") to
+ * integer cents. Exact via Big (no float ×100 dust), half-away-from-zero.
+ * Distinct from toCents, which rounds a value already expressed in cents.
+ * @param dollars - a dollar amount, e.g. 25.00 → 2500 cents
+ */
+export function dollarsToCents(dollars: number | string): Cents {
+  return BigInt(new Big(dollars).times(100).round(0, 1).toFixed(0)) as Cents;
+}
+
+/**
  * Convert cents back to a display value (decimal string).
  * FOR DISPLAY ONLY — do NOT chain arithmetic on the result.
  * @see §14.0.4 "fromCents is forbidden for arithmetic chaining"

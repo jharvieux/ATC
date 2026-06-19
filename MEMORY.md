@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-266 — 2026-06-18 — #1190 host booking fee was broken in 4 ways (not just column names); fixed per §14 worked example
+
+The host-fee resolver in `bookings/[id]/submit/route.ts` was computing **$0** on every submission — and the bugs went well beyond the #1190 column-reader violations (fee_cents/fee_rate/rule_ref). All four fixed:
+1. **Wrong filter column** — `.eq("adapter_id", …)` on tables whose column is `host_adapter` (400'd → no fee found). Not gate-flagged because the gate only checks `.select()`, not `.eq()` filters.
+2. **Units** — `flat_fee_amount` is `NUMERIC(12,2)` DOLLARS; code treated it as cents (`BigInt(fee_cents)`). §14 worked example: "$25.00 flat ($2,500 cents)". Needs ×100.
+3. **Percent base** — column is `percent_of_commission`; §14 math subtracts the fee from gross commission. Code applied the percent to the FARE, not the commission (massively over-charges). **User confirmed**: percent of GROSS COMMISSION.
+4. **Ordering** — fee was computed before gross commission existed; moved resolution into §14.3 after gross.
+
+**Decisions:** `rule_ref` (no such column) → use the applied config/override row's `id` as the audit snapshot (user chose A). `flat`/`percent`/`none` fixed; **`tiered` + `minimum_commission_threshold` deferred to #1247** (never-implemented §12.6 features, not column-reader bugs).
+
+**New money helper:** added `dollarsToCents()` to `lib/money.ts` — exact Big-based dollars→cents (×100). `toCents` does NOT do this — despite its misleading docstring ("dollar units"), its tests prove it ROUNDS a value already in cents (`toCents(99.995)=100n`). Pre-existing doc bug, left alone. Tests pin the §14 worked example (fare $5,000, 10% rate → $500 gross; $25 flat → 2500c; 10% percent → 5000c of the 50000c gross, NOT 50000c of the fare) + the host_adapter filter column.
+
+**Why this wasn't "decision-free":** I'd told the user flat/percent were "unambiguous renames." They weren't (units, percent-base, filter). Corrected the framing, confirmed the one real semantics call (percent base) before writing money code.
+
+**Artifacts:** PR (host fee), issue #1247 (tiered + min-threshold), `lib/money.ts` (`dollarsToCents`).
+
+---
+
 ## D-265 — 2026-06-18 — #1190 forums.coordinator_user_id fixed via group embed; supabase forward-FK embeds may be object OR array
 
 Shipped the forums coordinator fix (deferred from D-264). `forums` has no `coordinator_user_id` — it's on the linked group (`forums.group_id`→`groups`, UNIQUE/NOT NULL). Six routes read it off the forum row (3 via `.select("*")` the gate can't see, 3 explicit) → coordinator never recognized → moderation silently broke for every coordinator. Fixed by embedding `groups(coordinator_user_id)` in each forums select and reading via a new shared helper `forumCoordinatorId()` in `lib/forums/permissions.ts`.
