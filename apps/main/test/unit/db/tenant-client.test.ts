@@ -176,6 +176,23 @@ describe("tenantClient proxy", () => {
     });
   }
 
+  // #903 / D-193 — voice-profile tables were never registered, so the proxy
+  // threw UnregisteredTenantTableError at .from() and the settings/voice page
+  // 500'd ("Load failed (HTTP 500)") with no query ever reaching the DB. Both
+  // carry a tenant_id column, so they must scope, not throw or pass through.
+  for (const table of ["voice_samples", "voice_profiles"]) {
+    it(`scopes .from('${table}').select() with the tenant filter (#903)`, () => {
+      const qb = makeQueryBuilder();
+      mockFrom.mockReturnValue(qb);
+
+      const db = tenantClient(ctx);
+      db.from(table).select("*");
+
+      expect(mockFrom).toHaveBeenCalledWith(table);
+      expect(qb.filterBuilder.eqCalls).toEqual([["tenant_id", "tenant-abc"]]);
+    });
+  }
+
   it("THROWS on tables in neither TENANT_SCOPED_TABLES nor PLATFORM_READABLE_TABLES", () => {
     // Fail-closed contract — see UnregisteredTenantTableError.
     mockFrom.mockReturnValue(makeQueryBuilder());
