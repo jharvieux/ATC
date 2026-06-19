@@ -1,7 +1,7 @@
 "use client";
 
-// §14.3a — Sub-host subcontractor management page.
-// Only visible/accessible to sub_host tenants.
+// §14.3a — Subcontractor management page.
+// Available to sub_host and byo_host tenants (the platform's own agency is excluded).
 // Allows CRUD of named subcontractors with share rates.
 // Revenue dashboards subtract the subcontractor's share to show net retained.
 //
@@ -44,7 +44,7 @@ export default function SubcontractorsPage() {
     try {
       const res = await fetch("/api/subcontractors");
       if (res.status === 403) {
-        setError("Subcontractor tracking is only available for sub-host accounts.");
+        setError("Subcontractor tracking is only available for host accounts.");
         return;
       }
       const data = await res.json();

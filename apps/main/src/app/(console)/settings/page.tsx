@@ -18,7 +18,7 @@ const SECTIONS = [
       { href: "/settings/ai-mode",          label: "AI Mode",                  desc: "Set autonomous, draft-only, or disabled mode; configure background AI." },
       { href: "/settings/voice",            label: "Voice Profile",            desc: "Paste email samples so your AI concierge drafts replies in your voice." },
       { href: "/settings/host-integration", label: "Host Integration",         desc: "Connect or update your host agency adapter and credentials." },
-      { href: "/settings/subcontractors",   label: "Subcontractors",           desc: "Manage subcontractor agreements and commission share rates (sub-host only)." },
+      { href: "/settings/subcontractors",   label: "Subcontractors",           desc: "Track subcontractors and their share rates to forecast net retained revenue." },
     ],
   },
   {
