@@ -19,20 +19,27 @@
 import { chromium, type FullConfig } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-export const STORAGE_STATE_PATH = path.join(__dirname, ".auth", "owner.json");
+// CWD is always the repo root when Playwright invokes global-setup (same
+// directory as playwright.config.ts). Avoid import.meta.url — Playwright's
+// TypeScript transform targets CJS on this project, where import.meta is
+// not defined.
+export const STORAGE_STATE_PATH = path.join(
+  process.cwd(),
+  "tests",
+  "e2e",
+  ".auth",
+  "owner.json",
+);
 
 export default async function globalSetup(_config: FullConfig): Promise<void> {
   const email = process.env["TEST_E2E_OWNER_EMAIL"];
-  const password = process.env["TEST_E2E_OWNER_PASSWORD"];
+  const ownerPassword = process.env["TEST_E2E_OWNER_PASSWORD"];
   const supabaseUrl = process.env["NEXT_PUBLIC_SUPABASE_URL"];
   const anonKey = process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"];
   const baseUrl = process.env["BASE_URL"] ?? "http://localhost:3000";
 
-  if (!email || !password || !supabaseUrl || !anonKey) {
+  if (!email || !ownerPassword || !supabaseUrl || !anonKey) {
     // Credentials absent — authedPage fixture will throw when a test uses it.
     // Safe for unauthenticated test suites that don't depend on authedPage.
     return;
@@ -44,7 +51,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       "Content-Type": "application/json",
       apikey: anonKey,
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password: ownerPassword }),
   });
 
   if (!resp.ok) {
