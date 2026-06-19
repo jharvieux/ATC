@@ -11,6 +11,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   selectArgs: [] as string[],
+  eqArgs: [] as Array<[string, unknown]>,
+  bookingPrimaryContactId: "contact-1" as string | null,
   groupsRow: {
     cruise_line: "Norwegian Cruise Line",
     ship_name: "Norwegian Bliss",
@@ -27,40 +29,48 @@ vi.mock("@/lib/db/service-role-client", () => ({
       return {
         select(arg: string) {
           mocks.selectArgs.push(arg);
-          return {
-            eq() {
+          const maybeSingle = async () => {
+            if (table === "bookings") {
               return {
-                maybeSingle: async () => {
-                  if (table === "bookings") {
-                    return {
-                      data: {
-                        id: "b1",
-                        tenant_id: "t1",
-                        group_id: "g1",
-                        customer_name: "Jordan",
-                        passenger_contact_email: "jordan@example.com",
-                        groups: mocks.groupsRow,
-                      },
-                      error: null,
-                    };
-                  }
-                  if (table === "tenants") {
-                    return { data: { id: "t1", legal_name: "Anchor & Compass" }, error: null };
-                  }
-                  // tenant_branding — #1190: email send config lives here.
-                  return {
-                    data: {
-                      email_send_pattern: "tenant_resend",
-                      tenant_resend_api_key_encrypted: "enc-key",
-                      email_from_address: "concierge@tenant.com",
-                      email_from_name: "Tenant Concierge",
-                    },
-                    error: null,
-                  };
+                data: {
+                  id: "b1",
+                  tenant_id: "t1",
+                  group_booking_id: "g1",
+                  user_id: "u1",
+                  primary_contact_id: mocks.bookingPrimaryContactId,
+                  groups: mocks.groupsRow,
                 },
+                error: null,
               };
-            },
+            }
+            if (table === "contacts") {
+              // #1190: recipient name + email come from the booking's contact.
+              return { data: { first_name: "Jordan", email: "jordan@example.com" }, error: null };
+            }
+            if (table === "tenants") {
+              return { data: { id: "t1", legal_name: "Anchor & Compass" }, error: null };
+            }
+            // tenant_branding — #1190: email send config lives here.
+            return {
+              data: {
+                email_send_pattern: "tenant_resend",
+                tenant_resend_api_key_encrypted: "enc-key",
+                email_from_address: "concierge@tenant.com",
+                email_from_name: "Tenant Concierge",
+              },
+              error: null,
+            };
           };
+          // Support both .eq().maybeSingle() and .eq().eq().maybeSingle();
+          // capture eq args so tests can assert tenant scoping.
+          const chain: { eq: (col: string, val: unknown) => typeof chain; maybeSingle: typeof maybeSingle } = {
+            eq: (col: string, val: unknown) => {
+              mocks.eqArgs.push([col, val]);
+              return chain;
+            },
+            maybeSingle,
+          };
+          return chain;
         },
       };
     },
@@ -77,6 +87,8 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 beforeEach(() => {
   mocks.selectArgs = [];
+  mocks.eqArgs = [];
+  mocks.bookingPrimaryContactId = "contact-1";
   mocks.groupsRow = {
     cruise_line: "Norwegian Cruise Line",
     ship_name: "Norwegian Bliss",
@@ -93,12 +105,43 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
       tenant_id: "t1",
       phase: "t_1",
     });
-    const bookingsSelect = mocks.selectArgs.find((s) => s.includes("passenger_contact_email"));
+    const bookingsSelect = mocks.selectArgs.find((s) => s.includes("primary_contact_id"));
     expect(bookingsSelect).toBeDefined();
     expect(bookingsSelect).toContain("departure_port)");
-    // The bug — these must never come back:
+    expect(bookingsSelect).toContain("group_booking_id");
+    // The bug — these never existed on bookings and must never come back:
+    expect(bookingsSelect).not.toContain("customer_name");
+    expect(bookingsSelect).not.toContain("passenger_contact_email");
     expect(bookingsSelect).not.toContain("departure_port_code");
     expect(bookingsSelect).not.toContain("itinerary_ports");
+  });
+
+  it("#1190: recipient name (first name only) + email come from the booking's contact", async () => {
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_1",
+    });
+    expect(ctx?.toEmail).toBe("jordan@example.com");
+    expect(ctx?.customerName).toBe("Jordan");
+    // The contact must be looked up (no customer_name/email on bookings).
+    expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(true);
+    // D-091 two-layer: both the bookings and contacts reads are tenant-scoped.
+    expect(mocks.eqArgs).toContainEqual(["tenant_id", "t1"]);
+  });
+
+  it("#1190: short-circuits to null when the booking has no primary contact", async () => {
+    mocks.bookingPrimaryContactId = null;
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_1",
+    });
+    expect(ctx).toBeNull();
+    // No contact id → the contacts query must not run.
+    expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(false);
   });
 
   it("maps groups.departure_port to ctx.departurePort", async () => {

@@ -36,7 +36,7 @@ const MULTIPHASE = ALL_PHASES.filter((p) => p.phase !== "t_1");
 interface BookingRow {
   id: string;
   tenant_id: string;
-  group_id: string;
+  group_booking_id: string;
   groups: Array<{ sailing_date: string }> | { sailing_date: string } | null;
 }
 
@@ -57,11 +57,16 @@ async function scanAndEmit(args: {
   const svc = createServiceRoleClient();
   const nowMs = Date.now();
 
+  // D-091 Pattern 4: this scheduler is DELIBERATELY cross-tenant — it scans all
+  // confirmed group bookings platform-wide and fans out per booking, carrying
+  // booking.tenant_id into each downstream send. A tenant_id filter here would
+  // defeat the scheduler's purpose; tenant scoping happens at the per-send step.
   const { data: bookings, error } = await svc
     .from("bookings")
-    .select("id, tenant_id, group_id, groups(sailing_date)")
+    // #1190: the FK column is group_booking_id, not group_id.
+    .select("id, tenant_id, group_booking_id, groups(sailing_date)")
     .eq("status", "confirmed")
-    .not("group_id", "is", null);
+    .not("group_booking_id", "is", null);
   if (error) {
     console.error(`[pre-cruise-scheduler:${via}] query error`, error.message);
     return { triggered: 0 };
