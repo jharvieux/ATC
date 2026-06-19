@@ -11,9 +11,6 @@
 # Each entry is tracked for investigation in GitHub issue #1190.
 # Remove an entry once the underlying code is corrected or confirmed legitimate.
 
-bookings.customer_name # pre-existing violation — tracked in #1190; may be on contacts table
-bookings.group_id # pre-existing violation — tracked in #1190; FK col is group_booking_id not group_id
-bookings.passenger_contact_email # pre-existing violation — tracked in #1190; may be on contacts table
-messages.user_id # pre-existing violation — tracked in #1190
+messages.user_id # CONFIRMED false positive (#1190) — readers select via the embedded `conversations!inner(user_id)`; the gate mis-attributes the embed's column to the base table. Related gate weakness: #1243.
 tenant_settings.customer_bug_flow_enabled # pre-existing violation — tracked in #1190
 tenant_settings.import_auto_accept_threshold # pre-existing violation — tracked in #1190

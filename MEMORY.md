@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-268 — 2026-06-18 — #1190 precruise recipient fix completes the column-reader cleanup (only messages.user_id FP remains)
+
+Last decision-free #1190 item. Precruise emails were fully broken: `precruise-generate-and-send.ts` selected `customer_name`/`passenger_contact_email`/`group_id` from `bookings` (none exist) → the whole query 400'd → every precruise email silently skipped. Fix: recipient name + email come from the booking's contact (`primary_contact_id` → `contacts.first_name`/`email`, via a separate tenant-scoped query — D-091 two-layer, and avoids the embed object/array ambiguity); `group_id` → `group_booking_id`. Per product decision: **first name only** on the greeting.
+
+Removing the exceptions surfaced a SECOND reader again — `pre-cruise-email-scheduler.ts` read `bookings.group_id` in both a `.select()` AND a `.not("group_id", "is", null)` filter (the filter would 400 too; gate only sees the select). Both → `group_booking_id`.
+
+**#1190 is now effectively complete:** 34 baselined exceptions → **1** (`messages.user_id`), which is a CONFIRMED false positive (readers select via embedded `conversations!inner(user_id)`; the gate mis-attributes the embed to the base table — same class as the alias bug #1243). Its exception comment now documents this. Net: ~30 genuine latent runtime bugs fixed across 6 merged PRs (#1244/1245/1246/1248/1249 + this), spanning user-facing 400s, money ($0 host fee), CCPA export, and customer-comms email paths.
+
+**Artifacts:** PR (precruise), `db/column-reader-exceptions.txt` (down to the 1 FP). Follow-ups still open: #1247 (host-fee tiered/min-threshold), #1243 (gate alias/embed parsing), and the #1190 items still needing decisions are now NONE — remaining tenant_settings PR is the only #1190 code left.
+
+---
+
 ## D-267 — 2026-06-18 — #1190 CCPA data export was returning zero bookings/conversations (wrong linkage); fixed + extracted testable helper
 
 The §17.9 CCPA export (`user-data-export-build.ts`) keyed bookings + conversations on `auth_user_id`, but those tables link by `user_id` (= `users.id`); only `users` and `legal_consents` carry `auth_user_id`. So every export silently disclosed **zero** bookings/conversations. Fix: resolve `users.id` from `auth_user_id` first, then query bookings/conversations by `user_id`. Also fixed the column allowlists: bookings `source`/`booked_at`/`sailed_at` → real columns (cruise_line/ship_name/sailing_date/confirmed_at/…); legal_consents `doc_type`/`doc_version`/`accepted_at`/`created_at` → `document_type`/`document_version`/`acted_at` (no created_at). User chose the "obvious set" scope (profile, conversations, bookings, consents, RAG chunks).

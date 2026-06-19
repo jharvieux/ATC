@@ -27,40 +27,44 @@ vi.mock("@/lib/db/service-role-client", () => ({
       return {
         select(arg: string) {
           mocks.selectArgs.push(arg);
-          return {
-            eq() {
+          const maybeSingle = async () => {
+            if (table === "bookings") {
               return {
-                maybeSingle: async () => {
-                  if (table === "bookings") {
-                    return {
-                      data: {
-                        id: "b1",
-                        tenant_id: "t1",
-                        group_id: "g1",
-                        customer_name: "Jordan",
-                        passenger_contact_email: "jordan@example.com",
-                        groups: mocks.groupsRow,
-                      },
-                      error: null,
-                    };
-                  }
-                  if (table === "tenants") {
-                    return { data: { id: "t1", legal_name: "Anchor & Compass" }, error: null };
-                  }
-                  // tenant_branding — #1190: email send config lives here.
-                  return {
-                    data: {
-                      email_send_pattern: "tenant_resend",
-                      tenant_resend_api_key_encrypted: "enc-key",
-                      email_from_address: "concierge@tenant.com",
-                      email_from_name: "Tenant Concierge",
-                    },
-                    error: null,
-                  };
+                data: {
+                  id: "b1",
+                  tenant_id: "t1",
+                  group_booking_id: "g1",
+                  user_id: "u1",
+                  primary_contact_id: "contact-1",
+                  groups: mocks.groupsRow,
                 },
+                error: null,
               };
-            },
+            }
+            if (table === "contacts") {
+              // #1190: recipient name + email come from the booking's contact.
+              return { data: { first_name: "Jordan", email: "jordan@example.com" }, error: null };
+            }
+            if (table === "tenants") {
+              return { data: { id: "t1", legal_name: "Anchor & Compass" }, error: null };
+            }
+            // tenant_branding — #1190: email send config lives here.
+            return {
+              data: {
+                email_send_pattern: "tenant_resend",
+                tenant_resend_api_key_encrypted: "enc-key",
+                email_from_address: "concierge@tenant.com",
+                email_from_name: "Tenant Concierge",
+              },
+              error: null,
+            };
           };
+          // Support both .eq().maybeSingle() and .eq().eq().maybeSingle().
+          const chain: { eq: () => typeof chain; maybeSingle: typeof maybeSingle } = {
+            eq: () => chain,
+            maybeSingle,
+          };
+          return chain;
         },
       };
     },
@@ -93,12 +97,28 @@ describe("loadEmailContext — bookings SELECT shape (#483)", () => {
       tenant_id: "t1",
       phase: "t_1",
     });
-    const bookingsSelect = mocks.selectArgs.find((s) => s.includes("passenger_contact_email"));
+    const bookingsSelect = mocks.selectArgs.find((s) => s.includes("primary_contact_id"));
     expect(bookingsSelect).toBeDefined();
     expect(bookingsSelect).toContain("departure_port)");
-    // The bug — these must never come back:
+    expect(bookingsSelect).toContain("group_booking_id");
+    // The bug — these never existed on bookings and must never come back:
+    expect(bookingsSelect).not.toContain("customer_name");
+    expect(bookingsSelect).not.toContain("passenger_contact_email");
     expect(bookingsSelect).not.toContain("departure_port_code");
     expect(bookingsSelect).not.toContain("itinerary_ports");
+  });
+
+  it("#1190: recipient name (first name only) + email come from the booking's contact", async () => {
+    const ctx = await loadEmailContext({
+      svc: createServiceRoleClient(),
+      booking_id: "b1",
+      tenant_id: "t1",
+      phase: "t_1",
+    });
+    expect(ctx?.toEmail).toBe("jordan@example.com");
+    expect(ctx?.customerName).toBe("Jordan");
+    // The contact must be looked up (no customer_name/email on bookings).
+    expect(mocks.selectArgs.some((s) => s.includes("first_name, email"))).toBe(true);
   });
 
   it("maps groups.departure_port to ctx.departurePort", async () => {

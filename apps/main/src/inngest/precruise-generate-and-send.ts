@@ -270,9 +270,8 @@ interface EmailCtx {
   booking: {
     id: string;
     user_id?: string;
-    customer_name?: string;
-    passenger_contact_email?: string;
-    group_id?: string;
+    primary_contact_id?: string | null;
+    group_booking_id?: string;
     groups?: {
       cruise_line?: string;
       ship_name?: string;
@@ -320,17 +319,33 @@ export async function loadEmailContext(args: {
 
   const { data: bookingRaw } = await svc
     .from("bookings")
+    // #1190: bookings has no customer_name/passenger_contact_email/group_id —
+    // the recipient comes from the linked contact, and the FK is group_booking_id.
     .select(
-      "id, tenant_id, group_id, user_id, customer_name, passenger_contact_email, groups(cruise_line, ship_name, sailing_date, departure_port)",
+      "id, tenant_id, group_booking_id, user_id, primary_contact_id, groups(cruise_line, ship_name, sailing_date, departure_port)",
     )
     .eq("id", booking_id)
+    .eq("tenant_id", tenant_id)
     .maybeSingle();
   if (!bookingRaw) {
     console.error(`[precruise] booking not found: ${booking_id}`);
     return null;
   }
   const booking = bookingRaw as EmailCtx["booking"];
-  const toEmail = booking.passenger_contact_email;
+
+  // #1190: recipient name + email come from the booking's primary contact.
+  if (!booking.primary_contact_id) {
+    console.warn(`[precruise] no primary contact for booking ${booking_id}`);
+    return null;
+  }
+  const { data: contactRaw } = await svc
+    .from("contacts")
+    .select("first_name, email")
+    .eq("id", booking.primary_contact_id)
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+  const contact = contactRaw as { first_name?: string | null; email?: string | null } | null;
+  const toEmail = contact?.email ?? undefined;
   if (!toEmail) {
     console.warn(`[precruise] no contact email for booking ${booking_id}`);
     return null;
@@ -355,7 +370,8 @@ export async function loadEmailContext(args: {
     .maybeSingle();
   const branding = (brandingRaw as EmailCtx["branding"] | null) ?? {};
 
-  const customerName = booking.customer_name ?? "Traveler";
+  // #1190: first name only (per product decision) from the booking's contact.
+  const customerName = contact?.first_name ?? "Traveler";
   const shipName = booking.groups?.ship_name ?? "your ship";
   const cruiseLine = booking.groups?.cruise_line ?? "";
   const sailingDate = booking.groups?.sailing_date ?? "";
@@ -527,7 +543,7 @@ async function buildAndSend(args: {
     category: "pre_cruise",
     html,
     ...(emailCtx.booking.user_id ? { user_id: emailCtx.booking.user_id } : {}),
-    ...(emailCtx.booking.group_id ? { related_group_id: emailCtx.booking.group_id } : {}),
+    ...(emailCtx.booking.group_booking_id ? { related_group_id: emailCtx.booking.group_booking_id } : {}),
   });
 
   if (result.status === "sent" && contentId) {
