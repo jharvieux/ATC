@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-275 — 2026-06-19 — Hamburger nav is the canonical role-aware menu on EVERY tenant screen
+
+Operator (lisa-travel `tenant_owner`) reported they couldn't reach CRM from the hamburger anywhere except the main dashboard, and that the menu was inconsistent — "missing options or out of date once you choose an option." Investigation found three different chromes, not one: the main dashboard (`TenantShell`) and `/crm/*` pages (`(tenant)` layout → `SiteHeaderMenu`, fixed earlier in #1199) both showed the full role-aware menu, but the **Admin Console** (`(console)` → `ConsoleShell`) had a hand-rolled *reduced* hamburger (Dashboard / View profile / Sign out only — no Workspace/CRM, no My account), and the **personal-settings pages** (`/settings/conversations|price-watches|privacy|profile|memory`, served by the top-level `settings/layout.tsx`) had **no hamburger at all**. So any option that routed into the console or personal settings dead-ended navigation. Verified via psql that the login is genuinely `tenant_owner` (active) — so the CRM ("Workspace") section *should* render; the bug was missing/divergent menus on inner screens, not role resolution.
+
+Fix (PR #1278, merged): make `SiteHeaderMenu` (role-aware, `navSectionsForRole`) the single hamburger everywhere. `ConsoleShell` now renders `<SiteHeaderMenu isPlatformDomain={false} isAuthenticated role={role} />` (the hardcoded props are correct — `(console)/layout.tsx` gates auth/owner-scope upstream); `settings/layout.tsx` became an async server layout rendering the role-aware `<SiteHeader>` (platform logo for staff per #962, tenant branding for viewers per §16, mirroring `(tenant)/layout.tsx`).
+
+Two operator decisions to NOT undo later:
+- **Keep the "Workspace" heading** — operator declined a rename to "CRM" even though that's the word they used. Don't relabel.
+- **The Admin Console keeps BOTH the left sidebar AND the hamburger** — they are intentionally distinct surfaces (hamburger = cross-app nav incl. CRM/My-account; sidebar = the console's own sub-pages). Operator's words: "they're completely different options in each." Do not consolidate them.
+
+Why it mattered: the menu code already contained CRM for staff, so the temptation is to call this "works on dev, must be a deploy lag." The real defect was that #1199 only covered the `(tenant)` group; the console and personal-settings surfaces were never brought onto the canonical menu. Rejected: relabel Workspace→CRM (operator declined); unify everything onto one sidebar / drop the hamburger (operator wanted the hamburger kept and present everywhere). Related: nav source-of-truth is `components/tenant-shell/nav-sections.ts` (`navSectionsForRole`); `TenantShell` still inlines the same sections rather than reusing `SiteHeaderMenu` (pre-existing duplication, left as-is — surgical).
+
+---
+
 ## D-274 — 2026-06-19 — RAG retrieval degraded: tenant_registry_shadow drift + dead reconcile (missing env vars)
 
 User reported the concierge giving ungrounded, guessy answers (asking the customer for Bliss 10/3/26 itinerary detail it should know). Root cause: lisa-travel was `active` in main (activated 2026-06-16) but `onboarding` in RAG's `tenant_registry_shadow`, so the RAG verifier (`verify-service-jwt.ts:188`) rejected every `/api/retrieve` with **403 `tenant_inactive`** → `retrieve-for-chat` returns empty chunks → ungrounded answers. (Early red herring: I chased a `RAG_SERVICE_URL` vanity-domain redirect that strips `Authorization` on cross-origin hops — real but local-only; prod fails 403 not 401, proving the token arrives. Corrected mid-investigation.)

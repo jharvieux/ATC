@@ -1,28 +1,22 @@
-# Session state — last updated 2026-06-19 20:20 ET
+# Session state — last updated 2026-06-19 21:30 ET
 
 ## Just completed
-Two production incidents diagnosed and fixed end-to-end.
-
-1. **"AI temporarily unavailable" (agent support chat)** — `ai_call_log.purpose` CHECK constraint drift (D-273). Anthropic call succeeded; the post-call `ai_call_log` insert rejected newer purposes (incl. `ta_chat_main`) → safeAwait threw → fallback message. Fixed: migration `20260706000000` widens the constraint to all 23 `AICallPurpose` values. Applied to prod via psql + PR #1270 merged. Guard issue #1271. Logged D-273.
-
-2. **RAG retrieval degraded (ungrounded concierge answers)** — `tenant_registry_shadow` drift (D-274). lisa-travel was `active` in main but `onboarding` in RAG → verifier 403 `tenant_inactive` → empty chunks. Root causes: (a) activation never emitted `tenant.status_changed` — fixed in PR #1275 (merged): `activateTenant` now emits, monotonic `source_revision`; (b) nightly reconcile dead since May because `MAIN_APP_URL`+`MAIN_APP_ADMIN_API_KEY` were missing from atc-rag and the key missing from atc-main too. Fixed: provisioned shared key on both + `MAIN_APP_URL=https://ai-travelconcierge.com` on atc-rag, redeployed both, verified handshake 200. Mitigated lisa-travel shadow row via psql. Logged D-274.
+- **Hamburger nav consistency fix (PR #1278, merged to dev).** Operator (lisa-travel `tenant_owner`) couldn't reach CRM from the hamburger except on the main dashboard; menu was inconsistent on inner screens. Root cause: three divergent chromes — main + `/crm/*` had the full role-aware menu, but the Admin Console (`ConsoleShell`) had a reduced hamburger (Dashboard/profile/sign-out only) and the personal-settings pages (`settings/layout.tsx`) had no hamburger at all. Fix: `SiteHeaderMenu` (role-aware) is now the single hamburger everywhere — wired into `ConsoleShell` (sidebar kept alongside) and `settings/layout.tsx`. Verified login is genuinely `tenant_owner` via psql. `pnpm verify` green; both audit agents clean. Logged D-275.
+- Operator decisions captured in D-275: keep the "Workspace" label (no rename to "CRM"); Admin Console keeps BOTH sidebar + hamburger (distinct surfaces — do not consolidate).
 
 ## In flight
-- Nothing in flight — clean checkpoint on `dev`. About to commit MEMORY (D-274) + this SESSION via a doc-only PR.
+- Nothing in flight — clean checkpoint on `dev`. About to ship this SESSION + MEMORY (D-275) as a doc-only PR.
 
 ## Next step
-- Ship the doc-only PR (D-274 + SESSION). Then optionally: confirm the concierge now cites real Bliss itinerary detail; pick up #1273 hardening.
+- Ship the doc-only PR (D-275 + SESSION). Then: confirm in production that lisa-travel now shows CRM/Workspace in the hamburger on the Admin Console and personal-settings pages (requires the dev→prod deploy to land).
 
 ## Blocked on user
-- Nothing. (Suggested: re-test Captain Dave / Marcus on Bliss 10/3/26 — should now be grounded.)
+- Nothing. (Suggested verification: log into lisa-travel, open the hamburger from the Admin Console and from Settings → Conversations/Privacy — Workspace/CRM + My account should now appear on both. Note this needs the prod deploy of the merged `dev` change.)
 
 ## Open questions
-- #1273 hardening: `verifyEnvAtBoot()` did not fail the RAG deploy despite required vars missing for months — investigate (instrumentation throw non-fatal on Vercel, or team-shared vars). Also add an operator alert when the reconcile run throws.
-- #1274: emit `tenant.status_changed` on suspend/terminate/reject (shadow stays `active` for non-active tenants — inverse leak).
-- Orphan shadow rows (2nd "Lisa Travel" c351…, "Bigfoot" 820b…) not in main — the now-working reconcile will warn; decide whether to prune.
-- Local `.env.local` has `RAG_SERVICE_URL`/`MAIN_APP_URL` pointing at `.vercel.app` vanity domains (redirect/strip auth); prod uses canonical. Worth fixing local + hardening the RAG fetches to fail loud on 3xx.
+- Possible deploy lag: the fix is on `dev`; lisa-travel prod won't reflect it until the next main-app deploy. If CRM is *still* missing after deploy, re-investigate (unlikely — role + code both verified correct on dev).
+- Pre-existing nav duplication: `TenantShell` inlines the same sections as `SiteHeaderMenu` rather than reusing it. Left as-is (surgical). Could be unified in a future cleanup if desired (no issue opened — low value).
+- Carried over from prior session: #1273 reconcile hardening / boot-guard; #1274 emit status_changed on suspend/terminate/reject; orphan shadow rows pruning; local `.env.local` vanity-domain URLs.
 
 ## Issues opened this session
-- #1271 (sonnet) ai_call_log purpose↔constraint CI guard
-- #1273 (opus) reconcile hardening / boot-guard
-- #1274 (sonnet) emit status_changed on suspend/terminate/reject
+- None.
