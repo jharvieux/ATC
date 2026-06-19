@@ -14,13 +14,6 @@
 bookings.customer_name # pre-existing violation — tracked in #1190; may be on contacts table
 bookings.group_id # pre-existing violation — tracked in #1190; FK col is group_booking_id not group_id
 bookings.passenger_contact_email # pre-existing violation — tracked in #1190; may be on contacts table
-bookings.source # pre-existing violation — tracked in #1190; may be on conversations not bookings
-knowledge_chunks.created_at # pre-existing violation — tracked in #1190; may be parser limitation
-knowledge_chunks.source_title # pre-existing violation — tracked in #1190
-legal_consents.accepted_at # pre-existing violation — tracked in #1190
-legal_consents.created_at # pre-existing violation — tracked in #1190; may be parser limitation
-legal_consents.doc_type # pre-existing violation — tracked in #1190
-legal_consents.doc_version # pre-existing violation — tracked in #1190
 messages.user_id # pre-existing violation — tracked in #1190
 tenant_settings.customer_bug_flow_enabled # pre-existing violation — tracked in #1190
 tenant_settings.import_auto_accept_threshold # pre-existing violation — tracked in #1190

@@ -37,7 +37,9 @@ export const POST = withServiceAuth(async (req, ctx) => {
 
   const { data, error } = await db
     .from("knowledge_chunks")
-    .select("id, scope, tenant_id, source_url, source_title, category, content, created_at")
+    // #1190: knowledge_chunks has no source_title/created_at — the provenance
+    // fields are source_type/source_url and the timestamp is ingested_at.
+    .select("id, scope, tenant_id, source_url, source_type, category, content, ingested_at")
     .eq("ingest_user_id", body.auth_user_id);
 
   if (error) {

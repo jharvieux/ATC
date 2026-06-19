@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-267 — 2026-06-18 — #1190 CCPA data export was returning zero bookings/conversations (wrong linkage); fixed + extracted testable helper
+
+The §17.9 CCPA export (`user-data-export-build.ts`) keyed bookings + conversations on `auth_user_id`, but those tables link by `user_id` (= `users.id`); only `users` and `legal_consents` carry `auth_user_id`. So every export silently disclosed **zero** bookings/conversations. Fix: resolve `users.id` from `auth_user_id` first, then query bookings/conversations by `user_id`. Also fixed the column allowlists: bookings `source`/`booked_at`/`sailed_at` → real columns (cruise_line/ship_name/sailing_date/confirmed_at/…); legal_consents `doc_type`/`doc_version`/`accepted_at`/`created_at` → `document_type`/`document_version`/`acted_at` (no created_at). User chose the "obvious set" scope (profile, conversations, bookings, consents, RAG chunks).
+
+**RAG side:** `export-user-chunks` + `post-termination-queue` read `knowledge_chunks.source_title`/`created_at` (don't exist) → `source_type`/`ingested_at`. The `ingest_user_id` FILTER was fine (real col, §17.9). The post-termination route also `.order("created_at")` — would 400 too; fixed to `ingested_at`.
+
+**Testability:** extracted the main-DB query block into an exported `collectUserDbExport(db, auth_user_id)` (mirrors precruise's loadEmailContext). The Inngest function is otherwise unitestable (#1217 0%-coverage). New test pins the user_id linkage (bookings/conversations key on the resolved id, NOT auth_user_id — a revert silently empties the export), the corrected columns, and the no-user-found short-circuit.
+
+**Gotcha:** `sonarjs/no-dead-store` doesn't count object spread (`...dbExport`) as a read — flagged the helper result as dead. Reference fields explicitly instead of spreading. Also supabase-js types these selects' data as `GenericStringError[]`; widen through `unknown`.
+
+**Artifacts:** PR (GDPR export), `collectUserDbExport`, `db/column-reader-exceptions.txt` (7 removed). Exceptions now 6 — only precruise (3) + tenant_settings (2) + messages.user_id (FP) remain.
+
+---
+
 ## D-266 — 2026-06-18 — #1190 host booking fee was broken in 4 ways (not just column names); fixed per §14 worked example
 
 The host-fee resolver in `bookings/[id]/submit/route.ts` was computing **$0** on every submission — and the bugs went well beyond the #1190 column-reader violations (fee_cents/fee_rate/rule_ref). All four fixed:
