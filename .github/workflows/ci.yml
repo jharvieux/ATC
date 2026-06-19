@@ -7,9 +7,57 @@ on:
       - "release/*"
 
 jobs:
-  ci:
-    name: Lint, Typecheck, Build
+  # Doc-only detection (PR-only trigger, so base_ref is always set). Lets the
+  # required "Guards & Build" job skip on PRs whose every changed path is a doc.
+  # A skipped required job is reported as passing by branch protection, so doc
+  # PRs stay mergeable without running the guard suite. NOT done via paths-ignore
+  # because this job is a required check — a never-reported required check would
+  # strand the PR.
+  detect-changes:
+    name: Detect changes
     runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.f.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect non-doc changes
+        id: f
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+          # Fail SAFE: any uncertainty (fetch/diff error) => code=true => run the
+          # full guard suite. code=false (skip) only on a CONFIRMED doc-only diff.
+          # NOT set -e: a git failure must fall through to code=true, not abort the
+          # job — an aborted/failed detect-changes would skip the dependent
+          # required job, which branch protection treats as passing (fail-open).
+          git fetch --no-tags origin "$BASE" || true
+          if ! CHANGED=$(git diff --name-only "origin/$BASE...HEAD" 2>/dev/null); then
+            echo "::warning::git diff failed — defaulting to code=true (run full CI)."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NONDOC=$(printf '%s\n' "$CHANGED" | grep -vE '(\.md$|^docs/|^specs/)' || true)
+          if [ -n "$NONDOC" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Doc-only PR — Guards & Build will skip (reported as passing)."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Required check. Carries the guards that tsc/eslint can't express
+  # (dropped/static column readers, ambiguous embeds, D-091 gates, permission
+  # matrix, duplication) plus the only PR-time build. Lint/typecheck are NOT
+  # repeated here — deploy.yml's required Lint + Typecheck jobs cover them.
+  guards:
+    name: Guards & Build
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,9 +84,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm -r lint
 
       - name: Lint migrations
         run: pnpm lint:migrations
@@ -75,9 +120,6 @@ jobs:
         # tsc cannot catch this class (resource/action are plain strings); E2E tests
         # bypass it via role='tenant_owner'. Only this static sweep catches it.
         run: pnpm check:permission-matrix
-
-      - name: Typecheck
-        run: pnpm -r typecheck
 
       - name: Auth-error adoption guard (#556)
         run: pnpm check:auth-error
