@@ -25,13 +25,14 @@ export const GET = withServiceAuth(async (req, ctx) => {
 
   const { data, error, count } = await db
     .from("knowledge_chunks")
+    // #1190: knowledge_chunks timestamp is ingested_at, not created_at.
     .select(
-      "id, content, source_url, source_type, tenant_id, terminated_origin_tenant_id, post_termination_review_status, created_at",
+      "id, content, source_url, source_type, tenant_id, terminated_origin_tenant_id, post_termination_review_status, ingested_at",
       { count: "exact" },
     )
     .eq("post_termination_review_status", "pending")
     .eq("scope", "global")
-    .order("created_at", { ascending: false })
+    .order("ingested_at", { ascending: false })
     .range(from, from + limit - 1);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });

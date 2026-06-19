@@ -20,6 +20,73 @@ interface RagExportResponse {
   error?: string;
 }
 
+type ExportDb = Pick<ReturnType<typeof createServiceRoleClient>, "from">;
+
+// §17.9 — gather the requesting user's CCPA-disclosable rows from the main DB.
+// Exported for testing; the Inngest handler around it is otherwise hard to
+// exercise. D-091 Round-3 #46 — explicit column allowlists (never select('*'),
+// which would leak internal fields into the export).
+// #1190: bookings + conversations link by user_id (= users.id), NOT
+// auth_user_id — resolve the platform users.id first; the users row and
+// legal_consents carry auth_user_id directly.
+export async function collectUserDbExport(
+  db: ExportDb,
+  auth_user_id: string,
+): Promise<{
+  user_profile: Array<Record<string, unknown>>;
+  conversations: Array<Record<string, unknown>>;
+  bookings: Array<Record<string, unknown>>;
+  legal_consents: Array<Record<string, unknown>>;
+}> {
+  const { data: userRows } = await db
+    .from("users")
+    .select(
+      "id, email, display_name, first_name, last_name, " +
+        "preferred_persona_slug, marketing_email_opt_in, travel_news_opt_in, " +
+        "memory_opt_out, notif_preferences, email_status, " +
+        "last_signed_in_at, created_at, updated_at",
+    )
+    .eq("auth_user_id", auth_user_id);
+
+  const usersId = (userRows?.[0] as { id?: string } | undefined)?.id ?? null;
+
+  const [{ data: convRows }, { data: bookingRows }] = usersId
+    ? await Promise.all([
+        db
+          .from("conversations")
+          .select(
+            "id, status, active_persona_id, first_message_at, last_message_at, " +
+              "message_count, created_at, updated_at",
+          )
+          .eq("user_id", usersId),
+        db
+          .from("bookings")
+          // #1190: real columns — bookings has no source/booked_at/sailed_at.
+          .select(
+            "id, status, cruise_line, ship_name, sailing_date, " +
+              "total_amount_cents, currency, confirmed_at, submitted_at, " +
+              "cancelled_at, created_at, updated_at",
+          )
+          .eq("user_id", usersId),
+      ])
+    : [{ data: [] }, { data: [] }];
+
+  const { data: consentRows } = await db
+    .from("legal_consents")
+    // #1190: real columns are document_type/document_version/acted_at.
+    .select("id, document_type, document_version, acted_at, ip_address, user_agent")
+    .eq("auth_user_id", auth_user_id);
+
+  // supabase-js types data as GenericStringError[] for these selects; the rows
+  // are opaque export payload, so widen through unknown.
+  return {
+    user_profile: (userRows ?? []) as unknown as Array<Record<string, unknown>>,
+    conversations: (convRows ?? []) as unknown as Array<Record<string, unknown>>,
+    bookings: (bookingRows ?? []) as unknown as Array<Record<string, unknown>>,
+    legal_consents: (consentRows ?? []) as unknown as Array<Record<string, unknown>>,
+  };
+}
+
 export const userDataExportBuild = inngest.createFunction(
   {
     id: "user-data-export-build",
@@ -34,51 +101,9 @@ export const userDataExportBuild = inngest.createFunction(
     const { auth_user_id, export_request_id } = parsed.data;
     const db = createServiceRoleClient();
 
-    // Gather all data for this user.
-    //
-    // D-091 Round-3 #46 — explicit column allowlist. `select('*')` leaks
-    // internal fields (tenant_id, deleted_at, RLS-internal flags, audit
-    // timestamps) into the CCPA export. The CCPA disclosure obligation
-    // is the user's OWN data, not our internal record-keeping. Each list
-    // below is the user-facing subset; columns added in future migrations
-    // are excluded from the export by default until explicitly added here.
-    const [
-      { data: userRows },
-      { data: convRows },
-      { data: bookingRows },
-      { data: consentRows },
-    ] = await Promise.all([
-      db
-        .from("users")
-        .select(
-          "id, email, display_name, first_name, last_name, " +
-            "preferred_persona_slug, marketing_email_opt_in, travel_news_opt_in, " +
-            "memory_opt_out, notif_preferences, email_status, " +
-            "last_signed_in_at, created_at, updated_at",
-        )
-        .eq("auth_user_id", auth_user_id),
-      db
-        .from("conversations")
-        .select(
-          "id, status, active_persona_id, first_message_at, last_message_at, " +
-            "message_count, created_at, updated_at",
-        )
-        .eq("auth_user_id", auth_user_id),
-      db
-        .from("bookings")
-        .select(
-          "id, status, source, total_amount_cents, currency, " +
-            "booked_at, submitted_at, sailed_at, cancelled_at, " +
-            "created_at, updated_at",
-        )
-        .eq("auth_user_id", auth_user_id),
-      db
-        .from("legal_consents")
-        .select(
-          "id, doc_type, doc_version, accepted_at, ip_address, user_agent, created_at",
-        )
-        .eq("auth_user_id", auth_user_id),
-    ]);
+    // Gather the user's main-DB rows (see collectUserDbExport for the
+    // column-allowlist + user_id-resolution rationale).
+    const dbExport = await collectUserDbExport(db, auth_user_id);
 
     // Knowledge-chunks live on the RAG service; fetch via signed service JWT.
     // Failures are non-fatal — we record an empty array + the error so the
@@ -113,10 +138,10 @@ export const userDataExportBuild = inngest.createFunction(
 
     const payload = {
       exported_at: new Date().toISOString(),
-      user_profile: userRows ?? [],
-      conversations: convRows ?? [],
-      bookings: bookingRows ?? [],
-      legal_consents: consentRows ?? [],
+      user_profile: dbExport.user_profile,
+      conversations: dbExport.conversations,
+      bookings: dbExport.bookings,
+      legal_consents: dbExport.legal_consents,
       knowledge_chunks: knowledgeChunks,
       ...(knowledgeChunksError ? { knowledge_chunks_error: knowledgeChunksError } : {}),
     };
