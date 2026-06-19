@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   tierRow: vi.fn(),
   hostAdapterConfig: vi.fn(),
   feeConfig: vi.fn(),
+  feeConfigEqCol: vi.fn(),
   // side-effect mocks
   safeAwait: vi.fn().mockResolvedValue(null),
   writeAuditLog: vi.fn().mockResolvedValue(undefined),
@@ -110,7 +111,7 @@ vi.mock("@/lib/db/tenant-client", () => ({
         };
       }
       if (table === "commissions") {
-        return { insert: () => mocks.commissionsInsert() };
+        return { insert: (payload: unknown) => mocks.commissionsInsert(payload) };
       }
       if (table === "quotes") {
         return { select: () => ({ eq: () => ({ maybeSingle: mocks.quotesMaybeSingle }) }) };
@@ -136,7 +137,16 @@ vi.mock("@/lib/db/service-role-client", () => ({
         return { select: () => ({ eq: () => ({ maybeSingle: mocks.hostAdapterConfig }) }) };
       }
       if (table === "host_booking_fee_configs") {
-        return { select: () => ({ eq: () => ({ maybeSingle: mocks.feeConfig }) }) };
+        // #1190: capture the filter column — the bug was .eq("adapter_id") on a
+        // table whose column is host_adapter, which 400'd and zeroed the fee.
+        return {
+          select: () => ({
+            eq: (col: string) => {
+              mocks.feeConfigEqCol(col);
+              return { maybeSingle: mocks.feeConfig };
+            },
+          }),
+        };
       }
       // platform_revenue inserts go to safeAwait — chain shape doesn't matter
       return { insert: () => ({}) };
@@ -468,5 +478,71 @@ describe("POST /api/bookings/[id]/submit — happy path", () => {
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(200);
     expect(mocks.populateConversionTouch).not.toHaveBeenCalled();
+  });
+});
+
+// #1190 §12.6/§14.3 — host booking fee. BASE_BOOKING fare is $5,000 (500000c)
+// and the default commission_rate is 0.10, so gross commission = 50000c.
+// These pin the column/units/base fixes: flat is a DOLLAR amount (→ toCents),
+// percent applies to the GROSS COMMISSION (not the fare), rule_ref is the
+// applied row's id, and the filter column is host_adapter (not adapter_id).
+describe("POST /api/bookings/[id]/submit — host booking fee", () => {
+  function commissionPayload() {
+    return mocks.commissionsInsert.mock.calls[0]?.[0] as Record<string, unknown>;
+  }
+
+  it("flat fee is read in dollars and converted to cents; rule_ref is the config id", async () => {
+    mocks.feeConfig.mockResolvedValue({
+      data: { id: "cfg-flat", fee_type: "flat", flat_fee_amount: "25.00", percent_of_commission: null },
+      error: null,
+    });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(200);
+    const p = commissionPayload();
+    expect(p.gross_commission_cents).toBe("50000");
+    expect(p.host_booking_fee_cents).toBe("2500"); // $25.00 → 2500c, NOT 25c
+    expect(p.host_booking_fee_rule_ref).toBe("cfg-flat");
+    expect(p.net_commission_cents).toBe("47500");
+    // The fee schedule must be looked up by host_adapter, not adapter_id.
+    expect(mocks.feeConfigEqCol).toHaveBeenCalledWith("host_adapter");
+  });
+
+  it("percent fee is a percentage of the GROSS COMMISSION, not the fare", async () => {
+    mocks.feeConfig.mockResolvedValue({
+      data: { id: "cfg-pct", fee_type: "percent", flat_fee_amount: null, percent_of_commission: "0.1000" },
+      error: null,
+    });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(200);
+    const p = commissionPayload();
+    // 10% of gross commission (50000) = 5000 — NOT 10% of the fare (500000) = 50000.
+    expect(p.host_booking_fee_cents).toBe("5000");
+    expect(p.host_booking_fee_rule_ref).toBe("cfg-pct");
+    expect(p.net_commission_cents).toBe("45000");
+  });
+
+  it("a tenant override supersedes the platform fee config", async () => {
+    mocks.feeConfig.mockResolvedValue({
+      data: { id: "cfg-flat", fee_type: "flat", flat_fee_amount: "10.00", percent_of_commission: null },
+      error: null,
+    });
+    mocks.tenantFeeOverride.mockResolvedValue({
+      data: { id: "ovr-pct", fee_type: "percent", flat_fee_amount: null, percent_of_commission: "0.1000" },
+      error: null,
+    });
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(200);
+    const p = commissionPayload();
+    expect(p.host_booking_fee_cents).toBe("5000"); // override (10% of 50000), not the $10 config
+    expect(p.host_booking_fee_rule_ref).toBe("ovr-pct");
+  });
+
+  it("no fee config → zero host fee, full gross flows to net", async () => {
+    const res = await POST(makeReq(), PARAMS);
+    expect(res.status).toBe(200);
+    const p = commissionPayload();
+    expect(p.host_booking_fee_cents).toBe("0");
+    expect(p.host_booking_fee_rule_ref).toBeNull();
+    expect(p.net_commission_cents).toBe("50000");
   });
 });

@@ -16,7 +16,7 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
-import { multiplyRate, subtractFee, toRate, type Cents } from "@/lib/money";
+import { dollarsToCents, multiplyRate, subtractFee, toRate, type Cents } from "@/lib/money";
 import { writeAuditLog } from "@/lib/audit/write";
 import type { BookingSubmissionRequest } from "@atc/shared-types";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -51,12 +51,32 @@ type TierRow = {
   hold_period_days: number;
 };
 
+// #1190: real columns are host_adapter / flat_fee_amount / percent_of_commission
+// / id. flat_fee_amount + percent_of_commission are NUMERIC, returned as strings.
 type FeeConfigRow = {
+  id: string;
   fee_type: string;
-  fee_cents: number | null;
-  fee_rate: number | null;
-  rule_ref: string | null;
+  flat_fee_amount: number | string | null;
+  percent_of_commission: number | string | null;
 };
+
+// §12.6 host booking fee, locked at submission (§14.3). `flat` is a dollar
+// amount (NUMERIC dollars → cents via dollarsToCents); `percent` is a fraction OF THE GROSS
+// COMMISSION (not the fare). `none` → 0. `tiered` + minimum_commission_threshold
+// are not yet implemented (#1247) and also resolve to 0 here. ruleRef snapshots
+// which config/override row was applied, for auditable re-derivation.
+function resolveHostFeeCents(
+  fee: FeeConfigRow,
+  grossCommissionCents: Cents,
+): { cents: Cents; ruleRef: string | null } {
+  let cents = 0n as Cents;
+  if (fee.fee_type === "flat" && fee.flat_fee_amount != null) {
+    cents = dollarsToCents(fee.flat_fee_amount);
+  } else if (fee.fee_type === "percent" && fee.percent_of_commission != null) {
+    cents = multiplyRate(grossCommissionCents, toRate(Number(fee.percent_of_commission)));
+  }
+  return { cents, ruleRef: fee.id };
+}
 
 export async function POST(
   req: Request,
@@ -221,56 +241,8 @@ async function submitBooking(
       }
     }
 
-    // Step 4: Resolve booking fee from host_booking_fee_configs
-    let host_booking_fee_cents = 0n as Cents;
-    let host_booking_fee_rule_ref: string | null = null;
-
-    const { data: feeConfig } = await adminDb
-      .from("host_booking_fee_configs")
-      .select("fee_type, fee_cents, fee_rate, rule_ref")
-      .eq("adapter_id", adapter.adapterId)
-      .maybeSingle();
-
-    if (feeConfig) {
-      const fee = feeConfig as FeeConfigRow;
-      if (fee.fee_type === "flat" && fee.fee_cents != null) {
-        host_booking_fee_cents = BigInt(fee.fee_cents) as Cents;
-      } else if (
-        fee.fee_type === "percent" &&
-        fee.fee_rate != null &&
-        booking.commissionable_fare_cents != null
-      ) {
-        host_booking_fee_cents = multiplyRate(
-          BigInt(booking.commissionable_fare_cents),
-          toRate(fee.fee_rate),
-        ) as Cents;
-      }
-      host_booking_fee_rule_ref = fee.rule_ref;
-    }
-
-    // Check for tenant override
-    const { data: feeOverride } = await db
-      .from("tenant_host_fee_overrides")
-      .select("fee_type, fee_cents, fee_rate, rule_ref")
-      .eq("adapter_id", adapter.adapterId)
-      .maybeSingle();
-
-    if (feeOverride) {
-      const fee = feeOverride as FeeConfigRow;
-      if (fee.fee_type === "flat" && fee.fee_cents != null) {
-        host_booking_fee_cents = BigInt(fee.fee_cents) as Cents;
-      } else if (
-        fee.fee_type === "percent" &&
-        fee.fee_rate != null &&
-        booking.commissionable_fare_cents != null
-      ) {
-        host_booking_fee_cents = multiplyRate(
-          BigInt(booking.commissionable_fare_cents),
-          toRate(fee.fee_rate),
-        ) as Cents;
-      }
-      host_booking_fee_rule_ref = fee.rule_ref;
-    }
+    // Host booking fee is resolved in §14.3 below — a `percent` fee is a
+    // percentage of the gross commission, so it must be computed after gross.
 
     // §14.4 Fail-closed: if commission_rate or platform_split_rate is unresolvable, do NOT proceed
     if (commission_rate === null || !health.ok) {
@@ -344,6 +316,33 @@ async function submitBooking(
     const platformSplitRate = toRate(platform_split_rate);
 
     const gross_commission_cents = multiplyRate(fare, commissionRate);
+
+    // §12.6 / §14.3 — host booking fee snapshot, locked at submission. A tenant
+    // override supersedes the platform-wide adapter config. Persist the cents +
+    // the rule id so the math is auditable without re-derivation.
+    let host_booking_fee_cents = 0n as Cents;
+    let host_booking_fee_rule_ref: string | null = null;
+
+    const { data: feeConfig } = await adminDb
+      .from("host_booking_fee_configs")
+      .select("id, fee_type, flat_fee_amount, percent_of_commission")
+      .eq("host_adapter", adapter.adapterId)
+      .maybeSingle();
+    if (feeConfig) {
+      ({ cents: host_booking_fee_cents, ruleRef: host_booking_fee_rule_ref } =
+        resolveHostFeeCents(feeConfig as FeeConfigRow, gross_commission_cents));
+    }
+
+    const { data: feeOverride } = await db
+      .from("tenant_host_fee_overrides")
+      .select("id, fee_type, flat_fee_amount, percent_of_commission")
+      .eq("host_adapter", adapter.adapterId)
+      .maybeSingle();
+    if (feeOverride) {
+      ({ cents: host_booking_fee_cents, ruleRef: host_booking_fee_rule_ref } =
+        resolveHostFeeCents(feeOverride as FeeConfigRow, gross_commission_cents));
+    }
+
     const net_commission_cents = subtractFee(gross_commission_cents, host_booking_fee_cents);
     const platform_retained_cents = multiplyRate(net_commission_cents, platformSplitRate);
     const subhost_payable_cents = subtractFee(net_commission_cents, platform_retained_cents);
