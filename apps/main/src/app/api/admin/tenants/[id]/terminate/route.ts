@@ -10,6 +10,7 @@ import Stripe from "stripe";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
 
 function escapeHtml(s: string): string {
   return s
@@ -91,6 +92,10 @@ export async function POST(
         }).eq("id", tenantId);
 
         if (updateErr) throw new Error(updateErr.message);
+
+        // Propagate the suspension to RAG so retrieval is cut off during the
+        // grace window (best-effort; never throws, reconcile backstops).
+        await publishTenantShadowEvent(db, tenantId, "tenant.status_changed");
 
         const stripe = new Stripe(stripeKey);
 

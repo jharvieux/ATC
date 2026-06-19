@@ -23,6 +23,7 @@
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
 
 // 14 days from signup. Short enough to deter the abuse vector, long
 // enough that legitimate customers who take their time setting up
@@ -133,6 +134,8 @@ export const onboardingStaleSuspend = inngest.createFunction(
               }),
               "audit_log.insert.auto_suspend_stale_onboarding",
             );
+            // Propagate the suspension to RAG so retrieval is cut off.
+            await publishTenantShadowEvent(db, t.id, "tenant.status_changed");
           }
         }
 

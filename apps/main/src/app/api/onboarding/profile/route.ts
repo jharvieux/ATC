@@ -11,6 +11,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
 
 interface ProfileBody {
   legal_name: string;
@@ -98,6 +99,10 @@ export async function POST(req: Request): Promise<Response> {
     if (error) {
       return dbErrorResponse(error);
     }
+
+    // display_name is mirrored in RAG's tenant_registry_shadow — keep it current
+    // (best-effort; the nightly reconcile also corrects this field).
+    await publishTenantShadowEvent(db, ctx.tenant_id, "tenant.metadata_updated");
 
     // Advance to "legal". If still at "signup", go through "profile" first —
     // direct signup→legal skips a stage and the state machine rejects it.
