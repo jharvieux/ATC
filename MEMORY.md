@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-273 — 2026-06-19 — "AI temporarily unavailable" was ai_call_log.purpose CHECK drift, not an AI outage
+
+User reported the agent support chat (TA-concierge, Captain Dave) on the lisa-travel tenant showing "AI is temporarily unavailable." Root cause: the Anthropic call **succeeds**, then `logAndIncrement` (apps/main/src/lib/ai/call-wrapper.ts) inserts the `ai_call_log` row via `safeAwait` (throws on DB error, D-094). The `ai_call_log_purpose_check` CHECK constraint was last set in `20260609000000_help_ai_purposes.sql` (16 purposes) and never extended as the `AICallPurpose` union grew to 23. So any call on a newer purpose passed the LLM but failed the cost-log insert → throw → caught by run-generation-loop's generic `catch` → user-facing fallback. Postgres logs confirmed `violates check constraint "ai_call_log_purpose_check"` timed to the chat attempts. 7 purposes were rejected: `persona_addendum_rescreen, import_classify, import_extract, quote_copilot, public_token_chat, ta_chat_main, draft_reply`. `ta_chat_main` is the agent-support-chat purpose (route.ts:737), so this hit **every** tenant's TA chat (+ draft-reply, quote co-pilot, public-token chat, import pipeline) — not tenant-specific. Customer chat (`chat_main`) was unaffected (in the constraint). The RAG `operator-alert`s also seen on /api/chat were a separate, graceful degradation, not the cause.
+
+Fix: migration `20260706000000_ai_call_log_purpose_sync.sql` widens the constraint to the full 23-value union (PR #1270, merged 8cfa4147, both audits clean on Opus). Applied to prod out-of-band via `psql -f` first to unblock the live incident (user approved per-instance).
+
+Operational note — prod schema_migrations ledger: applying the DDL with raw `psql` did NOT record version `20260706000000` in `supabase_migrations.schema_migrations`. Deliberately left it unrecorded rather than hand-inserting a row, because prod was already behind dev (last recorded `20260704000000`; `20260704000001/0002`, `20260705000000` pending the next gated prod deploy). Hand-inserting only my version would create a gapped, non-monotonic ledger. The migration is idempotent (`DROP IF EXISTS`→`ADD`), so the next approved prod deploy applies all four in order and records mine cleanly — no drift. The constraint fix is live in prod now regardless.
+
+Follow-up #1271 (sonnet): a static CI guard parsing the `AICallPurpose` union vs the constraint's value list (no DB creds; like the dropped-column/permission-matrix guards). This drift class is invisible to tsc — the purpose is a plain string on both sides. Rejected: making the `ai_call_log` insert non-throwing on constraint error (the answer is already generated, but D-094 requires surfacing mutation failures; the real defect is the stale constraint, not the throw).
+
+---
+
 ## D-272 — 2026-06-19 — Subcontractor tracking opened to BYO hosts (overrides spec §14.3a sub_host-only gating)
 
 User asked, for a BYO agency in the tenant admin console, to make the Subcontractors feature (and the net-retained revenue forecast it powers) available — today it 403s with "only available for sub-host accounts." Approved as a deliberate product change even though the platform does not pay BYO subcontractors; tracking them is a tenant-side bookkeeping value-add.

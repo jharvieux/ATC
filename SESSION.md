@@ -1,20 +1,21 @@
-# Session state — last updated 2026-06-19 13:05 local
+# Session state — last updated 2026-06-19 19:05 ET
 
 ## Just completed
-- **Voice-profile 500 fixed** (PR #1266, merged e3b72755). Root cause: `voice_samples`/`voice_profiles` were never in `TENANT_SCOPED_TABLES`, so `tenantClient.from("voice_*")` threw `UnregisteredTenantTableError` (fail-closed) → generic 500 on settings/voice. Whole feature was dead (all routes + Inngest extractor + resolve-voice-profile/draft-reply). Added both tables + regression test. `pnpm verify` green; both audit agents clean (Sonnet). Logged D-271.
-- Opened issue #1267 — voice routes have no happy-path test coverage (why this shipped broken). Referenced from PR #1266 "Not in scope".
+- Diagnosed live "AI is temporarily unavailable" on the agent support chat (TA-concierge / Captain Dave, lisa-travel tenant).
+- Root cause: `ai_call_log.purpose` CHECK constraint drift. The Anthropic call succeeds; the post-call `ai_call_log` insert (call-wrapper.ts → safeAwait, throws per D-094) violated `ai_call_log_purpose_check` because the constraint (last set 2026-06-09, 16 purposes) never grew with the 23-value `AICallPurpose` union. 7 purposes rejected, incl. `ta_chat_main` (the TA-chat purpose). Hit every tenant's TA chat + draft-reply + quote co-pilot + public-token chat + import pipeline; customer `chat_main` was fine.
+- Migration `20260706000000_ai_call_log_purpose_sync.sql` widens the constraint to all 23 values. **Applied to prod via psql (user-approved) to unblock**, then PR #1270 merged to dev (squash 8cfa4147; both audits clean on Opus).
+- Opened follow-up #1271 (sonnet): static CI guard for AICallPurpose↔constraint drift.
+- Logged D-273 in MEMORY.md.
 
 ## In flight
-- Nothing in flight — clean checkpoint on dev (e3b72755).
+- Doc-only PR for D-273 (MEMORY.md) + this SESSION.md, on branch `feature/log-d273-ai-purpose-drift`. About to push + open + merge (audit-exempt doc-only).
 
 ## Next step
-- None committed. Merge to dev triggers the beta pipeline deploy of atc-main, so the user can re-test the Voice Profile page once that deploy lands.
+- Push branch, open doc-only PR into dev, merge once fast checks settle.
 
 ## Blocked on user
-- #1127 — transfer.reversed ledger unwind, spec §14.9 unspecified; needs spec owner decision
-- #563, #1222 — APP_STAGING_URL / PLATFORM_DEFAULT_TENANT_ID Vercel Preview — ops actions required
-- #895 — Re-enable BOOKING_CRONS_DISABLED: depends on product go-decision prongs 1+3
-- #1258, #1259 (Phase 2 sub-issues) — blocked on attorney sign-off (#427)
+- Nothing. (Confirm the chat now works on your end — prod constraint verified to include `ta_chat_main`.)
 
 ## Open questions
-- #1267 (voice-route coverage) is unrouted — agent-doable, will get an opus/sonnet label on next triage sweep unless user wants it picked up sooner.
+- Prod is behind dev in the migration ledger: `supabase_migrations.schema_migrations` last records `20260704000000`, so `20260704000001`, `20260704000002`, `20260705000000`, and `20260706000000` are pending the next gated prod deploy. The constraint fix is already live (applied out-of-band); the formal migration is idempotent and will record cleanly on next deploy. Worth confirming the next prod deploy runs them in order.
+- Separately observed: RAG retrieval was degraded (operator-alerts on /api/chat — graceful, ungrounded answers). Not this incident; flag if it persists.
