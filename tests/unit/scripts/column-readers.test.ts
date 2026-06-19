@@ -124,9 +124,10 @@ describe("parseSelectColumns", () => {
     expect(parseSelectColumns("!inner, id")).toEqual(["id"]);
   });
 
-  it("strips col:alias syntax — returns the base column name, not the alias", () => {
-    // .select("id:uuid, legal_name:name") — the key to send to Postgres is the left side
-    expect(parseSelectColumns("id:uuid, legal_name:name")).toEqual(["id", "legal_name"]);
+  it("strips alias:col syntax — returns the real column name, not the output alias", () => {
+    // PostgREST: alias:real_column — alias is the output key, real_column is what Postgres sees.
+    // .select("uuid:id, name:legal_name") → validates ["id", "legal_name"], not the aliases.
+    expect(parseSelectColumns("uuid:id, name:legal_name")).toEqual(["id", "legal_name"]);
   });
 });
 

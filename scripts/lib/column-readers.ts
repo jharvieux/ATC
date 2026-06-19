@@ -128,8 +128,8 @@ export function parseSelectColumns(selectArg: string): string[] {
     if (t.startsWith("!")) continue; // e.g. !inner, !left
     if (t.includes("(")) continue; // embedded resource or aggregate
     if (t.includes("->")) continue; // JSON operator
-    // Strip alias (col:alias → col) then take the identifier
-    const base = t.includes(":") ? t.slice(0, t.indexOf(":")).trim() : t;
+    // PostgREST alias syntax: alias:real_column — take the part AFTER the colon.
+    const base = t.includes(":") ? t.slice(t.indexOf(":") + 1).trim() : t;
     const ident = /^([a-z_][a-z0-9_]*)/i.exec(base);
     if (ident) cols.push(ident[1].toLowerCase());
   }
