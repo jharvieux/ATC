@@ -118,7 +118,7 @@ jobs:
             echo "is_doc_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # NOTE (D-2xx): the PR-body "## Audit" section is no longer enforced here.
+      # NOTE (D-270): the PR-body "## Audit" section is no longer enforced here.
       # The load-bearing guarantee — both subagents ran on the EXACT current diff —
       # lives entirely in the hash-bound marker comments checked by the step below.
       # The body block was only a human-readable summary and a frequent source of

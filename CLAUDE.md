@@ -457,7 +457,7 @@ If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-ex
 
 **Mandatory hash-bound audit comments on every PR.**
 
-The `pr-audit-section-check` workflow gates on ONE thing: a marker-stamped PR comment from each agent, **bound to the PR's current diff by hash** (#924 / D-200; body-section enforcement removed D-2xx). Each agent embeds `diff:<sha256>` in its marker (`<!-- d091-audit:v1 diff:<hash> -->`, `<!-- prepr-audit:v1 diff:<hash> -->`), where the hash covers the PR's effective diff (sorted filename+patch pairs from the PR files API). The check recomputes the hash and passes only if a marker comment with the matching hash exists — comment timestamps are irrelevant. The agents post those comments themselves — do not post them manually.
+The `pr-audit-section-check` workflow gates on ONE thing: a marker-stamped PR comment from each agent, **bound to the PR's current diff by hash** (#924 / D-200; body-section enforcement removed D-270). Each agent embeds `diff:<sha256>` in its marker (`<!-- d091-audit:v1 diff:<hash> -->`, `<!-- prepr-audit:v1 diff:<hash> -->`), where the hash covers the PR's effective diff (sorted filename+patch pairs from the PR files API). The check recomputes the hash and passes only if a marker comment with the matching hash exists — comment timestamps are irrelevant. The agents post those comments themselves — do not post them manually.
 
 The PR-body `## Audit` block is **no longer gated**. `pre-pr-reviewer` writes it into the body automatically (combining both agents' findings); it's there for the user to read, not for CI. Don't hand-craft it, and don't let a missing/short/"TBD" body block worry you — only the hash-bound comments matter.
 
