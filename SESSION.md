@@ -1,29 +1,20 @@
-# Session state — last updated 2026-06-18 21:30 UTC
+# Session state — last updated 2026-06-19 13:05 local
 
 ## Just completed
-- **#1190 CLOSED — complete.** Triaged all 34 baselined column-reader violations; ~31 were genuine runtime bugs. Fixed across 7 merged PRs:
-  - #1244 Severity A (booking/quote routes that 400'd)
-  - #1245 tenant email config → tenant_branding (6 files)
-  - #1246 forums coordinator via linked group (forumCoordinatorId helper)
-  - #1248 host booking fee (was $0): filter/units/percent-base + dollarsToCents helper
-  - #1249 CCPA export user_id linkage + multi-tenant disclosure
-  - #1250 precruise recipient from contact (first name only)
-  - #1251 tenant_settings: add import_auto_accept_threshold column (migration 20260705000000) + drop dead bug-flow read
-- Exceptions 34 → 1 (messages.user_id = documented false positive).
-- MEMORY D-263 … D-269 added.
+- **Voice-profile 500 fixed** (PR #1266, merged e3b72755). Root cause: `voice_samples`/`voice_profiles` were never in `TENANT_SCOPED_TABLES`, so `tenantClient.from("voice_*")` threw `UnregisteredTenantTableError` (fail-closed) → generic 500 on settings/voice. Whole feature was dead (all routes + Inngest extractor + resolve-voice-profile/draft-reply). Added both tables + regression test. `pnpm verify` green; both audit agents clean (Sonnet). Logged D-271.
+- Opened issue #1267 — voice routes have no happy-path test coverage (why this shipped broken). Referenced from PR #1266 "Not in scope".
 
 ## In flight
-- Nothing in flight — clean checkpoint on dev (synced to 34fa92fb).
+- Nothing in flight — clean checkpoint on dev (e3b72755).
 
 ## Next step
-- #1217 (Inngest background-job test coverage, opus-labeled) is workable and needs no decisions — natural next pickup.
+- None committed. Merge to dev triggers the beta pipeline deploy of atc-main, so the user can re-test the Voice Profile page once that deploy lands.
 
 ## Blocked on user
-- #1127 (opus) — transfer.reversed ledger unwind: spec §14.9 unspecified; needs spec owner.
-- #563 (APP_STAGING_URL), #1222 (PLATFORM_DEFAULT_TENANT_ID Vercel Preview) — ops actions.
+- #1127 — transfer.reversed ledger unwind, spec §14.9 unspecified; needs spec owner decision
+- #563, #1222 — APP_STAGING_URL / PLATFORM_DEFAULT_TENANT_ID Vercel Preview — ops actions required
+- #895 — Re-enable BOOKING_CRONS_DISABLED: depends on product go-decision prongs 1+3
+- #1258, #1259 (Phase 2 sub-issues) — blocked on attorney sign-off (#427)
 
-## Open questions / follow-ups opened this session
-- #1243 — column-reader gate parses PostgREST alias:column + !inner embeds incorrectly (caused the 1 remaining FP).
-- #1247 — host booking fee: implement tiered fee_type + minimum_commission_threshold (unbuilt §12.6 features).
-- Open opus issues remaining: #1217 (test coverage), #1127 (blocked).
-- Session on Opus (user set it for opus work). Not reverted.
+## Open questions
+- #1267 (voice-route coverage) is unrouted — agent-doable, will get an opus/sonnet label on next triage sweep unless user wants it picked up sooner.

@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-271 — 2026-06-19 — Voice-profile feature was dead: tables missing from TENANT_SCOPED_TABLES (same class as #1045/#1054)
+
+User reported "Load failed (HTTP 500)" on the tenant admin console → Voice Profile page. Root cause: `voice_samples` and `voice_profiles` were never registered in `TENANT_SCOPED_TABLES` (apps/main/src/lib/db/tenant-scoped-tables.ts). `tenantClient(ctx)` fails closed — `.from(table)` throws `UnregisteredTenantTableError` for any table in neither the scoped nor platform-readable set, BEFORE issuing a query — and `respondToAuthError` maps that unrecognized throw to a generic 500. PostgREST logs confirmed: the page's `users` query returned 200, but no `voice_*` query was ever issued.
+
+This killed the ENTIRE feature (samples GET/POST, card PATCH, sample DELETE, the Inngest extractor, and resolve-voice-profile → draft-reply all read these via tenantClient), and it had shipped that way with zero passing-path test coverage.
+
+Fix (PR #1266, merged e3b72755): add both tables to `TENANT_SCOPED_TABLES` + a regression test asserting the proxy injects the tenant filter rather than throwing. Both tables already had a `tenant_id` column and the full 4-policy RLS set, so they met the scoped-set contract — pure omission. This is the inverse of the #1045/#1054 bug (tables WITHOUT tenant_id wrongly IN the set, causing "column does not exist" 500s); same blast pattern, opposite direction. The DB-backed `check:tenant-scoped-columns` guard only catches the #1045 direction (scoped-without-column), NOT this one (a real tenant-scoped table simply absent from both sets) — no mechanical guard exists for "a tenantClient.from('X') string literal whose X is in neither set." Follow-up issue #1267 opened for the missing voice-route happy-path coverage.
+
+Rejected: moving voice tables to PLATFORM_READABLE_TABLES (wrong — they are per-tenant/per-user, need the auto-injected filter). Rejected: catching `UnregisteredTenantTableError` in the route to 404 gracefully (masks the real config bug; the fail-closed throw is correct, the registry omission is the defect).
+
+---
+
 ## D-270 — 2026-06-19 — PR gate streamlined: doc-only skip, audit gates on comments-only, agents run after CI, ci.yml guards now required
 
 The PR pipeline was slow/noisy and had an enforcement gap. Five coordinated changes (one PR, branch `feature/ci-doc-skip-audit-streamline`):
