@@ -121,6 +121,15 @@ jobs:
         # bypass it via role='tenant_owner'. Only this static sweep catches it.
         run: pnpm check:permission-matrix
 
+      - name: AI-purpose constraint guard (#1271)
+        # Fails if AICallPurpose union in call-wrapper.ts diverges from the
+        # ai_call_log_purpose_check CHECK constraint in the latest migration.
+        # Root cause of the "AI temporarily unavailable" incident: safeAwait
+        # throws on constraint violation, so a missing purpose causes the
+        # cost-log insert to fail and surfaces as an AI outage to users.
+        # Pure source parse — no DB connection required.
+        run: pnpm check:ai-purpose
+
       - name: Auth-error adoption guard (#556)
         run: pnpm check:auth-error
 
