@@ -1,8 +1,11 @@
 // Layout shell for every page in the (console) route group — the tenant
 // Admin Console. Two columns: left = ConsoleSidebar (collapsible groupings
 // of console pages), right = page content. Slim top bar: sidebar toggle +
-// platform logo on the left, hamburger menu (Dashboard / View profile /
-// Sign out) on the right.
+// platform logo on the left, the canonical role-aware app hamburger on the
+// right (same menu as the dashboard and CRM pages — Dashboard, Workspace/CRM,
+// My account, Admin Console, profile, sign out). The sidebar and the
+// hamburger are intentionally different surfaces: the hamburger is
+// cross-app navigation, the sidebar is the console's own sub-pages.
 //
 // Platform branding everywhere TA-facing (#962 follow-up): this surface is
 // staff-only, so it shows the AI Travel Concierge logo, never tenant
@@ -17,18 +20,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Menu, PanelLeft } from "lucide-react";
+import { PanelLeft } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { performSignout } from "@/lib/auth/perform-signout";
+import { SiteHeaderMenu } from "@/components/site-header/SiteHeaderMenu";
 import { ConsoleSidebar } from "./ConsoleSidebar";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
@@ -86,25 +81,11 @@ export function ConsoleShell({
             </span>
           </Link>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" aria-label="Open menu" className="h-10 w-10 px-0">
-              <Menu className="h-5 w-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem asChild>
-              <Link href="/">Dashboard</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/settings/profile">View profile</Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {/* onSelect (not a nested <form>) so ENTER/SPACE on the
-                highlighted item fire the action — see SiteHeaderMenu (#664). */}
-            <DropdownMenuItem onSelect={performSignout}>Sign out</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* Canonical role-aware app nav — identical to the dashboard and
+            CRM-page hamburger so navigation (incl. Workspace/CRM and My
+            account) stays consistent across every tenant screen. The
+            ConsoleSidebar below carries the console's own sub-page nav. */}
+        <SiteHeaderMenu isPlatformDomain={false} isAuthenticated role={role} />
       </header>
       <div className="flex min-h-0 flex-1">
         <ConsoleSidebar open={open} initialCollapsed={initialCollapsed} role={role} />
