@@ -311,7 +311,7 @@ async function routeToReview(
   console.warn(`[import-pipeline] queue=${id} routed to review: ${reason}`);
 }
 
-async function runExtractor(
+export async function runExtractor(
   type: string,
   args: { tenant_id: string; text: string },
 ): Promise<{ extracted: unknown; per_field_confidence: Record<string, number>; overall_confidence: number; error?: string }> {
@@ -334,7 +334,7 @@ async function runExtractor(
   }
 }
 
-function buildValidationInput(
+export function buildValidationInput(
   type: string,
   tenant_id: string,
   fields: unknown,
@@ -353,6 +353,6 @@ function buildValidationInput(
   }
 }
 
-function hoursFromNow(hours: number): string {
+export function hoursFromNow(hours: number): string {
   return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 }

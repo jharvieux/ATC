@@ -41,6 +41,18 @@ const NUDGE_LEVELS: { days: number; level: NudgeLevel }[] = [
 // for half a year; nothing more to say without becoming pushy).
 const EMAIL_LEVELS: ReadonlySet<NudgeLevel> = new Set(["30d", "60d", "90d"]);
 
+// Most-severe applicable nudge level for a given inactivity span, or null when
+// the tenant is still under the 30-day floor. Walks the levels high→low and
+// returns the first whose threshold is met — so a tenant 95 days idle trips
+// "90d", never the lower reminders. (checkInactivity acts only on this single
+// level: every branch of its old loop returned on the first match.)
+export function selectNudgeLevel(daysSinceActivity: number): NudgeLevel | null {
+  for (const { days, level } of [...NUDGE_LEVELS].reverse()) {
+    if (daysSinceActivity >= days) return level;
+  }
+  return null;
+}
+
 interface TenantContactRow {
   id: string;
   status: string;
@@ -201,52 +213,49 @@ async function checkInactivity(
   const lastActivity = new Date(Math.max(...dates.map((d) => d.getTime())));
   const daysSinceActivity = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24);
 
-  // Walk the levels in reverse so we trip the MOST severe applicable one
-  // (avoids sending a 30d reminder to a tenant who's already at 90d).
-  for (const { days, level } of [...NUDGE_LEVELS].reverse()) {
-    if (daysSinceActivity < days) continue;
+  // Act on the most severe applicable level (avoids sending a 30d reminder to
+  // a tenant who's already at 90d). Below the 30d floor → nothing to do.
+  const level = selectNudgeLevel(daysSinceActivity);
+  if (!level) return "below_threshold";
 
-    // Already sent this level? Skip.
-    const { data: existing } = await db
-      .from("tenant_inactivity_nudges")
-      .select("id")
-      .eq("tenant_id", tenant.id)
-      .eq("nudge_level", level)
-      .maybeSingle();
-    if (existing) return "already_sent";
+  // Already sent this level? Skip.
+  const { data: existing } = await db
+    .from("tenant_inactivity_nudges")
+    .select("id")
+    .eq("tenant_id", tenant.id)
+    .eq("nudge_level", level)
+    .maybeSingle();
+  if (existing) return "already_sent";
 
-    // Record the nudge regardless of whether we end up sending the email,
-    // so the "only send once per level" guard still works.
-    await safeAwait(db.from("tenant_inactivity_nudges").insert({
-      tenant_id: tenant.id,
-      nudge_level: level,
-      sent_at: now.toISOString(),
-    }), "tenant_inactivity_nudges.insert");
-    console.info(
-      "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
-      level, tenant.id, Math.floor(daysSinceActivity),
-    );
+  // Record the nudge regardless of whether we end up sending the email,
+  // so the "only send once per level" guard still works.
+  await safeAwait(db.from("tenant_inactivity_nudges").insert({
+    tenant_id: tenant.id,
+    nudge_level: level,
+    sent_at: now.toISOString(),
+  }), "tenant_inactivity_nudges.insert");
+  console.info(
+    "[compliance-nightly] Nudge level=%s recorded for tenant=%s (days_inactive=%d)",
+    level, tenant.id, Math.floor(daysSinceActivity),
+  );
 
-    if (!EMAIL_LEVELS.has(level)) {
-      // 180d — no email, just the breadcrumb above. Replaces the prior
-      // auto-suspend behaviour (deliberate policy change — paying tenants
-      // don't lose access for inactivity).
-      return "level_logged_no_email";
-    }
-
-    if (!tenant.support_email) {
-      console.warn(
-        "[compliance-nightly] Skipping reminder for tenant=%s — no support_email on row",
-        tenant.id,
-      );
-      return "level_logged_no_email";
-    }
-
-    await sendReminderEmail({ db, tenant, level: level as InactivityNudgeLevel, daysSinceActivity });
-    return "email_sent";
+  if (!EMAIL_LEVELS.has(level)) {
+    // 180d — no email, just the breadcrumb above. Replaces the prior
+    // auto-suspend behaviour (deliberate policy change — paying tenants
+    // don't lose access for inactivity).
+    return "level_logged_no_email";
   }
 
-  return "below_threshold";
+  if (!tenant.support_email) {
+    console.warn(
+      "[compliance-nightly] Skipping reminder for tenant=%s — no support_email on row",
+      tenant.id,
+    );
+    return "level_logged_no_email";
+  }
+
+  await sendReminderEmail({ db, tenant, level: level as InactivityNudgeLevel, daysSinceActivity });
+  return "email_sent";
 }
 
 async function sendReminderEmail(args: {
@@ -303,7 +312,7 @@ const SUBJECT_BY_LEVEL: Record<InactivityNudgeLevel, string> = {
   "90d": "Still here whenever you're ready",
 };
 
-function formatAddress(addr: Record<string, unknown> | null): string {
+export function formatAddress(addr: Record<string, unknown> | null): string {
   if (!addr) return "";
   const parts = [
     addr.line1,
