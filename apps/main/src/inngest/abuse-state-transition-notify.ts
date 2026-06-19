@@ -27,7 +27,7 @@ interface NotificationCopy {
 
 const AbuseStateTransitionPayloadSchema = z.object({
   tenant_id: z.string().optional(),
-  dimension: z.enum(["ai_cost", "chat_volume", "email_volume", "group_invite", "rag_cap"]).optional(),
+  dimension: z.enum(["ai_cost", "chat_volume", "email_volume", "group_invite", "rag_cap", "help_submission"]).optional(),
   from_state: z.string().optional(),
   to_state: z.string().optional(),
   metric_value: z.string().optional(),

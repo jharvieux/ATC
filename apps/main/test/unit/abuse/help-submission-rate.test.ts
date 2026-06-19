@@ -1,9 +1,19 @@
 // BP32 §32.11.2 — help_submission_rate threshold transitions.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveThresholdsSync } from "@/lib/abuse/thresholds";
-import { checkHelpSubmissionRate } from "@/lib/abuse/help-submission-rate";
+import { checkHelpSubmissionRate, incrementHelpSubmissionCounter } from "@/lib/abuse/help-submission-rate";
+
+const inngestSendMock = vi.fn();
+vi.mock("@/inngest/client", () => ({
+  inngest: { send: (...args: unknown[]) => inngestSendMock(...args) },
+}));
+
+const operatorAlertMock = vi.fn();
+vi.mock("@/lib/monitoring/send-operator-alert", () => ({
+  sendOperatorAlert: (...args: unknown[]) => operatorAlertMock(...args),
+}));
 
 // Minimal chainable Supabase stub whose terminal `.maybeSingle()` resolves to a
 // scripted `{ data, error }`. Mirrors the metrics query in loadCurrentMetrics.
@@ -66,6 +76,98 @@ describe("help_submission_rate thresholds", () => {
     });
     expect(t.help_submission_rate_daily.soft1).toBe(10);
     expect(t.help_submission_rate_daily.soft2).toBe(50); // unchanged
+  });
+});
+
+// Stub for incrementHelpSubmissionCounter tests: handles one select then one update.
+function metricsDbForIncrement(existingRow: Record<string, unknown> | null): SupabaseClient {
+  const selectChain = {
+    select: () => selectChain,
+    eq: () => selectChain,
+    order: () => selectChain,
+    limit: () => selectChain,
+    maybeSingle: () => Promise.resolve({ data: existingRow, error: null }),
+  };
+
+  const updateResult = { data: null, error: null };
+  const updateChain: Record<string, unknown> = {};
+  updateChain.update = () => updateChain;
+  updateChain.eq = () => updateChain;
+  // thenable — safeAwait does `await chain`, which calls .then
+  updateChain.then = (resolve: (v: unknown) => unknown) => resolve(updateResult);
+
+  let fromCount = 0;
+  return {
+    from: () => (fromCount++ === 0 ? selectChain : updateChain),
+  } as unknown as SupabaseClient;
+}
+
+describe("incrementHelpSubmissionCounter — soft2 owner email (#1261)", () => {
+  beforeEach(() => {
+    inngestSendMock.mockReset();
+    operatorAlertMock.mockReset();
+  });
+
+  it("fires abuse.state_transition(help_submission, soft2) when crossing the soft2 threshold", async () => {
+    // 49 submissions + 1 = 50, crosses soft2 for the first time this day
+    const db = metricsDbForIncrement({
+      help_submission_count: 49,
+      help_submission_limit_state: "soft1",
+      last_recomputed_at: null,
+      billing_period: "2026-06",
+    });
+
+    const result = await incrementHelpSubmissionCounter(db, "t-soft2");
+
+    expect(result.new_state).toBe("soft2");
+    expect(result.transitioned).toBe(true);
+    expect(inngestSendMock).toHaveBeenCalledOnce();
+    expect(inngestSendMock).toHaveBeenCalledWith({
+      name: "abuse.state_transition",
+      data: {
+        tenant_id: "t-soft2",
+        dimension: "help_submission",
+        from_state: "soft1",
+        to_state: "soft2",
+        metric_value: "50",
+        threshold_crossed: "50",
+      },
+    });
+  });
+
+  it("does NOT re-fire when already in soft2 (24 h throttle: at-most-once per day)", async () => {
+    // Already at 55 submissions in soft2 — no new transition, no email
+    const db = metricsDbForIncrement({
+      help_submission_count: 55,
+      help_submission_limit_state: "soft2",
+      last_recomputed_at: null,
+      billing_period: "2026-06",
+    });
+
+    const result = await incrementHelpSubmissionCounter(db, "t-soft2-again");
+
+    expect(result.new_state).toBe("soft2");
+    expect(result.transitioned).toBe(false);
+    expect(inngestSendMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT fire soft2 event when crossing the hard threshold", async () => {
+    // 99 submissions in soft2 → 100 = hard; only the hard operator alert fires
+    const db = metricsDbForIncrement({
+      help_submission_count: 99,
+      help_submission_limit_state: "soft2",
+      last_recomputed_at: null,
+      billing_period: "2026-06",
+    });
+
+    const result = await incrementHelpSubmissionCounter(db, "t-hard");
+
+    expect(result.new_state).toBe("hard");
+    expect(result.transitioned).toBe(true);
+    expect(inngestSendMock).not.toHaveBeenCalled();
+    expect(operatorAlertMock).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: "help_submission_rate_hard" }),
+    );
   });
 });
 
