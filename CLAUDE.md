@@ -2,13 +2,15 @@
 
 Working instructions for Claude Code sessions in this repo. Read this first, every session, before doing anything else.
 
+> **Branch protection — read before you commit.** `dev` and `main` are protected. Never commit directly to either. **Every change lands via a PR into `dev`** — that includes edits to this file, MEMORY/SESSION, docs, and workflow YAML, not just application code. Branch off `dev` (`feature/*` or `docs/*`), push, open the PR, let required CI pass, then squash-merge. Full rules in "Git, commits, pushes, and PRs" below.
+
 -----
 
 ## Session start protocol
 
 Every session, in this order:
 
-1. Read `/MEMORY.md` in full.
+1. Read `/MEMORY-INDEX.md` (one line per decision, newest first). Do NOT read `/MEMORY.md` in full — it's the append-only archive; `grep` the full entry out of it when a task touches that area.
 2. Read `/SESSION.md` in full.
 3. If a build prompt is being executed, read it.
 4. **Auto-triage open issues + PRs** per the rules in "Auto-triage on session start" below.
@@ -103,6 +105,7 @@ If nothing needed action, the line is `Auto-triage: clean — nothing open neede
 - Each entry: date, decision, why, what was rejected, related artifacts.
 - After any significant decision this session, **add an entry**. Significant means anything a future engineer or the user re-reading the log would want to know — model choices, threshold values, file-structure decisions, sequencing, scope cuts, deferrals.
 - **You can add entries. You cannot edit prior entries** without explicit permission — they are the historical record.
+- **`MEMORY.md` is the archive; `MEMORY-INDEX.md` is the session-start read.** Never read `MEMORY.md` in full (it's ~120K tokens). When you prepend an entry here, also prepend its one-liner under `## Entries` in `MEMORY-INDEX.md`, or rerun the rebuild snippet in that file's header.
 - If a user request conflicts with a logged decision, stop and surface the conflict before proceeding.
 
 ### How to write to it (a hook enforces append-only)
@@ -265,129 +268,26 @@ If you genuinely think a convention is harmful, surface it. Don't fork silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
 
-— No stub-shaped code (D-091)
-If a function takes a parameter, every parameter must affect the output.
-If a function returns a tuple, every variant must be reachable.
-A `kid` arg that resolves to the same single key is worse than not having the arg —
-the signature lies about the behavior. Same for `if/else if/else` branches where
-one is dead code. See docs/runbooks/anti-patterns.md.
+— D-091 anti-patterns (authoring checklist)
+Full catalog — symptoms, examples, codebase instances, prevention — lives in
+`docs/runbooks/anti-patterns.md`. Scan this list before writing app code; the
+`d091-reviewer` agent enforces it at PR time. The actionable specifics are kept
+here so the doctrine is in-context every session; open the runbook for the why.
 
-— Fail-closed by default (D-091)
-When an enforcement layer can't run (Redis down, secret unset, DB error, signature
-absent), the answer is denial, not permission. Returning `{ allowed: true }` on
-Redis error, or 200 on a silent DB-write failure, is the worst possible failure mode
-because it's silent AND it disables retries. Permit only on positive confirmation.
-
-— Check every Supabase mutation (D-091 / D-094)
-`@supabase/supabase-js` v2 does NOT throw on DB errors. Every `await x.update().eq(...)`,
-`.insert(...)`, `.delete()`, `.upsert(...)` must surface failure as a throw or non-200
-response. Two equivalent patterns:
-
-  // Preferred (D-094): wrap the query, throw structured error on failure.
-  await safeAwait(db.from("x").update({...}).eq("id", id), "x.update.context");
-
-  // Also acceptable: destructure { error } and explicit-handle.
-  const { error } = await db.from("x").update({...}).eq("id", id);
-  if (error) throw new Error(`x.update failed: ${error.message}`);
-
-For CAS-style updates (status guard), use `safeAwaitRowCount` with the expected count
-so zero-row updates raise instead of silently no-op'ing (Greptile P1 #24 root cause).
-
-See `apps/main/src/lib/db/safe-mutation.ts` for the helper module.
-
-— Two layers of tenant isolation (D-091)
-Every tenant-scoped query needs BOTH an app-layer filter AND a DB-layer constraint
-(RLS via tenantClient, or an explicit `.eq("tenant_id", ...)` on service-role queries).
-A single defense — even a correct one — is one bug away from cross-tenant leakage.
-
-— External credentials in headers, never URLs (D-091)
-URLs end up in proxy logs, CDN logs, APM traces, and Node `TypeError` messages.
-Headers are routinely scrubbed; URLs are not. Use `Authorization: Bearer ...` even
-when the API also accepts `?token=...`.
-
-— Quota gates re-read between consuming ops (D-091)
-A budget gate read once before a multi-batch loop will not catch overruns mid-loop.
-Either re-check between batches, or use a DB-atomic reserve-row pattern. Concurrent
-crons + retries can both pass the gate at run-start and double-spend.
-
-— CAS-style status-guarded updates need row-count verification (D-091 round 2)
-`.update({status:'X'}).eq("id", id).eq("status", 'Y')` does NOT throw when zero
-rows match. Supabase JS returns `{ error: null }` whether the row was found-and-
-updated or not-matched. Every CAS-style lock pattern MUST chain `.select('id')`
-and assert the returned array length matches the expected affected-row count.
-
-— Never `void` an async call in serverless without a justification (D-091 round 2)
-`void someAsyncFn()` in a Vercel/Lambda function tells the host the work is
-fire-and-forget. The host may terminate the process before the work completes,
-silently dropping DB writes, audit rows, and alerts. Either `await` the call,
-OR add a `// allow-void-async: <reason>` comment justifying that the work is
-idempotent and retry-safe (and ideally moved into its own Inngest function).
-
-— One assertPermission call per semantic operation (D-091 round 2)
-Routes that switch on `body.action` or accept multiple HTTP methods must call
-`assertPermission` separately for each operation with the correct (resource,
-action) pair. Reusing a single permission gate for two semantically-different
-operations is either over-permissive or under-permissive — both are bugs.
-
-— Idempotency rows written AFTER dispatch, not before (D-091 round 2)
-A webhook handler that inserts the dedup row before completing the dispatched
-handler creates a "stranded state": if the process crashes between insert and
-dispatch, retries are rejected as duplicates and the work never completes. The
-dedup row's existence should indicate "fully processed," not "received." Use a
-separate `processing_started_at` timestamp for in-flight tracking if reconcile
-needs to recover stuck rows.
-
-— State-machine transitions validate inputs at the function boundary (D-091 round 2)
-If `progressTo`/`revertTo`/`transitionTo` accept any non-literal value, the
-function itself MUST assert: (a) target is a valid enum value, (b) transition is
-permitted from current state. Don't delegate this to callers — defense-in-depth
-catches the day a route passes `body.target_stage` straight through.
-
-— Webhook signatures: capture the encoding at integration time (D-091 round 2)
-Different webhook providers use different signature encodings (hex, base64,
-base64url). Mis-decoding silently rejects every valid webhook AND every
-downstream enforcement step. At integration time, capture a recorded signature
-fixture and write a unit test that verifies it passes — guards against a future
-refactor flipping the encoding. Note the encoding in a comment near
-constructEvent / verify call.
-
-— Destructive migrations ship AFTER the read-switchover, in their own PR (BP38/#137)
-Postgres column names are referenced from app code as STRINGS
-(`.from("quotes").select("cruise_line")`), so `tsc` CANNOT see that a migration
-dropped a column the code still asks for. That is how #137 shipped: the §38
-expand + backfill + CONTRACT migrations all landed in one commit, dropping 9
-columns off `quotes` while readers still SELECTed them — nothing failed until
-those readers 500'd in prod. (The customer quote view `/q/[token]` was a 10th
-reader missed even by the follow-up switchover, found later by the gate below.)
-
-Expand-migrate-contract is THREE separate merges, in order:
-1. **Expand** — add the new columns/table; dual-write if needed. Merge.
-2. **Switch reads** — grep EVERY reader of each column you're about to drop
-   (`grep -rn '<column>' apps/*/src` — it's a string, tsc won't help), repoint
-   them to the new location, ship + deploy. Merge.
-3. **Contract** — drop the old columns, only after step 2 is live. Merge.
-
-Never bundle the contract drop into the same PR as the expand or the read-switch.
-
-`pnpm check:dropped-columns` (CI step "Dropped-column reader guard") is the
-mechanical backstop: it fails any PR where app code names a dropped column inside
-a Supabase query string within its `.from("<table>")` chain. It is table-aware
-(a column dropped from `quotes` but live on `bookings` is fine) and whole-word
-(`total_amount` ≠ `total_amount_cents`). Limits — it only sees columns named as
-STRINGS near their `.from`: a `.select("*")` + later `row.col`, or a column that
-was NEVER on the table, slips through. The gate is a backstop, not a substitute
-for step 2.
-
-### Permission grants belong with the route PR
-
-`pnpm check:permission-matrix` (CI step "Permission-matrix guard") fails any PR where a route under `apps/main/src/app/api/` calls `assertPermission(req, { resource: "X", action: "Y" })` with a pair absent from `apps/main/src/lib/auth/permission-grants.ts`. Root cause of issue #1173 (58 silent 403s). tsc cannot catch this class — resource and action are plain strings. E2E tests bypass `isPermitted` via `role='tenant_owner'`. Only this static sweep catches it.
-
-When you add a new route that calls `assertPermission`:
-1. Add the `key("resource", "action")` entry to the correct set in `permission-grants.ts` in the **same PR** as the route.
-2. Add the matching tuple to `permission-grants.test.ts` under the right array (`READ_PAIRS` / `SELF_SERVICE_PAIRS` / `AGENT_ONLY_PAIRS` / `OWNER_ONLY_PAIRS`).
-3. `pnpm check:permission-matrix` must pass before push.
-
-Pre-existing gaps tracked in `scripts/permission-matrix-baseline.txt` (issue #1173). Remove a baseline entry once the grant is added.
+1. **No stub-shaped code** — every parameter must affect output; every returned variant reachable; no dead `if/else` branches. A `kid` arg that resolves to one key is worse than no arg.
+2. **Fail-closed** — when an enforcement layer can't run (Redis/DB/secret/signature absent), deny, don't permit. Returning `{ allowed: true }` on error, or 200 on a silent write failure, is the worst mode — silent AND it kills retries.
+3. **Check every Supabase mutation** — supabase-js v2 doesn't throw. Wrap with `safeAwait(...)` or destructure `{ error }` and return non-200. CAS updates use `safeAwaitRowCount` with the expected count. Helpers: `apps/main/src/lib/db/safe-mutation.ts`.
+4. **Two layers of tenant isolation** — app-layer filter AND DB-layer constraint (RLS via `tenantClient`, or explicit `.eq("tenant_id", …)` on service-role queries). One defense is one bug from cross-tenant leakage.
+5. **Credentials in headers, never URLs** — `Authorization: Bearer …`, not `?token=…`. URLs leak into proxy/CDN/APM logs and `TypeError` messages; headers are scrubbed.
+6. **Quota gates re-read between consuming ops** — re-check between batches, or use a DB-atomic reserve-row. A gate read once before a loop misses mid-loop overruns; concurrent crons double-spend.
+7. **CAS status-guarded updates verify row count** — `.update(...).eq("status", 'Y')` returns `{ error: null }` even on zero matched rows. Chain `.select('id')` and assert the affected-row count.
+8. **No unjustified `void` async in serverless** — the host can kill the process before fire-and-forget work completes. `await` it, or add `// allow-void-async: <reason>` (must be idempotent/retry-safe).
+9. **One assertPermission per semantic operation** — routes switching on `body.action` or multiple HTTP methods need a separate gate per (resource, action). Reusing one gate is over- or under-permissive.
+10. **Idempotency rows written AFTER dispatch** — the dedup row must mean "fully processed," not "received," or a crash mid-handler strands the work behind a duplicate-rejection. Use a separate `processing_started_at` for in-flight tracking.
+11. **State-machine transitions validate at the function boundary** — `progressTo`/`revertTo`/`transitionTo` must assert the target is enum-valid and the transition is permitted from current state. Don't trust callers (e.g. `body.target_stage`).
+12. **Webhook signatures: capture the encoding at integration time** — hex vs base64 vs base64url. Mis-decoding silently rejects every valid webhook. Add a recorded-signature fixture test and a comment naming the provider + encoding.
+13. **Destructive migrations ship AFTER the read-switchover, in their own PR** (#137) — expand → switch reads → contract as THREE separate merges. Column names are query-string literals tsc can't see. Never bundle the contract drop with the expand or read-switch. `pnpm check:dropped-columns` ("Dropped-column reader guard") is the backstop.
+14. **Permission grants belong with the route PR** (#1173) — adding a route that calls `assertPermission` requires, in the SAME PR, the `key("resource","action")` entry in `apps/main/src/lib/auth/permission-grants.ts` AND the matching tuple in `permission-grants.test.ts`. `pnpm check:permission-matrix` ("Permission-matrix guard") enforces it; pre-existing gaps live in `scripts/permission-matrix-baseline.txt`.
 
 ## Honesty about uncertainty
 

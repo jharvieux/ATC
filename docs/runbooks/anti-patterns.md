@@ -206,6 +206,36 @@ Recurring bug-class patterns identified in the 2026-05-26 Greptile audit. Each p
 
 ---
 
+---
+
+## Later additions (post-round-2 incidents)
+
+### 13. Destructive migration ships before the read-switchover (#137)
+
+**Symptom**: a migration drops or renames a Postgres column while app code still references it. Column names live in app code as **strings** inside Supabase query chains (`.from("quotes").select("cruise_line")`), so `tsc` is completely blind — nothing fails to compile, nothing fails until those readers 500 in prod.
+
+**Codebase instance**: #137 — the §38 expand + backfill + CONTRACT migrations all landed in one commit, dropping 9 columns off `quotes` while readers still SELECTed them. The customer quote view `/q/[token]` was a 10th reader missed even by the follow-up switchover.
+
+**Why slips through**: the type system can't see column names in query strings; happy-path tests use the new schema.
+
+**Prevention**:
+- **Doctrine** (CLAUDE.md): expand-migrate-contract is THREE separate merges, in order — (1) **expand** (add new columns/table, dual-write if needed), (2) **switch reads** (`grep -rn '<column>' apps/*/src` for EVERY reader — it's a string, tsc won't help — repoint them, ship + deploy), (3) **contract** (drop old columns, only after step 2 is live). Never bundle the contract drop into the expand or read-switch PR.
+- **CI gate**: `pnpm check:dropped-columns` (CI step "Dropped-column reader guard") fails any PR where app code names a dropped column inside a Supabase query string within its `.from("<table>")` chain. Table-aware (`quotes.cruise_line` dropped ≠ `bookings.cruise_line` live) and whole-word (`total_amount` ≠ `total_amount_cents`). **Limits**: only sees columns named as STRINGS near their `.from` — a `.select("*")` + later `row.col`, or a column never on the table, slips through. The gate is a backstop, not a substitute for step 2.
+
+### 14. assertPermission pair missing from the grants matrix (#1173)
+
+**Symptom**: a route under `apps/main/src/app/api/` calls `assertPermission(req, { resource: "X", action: "Y" })` with an `(X, Y)` pair absent from `permission-grants.ts` → silent 403s for every legitimate caller.
+
+**Codebase instance**: #1173 — 58 silent 403s. `tsc` can't catch this class (resource and action are plain strings); E2E tests bypass `isPermitted` via `role='tenant_owner'`, so they pass too. Only the static sweep catches it.
+
+**Why slips through**: strings again — neither the type checker nor the owner-role E2E path exercises the missing grant.
+
+**Prevention**:
+- **Same-PR rule** (CLAUDE.md): when you add a route that calls `assertPermission`, in the **same PR** (1) add the `key("resource", "action")` entry to the correct set in `apps/main/src/lib/auth/permission-grants.ts`, (2) add the matching tuple to `permission-grants.test.ts` under the right array (`READ_PAIRS` / `SELF_SERVICE_PAIRS` / `AGENT_ONLY_PAIRS` / `OWNER_ONLY_PAIRS`).
+- **CI gate**: `pnpm check:permission-matrix` (CI step "Permission-matrix guard") must pass before push. Pre-existing gaps are tracked in `scripts/permission-matrix-baseline.txt`; remove a baseline entry once its grant is added.
+
+---
+
 ## How this catalog gets used
 
 - **At authoring time**: the CLAUDE.md doctrine lines (added to the "Things to be wary of" section) shape what gets written. Re-read every session.
