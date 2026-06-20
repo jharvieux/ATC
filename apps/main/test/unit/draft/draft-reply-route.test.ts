@@ -109,6 +109,23 @@ describe("POST /api/draft-reply (#904)", () => {
     expect(vi.mocked(buildSystemPrompt).mock.calls[0]![0]).toMatchObject({ audience: "tenant_member" });
   });
 
+  it("unknown tone label → 400, model never called", async () => {
+    const res = await POST(req({ ...GOOD, tone: "Cheery" }));
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe("invalid_tone");
+    expect(instrumentedClaudeCall).not.toHaveBeenCalled();
+  });
+
+  it("Formal tone label → tone_level 1 reaches buildSystemPrompt", async () => {
+    await POST(req({ ...GOOD, tone: "Formal" }));
+    expect(vi.mocked(buildSystemPrompt).mock.calls[0]![0]).toMatchObject({ tone_level: 1 });
+  });
+
+  it("omitted tone → tone_level 3 (default) reaches buildSystemPrompt", async () => {
+    await POST(req(GOOD));
+    expect(vi.mocked(buildSystemPrompt).mock.calls[0]![0]).toMatchObject({ tone_level: 3 });
+  });
+
   it("no customer_name → the [name] placeholder instruction, never an invented name", async () => {
     await POST(req(GOOD));
     const userMsg = vi.mocked(instrumentedClaudeCall).mock.calls[0]![0].messages[0]!.content as string;

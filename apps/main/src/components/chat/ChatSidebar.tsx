@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TONE_LABELS } from "@/lib/tone/constants";
 
 interface Conversation {
   id: string;
@@ -198,19 +199,31 @@ function PrefsPanel(): JSX.Element {
 
   return (
     <div>
-      <label className="block text-[12px] text-foreground mb-1">
-        Rapport tone (1 reserved → 5 warm)
+      <label className="block text-[12px] text-foreground mb-2">
+        Rapport tone
       </label>
-      <input
-        type="range"
-        min={1}
-        max={5}
-        step={1}
-        value={tone}
-        onChange={(e) => setTone(Number(e.target.value))}
-        className="w-full"
-      />
-      <div className="text-[11px] text-muted-foreground mb-3">Current: {tone}</div>
+      <div className="flex gap-1 flex-wrap mb-1">
+        {TONE_LABELS.map((label, i) => {
+          const level = i + 1;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setTone(level)}
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${
+                tone === level
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-transparent text-muted-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {tone === 5 && (
+        <p className="text-[11px] text-amber-500 mb-2">⚠ Profanity is permitted at this tone level.</p>
+      )}
 
       <label className="block text-[12px] text-foreground mb-1">
         Notes (anything you want the AI to remember)

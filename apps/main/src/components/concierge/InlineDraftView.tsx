@@ -11,9 +11,7 @@ import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { parseEmlFile, parseMsgFile, type ParsedInquiry } from "@/lib/draft/parse-inquiry";
 import { deriveGreetingName } from "@/lib/draft/greeting-name";
 import { Copy, RefreshCw } from "lucide-react";
-
-type Tone = "Warm" | "Concise" | "Detailed" | "Reassuring";
-const TONES: Tone[] = ["Warm", "Concise", "Detailed", "Reassuring"];
+import { TONE_LABELS, type ToneLabel } from "@/lib/tone/constants";
 
 // Exported for unit testing — resolves which fields to populate from a
 // parsed email, encoding the customerName-only-if-empty invariant and the
@@ -36,7 +34,7 @@ interface InlineDraftViewProps {
 export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.Element {
   const [inquiry, setInquiry] = useState("");
   const [customerName, setCustomerName] = useState("");
-  const [tone, setTone] = useState<Tone>("Warm");
+  const [tone, setTone] = useState<ToneLabel>("Friendly");
   const [generating, setGenerating] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +218,7 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
           Tone
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {TONES.map((t) => (
+          {TONE_LABELS.map((t) => (
             <button
               key={t}
               type="button"
@@ -241,6 +239,11 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
             </button>
           ))}
         </div>
+        {tone === "Very Casual" && (
+          <p style={{ fontSize: 11, color: "var(--ta-amber, #f59e0b)", margin: "6px 0 0" }}>
+            ⚠ Profanity is permitted at this tone level.
+          </p>
+        )}
       </div>
 
       {/* Byline + generate button */}

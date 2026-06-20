@@ -19,6 +19,7 @@ import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
+import { TONE_LABELS } from "@/lib/tone/constants";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -389,9 +390,22 @@ function TaPrefsPanel({
   showQualityPill: boolean;
   onToggleQualityPill: (v: boolean) => void;
 }): React.JSX.Element {
-  const [tone, setTone] = useState("warm");
+  const [tone, setTone] = useState<number>(3);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await fetch("/api/memory");
+        if (!r.ok) return;
+        const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
+        setTone(data?.rapport_tone_level ?? 3);
+      } catch {
+        // network failure — leave the default tone in place
+      }
+    })();
+  }, []);
 
   async function save(): Promise<void> {
     setSaving(true);
@@ -400,10 +414,7 @@ function TaPrefsPanel({
       const r = await fetch("/api/memory", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rapport_tone_level:
-            tone === "warm" ? 5 : tone === "detailed" ? 4 : tone === "concise" ? 2 : 1,
-        }),
+        body: JSON.stringify({ rapport_tone_level: tone }),
       });
       setStatus(r.ok ? "Saved." : "Couldn't save.");
     } catch {
@@ -424,34 +435,44 @@ function TaPrefsPanel({
     fontSize: 12,
     color: "var(--ta-text-soft)",
   };
-  const selectStyle: React.CSSProperties = {
-    fontSize: 12,
-    background: "var(--ta-surface-2)",
-    border: "1px solid var(--ta-border-2)",
-    borderRadius: 6,
-    color: "var(--ta-text)",
-    padding: "4px 8px",
-    outline: "none",
-  };
-
   return (
     <div>
       <div style={rowStyle}>
         <span style={labelStyle}>Default agent</span>
         <span style={{ fontSize: 11, color: "var(--ta-text-mute)" }}>Set via agent picker</span>
       </div>
-      <div style={rowStyle}>
+      <div style={{ padding: "8px 0", borderBottom: "1px solid var(--ta-border)" }}>
         <span style={labelStyle}>Reply tone</span>
-        <select
-          value={tone}
-          onChange={(e) => setTone(e.target.value)}
-          style={selectStyle}
-        >
-          <option value="warm">Warm</option>
-          <option value="concise">Concise</option>
-          <option value="detailed">Detailed</option>
-          <option value="reserved">Reserved</option>
-        </select>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+          {TONE_LABELS.map((label, i) => {
+            const level = i + 1;
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setTone(level)}
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 20,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  border: `1px solid ${tone === level ? "var(--ta-accent)" : "var(--ta-border-2)"}`,
+                  background: tone === level ? "var(--ta-accent-soft)" : "transparent",
+                  color: tone === level ? "var(--ta-accent)" : "var(--ta-text-soft)",
+                  transition: "all 0.12s",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {tone === 5 && (
+          <p style={{ fontSize: 11, color: "var(--ta-amber, #f59e0b)", margin: "6px 0 0" }}>
+            ⚠ Profanity is permitted at this tone level.
+          </p>
+        )}
       </div>
       <div style={rowStyle}>
         <span style={labelStyle}>Quality-review notice</span>
