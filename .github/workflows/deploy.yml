@@ -9,6 +9,7 @@ on:
     branches:
       - dev
       - "release/*"
+  workflow_dispatch: # manual re-trigger for release/* when push didn't fire deploy.yml
 
 jobs:
   # ============================================================
@@ -398,7 +399,7 @@ jobs:
     runs-on: ubuntu-latest
     # Skipped until staging DB is provisioned. Set STAGING_PIPELINE_ENABLED=true
     # repo variable to activate. See issue #533.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
     needs:
       [
         typecheck,
@@ -454,7 +455,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/heads/release/') && vars.STAGING_PIPELINE_ENABLED == 'true'
     needs: [db-copy]
     environment:
       name: staging
@@ -537,7 +538,7 @@ jobs:
     # !failure() + !cancelled() still block production if staging ran and failed.
     if: |
       always() &&
-      github.event_name == 'push' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       startsWith(github.ref, 'refs/heads/release/') &&
       !failure() && !cancelled()
     needs: [deploy-staging]
