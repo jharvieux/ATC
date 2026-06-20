@@ -75,7 +75,12 @@ export default async function HomePage() {
           return (
             <>
               <TenantTheme />
-              <TenantShell role={role} branding={headerProps.tenantBranding}>
+              <TenantShell
+                role={role}
+                branding={headerProps.tenantBranding}
+                avatarUrl={headerProps.avatarUrl ?? null}
+                displayName={headerProps.displayName ?? null}
+              >
                 {defaultPanelForRole(role) === "ta-concierge" ? (
                   <ConciergeExperience />
                 ) : (

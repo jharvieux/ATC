@@ -28,6 +28,10 @@ export interface SiteHeaderProps {
   role?: UserRole | null;
   /** Optional element rendered to the left of the logo (e.g. conversation rail toggle for staff). */
   leftSlot?: React.ReactNode;
+  /** OAuth avatar URL for the signed-in user; null for email-only accounts. */
+  avatarUrl?: string | null;
+  /** Display name (full_name, name, or email) for the signed-in user. */
+  displayName?: string | null;
 }
 
 export function SiteHeader({
@@ -36,6 +40,8 @@ export function SiteHeader({
   tenantBranding,
   role = null,
   leftSlot,
+  avatarUrl = null,
+  displayName = null,
 }: SiteHeaderProps) {
   return (
     <header className="w-full border-b border-border bg-background">
@@ -47,6 +53,10 @@ export function SiteHeader({
           </Link>
         </div>
         <div className="flex items-center gap-3">
+          {/* Slot for page-level toggles (e.g. TA console dark/light); empty on non-concierge pages.
+              SiteHeader and TenantShell are mutually exclusive per routing — exactly one
+              #ta-theme-slot exists in the document at runtime. */}
+          <span id="ta-theme-slot" className="flex items-center" />
           {!isAuthenticated && (
             <Button asChild className="h-9 px-3 text-sm">
               <Link href="/signup">Log in</Link>
@@ -56,6 +66,8 @@ export function SiteHeader({
             isPlatformDomain={isPlatformDomain}
             isAuthenticated={isAuthenticated}
             role={role}
+            avatarUrl={avatarUrl}
+            displayName={displayName}
           />
         </div>
       </div>

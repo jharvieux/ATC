@@ -54,6 +54,56 @@ function render(props: React.ComponentProps<typeof SiteHeaderMenu>): string {
   return renderToStaticMarkup(<SiteHeaderMenu {...props} />);
 }
 
+// WHY: the trigger icon differs based on auth + avatar state; a refactor
+// that silently drops the avatar/initials branches would regress UX without
+// a test failure.
+describe("SiteHeaderMenu — trigger icon state (#1302)", () => {
+  it("shows avatar img when authenticated with avatarUrl", () => {
+    const html = render({
+      isPlatformDomain: false,
+      isAuthenticated: true,
+      role: "agent",
+      avatarUrl: "https://example.com/avatar.jpg",
+      displayName: "Jane Smith",
+    });
+    expect(html).toContain('src="https://example.com/avatar.jpg"');
+    expect(html).not.toContain('data-testid="menu-icon"');
+  });
+
+  it("shows initials when authenticated with displayName but no avatarUrl", () => {
+    const html = render({
+      isPlatformDomain: false,
+      isAuthenticated: true,
+      role: "agent",
+      avatarUrl: null,
+      displayName: "Jane Smith",
+    });
+    expect(html).toContain(">J<");
+    expect(html).not.toContain('data-testid="menu-icon"');
+  });
+
+  it("falls back to menu icon when authenticated but no avatarUrl or displayName", () => {
+    const html = render({
+      isPlatformDomain: false,
+      isAuthenticated: true,
+      role: "agent",
+      avatarUrl: null,
+      displayName: null,
+    });
+    expect(html).toContain('data-testid="menu-icon"');
+  });
+
+  it("shows menu icon when unauthenticated regardless of avatarUrl", () => {
+    const html = render({
+      isPlatformDomain: true,
+      isAuthenticated: false,
+      avatarUrl: "https://example.com/avatar.jpg",
+    });
+    expect(html).not.toContain("example.com/avatar.jpg");
+    expect(html).toContain('data-testid="menu-icon"');
+  });
+});
+
 describe("SiteHeaderMenu — role-aware nav wiring (#1199)", () => {
   it("tenant_owner sees Dashboard and Admin Console links", () => {
     const html = render({

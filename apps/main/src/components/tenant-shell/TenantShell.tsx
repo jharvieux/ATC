@@ -43,12 +43,18 @@ export interface TenantShellProps {
    *  always get the platform logo. */
   branding?: BrandLogoBranding | null;
   children: React.ReactNode;
+  /** OAuth avatar URL for the signed-in user; null for email-only accounts. */
+  avatarUrl?: string | null;
+  /** Display name (full_name, name, or email) for the signed-in user. */
+  displayName?: string | null;
 }
 
 export function TenantShell({
   role,
   branding = null,
   children,
+  avatarUrl = null,
+  displayName = null,
 }: Readonly<TenantShellProps>): React.ReactElement {
   const isStaff = role === "tenant_owner" || role === "agent";
   const sections = navSectionsForRole(role);
@@ -95,14 +101,29 @@ export function TenantShell({
               )}
             </Link>
           </div>
+          {/* Slot for page-level toggles (e.g. TA console dark/light); empty when ConciergeExperience is not mounted.
+              SiteHeader and TenantShell are mutually exclusive per routing — exactly one
+              #ta-theme-slot exists in the document at runtime. */}
+          <span id="ta-theme-slot" className="flex items-center" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 aria-label="Open menu"
-                className="h-10 w-10 px-0"
+                className="h-10 w-10 px-0 rounded-full"
               >
-                <Menu className="h-5 w-5" />
+                {/* TenantShell only renders for authenticated staff roles, so isAuthenticated
+                    check is implicit — avatarUrl is only non-null when a user is present. */}
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={avatarUrl} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full object-cover" />
+                ) : displayName ? (
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary leading-none">
+                    {displayName[0]?.toUpperCase()}
+                  </span>
+                ) : (
+                  <Menu className="h-5 w-5" />
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">

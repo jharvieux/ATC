@@ -33,20 +33,35 @@ export interface SiteHeaderMenuProps {
   isAuthenticated: boolean;
   /** Resolved tenant membership role. When present, renders role-aware nav sections. */
   role?: UserRole | null;
+  /** OAuth avatar URL for the signed-in user; null for email-only accounts. */
+  avatarUrl?: string | null;
+  /** Display name (full_name, name, or email) for the signed-in user. */
+  displayName?: string | null;
 }
 
 export function SiteHeaderMenu({
   isPlatformDomain,
   isAuthenticated,
   role = null,
+  avatarUrl = null,
+  displayName = null,
 }: SiteHeaderMenuProps) {
   const sections = isAuthenticated && role ? navSectionsForRole(role) : null;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" aria-label="Open menu" className="h-10 w-10 px-0">
-          <Menu className="h-5 w-5" />
+        <Button variant="ghost" aria-label="Open menu" className="h-10 w-10 px-0 rounded-full">
+          {isAuthenticated && avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full object-cover" />
+          ) : isAuthenticated && displayName ? (
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary leading-none">
+              {displayName[0]?.toUpperCase()}
+            </span>
+          ) : (
+            <Menu className="h-5 w-5" />
+          )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">

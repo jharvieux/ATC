@@ -8,6 +8,7 @@ import { getCachedUser } from "@/lib/auth/get-cached-user";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
 import { getTenantRole } from "@/lib/auth/resolve-post-login";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { extractUserDisplayMeta } from "@/lib/auth/user-meta";
 import type { SiteHeaderProps } from "./SiteHeader";
 
 export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
@@ -44,5 +45,7 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
     }
   }
 
-  return { isPlatformDomain, isAuthenticated, tenantBranding, role };
+  const { avatarUrl, displayName } = extractUserDisplayMeta(user);
+
+  return { isPlatformDomain, isAuthenticated, tenantBranding, role, avatarUrl, displayName };
 }
