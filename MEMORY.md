@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-276 — 2026-06-20 — release.yml owns full pipeline; deploy.yml push-trigger kept for manual branch pushes
+
+One-click release via `workflow_dispatch` in `release.yml` (Actions → Release → Run workflow → enter version). Release.yml owns the complete pipeline: creates `release/<version>` from dev, runs CI, staging block (gated on `STAGING_PIPELINE_ENABLED`), then production (gated on GitHub environment approval). After prod deploy it creates the git tag, GitHub Release (`gh release create --generate-notes`), and merge-back PR. Deploy.yml's `push: branches: [release/*]` trigger is still live — if someone pushes a release branch manually, deploy.yml handles it the same way.
+
+**Why:** User wanted a single GitHub UI click instead of manual git commands. Prior architecture (release.yml branches-only, rely on deploy.yml push trigger) was cleaner for the minimal case but added a double-deploy race risk if both workflows ran simultaneously; self-contained approach avoids this by being the single authority for the release branch's lifecycle.
+
+**What was rejected:** Branch-creation-only approach (50-line release.yml delegating to deploy.yml via push trigger) — clean in theory but creates a race window where deploy.yml and release.yml could both run a prod deploy if the push trigger fired at the same time. Accepted current approach: release.yml is self-contained and authoritative for workflow_dispatch releases.
+
+**Related:** PR #1285, issue #1286 (E2E secrets needed for staging E2E step).
+
+---
+
 ## D-275 — 2026-06-19 — Hamburger nav is the canonical role-aware menu on EVERY tenant screen
 
 Operator (lisa-travel `tenant_owner`) reported they couldn't reach CRM from the hamburger anywhere except the main dashboard, and that the menu was inconsistent — "missing options or out of date once you choose an option." Investigation found three different chromes, not one: the main dashboard (`TenantShell`) and `/crm/*` pages (`(tenant)` layout → `SiteHeaderMenu`, fixed earlier in #1199) both showed the full role-aware menu, but the **Admin Console** (`(console)` → `ConsoleShell`) had a hand-rolled *reduced* hamburger (Dashboard / View profile / Sign out only — no Workspace/CRM, no My account), and the **personal-settings pages** (`/settings/conversations|price-watches|privacy|profile|memory`, served by the top-level `settings/layout.tsx`) had **no hamburger at all**. So any option that routed into the console or personal settings dead-ended navigation. Verified via psql that the login is genuinely `tenant_owner` (active) — so the CRM ("Workspace") section *should* render; the bug was missing/divergent menus on inner screens, not role resolution.

@@ -1,22 +1,23 @@
-# Session state — last updated 2026-06-19 21:30 ET
+# Session state — last updated 2026-06-20 TZ
 
 ## Just completed
-- **Hamburger nav consistency fix (PR #1278, merged to dev).** Operator (lisa-travel `tenant_owner`) couldn't reach CRM from the hamburger except on the main dashboard; menu was inconsistent on inner screens. Root cause: three divergent chromes — main + `/crm/*` had the full role-aware menu, but the Admin Console (`ConsoleShell`) had a reduced hamburger (Dashboard/profile/sign-out only) and the personal-settings pages (`settings/layout.tsx`) had no hamburger at all. Fix: `SiteHeaderMenu` (role-aware) is now the single hamburger everywhere — wired into `ConsoleShell` (sidebar kept alongside) and `settings/layout.tsx`. Verified login is genuinely `tenant_owner` via psql. `pnpm verify` green; both audit agents clean. Logged D-275.
-- Operator decisions captured in D-275: keep the "Workspace" label (no rename to "CRM"); Admin Console keeps BOTH sidebar + hamburger (distinct surfaces — do not consolidate).
+- PR #1285 (merged): One-click release workflow — `release.yml` `workflow_dispatch` that owns the full pipeline (CI, staging block, prod deploy with approval gate, git tag, GitHub Release with auto-generated notes, merge-back to dev). Deploy.yml modified to add `gh release create --generate-notes` step.
+- Issue #1286 opened: Add TEST_E2E_OWNER_EMAIL and TEST_E2E_OWNER_PASSWORD to GitHub Actions secrets (blocks `authedPage` Playwright tests in CI)
 
 ## In flight
-- Nothing in flight — clean checkpoint on `dev`. About to ship this SESSION + MEMORY (D-275) as a doc-only PR.
+- Nothing in flight — clean checkpoint
 
 ## Next step
-- Ship the doc-only PR (D-275 + SESSION). Then: confirm in production that lisa-travel now shows CRM/Workspace in the hamburger on the Admin Console and personal-settings pages (requires the dev→prod deploy to land).
+- User adds `TEST_E2E_OWNER_EMAIL` and `TEST_E2E_OWNER_PASSWORD` to GitHub repo secrets (Settings → Secrets → Actions) — see issue #1286
+- After secrets are added, verify `Playwright (Tier 1 + 2 + 2.5)` passes on next CI run
+- Next implementable engineering issue after #709 partial — check issue list for unblocked items
 
 ## Blocked on user
-- Nothing. (Suggested verification: log into lisa-travel, open the hamburger from the Admin Console and from Settings → Conversations/Privacy — Workspace/CRM + My account should now appear on both. Note this needs the prod deploy of the merged `dev` change.)
+- `TEST_E2E_OWNER_EMAIL` and `TEST_E2E_OWNER_PASSWORD` need to be added to GitHub repo secrets (issue #1286)
+- Issue #1259: attorney sign-off on §15.14.6 wording required before implementation
+- Issue #1159: needs beta deployment URL + Stripe test credentials in CI + OAuth sign-up scripting (infrastructure gap)
+- Issue #1162: blocked on sub-issues #1257, #1258, #1259, #1260 — all still open
 
 ## Open questions
-- Possible deploy lag: the fix is on `dev`; lisa-travel prod won't reflect it until the next main-app deploy. If CRM is *still* missing after deploy, re-investigate (unlikely — role + code both verified correct on dev).
-- Pre-existing nav duplication: `TenantShell` inlines the same sections as `SiteHeaderMenu` rather than reusing it. Left as-is (surgical). Could be unified in a future cleanup if desired (no issue opened — low value).
-- Carried over from prior session: #1273 reconcile hardening / boot-guard; #1274 emit status_changed on suspend/terminate/reject; orphan shadow rows pruning; local `.env.local` vanity-domain URLs.
-
-## Issues opened this session
-- None.
+- #709 remaining 23 fixmes: email-connection (#429 Gmail OAuth not provisioned), customer-portal (routes not built), booking (#424 handlers still 501), onboarding (#441 complex flow), agent-chat (needs live endpoint), agent-discovery (needs live agent slugs), auth (OAuth-only sign-in, no form), help (needs help module UI wiring)
+- After all blocked issues, what's next in the backlog? May need user to re-prioritize.
