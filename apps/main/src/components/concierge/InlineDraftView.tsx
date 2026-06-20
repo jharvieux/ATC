@@ -5,11 +5,27 @@
 // but the agent is controlled by the parent (ConciergeExperience), and the
 // tone chip row is surfaced directly. Nothing is sent — copy-only contract.
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { AgentAvatar } from "./AgentPickerPopover";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
+import { parseEmlFile, parseMsgFile, type ParsedInquiry } from "@/lib/draft/parse-inquiry";
+import { deriveGreetingName } from "@/lib/draft/greeting-name";
 import { Copy, RefreshCw } from "lucide-react";
 import { TONE_LABELS, type ToneLabel } from "@/lib/tone/constants";
+
+// Exported for unit testing — resolves which fields to populate from a
+// parsed email, encoding the customerName-only-if-empty invariant and the
+// null-body (.msg RTF-fail) contract in one testable place.
+export function resolveEmailDrop(
+  parsed: ParsedInquiry,
+  currentCustomerName: string,
+): { inquiry: string | null; customerName: string | null } {
+  const greetingName = deriveGreetingName(parsed.from_name, parsed.from_email);
+  return {
+    inquiry: parsed.body,
+    customerName: greetingName && !currentCustomerName ? greetingName : null,
+  };
+}
 
 interface InlineDraftViewProps {
   agentSlug: string;
@@ -24,6 +40,41 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
   const [error, setError] = useState<string | null>(null);
   const [voiceMissing, setVoiceMissing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [dragHover, setDragHover] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragHover(false);
+    setDropError(null);
+    try {
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+        const fileName = file.name.toLowerCase();
+        const buf = await file.arrayBuffer();
+        let parsed;
+        if (fileName.endsWith(".eml")) {
+          parsed = await parseEmlFile(buf);
+        } else if (fileName.endsWith(".msg")) {
+          parsed = await parseMsgFile(buf);
+          if (!parsed.body) setDropError("Couldn't extract text from this .msg — paste the body below.");
+        } else {
+          setDropError("Drop a .eml or .msg file, or drag the email text itself.");
+          return;
+        }
+        const { inquiry: body, customerName: name } = resolveEmailDrop(parsed, customerName);
+        if (body) setInquiry(body);
+        if (name) setCustomerName(name);
+        return;
+      }
+      // safe: result is stored in React state, never rendered as HTML
+      const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/html").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (text.trim()) { setInquiry(text.trim()); return; }
+      setDropError("Nothing readable in that drop — try the email file or drag its text.");
+    } catch (err) {
+      setDropError(err instanceof Error ? err.message : String(err));
+    }
+  }, [customerName]);
 
   const agent = AGENT_CATALOG.find((a) => a.slug === agentSlug) ?? AGENT_CATALOG[0]!;
 
@@ -129,20 +180,34 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
         />
       </div>
 
-      {/* Inquiry */}
       <div style={{ marginBottom: 14 }}>
         <label
           style={{ fontSize: 11, fontWeight: 600, color: "var(--ta-text-mute)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 }}
         >
-          What did your customer ask?
+          Customer email or inquiry
         </label>
-        <textarea
-          value={inquiry}
-          onChange={(e) => setInquiry(e.target.value)}
-          rows={6}
-          placeholder="Paste the customer's email or summarise their inquiry…"
-          style={taField}
-        />
+        <div style={{ position: "relative" }}>
+          <textarea
+            value={inquiry}
+            onChange={(e) => setInquiry(e.target.value)}
+            onDragOver={(e) => { e.preventDefault(); setDragHover(true); }}
+            onDragLeave={() => setDragHover(false)}
+            onDrop={(e) => void handleDrop(e)}
+            rows={6}
+            placeholder="Paste the customer's email — or drag a .eml / .msg file here"
+            style={{
+              ...taField,
+              border: `1px solid ${dragHover ? "var(--ta-accent)" : "var(--ta-border-2)"}`,
+              background: dragHover ? "var(--ta-accent-soft, color-mix(in srgb, var(--ta-accent) 8%, transparent))" : undefined,
+            }}
+          />
+          {dragHover && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "var(--ta-accent)", pointerEvents: "none", fontWeight: 600 }}>
+              Drop to fill
+            </div>
+          )}
+        </div>
+        {dropError && <p style={{ fontSize: 12, color: "#F87171", marginTop: 4 }}>{dropError}</p>}
       </div>
 
       {/* Tone chips */}
