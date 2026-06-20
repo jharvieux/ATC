@@ -76,7 +76,7 @@ test("POST /api/quotes creates a draft quote with tenant_id auto-injected", asyn
 });
 
 test("quote detail page loads with correct information", async ({ authedPage, request }) => {
-  // §12.4 / §38 — /crm/quotes/[id] renders quote info for authenticated agents.
+  // /crm/quotes/[id] renders quote info for authenticated agents.
   // The beforeEach has cleared all quotes; create a fresh one for this test.
   // Requires TEST_E2E_OWNER_EMAIL / TEST_E2E_OWNER_PASSWORD to be set.
   const res = await request.post("/api/quotes", {
@@ -99,9 +99,9 @@ test("quote detail page loads with correct information", async ({ authedPage, re
 });
 
 test("customer can view a sent quote via public /q/[token] URL", async ({ page, request }) => {
-  // §38.4.3 / §38.8.1 — /q/[token] is a public server-rendered page.
-  // Create the quote via API so quote_options (cruise_line) are seeded,
-  // then stamp customer_access_token directly to avoid driving the
+  // /q/[token] is a public server-rendered page. Create the quote via API
+  // so quote_options (cruise_line) are seeded, then stamp
+  // customer_access_token directly to avoid driving the
   // /api/quotes/[id]/send PDF-render + Supabase Storage upload pipeline.
   //
   // Regression surface: #1131/#1132/#1133 (wrong-host token resolution) would
