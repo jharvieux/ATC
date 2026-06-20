@@ -52,3 +52,52 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ─── TA Agent Console design tokens ──────────────────────────────────────
+   Applied when a [data-ta-theme] attribute is set on an ancestor element.
+   The theme toggle in ConciergeExperience writes this attribute; it never
+   bleeds into the rest of the app because no other element carries the attr.
+   Accent shifts between themes so it stays legible on both backgrounds.
+   ───────────────────────────────────────────────────────────────────────── */
+[data-ta-theme] {
+  --ta-accent: #5DADE2;
+  --ta-accent-2: #7CC2EE;
+  --ta-accent-ink: #04121F;
+  --ta-green: #34D399;
+  --ta-amber: #F0B45A;
+}
+[data-ta-theme="dark"] {
+  --ta-bg: #0A1119;
+  --ta-sidebar: #0B1521;
+  --ta-surface: #0F1C2B;
+  --ta-surface-2: #152639;
+  --ta-elevated: #18293D;
+  --ta-hover: rgba(255, 255, 255, 0.05);
+  --ta-border: rgba(255, 255, 255, 0.08);
+  --ta-border-2: rgba(255, 255, 255, 0.14);
+  --ta-text: #eaf1f8;
+  --ta-text-soft: #9db0c2;
+  --ta-text-mute: #64768a;
+  --ta-user-bubble: #193550;
+  --ta-user-border: rgba(93, 173, 226, 0.3);
+  --ta-accent-soft: rgba(93, 173, 226, 0.14);
+}
+[data-ta-theme="light"] {
+  --ta-bg: #eef3f8;
+  --ta-sidebar: #ffffff;
+  --ta-surface: #ffffff;
+  --ta-surface-2: #f1f6fb;
+  --ta-elevated: #ffffff;
+  --ta-hover: rgba(10, 35, 66, 0.04);
+  --ta-border: rgba(10, 35, 66, 0.1);
+  --ta-border-2: rgba(10, 35, 66, 0.17);
+  --ta-text: #0a2342;
+  --ta-text-soft: #46586b;
+  --ta-text-mute: #7c8da0;
+  --ta-accent: #2e92d6;
+  --ta-accent-2: #1e6fa8;
+  --ta-accent-ink: #ffffff;
+  --ta-user-bubble: #e2effa;
+  --ta-user-border: rgba(46, 146, 214, 0.35);
+  --ta-accent-soft: rgba(46, 146, 214, 0.12);
+}

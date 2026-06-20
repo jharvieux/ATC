@@ -20,10 +20,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Generate app token
+        id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
         with:
           ref: dev
           fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
 
       - name: Validate version format
         run: |
