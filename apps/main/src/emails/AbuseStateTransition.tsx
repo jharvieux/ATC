@@ -10,7 +10,7 @@ import { BrandedLayout, type BrandedLayoutProps } from "./BrandedLayout";
 export interface AbuseStateTransitionProps {
   layout: Omit<BrandedLayoutProps, "children">;
   recipient_name: string;
-  dimension: "ai_cost" | "chat_volume" | "email_volume" | "group_invite" | "rag_cap";
+  dimension: "ai_cost" | "chat_volume" | "email_volume" | "group_invite" | "rag_cap" | "help_submission";
   from_state: string;
   to_state: string;
   subject_template: string;
@@ -29,7 +29,8 @@ const DIM_LABEL: Record<AbuseStateTransitionProps["dimension"], string> = {
   chat_volume:  "Chat volume",
   email_volume: "Email volume",
   group_invite: "Group invitations",
-  rag_cap:      "RAG knowledge base capacity",
+  rag_cap:        "RAG knowledge base capacity",
+  help_submission: "Help submission rate",
 };
 
 export function AbuseStateTransition(

@@ -13,8 +13,10 @@
  * Enforcement:
  *   - soft1: admin in-app banner via sendOperatorAlert (severity 'low');
  *     no tenant notification, no throttle.
- *   - soft2: email tenant owner — TODO(bp32-operator-content): wire copy; throttle to
- *     1 submission per 10 minutes — caller checks
+ *   - soft2: email tenant owner via abuse.state_transition → abuse-state-transition-notify
+ *     Inngest function (dimension="help_submission"). Throttle: naturally at-most-once
+ *     per day because the state machine is monotonic; the daily reset cron is the only
+ *     path back to 'ok'. Also throttles submissions to 1 per 10 minutes — caller checks
  *     `last_submission_at` from tenant_usage_metrics for this.
  *   - hard: block submission for the rest of the day; surface the
  *     §32.11.2 "paused until tomorrow" banner.
@@ -32,6 +34,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { inngest } from "@/inngest/client";
 
 const SOFT1 = 20;
 const SOFT2 = 50;
@@ -176,6 +179,20 @@ export async function incrementHelpSubmissionCounter(
         signal: "help_submission_rate_soft2",
         detail: `Tenant ${tenant_id} reached help_submission_rate soft2 (${newCount} submissions today). Throttling to 1 per 10 min.`,
         payload: { tenant_id, count: newCount },
+      });
+      // Fire abuse.state_transition so abuse-state-transition-notify sends the
+      // tenant-owner warning email. Fires at most once per day — the state machine
+      // is monotonic; transitioned=true only when prevState !== "soft2".
+      await inngest.send({
+        name: "abuse.state_transition",
+        data: {
+          tenant_id,
+          dimension: "help_submission",
+          from_state: prevState,
+          to_state: "soft2",
+          metric_value: String(newCount),
+          threshold_crossed: String(SOFT2),
+        },
       });
     } else if (newState === "hard") {
       await sendOperatorAlert({
