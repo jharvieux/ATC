@@ -1,27 +1,25 @@
-# Session state — last updated 2026-06-20 21:50 UTC
+# Session state — last updated 2026-06-20 22:30 UTC
 
 ## Just completed
-- Merged PR #1301: create-github-app-token @v1→@v3 (PKCS#8 key support)
-- Merged PR #1300: familiarity level buttons — tone constants, TaPrefsPanel loads saved tone
-- Merged PR #1302: header dedup + portal theme toggle + user avatar in hamburger
-- Merged PR #1305: follow-ups #1303/#1304 — InlineDraftView prefills saved tone from /api/memory; #ta-theme-slot migrated from getElementById to ThemeSlotContext (new theme-slot-context.tsx); removed vestigial SiteHeader span
-- Merged PR #1306: release.yml switched from GitHub App token to fine-grained PAT (GH_PAT) — fixes the contents:write 403 on the release-branch push. **User confirmed the release workflow works now.**
-- Merged PR #1308: dependabot-update-branch.yml switched to GH_PAT too (same root cause)
-- Logged D-279 (PAT decision) to MEMORY
+- Merged PR #1311 (#1273 AC3/AC4): RAG tenant-registry-reconcile hardening — onFailure PAGE PLATFORM ADMIN alert (fires once after Inngest retries exhaust) + redirect:"manual" + isCrossOriginRedirect guard so a cross-origin redirect can't strip the bearer; new unit test.
+  - AC1 (env) + AC2 (drift) already resolved out-of-band: reconcile ran 2026-06-20 03:01 UTC, synced the active Lisa Travel row.
+- Merged PR #1313: deploy.yml installs postgresql-client-17 (prod Supabase upgraded to PG 17.6; runner's pg_dump 16 refused to dump it → "Copy Prod DB to Staging" failed → blocked the whole release pipeline).
+- Logged D-280 (PG17) to MEMORY.
 
 ## In flight
 - Nothing in flight — clean checkpoint
 
 ## Next step
-- Session clean. Next task is whatever the user brings.
+- Doc PR for the D-280 MEMORY entry + this SESSION update (in progress).
 
 ## Blocked on user
-- Nothing
+- **Re-cut release 0.7.2 after #1313 is on dev** (it is now): delete the failed `release/0.7.2` branch, then re-run the Release workflow for 0.7.2. deploy.yml runs from the release-branch copy, so the PG17 fix only applies to a release branch cut after #1313 merged.
 
-## Open questions
-- Issue #1309 (open): add test coverage for tone-level <-> label mapping in InlineDraftView + TaPrefsPanel; ideally extract toneLevelToLabel/toneLabelToLevel into lib/tone/constants.ts. Flagged as a non-blocking NIT on #1305.
+## Open questions / follow-ups (issues filed)
+- #1312 (opus): 2 orphan tenant_registry_shadow rows absent from main (Lisa Travel c351305b, Bigfoot Travel 820b4367) — ops decision whether to delete/prune.
+- #1314 (sonnet): tenant-registry-reconcile shadow UPDATE has no zero-row guard (pre-existing Pattern-2-class; flagged by d091 on #1311, kept out to stay surgical).
+- #1309 (sonnet): add tone-level<->label mapping test coverage (from #1305).
 
 ## Notes
-- GH_PAT (fine-grained, repo jharvieux/ATC) needs: Contents R/W, Pull requests R/W, Metadata R (auto). No "Checks" permission exists for fine-grained PATs. User created the secret; release pipeline confirmed working.
-- Issues closed this session: #1303, #1304 (by #1305), #1307 (by #1308).
-- Model: user switched to Opus 4.8 mid-session and saved it as their new default — left as-is (deliberate user choice, not auto-reverted to Sonnet).
+- Prod Supabase main DB is Postgres 17.6. deploy.yml's DB-copy pins postgresql-client-17 — bump on next major upgrade (D-280).
+- Model: still on Opus 4.8 (user's deliberate default this session).

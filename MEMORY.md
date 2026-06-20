@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-280 — 2026-06-20 — Prod Supabase is on Postgres 17; deploy.yml's DB-copy pins postgresql-client-17
+
+Supabase upgraded the **prod** main DB to Postgres **17.6**. The release pipeline's "Copy Prod DB to Staging" job (`deploy.yml`) failed with `pg_dump: error: aborting because of server version mismatch` because the Ubuntu 24.04 runner ships `pg_dump` 16.14, and `pg_dump` refuses to dump a server newer than itself.
+
+**Fix (PR #1313)**: the job installs `postgresql-client-17` from the PGDG apt repo and prepends `/usr/lib/postgresql/17/bin` to `$GITHUB_PATH` so `pg_dump`/`pg_restore`/`psql` all run v17.
+
+**Why / how to apply**: this is pinned to 17 deliberately (explicit > "latest", which could silently jump majors). **When Supabase upgrades the prod major again (→18), bump `postgresql-client-17` and the bin path in `deploy.yml`'s "Install PostgreSQL 17 client" step** — otherwise the DB-copy job breaks the whole release pipeline again. Note `deploy.yml` runs from the copy ON the release branch, so a deploy.yml fix only takes effect on release branches cut AFTER it merges to dev — re-cut the release to pick it up. Related: [[D-279]] (the release-branch push itself uses GH_PAT).
+
+---
+
 ## D-279 — 2026-06-20 — Release + dependabot-update-branch workflows use a fine-grained PAT, not the GitHub App token
 
 `release.yml` and `dependabot-update-branch.yml` now authenticate their git pushes / `gh pr update-branch` calls with a fine-grained PAT (`GH_PAT`, Actions secret) instead of the `atc-selfhelp` GitHub App installation token.
