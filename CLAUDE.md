@@ -357,16 +357,15 @@ If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-ex
 
 **Mandatory hash-bound audit comments on every PR.**
 
-The `pr-audit-section-check` workflow gates on ONE thing: a marker-stamped PR comment from each agent, **bound to the PR's current diff by hash** (#924 / D-200; body-section enforcement removed D-270). Each agent embeds `diff:<sha256>` in its marker (`<!-- d091-audit:v1 diff:<hash> -->`, `<!-- prepr-audit:v1 diff:<hash> -->`), where the hash covers the PR's effective diff (sorted filename+patch pairs from the PR files API). The check recomputes the hash and passes only if a marker comment with the matching hash exists — comment timestamps are irrelevant. The agents post those comments themselves — do not post them manually.
+The `pr-audit-section-check` gate passes only when each agent has posted a marker comment whose `diff:<sha256>` matches the PR's current effective diff (sorted filename+patch pairs). Markers: `<!-- d091-audit:v1 diff:<hash> -->` and `<!-- prepr-audit:v1 diff:<hash> -->`. Timestamps are irrelevant. The agents post these themselves — never post them manually.
 
-The PR-body `## Audit` block is **no longer gated**. `pre-pr-reviewer` writes it into the body automatically (combining both agents' findings); it's there for the user to read, not for CI. Don't hand-craft it, and don't let a missing/short/"TBD" body block worry you — only the hash-bound comments matter.
+The PR-body `## Audit` block is **not** gated — `pre-pr-reviewer` writes it from both agents' findings, for the user to read. Don't hand-craft it; a missing/short/"TBD" body never blocks.
 
-What hash binding means in practice:
+In practice:
 
-- **A plain `update-branch` never stales an audit.** A merge commit that doesn't change the effective diff produces the same hash, so existing audit comments stay valid — do NOT repost comments or re-run agents after update-branching a queued PR.
-- **Any commit that changes the effective diff** (fix-commits, conflict-resolving merges) changes the hash — re-run the agents; they post fresh hash-bound comments.
-- **Editing the PR body re-triggers the check** (the workflow listens for `edited` events) — never push a no-op commit to refresh it. Empty commits are also walked over by the check, so they neither help nor hurt.
-- A legacy timestamp fallback still accepts pre-hash-era comments during the transition; its removal is tracked in #926. New audits always carry the hash.
+- **`update-branch` (or any merge that doesn't change the effective diff) never stales an audit** — same hash, existing comments stay valid. Don't re-run agents after update-branching a queued PR.
+- **A diff-changing commit** (fix-commit, conflict-resolving merge) changes the hash — re-run the agents for fresh comments.
+- **Editing the PR body re-triggers the check** (it listens for `edited`) — never push a no-op or empty commit to refresh it.
 
 **Workflow (order matters). Run the agents LAST — after required CI is green:**
 
