@@ -10,8 +10,9 @@
 // Backend/chat logic is unchanged — all API calls and SSE handling live in
 // ChatExperience; this component only controls layout, agent selection, and theme.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Menu, Moon, Plus, Sun } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { Moon, Plus, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
@@ -37,32 +38,6 @@ interface TaConversation {
 interface ConvMessages {
   conversation: { active_persona_id: string | null };
   messages: ChatMessage[];
-}
-
-// ─── Compass mark SVG ───────────────────────────────────────────────────────
-
-function CompassMark({ size = 22 }: { size?: number }): React.JSX.Element {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      style={{ flexShrink: 0 }}
-    >
-      <circle cx="12" cy="12" r="10.5" stroke="currentColor" strokeWidth="1.2" opacity="0.25" />
-      {/* North needle — accent colour */}
-      <path d="M12 2.5L13.8 10.5H10.2L12 2.5Z" fill="var(--ta-accent)" />
-      {/* South needle */}
-      <path d="M12 21.5L10.2 13.5H13.8L12 21.5Z" fill="currentColor" opacity="0.4" />
-      {/* West needle */}
-      <path d="M2.5 12L10.5 10.2V13.8L2.5 12Z" fill="currentColor" opacity="0.4" />
-      {/* East needle */}
-      <path d="M21.5 12L13.5 13.8V10.2L21.5 12Z" fill="currentColor" opacity="0.4" />
-      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
-    </svg>
-  );
 }
 
 // ─── Shared mini button style factory ───────────────────────────────────────
@@ -525,26 +500,37 @@ function TaPrefsPanel({
 export function ConciergeExperience(): React.JSX.Element {
   // Theme — persisted to localStorage; initial value respects prefers-color-scheme.
   const [taTheme, setTaTheme] = useState<TaTheme>("dark");
-  const themeInitialised = useRef(false);
+  const [themeSlot, setThemeSlot] = useState<Element | null>(null);
 
+  // Init: read localStorage / media-query once on mount.
   useEffect(() => {
-    if (themeInitialised.current) return;
-    themeInitialised.current = true;
     const saved = localStorage.getItem("ta-console-theme") as TaTheme | null;
     if (saved === "dark" || saved === "light") { setTaTheme(saved); return; }
     if (window.matchMedia("(prefers-color-scheme: light)").matches) setTaTheme("light");
   }, []);
 
+  // Sync: push theme to document so the whole page (SiteHeader / TenantShell) responds.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-ta-theme", taTheme);
+    document.documentElement.classList.toggle("dark", taTheme === "dark");
+    localStorage.setItem("ta-console-theme", taTheme);
+    return () => {
+      document.documentElement.removeAttribute("data-ta-theme");
+      document.documentElement.classList.remove("dark");
+    };
+  }, [taTheme]);
+
+  // Wire the toggle button into the slot rendered by SiteHeader / TenantShell.
+  useEffect(() => {
+    setThemeSlot(document.getElementById("ta-theme-slot"));
+  }, []);
+
   function toggleTheme(): void {
-    setTaTheme((t) => {
-      const next: TaTheme = t === "dark" ? "light" : "dark";
-      localStorage.setItem("ta-console-theme", next);
-      return next;
-    });
+    setTaTheme((t) => (t === "dark" ? "light" : "dark"));
   }
 
-  // Sidebar collapse — shared with the TenantShell top-bar toggle.
-  const { open, toggle } = useConversationRail();
+  // Sidebar collapse — toggled by PanelLeft in TenantShell (or CSS default on /concierge).
+  const { open } = useConversationRail();
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chats");
   const [mainTab, setMainTab] = useState<MainTab>("conversation");
@@ -664,74 +650,28 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  return (
-    <div
-      data-ta-theme={taTheme}
-      className="flex flex-col h-full overflow-hidden"
-      style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
-    >
-      {/* ── Top bar ─────────────────────────────────────────────────────── */}
-      <header
-        style={{
-          height: 52,
-          background: "var(--ta-sidebar)",
-          borderBottom: "1px solid var(--ta-border)",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "0 14px",
-          flexShrink: 0,
-        }}
-      >
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label="Toggle sidebar"
-          style={ICON_BTN_STYLE}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-          }}
-        >
-          <Menu size={17} />
-        </button>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 2 }}>
-          <CompassMark size={22} />
-          <span
-            style={{
-              fontSize: 14,
-              fontWeight: 700,
-              color: "var(--ta-text)",
-              letterSpacing: -0.2,
-            }}
-          >
-            AI{" "}
-            <span style={{ color: "var(--ta-accent)" }}>Travel</span>{" "}
-            Concierge
-          </span>
-        </div>
-
-        <div style={{ flex: 1 }} />
-
+  // Theme toggle button portalled into the slot in SiteHeader / TenantShell.
+  const themeToggle = themeSlot
+    ? createPortal(
         <button
           type="button"
           onClick={toggleTheme}
           aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
           title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-          style={ICON_BTN_STYLE}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-          }}
+          style={{ ...ICON_BTN_STYLE, color: "var(--foreground)" }}
         >
           {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
-      </header>
+        </button>,
+        themeSlot,
+      )
+    : null;
+
+  return (
+    <div
+      className="flex flex-col h-full overflow-hidden"
+      style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
+    >
+      {themeToggle}
 
       {/* ── Body ────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">

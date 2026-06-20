@@ -70,12 +70,18 @@ export default async function HomePage() {
         const role =
           tenantId && user ? await getTenantRole(user.id, tenantId) : null;
         if (role) {
+          const meta = user?.user_metadata as { avatar_url?: string; full_name?: string; name?: string } | undefined;
           // #974 — staff default to TA mode (trade chat, no customer
           // guardrails); viewers keep the guardrailed customer chat.
           return (
             <>
               <TenantTheme />
-              <TenantShell role={role} branding={headerProps.tenantBranding}>
+              <TenantShell
+                role={role}
+                branding={headerProps.tenantBranding}
+                avatarUrl={meta?.avatar_url ?? null}
+                displayName={meta?.full_name ?? meta?.name ?? user?.email ?? null}
+              >
                 {defaultPanelForRole(role) === "ta-concierge" ? (
                   <ConciergeExperience />
                 ) : (

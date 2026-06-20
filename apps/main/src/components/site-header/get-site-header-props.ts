@@ -44,5 +44,9 @@ export async function getSiteHeaderProps(): Promise<SiteHeaderProps> {
     }
   }
 
-  return { isPlatformDomain, isAuthenticated, tenantBranding, role };
+  const meta = user?.user_metadata as { avatar_url?: string; full_name?: string; name?: string } | undefined;
+  const avatarUrl = meta?.avatar_url ?? null;
+  const displayName = meta?.full_name ?? meta?.name ?? user?.email ?? null;
+
+  return { isPlatformDomain, isAuthenticated, tenantBranding, role, avatarUrl, displayName };
 }
