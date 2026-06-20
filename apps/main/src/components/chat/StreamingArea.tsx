@@ -2,22 +2,43 @@
 // Uses an IntersectionObserver on a bottom sentinel: if the sentinel is in
 // view, auto-scroll new content; otherwise show "New message" floating
 // indicator that smooth-scrolls on click.
+//
+// Auto-scroll always fires when the last message is from the user so the reply
+// is visible even if they scrolled up mid-conversation before hitting Send.
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { MessageBubble, type ChatMessage } from "./MessageBubble";
 
+function ThinkingBubble(): React.JSX.Element {
+  return (
+    <div className="flex gap-3 items-start my-3">
+      {/* Avatar matches assistant bubble style in MessageBubble */}
+      <div className="w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-semibold shrink-0 text-white bg-emerald-500">
+        AI
+      </div>
+      <div className="px-3.5 py-3 rounded-xl bg-muted flex items-center gap-[5px]">
+        <span className="block w-[7px] h-[7px] rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
+        <span className="block w-[7px] h-[7px] rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:160ms]" />
+        <span className="block w-[7px] h-[7px] rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:320ms]" />
+      </div>
+    </div>
+  );
+}
+
 export function StreamingArea({
   messages,
   streamingDelta,
   showMemoryIndicator,
   onFeedback,
+  thinking = false,
 }: {
   messages: ChatMessage[];
   streamingDelta: string | null;
   showMemoryIndicator: boolean;
   onFeedback?: (id: string, score: -1 | 1) => void;
+  thinking?: boolean;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -37,10 +58,14 @@ export function StreamingArea({
   }, []);
 
   useEffect(() => {
-    if (atBottom) {
+    // Force scroll when the user just sent (last msg is theirs) or while the
+    // AI is thinking — so the ellipsis bubble and eventual response are visible
+    // even if the user had scrolled up in a long conversation.
+    const lastMsgIsFromUser = messages[messages.length - 1]?.role === "user";
+    if (atBottom || lastMsgIsFromUser || thinking) {
       sentinelRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
-  }, [messages.length, streamingDelta, atBottom]);
+  }, [messages, streamingDelta, atBottom, thinking]);
 
   function scrollToLatest(): void {
     sentinelRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -67,6 +92,8 @@ export function StreamingArea({
           showMemoryIndicator={false}
         />
       )}
+      {/* Show thinking bubble only when waiting for first token, not while streaming */}
+      {thinking && streamingDelta === null && <ThinkingBubble />}
       <div ref={sentinelRef} aria-hidden="true" />
       {!atBottom && (
         <button

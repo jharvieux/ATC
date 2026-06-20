@@ -63,6 +63,14 @@ export interface ChatExperienceProps {
   // (i.e. the first message_id SSE event when conversationIdRef was null
   // at turn start). The concierge sidebar uses this to refresh the list.
   onConversationCreated?: ((id: string) => void) | undefined;
+  // Agent-console redesign — when the parent provides its own sidebar and
+  // disclosure banner, suppress the built-in ones to avoid duplication.
+  hideSidebar?: boolean;
+  hideBanner?: boolean;
+  // Agent-console redesign — agent-specific composer copy injected by the
+  // parent so the placeholder and helper text update with agent selection.
+  composerPlaceholder?: string;
+  composerHelper?: string;
 }
 
 export function ChatExperience({
@@ -71,6 +79,10 @@ export function ChatExperience({
   initialConversationId,
   initialMessages,
   onConversationCreated,
+  hideSidebar = false,
+  hideBanner = false,
+  composerPlaceholder,
+  composerHelper,
 }: ChatExperienceProps): JSX.Element {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? []);
   const [streaming, setStreaming] = useState<string | null>(null);
@@ -246,12 +258,14 @@ export function ChatExperience({
     // the agent header on /chat/[slug] and push the compose form off-
     // screen (#663).
     <div className="flex flex-col h-full">
-      <NewsTickerBanner />
-      <AIDisclosureBanner />
+      {!hideBanner && <NewsTickerBanner />}
+      {!hideBanner && <AIDisclosureBanner />}
       <div className="flex flex-1 overflow-hidden">
-        <aside className="hidden md:block w-[260px] border-r border-border p-4 overflow-y-auto shrink-0">
-          <ChatSidebar />
-        </aside>
+        {!hideSidebar && (
+          <aside className="hidden md:block w-[260px] border-r border-border p-4 overflow-y-auto shrink-0">
+            <ChatSidebar />
+          </aside>
+        )}
 
         <main className="flex-1 flex flex-col overflow-hidden">
           {signupWall && <SignupWall body={signupWall} />}
@@ -261,6 +275,7 @@ export function ChatExperience({
             streamingDelta={streaming}
             showMemoryIndicator={true}
             onFeedback={submitFeedback}
+            thinking={sending && streaming === null}
           />
 
           {error && (
@@ -270,35 +285,40 @@ export function ChatExperience({
           )}
 
           {!hardLimit && !signupWall && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                // allow-void-async: browser onSubmit handler; send()
-                // manages its own loading/error state via useState and
-                // cannot be awaited from a synchronous event handler.
-                void send();
-              }}
-              className="flex gap-2 p-3 border-t border-border bg-background"
-            >
-              <Input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Type a message…"
-                disabled={sending}
-                aria-label="Message input"
-                className="flex-1"
-              />
-              <Button type="submit" disabled={sending || !input.trim()}>
-                {sending ? "…" : "Send"}
-              </Button>
-            </form>
+            <div className="border-t border-border bg-background">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  // allow-void-async: browser onSubmit handler; send()
+                  // manages its own loading/error state via useState and
+                  // cannot be awaited from a synchronous event handler.
+                  void send();
+                }}
+                className="flex gap-2 p-3"
+              >
+                <Input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={composerPlaceholder ?? "Type a message…"}
+                  disabled={sending}
+                  aria-label="Message input"
+                  className="flex-1"
+                />
+                <Button type="submit" disabled={sending || !input.trim()}>
+                  {sending ? "…" : "Send"}
+                </Button>
+              </form>
+              {composerHelper && (
+                <p className="px-3 pb-2 text-[11px] text-muted-foreground">{composerHelper}</p>
+              )}
+            </div>
           )}
           {/* §16.7 — Powered-by attribution. show=true is the BYO Research /
               Professional / Sub-Host Starter floor. A future branding-aware
               variant will resolve tenant_branding.show_powered_by per-tenant;
               for now this is a constant true placeholder. */}
-          <PoweredBy show={true} />
+          {!hideBanner && <PoweredBy show={true} />}
         </main>
       </div>
     </div>
