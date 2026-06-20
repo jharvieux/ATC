@@ -120,7 +120,9 @@ export function AgentPickerPopover({
 
   // Auto-focus search when popover opens.
   useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 30);
+    if (!open) return;
+    const id = setTimeout(() => searchRef.current?.focus(), 30);
+    return () => clearTimeout(id);
   }, [open]);
 
   return (

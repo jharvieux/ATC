@@ -67,7 +67,7 @@ function CompassMark({ size = 22 }: { size?: number }): React.JSX.Element {
 
 // ─── Shared mini button style factory ───────────────────────────────────────
 
-function iconBtn(extra?: React.CSSProperties): React.CSSProperties {
+function iconBtn(): React.CSSProperties {
   return {
     display: "flex",
     alignItems: "center",
@@ -81,7 +81,6 @@ function iconBtn(extra?: React.CSSProperties): React.CSSProperties {
     cursor: "pointer",
     transition: "background 0.12s",
     flexShrink: 0,
-    ...extra,
   };
 }
 
@@ -272,6 +271,17 @@ const MEMORY_ICONS: Record<string, string> = {
   notes_freeform: "📝",
 };
 
+const MEMORY_LABELS: Record<string, string> = {
+  preferences: "Preferences",
+  travel_history: "Travel history",
+  family_composition: "Family",
+  accessibility_needs: "Accessibility",
+  dietary_restrictions: "Dietary",
+  loyalty_programs: "Loyalty",
+  important_dates: "Dates",
+  notes_freeform: "Notes",
+};
+
 function TaMemoryPanel(): React.JSX.Element {
   const [mem, setMem] = useState<MemoryRow | null | "loading">("loading");
   const [err, setErr] = useState<string | null>(null);
@@ -304,17 +314,6 @@ function TaMemoryPanel(): React.JSX.Element {
       </p>
     );
   }
-
-  const MEMORY_LABELS: Record<string, string> = {
-    preferences: "Preferences",
-    travel_history: "Travel history",
-    family_composition: "Family",
-    accessibility_needs: "Accessibility",
-    dietary_restrictions: "Dietary",
-    loyalty_programs: "Loyalty",
-    important_dates: "Dates",
-    notes_freeform: "Notes",
-  };
 
   const entries = Object.entries(mem).filter(([, v]) => {
     if (v === null || v === undefined) return false;
@@ -403,9 +402,14 @@ function TaPrefsPanel({
       const r = await fetch("/api/memory", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rapport_tone_level: tone === "warm" ? 5 : tone === "reserved" ? 1 : 3 }),
+        body: JSON.stringify({
+          rapport_tone_level:
+            tone === "warm" ? 5 : tone === "detailed" ? 4 : tone === "concise" ? 2 : 1,
+        }),
       });
       setStatus(r.ok ? "Saved." : "Couldn't save.");
+    } catch {
+      setStatus("Couldn't save.");
     } finally {
       setSaving(false);
     }
@@ -483,10 +487,6 @@ function TaPrefsPanel({
             }}
           />
         </button>
-      </div>
-      <div style={{ ...rowStyle, borderBottom: "none" }}>
-        <span style={labelStyle}>Compact density</span>
-        <span style={{ fontSize: 11, color: "var(--ta-text-mute)" }}>Coming soon</span>
       </div>
       <button
         type="button"
