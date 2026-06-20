@@ -119,12 +119,13 @@ test("customer can view a sent quote via public /q/[token] URL", async ({ page, 
   expect(res.status()).toBe(201);
   const { id } = await res.json() as { id: string };
 
-  await sql`
+  const updated = await sql`
     UPDATE public.quotes
     SET status = 'sent', customer_access_token = ${CUSTOMER_TOKEN},
         sent_at = now(), updated_at = now()
     WHERE id = ${id}::uuid AND tenant_id = ${TENANT}::uuid
   `;
+  expect(updated.count).toBe(1);
 
   await page.goto(`/q/${CUSTOMER_TOKEN}`);
   await expect(page).toHaveURL(new RegExp(`/q/${CUSTOMER_TOKEN}`));
