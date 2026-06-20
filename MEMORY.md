@@ -4,6 +4,35 @@ Newest entries on top.
 
 ---
 
+## D-279 — 2026-06-20 — Release + dependabot-update-branch workflows use a fine-grained PAT, not the GitHub App token
+
+`release.yml` and `dependabot-update-branch.yml` now authenticate their git pushes / `gh pr update-branch` calls with a fine-grained PAT (`GH_PAT`, Actions secret) instead of the `atc-selfhelp` GitHub App installation token.
+
+**Why**: The App token generated successfully (after the App ID + PKCS#8 key were fixed earlier today) but the `atc-selfhelp[bot]` lacked `contents: write` on the repo, so every push 403'd (`Permission to jharvieux/ATC.git denied to atc-selfhelp[bot]`). Granting App write requires a two-page approval (app Permissions page → installation approval) that wasn't resolving. A PAT sidesteps the App permission model entirely and — like the App token, unlike `GITHUB_TOKEN` — still triggers downstream workflow runs (so the `release/*` push fires `deploy.yml`, and dependabot update-branch pushes fire CI).
+
+**What was rejected**: Fixing the App's `contents: write` grant (would have kept bot-authored pushes, but the approval friction had already burned a day). PRs #1306 (release.yml) and #1308 (dependabot-update-branch.yml) shipped the PAT swap; issues #1303/#1304 follow-ups shipped in #1305.
+
+**GH_PAT permissions** (fine-grained, repo = jharvieux/ATC): Contents R/W, Pull requests R/W, Metadata R (auto). No "Checks" permission exists for fine-grained PATs (App-only); `gh pr checks` degrades via the workflow's `|| echo "0"` fallback. `dependabot-update-branch.yml` runs on a **cron** trigger, not a Dependabot event — so a regular Actions secret works (NOT a Dependabot secret; my earlier #1307 note saying otherwise was wrong).
+
+**Correction to [[D-278]]**: that entry claims `gh pr update-branch` does not trigger CI. On #1305 the update-branch DID re-trigger CI on the new merge SHA. So don't rely on either assumption — check the new HEAD's checks after an update-branch. The hash-stability point in D-278 still holds: update-branch only stales the audit markers when the two branches touched the SAME file (context-line shift); with no file overlap the effective-diff hash is stable and markers survive.
+
+`deploy.yml` was NOT changed — its tag push / GitHub Release / merge-back run inside the already-triggered pipeline via `GITHUB_TOKEN`, which is fine (they don't need to trigger anything downstream).
+
+---
+
+## D-278 — 2026-06-20 — gh pr update-branch does not trigger CI; next/image requires remotePatterns
+
+Two operational findings from session work on PRs #1300–#1302:
+
+1. `gh pr update-branch` creates a merge commit via the GitHub API but does NOT fire push-triggered workflow events. CI (deploy.yml, ci.yml, CodeQL, etc.) does not run for the new HEAD. A subsequent `git push` of any commit (even empty) is required to trigger workflows. **However**: if both the feature branch and dev diverged on the same file, the push will produce a new effective diff (shifted patch context) which stales the pr-audit-section-check and requires re-running both audit agents.
+
+2. `next/image` requires explicit `images.remotePatterns` entries for external hostnames — the CSP `img-src https:` directive is a browser-level policy, not a Next.js image optimizer allowlist. For external OAuth avatar URLs (Google, GitHub, etc.) where the hostname is unpredictable, the correct pattern is a raw `<img referrerPolicy="no-referrer">` with `// eslint-disable-next-line @next/next/no-img-element` — matching the AssetLightbox.tsx precedent already in the codebase.
+
+**Why**: PR #1302 hit both issues. The update-branch + empty-commit sequence forced two extra audit-agent re-runs.
+**How to apply**: After `gh pr update-branch`, always push a real commit (or use `--auto` flag if all required checks already pass). For external avatar/image URLs, use raw `<img>` not `next/image` until `remotePatterns` is configured in next.config.js.
+
+---
+
 ## D-277 — 2026-06-20 — MEMORY-INDEX.md is the session-start read; MEMORY.md is grep-on-demand archive
 
 Cut session-start standing context from ~125K to ~12.5K tokens (~90%) via PR #1288. Three changes:
