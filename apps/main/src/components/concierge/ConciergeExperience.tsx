@@ -522,6 +522,10 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // Wire the toggle button into the slot rendered by SiteHeader / TenantShell.
   useEffect(() => {
+    if (process.env.NODE_ENV === "development") {
+      const all = document.querySelectorAll("#ta-theme-slot");
+      if (all.length > 1) console.warn("[ConciergeExperience] Multiple #ta-theme-slot elements found — theme toggle will bind to the first one.");
+    }
     setThemeSlot(document.getElementById("ta-theme-slot"));
   }, []);
 
@@ -650,21 +654,20 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  // Theme toggle button portalled into the slot in SiteHeader / TenantShell.
-  const themeToggle = themeSlot
-    ? createPortal(
-        <button
-          type="button"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-          title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-          style={{ ...ICON_BTN_STYLE, color: "var(--foreground)" }}
-        >
-          {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>,
-        themeSlot,
-      )
-    : null;
+  // Theme toggle button — portalled into the header slot when available,
+  // rendered inline in the top-right corner as fallback if the slot wasn't found.
+  const toggleBtn = (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+      title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+      style={{ ...ICON_BTN_STYLE, color: "var(--foreground)" }}
+    >
+      {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+    </button>
+  );
+  const themeToggle = themeSlot ? createPortal(toggleBtn, themeSlot) : toggleBtn;
 
   return (
     <div
