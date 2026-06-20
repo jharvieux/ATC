@@ -19,15 +19,6 @@ const AVATAR_GRADIENTS: Record<string, string> = {
   "jenny-hartwell": "linear-gradient(135deg,#A02E6B,#E04DA5)",
 };
 
-function initials(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0] ?? "")
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 export function AgentAvatar({
   agent,
   size = 32,
@@ -57,7 +48,7 @@ export function AgentAvatar({
           userSelect: "none",
         }}
       >
-        {initials(agent.name)}
+        {agent.name.split(" ").map((w) => w[0] ?? "").join("").slice(0, 2).toUpperCase()}
       </span>
     );
   }
