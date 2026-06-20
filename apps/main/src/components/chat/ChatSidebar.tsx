@@ -196,21 +196,39 @@ function PrefsPanel(): JSX.Element {
 
   if (!loaded) return <p className="text-muted-foreground">Loading…</p>;
 
+  const TONE_LABELS: [number, string][] = [
+    [1, "Formal"],
+    [2, "Professional"],
+    [3, "Friendly"],
+    [4, "Casual"],
+    [5, "Very Casual"],
+  ];
+
   return (
     <div>
-      <label className="block text-[12px] text-foreground mb-1">
-        Rapport tone (1 reserved → 5 warm)
+      <label className="block text-[12px] text-foreground mb-2">
+        Rapport tone
       </label>
-      <input
-        type="range"
-        min={1}
-        max={5}
-        step={1}
-        value={tone}
-        onChange={(e) => setTone(Number(e.target.value))}
-        className="w-full"
-      />
-      <div className="text-[11px] text-muted-foreground mb-3">Current: {tone}</div>
+      <div className="flex gap-1 flex-wrap mb-1">
+        {TONE_LABELS.map(([level, label]) => (
+          <button
+            key={level}
+            type="button"
+            onClick={() => setTone(level)}
+            className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${
+              tone === level
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-transparent text-muted-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tone === 5 && (
+        <p className="text-[11px] text-amber-500 mb-1">⚠ Profanity is permitted at this tone level.</p>
+      )}
+      <div className="mb-3" />
 
       <label className="block text-[12px] text-foreground mb-1">
         Notes (anything you want the AI to remember)

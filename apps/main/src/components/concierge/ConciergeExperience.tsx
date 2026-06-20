@@ -389,7 +389,7 @@ function TaPrefsPanel({
   showQualityPill: boolean;
   onToggleQualityPill: (v: boolean) => void;
 }): React.JSX.Element {
-  const [tone, setTone] = useState("warm");
+  const [tone, setTone] = useState<number>(3);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -400,10 +400,7 @@ function TaPrefsPanel({
       const r = await fetch("/api/memory", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rapport_tone_level:
-            tone === "warm" ? 5 : tone === "detailed" ? 4 : tone === "concise" ? 2 : 1,
-        }),
+        body: JSON.stringify({ rapport_tone_level: tone }),
       });
       setStatus(r.ok ? "Saved." : "Couldn't save.");
     } catch {
@@ -424,15 +421,13 @@ function TaPrefsPanel({
     fontSize: 12,
     color: "var(--ta-text-soft)",
   };
-  const selectStyle: React.CSSProperties = {
-    fontSize: 12,
-    background: "var(--ta-surface-2)",
-    border: "1px solid var(--ta-border-2)",
-    borderRadius: 6,
-    color: "var(--ta-text)",
-    padding: "4px 8px",
-    outline: "none",
-  };
+  const TONE_LABELS: [number, string][] = [
+    [1, "Formal"],
+    [2, "Professional"],
+    [3, "Friendly"],
+    [4, "Casual"],
+    [5, "Very Casual"],
+  ];
 
   return (
     <div>
@@ -440,18 +435,35 @@ function TaPrefsPanel({
         <span style={labelStyle}>Default agent</span>
         <span style={{ fontSize: 11, color: "var(--ta-text-mute)" }}>Set via agent picker</span>
       </div>
-      <div style={rowStyle}>
+      <div style={{ padding: "8px 0", borderBottom: "1px solid var(--ta-border)" }}>
         <span style={labelStyle}>Reply tone</span>
-        <select
-          value={tone}
-          onChange={(e) => setTone(e.target.value)}
-          style={selectStyle}
-        >
-          <option value="warm">Warm</option>
-          <option value="concise">Concise</option>
-          <option value="detailed">Detailed</option>
-          <option value="reserved">Reserved</option>
-        </select>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+          {TONE_LABELS.map(([level, label]) => (
+            <button
+              key={level}
+              type="button"
+              onClick={() => setTone(level)}
+              style={{
+                padding: "3px 10px",
+                borderRadius: 20,
+                fontSize: 11,
+                fontWeight: 500,
+                cursor: "pointer",
+                border: `1px solid ${tone === level ? "var(--ta-accent)" : "var(--ta-border-2)"}`,
+                background: tone === level ? "var(--ta-accent-soft)" : "transparent",
+                color: tone === level ? "var(--ta-accent)" : "var(--ta-text-soft)",
+                transition: "all 0.12s",
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {tone === 5 && (
+          <p style={{ fontSize: 11, color: "var(--ta-amber, #f59e0b)", margin: "6px 0 0" }}>
+            ⚠ Profanity is permitted at this tone level.
+          </p>
+        )}
       </div>
       <div style={rowStyle}>
         <span style={labelStyle}>Quality-review notice</span>
