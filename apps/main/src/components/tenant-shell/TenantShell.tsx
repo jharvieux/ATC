@@ -35,6 +35,7 @@ import {
 import { performSignout } from "@/lib/auth/perform-signout";
 import { navSectionsForRole } from "./nav-sections";
 import { ConversationRailContext } from "./conversation-rail-context";
+import { ThemeSlotContext } from "./theme-slot-context";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface TenantShellProps {
@@ -63,6 +64,7 @@ export function TenantShell({
   // shared via context. null = visitor hasn't toggled → CSS-only default
   // (closed below lg, open lg+) so the first paint has no hydration flash.
   const [open, setOpen] = React.useState<boolean | null>(null);
+  const [themeSlotEl, setThemeSlotEl] = React.useState<HTMLSpanElement | null>(null);
   const toggle = React.useCallback((): void => {
     setOpen((prev) =>
       prev === null
@@ -72,39 +74,39 @@ export function TenantShell({
   }, []);
 
   return (
-    <ConversationRailContext.Provider value={{ open, toggle }}>
-      <div className="flex h-screen flex-col">
-        <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
-          <div className="flex items-center gap-3">
-            {isStaff && (
-              <button
-                type="button"
-                onClick={toggle}
-                aria-label="Toggle conversation history"
-                className="rounded-md p-1.5 hover:bg-accent"
-              >
-                <PanelLeft className="h-5 w-5" />
-              </button>
-            )}
-            <Link href="/" aria-label="Home" className="flex items-center">
-              {isStaff ? (
-                <>
-                  <span className="hidden sm:inline-flex">
-                    <Logo height={49} />
-                  </span>
-                  <span className="sm:hidden">
-                    <LogoMark size={49} />
-                  </span>
-                </>
-              ) : (
-                <BrandLogo branding={branding} height={49} />
+    <ThemeSlotContext.Provider value={themeSlotEl}>
+      <ConversationRailContext.Provider value={{ open, toggle }}>
+        <div className="flex h-screen flex-col">
+          <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+            <div className="flex items-center gap-3">
+              {isStaff && (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-label="Toggle conversation history"
+                  className="rounded-md p-1.5 hover:bg-accent"
+                >
+                  <PanelLeft className="h-5 w-5" />
+                </button>
               )}
-            </Link>
-          </div>
-          {/* Slot for page-level toggles (e.g. TA console dark/light); empty when ConciergeExperience is not mounted.
-              SiteHeader and TenantShell are mutually exclusive per routing — exactly one
-              #ta-theme-slot exists in the document at runtime. */}
-          <span id="ta-theme-slot" className="flex items-center" />
+              <Link href="/" aria-label="Home" className="flex items-center">
+                {isStaff ? (
+                  <>
+                    <span className="hidden sm:inline-flex">
+                      <Logo height={49} />
+                    </span>
+                    <span className="sm:hidden">
+                      <LogoMark size={49} />
+                    </span>
+                  </>
+                ) : (
+                  <BrandLogo branding={branding} height={49} />
+                )}
+              </Link>
+            </div>
+            {/* Theme toggle slot — ConciergeExperience portals its dark/light button
+                here via ThemeSlotContext. Empty when ConciergeExperience is not mounted. */}
+            <span ref={setThemeSlotEl} className="flex items-center" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -154,6 +156,7 @@ export function TenantShell({
         </header>
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
-    </ConversationRailContext.Provider>
+      </ConversationRailContext.Provider>
+    </ThemeSlotContext.Provider>
   );
 }

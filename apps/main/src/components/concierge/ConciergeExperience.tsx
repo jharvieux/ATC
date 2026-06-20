@@ -18,6 +18,7 @@ import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
+import { useThemeSlot } from "@/components/tenant-shell/theme-slot-context";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
 import { TONE_LABELS } from "@/lib/tone/constants";
@@ -521,7 +522,7 @@ function TaPrefsPanel({
 export function ConciergeExperience(): React.JSX.Element {
   // Theme — persisted to localStorage; initial value respects prefers-color-scheme.
   const [taTheme, setTaTheme] = useState<TaTheme>("dark");
-  const [themeSlot, setThemeSlot] = useState<Element | null>(null);
+  const themeSlot = useThemeSlot();
 
   // Init: read localStorage / media-query once on mount.
   useEffect(() => {
@@ -530,7 +531,7 @@ export function ConciergeExperience(): React.JSX.Element {
     if (window.matchMedia("(prefers-color-scheme: light)").matches) setTaTheme("light");
   }, []);
 
-  // Sync: push theme to document so the whole page (SiteHeader / TenantShell) responds.
+  // Sync: push theme to document so the whole page (TenantShell) responds.
   useEffect(() => {
     document.documentElement.setAttribute("data-ta-theme", taTheme);
     document.documentElement.classList.toggle("dark", taTheme === "dark");
@@ -540,15 +541,6 @@ export function ConciergeExperience(): React.JSX.Element {
       document.documentElement.classList.remove("dark");
     };
   }, [taTheme]);
-
-  // Wire the toggle button into the slot rendered by SiteHeader / TenantShell.
-  // SiteHeader and TenantShell are mutually exclusive per routing, so only one
-  // #ta-theme-slot exists at runtime — but warn in all envs if that ever changes.
-  useEffect(() => {
-    const all = document.querySelectorAll("#ta-theme-slot");
-    if (all.length > 1) console.warn("[ConciergeExperience] Multiple #ta-theme-slot elements found — theme toggle will bind to the first one.");
-    setThemeSlot(document.getElementById("ta-theme-slot"));
-  }, []);
 
   function toggleTheme(): void {
     setTaTheme((t) => (t === "dark" ? "light" : "dark"));
