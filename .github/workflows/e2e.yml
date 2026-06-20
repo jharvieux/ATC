@@ -12,6 +12,7 @@ on:
       - "**.md"
       - "docs/**"
       - "specs/**"
+      - ".github/workflows/**"
 
 jobs:
   e2e:
