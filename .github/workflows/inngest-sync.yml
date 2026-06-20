@@ -1,0 +1,34 @@
+name: Inngest sync
+
+# Manual re-sync of the Inngest app registry. Run this after any production
+# deploy that bypassed the normal release pipeline (which runs sync automatically).
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Inngest serve URL (leave blank for production default)'
+        required: false
+        default: 'https://ai-travelconcierge.com/api/inngest'
+        type: string
+
+jobs:
+  sync:
+    name: Sync Inngest app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync
+        env:
+          INNGEST_API_KEY: ${{ secrets.INNGEST_API_KEY }}
+        run: |
+          if [ -z "$INNGEST_API_KEY" ]; then
+            echo "::error::INNGEST_API_KEY secret is not set."
+            exit 1
+          fi
+          echo "Syncing Inngest app 'atc-main' at ${{ inputs.url }}"
+          curl -fsS -X POST "https://api.inngest.com/v2/apps/atc-main/syncs" \
+            -H "Authorization: Bearer $INNGEST_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"url\": \"${{ inputs.url }}\"}" \
+            && echo "Sync succeeded." \
+            || { echo "::error::Inngest sync failed — check INNGEST_API_KEY and app id 'atc-main'."; exit 1; }
