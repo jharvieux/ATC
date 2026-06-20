@@ -1,0 +1,274 @@
+# MEMORY index
+
+One line per decision in `MEMORY.md`, newest first. This is the session-start
+read — scan it for relevant decisions, then `grep` the full entry out of
+`MEMORY.md` when a task touches that area. Do **not** read `MEMORY.md` in full.
+
+Rebuild this file anytime it drifts from MEMORY.md:
+
+```bash
+{ printf '# MEMORY index\n\n'; \
+  printf 'One line per decision in `MEMORY.md`, newest first. Session-start read — scan, then grep the full entry from MEMORY.md. Do not read MEMORY.md in full.\n\n'; \
+  printf 'Rebuilt with the snippet inside this file.\n\n## Entries\n\n'; \
+  grep -E '^## D-[0-9]+' MEMORY.md | sed 's/^## /- /'; } > MEMORY-INDEX.md
+```
+
+When you prepend a new entry to MEMORY.md, also prepend its one-liner under
+`## Entries` below (or just rerun the snippet above).
+
+## Entries
+
+- D-276 — 2026-06-20 — release.yml owns full pipeline; deploy.yml push-trigger kept for manual branch pushes
+- D-275 — 2026-06-19 — Hamburger nav is the canonical role-aware menu on EVERY tenant screen
+- D-274 — 2026-06-19 — RAG retrieval degraded: tenant_registry_shadow drift + dead reconcile (missing env vars)
+- D-273 — 2026-06-19 — "AI temporarily unavailable" was ai_call_log.purpose CHECK drift, not an AI outage
+- D-272 — 2026-06-19 — Subcontractor tracking opened to BYO hosts (overrides spec §14.3a sub_host-only gating)
+- D-271 — 2026-06-19 — Voice-profile feature was dead: tables missing from TENANT_SCOPED_TABLES (same class as #1045/#1054)
+- D-270 — 2026-06-19 — PR gate streamlined: doc-only skip, audit gates on comments-only, agents run after CI, ci.yml guards now required
+- D-269 — 2026-06-18 — #1190 tenant_settings closes out the issue; 34 baselined exceptions → 0 genuine (1 documented FP)
+- D-268 — 2026-06-18 — #1190 precruise recipient fix completes the column-reader cleanup (only messages.user_id FP remains)
+- D-267 — 2026-06-18 — #1190 CCPA data export was returning zero bookings/conversations (wrong linkage); fixed + extracted testable helper
+- D-266 — 2026-06-18 — #1190 host booking fee was broken in 4 ways (not just column names); fixed per §14 worked example
+- D-265 — 2026-06-18 — #1190 forums.coordinator_user_id fixed via group embed; supabase forward-FK embeds may be object OR array
+- D-264 — 2026-06-18 — #1190 decision-free Severity C shipped (email config on tenant_branding); forums coordinator split out
+- D-263 — 2026-06-18 — #1190 column-reader baseline was ~31 genuine runtime bugs, not false positives; Severity A shipped (#1244)
+- D-262 — 2026-06-18 — process_transfer_reversal RPC: 3-param signature with stripe_event_id (#1227)
+- D-261 — 2026-06-17 — Vercel preview deploys now render via PLATFORM_DEFAULT_TENANT_ID (non-prod only)
+- D-260 — 2026-06-17 — First full-codebase mutation-testing baseline (Stryker) + tooling fixes + perTest-artifact lesson
+- D-259 — 2026-06-18 — Reverses D-142: PR-time grants:check now runs against the TEST DB (premise changed in D-257)
+- D-258 — 2026-06-18 — Vercel cron Phase 2a (#894) + retired public.schema_migrations (#1078)
+- D-257 — 2026-06-17 — Staging/test Supabase DB provisioned
+- D-255 — 2026-06-17 — Vercel cron migration (issue #894): pattern + env requirements
+- D-256 — 2026-06-17 — OAuth subdomain redirect + hamburger menu role-awareness (PRs #1199 #1201)
+- D-254 — 2026-06-17 — Three deploy.yml bugs found during beta release (PRs #1195 #1196 #1197)
+- D-253 — 2026-06-17 — Migration ledger ↔ live DB drift gate (#1158, PR #1193)
+- D-252 — 2026-06-17 — Permission-matrix CI guard added (#1176); all 59 missing RBAC grants filled (#1173)
+- D-250 — 2026-06-16 — TA dashboard revamped to ChatGPT-style; Admin Console moved to a new (console) route group; platform branding on all TA-facing surfaces (PR #1177)
+- D-249 — 2026-06-16 — TenantUsage:read + TenantOverrideRequest:list/create granted to tenant_owner; first of the #1173 backlog fixed as a live bug
+- D-248 — 2026-06-16 — Chat + customer self-service ops granted to all roles via shared SELF_SERVICE_GRANTS; 68 other ungranted pairs deferred to #1173 (PR #1174)
+- D-247 — 2026-06-16 — PostgREST 1-to-1 embed returns null (not []) for missing rows — production 500 on lisa-travel (#1167/#1168, release/beta062)
+- D-246 — 2026-06-16 — Onboarding trial_end is 30 days for ALL tenant types at checkout; BYO self-activation gated to the `branding` stage — supersedes D-239 (PR #1162)
+- D-245 — 2026-06-16 — §14.9 multi-step money movement → single atomic SECURITY DEFINER RPC (PR #1155)
+- D-244 — 2026-06-15 — Onboarding Stripe redirect URLs use the tenant request origin, not platformBaseUrl() — reverses D-241 §3 (PR #1133)
+- D-243 — 2026-06-15 — Login 500 (ERROR 101242302) was a PostgREST embed ambiguity; pin users→tenants embed to the FK constraint (PR #1135)
+- D-242 — 2026-06-15 — Payout settlement is synchronous; drop transfer.paid, add transfer.reversed (PR #1128)
+- D-241 — 2026-06-15 — env() lazy-inits instead of throwing; Stripe redirect base-URL fails loud (PR #1124)
+- D-240 — 2026-06-15 — TIER_CODE + CODE_TO_TIER extracted to shared lib/stripe/tier-codes.ts (PR #1118)
+- D-239 — 2026-06-15 — Stripe Checkout trial_end capped at 729 days (PR #1116)
+- D-238 — 2026-06-15 — TIER_CODE/CODE_TO_TIER duplication across three routes (issue #1114)
+- D-237 — 2026-06-15 — Pricing canonical single source of truth (PR #1112)
+- D-236 — 2026-06-15 — internal_error on subscription checkout — triple bug fix (PR #1111)
+- D-235 — 2026-06-15 — tier_not_found on plan selection — dual bug fix (PR #1109)
+- D-234 — 2026-06-15 — BYO hosts skip ica/tax_form/connect_setup onboarding stages (PR #1107)
+- D-233 — 2026-06-15 — Supabase JWT uses amr[].timestamp, not auth_time (PR #1104)
+- D-232 — 2026-06-15 — group.invitations permission matrix gap (issue #1091, PR #1096)
+- D-231 — 2026-06-15 — #783 Phase 3 — Sailing catalog + cascade-dropdown group creation (PR #1093)
+- D-230 — 2026-06-15 — Login gate for /signup/complete and /onboarding/* redirects to /auth/reauth (#1050)
+- D-229 — 2026-06-15 — Retire db:migrate; psql loops replace custom migration ledger (#1078)
+- D-228 — 2026-06-15 — Resource-centric admin area gates (#1003)
+- D-227 — 2026-06-14 — OAuth initiation forces account chooser (prompt=select_account); beta053 cut
+- D-226 — 2026-06-14 — #1052: RLS migration applied to live beta DB; dual-ledger drift surfaced (#1067)
+- D-225 — 2026-06-14 — #1056: group detail + broadcast use rsvp_state; coordinator picks recipient states
+- D-224 — 2026-06-14 — #1054: audited TENANT_SCOPED_TABLES + added DB-backed reintroduction guard
+- D-223 — 2026-06-14 — Signup legal-accept 500: legal_documents moved to PLATFORM_READABLE_TABLES
+- D-222 — 2026-06-14 — #1052: enable RLS (zero policies) on 7 advisor-flagged public tables
+- D-221 — 2026-06-12 — Signup 401 loop: createRequestScopedClient must use req.cookies.getAll(), not parseCookieHeader
+- D-220 — 2026-06-12 — #1010 vendor-health split-brain resolved by probing Anthropic, not by durable real-traffic writes
+- D-219 — 2026-06-12 — #996 member-picker for PAT minting shipped in PR #1039
+- D-218 — 2026-06-12 — #1002 per-page assertPlatformRolePage gates shipped in PR #1038
+- D-217 — 2026-06-12 — #1034/#1035 shipped in PR #1036; fail-closed on DB read errors in 4 enforcement gates
+- D-216 — 2026-06-12 — #1028/#1029/#1030 shipped in PR #1032; d091-baseline shrinks by 17
+- D-215 — 2026-06-12 — #1025 classification done: 25 real fixes (→ #1028/#1029/#1030), 28 intentional cross-tenant, 16 tenant-less-table
+- D-214 — 2026-06-12 — #1023 shipped (PR #1026): D-091 tenant gate now scans SupabaseClient-param modules; 69 surfaced hits baselined, audit filed as #1025
+- D-213 — 2026-06-12 — #1016 shipped (PR #1022): runGenerationLoop extracted; fail-loud replaces a silent null; detector gap filed as #1023
+- D-212 — 2026-06-11 — Chat-route god-function split deferred to #1015 + #1016 (Vitals scan)
+- D-211 — 2026-06-11 — service-role ESLint allowlist extracted to its own data module (#1014)
+- D-210 — 2026-06-11 — #781 Phase 2 Step 2: canonical_match_reviews gains real RLS policies (D-203 reversal)
+- D-209 — 2026-06-11 — Tenant branding applied at runtime (§16.2) — token mapping + injection points chosen
+- D-208 — 2026-06-11 — #811 shipped with D-170 scope; D-201 narrowing deferred to #1003
+- D-207 — 2026-06-11 — Nightly #997 root-caused (test-shape drift, not regression); standalone snapshot-sync chosen to unblock dev
+- D-206 — 2026-06-10 — §953 Phase A shipped (PR #991); #781 Phase 2 Step 1 merged (PR #990); migration ordering lesson
+- D-205 — 2026-06-10 — Operator directives executed: prod = the MCP project; viewer backfill run; dependabot unstuck + cron
+- D-204 — 2026-06-10 — Onboarding/UX sprint: 4 features built by parallel worker agents, all merged
+- D-203 — 2026-06-10 — #780 Phase 1 shipped: canonical cruise catalog (PR #959)
+- D-202 — 2026-06-10 — Scraping-source rulings: cabin intel sources picked, Apify stays for live pricing
+- D-201 — 2026-06-10 — Design pass (Fable) over the four NEEDS-DESIGN issues — operator decisions locked
+- D-200 — 2026-06-10 — #924/#802/#846 shipped: diff-hash audit binding + payout fixes
+- D-199 — 2026-06-10 — #904 Phase 3 draft composer shipped (PR #922): client-side parsing, code-based suggestion, draft-only contract
+- D-198 — 2026-06-10 — #908 shipped (PR #921): conversation member-isolation; the real exposure was app-layer (tenantClient is service-role)
+- D-197 — 2026-06-10 — Sonnet build session: #913, #903, #881 built; #906 and #866 also shipped
+- D-196 — 2026-06-09 — #902 PR A shipped (TA-mode chat API); found conversations RLS is tenant-level only (#908)
+- D-195 — 2026-06-09 — #902 TA-mode chat design approved (no RAG ingestion; audience in Layer 2; existing cost breaker + 200/day backstop; own-only visibility)
+- D-194 — 2026-06-09 — Outlook desktop .msg intake is IN scope for the Phase 3 draft composer (amends [[D-193]] point 5)
+- D-193 — 2026-06-09 — Strategic focus: BYO agents; personas become dual-role (customer concierge + TA support/drafting assistant)
+- D-192 — 2026-06-09 — Inngest cost containment: registration-level kill switches + cron schedule stretch (PR #896)
+- D-191 — 2026-06-08 — #889: email_customer tool — concierge can email signed-in customers (recipient is server-resolved, never model-chosen)
+- D-190 — 2026-06-08 — display-asset lightbox refinements: descriptive labels + mobile-safe modal
+- D-189 — 2026-06-08 — #884: display assets open in an on-page lightbox (partial reversal of D-075's new-tab hyperlink)
+- D-188 — 2026-06-08 — #882: display-asset markers never rendered in customer chat (D-075 wiring finally landed)
+- D-187 — 2026-06-08 — #878: conversation context for follow-up entity extraction
+- D-186 — 2026-06-08 — #868: ship_lookup + port_lookup structured retrieval paths
+- D-185 — 2026-06-08 — #868: match_knowledge_chunks search_path + PG14 EXTRACT fix — merged, applied to prod DB, fix live
+- D-184 — 2026-06-07 — #868: RetrieveRequestSchema contract fix (persona slug + null user_id) — merged + atc-rag redeployed
+- D-183 — 2026-06-07 — #868: the concierge has NEVER had RAG grounding — 3 stacked bugs (tenant 403 + contract 400), NOT the persona prompts
+- D-182 — 2026-06-07 — #862 verifyEnvAtBoot() at the chat route 500'd PROD chat — reverted; whole-app env validation must never run in a request handler
+- D-181 — 2026-06-07 — #860: /api/chat recognizes the session cookie + platform-admin bypass; resolve users.id (NOT the auth id) for the FK columns (#865)
+- D-180 — 2026-06-07 — #850 root cause = anon session id written into ai_call_log.user_id (FK violation), NOT a model/key/data problem (#861)
+- D-179 — 2026-06-07 — Adopted claude-opus-4-8 (first real use of #851's attempt-latest machinery) (#858/#857)
+- D-178 — 2026-06-07 — #851 model-resilience COMPLETE (3 layers: loud + attempt-latest fallback + canary); opus-4-8 available
+- D-177 — 2026-06-07 — Concierge ignores ship+date itinerary data: entity extraction silently dead in prod → loud-fix shipped (#850/#852) + model-resilience initiative (#851)
+- D-176 — 2026-06-07 — Fork PRs can't satisfy this repo's required checks → re-home to an origin branch (#790 → #848, fixes #719)
+- D-175 — 2026-06-07 — Closed the open cross-tenant service-role cluster from the 2026-06-05 scan (#845); deploy HELD
+- D-174 — 2026-06-07 — Sailing-cron ports backfill timed out (FUNCTION_INVOCATION_TIMEOUT); bound the detail-fetch loop by the step deadline (#842/#843, beta047)
+- D-173 — 2026-06-07 — Prod rollout of #826/#827/#828, the sailing-halt fix, + 4 process improvements
+- D-172 — 2026-06-07 — Chat itinerary lookup + future-sailing ports (cruise.json) + ballpark prices (#826/#827/#828)
+- D-171 — 2026-06-06 — CruiseMapper itinerary coverage: masking + mapper-allow-list bugs fixed; RLS on RAG tables; beta044 cut
+- D-170 — 2026-06-06 — #813 shipped; #811 (per-role admin enforcement) scoped + QUEUED; process-improvement issues filed
+- D-169 — 2026-06-06 — Role-management UI shipped (tenant + platform); platform roles still NOT per-page-enforced (PR #812)
+- D-168 — 2026-06-06 — Embedding-flush follow-ups resolved (#807, #808); #809 was transient (corrects D-167)
+- D-167 — 2026-06-06 — First full CruiseMapper ingest succeeded (13.9k itineraries); embedding flush 500-looped, fixed (#805)
+- D-166 — 2026-06-06 — Auth/tenancy: platform logins became Booking OWNERS (#800); fixed role default + unbroke agency signup + MS/FB OTP provisioning
+- D-165 — 2026-06-06 — Sailing cron: adaptive time-budgeted Inngest stepping (#796); reusable for #774
+- D-164 — 2026-06-06 — Shipped #787/#788/#789 (RAG ingest + embedding hardening); found RAG-tests-not-in-CI gap (#792)
+- D-163 — 2026-06-05 — Cruise data scope: ports folded into Phase 1; Phase 3 (#783) connected group-booking flow created
+- D-162 — 2026-06-05 — Add structured `ship_class` to cruise_ships (revises D-161's "specs out")
+- D-161 — 2026-06-05 — Track supported cruise lines + ships in canonical DB tables (Phase 1 #780 / Phase 2 #781)
+- D-160 — 2026-06-05 — beta042 cut to prod (cruisemapper ingest fixes + PKCE)
+- D-159 — 2026-06-05 — CruiseMapper ship discovery per-cruise-line (38 → ~215 ships); per-URL steps → BATCHED steps (revises D-158's rejected-chunking)
+- D-158 — 2026-06-05 — CruiseMapper crons restructured: sailing decoupled to a durable monthly cron; per-URL Inngest steps (supersedes D-126 one-fetch design)
+- D-157 — 2026-06-05 — beta040 shipped to prod from pre-security-fix tag
+- D-156 — 2026-06-05 — RAG security day-2: 3 medium findings fixed in PR #759
+- D-155 — 2026-06-05 — Security triage: 20 TP / 13 NMT / 10 FP across 43 findings; all issued
+- D-154 — 2026-06-05 — RAG security day-1: 4 fixes shipped in PR #758; 3 decisions deferred pending user input
+- D-153 — 2026-06-04 — RAG embedding cost flows to main via nightly Inngest reconciler (not direct cross-service write)
+- D-152 — 2026-06-04 — Stale-onboarding tenants auto-suspended after 14 days
+- D-151 — 2026-06-04 — RAG service env vars: SUPABASE_RAG_* is canonical; do NOT rely on the NEXT_PUBLIC_SUPABASE_URL fallback
+- D-150 — 2026-06-04 — Adding commits to an in-flight protected release branch: temp-relax + recreate
+- D-149 — 2026-06-04 — All follow-ups/deferrals get GitHub issues (CLAUDE.md rule)
+- D-148 — 2026-06-04 — UX redesign overnight initiative: 5-phase split shipped (PRs #637–#643)
+- D-147 — 2026-06-03 — Opus for first-run audit agents on big/risky diffs (CLAUDE.md)
+- D-146 — 2026-06-03 — Contract tests use raw fetch instead of Stripe SDK (PR #632)
+- D-145 — 2026-06-03 — S5852 input-length caps before regex calls (PR #630); React 19 dependabot ignore (PR #631)
+- D-144 — 2026-06-03 — Platform-domain signup assigns users to PLATFORM_DEFAULT_TENANT_ID tenant (PR #625)
+- D-143 — 2026-06-03 — UI redesign direction switched from "Warm travel brand" to POC clone (indigo + Geist + system-aware dark mode); Phase 1 theme foundation shipped (PR #615)
+- D-142 — 2026-06-03 — Grant-drift CI gate shipped (#546 / PR #592): prod-baseline GRANT snapshot + fail-closed diff guards the #544 outage class
+- D-141 — 2026-06-03 — DIY local SonarCloud-class gate: curated eslint-plugin-sonarjs (9 bug rules) + jscpd duplication gate, instead of a paid subscription
+- D-140 — 2026-06-03 — Dropped-column reader CI gate + expand-migrate-contract rule (the #137 process fix); the gate immediately caught a 10th, customer-facing §38 reader the #608 switchover missed
+- D-139 — 2026-06-03 — §38 quote read-switchover completed for ALL 9 readers in one PR (#608); trip/financial detail now sourced from the representative quote_options row
+- D-138 — 2026-06-02 — Personas + Layer-2 safety floor moved to DB with a platform-admin editor (§9.3); builds the table that D-136 found missing
+- D-137 — 2026-06-02 — Nightly-only RLS integration suite hid a §12.2 matcher bug for 2 nights (#576/#532); postgres.js SQLSTATE lives on err.code
+- D-136 — 2026-06-02 — #455 active_persona_id FK is UNBUILDABLE as written; spec models personas by slug, not a table
+- D-135 — 2026-06-02 — #572 CSP shipped as no-nonce STATIC report-only; enforce mechanism (nonce vs SRI) deferred + user-gated
+- D-134 — 2026-06-02 — #571 CI shell-injection fix targeted `reason` (not `files`); allowlist extracted to scripts/lib/*.mjs
+- D-133 — 2026-06-01 — Doc-only PRs exempt from pr-audit-section-check (and from running the audit agents)
+- D-132 — 2026-05-31 — RLS snapshot must be regenerated when migrations add new tables/policies
+- D-131 — 2026-05-31 — §7.1/§17.3 signup/complete tenant provisioning: assertPermission cannot gate this route
+- D-130 — 2026-05-31 — §12.4 quote state-machine extracted to lib; routes still use inline status checks (follow-up tracked in #384)
+- D-129 — 2026-05-31 — §9.6 collect_booking_details: draft creation is NOT submission; supersedes D-105 placeholder stance for this tool
+- D-128 — 2026-05-31 — §20.2 booking flow Stages 2+3 (PR #515): replace-all passenger/options pattern; non-atomic delete+insert acceptable for drafts
+- D-127 — 2026-05-31 — §24.x anon session HMAC hardening (PR #513); ANON_COOKIE_SECRET required at boot; migration window open
+- D-126 — 2026-05-30 — §33.4 sailing ingest pipeline wired (PR #501); authority model 0.40/0.45/0.55; one-fetch quarterly design; issue #500 for one-time manual load
+- D-125 — 2026-05-30 — CruiseMapper itineraries live on the SHIP page (not /cruises/ URLs); sailing parser shipped (PR #498), wiring deferred
+- D-124 — 2026-05-30 — Pre-cruise emails gain destination hero images + full-cruise weather chart; images in rag_media_assets region scope; prod wire-up tracked in #483-#489 (PRs #469/#470/#481/#482)
+- D-123 — 2026-05-30 — contracts-canary recorder fully implemented; awaits two GitHub secrets (PR #472, issue #471)
+- D-122 — 2026-05-29 — Migrate the session boundary from `Authorization: Bearer` + localStorage to HttpOnly cookies via `@supabase/ssr` (PR #443)
+- D-121 — 2026-05-29 — Fix Google-login outage (Supabase `state` clobber + missing /auth/error); defer "return to original page" re-auth to #437
+- D-120 — 2026-05-29 — Formalize the §34.3.1 upload virus-scanning deferral as a logged risk acceptance
+- D-119 — 2026-05-29 — Overnight open-issue sweep: only #425 + #428-doc-half were autonomously completable; #37/#38 are DB-harness-gated (#386), not pure-logic extractions
+- D-118 — 2026-05-29 — Late import of D-106 + D-107 (Anthropic Message Batches pipeline + pre-cruise scheduler split), originally 2026-05-28 in PR #366
+- D-117 — 2026-05-29 — Remove the CI `slop-check` GitHub Action; keep the scanner local-only (`pnpm verify` + pre-pr-reviewer)
+- D-116 — 2026-05-29 — #384 batch 2: unit-test the 2 judgment files that have pure-fn seams (bookings allowlist, moderation thresholds); defer the DB-coupled rest to #386; reinterpret the user's "integration tests" pick (PR #417)
+- D-115 — 2026-05-29 — #384 Class-A backlog: ship the 2 clean pure-fn extractions (powered-by, reminder-cadence); surface the rest as judgment/blocked (PR #415)
+- D-114 — 2026-05-29 — Retroactive D-091 anti-pattern sweep: 3 waves, 9 pattern issues + epic, hand-verified severity below agent first-pass (#392–#401)
+- D-113 — 2026-05-29 — Repair false-confidence + dead test suites; defer RAG scope-isolation; catalog the reimplementation anti-pattern (#384)
+- D-112 — 2026-05-28 — Recreate atc-main in us-east-1, repoint test secrets, activate nightly DB suites against the prod-serving DB (pre-launch exception)
+- D-111 — 2026-05-28 — Session-start auto-triage protocol — silently fix mechanical cases, surface judgement calls
+- D-110 — 2026-05-28 — CI shift-left Phase 1: vitest related on PR + nightly full-test on dev
+- D-109 — 2026-05-28 — Dependabot self-managing auto-merge loop
+- D-108 — 2026-05-28 — Code-review automation: pre-pr-reviewer subagent + audit-section gate + pre-push verify
+- D-105 — 2026-05-28 — Persona tool dispatch: 3 real handlers + 3 honest placeholders, single-pass loop, structured errors
+- D-104 — 2026-05-28 — Token-gated public chat gets full supervisor via SHA-256-hashed conversation anchor
+- D-103 — 2026-05-27 — Customer-context system-prompt injection uses server-resolved refs, never client text
+- D-102 — 2026-05-27 — Token-gated public chat ships without §10 supervisor; mitigated by ground rules + read-only context
+- D-101 — 2026-05-27 — Next 16 instrumentation timing required env-var placeholder cascade
+- D-100 — 2026-05-27 — Replace `z.coerce.boolean()` with `envBoolean()` helper across env.ts
+- D-099 — 2026-05-27 — Claude Code automation infrastructure for the ATC repo
+- D-098 — 2026-05-27 — Keep `react-hooks/set-state-in-effect` + `react-hooks/immutability` disabled
+- D-097 — 2026-05-27 — Help-AI persists to `messages` table; counts toward chat metrics
+- D-096 — 2026-05-27 — Overnight D-091 round-3 punch list completion
+- D-095 — 2026-05-26 — Chat conversation history (PR #266)
+- D-094 — 2026-05-26 — Safe-mutation wrapper (PR #265)
+- D-093 — 2026-05-26 — Procedure change: read every Greptile review before merging
+- D-092 — 2026-05-26 — Round-3 Greptile audit (10 more subsystems) + 6 new patterns
+- D-091b — 2026-05-26 — Anti-pattern catalog + ESLint rules (post Greptile audit)
+- D-091 — 2026-05-26 — AI-slop detection infrastructure (3 layers)
+- D-090 — 2026-05-26 — Apify-5: APIFY_API_TOKEN blast-radius mitigations
+- D-089 — 2026-05-26 — Apify-4: catalog research + 9-line enablement + per-line kill switches
+- D-087 — 2026-05-26 — Walkthrough decisions (post-overnight, operator confirmations)
+- D-086 — 2026-05-26 — Overnight exhaustive spec sweep + CodeQL closure
+- D-085 — 2026-05-25 — Reality-delta supplement items 1-5: three-PR sweep
+- D-084 — 2026-05-25 — Security audit follow-ups closed; full audit wave done
+- D-083 — 2026-05-25 — Security audit wave + stop-the-world fixes
+- D-082 — 2026-05-25 — Merge cascade for BP34–BP40 + UI follow-ups
+- D-081 — 2026-05-24 — BP34 Phase C scope decisions (autonomous build resumed)
+- D-080 — 2026-05-24 — §34–§40 tech-spec addenda are missing from repo; autonomous build halted
+- D-079 — 2026-05-24 — BP34 build approach: AI defaults on, kill-switch per feature, one PR per BP
+- D-078 — 2026-05-24 — D-041 follow-up shipped: platform_settings cross-project sync
+- D-077 — 2026-05-24 — BP41: Haiku vision OCR sample-evaluation scripts ($25 hard cap) — key decisions
+- D-076 — 2026-05-24 — BP40: Price-watch subscriptions — backend, evaluator, daily Inngest, kill switch — key decisions
+- D-075 — 2026-05-24 — BP39: consumer-side display markup + asset_id_validation hallucination layer — key decisions
+- D-074 — 2026-05-24 — BP38: /api/retrieve hydrates related_asset_ids + adds top-level assets array — key decisions
+- D-073 — 2026-05-24 — BP37: CruiseMapper deck plan ingest with hot-linked images + related_asset_ids — key decisions
+- D-072 — 2026-05-24 — BP36: CruiseMapper DIY scraper — fetcher + robots + rate limiter + parsers + reference ingest — key decisions
+- D-071 — 2026-05-24 — BP35: CruiseMapper itinerary ingest — monthly Inngest + dedicated RAG endpoint + full embedding — key decisions
+- D-070 — 2026-05-24 — BP34: PricingDataSource interface + ApifyPricingAdapter + apify_spend_ledger — key decisions
+- D-069 — 2026-05-23 — BP33: §33 addendum schema — pricing_cache + price_watches + rag_media_assets + related_asset_ids — key decisions
+- D-068 — 2026-05-23 — BP32: customer bug flow + help_submission_rate (per-DAY) + issue-closure webhook + per-customer rate limit — key decisions
+- D-067 — 2026-05-23 — BP31 Phase C: help docs viewer + PDF/Word export + slide-over chat (SSE with real Anthropic) + admin triage + sync CLI — key decisions
+- D-066 — 2026-05-23 — BP31 Phase B: Help AI persona + flow controllers + API routes (confidence scorer STUBBED) — key decisions
+- D-065 — 2026-05-23 — BP31 Phase A: §32 Self-Service Help foundation (schema, GitHub App, PII redaction, /fix-bugs) — key decisions
+- D-064 — 2026-05-23 — BP30 Phase B: skeletal fixtures + loader + db-setup scaffold + k6 + runbooks — key decisions
+- D-063 — 2026-05-23 — BP30 Phase A: static security probes + service-role lint guard — key decisions
+- D-062 — 2026-05-23 — BP29: §28 env-var reconciliation + Zod boot validation + secret rotation runbook — key decisions
+- D-061 — 2026-05-23 — BP28: SaaS abuse dashboard + override workflow + nightly recompute (§27.7 / §27.8 / §27.11 / §27.14) — key decisions
+- D-060 — 2026-05-23 — BP27: SaaS abuse monitoring + cost controls (§27) — key decisions
+- D-059 — 2026-05-23 — BP26: Four-layer auth reconciled, service-role discipline lint, audit_log live, forensics decrypt, vendor health, monitoring — key decisions
+- D-058 — 2026-05-23 — BP25: CCPA retention closeout, free-text anonymization, forensics capture — key decisions
+- D-057 — 2026-05-22 — BP24: Chat UI, tone matching, deny-list, anonymous + customer rate limits — key decisions
+- D-056 — 2026-05-22 — BP23: Email infrastructure, pre-cruise series, in-app notifications — key decisions
+- D-055 — 2026-05-22 — BP22 follow-up: file parsers + OCR installed
+- D-054 — 2026-05-22 — BP22: RAG ingestion pipeline — key decisions
+- D-053 — 2026-05-22 — BP21: RAG consumer, 8-layer hallucination defense, quote pricing — key decisions
+- D-052 — 2026-05-22 — BP20: Forum moderation, booking flow scaffolding — key decisions
+- D-051 — 2026-05-22 — BP18: White-label visual brand, custom domains, persona addendums
+- D-050 — 2026-05-22 — BP17: Termination, chunk-license survival, versioned consent, CCPA
+- D-049 — 2026-05-22 — BP16: Tenant onboarding — key decisions
+- D-048 — 2026-05-22 — BP15: Commissions, splits, payouts — key decisions
+- D-047 — 2026-05-22 — BP12: Customer Memory scope contract, merge logic, DOB lifecycle, transfer undo cancellation
+- D-046 — 2026-05-23 — BP11: Supervisor sampling rates, stub status, slur deny-list launch state
+- D-045 — 2026-05-22 — BP10: Persona slugs and specialties from Agent Backstories Photo Guide; no-direct-service-role refactor
+- D-044 — 2026-05-22 — BP09: pgvector retrieval via RPC, PII separator backreference, submitted_by_user_id nullable
+- D-043 — 2026-05-22 — BP08: tenant_registry renamed to tenant_registry_shadow; Redis fail-closed; ioredis test strategy
+- D-042 — 2026-05-21 — BP07: Stripe key names verified; all event handlers are TODO stubs; Inngest v4 trigger API
+- D-041 — 2026-05-21 — BP06 RAG schema: platform_settings replica in RAG project (option C)
+- D-040 — 2026-05-21 — BP05 core domain schema: deferred FKs, payout_balances PK, stripe_webhook_events custom RLS
+- D-039 — 2026-05-21 — service_role requires explicit table grants on atc-main (same provisioning gap as D-032)
+- D-038 — 2026-05-21 — Middleware runs default runtime; vitest @/ alias wired via vitest.config.ts
+- D-037 — 2026-05-21 — BP04 tenant middleware: custom_domain added in migration 0004; service-role explicit Authorization header required
+- D-036 — 2026-05-21 — Audit-log writes stubbed to console.warn; switch to real INSERT in §26 work
+- D-035 — 2026-05-21 — correlation_id uses crypto.randomUUID(), not ULID
+- D-034 — 2026-05-21 — tenantClient Proxy deviates from spec §5.4.3 verbatim code
+- D-033 — 2026-05-21 — RLS snapshot scope is RLS-tables-and-policies only; SECURITY DEFINER + grants coverage deferred
+- D-032 — 2026-05-21 — Explicit table grants required for authenticated role on atc-main Supabase
+- D-031 — 2026-05-21 — BP02 monorepo + RLS foundations complete
+- D-030 — 2026-05-21 — Singular VERCEL_PROJECT_ID points at atc-main; rag deploy deferred to BP07
+- D-029 — 2026-05-21 — Vercel project names: atc-main and atc-rag
+- D-028 — 2026-05-21 — BP01 monorepo scaffold complete (PR #22)
+- D-027 — 2026-05-20 — Node.js 24 chosen over spec's 22.x
+- D-026 — 2026-05-18 — CI/CD Day 0 hardening (S-1, CR-1, CR-3a, HI-6, ME-15)
+- D-025 — 2026-05-16 — §13 rollback runbooks shipped as documentation only
+- D-024 — 2026-05-16 — §12 AI Eval Harness deferred; design-only deliverable
+- D-023 — 2026-05-16 — §11 contract tests: all tests skipped pending SDK wrappers
+- D-022 — 2026-05-16 — §10 cross-tenant probe: static enumeration + skipped live probe
+- D-021 — 2026-05-16 — §9 RLS snapshot: postgres npm package over Supabase client
+- D-020 — 2026-05-16 — §8 CVE scan: npm audit, critical=fail, high=warn
