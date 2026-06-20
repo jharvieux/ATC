@@ -4,12 +4,13 @@
 # (observed: #957 sat BEHIND until manually rebased, 2026-06-10). This cron
 # updates eligible branches so auto-merge can fire.
 #
-# Token: a GitHub App installation token, NOT GITHUB_TOKEN. Pushes made with
+# Token: a fine-grained PAT (GH_PAT), NOT GITHUB_TOKEN. Pushes made with
 # GITHUB_TOKEN do not trigger pull_request workflows (recursion guard), so an
 # update-branch would leave the new head with no CI and auto-merge would never
-# fire — strictly worse than the stall. App-authored pushes trigger CI
-# normally. Reuses the platform's existing GitHub App (GH_APP_ID /
-# GH_APP_PRIVATE_KEY secrets mirror the runtime credentials).
+# fire — strictly worse than the stall. PAT-authored pushes trigger CI
+# normally. GH_PAT needs Contents: write + Pull requests: write (+ Checks and
+# Commit statuses: read for `gh pr checks`). This cron runs in a normal context
+# (not a Dependabot event trigger), so a regular Actions secret is sufficient.
 name: dependabot-update-branch
 
 on:
@@ -17,26 +18,18 @@ on:
     - cron: "17 */6 * * *"
   workflow_dispatch:
 
-# Lock GITHUB_TOKEN to nothing — all API calls use the minted App token,
-# whose grants come from the App's own installation configuration. Do not
-# "fix" this by adding contents: write here; it would widen GITHUB_TOKEN
-# for no reason.
+# Lock GITHUB_TOKEN to nothing — all API calls use GH_PAT, whose grants come
+# from the PAT's own fine-grained permissions. Do not "fix" this by adding
+# contents: write here; it would widen GITHUB_TOKEN for no reason.
 permissions: {}
 
 jobs:
   update-branches:
     runs-on: ubuntu-latest
     steps:
-      - name: Mint GitHub App token
-        id: app
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-
       - name: Update eligible Dependabot PRs
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
           prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --author 'app/dependabot' --state open \
