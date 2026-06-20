@@ -20,15 +20,16 @@ jobs:
       - name: Sync
         env:
           INNGEST_API_KEY: ${{ secrets.INNGEST_API_KEY }}
+          INNGEST_SERVE_URL: ${{ inputs.url }}
         run: |
           if [ -z "$INNGEST_API_KEY" ]; then
             echo "::error::INNGEST_API_KEY secret is not set."
             exit 1
           fi
-          echo "Syncing Inngest app 'atc-main' at ${{ inputs.url }}"
+          echo "Syncing Inngest app 'atc-main' at $INNGEST_SERVE_URL"
           curl -fsS -X POST "https://api.inngest.com/v2/apps/atc-main/syncs" \
             -H "Authorization: Bearer $INNGEST_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"url\": \"${{ inputs.url }}\"}" \
+            -d "{\"url\": \"$INNGEST_SERVE_URL\"}" \
             && echo "Sync succeeded." \
             || { echo "::error::Inngest sync failed — check INNGEST_API_KEY and app id 'atc-main'."; exit 1; }
