@@ -419,10 +419,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install postgresql-client
+      # Supabase prod is on Postgres 17; Ubuntu's default postgresql-client is
+      # 16, and pg_dump refuses to dump a server newer than itself ("server
+      # version mismatch"). Install the v17 client from the PGDG apt repo and
+      # prepend its bin to PATH so pg_dump/pg_restore/psql below all use 17.
+      # Bump this when Supabase upgrades the prod major again.
+      - name: Install PostgreSQL 17 client
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y curl ca-certificates lsb-release
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: Dump production database
         run: |
