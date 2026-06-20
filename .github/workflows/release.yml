@@ -17,21 +17,16 @@ jobs:
   create-branch:
     name: Create release/${{ inputs.version }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Generate app token
-        id: app
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-
+      # Fine-grained PAT (GH_PAT) with Contents: Read and write on this repo.
+      # A PAT (not GITHUB_TOKEN) is required so the push to release/* triggers
+      # deploy.yml's push pipeline — GITHUB_TOKEN-authored pushes don't fire
+      # downstream workflow runs.
       - uses: actions/checkout@v4
         with:
           ref: dev
           fetch-depth: 0
-          token: ${{ steps.app.outputs.token }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Validate version format
         run: |
