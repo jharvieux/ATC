@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-277 — 2026-06-20 — MEMORY-INDEX.md is the session-start read; MEMORY.md is grep-on-demand archive
 - D-276 — 2026-06-20 — release.yml owns full pipeline; deploy.yml push-trigger kept for manual branch pushes
 - D-275 — 2026-06-19 — Hamburger nav is the canonical role-aware menu on EVERY tenant screen
 - D-274 — 2026-06-19 — RAG retrieval degraded: tenant_registry_shadow drift + dead reconcile (missing env vars)

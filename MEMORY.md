@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-277 — 2026-06-20 — MEMORY-INDEX.md is the session-start read; MEMORY.md is grep-on-demand archive
+
+Cut session-start standing context from ~125K to ~12.5K tokens (~90%) via PR #1288. Three changes:
+- **`MEMORY-INDEX.md` (new)** is now the session-start read — one line per decision (254 entries at creation), regenerable via the snippet in its header. `MEMORY.md` stays the full append-only archive but is NO LONGER read in full; grep it on demand. CLAUDE.md's session-start protocol (step 1) and the "MEMORY.md — the decision log" section were updated to match.
+- The verbose D-091 doctrine block in CLAUDE.md (~122 lines, which duplicated the runbook) was condensed to a 14-item authoring checklist that points to `docs/runbooks/anti-patterns.md` while keeping the actionable specifics (helper paths, CI gate names, comment syntax).
+- The two patterns that lived only in CLAUDE.md — §13 expand-migrate-contract (#137), §14 permission-grants-with-route (#1173) — were ported into that runbook so it is the single catalog.
+
+**Why:** `MEMORY.md` had grown to 254 entries / ~118K tokens, and the protocol force-read it in full every session — ~94% of standing context, for an append-only archive most of which a given session never references.
+
+**Rejected:** (a) archive-split (move old entries to `MEMORY-archive.md`) — arbitrary cutoff, tail keeps growing; (b) an in-file index at the top of MEMORY.md — the append-only hook only allows prepends, so an index needing ongoing edits would be un-maintainable; (c) automating index sync via a git hook — deferred to keep the change doc-only. Index sync is therefore a manual one-liner when adding an entry (prepend the one-liner to `MEMORY-INDEX.md`, or rerun the rebuild snippet in its header).
+
+**Related:** PR #1288; `MEMORY-INDEX.md`; CLAUDE.md session-start protocol + branch-protection callout; `docs/runbooks/anti-patterns.md` §13/§14.
+
+---
+
 ## D-276 — 2026-06-20 — release.yml owns full pipeline; deploy.yml push-trigger kept for manual branch pushes
 
 One-click release via `workflow_dispatch` in `release.yml` (Actions → Release → Run workflow → enter version). Release.yml owns the complete pipeline: creates `release/<version>` from dev, runs CI, staging block (gated on `STAGING_PIPELINE_ENABLED`), then production (gated on GitHub environment approval). After prod deploy it creates the git tag, GitHub Release (`gh release create --generate-notes`), and merge-back PR. Deploy.yml's `push: branches: [release/*]` trigger is still live — if someone pushes a release branch manually, deploy.yml handles it the same way.
