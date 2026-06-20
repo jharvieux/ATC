@@ -142,23 +142,21 @@ END $$;
 -- email_log_active_statuses: should be 0
 -- =============================================================================
 
-SELECT 'email_connections_with_tokens' AS check_name,
-       CASE
-         WHEN EXISTS (
-           SELECT 1 FROM pg_class c
-           JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE c.relname = 'email_connections'
-             AND n.nspname = 'public'
-             AND c.relkind = 'r'
-         )
-         THEN (
-           SELECT COUNT(*)::TEXT
-           FROM public.email_connections
-           WHERE access_token IS NOT NULL
-              OR refresh_token IS NOT NULL
-         )
-         ELSE 'N/A — table not present'
-       END AS result
+-- Presence check only — do NOT SELECT FROM public.email_connections here.
+-- Postgres resolves table references at PARSE time, so a direct reference
+-- errors ("relation does not exist") when the table is absent (v6.1), even
+-- inside a CASE WHEN EXISTS guard. Step 1 already clears the tokens defensively;
+-- this row just reports whether the table is present.
+SELECT 'email_connections_table' AS check_name,
+       COALESCE(
+         (SELECT 'present'
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relname = 'email_connections'
+            AND n.nspname = 'public'
+            AND c.relkind = 'r'),
+         'N/A — table not present'
+       ) AS result
 
 UNION ALL
 
