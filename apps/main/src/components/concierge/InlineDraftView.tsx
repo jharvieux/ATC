@@ -8,12 +8,26 @@
 import { useCallback, useState } from "react";
 import { AgentAvatar } from "./AgentPickerPopover";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
-import { parseEmlFile, parseMsgFile } from "@/lib/draft/parse-inquiry";
+import { parseEmlFile, parseMsgFile, type ParsedInquiry } from "@/lib/draft/parse-inquiry";
 import { deriveGreetingName } from "@/lib/draft/greeting-name";
 import { Copy, RefreshCw } from "lucide-react";
 
 type Tone = "Warm" | "Concise" | "Detailed" | "Reassuring";
 const TONES: Tone[] = ["Warm", "Concise", "Detailed", "Reassuring"];
+
+// Exported for unit testing — resolves which fields to populate from a
+// parsed email, encoding the customerName-only-if-empty invariant and the
+// null-body (.msg RTF-fail) contract in one testable place.
+export function resolveEmailDrop(
+  parsed: ParsedInquiry,
+  currentCustomerName: string,
+): { inquiry: string | null; customerName: string | null } {
+  const greetingName = deriveGreetingName(parsed.from_name, parsed.from_email);
+  return {
+    inquiry: parsed.body,
+    customerName: greetingName && !currentCustomerName ? greetingName : null,
+  };
+}
 
 interface InlineDraftViewProps {
   agentSlug: string;
@@ -38,23 +52,24 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
     try {
       const file = e.dataTransfer.files?.[0];
       if (file) {
-        const name = file.name.toLowerCase();
+        const fileName = file.name.toLowerCase();
         const buf = await file.arrayBuffer();
         let parsed;
-        if (name.endsWith(".eml")) {
+        if (fileName.endsWith(".eml")) {
           parsed = await parseEmlFile(buf);
-        } else if (name.endsWith(".msg")) {
+        } else if (fileName.endsWith(".msg")) {
           parsed = await parseMsgFile(buf);
           if (!parsed.body) setDropError("Couldn't extract text from this .msg — paste the body below.");
         } else {
           setDropError("Drop a .eml or .msg file, or drag the email text itself.");
           return;
         }
-        if (parsed.body) setInquiry(parsed.body);
-        const name_ = deriveGreetingName(parsed.from_name, parsed.from_email);
-        if (name_ && !customerName) setCustomerName(name_);
+        const { inquiry: body, customerName: name } = resolveEmailDrop(parsed, customerName);
+        if (body) setInquiry(body);
+        if (name) setCustomerName(name);
         return;
       }
+      // safe: result is stored in React state, never rendered as HTML
       const text = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text/html").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
       if (text.trim()) { setInquiry(text.trim()); return; }
       setDropError("Nothing readable in that drop — try the email file or drag its text.");
@@ -167,7 +182,6 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
         />
       </div>
 
-      {/* Inquiry — also accepts .eml / .msg drops and webmail text drags */}
       <div style={{ marginBottom: 14 }}>
         <label
           style={{ fontSize: 11, fontWeight: 600, color: "var(--ta-text-mute)", display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: 0.5 }}
