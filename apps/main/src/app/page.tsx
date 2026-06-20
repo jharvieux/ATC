@@ -21,6 +21,7 @@ import { getRequestTenantBranding } from "@/lib/branding/request-branding";
 import { TenantTheme } from "@/components/branding/TenantTheme";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 import { getCachedUser } from "@/lib/auth/get-cached-user";
+import { extractUserDisplayMeta } from "@/lib/auth/user-meta";
 import { TenantShell } from "@/components/tenant-shell/TenantShell";
 import { defaultPanelForRole } from "@/components/tenant-shell/nav-sections";
 import { ChatExperience } from "@/components/chat/ChatExperience";
@@ -70,7 +71,7 @@ export default async function HomePage() {
         const role =
           tenantId && user ? await getTenantRole(user.id, tenantId) : null;
         if (role) {
-          const meta = user?.user_metadata as { avatar_url?: string; full_name?: string; name?: string } | undefined;
+          const { avatarUrl, displayName } = extractUserDisplayMeta(user);
           // #974 — staff default to TA mode (trade chat, no customer
           // guardrails); viewers keep the guardrailed customer chat.
           return (
@@ -79,8 +80,8 @@ export default async function HomePage() {
               <TenantShell
                 role={role}
                 branding={headerProps.tenantBranding}
-                avatarUrl={meta?.avatar_url ?? null}
-                displayName={meta?.full_name ?? meta?.name ?? user?.email ?? null}
+                avatarUrl={avatarUrl}
+                displayName={displayName}
               >
                 {defaultPanelForRole(role) === "ta-concierge" ? (
                   <ConciergeExperience />
