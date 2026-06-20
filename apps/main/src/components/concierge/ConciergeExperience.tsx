@@ -396,10 +396,14 @@ function TaPrefsPanel({
 
   useEffect(() => {
     void (async () => {
-      const r = await fetch("/api/memory");
-      if (!r.ok) return;
-      const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
-      if (data?.rapport_tone_level) setTone(data.rapport_tone_level);
+      try {
+        const r = await fetch("/api/memory");
+        if (!r.ok) return;
+        const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
+        setTone(data?.rapport_tone_level ?? 3);
+      } catch {
+        // network failure — leave the default tone in place
+      }
     })();
   }, []);
 
