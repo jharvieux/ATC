@@ -77,7 +77,7 @@ jobs:
         working-directory: apps/main
         run: |
           if [ -z "$SUPABASE_DB_URL" ]; then
-            echo "::error::SUPABASE_TEST_DB_URL secret is not set. Aborting."
+            echo "::error::SUPABASE_DB_URL is empty (check SUPABASE_TEST_DB_URL secret). Aborting."
             exit 1
           fi
           npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
