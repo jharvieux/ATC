@@ -9,9 +9,7 @@ import { useState } from "react";
 import { AgentAvatar } from "./AgentPickerPopover";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { Copy, RefreshCw } from "lucide-react";
-
-type Tone = "Formal" | "Professional" | "Friendly" | "Casual" | "Very Casual";
-const TONES: Tone[] = ["Formal", "Professional", "Friendly", "Casual", "Very Casual"];
+import { TONE_LABELS, type ToneLabel } from "@/lib/tone/constants";
 
 interface InlineDraftViewProps {
   agentSlug: string;
@@ -20,7 +18,7 @@ interface InlineDraftViewProps {
 export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.Element {
   const [inquiry, setInquiry] = useState("");
   const [customerName, setCustomerName] = useState("");
-  const [tone, setTone] = useState<Tone>("Friendly");
+  const [tone, setTone] = useState<ToneLabel>("Friendly");
   const [generating, setGenerating] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -155,7 +153,7 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
           Tone
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {TONES.map((t) => (
+          {TONE_LABELS.map((t) => (
             <button
               key={t}
               type="button"

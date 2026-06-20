@@ -21,6 +21,7 @@ import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
 import { resolveVoiceProfile } from "@/lib/voice-profiles/resolve-voice-profile";
 import { enforceDraftReplyLimit } from "@/lib/draft/draft-reply-limit";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+import { TONE_LABELS, TONE_LABEL_TO_LEVEL } from "@/lib/tone/constants";
 
 const DRAFT_MODEL = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
 
@@ -30,14 +31,6 @@ export async function POST(req: Request): Promise<Response> {
       resource: "draft_reply",
       action: "create",
     });
-
-    const TONE_LABEL_TO_LEVEL: Record<string, number> = {
-      Formal: 1,
-      Professional: 2,
-      Friendly: 3,
-      Casual: 4,
-      "Very Casual": 5,
-    };
 
     let body: {
       inquiry?: string;
@@ -50,6 +43,13 @@ export async function POST(req: Request): Promise<Response> {
       body = (await req.json()) as typeof body;
     } catch {
       return Response.json({ error: "invalid_json" }, { status: 400 });
+    }
+
+    if (
+      body.tone !== undefined &&
+      !TONE_LABELS.includes(body.tone as (typeof TONE_LABELS)[number])
+    ) {
+      return Response.json({ error: "invalid_tone" }, { status: 400 });
     }
 
     const inquiry = (body.inquiry ?? "").trim();
@@ -113,7 +113,7 @@ export async function POST(req: Request): Promise<Response> {
       persona_slug: personaSlug,
       tenant_id: ctx.tenant_id,
       tenant_tier: tenantTier,
-      tone_level: TONE_LABEL_TO_LEVEL[body.tone ?? ""] ?? 3,
+      tone_level: TONE_LABEL_TO_LEVEL[body.tone as (typeof TONE_LABELS)[number]] ?? 3,
       db,
       audience: "tenant_member",
       knowledge_block: retrieval.knowledge_block,

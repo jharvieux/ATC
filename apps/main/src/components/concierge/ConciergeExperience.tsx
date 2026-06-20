@@ -19,6 +19,7 @@ import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
+import { TONE_LABELS } from "@/lib/tone/constants";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -421,14 +422,6 @@ function TaPrefsPanel({
     fontSize: 12,
     color: "var(--ta-text-soft)",
   };
-  const TONE_LABELS: [number, string][] = [
-    [1, "Formal"],
-    [2, "Professional"],
-    [3, "Friendly"],
-    [4, "Casual"],
-    [5, "Very Casual"],
-  ];
-
   return (
     <div>
       <div style={rowStyle}>
@@ -438,26 +431,29 @@ function TaPrefsPanel({
       <div style={{ padding: "8px 0", borderBottom: "1px solid var(--ta-border)" }}>
         <span style={labelStyle}>Reply tone</span>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-          {TONE_LABELS.map(([level, label]) => (
-            <button
-              key={level}
-              type="button"
-              onClick={() => setTone(level)}
-              style={{
-                padding: "3px 10px",
-                borderRadius: 20,
-                fontSize: 11,
-                fontWeight: 500,
-                cursor: "pointer",
-                border: `1px solid ${tone === level ? "var(--ta-accent)" : "var(--ta-border-2)"}`,
-                background: tone === level ? "var(--ta-accent-soft)" : "transparent",
-                color: tone === level ? "var(--ta-accent)" : "var(--ta-text-soft)",
-                transition: "all 0.12s",
-              }}
-            >
-              {label}
-            </button>
-          ))}
+          {TONE_LABELS.map((label, i) => {
+            const level = i + 1;
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setTone(level)}
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 20,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  border: `1px solid ${tone === level ? "var(--ta-accent)" : "var(--ta-border-2)"}`,
+                  background: tone === level ? "var(--ta-accent-soft)" : "transparent",
+                  color: tone === level ? "var(--ta-accent)" : "var(--ta-text-soft)",
+                  transition: "all 0.12s",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
         {tone === 5 && (
           <p style={{ fontSize: 11, color: "var(--ta-amber, #f59e0b)", margin: "6px 0 0" }}>
