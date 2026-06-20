@@ -101,7 +101,9 @@ export function TenantShell({
               )}
             </Link>
           </div>
-          {/* Slot for page-level toggles (e.g. TA console dark/light); empty when ConciergeExperience is not mounted */}
+          {/* Slot for page-level toggles (e.g. TA console dark/light); empty when ConciergeExperience is not mounted.
+              SiteHeader and TenantShell are mutually exclusive per routing — exactly one
+              #ta-theme-slot exists in the document at runtime. */}
           <span id="ta-theme-slot" className="flex items-center" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -110,6 +112,8 @@ export function TenantShell({
                 aria-label="Open menu"
                 className="h-10 w-10 px-0 rounded-full"
               >
+                {/* TenantShell only renders for authenticated staff roles, so isAuthenticated
+                    check is implicit — avatarUrl is only non-null when a user is present. */}
                 {avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={avatarUrl} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full object-cover" />

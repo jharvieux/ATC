@@ -521,11 +521,11 @@ export function ConciergeExperience(): React.JSX.Element {
   }, [taTheme]);
 
   // Wire the toggle button into the slot rendered by SiteHeader / TenantShell.
+  // SiteHeader and TenantShell are mutually exclusive per routing, so only one
+  // #ta-theme-slot exists at runtime — but warn in all envs if that ever changes.
   useEffect(() => {
-    if (process.env.NODE_ENV === "development") {
-      const all = document.querySelectorAll("#ta-theme-slot");
-      if (all.length > 1) console.warn("[ConciergeExperience] Multiple #ta-theme-slot elements found — theme toggle will bind to the first one.");
-    }
+    const all = document.querySelectorAll("#ta-theme-slot");
+    if (all.length > 1) console.warn("[ConciergeExperience] Multiple #ta-theme-slot elements found — theme toggle will bind to the first one.");
     setThemeSlot(document.getElementById("ta-theme-slot"));
   }, []);
 
