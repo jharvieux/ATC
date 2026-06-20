@@ -10,8 +10,8 @@ import { AgentAvatar } from "./AgentPickerPopover";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { Copy, RefreshCw } from "lucide-react";
 
-type Tone = "Warm" | "Concise" | "Detailed" | "Reassuring";
-const TONES: Tone[] = ["Warm", "Concise", "Detailed", "Reassuring"];
+type Tone = "Formal" | "Professional" | "Friendly" | "Casual" | "Very Casual";
+const TONES: Tone[] = ["Formal", "Professional", "Friendly", "Casual", "Very Casual"];
 
 interface InlineDraftViewProps {
   agentSlug: string;
@@ -20,7 +20,7 @@ interface InlineDraftViewProps {
 export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.Element {
   const [inquiry, setInquiry] = useState("");
   const [customerName, setCustomerName] = useState("");
-  const [tone, setTone] = useState<Tone>("Warm");
+  const [tone, setTone] = useState<Tone>("Friendly");
   const [generating, setGenerating] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -176,6 +176,11 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
             </button>
           ))}
         </div>
+        {tone === "Very Casual" && (
+          <p style={{ fontSize: 11, color: "var(--ta-amber, #f59e0b)", margin: "6px 0 0" }}>
+            ⚠ Profanity is permitted at this tone level.
+          </p>
+        )}
       </div>
 
       {/* Byline + generate button */}

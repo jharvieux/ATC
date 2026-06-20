@@ -31,11 +31,20 @@ export async function POST(req: Request): Promise<Response> {
       action: "create",
     });
 
+    const TONE_LABEL_TO_LEVEL: Record<string, number> = {
+      Formal: 1,
+      Professional: 2,
+      Friendly: 3,
+      Casual: 4,
+      "Very Casual": 5,
+    };
+
     let body: {
       inquiry?: string;
       customer_name?: string | null;
       persona_slug?: string;
       subject?: string | null;
+      tone?: string;
     };
     try {
       body = (await req.json()) as typeof body;
@@ -104,7 +113,7 @@ export async function POST(req: Request): Promise<Response> {
       persona_slug: personaSlug,
       tenant_id: ctx.tenant_id,
       tenant_tier: tenantTier,
-      tone_level: 2,
+      tone_level: TONE_LABEL_TO_LEVEL[body.tone ?? ""] ?? 3,
       db,
       audience: "tenant_member",
       knowledge_block: retrieval.knowledge_block,
