@@ -70,6 +70,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Apply Supabase migrations to test DB
+        # Ensures the test DB schema matches dev before running integration tests.
+        # Without this, RPC-signature changes (e.g. adding a parameter) leave the
+        # test DB on the old signature, causing integration tests to fail with 500.
+        working-directory: apps/main
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_TEST_DB_URL secret is not set. Aborting."
+            exit 1
+          fi
+          npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
+
       - name: Seed Tier-2 fixture tenant
         # The DB-backed inngest probes act on the Tier-2 fixture tenant; seed it
         # idempotently so their FK targets exist. Fails the run loudly (no issue
