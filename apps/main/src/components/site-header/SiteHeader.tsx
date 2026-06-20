@@ -53,10 +53,6 @@ export function SiteHeader({
           </Link>
         </div>
         <div className="flex items-center gap-3">
-          {/* Reserved slot for page-level toggles; unused on SiteHeader pages
-              (ConciergeExperience only renders inside TenantShell, which provides
-              ThemeSlotContext — see issue #1304). */}
-          <span className="flex items-center" />
           {!isAuthenticated && (
             <Button asChild className="h-9 px-3 text-sm">
               <Link href="/signup">Log in</Link>
