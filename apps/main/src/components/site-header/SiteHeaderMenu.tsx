@@ -14,7 +14,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { Menu } from "lucide-react";
 import {
   DropdownMenu,
@@ -54,7 +53,8 @@ export function SiteHeaderMenu({
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" aria-label="Open menu" className="h-10 w-10 px-0 rounded-full">
           {isAuthenticated && avatarUrl ? (
-            <Image src={avatarUrl} alt="" referrerPolicy="no-referrer" width={28} height={28} className="rounded-full object-cover" />
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-full object-cover" />
           ) : isAuthenticated && displayName ? (
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary leading-none">
               {displayName[0]?.toUpperCase()}
