@@ -1005,10 +1005,7 @@ export function ConciergeExperience(): React.JSX.Element {
               />
             ) : (
               <div className="flex h-full overflow-hidden">
-                <InlineDraftView
-                  agentSlug={selectedPersona}
-                  agentName={selectedAgent.name}
-                />
+                <InlineDraftView agentSlug={selectedPersona} />
               </div>
             )}
           </div>

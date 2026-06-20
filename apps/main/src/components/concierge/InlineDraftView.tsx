@@ -15,10 +15,9 @@ const TONES: Tone[] = ["Warm", "Concise", "Detailed", "Reassuring"];
 
 interface InlineDraftViewProps {
   agentSlug: string;
-  agentName: string;
 }
 
-export function InlineDraftView({ agentSlug, agentName }: InlineDraftViewProps): React.JSX.Element {
+export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.Element {
   const [inquiry, setInquiry] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [tone, setTone] = useState<Tone>("Warm");
@@ -194,7 +193,7 @@ export function InlineDraftView({ agentSlug, agentName }: InlineDraftViewProps):
       >
         <AgentAvatar agent={agent} size={26} />
         <span style={{ fontSize: 12, color: "var(--ta-text-soft)", flex: 1 }}>
-          Drafting as <span style={{ color: "var(--ta-text)", fontWeight: 600 }}>{agentName}</span>
+          Drafting as <span style={{ color: "var(--ta-text)", fontWeight: 600 }}>{agent.name}</span>
         </span>
         <button
           type="button"
