@@ -222,9 +222,8 @@ function PrefsPanel(): JSX.Element {
         })}
       </div>
       {tone === 5 && (
-        <p className="text-[11px] text-amber-500 mb-1">⚠ Profanity is permitted at this tone level.</p>
+        <p className="text-[11px] text-amber-500 mb-2">⚠ Profanity is permitted at this tone level.</p>
       )}
-      <div className="mb-3" />
 
       <label className="block text-[12px] text-foreground mb-1">
         Notes (anything you want the AI to remember)
