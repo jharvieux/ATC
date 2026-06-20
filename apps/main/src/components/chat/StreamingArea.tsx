@@ -3,13 +3,8 @@
 // view, auto-scroll new content; otherwise show "New message" floating
 // indicator that smooth-scrolls on click.
 //
-// thinking prop: true between user send and first AI token. Shows an animated
-// three-dot bubble so the user knows the request is in-flight.
-//
-// Auto-scroll rule: always force-scroll when the user just sent a message
-// (last message.role === "user") or while thinking, regardless of scroll
-// position. This ensures the user sees their message and the incoming reply
-// even if they were scrolled up when they hit Send.
+// Auto-scroll always fires when the last message is from the user so the reply
+// is visible even if they scrolled up mid-conversation before hitting Send.
 
 "use client";
 

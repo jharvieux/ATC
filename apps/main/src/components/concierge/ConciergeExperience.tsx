@@ -67,22 +67,20 @@ function CompassMark({ size = 22 }: { size?: number }): React.JSX.Element {
 
 // ─── Shared mini button style factory ───────────────────────────────────────
 
-function iconBtn(): React.CSSProperties {
-  return {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    border: "none",
-    background: "transparent",
-    color: "var(--ta-text-soft)",
-    cursor: "pointer",
-    transition: "background 0.12s",
-    flexShrink: 0,
-  };
-}
+const ICON_BTN_STYLE: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  border: "none",
+  background: "transparent",
+  color: "var(--ta-text-soft)",
+  cursor: "pointer",
+  transition: "background 0.12s",
+  flexShrink: 0,
+};
 
 // ─── Sidebar sub-panels ──────────────────────────────────────────────────────
 
@@ -548,20 +546,13 @@ export function ConciergeExperience(): React.JSX.Element {
   // Sidebar collapse — shared with the TenantShell top-bar toggle.
   const { open, toggle } = useConversationRail();
 
-  // Panel tabs
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chats");
   const [mainTab, setMainTab] = useState<MainTab>("conversation");
   const [showQualityPill, setShowQualityPill] = useState(true);
-
-  // Sidebar search
   const [searchQuery, setSearchQuery] = useState("");
-
-  // Conversations
   const [conversations, setConversations] = useState<TaConversation[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  // Active chat state
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [activeMessages, setActiveMessages] = useState<ChatMessage[]>([]);
   const [selectedPersona, setSelectedPersona] = useState<string>(AGENT_CATALOG[0]!.slug);
@@ -696,7 +687,7 @@ export function ConciergeExperience(): React.JSX.Element {
           type="button"
           onClick={toggle}
           aria-label="Toggle sidebar"
-          style={iconBtn()}
+          style={ICON_BTN_STYLE}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
           }}
@@ -730,7 +721,7 @@ export function ConciergeExperience(): React.JSX.Element {
           onClick={toggleTheme}
           aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
           title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-          style={iconBtn()}
+          style={ICON_BTN_STYLE}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
           }}
