@@ -28,8 +28,39 @@ type ShadowRow = {
   source_revision: number;
 };
 
+// Exported for testing. A `redirect: "manual"` fetch yields either an
+// "opaqueredirect" response (Node/undici: type set, status 0) or a raw 3xx.
+// Following such a redirect cross-origin (e.g. apex→www, or the Vercel
+// deployment-protection wall on atc-main.vercel.app) strips the Authorization
+// header on the next hop, turning an authenticated request into an anonymous
+// one that often returns a 200 HTML login page — a silent, confusing failure.
+// Callers must fail loud instead of following it. (Issue #1273)
+export function isCrossOriginRedirect(res: {
+  type: string;
+  status: number;
+}): boolean {
+  return res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400);
+}
+
 export const tenantRegistryReconcile = inngest.createFunction(
-  { id: "tenant-registry-reconcile", triggers: [{ cron: "0 3 * * *" }] },
+  {
+    id: "tenant-registry-reconcile",
+    triggers: [{ cron: "0 3 * * *" }],
+    // Fires once after Inngest exhausts retries — previously this cron failed
+    // silently into the retry queue (it never ran in prod for weeks; #1273).
+    // RAG has no direct pager channel, so we log loudly for Sentry/log
+    // aggregation, matching promo-state-drift-alert's convention.
+    onFailure: async ({ error, runId }) => {
+      console.error(
+        "[tenant-registry-reconcile] PAGE PLATFORM ADMIN: nightly reconcile failed after all retries " +
+          "(runId=%s): %s. tenant_registry_shadow will drift from main until fixed — verify atc-rag env: " +
+          "MAIN_APP_URL must be the canonical, non-protected main domain (not atc-main.vercel.app) and " +
+          "MAIN_APP_ADMIN_API_KEY must match main.",
+        runId,
+        error?.message ?? String(error),
+      );
+    },
+  },
   async () => {
     const mainAppUrl = process.env.MAIN_APP_URL;
     const adminKey = process.env.MAIN_APP_ADMIN_API_KEY;
@@ -37,11 +68,18 @@ export const tenantRegistryReconcile = inngest.createFunction(
       throw new Error("MAIN_APP_URL or MAIN_APP_ADMIN_API_KEY not set");
     }
 
-    // Fetch canonical tenant list from main app
+    // Fetch canonical tenant list from main app. redirect: "manual" so a
+    // cross-origin redirect can't silently strip the bearer (see #1273).
     const res = await fetch(
       `${mainAppUrl}/api/admin/tenants?fields=id,status,tenant_type,display_name,source_revision`,
-      { headers: { Authorization: `Bearer ${adminKey}` } },
+      { headers: { Authorization: `Bearer ${adminKey}` }, redirect: "manual" },
     );
+    if (isCrossOriginRedirect(res)) {
+      throw new Error(
+        `Main app admin API redirected (status ${res.status || "opaque"}) — a cross-origin redirect ` +
+          `strips the Bearer token. Set MAIN_APP_URL to the canonical, non-protected main domain.`,
+      );
+    }
     if (!res.ok) {
       throw new Error(`Main app admin API returned ${res.status}`);
     }
