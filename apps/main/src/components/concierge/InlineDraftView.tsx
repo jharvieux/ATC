@@ -5,7 +5,7 @@
 // but the agent is controlled by the parent (ConciergeExperience), and the
 // tone chip row is surfaced directly. Nothing is sent — copy-only contract.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AgentAvatar } from "./AgentPickerPopover";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { parseEmlFile, parseMsgFile, type ParsedInquiry } from "@/lib/draft/parse-inquiry";
@@ -35,6 +35,20 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
   const [inquiry, setInquiry] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [tone, setTone] = useState<ToneLabel>("Friendly");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await fetch("/api/memory");
+        if (!r.ok) return;
+        const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
+        const lvl = data?.rapport_tone_level;
+        if (lvl != null) setTone(TONE_LABELS[lvl - 1] ?? "Friendly");
+      } catch {
+        // network failure — leave the default tone in place
+      }
+    })();
+  }, []);
   const [generating, setGenerating] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);

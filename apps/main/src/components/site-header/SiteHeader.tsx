@@ -53,10 +53,10 @@ export function SiteHeader({
           </Link>
         </div>
         <div className="flex items-center gap-3">
-          {/* Slot for page-level toggles (e.g. TA console dark/light); empty on non-concierge pages.
-              SiteHeader and TenantShell are mutually exclusive per routing — exactly one
-              #ta-theme-slot exists in the document at runtime. */}
-          <span id="ta-theme-slot" className="flex items-center" />
+          {/* Reserved slot for page-level toggles; unused on SiteHeader pages
+              (ConciergeExperience only renders inside TenantShell, which provides
+              ThemeSlotContext — see issue #1304). */}
+          <span className="flex items-center" />
           {!isAuthenticated && (
             <Button asChild className="h-9 px-3 text-sm">
               <Link href="/signup">Log in</Link>
