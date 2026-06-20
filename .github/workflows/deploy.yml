@@ -624,6 +624,16 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
 
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#release/}"
+          gh release create "v$VERSION" \
+            --title "Release v$VERSION" \
+            --generate-notes \
+            --target "$GITHUB_REF_NAME"
+
       - name: Auto-merge release branch back to dev
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

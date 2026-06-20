@@ -1,0 +1,51 @@
+name: Release
+
+# One-click release kickoff: creates the release/<version> branch from dev,
+# which triggers deploy.yml's push-to-release/* pipeline automatically.
+# That pipeline owns CI, staging, prod deployment (with approval gate),
+# tagging, GitHub Release creation, and merge-back to dev.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 1.2.3) — creates release/<version> from dev'
+        required: true
+        type: string
+
+jobs:
+  create-branch:
+    name: Create release/${{ inputs.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ inputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be x.y.z (e.g. 1.2.3). Got: $VERSION"
+            exit 1
+          fi
+
+      - name: Abort if branch already exists
+        run: |
+          VERSION="${{ inputs.version }}"
+          if git ls-remote --exit-code --heads origin "release/$VERSION" > /dev/null 2>&1; then
+            echo "::error::release/$VERSION already exists. Delete it first or choose a different version."
+            exit 1
+          fi
+
+      - name: Create and push release branch
+        run: |
+          VERSION="${{ inputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release/$VERSION"
+          git push origin "release/$VERSION"
+          echo "::notice::release/$VERSION pushed — deploy.yml CI + prod pipeline is now running."
