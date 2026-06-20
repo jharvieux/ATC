@@ -394,6 +394,15 @@ function TaPrefsPanel({
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
+  useEffect(() => {
+    void (async () => {
+      const r = await fetch("/api/memory");
+      if (!r.ok) return;
+      const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
+      if (data?.rapport_tone_level) setTone(data.rapport_tone_level);
+    })();
+  }, []);
+
   async function save(): Promise<void> {
     setSaving(true);
     setStatus(null);

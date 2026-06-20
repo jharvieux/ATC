@@ -113,7 +113,7 @@ export async function POST(req: Request): Promise<Response> {
       persona_slug: personaSlug,
       tenant_id: ctx.tenant_id,
       tenant_tier: tenantTier,
-      tone_level: TONE_LABEL_TO_LEVEL[body.tone as (typeof TONE_LABELS)[number]] ?? 3,
+      tone_level: body.tone !== undefined ? TONE_LABEL_TO_LEVEL[body.tone as (typeof TONE_LABELS)[number]] : 3,
       db,
       audience: "tenant_member",
       knowledge_block: retrieval.knowledge_block,
