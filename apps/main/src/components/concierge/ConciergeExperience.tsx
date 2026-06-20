@@ -1,26 +1,30 @@
 "use client";
 
-// #902 PR B — TA-mode dashboard chat for travel agents (tenant_owner/agent).
-// Extracted from app/(tenant)/concierge/page.tsx for #974 so the tenant
-// landing shell can embed it as the staff default panel. Root is `h-full`
-// (consumer owns the height container — same convention as ChatExperience).
-// Access enforcement is server-side on every API call; 403 → access-denied UX.
+// Agent-console redesign (#902 PR B + spec: agent-console-redesign-instructions.md).
+// Four structural changes from the original flat layout:
+//   1. Single merged sidebar (Chats / Memory / Prefs segmented control).
+//   2. Inline "Draft a reply" tab — no navigation away from this screen.
+//   3. Rich agent picker chip with bio, tags, and search popover.
+//   4. Token-driven dark/light theme via [data-ta-theme] CSS custom properties.
+//
+// Backend/chat logic is unchanged — all API calls and SSE handling live in
+// ChatExperience; this component only controls layout, agent selection, and theme.
 
-import { useCallback, useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Menu, Moon, Plus, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
-import { Button } from "@/components/ui/button";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { AgentPickerPopover } from "./AgentPickerPopover";
+import { InlineDraftView } from "./InlineDraftView";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+type SidebarTab = "chats" | "memory" | "prefs";
+type MainTab = "conversation" | "draft";
+type TaTheme = "dark" | "light";
 
 interface TaConversation {
   id: string;
@@ -35,11 +39,524 @@ interface ConvMessages {
   messages: ChatMessage[];
 }
 
+// ─── Compass mark SVG ───────────────────────────────────────────────────────
+
+function CompassMark({ size = 22 }: { size?: number }): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <circle cx="12" cy="12" r="10.5" stroke="currentColor" strokeWidth="1.2" opacity="0.25" />
+      {/* North needle — accent colour */}
+      <path d="M12 2.5L13.8 10.5H10.2L12 2.5Z" fill="var(--ta-accent)" />
+      {/* South needle */}
+      <path d="M12 21.5L10.2 13.5H13.8L12 21.5Z" fill="currentColor" opacity="0.4" />
+      {/* West needle */}
+      <path d="M2.5 12L10.5 10.2V13.8L2.5 12Z" fill="currentColor" opacity="0.4" />
+      {/* East needle */}
+      <path d="M21.5 12L13.5 13.8V10.2L21.5 12Z" fill="currentColor" opacity="0.4" />
+      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
+    </svg>
+  );
+}
+
+// ─── Shared mini button style factory ───────────────────────────────────────
+
+function iconBtn(extra?: React.CSSProperties): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    border: "none",
+    background: "transparent",
+    color: "var(--ta-text-soft)",
+    cursor: "pointer",
+    transition: "background 0.12s",
+    flexShrink: 0,
+    ...extra,
+  };
+}
+
+// ─── Sidebar sub-panels ──────────────────────────────────────────────────────
+
+function ConvGroup({
+  label,
+  items,
+  activeConvId,
+  loadingConv,
+  onOpen,
+}: {
+  label: string;
+  items: TaConversation[];
+  activeConvId: string | null;
+  loadingConv: boolean;
+  onOpen: (id: string) => void;
+}): React.JSX.Element | null {
+  if (items.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: 0.7,
+          textTransform: "uppercase",
+          color: "var(--ta-text-mute)",
+          padding: "4px 2px",
+          marginBottom: 2,
+        }}
+      >
+        {label}
+      </div>
+      {items.map((c) => {
+        const isActive = c.id === activeConvId;
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onOpen(c.id)}
+            disabled={loadingConv}
+            style={{
+              width: "100%",
+              textAlign: "left",
+              padding: "6px 8px",
+              borderRadius: 7,
+              marginBottom: 1,
+              border: isActive ? "1px solid var(--ta-border-2)" : "1px solid transparent",
+              background: isActive ? "var(--ta-surface-2)" : "transparent",
+              cursor: loadingConv ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 6,
+            }}
+            onMouseEnter={(e) => {
+              if (!isActive)
+                (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+            }}
+            onMouseLeave={(e) => {
+              if (!isActive)
+                (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: isActive ? "var(--ta-accent)" : "var(--ta-border-2)",
+                flexShrink: 0,
+                marginTop: 5,
+              }}
+            />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: isActive ? "var(--ta-text)" : "var(--ta-text-soft)",
+                  fontWeight: isActive ? 600 : 400,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontStyle: c.title ? "normal" : "italic",
+                }}
+              >
+                {c.title ?? "Untitled"}
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  color: "var(--ta-text-mute)",
+                  fontFamily: "var(--font-geist-mono, monospace)",
+                  marginTop: 1,
+                }}
+              >
+                {c.message_count ?? 0} msgs ·{" "}
+                {c.last_message_at ? new Date(c.last_message_at).toLocaleDateString() : "—"}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChatsPanel({
+  conversations,
+  activeConvId,
+  loadingConv,
+  searchQuery,
+  onOpen,
+}: {
+  conversations: TaConversation[] | null;
+  activeConvId: string | null;
+  loadingConv: boolean;
+  searchQuery: string;
+  onOpen: (id: string) => void;
+}): React.JSX.Element {
+  if (conversations === null) {
+    return <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>Loading…</p>;
+  }
+
+  const filtered = conversations.filter((c) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (c.title ?? "").toLowerCase().includes(q);
+  });
+
+  if (filtered.length === 0) {
+    return (
+      <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>
+        {searchQuery ? `No chats matching "${searchQuery}"` : "No chats yet."}
+      </p>
+    );
+  }
+
+  const today = new Date().toDateString();
+  const todayList = filtered.filter(
+    (c) => c.last_message_at && new Date(c.last_message_at).toDateString() === today,
+  );
+  const earlierList = filtered.filter(
+    (c) => !c.last_message_at || new Date(c.last_message_at).toDateString() !== today,
+  );
+
+  return (
+    <>
+      <ConvGroup
+        label="Today"
+        items={todayList}
+        activeConvId={activeConvId}
+        loadingConv={loadingConv}
+        onOpen={onOpen}
+      />
+      <ConvGroup
+        label="Earlier"
+        items={earlierList}
+        activeConvId={activeConvId}
+        loadingConv={loadingConv}
+        onOpen={onOpen}
+      />
+    </>
+  );
+}
+
+// ─── Memory panel ────────────────────────────────────────────────────────────
+
+interface MemoryRow {
+  preferences?: Record<string, unknown> | null;
+  travel_history?: Record<string, unknown> | null;
+  family_composition?: unknown[] | null;
+  accessibility_needs?: Record<string, unknown> | null;
+  dietary_restrictions?: Record<string, unknown> | null;
+  loyalty_programs?: unknown[] | null;
+  important_dates?: Record<string, unknown> | null;
+  notes_freeform?: string | null;
+}
+
+const MEMORY_ICONS: Record<string, string> = {
+  preferences: "⚙️",
+  travel_history: "🗺️",
+  family_composition: "👨‍👩‍👧",
+  accessibility_needs: "♿",
+  dietary_restrictions: "🍽️",
+  loyalty_programs: "🎖️",
+  important_dates: "📅",
+  notes_freeform: "📝",
+};
+
+function TaMemoryPanel(): React.JSX.Element {
+  const [mem, setMem] = useState<MemoryRow | null | "loading">("loading");
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await fetch("/api/memory");
+        if (!r.ok) { setErr(`HTTP ${r.status}`); return; }
+        const data = (await r.json()) as MemoryRow | null;
+        setMem(data ?? null);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    })();
+  }, []);
+
+  if (err) {
+    return (
+      <p style={{ fontSize: 12, color: "#F87171" }}>Could not load memory: {err}</p>
+    );
+  }
+  if (mem === "loading") {
+    return <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>Loading…</p>;
+  }
+  if (!mem) {
+    return (
+      <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>
+        No client memory yet — keep chatting and it will appear here.
+      </p>
+    );
+  }
+
+  const MEMORY_LABELS: Record<string, string> = {
+    preferences: "Preferences",
+    travel_history: "Travel history",
+    family_composition: "Family",
+    accessibility_needs: "Accessibility",
+    dietary_restrictions: "Dietary",
+    loyalty_programs: "Loyalty",
+    important_dates: "Dates",
+    notes_freeform: "Notes",
+  };
+
+  const entries = Object.entries(mem).filter(([, v]) => {
+    if (v === null || v === undefined) return false;
+    if (Array.isArray(v) && v.length === 0) return false;
+    if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) return false;
+    return true;
+  });
+
+  if (entries.length === 0) {
+    return (
+      <p style={{ fontSize: 12, color: "var(--ta-text-mute)" }}>
+        No client memory yet — keep chatting and it will appear here.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      {entries.map(([key, val]) => (
+        <div
+          key={key}
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            padding: "7px 8px",
+            borderRadius: 7,
+            marginBottom: 3,
+            background: "var(--ta-surface-2)",
+            border: "1px solid var(--ta-border)",
+          }}
+        >
+          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>
+            {MEMORY_ICONS[key] ?? "💡"}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+                color: "var(--ta-text-mute)",
+                marginBottom: 2,
+              }}
+            >
+              {MEMORY_LABELS[key] ?? key}
+            </div>
+            <div
+              style={{
+                fontSize: 11.5,
+                color: "var(--ta-text-soft)",
+                fontFamily: "var(--font-geist-mono, monospace)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {typeof val === "string"
+                ? val
+                : JSON.stringify(val, null, 2)}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Prefs panel ─────────────────────────────────────────────────────────────
+
+function TaPrefsPanel({
+  showQualityPill,
+  onToggleQualityPill,
+}: {
+  showQualityPill: boolean;
+  onToggleQualityPill: (v: boolean) => void;
+}): React.JSX.Element {
+  const [tone, setTone] = useState("warm");
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const r = await fetch("/api/memory", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rapport_tone_level: tone === "warm" ? 5 : tone === "reserved" ? 1 : 3 }),
+      });
+      setStatus(r.ok ? "Saved." : "Couldn't save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 0",
+    borderBottom: "1px solid var(--ta-border)",
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 12,
+    color: "var(--ta-text-soft)",
+  };
+  const selectStyle: React.CSSProperties = {
+    fontSize: 12,
+    background: "var(--ta-surface-2)",
+    border: "1px solid var(--ta-border-2)",
+    borderRadius: 6,
+    color: "var(--ta-text)",
+    padding: "4px 8px",
+    outline: "none",
+  };
+
+  return (
+    <div>
+      <div style={rowStyle}>
+        <span style={labelStyle}>Default agent</span>
+        <span style={{ fontSize: 11, color: "var(--ta-text-mute)" }}>Set via agent picker</span>
+      </div>
+      <div style={rowStyle}>
+        <span style={labelStyle}>Reply tone</span>
+        <select
+          value={tone}
+          onChange={(e) => setTone(e.target.value)}
+          style={selectStyle}
+        >
+          <option value="warm">Warm</option>
+          <option value="concise">Concise</option>
+          <option value="detailed">Detailed</option>
+          <option value="reserved">Reserved</option>
+        </select>
+      </div>
+      <div style={rowStyle}>
+        <span style={labelStyle}>Quality-review notice</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showQualityPill}
+          onClick={() => onToggleQualityPill(!showQualityPill)}
+          style={{
+            width: 36,
+            height: 20,
+            borderRadius: 10,
+            border: "none",
+            background: showQualityPill ? "var(--ta-accent)" : "var(--ta-border-2)",
+            cursor: "pointer",
+            position: "relative",
+            transition: "background 0.2s",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: 2,
+              left: showQualityPill ? 18 : 2,
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#fff",
+              transition: "left 0.2s",
+            }}
+          />
+        </button>
+      </div>
+      <div style={{ ...rowStyle, borderBottom: "none" }}>
+        <span style={labelStyle}>Compact density</span>
+        <span style={{ fontSize: 11, color: "var(--ta-text-mute)" }}>Coming soon</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={saving}
+        style={{
+          marginTop: 14,
+          padding: "6px 16px",
+          borderRadius: 7,
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: saving ? "not-allowed" : "pointer",
+          border: "none",
+          background: saving ? "var(--ta-surface-2)" : "var(--ta-accent)",
+          color: saving ? "var(--ta-text-mute)" : "var(--ta-accent-ink)",
+          transition: "background 0.15s",
+        }}
+      >
+        {saving ? "Saving…" : "Save preferences"}
+      </button>
+      {status && (
+        <p
+          style={{
+            fontSize: 11,
+            marginTop: 6,
+            color: status === "Saved." ? "var(--ta-green)" : "#F87171",
+          }}
+        >
+          {status}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export function ConciergeExperience(): React.JSX.Element {
-  // Conversation-rail collapse is driven by the PanelLeft toggle in the
-  // TenantShell top bar, shared through context (no prop-drilling through
-  // the server page that renders this).
-  const { open } = useConversationRail();
+  // Theme — persisted to localStorage; initial value respects prefers-color-scheme.
+  const [taTheme, setTaTheme] = useState<TaTheme>("dark");
+  const themeInitialised = useRef(false);
+
+  useEffect(() => {
+    if (themeInitialised.current) return;
+    themeInitialised.current = true;
+    const saved = localStorage.getItem("ta-console-theme") as TaTheme | null;
+    if (saved === "dark" || saved === "light") { setTaTheme(saved); return; }
+    if (window.matchMedia("(prefers-color-scheme: light)").matches) setTaTheme("light");
+  }, []);
+
+  function toggleTheme(): void {
+    setTaTheme((t) => {
+      const next: TaTheme = t === "dark" ? "light" : "dark";
+      localStorage.setItem("ta-console-theme", next);
+      return next;
+    });
+  }
+
+  // Sidebar collapse — shared with the TenantShell top-bar toggle.
+  const { open, toggle } = useConversationRail();
+
+  // Panel tabs
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chats");
+  const [mainTab, setMainTab] = useState<MainTab>("conversation");
+  const [showQualityPill, setShowQualityPill] = useState(true);
+
+  // Sidebar search
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Conversations
   const [conversations, setConversations] = useState<TaConversation[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -50,10 +567,12 @@ export function ConciergeExperience(): React.JSX.Element {
   const [selectedPersona, setSelectedPersona] = useState<string>(AGENT_CATALOG[0]!.slug);
   const [convLoadError, setConvLoadError] = useState<string | null>(null);
   const [loadingConv, setLoadingConv] = useState(false);
-
-  // Single counter that forces ChatExperience to remount when the active
-  // conversation or persona changes.
   const [chatKey, setChatKey] = useState(0);
+
+  const selectedAgent =
+    AGENT_CATALOG.find((a) => a.slug === selectedPersona) ?? AGENT_CATALOG[0]!;
+
+  // ─── Data fetching ────────────────────────────────────────────────────────
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -74,10 +593,7 @@ export function ConciergeExperience(): React.JSX.Element {
     setLoadingConv(true);
     try {
       const res = await fetch(`/api/chat/conversations/${convId}`);
-      if (!res.ok) {
-        setConvLoadError(`Could not load conversation (HTTP ${res.status})`);
-        return;
-      }
+      if (!res.ok) { setConvLoadError(`Could not load conversation (HTTP ${res.status})`); return; }
       const data = (await res.json()) as ConvMessages;
       const persona = data.conversation.active_persona_id ?? selectedPersona;
       setActiveConvId(convId);
@@ -96,11 +612,12 @@ export function ConciergeExperience(): React.JSX.Element {
     setChatKey((k) => k + 1);
   }
 
-  // Called by ChatExperience when the first message_id SSE fires (new
-  // conversation assigned). Refreshes the sidebar so the new thread appears.
-  const handleConversationCreated = useCallback((_id: string) => {
-    void fetchConversations();
-  }, [fetchConversations]);
+  const handleConversationCreated = useCallback(
+    (_id: string) => { void fetchConversations(); },
+    [fetchConversations],
+  );
+
+  // ─── Error / access states ────────────────────────────────────────────────
 
   if (forbidden) {
     return (
@@ -122,118 +639,379 @@ export function ConciergeExperience(): React.JSX.Element {
     );
   }
 
+  // ─── Layout helpers ───────────────────────────────────────────────────────
+
+  const sidebarWidth = open === null ? "w-0 lg:w-[300px]" : open ? "w-[300px]" : "w-0";
+
+  const tabBtn = (active: boolean): React.CSSProperties => ({
+    padding: "9px 14px",
+    border: "none",
+    borderBottom: active ? "2px solid var(--ta-accent)" : "2px solid transparent",
+    background: "transparent",
+    fontSize: 13,
+    fontWeight: active ? 600 : 400,
+    color: active ? "var(--ta-accent)" : "var(--ta-text-mute)",
+    cursor: "pointer",
+    transition: "color 0.12s, border-color 0.12s",
+    whiteSpace: "nowrap" as const,
+  });
+
+  const sidebarTabBtn = (active: boolean): React.CSSProperties => ({
+    flex: 1,
+    padding: "8px 0",
+    border: "none",
+    borderBottom: active ? "2px solid var(--ta-accent)" : "2px solid transparent",
+    background: "transparent",
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 0.7,
+    textTransform: "uppercase" as const,
+    color: active ? "var(--ta-accent)" : "var(--ta-text-mute)",
+    cursor: "pointer",
+    transition: "color 0.12s, border-color 0.12s",
+  });
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   return (
-    <div className="flex h-full overflow-hidden bg-background">
-      {/* Conversation-history rail (ChatGPT-style). Tri-state width driven by
-          the top-bar toggle via context: null = CSS default (closed below lg,
-          open lg+, no flash), true = open, false = closed. The inner column
-          stays a fixed width so the list doesn't reflow during the animation. */}
-      <aside
-        className={cn(
-          "shrink-0 overflow-hidden border-r border-border bg-card transition-all",
-          open === null ? "w-0 lg:w-72" : open ? "w-72" : "w-0",
-        )}
+    <div
+      data-ta-theme={taTheme}
+      className="flex flex-col h-full overflow-hidden"
+      style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
+    >
+      {/* ── Top bar ─────────────────────────────────────────────────────── */}
+      <header
+        style={{
+          height: 52,
+          background: "var(--ta-sidebar)",
+          borderBottom: "1px solid var(--ta-border)",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "0 14px",
+          flexShrink: 0,
+        }}
       >
-        <div className="flex h-full w-72 flex-col">
-          <div className="px-3 py-3 border-b border-border">
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2 text-[13px] h-9"
-              onClick={startNew}
-            >
-              <Plus className="h-4 w-4" /> New chat
-            </Button>
-            {/* #904 — draft composer entry point */}
-            <a
-              href="/concierge/draft"
-              className="mt-2 block text-[12px] text-primary hover:underline"
-            >
-              ✉ Draft a reply
-            </a>
-          </div>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label="Toggle sidebar"
+          style={iconBtn()}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+          }}
+        >
+          <Menu size={17} />
+        </button>
 
-          <nav className="flex-1 overflow-y-auto py-2 px-2">
-            {conversations === null ? (
-              <p className="text-[12px] text-muted-foreground px-1">Loading…</p>
-            ) : conversations.length === 0 ? (
-              <p className="text-[12px] text-muted-foreground px-1">No chats yet.</p>
-            ) : (
-              conversations.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => void openConversation(c.id)}
-                  disabled={loadingConv}
-                  className={`w-full text-left px-2 py-1.5 rounded text-[12px] mb-0.5 hover:bg-accent transition-colors truncate ${
-                    activeConvId === c.id
-                      ? "bg-accent font-medium text-foreground"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {c.title ?? "(untitled)"}
-                  <span className="block text-[10px] opacity-60">
-                    {c.message_count ?? 0} msgs ·{" "}
-                    {c.last_message_at
-                      ? new Date(c.last_message_at).toLocaleDateString()
-                      : "—"}
-                  </span>
-                </button>
-              ))
-            )}
-          </nav>
-        </div>
-      </aside>
-
-      {/* Main area */}
-      <div className="flex flex-col flex-1 overflow-hidden">
-        {/* Persona picker */}
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-card shrink-0">
-          <span className="text-[12px] text-muted-foreground whitespace-nowrap">
-            Speaking with
-          </span>
-          <Select
-            value={selectedPersona}
-            onValueChange={(v) => {
-              setSelectedPersona(v);
-              // Start a fresh conversation when the persona changes — the new
-              // persona's Layer-1 identity must apply from the first turn.
-              setActiveConvId(null);
-              setActiveMessages([]);
-              setChatKey((k) => k + 1);
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 2 }}>
+          <CompassMark size={22} />
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 700,
+              color: "var(--ta-text)",
+              letterSpacing: -0.2,
             }}
           >
-            <SelectTrigger className="h-7 text-[12px] w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {AGENT_CATALOG.map((a) => (
-                <SelectItem key={a.slug} value={a.slug} className="text-[12px]">
-                  {a.name} · {a.specialty}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span className="text-[11px] text-muted-foreground hidden sm:block">
-            TA mode — trade topics, platform questions, no customer guardrails
+            AI{" "}
+            <span style={{ color: "var(--ta-accent)" }}>Travel</span>{" "}
+            Concierge
           </span>
         </div>
 
-        {convLoadError && (
-          <p className="text-[12px] text-red-700 dark:text-red-400 px-4 py-2 border-b border-border">
-            {convLoadError}
-          </p>
-        )}
+        <div style={{ flex: 1 }} />
 
-        {/* Chat */}
-        <div className="flex-1 overflow-hidden">
-          <ChatExperience
-            key={chatKey}
-            mode="ta"
-            personaSlug={selectedPersona}
-            initialConversationId={activeConvId ?? undefined}
-            initialMessages={activeMessages}
-            onConversationCreated={handleConversationCreated}
-          />
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+          title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+          style={iconBtn()}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+          }}
+        >
+          {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
+      </header>
+
+      {/* ── Body ────────────────────────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* ── Sidebar ─────────────────────────────────────────────────── */}
+        <aside
+          className={cn("shrink-0 overflow-hidden transition-all duration-200", sidebarWidth)}
+          style={{
+            borderRight: "1px solid var(--ta-border)",
+            background: "var(--ta-sidebar)",
+          }}
+        >
+          {/* Fixed inner width so content doesn't reflow during animation */}
+          <div className="flex flex-col h-full" style={{ width: 300 }}>
+
+            {/* New chat button */}
+            <div style={{ padding: "12px 12px 8px" }}>
+              <button
+                type="button"
+                onClick={startNew}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: "var(--ta-r-sm, 9px)",
+                  border: "none",
+                  background: "var(--ta-accent)",
+                  color: "var(--ta-accent-ink)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "opacity 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.opacity = "0.88";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+                }}
+              >
+                <Plus size={14} />
+                New chat
+              </button>
+            </div>
+
+            {/* Search */}
+            <div style={{ padding: "0 12px 6px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  background: "var(--ta-surface-2)",
+                  border: "1px solid var(--ta-border)",
+                  borderRadius: 7,
+                  padding: "5px 9px",
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="6.5" cy="6.5" r="5" stroke="var(--ta-text-mute)" strokeWidth="1.5" />
+                  <path d="M10.5 10.5L14 14" stroke="var(--ta-text-mute)" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Search chats…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    background: "transparent",
+                    fontSize: 12,
+                    color: "var(--ta-text)",
+                    outline: "none",
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Chats · Memory · Prefs segmented tabs */}
+            <div
+              style={{
+                display: "flex",
+                padding: "0 12px",
+                borderBottom: "1px solid var(--ta-border)",
+              }}
+            >
+              {(["chats", "memory", "prefs"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setSidebarTab(tab)}
+                  style={sidebarTabBtn(sidebarTab === tab)}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            {/* Panel content */}
+            <div
+              className="flex-1 overflow-y-auto"
+              style={{ padding: "10px 12px" }}
+            >
+              {sidebarTab === "chats" && (
+                <ChatsPanel
+                  conversations={conversations}
+                  activeConvId={activeConvId}
+                  loadingConv={loadingConv}
+                  searchQuery={searchQuery}
+                  onOpen={(id) => void openConversation(id)}
+                />
+              )}
+              {sidebarTab === "memory" && <TaMemoryPanel />}
+              {sidebarTab === "prefs" && (
+                <TaPrefsPanel
+                  showQualityPill={showQualityPill}
+                  onToggleQualityPill={setShowQualityPill}
+                />
+              )}
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Main panel ──────────────────────────────────────────────── */}
+        <div
+          className="flex flex-col flex-1 overflow-hidden"
+          style={{ background: "var(--ta-bg)" }}
+        >
+          {/* Main header — agent chip + status pills */}
+          <div
+            style={{
+              padding: "10px 16px",
+              borderBottom: "1px solid var(--ta-border)",
+              background: "var(--ta-surface)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              flexShrink: 0,
+              flexWrap: "wrap",
+            }}
+          >
+            <AgentPickerPopover
+              selectedSlug={selectedPersona}
+              onSelect={(slug) => {
+                setSelectedPersona(slug);
+                setActiveConvId(null);
+                setActiveMessages([]);
+                setChatKey((k) => k + 1);
+              }}
+            />
+            <div style={{ flex: 1 }} />
+            {/* TA mode pill */}
+            <span
+              style={{
+                fontSize: 10,
+                padding: "3px 9px",
+                background: "var(--ta-accent-soft)",
+                color: "var(--ta-accent)",
+                borderRadius: 20,
+                fontWeight: 700,
+                letterSpacing: 0.5,
+                textTransform: "uppercase",
+              }}
+            >
+              TA mode
+            </span>
+            {/* Quality review pill — toggled by Prefs */}
+            {showQualityPill && (
+              <span
+                title="Conversations are reviewed for quality"
+                style={{
+                  fontSize: 10,
+                  padding: "3px 9px",
+                  background: "rgba(240,180,90,.12)",
+                  color: "var(--ta-amber)",
+                  borderRadius: 20,
+                  fontWeight: 600,
+                  letterSpacing: 0.3,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                🛡 Reviewed for quality
+              </span>
+            )}
+          </div>
+
+          {/* Tab row — Conversation | Draft a reply */}
+          <div
+            style={{
+              display: "flex",
+              borderBottom: "1px solid var(--ta-border)",
+              background: "var(--ta-surface)",
+              padding: "0 16px",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setMainTab("conversation")}
+              style={tabBtn(mainTab === "conversation")}
+            >
+              Conversation
+            </button>
+            <button
+              type="button"
+              onClick={() => setMainTab("draft")}
+              style={tabBtn(mainTab === "draft")}
+            >
+              Draft a reply
+              <span
+                style={{
+                  marginLeft: 5,
+                  fontSize: 9,
+                  padding: "1px 5px",
+                  background: "var(--ta-accent-soft)",
+                  color: "var(--ta-accent)",
+                  borderRadius: 3,
+                  fontWeight: 700,
+                  letterSpacing: 0.4,
+                }}
+              >
+                AI
+              </span>
+            </button>
+          </div>
+
+          {/* Conv-load error */}
+          {convLoadError && (
+            <p
+              style={{
+                fontSize: 12,
+                color: "#F87171",
+                padding: "6px 16px",
+                borderBottom: "1px solid var(--ta-border)",
+                margin: 0,
+              }}
+            >
+              {convLoadError}
+            </p>
+          )}
+
+          {/* Active tab content */}
+          <div className="flex-1 overflow-hidden">
+            {mainTab === "conversation" ? (
+              <ChatExperience
+                key={chatKey}
+                mode="ta"
+                personaSlug={selectedPersona}
+                initialConversationId={activeConvId ?? undefined}
+                initialMessages={activeMessages}
+                onConversationCreated={handleConversationCreated}
+                hideSidebar
+                hideBanner
+                composerPlaceholder={`Ask ${selectedAgent.name} about trade topics…`}
+                composerHelper={`${selectedAgent.name} is an AI specialist · Trade-mode answers, no customer guardrails`}
+              />
+            ) : (
+              <div className="flex h-full overflow-hidden">
+                <InlineDraftView
+                  agentSlug={selectedPersona}
+                  agentName={selectedAgent.name}
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
