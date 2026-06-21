@@ -512,7 +512,7 @@ jobs:
             exit 1
           fi
           tolerated=$(grep -cE 'foreign key constraint "[^"]*auth_user_id[^"]*fkey"' restore_err.log 2>/dev/null || true)
-          echo "::warning::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
+          echo "::notice::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
 
       - name: Apply staging fixups
         run: |
