@@ -502,6 +502,15 @@ jobs:
             cat restore_err.log
             exit 1
           fi
+          # Belt-and-suspenders: the gate above is text-based. A non-zero exit with
+          # NO "pg_restore: error:" lines at all (e.g. OOM / SIGKILL / aborted before
+          # logging) must NOT pass silently — fail on an unexplained non-zero rc.
+          total_err=$(grep -cE '^pg_restore: error:' restore_err.log 2>/dev/null || true)
+          if [ "${restore_rc}" -ne 0 ] && [ "${total_err:-0}" -eq 0 ]; then
+            echo "::error::pg_restore exited ${restore_rc} with no recognizable error lines — treating as failure."
+            cat restore_err.log
+            exit 1
+          fi
           tolerated=$(grep -cE 'foreign key constraint "[^"]*auth_user_id[^"]*fkey"' restore_err.log 2>/dev/null || true)
           echo "::warning::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
 
