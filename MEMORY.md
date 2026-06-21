@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-281 — 2026-06-20 — Prod→staging DB copy is public-schema-only with prod ACLs; auth/storage not copied
+
+The `deploy.yml` "Copy Prod DB to Staging" job (PR #1317) was redesigned to actually work on Supabase. It had never succeeded. The working design, validated end-to-end against the real prod+staging DBs:
+
+- **Dump `--schema=public` only** (with ACLs, `--no-owner`). A full dump tries to restore `auth`/`storage`/`graphql`/`realtime`/`vault` — owned by `supabase_admin`, which the `postgres` role can't touch → 556 permission errors. Staging is its own Supabase project and already has those schemas.
+- **Reset via `DROP SCHEMA public CASCADE` + `pg_restore` WITHOUT `--clean`.** In-place `--clean` on a populated Supabase DB drops objects out of dependency order (~100 errors); restoring into an empty schema is clean.
+- **Grants ride along from the dump's ACLs** — do NOT use `--no-acl`, and do NOT hand-maintain a grants script. Prod's per-table grants are the same source of truth as `db/grants-snapshot-main.sql`; a with-ACL restore shows `no drift` under `pnpm grants:check`. (An early revision added a blanket `staging-grants.sql` that over-granted DML to anon/authenticated and tripped the drift gate — deleted.)
+- **Fail-closed error toleration**: `pg_restore` runs under `set +e`; the job greps stderr and fails unless every error is one of three known-benign Supabase classes — public→auth.users FK constraints (auth not copied), `permission denied to change default privileges`, `schema "public" already exists` — PLUS a guard that fails on a non-zero exit with zero error lines (OOM/SIGKILL).
+
+**Why / gotchas for future engineers:**
+- `SUPABASE_TEST_DB_URL` (the CI test DB used by `grants:check`/RLS-snapshot) is the **same database** as the staging deploy target (`DB_URL` in the `staging` environment). So a staging refresh changes what the grants-drift check validates against — they stay consistent only because both reflect prod. **A local dry-run that restores prod into `SUPABASE_TEST_DB_URL` will break the CI grants check until you re-restore prod's correct (ACL) grants.** (Learned the hard way this session.)
+- **Known staging limitations (tracked in #1316):** `DROP SCHEMA public CASCADE` drops Supabase-managed objects that depend on public (storage RLS policies, realtime publication membership) which the postgres role can't recreate; and the 2 public→auth.users FK constraints aren't enforced on staging (data loads; auth isn't copied).
+- `deploy.yml` runs from the copy ON the release branch — re-cut the release after merging a deploy.yml fix. See [[D-280]] (PG17 client) and [[D-279]] (release uses GH_PAT).
+
+---
+
 ## D-280 — 2026-06-20 — Prod Supabase is on Postgres 17; deploy.yml's DB-copy pins postgresql-client-17
 
 Supabase upgraded the **prod** main DB to Postgres **17.6**. The release pipeline's "Copy Prod DB to Staging" job (`deploy.yml`) failed with `pg_dump: error: aborting because of server version mismatch` because the Ubuntu 24.04 runner ships `pg_dump` 16.14, and `pg_dump` refuses to dump a server newer than itself.
