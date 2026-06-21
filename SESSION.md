@@ -1,25 +1,26 @@
-# Session state — last updated 2026-06-20 22:30 UTC
+# Session state — last updated 2026-06-20 23:30 UTC
 
 ## Just completed
-- Merged PR #1311 (#1273 AC3/AC4): RAG tenant-registry-reconcile hardening — onFailure PAGE PLATFORM ADMIN alert (fires once after Inngest retries exhaust) + redirect:"manual" + isCrossOriginRedirect guard so a cross-origin redirect can't strip the bearer; new unit test.
-  - AC1 (env) + AC2 (drift) already resolved out-of-band: reconcile ran 2026-06-20 03:01 UTC, synced the active Lisa Travel row.
-- Merged PR #1313: deploy.yml installs postgresql-client-17 (prod Supabase upgraded to PG 17.6; runner's pg_dump 16 refused to dump it → "Copy Prod DB to Staging" failed → blocked the whole release pipeline).
-- Logged D-280 (PG17) to MEMORY.
+- Merged PR #1317: redesigned the prod→staging DB-copy job (deploy.yml) to work on Supabase — public-only dump WITH ACLs, DROP SCHEMA reset + restore-without-clean, fail-closed error toleration (auth-FK + default-priv + schema-exists + non-zero-rc-no-output guard), parse-safe staging-fixups verification. Validated end-to-end against real prod+staging DBs (restore unexpected=0, grants:check no drift, fixups clean, row counts match prod). Opus d091 + pre-pr both clean.
+- Earlier today: #1311 (RAG reconcile hardening, #1273), #1313 (PG17 client), #1305/#1306/#1308/#1310 (see prior). Set staging DB_URL secret to the test project. Deleted 2 orphan RAG shadow rows (#1312 closed).
+- Logged D-281 (staging-refresh design + TEST-DB-==-staging-DB gotcha).
 
 ## In flight
-- Nothing in flight — clean checkpoint
-
-## Next step
-- Doc PR for the D-280 MEMORY entry + this SESSION update (in progress).
+- Nothing in flight — clean checkpoint (this SESSION/MEMORY update lands via a doc PR next).
 
 ## Blocked on user
-- **Re-cut release 0.7.2 after #1313 is on dev** (it is now): delete the failed `release/0.7.2` branch, then re-run the Release workflow for 0.7.2. deploy.yml runs from the release-branch copy, so the PG17 fix only applies to a release branch cut after #1313 merged.
+- **Re-cut the release** (latest was release/0.7.3, which failed pre-fix). Delete the stale release branch, re-run the Release workflow. With #1313 + #1317 on dev, the Copy-Prod-DB-to-Staging job should now go green → staging deploy → prod (manual approval gate).
+
+## Next step
+- Doc PR for D-281 + this SESSION update. Then await the user's release re-cut.
 
 ## Open questions / follow-ups (issues filed)
-- #1312 (opus): 2 orphan tenant_registry_shadow rows absent from main (Lisa Travel c351305b, Bigfoot Travel 820b4367) — ops decision whether to delete/prune.
-- #1314 (sonnet): tenant-registry-reconcile shadow UPDATE has no zero-row guard (pre-existing Pattern-2-class; flagged by d091 on #1311, kept out to stay surgical).
-- #1309 (sonnet): add tone-level<->label mapping test coverage (from #1305).
+- #1316 (opus): staging refresh doesn't restore Supabase-managed objects that depend on public (storage RLS policies, realtime publication membership); 2 auth-FK constraints unenforced on staging. Ops decision on whether/how to re-apply.
+- #1314 (sonnet): tenant-registry-reconcile shadow UPDATE has no zero-row guard (pre-existing).
+- #1309 (sonnet): tone-level<->label mapping test coverage.
 
 ## Notes
-- Prod Supabase main DB is Postgres 17.6. deploy.yml's DB-copy pins postgresql-client-17 — bump on next major upgrade (D-280).
-- Model: still on Opus 4.8 (user's deliberate default this session).
+- SUPABASE_TEST_DB_URL (CI test DB for grants:check/RLS) IS the staging deploy DB. A local dry-run restoring prod into it breaks the CI grants check until prod's ACL grants are re-restored. (D-281)
+- Prod Supabase main = Postgres 17.6; deploy.yml pins postgresql-client-17 (D-280).
+- Release + dependabot-update-branch workflows use GH_PAT (D-279).
+- Model: on Opus 4.8 (user's deliberate default this session).
