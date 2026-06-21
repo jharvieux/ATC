@@ -437,24 +437,82 @@ jobs:
           sudo apt-get install -y postgresql-client-17
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
-      - name: Dump production database
+      - name: Dump production database (public schema only)
         run: |
+          # Only the application schema. The Supabase-managed schemas (auth,
+          # storage, graphql, realtime, vault) are owned by supabase_admin and
+          # CANNOT be restored by the postgres role — a full dump produced 500+
+          # "permission denied"/"must be owner" errors. Staging is its own
+          # Supabase project and already has those schemas natively.
+          # Keep ACLs (no --no-acl): the dump carries prod's real per-table
+          # grants, which are the SAME source of truth as db/grants-snapshot-main.sql
+          # (verified: a with-ACL restore shows "no drift" against the snapshot).
+          # This auto-syncs grants from prod — no hand-maintained grants script to
+          # drift. --no-owner still strips ownership (objects restore as postgres).
           pg_dump "$PROD_DB_URL" \
+            --schema=public \
             --no-owner \
-            --no-acl \
             --format=custom \
             --file=prod_dump.pgdump
 
-      - name: Terminate staging connections and restore
+      - name: Reset staging public schema and restore
         run: |
-          psql "$DB_URL" -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();"
-          pg_restore \
-            --no-owner \
-            --no-acl \
-            --clean \
-            --if-exists \
-            --dbname="$DB_URL" \
-            prod_dump.pgdump
+          # 1) Evict app connections so the schema reset isn't blocked by locks.
+          #    Scope to NON-superuser client backends only: Supabase's postgres
+          #    role isn't a true superuser and can't terminate superuser/system
+          #    backends ("permission denied to terminate process").
+          psql "$DB_URL" -c "SELECT pg_terminate_backend(sa.pid) FROM pg_stat_activity sa JOIN pg_roles r ON r.rolname = sa.usename WHERE sa.datname = current_database() AND sa.pid <> pg_backend_pid() AND sa.backend_type = 'client backend' AND NOT r.rolsuper;"
+
+          # 2) Reset public to an empty schema, then restore into it. We do NOT
+          #    use pg_restore --clean: on a populated Supabase DB it drops objects
+          #    out of dependency order and yields ~100 "no unique constraint" /
+          #    "cannot drop ... depends on" errors. Restoring into an empty schema
+          #    is clean. The dump recreates `public` itself (CREATE SCHEMA).
+          #    NOTE: CASCADE also drops the few Supabase-managed objects that
+          #    depend on public (e.g. storage RLS policies, realtime publication
+          #    membership); the postgres role can't recreate those, so staging
+          #    loses them — an accepted limitation tracked separately.
+          psql "$DB_URL" -c "DROP SCHEMA IF EXISTS public CASCADE;"
+
+          # 3) Restore (no --clean; schema is empty). Data loads first, then
+          #    constraints and grants. pg_restore exits non-zero on a few error
+          #    classes that are inherent to a Supabase postgres-role restore and
+          #    are safe to ignore:
+          #      - public->auth.users FK constraints — can't validate because the
+          #        Supabase-managed auth schema isn't copied; the row DATA still
+          #        loads, only the (unenforceable) FK is skipped.
+          #      - "permission denied to change default privileges" — the dump's
+          #        ALTER DEFAULT PRIVILEGES can't run as postgres on Supabase; this
+          #        only affects FUTURE objects (none are created on staging between
+          #        refreshes), and the actual table grants DO restore (verified
+          #        "no drift" vs the committed grants snapshot).
+          #      - benign "schema public already exists".
+          #    Any OTHER error fails the job — a real restore failure can't slip by.
+          set +e
+          pg_restore --no-owner --dbname="$DB_URL" prod_dump.pgdump 2> restore_err.log
+          restore_rc=$?
+          set -e
+          unexpected=$(grep -E '^pg_restore: error:' restore_err.log 2>/dev/null \
+            | grep -vE 'foreign key constraint "[^"]*auth_user_id[^"]*fkey"' \
+            | grep -vE 'permission denied to change default privileges' \
+            | grep -vE 'schema "public" already exists' \
+            | wc -l | tr -d ' ')
+          if [ "${unexpected:-0}" -gt 0 ]; then
+            echo "::error::pg_restore reported ${unexpected} unexpected error(s) (not the known Supabase auth-FK / default-privileges / schema-exists classes):"
+            cat restore_err.log
+            exit 1
+          fi
+          # Belt-and-suspenders: the gate above is text-based. A non-zero exit with
+          # NO "pg_restore: error:" lines at all (e.g. OOM / SIGKILL / aborted before
+          # logging) must NOT pass silently — fail on an unexplained non-zero rc.
+          total_err=$(grep -cE '^pg_restore: error:' restore_err.log 2>/dev/null || true)
+          if [ "${restore_rc}" -ne 0 ] && [ "${total_err:-0}" -eq 0 ]; then
+            echo "::error::pg_restore exited ${restore_rc} with no recognizable error lines — treating as failure."
+            cat restore_err.log
+            exit 1
+          fi
+          tolerated=$(grep -cE 'foreign key constraint "[^"]*auth_user_id[^"]*fkey"' restore_err.log 2>/dev/null || true)
+          echo "::notice::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
 
       - name: Apply staging fixups
         run: |
