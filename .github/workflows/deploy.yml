@@ -444,10 +444,14 @@ jobs:
           # CANNOT be restored by the postgres role — a full dump produced 500+
           # "permission denied"/"must be owner" errors. Staging is its own
           # Supabase project and already has those schemas natively.
+          # Keep ACLs (no --no-acl): the dump carries prod's real per-table
+          # grants, which are the SAME source of truth as db/grants-snapshot-main.sql
+          # (verified: a with-ACL restore shows "no drift" against the snapshot).
+          # This auto-syncs grants from prod — no hand-maintained grants script to
+          # drift. --no-owner still strips ownership (objects restore as postgres).
           pg_dump "$PROD_DB_URL" \
             --schema=public \
             --no-owner \
-            --no-acl \
             --format=custom \
             --file=prod_dump.pgdump
 
@@ -471,33 +475,35 @@ jobs:
           psql "$DB_URL" -c "DROP SCHEMA IF EXISTS public CASCADE;"
 
           # 3) Restore (no --clean; schema is empty). Data loads first, then
-          #    constraints. pg_restore exits non-zero on the public->auth.users FK
-          #    constraints — they can't validate because the Supabase-managed auth
-          #    schema isn't copied to staging. The DATA still loads fine; only the
-          #    (unenforceable) FK constraints are skipped. Tolerate ONLY that error
-          #    class plus the benign "schema public already exists"; fail loud on
-          #    anything else so a real restore failure can't slip through.
+          #    constraints and grants. pg_restore exits non-zero on a few error
+          #    classes that are inherent to a Supabase postgres-role restore and
+          #    are safe to ignore:
+          #      - public->auth.users FK constraints — can't validate because the
+          #        Supabase-managed auth schema isn't copied; the row DATA still
+          #        loads, only the (unenforceable) FK is skipped.
+          #      - "permission denied to change default privileges" — the dump's
+          #        ALTER DEFAULT PRIVILEGES can't run as postgres on Supabase; this
+          #        only affects FUTURE objects (none are created on staging between
+          #        refreshes), and the actual table grants DO restore (verified
+          #        "no drift" vs the committed grants snapshot).
+          #      - benign "schema public already exists".
+          #    Any OTHER error fails the job — a real restore failure can't slip by.
           set +e
-          pg_restore --no-owner --no-acl --dbname="$DB_URL" prod_dump.pgdump 2> restore_err.log
+          pg_restore --no-owner --dbname="$DB_URL" prod_dump.pgdump 2> restore_err.log
           restore_rc=$?
           set -e
           unexpected=$(grep -E '^pg_restore: error:' restore_err.log 2>/dev/null \
             | grep -vE 'foreign key constraint "[^"]*auth_user_id[^"]*fkey"' \
+            | grep -vE 'permission denied to change default privileges' \
             | grep -vE 'schema "public" already exists' \
             | wc -l | tr -d ' ')
           if [ "${unexpected:-0}" -gt 0 ]; then
-            echo "::error::pg_restore reported ${unexpected} unexpected error(s) (not the known auth-FK / schema-exists class):"
+            echo "::error::pg_restore reported ${unexpected} unexpected error(s) (not the known Supabase auth-FK / default-privileges / schema-exists classes):"
             cat restore_err.log
             exit 1
           fi
           tolerated=$(grep -cE 'foreign key constraint "[^"]*auth_user_id[^"]*fkey"' restore_err.log 2>/dev/null || true)
-          echo "::warning::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) — staging auth.users is not a copy of prod."
-
-      - name: Re-grant public schema privileges
-        run: |
-          # DROP SCHEMA above removed the anon/authenticated/service_role grants
-          # the Supabase API (PostgREST) needs, and --no-acl doesn't restore them.
-          psql "$DB_URL" -f scripts/staging-grants.sql
+          echo "::warning::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
 
       - name: Apply staging fixups
         run: |
