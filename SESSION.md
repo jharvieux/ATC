@@ -9,7 +9,7 @@
 - Nothing in flight — clean checkpoint (this SESSION/MEMORY update lands via a doc PR next).
 
 ## Blocked on user
-- **Re-cut the release** (latest was release/0.7.3, which failed pre-fix). Delete the stale release branch, re-run the Release workflow. With #1313 + #1317 on dev, the Copy-Prod-DB-to-Staging job should now go green → staging deploy → prod (manual approval gate).
+- **Re-cut the release** (latest was release/0.7.3, which failed pre-fix). Delete the stale release branch, re-run the Release workflow. **Staging is now DISABLED** (`STAGING_PIPELINE_ENABLED` repo var set to `false` 2026-06-21 — no Vercel staging env yet), so db-copy + deploy-staging SKIP and prod deploys directly via deploy-production's `always() && !failure()` path → prod approval gate. Re-enable staging by flipping the var to `true` once a Vercel staging env is provisioned (the #1317 db-copy fix stays in place, dormant).
 
 ## Next step
 - Doc PR for D-281 + this SESSION update. Then await the user's release re-cut.
