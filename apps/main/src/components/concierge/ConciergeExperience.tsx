@@ -16,7 +16,6 @@ import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
-import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
 import { useTaThemeSync, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
@@ -505,10 +504,6 @@ export function ConciergeExperience(): React.JSX.Element {
   // needs to react to theme changes and ensure data-ta-theme is applied on
   // mount so --ta-* CSS vars resolve for this subtree.
   useTaThemeSync();
-
-  // Keep hook call to satisfy the context contract; ignore the external `open` value —
-  // the rail toggle now lives inside this component for self-contained control.
-  useConversationRail();
 
   // Local rail open/close. Tri-state: null = CSS default (closed below lg, open on lg+).
   const [railOpen, setRailOpen] = useState<boolean | null>(null);

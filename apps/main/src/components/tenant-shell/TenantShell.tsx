@@ -4,10 +4,8 @@
 // subdomain root.
 //   - Staff (tenant_owner/agent): ChatGPT-style dashboard. Platform branding
 //     — this surface is staff-only, so it never shows tenant white-label
-//     (that stays on end-customer surfaces). Workspace nav lives in the
-//     persistent left WorkspaceSidebar; the conversation rail inside
-//     ConciergeExperience is toggled by the PanelLeft button, shared via
-//     ConversationRailContext.
+//     (that stays on end-customer surfaces). Workspace nav in WorkspaceSidebar;
+//     conversation rail inside ConciergeExperience is self-contained.
 //   - Viewers (end customers): unchanged — tenant BrandLogo + ChatExperience,
 //     no WorkspaceSidebar, full nav in the dropdown.
 //
@@ -34,7 +32,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { performSignout } from "@/lib/auth/perform-signout";
 import { navSectionsForRole } from "./nav-sections";
-import { ConversationRailContext } from "./conversation-rail-context";
 import { useTaTheme, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import type { UserRole } from "@/lib/auth/permission-grants";
@@ -76,20 +73,8 @@ export function TenantShell({
     );
   };
 
-  // Tri-state collapse for the staff conversation rail (ConciergeExperience),
-  // shared via context. null = visitor hasn't toggled → CSS-only default
-  // (closed below lg, open lg+) so the first paint has no hydration flash.
-  const [open, setOpen] = React.useState<boolean | null>(null);
-  const toggle = React.useCallback((): void => {
-    setOpen((prev) =>
-      prev === null
-        ? !window.matchMedia("(min-width: 1024px)").matches
-        : !prev,
-    );
-  }, []);
-
   return (
-    <ConversationRailContext.Provider value={{ open, toggle }}>
+    <>
       <div
         className="flex h-screen flex-col"
         style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
@@ -213,6 +198,6 @@ export function TenantShell({
           <main className="min-h-0 flex-1 overflow-x-hidden">{children}</main>
         </div>
       </div>
-    </ConversationRailContext.Provider>
+    </>
   );
 }
