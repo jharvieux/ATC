@@ -23,6 +23,7 @@ import {
   Sparkles,
   Gauge,
   AlertTriangle,
+  ShieldCheck,
 } from "lucide-react";
 
 interface DashboardData {
@@ -279,6 +280,11 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
   );
 }
 
+// Rough desk-time-saved estimate. Not an empirical measurement — surfaced to
+// the tenant explicitly as an estimate (see the "estimated" label below) so the
+// basis is transparent. Single-sourced here so the math and label never drift.
+const EST_DESK_MINUTES_PER_AI_MESSAGE = 2;
+
 function StatRow({ stats }: { stats: DashboardData["stats"] }): JSX.Element {
   const trend =
     stats.conversations_prev_month > 0
@@ -289,7 +295,7 @@ function StatRow({ stats }: { stats: DashboardData["stats"] }): JSX.Element {
         )
       : null;
 
-  const hoursSaved = ((stats.ai_messages_this_month * 2) / 60).toFixed(1);
+  const hoursSaved = ((stats.ai_messages_this_month * EST_DESK_MINUTES_PER_AI_MESSAGE) / 60).toFixed(1);
 
   const chatPct =
     stats.chat_limit_cap > 0 ? Math.min(100, Math.round((stats.chat_limit_used / stats.chat_limit_cap) * 100)) : 0;
@@ -326,7 +332,7 @@ function StatRow({ stats }: { stats: DashboardData["stats"] }): JSX.Element {
           {stats.ai_messages_this_month}
         </div>
         <div style={{ fontFamily: MONO, fontSize: 12, color: "var(--ta-text-mute)", marginTop: 4 }}>
-          ~{hoursSaved} hrs desk time saved
+          ~{hoursSaved} hrs estimated (≈{EST_DESK_MINUTES_PER_AI_MESSAGE} min/msg)
         </div>
       </StatCard>
 
@@ -445,7 +451,7 @@ function SetupCard({
                 href={step.href}
                 style={{ fontSize: 13, fontWeight: 600, color: "var(--ta-accent)", textDecoration: "none" }}
               >
-                Fix →
+                Configure →
               </Link>
             )}
           </li>
@@ -461,6 +467,7 @@ function QuickActions(): JSX.Element {
     { label: "Edit AI personas", href: "/settings/personas", icon: <Bot size={18} /> },
     { label: "Update branding", href: "/settings/branding", icon: <Palette size={18} /> },
     { label: "Manage billing", href: "/settings/billing", icon: <CreditCard size={18} /> },
+    { label: "Content safety", href: "/tenant-admin/safety", icon: <ShieldCheck size={18} /> },
   ];
   return (
     <Card>
@@ -556,7 +563,6 @@ function PlanHealth({
 }): JSX.Element {
   const healthItems = [
     { label: "Host connected", ok: setup.host_connected, href: "/settings/host-integration" },
-    { label: "Content safety", ok: true, href: "/tenant-admin/safety" },
     { label: "Branding set", ok: setup.branding_set, href: "/settings/branding" },
     { label: "AI mode chosen", ok: setup.ai_mode_set, href: "/settings/ai-mode" },
   ];
@@ -621,7 +627,7 @@ function PlanHealth({
                 href={h.href}
                 style={{ fontSize: 13, fontWeight: 600, color: "var(--ta-accent)", textDecoration: "none" }}
               >
-                Fix →
+                Configure →
               </Link>
             )}
           </li>
