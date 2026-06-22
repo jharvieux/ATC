@@ -296,7 +296,7 @@ export async function GET(req: Request): Promise<Response> {
 
   // ── Plan ─────────────────────────────────────────────────────────────────
   // tier_definitions is still a stub (§14 pricing columns not yet added).
-  // TODO(#1324): wire price_monthly once real pricing columns land.
+  // TODO(#1332): wire price_monthly once real pricing columns land.
   let tierCode: string | null = null;
   let tierName: string | null = null;
   if (tenantTierId) {
@@ -344,7 +344,7 @@ export async function GET(req: Request): Promise<Response> {
     plan: {
       tier_code: tierCode,
       tier_name: tierName,
-      price_monthly: null, // TODO(#1324): real value once pricing columns exist
+      price_monthly: null, // TODO(#1332): real value once pricing columns exist
       billing_period: billingPeriod,
       status: tenantStatus,
     },
