@@ -68,7 +68,7 @@ function SidebarSection({
   heading: string | null;
   items: readonly { href: string; label: string }[];
   currentPath: string | null;
-  onNavigate?: () => void;
+  onNavigate?: (() => void) | undefined;
 }): React.ReactElement {
   return (
     <div>
@@ -111,7 +111,7 @@ function SidebarLink({
   href: string;
   label: string;
   active: boolean;
-  onNavigate?: () => void;
+  onNavigate?: (() => void) | undefined;
 }): React.ReactElement {
   const [hovered, setHovered] = React.useState(false);
 

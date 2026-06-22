@@ -68,13 +68,13 @@ export function TenantShell({
   // WorkspaceSidebar open/close (staff only). Tri-state: null = visitor
   // hasn't toggled yet → CSS-only default (closed below lg, open on lg+).
   const [workspaceOpen, setWorkspaceOpen] = React.useState<boolean | null>(null);
-  const toggleWorkspace = React.useCallback((): void => {
+  const toggleWorkspace = (): void => {
     setWorkspaceOpen((prev) =>
       prev === null
         ? !window.matchMedia("(min-width: 1024px)").matches
         : !prev,
     );
-  }, []);
+  };
 
   // Tri-state collapse for the staff conversation rail (ConciergeExperience),
   // shared via context. null = visitor hasn't toggled → CSS-only default
