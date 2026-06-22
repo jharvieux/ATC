@@ -151,7 +151,10 @@ export const tenantRegistryReconcile = inngest.createFunction(
           updated++;
         }
       } else {
-        // No drift — just update last_reconcile_sync_at
+        // No drift — just touch last_reconcile_sync_at. Same concurrent-delete
+        // race as the drifted path, but tolerated without a row-match check:
+        // this write is uncounted and the field has no downstream consumer, so
+        // a silent no-op on a deleted row is harmless and self-corrects next run.
         await safeAwait(db.from("tenant_registry_shadow").update({
           last_reconcile_sync_at: new Date().toISOString(),
         }).eq("tenant_id", tenant.id), "tenant_registry_shadow.update");
