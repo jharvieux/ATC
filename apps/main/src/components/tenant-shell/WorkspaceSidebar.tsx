@@ -16,7 +16,7 @@ import * as React from "react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { navSectionsForRole } from "./nav-sections";
-import { TaSidebarLink } from "@/lib/ta-theme/TaSidebarLink";
+import { TaSidebarLink } from "@/lib/ta-theme/ta-sidebar-link";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface WorkspaceSidebarProps {

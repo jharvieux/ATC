@@ -12,7 +12,7 @@
 
 import * as React from "react";
 import { usePathname } from "next/navigation";
-import { TaSidebarLink } from "@/lib/ta-theme/TaSidebarLink";
+import { TaSidebarLink } from "@/lib/ta-theme/ta-sidebar-link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isActiveLink } from "@/components/admin-shell/is-active-link";
