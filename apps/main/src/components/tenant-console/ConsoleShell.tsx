@@ -20,11 +20,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { PanelLeft } from "lucide-react";
+import { Moon, PanelLeft, Sun } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { SiteHeaderMenu } from "@/components/site-header/SiteHeaderMenu";
 import { ConsoleSidebar } from "./ConsoleSidebar";
+import { useTaTheme, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface ConsoleShellProps {
@@ -53,15 +54,33 @@ export function ConsoleShell({
         : !prev,
     );
 
+  const [taTheme, toggleTheme] = useTaTheme();
+
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+    <div
+      className="flex min-h-screen flex-col"
+      style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
+    >
+      <header
+        className="flex items-center justify-between px-4 py-3"
+        style={{
+          background: "var(--ta-sidebar)",
+          borderBottom: "1px solid var(--ta-border)",
+          color: "var(--ta-text)",
+        }}
+      >
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={toggle}
             aria-label="Toggle navigation"
-            className="rounded-md p-1.5 hover:bg-accent"
+            style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
           >
             <PanelLeft className="h-5 w-5" />
           </button>
@@ -76,16 +95,36 @@ export function ConsoleShell({
             <span className="sm:hidden">
               <LogoMark size={49} />
             </span>
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <span
+              className="text-xs font-semibold uppercase tracking-wide"
+              style={{ color: "var(--ta-text-mute)" }}
+            >
               Admin Console
             </span>
           </Link>
         </div>
-        {/* Canonical role-aware app nav — identical to the dashboard and
-            CRM-page hamburger so navigation (incl. Workspace/CRM and My
-            account) stays consistent across every tenant screen. The
-            ConsoleSidebar below carries the console's own sub-page nav. */}
-        <SiteHeaderMenu isPlatformDomain={false} isAuthenticated role={role} />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+            title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+            style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+          {/* Canonical role-aware app nav — identical to the dashboard and
+              CRM-page hamburger so navigation (incl. Workspace/CRM and My
+              account) stays consistent across every tenant screen. The
+              ConsoleSidebar below carries the console's own sub-page nav. */}
+          <SiteHeaderMenu isPlatformDomain={false} isAuthenticated role={role} />
+        </div>
       </header>
       <div className="flex min-h-0 flex-1">
         <ConsoleSidebar open={open} initialCollapsed={initialCollapsed} role={role} />

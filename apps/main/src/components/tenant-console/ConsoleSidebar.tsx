@@ -11,8 +11,8 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { TaSidebarLink } from "@/lib/ta-theme/ta-sidebar-link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isActiveLink } from "@/components/admin-shell/is-active-link";
@@ -68,9 +68,13 @@ export function ConsoleSidebar({
   return (
     <aside
       className={cn(
-        "border-r border-border bg-background transition-all overflow-hidden",
+        "transition-all overflow-hidden",
         open === null ? "w-0 lg:w-64" : open ? "w-64" : "w-0",
       )}
+      style={{
+        background: "var(--ta-sidebar)",
+        borderRight: "1px solid var(--ta-border)",
+      }}
     >
       <nav className="flex flex-col gap-4 px-3 py-6">
         {visibleSections.map((section) => (
@@ -103,14 +107,30 @@ function Section({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:bg-accent"
+        className="flex w-full items-center justify-between rounded-md px-2 py-1.5"
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          color: "var(--ta-text-mute)",
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+        }}
         aria-expanded={!collapsed}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+        }}
       >
         <span>{section.heading}</span>
         {collapsed ? (
-          <ChevronRight className="h-3 w-3" />
+          <ChevronRight className="h-3 w-3" style={{ color: "var(--ta-text-mute)" }} />
         ) : (
-          <ChevronDown className="h-3 w-3" />
+          <ChevronDown className="h-3 w-3" style={{ color: "var(--ta-text-mute)" }} />
         )}
       </button>
       {!collapsed && (
@@ -119,17 +139,7 @@ function Section({
             const active = isActiveLink(currentPath, item.href);
             return (
               <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={cn(
-                    "block rounded-md px-2 py-1.5 text-sm transition-colors",
-                    active
-                      ? "bg-accent text-accent-foreground font-medium"
-                      : "text-foreground/80 hover:bg-accent/60",
-                  )}
-                >
-                  {item.label}
-                </Link>
+                <TaSidebarLink href={item.href} label={item.label} active={active} />
               </li>
             );
           })}
@@ -138,3 +148,4 @@ function Section({
     </div>
   );
 }
+

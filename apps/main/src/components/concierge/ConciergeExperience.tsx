@@ -11,14 +11,12 @@
 // ChatExperience; this component only controls layout, agent selection, and theme.
 
 import { useCallback, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { Moon, Plus, Sun } from "lucide-react";
+import { PanelLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
-import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
-import { useThemeSlot } from "@/components/tenant-shell/theme-slot-context";
+import { useTaThemeSync, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
 import { TONE_LABELS } from "@/lib/tone/constants";
@@ -27,7 +25,6 @@ import { TONE_LABELS } from "@/lib/tone/constants";
 
 type SidebarTab = "chats" | "memory" | "prefs";
 type MainTab = "conversation" | "draft";
-type TaTheme = "dark" | "light";
 
 interface TaConversation {
   id: string;
@@ -41,23 +38,6 @@ interface ConvMessages {
   conversation: { active_persona_id: string | null };
   messages: ChatMessage[];
 }
-
-// ─── Shared mini button style factory ───────────────────────────────────────
-
-const ICON_BTN_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  borderRadius: 8,
-  border: "none",
-  background: "transparent",
-  color: "var(--ta-text-soft)",
-  cursor: "pointer",
-  transition: "background 0.12s",
-  flexShrink: 0,
-};
 
 // ─── Sidebar sub-panels ──────────────────────────────────────────────────────
 
@@ -520,34 +500,13 @@ function TaPrefsPanel({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ConciergeExperience(): React.JSX.Element {
-  // Theme — persisted to localStorage; initial value respects prefers-color-scheme.
-  const [taTheme, setTaTheme] = useState<TaTheme>("dark");
-  const themeSlot = useThemeSlot();
+  // Theme sync — TenantShell owns the toggle button; this component only
+  // needs to react to theme changes and ensure data-ta-theme is applied on
+  // mount so --ta-* CSS vars resolve for this subtree.
+  useTaThemeSync();
 
-  // Init: read localStorage / media-query once on mount.
-  useEffect(() => {
-    const saved = localStorage.getItem("ta-console-theme") as TaTheme | null;
-    if (saved === "dark" || saved === "light") { setTaTheme(saved); return; }
-    if (window.matchMedia("(prefers-color-scheme: light)").matches) setTaTheme("light");
-  }, []);
-
-  // Sync: push theme to document so the whole page (TenantShell) responds.
-  useEffect(() => {
-    document.documentElement.setAttribute("data-ta-theme", taTheme);
-    document.documentElement.classList.toggle("dark", taTheme === "dark");
-    localStorage.setItem("ta-console-theme", taTheme);
-    return () => {
-      document.documentElement.removeAttribute("data-ta-theme");
-      document.documentElement.classList.remove("dark");
-    };
-  }, [taTheme]);
-
-  function toggleTheme(): void {
-    setTaTheme((t) => (t === "dark" ? "light" : "dark"));
-  }
-
-  // Sidebar collapse — toggled by PanelLeft in TenantShell (or CSS default on /concierge).
-  const { open } = useConversationRail();
+  // Local rail open/close. Tri-state: null = CSS default (closed below lg, open on lg+).
+  const [railOpen, setRailOpen] = useState<boolean | null>(null);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chats");
   const [mainTab, setMainTab] = useState<MainTab>("conversation");
@@ -635,7 +594,7 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // ─── Layout helpers ───────────────────────────────────────────────────────
 
-  const sidebarWidth = open === null ? "w-0 lg:w-[300px]" : open ? "w-[300px]" : "w-0";
+  const sidebarWidth = railOpen === null ? "w-0 lg:w-[300px]" : railOpen ? "w-[300px]" : "w-0";
 
   const tabBtn = (active: boolean): React.CSSProperties => ({
     padding: "9px 14px",
@@ -667,27 +626,11 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  // Theme toggle button — portalled into the header slot when available,
-  // rendered inline in the top-right corner as fallback if the slot wasn't found.
-  const toggleBtn = (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-      title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-      style={{ ...ICON_BTN_STYLE, color: "var(--foreground)" }}
-    >
-      {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-    </button>
-  );
-  const themeToggle = themeSlot ? createPortal(toggleBtn, themeSlot) : toggleBtn;
-
   return (
     <div
       className="flex flex-col h-full overflow-hidden"
       style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
     >
-      {themeToggle}
 
       {/* ── Body ────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
@@ -703,13 +646,31 @@ export function ConciergeExperience(): React.JSX.Element {
           {/* Fixed inner width so content doesn't reflow during animation */}
           <div className="flex flex-col h-full" style={{ width: 300 }}>
 
-            {/* New chat button */}
-            <div style={{ padding: "12px 12px 8px" }}>
+            {/* Rail toggle + New chat button */}
+            <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                aria-label="Toggle conversation rail"
+                onClick={() =>
+                  setRailOpen((prev) =>
+                    prev === null ? !window.matchMedia("(min-width: 1024px)").matches : !prev,
+                  )
+                }
+                style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)", flexShrink: 0 }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                }}
+              >
+                <PanelLeft size={16} />
+              </button>
               <button
                 type="button"
                 onClick={startNew}
                 style={{
-                  width: "100%",
+                  flex: 1,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
