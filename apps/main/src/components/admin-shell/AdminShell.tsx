@@ -11,11 +11,24 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Menu } from "lucide-react";
+import { Menu, Moon, Sun } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { AdminSidebar } from "./AdminSidebar";
+import { useTaTheme } from "@/lib/ta-theme/use-ta-theme";
 import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
+
+const ICON_BTN_STYLE: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 32,
+  height: 32,
+  border: "none",
+  borderRadius: 8,
+  background: "transparent",
+  cursor: "pointer",
+};
 
 export interface AdminShellProps {
   children: React.ReactNode;
@@ -33,16 +46,33 @@ export function AdminShell({
   adminRole,
 }: Readonly<AdminShellProps>): React.ReactElement {
   const [open, setOpen] = React.useState(true);
+  const [taTheme, toggleTheme] = useTaTheme();
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+    <div
+      className="flex min-h-screen flex-col"
+      style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
+    >
+      <header
+        className="flex items-center justify-between px-4 py-3"
+        style={{
+          background: "var(--ta-sidebar)",
+          borderBottom: "1px solid var(--ta-border)",
+          color: "var(--ta-text)",
+        }}
+      >
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-label={open ? "Hide sidebar" : "Show sidebar"}
-            className="rounded-md p-1.5 hover:bg-accent"
+            style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -53,11 +83,29 @@ export function AdminShell({
             <span className="sm:hidden">
               <LogoMark size={49} />
             </span>
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <span
+              className="text-xs font-semibold uppercase tracking-wide"
+              style={{ color: "var(--ta-text-mute)" }}
+            >
               Admin
             </span>
           </Link>
         </div>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+          title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+          style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+          }}
+        >
+          {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
       </header>
       <div className="flex flex-1">
         <AdminSidebar open={open} initialCollapsed={initialCollapsed} adminRole={adminRole} />

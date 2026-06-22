@@ -11,14 +11,13 @@
 // ChatExperience; this component only controls layout, agent selection, and theme.
 
 import { useCallback, useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { Moon, Plus, Sun } from "lucide-react";
+import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
-import { useThemeSlot } from "@/components/tenant-shell/theme-slot-context";
+import { useTaTheme } from "@/lib/ta-theme/use-ta-theme";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
 import { TONE_LABELS } from "@/lib/tone/constants";
@@ -27,7 +26,6 @@ import { TONE_LABELS } from "@/lib/tone/constants";
 
 type SidebarTab = "chats" | "memory" | "prefs";
 type MainTab = "conversation" | "draft";
-type TaTheme = "dark" | "light";
 
 interface TaConversation {
   id: string;
@@ -520,31 +518,10 @@ function TaPrefsPanel({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ConciergeExperience(): React.JSX.Element {
-  // Theme — persisted to localStorage; initial value respects prefers-color-scheme.
-  const [taTheme, setTaTheme] = useState<TaTheme>("dark");
-  const themeSlot = useThemeSlot();
-
-  // Init: read localStorage / media-query once on mount.
-  useEffect(() => {
-    const saved = localStorage.getItem("ta-console-theme") as TaTheme | null;
-    if (saved === "dark" || saved === "light") { setTaTheme(saved); return; }
-    if (window.matchMedia("(prefers-color-scheme: light)").matches) setTaTheme("light");
-  }, []);
-
-  // Sync: push theme to document so the whole page (TenantShell) responds.
-  useEffect(() => {
-    document.documentElement.setAttribute("data-ta-theme", taTheme);
-    document.documentElement.classList.toggle("dark", taTheme === "dark");
-    localStorage.setItem("ta-console-theme", taTheme);
-    return () => {
-      document.documentElement.removeAttribute("data-ta-theme");
-      document.documentElement.classList.remove("dark");
-    };
-  }, [taTheme]);
-
-  function toggleTheme(): void {
-    setTaTheme((t) => (t === "dark" ? "light" : "dark"));
-  }
+  // Theme — shared hook keeps TenantShell's toggle button + this instance
+  // in sync via the "ta-theme-change" custom event. The hook also applies
+  // data-ta-theme on document.documentElement so --ta-* CSS vars resolve.
+  useTaTheme();
 
   // Sidebar collapse — toggled by PanelLeft in TenantShell (or CSS default on /concierge).
   const { open } = useConversationRail();
@@ -667,27 +644,11 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  // Theme toggle button — portalled into the header slot when available,
-  // rendered inline in the top-right corner as fallback if the slot wasn't found.
-  const toggleBtn = (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-      title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-      style={{ ...ICON_BTN_STYLE, color: "var(--foreground)" }}
-    >
-      {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-    </button>
-  );
-  const themeToggle = themeSlot ? createPortal(toggleBtn, themeSlot) : toggleBtn;
-
   return (
     <div
       className="flex flex-col h-full overflow-hidden"
       style={{ background: "var(--ta-bg)", color: "var(--ta-text)" }}
     >
-      {themeToggle}
 
       {/* ── Body ────────────────────────────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
