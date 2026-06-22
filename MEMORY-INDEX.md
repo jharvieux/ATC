@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-282 — 2026-06-22 — admin console home dashboard shipped with placeholder values for price_monthly, content-safety, and hours-saved (issues #1324, #1325)
 - D-281 — 2026-06-20 — prod→staging copy is public-only with prod ACLs; auth/storage not copied; TEST DB == staging DB (grants:check gotcha)
 - D-280 — 2026-06-20 — prod Supabase on Postgres 17; deploy.yml DB-copy pins postgresql-client-17 (bump on next major)
 - D-279 — 2026-06-20 — release.yml + dependabot-update-branch use a fine-grained PAT (GH_PAT), not the GitHub App token
