@@ -15,20 +15,8 @@ import { Menu, Moon, Sun } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { AdminSidebar } from "./AdminSidebar";
-import { useTaTheme } from "@/lib/ta-theme/use-ta-theme";
+import { useTaTheme, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
-
-const ICON_BTN_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  border: "none",
-  borderRadius: 8,
-  background: "transparent",
-  cursor: "pointer",
-};
 
 export interface AdminShellProps {
   children: React.ReactNode;

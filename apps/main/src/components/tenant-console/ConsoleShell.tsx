@@ -25,20 +25,8 @@ import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { SiteHeaderMenu } from "@/components/site-header/SiteHeaderMenu";
 import { ConsoleSidebar } from "./ConsoleSidebar";
-import { useTaTheme } from "@/lib/ta-theme/use-ta-theme";
+import { useTaTheme, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import type { UserRole } from "@/lib/auth/permission-grants";
-
-const ICON_BTN_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  border: "none",
-  borderRadius: 8,
-  background: "transparent",
-  cursor: "pointer",
-};
 
 export interface ConsoleShellProps {
   children: React.ReactNode;

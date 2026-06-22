@@ -39,7 +39,8 @@ export function WorkspaceSidebar({ open, role }: WorkspaceSidebarProps): React.R
         borderRight: "1px solid var(--ta-border)",
       }}
     >
-      {/* Fixed inner width so content doesn't reflow during the open/close animation */}
+      {/* Inner width matches parent w-64 (256px) — keeps text laid out
+          during the overflow:hidden transition so content doesn't reflow */}
       <div className="flex h-full flex-col" style={{ width: 256 }}>
         <nav className="flex flex-col gap-4 overflow-y-auto" style={{ padding: "24px 12px" }}>
           {sections.map((section, i) => (

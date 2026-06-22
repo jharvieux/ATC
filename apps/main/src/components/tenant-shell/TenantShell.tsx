@@ -35,23 +35,9 @@ import {
 import { performSignout } from "@/lib/auth/perform-signout";
 import { navSectionsForRole } from "./nav-sections";
 import { ConversationRailContext } from "./conversation-rail-context";
-import { useTaTheme } from "@/lib/ta-theme/use-ta-theme";
+import { useTaTheme, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import type { UserRole } from "@/lib/auth/permission-grants";
-
-// ─── Style constants ─────────────────────────────────────────────────────────
-
-const ICON_BTN_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  border: "none",
-  borderRadius: 8,
-  background: "transparent",
-  cursor: "pointer",
-};
 
 export interface TenantShellProps {
   role: UserRole;

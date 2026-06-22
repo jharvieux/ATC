@@ -17,7 +17,7 @@ import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
-import { useTaTheme } from "@/lib/ta-theme/use-ta-theme";
+import { useTaThemeSync } from "@/lib/ta-theme/use-ta-theme";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
 import { TONE_LABELS } from "@/lib/tone/constants";
@@ -518,10 +518,10 @@ function TaPrefsPanel({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ConciergeExperience(): React.JSX.Element {
-  // Theme — shared hook keeps TenantShell's toggle button + this instance
-  // in sync via the "ta-theme-change" custom event. The hook also applies
-  // data-ta-theme on document.documentElement so --ta-* CSS vars resolve.
-  useTaTheme();
+  // Theme sync — TenantShell owns the toggle button; this component only
+  // needs to react to theme changes and ensure data-ta-theme is applied on
+  // mount so --ta-* CSS vars resolve for this subtree.
+  useTaThemeSync();
 
   // Sidebar collapse — toggled by PanelLeft in TenantShell (or CSS default on /concierge).
   const { open } = useConversationRail();
