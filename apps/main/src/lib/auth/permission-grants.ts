@@ -216,6 +216,7 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   key("imports.review", "read"),
   key("imports.review", "accept"),
   key("imports.review", "reject"),
+  key("imports.review", "retry"),
   // #1173 — CRM (Contacts, STAFF nav)
   key("crm.attribution_categories", "list"),
   key("crm.attribution_categories", "create"),

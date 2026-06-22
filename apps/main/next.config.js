@@ -114,6 +114,13 @@ const securityHeaders = [
 
 const nextConfig = {
   transpilePackages: ["@atc/shared-types"],
+  // pdf-parse wraps pdfjs-dist, which loads its worker/standard-font assets at
+  // runtime and breaks when webpack-bundled into a serverless function (it works
+  // under plain `node` locally, then throws on Vercel). Mark it external so Next
+  // loads it from node_modules in the function instead of bundling it. Without
+  // this, every document-import PDF silently failed to extract text and the row
+  // landed in parse_failed (BP34 §34.3 import pipeline + the rag-ingest PDF path).
+  serverExternalPackages: ["pdf-parse"],
   poweredByHeader: false,
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];

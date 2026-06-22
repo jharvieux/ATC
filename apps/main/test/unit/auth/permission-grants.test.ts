@@ -219,6 +219,7 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["imports.review", "read"],
   ["imports.review", "accept"],
   ["imports.review", "reject"],
+  ["imports.review", "retry"],
   // #1173 — CRM contacts (STAFF)
   ["crm.attribution_categories", "list"],
   ["crm.attribution_categories", "create"],
