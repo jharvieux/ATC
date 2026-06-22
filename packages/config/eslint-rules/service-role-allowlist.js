@@ -316,6 +316,9 @@ module.exports = [
   "/app/api/imports/review/[id]/accept/route.ts",
   "/app/api/imports/review/[id]/merge/route.ts",
   "/app/api/imports/review/[id]/reject/route.ts",
+  // §34.3 retry: reset a parse_failed row + re-emit import.queued (mirrors the
+  // sibling review routes, which manage import_queue via the service role).
+  "/app/api/imports/review/[id]/retry/route.ts",
   "/app/api/imports/source-file/route.ts",
   "/app/api/integrations/gmail/health/route.ts",
   // BP37 task system.

@@ -11,6 +11,7 @@ import { FileDropZone } from "@/components/ui/file-drop-zone";
 
 interface ImportItem {
   id: string;
+  status: "pending_review" | "parse_failed";
   import_path: "email" | "document" | "manual";
   source_ref: string;
   document_type: string | null;
@@ -62,9 +63,30 @@ export default function ImportsReviewPage() {
     void fetchItems();
   }, [fetchItems]);
 
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  // parse_failed rows can't be accepted (the accept route requires
+  // pending_review), so they're never selectable for bulk-accept.
+  const selectableIds = items.filter((i) => i.status === "pending_review").map((i) => i.id);
+
   const toggleAll = (checked: boolean) => {
-    if (checked) setSelected(new Set(items.map((i) => i.id)));
+    if (checked) setSelected(new Set(selectableIds));
     else setSelected(new Set());
+  };
+
+  const retryOne = async (id: string) => {
+    setRetryingId(id);
+    try {
+      const r = await fetch(`/api/imports/review/${id}/retry`, { method: "POST" });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        alert(`Retry failed: ${j.error ?? r.status}`);
+        return;
+      }
+      void fetchItems();
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   const toggleOne = (id: string, checked: boolean) => {
@@ -179,7 +201,7 @@ export default function ImportsReviewPage() {
                   <th className="px-4 py-3 w-8">
                     <input
                       type="checkbox"
-                      checked={selected.size === items.length && items.length > 0}
+                      checked={selectableIds.length > 0 && selected.size === selectableIds.length}
                       onChange={(e) => toggleAll(e.target.checked)}
                       aria-label="Select all"
                     />
@@ -189,6 +211,7 @@ export default function ImportsReviewPage() {
                   <th className="text-left px-4 py-3">Type</th>
                   <th className="text-left px-4 py-3">Conf.</th>
                   <th className="text-left px-4 py-3">Flags</th>
+                  <th className="text-left px-4 py-3">Status</th>
                   <th className="text-left px-4 py-3">Received</th>
                 </tr>
               </thead>
@@ -199,6 +222,7 @@ export default function ImportsReviewPage() {
                       <input
                         type="checkbox"
                         checked={selected.has(it.id)}
+                        disabled={it.status !== "pending_review"}
                         onChange={(e) => toggleOne(it.id, e.target.checked)}
                         aria-label={`Select ${it.id}`}
                       />
@@ -222,6 +246,28 @@ export default function ImportsReviewPage() {
                         "—"
                       )}
                     </td>
+                    <td className="px-4 py-3">
+                      {it.status === "parse_failed" ? (
+                        <div className="flex items-center gap-2">
+                          <span
+                            title={it.parse_failure_reason ?? undefined}
+                            className="inline-block bg-red-100 text-red-800 rounded-full px-2 py-0.5 text-xs"
+                          >
+                            Failed
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => retryOne(it.id)}
+                            disabled={retryingId === it.id}
+                            className="text-blue-600 hover:underline text-xs disabled:opacity-50"
+                          >
+                            {retryingId === it.id ? "Retrying…" : "Retry"}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 text-xs">Pending review</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">
                       {new Date(it.created_at).toLocaleString()}
                     </td>
@@ -229,8 +275,8 @@ export default function ImportsReviewPage() {
                 ))}
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
-                      No items pending review.
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
+                      No items to review.
                     </td>
                   </tr>
                 )}

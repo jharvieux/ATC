@@ -36,14 +36,19 @@ export async function GET(req: Request): Promise<Response> {
       return Response.json({ error: `invalid document_type: ${documentType}` }, { status: 400 });
     }
 
+    // Include parse_failed rows alongside pending_review: a failed parse
+    // (e.g. unextractable PDF) otherwise vanishes from every screen, leaving
+    // the submitter with no signal that their upload went nowhere. The UI
+    // badges these and offers a retry. status is selected so the client can
+    // tell the two apart.
     let query = svc
       .from("import_queue")
       .select(
-        "id, import_path, source_ref, document_type, classification_confidence, extraction_overall_confidence, raw_extracted_fields, validation_flags, parse_failure_reason, submitted_by_user_id, uploaded_file_path, created_at",
+        "id, status, import_path, source_ref, document_type, classification_confidence, extraction_overall_confidence, raw_extracted_fields, validation_flags, parse_failure_reason, submitted_by_user_id, uploaded_file_path, created_at",
         { count: "exact" },
       )
       .eq("tenant_id", ctx.tenant_id)
-      .eq("status", "pending_review")
+      .in("status", ["pending_review", "parse_failed"])
       .order("created_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
