@@ -30,6 +30,10 @@ const OWNER_ONLY: readonly UserRole[] = ["tenant_owner"];
 
 export const CONSOLE_NAV_SECTIONS: readonly ConsoleNavSection[] = [
   {
+    heading: "Home",
+    items: [{ href: "/settings", label: "Home" }],
+  },
+  {
     heading: "Account",
     items: [
       { href: "/settings/billing", label: "Billing & Subscription" },
