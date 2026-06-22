@@ -29,6 +29,12 @@ function applyDocTheme(theme: TaTheme): void {
   document.documentElement.classList.toggle("dark", theme === "dark");
 }
 
+function readInitialTheme(): TaTheme {
+  const saved = localStorage.getItem(STORAGE_KEY) as TaTheme | null;
+  if (saved === "dark" || saved === "light") return saved;
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
 // ─── Hooks ───────────────────────────────────────────────────────────────────
 
 /**
@@ -44,13 +50,7 @@ export function useTaTheme(): [TaTheme, () => void] {
   const [theme, setTheme] = useState<TaTheme>("dark");
 
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY) as TaTheme | null;
-    const initial: TaTheme =
-      saved === "dark" || saved === "light"
-        ? saved
-        : window.matchMedia("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark";
+    const initial = readInitialTheme();
     setTheme(initial);
     applyDocTheme(initial);
 
@@ -83,14 +83,7 @@ export function useTaTheme(): [TaTheme, () => void] {
  */
 export function useTaThemeSync(): void {
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY) as TaTheme | null;
-    const initial: TaTheme =
-      saved === "dark" || saved === "light"
-        ? saved
-        : window.matchMedia("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark";
-    applyDocTheme(initial);
+    applyDocTheme(readInitialTheme());
 
     const onExternalChange = (e: Event): void => {
       applyDocTheme((e as CustomEvent<TaTheme>).detail as TaTheme);

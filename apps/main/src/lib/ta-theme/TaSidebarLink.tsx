@@ -24,7 +24,6 @@ export function TaSidebarLink({
   const r = variant === "workspace" ? 7 : 6;
   const p = variant === "workspace" ? "7px 10px" : "6px 8px";
   const fs = variant === "workspace" ? 13 : 14;
-  const fw = variant === "workspace" ? 600 : 500;
 
   const style: React.CSSProperties = active
     ? {
@@ -32,7 +31,7 @@ export function TaSidebarLink({
         borderRadius: r,
         padding: p,
         fontSize: fs,
-        fontWeight: fw,
+        fontWeight: variant === "workspace" ? 600 : 500,
         background: "var(--ta-accent-soft)",
         color: "var(--ta-accent)",
         textDecoration: "none",
