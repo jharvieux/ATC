@@ -51,7 +51,6 @@ interface DashboardPayload {
     price_monthly: number | null;
     billing_period: string | null;
     status: string;
-    next_billing_date: string | null;
   };
 }
 
@@ -349,7 +348,6 @@ export async function GET(req: Request): Promise<Response> {
       price_monthly: priceMonthly,
       billing_period: billingPeriod,
       status: tenantStatus,
-      next_billing_date: firstOfNextMonthISO(),
     },
   };
 

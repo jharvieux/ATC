@@ -52,7 +52,6 @@ interface DashboardData {
     price_monthly: number | null;
     billing_period: string | null;
     status: string;
-    next_billing_date: string | null;
   };
 }
 
