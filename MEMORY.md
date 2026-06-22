@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-282 — 2026-06-22 — Admin console home dashboard: placeholders for price_monthly, content-safety, and hours-saved
+
+**Decision**: Shipped admin console home dashboard (PR #1323) with three known placeholder values: `price_monthly: null` (no pricing columns on `tier_definitions` yet), "Content safety" health item hardcoded `ok: true` (no safety-config table), and `hoursSaved` computed as `messages * 2 / 60` (no empirical basis). All three tracked as issues #1324 and #1325.
+
+**Why**: The spec required these UI elements and the backend tables/columns don't exist yet. Shipping with safe defaults is better than blocking on schema work; the TODOs and issues ensure they won't be forgotten.
+
+**Rejected**: Removing the stat cards/health items entirely — they are part of the spec and the UI skeleton is correct; only the data source is missing.
+
+**Related**: PR #1323, issues #1324, #1325.
+
+---
+
 ## D-281 — 2026-06-20 — Prod→staging DB copy is public-schema-only with prod ACLs; auth/storage not copied
 
 The `deploy.yml` "Copy Prod DB to Staging" job (PR #1317) was redesigned to actually work on Supabase. It had never succeeded. The working design, validated end-to-end against the real prod+staging DBs:
