@@ -4,6 +4,21 @@ Newest entries on top.
 
 ---
 
+## D-283 — 2026-06-22 — Document-import PDFs need pdf-parse in serverExternalPackages; failed imports must be visible
+
+**Decision.** Document-path imports (BP34 §34.3) silently failed in production — every uploaded PDF landed in `import_queue.status='parse_failed'` (reason `no_text_available`) and vanished from every screen. Two root causes, both fixed in PR #1328:
+
+1. **`pdf-parse` (wraps `pdfjs-dist`) was webpack-bundled into the serverless function and threw at runtime.** Fix: add `serverExternalPackages: ["pdf-parse"]` to `apps/main/next.config.js`. The lib + the exact PDF parse fine under plain `node` locally (8.4K chars extracted); only the bundled Vercel function fails. This is the canonical pdfjs-on-Vercel failure. **Any future native/worker-based parser added to a route or Inngest fn must be added to `serverExternalPackages` too** — issue #1327 tracks auditing `tesseract.js`/`officeparser`/`mammoth`/`exceljs`.
+2. **`parse_failed` rows were invisible** — the review screen (`/api/imports/review`) only listed `pending_review`, and `/api/imports/upload` returns `202 queued` (async failure never surfaced). Fix: the review API now also returns `parse_failed` rows; the imports page badges them "Failed" + offers Retry. New `POST /api/imports/review/[id]/retry` (CAS-guarded reset to `pending_classification` + re-emit `import.queued`).
+
+**Why.** The feature had a 0% success rate in prod and no user feedback path — a customer (Lisa) lost a real NCL booking import twice with no signal.
+
+**Rejected.** OCR for the PDF (not needed — the file had a clean text layer; OCR for genuinely scanned PDFs stays an unshipped capability). Adding all parsers to `serverExternalPackages` at once (unverified scope — only pdf-parse had a confirmed failure; rest deferred to #1327).
+
+**Related artifacts.** PR #1328; issue #1327; `apps/main/next.config.js`; `apps/main/src/app/api/imports/review/[id]/retry/route.ts`; `apps/main/src/inngest/import-pipeline.ts` (resolveText/markParseFailed). **Not yet deployed to prod as of this entry — fix only takes effect on prod deploy (operator-gated); Lisa's 2 stuck rows await retry-after-deploy.**
+
+---
+
 ## D-282 — 2026-06-22 — Admin console home dashboard: placeholders for price_monthly, content-safety, and hours-saved
 
 **Decision**: Shipped admin console home dashboard (PR #1323) with three known placeholder values: `price_monthly: null` (no pricing columns on `tier_definitions` yet), "Content safety" health item hardcoded `ok: true` (no safety-config table), and `hoursSaved` computed as `messages * 2 / 60` (no empirical basis). All three tracked as issues #1324 and #1325.

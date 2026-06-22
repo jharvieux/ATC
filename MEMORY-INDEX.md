@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-283 — 2026-06-22 — document-import PDFs silently failed in prod: pdf-parse must be in serverExternalPackages (#1327 audits other parsers); parse_failed rows now visible + retryable (PR #1328); not yet prod-deployed
 - D-282 — 2026-06-22 — admin console home dashboard shipped with placeholder values for price_monthly, content-safety, and hours-saved (issues #1324, #1325)
 - D-281 — 2026-06-20 — prod→staging copy is public-only with prod ACLs; auth/storage not copied; TEST DB == staging DB (grants:check gotcha)
 - D-280 — 2026-06-20 — prod Supabase on Postgres 17; deploy.yml DB-copy pins postgresql-client-17 (bump on next major)
