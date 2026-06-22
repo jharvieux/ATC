@@ -295,11 +295,10 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   // ── Plan ─────────────────────────────────────────────────────────────────
-  // tier_definitions is still a stub (§14 pricing columns not yet added), so
-  // price_monthly stays null until real pricing lands — the UI omits the price.
+  // tier_definitions is still a stub (§14 pricing columns not yet added).
+  // TODO(#1324): wire price_monthly once real pricing columns land.
   let tierCode: string | null = null;
   let tierName: string | null = null;
-  const priceMonthly: number | null = null;
   if (tenantTierId) {
     try {
       const { data, error } = await db
@@ -345,7 +344,7 @@ export async function GET(req: Request): Promise<Response> {
     plan: {
       tier_code: tierCode,
       tier_name: tierName,
-      price_monthly: priceMonthly,
+      price_monthly: null, // TODO(#1324): real value once pricing columns exist
       billing_period: billingPeriod,
       status: tenantStatus,
     },
