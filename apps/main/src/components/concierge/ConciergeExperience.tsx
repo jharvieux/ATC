@@ -40,23 +40,6 @@ interface ConvMessages {
   messages: ChatMessage[];
 }
 
-// ─── Shared mini button style factory ───────────────────────────────────────
-
-const ICON_BTN_STYLE: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  borderRadius: 8,
-  border: "none",
-  background: "transparent",
-  color: "var(--ta-text-soft)",
-  cursor: "pointer",
-  transition: "background 0.12s",
-  flexShrink: 0,
-};
-
 // ─── Sidebar sub-panels ──────────────────────────────────────────────────────
 
 function ConvGroup({
