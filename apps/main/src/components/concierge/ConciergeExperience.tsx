@@ -11,13 +11,13 @@
 // ChatExperience; this component only controls layout, agent selection, and theme.
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { PanelLeft, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatExperience } from "@/components/chat/ChatExperience";
 import type { ChatMessage } from "@/components/chat/MessageBubble";
 import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { useConversationRail } from "@/components/tenant-shell/conversation-rail-context";
-import { useTaThemeSync } from "@/lib/ta-theme/use-ta-theme";
+import { useTaThemeSync, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import { AgentPickerPopover } from "./AgentPickerPopover";
 import { InlineDraftView } from "./InlineDraftView";
 import { TONE_LABELS } from "@/lib/tone/constants";
@@ -506,8 +506,12 @@ export function ConciergeExperience(): React.JSX.Element {
   // mount so --ta-* CSS vars resolve for this subtree.
   useTaThemeSync();
 
-  // Sidebar collapse — toggled by PanelLeft in TenantShell (or CSS default on /concierge).
-  const { open } = useConversationRail();
+  // Keep hook call to satisfy the context contract; ignore the external `open` value —
+  // the rail toggle now lives inside this component for self-contained control.
+  useConversationRail();
+
+  // Local rail open/close. Tri-state: null = CSS default (closed below lg, open on lg+).
+  const [railOpen, setRailOpen] = useState<boolean | null>(null);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chats");
   const [mainTab, setMainTab] = useState<MainTab>("conversation");
@@ -595,7 +599,7 @@ export function ConciergeExperience(): React.JSX.Element {
 
   // ─── Layout helpers ───────────────────────────────────────────────────────
 
-  const sidebarWidth = open === null ? "w-0 lg:w-[300px]" : open ? "w-[300px]" : "w-0";
+  const sidebarWidth = railOpen === null ? "w-0 lg:w-[300px]" : railOpen ? "w-[300px]" : "w-0";
 
   const tabBtn = (active: boolean): React.CSSProperties => ({
     padding: "9px 14px",
@@ -647,13 +651,31 @@ export function ConciergeExperience(): React.JSX.Element {
           {/* Fixed inner width so content doesn't reflow during animation */}
           <div className="flex flex-col h-full" style={{ width: 300 }}>
 
-            {/* New chat button */}
-            <div style={{ padding: "12px 12px 8px" }}>
+            {/* Rail toggle + New chat button */}
+            <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                aria-label="Toggle conversation rail"
+                onClick={() =>
+                  setRailOpen((prev) =>
+                    prev === null ? !window.matchMedia("(min-width: 1024px)").matches : !prev,
+                  )
+                }
+                style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)", flexShrink: 0 }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                }}
+              >
+                <PanelLeft size={16} />
+              </button>
               <button
                 type="button"
                 onClick={startNew}
                 style={{
-                  width: "100%",
+                  flex: 1,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",

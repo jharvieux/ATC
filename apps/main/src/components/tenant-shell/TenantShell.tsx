@@ -174,9 +174,7 @@ export function TenantShell({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                {/* Staff nav is in the WorkspaceSidebar — only show profile + sign out.
-                    Viewers keep the full nav in the dropdown since they have no sidebar. */}
-                {!isStaff && sections.map((section, i) => (
+                {sections.map((section, i) => (
                   <React.Fragment key={section.heading ?? `home-${i}`}>
                     {i > 0 && <DropdownMenuSeparator />}
                     {section.heading && (
@@ -189,7 +187,7 @@ export function TenantShell({
                     ))}
                   </React.Fragment>
                 ))}
-                {!isStaff && <DropdownMenuSeparator />}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
                   <Link href="/settings/profile">View profile</Link>
                 </DropdownMenuItem>
@@ -203,7 +201,15 @@ export function TenantShell({
           </div>
         </header>
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {isStaff && <WorkspaceSidebar open={workspaceOpen} role={role} />}
+          {isStaff && (
+            <WorkspaceSidebar
+              open={workspaceOpen}
+              role={role}
+              onNavigate={() => {
+                if (!window.matchMedia("(min-width: 1024px)").matches) setWorkspaceOpen(false);
+              }}
+            />
+          )}
           <main className="min-h-0 flex-1 overflow-x-hidden">{children}</main>
         </div>
       </div>

@@ -22,9 +22,10 @@ import type { UserRole } from "@/lib/auth/permission-grants";
 export interface WorkspaceSidebarProps {
   open: boolean | null;
   role: UserRole;
+  onNavigate?: () => void;
 }
 
-export function WorkspaceSidebar({ open, role }: WorkspaceSidebarProps): React.ReactElement {
+export function WorkspaceSidebar({ open, role, onNavigate }: WorkspaceSidebarProps): React.ReactElement {
   const pathname = usePathname();
   const sections = navSectionsForRole(role);
 
@@ -49,6 +50,7 @@ export function WorkspaceSidebar({ open, role }: WorkspaceSidebarProps): React.R
               heading={section.heading}
               items={section.items}
               currentPath={pathname}
+              onNavigate={onNavigate}
             />
           ))}
         </nav>
@@ -61,10 +63,12 @@ function SidebarSection({
   heading,
   items,
   currentPath,
+  onNavigate,
 }: {
   heading: string | null;
   items: readonly { href: string; label: string }[];
   currentPath: string | null;
+  onNavigate?: () => void;
 }): React.ReactElement {
   return (
     <div>
@@ -89,7 +93,7 @@ function SidebarSection({
             (item.href !== "/" && currentPath !== null && currentPath.startsWith(item.href + "/"));
           return (
             <li key={item.href}>
-              <SidebarLink href={item.href} label={item.label} active={active} />
+              <SidebarLink href={item.href} label={item.label} active={active} onNavigate={onNavigate} />
             </li>
           );
         })}
@@ -102,10 +106,12 @@ function SidebarLink({
   href,
   label,
   active,
+  onNavigate,
 }: {
   href: string;
   label: string;
   active: boolean;
+  onNavigate?: () => void;
 }): React.ReactElement {
   const [hovered, setHovered] = React.useState(false);
 
@@ -139,6 +145,7 @@ function SidebarLink({
       style={style}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onClick={() => onNavigate?.()}
     >
       {label}
     </Link>
