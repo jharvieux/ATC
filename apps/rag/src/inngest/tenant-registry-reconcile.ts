@@ -132,15 +132,24 @@ export const tenantRegistryReconcile = inngest.createFunction(
         shadow.source_revision !== tenant.source_revision;
 
       if (drifted) {
-        await safeAwait(db.from("tenant_registry_shadow").update({
+        // Chain .select so we can tell whether a row was actually matched.
+        // The shadow snapshot above can race a concurrent delete (tenant
+        // removed from the shadow between the read and this write), in which
+        // case the update no-ops and returns zero rows. We tolerate that race
+        // — it self-corrects on the next nightly run, so forcing an Inngest
+        // retry would be noise — but the returned `updated` count must reflect
+        // real corrections, so only increment when a row was actually matched.
+        const corrected = await safeAwait(db.from("tenant_registry_shadow").update({
           status: tenant.status,
           tenant_type: tenant.tenant_type,
           display_name: tenant.display_name,
           source_revision: tenant.source_revision,
           last_reconcile_sync_at: new Date().toISOString(),
-        }).eq("tenant_id", tenant.id), "tenant_registry_shadow.update");
-        console.warn("[reconcile] corrected drifted tenant", { tenant_id: tenant.id });
-        updated++;
+        }).eq("tenant_id", tenant.id).select("tenant_id"), "tenant_registry_shadow.update");
+        if (corrected && corrected.length > 0) {
+          console.warn("[reconcile] corrected drifted tenant", { tenant_id: tenant.id });
+          updated++;
+        }
       } else {
         // No drift — just update last_reconcile_sync_at
         await safeAwait(db.from("tenant_registry_shadow").update({
