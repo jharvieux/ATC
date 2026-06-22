@@ -13,10 +13,10 @@
 // Color classes are intentionally absent — inline styles with --ta-* vars only.
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { navSectionsForRole } from "./nav-sections";
+import { TaSidebarLink } from "@/lib/ta-theme/TaSidebarLink";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 export interface WorkspaceSidebarProps {
@@ -93,61 +93,11 @@ function SidebarSection({
             (item.href !== "/" && currentPath !== null && currentPath.startsWith(item.href + "/"));
           return (
             <li key={item.href}>
-              <SidebarLink href={item.href} label={item.label} active={active} onNavigate={onNavigate} />
+              <TaSidebarLink href={item.href} label={item.label} active={active} variant="workspace" onNavigate={onNavigate} />
             </li>
           );
         })}
       </ul>
     </div>
-  );
-}
-
-function SidebarLink({
-  href,
-  label,
-  active,
-  onNavigate,
-}: {
-  href: string;
-  label: string;
-  active: boolean;
-  onNavigate?: (() => void) | undefined;
-}): React.ReactElement {
-  const [hovered, setHovered] = React.useState(false);
-
-  const style: React.CSSProperties = active
-    ? {
-        display: "block",
-        borderRadius: 7,
-        padding: "7px 10px",
-        fontSize: 13,
-        fontWeight: 600,
-        background: "var(--ta-accent-soft)",
-        color: "var(--ta-accent)",
-        textDecoration: "none",
-        transition: "background 0.12s, color 0.12s",
-      }
-    : {
-        display: "block",
-        borderRadius: 7,
-        padding: "7px 10px",
-        fontSize: 13,
-        fontWeight: 400,
-        background: hovered ? "var(--ta-hover)" : "transparent",
-        color: hovered ? "var(--ta-text)" : "var(--ta-text-soft)",
-        textDecoration: "none",
-        transition: "background 0.12s, color 0.12s",
-      };
-
-  return (
-    <Link
-      href={href}
-      style={style}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={() => onNavigate?.()}
-    >
-      {label}
-    </Link>
   );
 }

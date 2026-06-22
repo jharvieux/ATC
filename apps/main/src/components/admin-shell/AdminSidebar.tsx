@@ -11,8 +11,8 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { TaSidebarLink } from "@/lib/ta-theme/TaSidebarLink";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { filterNavForRole, type AdminNavSection } from "./sidebar-sections";
@@ -137,59 +137,12 @@ function Section({
             const active = isActiveLink(currentPath, item.href);
             return (
               <li key={item.href}>
-                <AdminSidebarLink href={item.href} label={item.label} active={active} />
+                <TaSidebarLink href={item.href} label={item.label} active={active} />
               </li>
             );
           })}
         </ul>
       )}
     </div>
-  );
-}
-
-function AdminSidebarLink({
-  href,
-  label,
-  active,
-}: {
-  href: string;
-  label: string;
-  active: boolean;
-}): React.ReactElement {
-  const [hovered, setHovered] = React.useState(false);
-
-  const style: React.CSSProperties = active
-    ? {
-        display: "block",
-        borderRadius: 6,
-        padding: "6px 8px",
-        fontSize: 14,
-        fontWeight: 500,
-        background: "var(--ta-accent-soft)",
-        color: "var(--ta-accent)",
-        textDecoration: "none",
-        transition: "background 0.12s, color 0.12s",
-      }
-    : {
-        display: "block",
-        borderRadius: 6,
-        padding: "6px 8px",
-        fontSize: 14,
-        fontWeight: 400,
-        background: hovered ? "var(--ta-hover)" : "transparent",
-        color: hovered ? "var(--ta-text)" : "var(--ta-text-soft)",
-        textDecoration: "none",
-        transition: "background 0.12s, color 0.12s",
-      };
-
-  return (
-    <Link
-      href={href}
-      style={style}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {label}
-    </Link>
   );
 }
