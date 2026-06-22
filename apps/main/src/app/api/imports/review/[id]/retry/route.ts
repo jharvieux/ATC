@@ -10,7 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { inngest } from "@/inngest/client";
 import { writeAuditLog } from "@/lib/audit/write";
-import { safeAwaitRowCount } from "@/lib/db/safe-mutation";
+import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -53,8 +53,14 @@ export async function POST(_req: Request, props: { params: Promise<{ id: string 
         "import_queue.retry",
         1,
       );
-    } catch {
-      return Response.json({ error: "retry_conflict" }, { status: 409 });
+    } catch (err) {
+      // Only the CAS zero-row case is a conflict (already retried / lost the
+      // race). A real DB/RLS error must surface as a 5xx, not be masked as 409.
+      if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+        return Response.json({ error: "retry_conflict" }, { status: 409 });
+      }
+      if (err instanceof SupabaseMutationError) return dbErrorResponse(err.pgError);
+      throw err;
     }
 
     await inngest.send({
