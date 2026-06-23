@@ -9,6 +9,10 @@
 -- abuse-revenue numbers only and keeps the code constant as a seeded fallback.
 --
 -- Money values are integer cents. Annual is the full annual price (not /12).
+-- Fully idempotent (re-runnable) per the ledger-free psql-loop model (D-229):
+-- column adds use IF NOT EXISTS, the seed UPDATEs only touch still-default rows
+-- (so a re-apply never clobbers operator-edited prices), CREATE TABLE uses
+-- IF NOT EXISTS, and the ladder seed is ON CONFLICT DO NOTHING.
 
 -- ---------------------------------------------------------------------------
 -- 1. Per-tier base prices on tier_definitions (already RLS-enabled-zero-policy,
@@ -17,28 +21,18 @@
 -- ---------------------------------------------------------------------------
 
 ALTER TABLE public.tier_definitions
-  ADD COLUMN IF NOT EXISTS base_price_monthly_cents INTEGER,
-  ADD COLUMN IF NOT EXISTS base_price_annual_cents  INTEGER;
+  ADD COLUMN IF NOT EXISTS base_price_monthly_cents INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS base_price_annual_cents  INTEGER NOT NULL DEFAULT 0;
 
--- Seed from §3.3 (matches TIER_BASE_PRICE_CENTS as of 2026-06-22).
-UPDATE public.tier_definitions SET base_price_monthly_cents =  1900, base_price_annual_cents =  19000 WHERE code = 'byo_research';
-UPDATE public.tier_definitions SET base_price_monthly_cents =  5900, base_price_annual_cents =  59000 WHERE code = 'byo_professional';
-UPDATE public.tier_definitions SET base_price_monthly_cents =  9900, base_price_annual_cents =  99000 WHERE code = 'byo_agency';
-UPDATE public.tier_definitions SET base_price_monthly_cents =  4900, base_price_annual_cents =  49000 WHERE code = 'sub_starter';
-UPDATE public.tier_definitions SET base_price_monthly_cents = 14900, base_price_annual_cents = 149000 WHERE code = 'sub_pro';
-UPDATE public.tier_definitions SET base_price_monthly_cents = 24900, base_price_annual_cents = 249000 WHERE code = 'sub_agency';
-
--- Backstop any future tier rows that miss a seed, then lock NOT NULL + DEFAULT 0
--- (mirrors 20260625000004's belt-and-suspenders close).
-UPDATE public.tier_definitions SET
-  base_price_monthly_cents = COALESCE(base_price_monthly_cents, 0),
-  base_price_annual_cents  = COALESCE(base_price_annual_cents, 0);
-
-ALTER TABLE public.tier_definitions
-  ALTER COLUMN base_price_monthly_cents SET NOT NULL,
-  ALTER COLUMN base_price_annual_cents  SET NOT NULL,
-  ALTER COLUMN base_price_monthly_cents SET DEFAULT 0,
-  ALTER COLUMN base_price_annual_cents  SET DEFAULT 0;
+-- Seed from §3.3 (matches TIER_BASE_PRICE_CENTS as of 2026-06-22). The
+-- `= 0` guard makes this re-runnable: once seeded (or operator-edited to a
+-- non-zero value) a re-apply is a no-op and never resets a changed price.
+UPDATE public.tier_definitions SET base_price_monthly_cents =  1900, base_price_annual_cents =  19000 WHERE code = 'byo_research'     AND base_price_monthly_cents = 0;
+UPDATE public.tier_definitions SET base_price_monthly_cents =  5900, base_price_annual_cents =  59000 WHERE code = 'byo_professional' AND base_price_monthly_cents = 0;
+UPDATE public.tier_definitions SET base_price_monthly_cents =  9900, base_price_annual_cents =  99000 WHERE code = 'byo_agency'       AND base_price_monthly_cents = 0;
+UPDATE public.tier_definitions SET base_price_monthly_cents =  4900, base_price_annual_cents =  49000 WHERE code = 'sub_starter'      AND base_price_monthly_cents = 0;
+UPDATE public.tier_definitions SET base_price_monthly_cents = 14900, base_price_annual_cents = 149000 WHERE code = 'sub_pro'          AND base_price_monthly_cents = 0;
+UPDATE public.tier_definitions SET base_price_monthly_cents = 24900, base_price_annual_cents = 249000 WHERE code = 'sub_agency'       AND base_price_monthly_cents = 0;
 
 -- ---------------------------------------------------------------------------
 -- 2. Global agency seat ladder (was SEAT_LADDER). Applies to agency tiers and
@@ -48,7 +42,7 @@ ALTER TABLE public.tier_definitions
 --    reads via the service-role client, added to PLATFORM_READABLE_TABLES.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE public.pricing_seat_ladder (
+CREATE TABLE IF NOT EXISTS public.pricing_seat_ladder (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   -- Inclusive upper seat number for this band. The final (open-ended) band
   -- uses the INT4 max sentinel 2147483647 = "and up".
@@ -67,10 +61,12 @@ COMMENT ON TABLE public.pricing_seat_ladder IS
 
 -- Seed from SEAT_LADDER (lib/abuse/revenue.ts as of 2026-06-22):
 --   seats 2-4 → $59/mo, seats 5-10 → $49/mo, seats 11+ → $39/mo.
+-- ON CONFLICT (sort_order) keeps the re-apply a no-op without clobbering edits.
 INSERT INTO public.pricing_seat_ladder (up_to_seat, monthly_cents, annual_cents, sort_order) VALUES
   (4,          5900, 59000, 1),
   (10,         4900, 49000, 2),
-  (2147483647, 3900, 39000, 3);
+  (2147483647, 3900, 39000, 3)
+ON CONFLICT (sort_order) DO NOTHING;
 
 ALTER TABLE public.pricing_seat_ladder ENABLE ROW LEVEL SECURITY;
 -- No policy by design: default-deny for anon/authenticated. service_role has
@@ -81,6 +77,6 @@ ALTER TABLE public.pricing_seat_ladder ENABLE ROW LEVEL SECURITY;
 GRANT SELECT ON public.pricing_seat_ladder TO service_role;
 GRANT SELECT ON public.pricing_seat_ladder TO authenticated;
 GRANT SELECT ON public.pricing_seat_ladder TO anon;
--- UPDATE/INSERT for the platform-admin pricing editor (Phase 3) runs as
+-- INSERT/UPDATE/DELETE for the platform-admin pricing editor (Phase 3) runs as
 -- service_role; grant write now so the Phase 3 route needs no grant migration.
 GRANT INSERT, UPDATE, DELETE ON public.pricing_seat_ladder TO service_role;
