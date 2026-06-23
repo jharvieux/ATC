@@ -18,6 +18,7 @@ import {
   createMiddlewareClient,
   clearAuthCookies,
   isInvalidSessionError,
+  AUTH_TOKEN_COOKIE_RE,
 } from "@/lib/auth/ssr-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
@@ -181,7 +182,7 @@ function isAuthFlowPath(pathname: string): boolean {
 
 function hasSupabaseAuthCookie(req: NextRequest): boolean {
   for (const c of req.cookies.getAll()) {
-    if (/^sb-.+-auth-token(\.\d+)?$/.test(c.name)) return true;
+    if (AUTH_TOKEN_COOKIE_RE.test(c.name)) return true;
   }
   return false;
 }

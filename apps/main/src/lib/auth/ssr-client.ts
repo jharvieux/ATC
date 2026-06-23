@@ -166,7 +166,12 @@ function withCookieDomain(options: CookieOptions, domain: string | undefined): C
   return { ...options, domain };
 }
 
-const AUTH_TOKEN_COOKIE_RE = /^sb-.+-auth-token(\.\d+)?$/;
+// Matches Supabase's auth-token cookie and its chunked variants
+// (sb-<ref>-auth-token, sb-<ref>-auth-token.0, …). Exported so the self-heal
+// GATE (hasSupabaseAuthCookie in proxy.ts) and the self-heal ACTION
+// (clearAuthCookies) share one definition — if they diverged, the gate could
+// fire while the clear misses the cookie, leaving a stale token in place.
+export const AUTH_TOKEN_COOKIE_RE = /^sb-.+-auth-token(\.\d+)?$/;
 
 // §17.x self-heal (#1361) — distinguish a DEFINITIVELY invalid session (the
 // auth server returned a 4xx: bad/expired/rotated refresh or access token)

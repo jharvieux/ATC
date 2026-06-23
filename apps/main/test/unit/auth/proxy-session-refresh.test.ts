@@ -214,4 +214,16 @@ describe("proxy() invalid-session self-heal", () => {
     expect(res.headers.get("location")).toBeNull();
     expect(mocks.applyRefreshedSession).toHaveBeenCalledTimes(1);
   });
+
+  it("does NOT heal on /api/auth/* even with a dead session cookie (PKCE exemption)", async () => {
+    // getUser is skipped entirely for /api/auth/*, so the heal can never fire
+    // there — these routes own their own session/PKCE state. Pin it so a
+    // refactor of the exemption can't silently start clobbering the cookie
+    // mid-callback.
+    invalidSession();
+    const res = await proxy(req("ai-travelconcierge.com", "/api/auth/callback", { cookie: COOKIE }));
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.cookies.get("sb-abc-auth-token")?.maxAge).not.toBe(0);
+    expect(mocks.getUser).not.toHaveBeenCalled();
+  });
 });
