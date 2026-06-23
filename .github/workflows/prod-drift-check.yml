@@ -1,0 +1,101 @@
+name: prod-drift-check
+
+# Nightly read-only check that PRODUCTION's live table GRANTs + RLS match the
+# committed snapshots (db/grants-snapshot-*.sql, db/rls-snapshot-*.sql). Catches
+# out-of-band / manual changes made directly in prod — the purpose formerly
+# served by the pre-migration prod grants gate in deploy.yml, which was removed
+# because it false-failed every new-table release (it compared prod BEFORE the
+# release's own migrations applied).
+#
+# Decoupled from releases AND from STAGING_PIPELINE_ENABLED, so it runs even
+# while the staging→prod pipeline is off and prod deploys are manual. It also
+# acts as a backstop that flags "prod is missing a migration someone forgot to
+# apply" (e.g. a new table present in the snapshot but absent in prod). The prod
+# migration-apply path itself is tracked in #1349.
+#
+# Failure modes:
+#   • Install fails / secrets missing → red run, no issue (the drift steps are
+#     skipped, so the issue conditional stays false).
+#   • Drift found → red run AND a `prod-drift` issue (deduped — one open at a time).
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 8am UTC, before working hours (after nightly tests)
+  workflow_dispatch: # manual trigger
+
+# The default workflow token is read-only in this repo; the drift-issue step
+# needs issues:write to open/comment the prod-drift issue.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  prod-drift:
+    name: Prod grants + RLS drift
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
+      SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Read-only diffs of live prod grants/RLS vs the committed snapshots.
+      # grants:check runs regardless of the RLS outcome so the issue reports both.
+      - name: Check RLS drift vs prod
+        id: rls
+        run: pnpm rls:check
+
+      - name: Check grants drift vs prod
+        id: grants
+        if: always()
+        run: pnpm grants:check
+
+      - name: Open GitHub issue on prod drift
+        if: failure() && (steps.rls.outcome == 'failure' || steps.grants.outcome == 'failure')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RLS_OUTCOME: ${{ steps.rls.outcome }}
+          GRANTS_OUTCOME: ${{ steps.grants.outcome }}
+        run: |
+          # Dedupe: only one open prod-drift issue at a time — comment instead of
+          # spawning a new issue every night while the drift persists.
+          existing=$(gh issue list --state open --label prod-drift --json number --jq '.[0].number')
+          summary="RLS: ${RLS_OUTCOME}, grants: ${GRANTS_OUTCOME} (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Prod drift still present on $(date -u +%Y-%m-%dT%H:%M:%SZ). ${summary}"
+          else
+            gh issue create \
+              --title "Prod schema drift detected (grants/RLS vs committed snapshot)" \
+              --label "prod-drift" \
+              --body "$(cat <<BODY
+          ## Production schema drift
+
+          The nightly prod-drift check found that prod's live GRANTs and/or RLS no longer match the committed snapshots.
+
+          ${summary}
+
+          **Likely causes**
+          - An out-of-band/manual grant or RLS change was made directly in prod.
+          - A migration is committed + in the snapshot but has **not been applied to prod** (the prod migration-apply path is tracked in #1349).
+
+          **How to investigate (read-only)**
+          \`\`\`
+          SUPABASE_DB_URL=<prod> SUPABASE_RAG_DB_URL=<rag-prod> pnpm rls:check
+          SUPABASE_DB_URL=<prod> SUPABASE_RAG_DB_URL=<rag-prod> pnpm grants:check
+          \`\`\`
+          The diff output names the exact tables/grants. Reconcile by applying the pending migration to prod (ledger-correct: \`supabase db push\`, never raw psql) or by correcting the out-of-band change.
+          BODY
+          )"
+          fi

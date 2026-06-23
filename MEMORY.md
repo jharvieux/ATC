@@ -4,6 +4,32 @@ Newest entries on top.
 
 ---
 
+## D-289 — 2026-06-23 — Pipeline drift-gate fix (PR #1350): grants:check vs TEST on PR+release, prod-drift → nightly; retires the pre-migration PROD gate (extends D-259, supersedes the PROD bits of D-258/D-259)
+
+**Decision.** The `release/*` grants drift gate compared **PROD** *before* the release's own migrations applied — the gate lives in the `rls-snapshot-diff` job, and `db-copy → deploy-staging → deploy-production` (where `supabase db push` applies prod migrations) all `needs` it, so the gate is upstream of the migration apply. Result: it false-failed **every** new-table release. This is what blocked the pricing prod deploy (see [[D-288]]). Caught because the operator (jharvieux) challenged the "it's by design" framing — it is a genuine ordering bug, latent in the automated path (off via `STAGING_PIPELINE_ENABLED=false`) and active on every `release/*` push.
+
+**Fix (PR #1350).** `deploy.yml`: grants:check now runs vs the **TEST DB** on PR **and** `release/*` (mirrors the RLS check, which already did); removed the pre-migration PROD grants gate; the dev-push grants warn also moved to TEST. New `.github/workflows/prod-drift-check.yml`: nightly (+ manual) **read-only** diff of prod GRANTs + RLS vs the committed snapshots — the real home for out-of-band prod-drift detection, **decoupled from releases AND `STAGING_PIPELINE_ENABLED`**; opens a deduped `prod-drift` issue (needs `issues: write`). Mirrors `contracts-canary.yml`.
+
+**Topology update (supersedes the PROD bits of [[D-258]]/[[D-259]]).** All grants:check/rls:check gate paths in `deploy.yml` now target the **TEST DB**; `db/grants-snapshot-*.sql` + `db/rls-snapshot-*.sql` are regenerated from the TEST DB (already true for the snapshot per D-281). Prod is verified by the **nightly** job, not the release gate. D-259 already moved *PR-time* grants to test; this extends it to release/* + dev-push and removes the prod gate entirely.
+
+**Why.** A pre-migration prod gate is structurally incompatible with same-release schema additions. The migration-built test DB still catches the #544 "table shipped without its grant" class; out-of-band prod drift (the prod gate's only unique value) is meaningless pre-migration and now lives in the nightly check.
+
+**Rejected.** Warn-only prod gate (noise on every new-table release → alert fatigue); checking test at release time as a *separate* step (redundant with the PR gate); a `${{ steps.*.outcome }}` interpolation inside the issue `run:` block (moved to env vars — injection-shaped). **NOT in scope:** automating prod migration-apply (still manual + approval) — tracked in **#1349**.
+
+**Related.** PR #1350. Also gitignored `.claude/scheduled_tasks.lock` (a harness session-lock artifact that `git add -A` had been sweeping into commits). Builds on [[D-288]], [[D-259]], [[D-258]], [[D-281]].
+
+---
+
+## D-288 — 2026-06-23 — Applied pending pricing migrations to PROD via `supabase db push` (reconciled the D-285 ledger desync); unblocked the prod release
+
+**Decision / event.** A prod release failed the grants drift gate because prod lacked `stripe_price_map`. Diagnosed: the [[D-285]] incident had applied Phase 1's migration (`20260707000000`) to prod via **raw psql** (objects created, but **no `schema_migrations` ledger row**), and Phase 2 (`20260708000000`, `stripe_price_map`) had never reached prod. So prod had the Phase 1 tables but its migration ledger didn't list them, and was missing Phase 2 entirely.
+
+**Action (operator-approved prod write).** Applied both pending migrations to prod with `npx supabase db push --include-all --db-url <prod>` — ledger-correct and idempotent (Phase 1's objects were skipped via `IF NOT EXISTS`; Phase 2 created `stripe_price_map` + its service-role grant). Verified after: `grants:check` + `rls:check` vs prod both `no drift`; the ledger now records `20260707000000` + `20260708000000`.
+
+**Lesson (reinforces [[D-285]]).** Apply prod migrations with `supabase db push` (records the ledger), **never raw `psql -f`** (which created the desync this had to repair). The lack of a clean automated/approval-gated prod migration-apply path is tracked in **#1349**. Pricing is now seeded-table-ready in prod (`stripe_price_map` exists, empty → the env fallback still serves until the Phase 2 backfill is run with prod Stripe Price IDs). Pairs with the pipeline fix in [[D-289]].
+
+---
+
 ## D-287 — 2026-06-23 — Pricing Phase 3 shipped (PR #1345): platform-admin pricing screen pushes edits to Stripe; Phase 4 deferred until prod-verified
 
 **Decision.** EPIC #1336 Phase 3 (#1339) is merged. New platform-admin area `pricing` (superadmin + finance) with a screen at `(admin)/admin/pricing` and `GET/PUT /api/admin/pricing`. Operator edits a price → the API creates a NEW Stripe Price (Stripe Prices are immutable), repoints the product's `default_price`, and updates the DB. Existing subscriptions keep their locked-in price; new prices apply to new checkouts only.

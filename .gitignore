@@ -71,3 +71,6 @@ next-env.d.ts
 # Vitals provenance data
 .vitals/
 headroom_memory.db
+
+# Harness session-lock artifact (per-session PID/timestamp) — must not be committed.
+/.claude/scheduled_tasks.lock
