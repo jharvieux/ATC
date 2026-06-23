@@ -31,7 +31,11 @@
 //     helpers run deep inside handlers where there is no response to write to.
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  isAuthApiError,
+  isAuthRetryableFetchError,
+  type SupabaseClient,
+} from "@supabase/supabase-js";
 import type { NextRequest, NextResponse } from "next/server";
 
 // verifyEnvAtBoot (lib/env.ts) is the primary gate; this is defense-in-depth
@@ -160,6 +164,47 @@ export function getAuthCookieDomain(req: Request | NextRequest): string | undefi
 function withCookieDomain(options: CookieOptions, domain: string | undefined): CookieOptions {
   if (!domain) return options;
   return { ...options, domain };
+}
+
+// Matches Supabase's auth-token cookie and its chunked variants
+// (sb-<ref>-auth-token, sb-<ref>-auth-token.0, …). Exported so the self-heal
+// GATE (hasSupabaseAuthCookie in proxy.ts) and the self-heal ACTION
+// (clearAuthCookies) share one definition — if they diverged, the gate could
+// fire while the clear misses the cookie, leaving a stale token in place.
+export const AUTH_TOKEN_COOKIE_RE = /^sb-.+-auth-token(\.\d+)?$/;
+
+// §17.x self-heal (#1361) — distinguish a DEFINITIVELY invalid session (the
+// auth server returned a 4xx: bad/expired/rotated refresh or access token)
+// from a TRANSIENT failure (network blip, auth-server 5xx). Only the former
+// may trigger a cookie purge: clearing on a transient error would mass-log-out
+// every user during a brief Supabase outage. auth-js wraps 4xx responses as
+// AuthApiError and network/5xx as AuthRetryableFetchError, so the two guards
+// fully separate the cases; any other error shape fails safe (keep session).
+export function isInvalidSessionError(err: unknown): boolean {
+  if (!err || isAuthRetryableFetchError(err)) return false;
+  return isAuthApiError(err);
+}
+
+// §17.x self-heal (#1361) — expire the Supabase auth cookies on `res`, scoped
+// to the same domain they were set with (getAuthCookieDomain), so the browser
+// stops replaying a dead/rotated session. The middleware calls this when
+// getUser() definitively rejects the session; without it the stale cookie
+// fails on every subsequent request and fail-closed gates wedge at a 404.
+export function clearAuthCookies(req: NextRequest, res: NextResponse): void {
+  const domain = getAuthCookieDomain(req);
+  for (const c of req.cookies.getAll()) {
+    if (!AUTH_TOKEN_COOKIE_RE.test(c.name)) continue;
+    res.cookies.set({
+      name: c.name,
+      value: "",
+      path: "/",
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      ...(domain ? { domain } : {}),
+    });
+  }
 }
 
 export function extractBearerToken(req: Request): string | null {
