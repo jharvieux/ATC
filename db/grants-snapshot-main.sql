@@ -314,6 +314,11 @@ GRANT INSERT, SELECT, UPDATE ON public.price_watches TO service_role;
 -- TABLE: public.pricing_cache
 GRANT INSERT, SELECT, UPDATE ON public.pricing_cache TO service_role;
 
+-- TABLE: public.pricing_seat_ladder
+GRANT SELECT ON public.pricing_seat_ladder TO anon;
+GRANT SELECT ON public.pricing_seat_ladder TO authenticated;
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.pricing_seat_ladder TO service_role;
+
 -- TABLE: public.quote_options
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.quote_options TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.quote_options TO service_role;

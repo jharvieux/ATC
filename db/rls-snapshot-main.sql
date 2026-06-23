@@ -88,6 +88,7 @@
 -- public.pre_cruise_email_content (rls_enabled)
 -- public.price_watches (rls_enabled)
 -- public.pricing_cache (rls_enabled)
+-- public.pricing_seat_ladder (rls_enabled)
 -- public.quote_options (rls_enabled)
 -- public.quotes (rls_enabled)
 -- public.rag_cost_reconcile_ledger (rls_enabled)
