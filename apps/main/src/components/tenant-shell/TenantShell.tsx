@@ -14,7 +14,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Menu, Moon, PanelLeft, Sun } from "lucide-react";
+import { Menu, Moon, Sun } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import {
@@ -62,17 +62,6 @@ export function TenantShell({
   // syncs across all mounted instances via "ta-theme-change" custom event.
   const [taTheme, toggleTheme] = useTaTheme();
 
-  // WorkspaceSidebar open/close (staff only). Tri-state: null = visitor
-  // hasn't toggled yet → CSS-only default (closed below lg, open on lg+).
-  const [workspaceOpen, setWorkspaceOpen] = React.useState<boolean | null>(null);
-  const toggleWorkspace = (): void => {
-    setWorkspaceOpen((prev) =>
-      prev === null
-        ? !window.matchMedia("(min-width: 1024px)").matches
-        : !prev,
-    );
-  };
-
   return (
     <>
       <div
@@ -88,22 +77,6 @@ export function TenantShell({
           }}
         >
           <div className="flex items-center gap-3">
-            {isStaff && (
-              <button
-                type="button"
-                onClick={toggleWorkspace}
-                aria-label="Toggle navigation"
-                style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                }}
-              >
-                <PanelLeft className="h-5 w-5" />
-              </button>
-            )}
             <Link href="/" aria-label="Home" className="flex items-center">
               {isStaff ? (
                 <>
@@ -186,15 +159,7 @@ export function TenantShell({
           </div>
         </header>
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {isStaff && (
-            <WorkspaceSidebar
-              open={workspaceOpen}
-              role={role}
-              onNavigate={() => {
-                if (!window.matchMedia("(min-width: 1024px)").matches) setWorkspaceOpen(false);
-              }}
-            />
-          )}
+          {isStaff && <WorkspaceSidebar role={role} />}
           <main className="min-h-0 flex-1 overflow-x-hidden">{children}</main>
         </div>
       </div>
