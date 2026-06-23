@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-293 — 2026-06-23 — Auth session self-heal shipped (#1362); rotation-race mitigation = bump Supabase refresh_token_reuse_interval, not code
+
+**Context.** Superadmin reported admin lockout: apex `/admin` → Next 404. Root-caused (prod runtime logs) to `getUser()` returning `AuthApiError: Invalid Refresh Token` on the apex — a present-but-invalid session cookie that was never cleared, so the fail-closed admin gate wedged at 404 on every request. Operator's `platform_admins` row was intact (auth_user_id `9ac93c3f-…`) — NOT a creds-loss issue. Cause of the bad cookie: 1h access-token expiry + refresh-token rotation-on-every-use; concurrent in-flight requests (parallel calls / multiple tabs / apex + `booking.` subdomain sharing the `.ai-travelconcierge.com` cookie) race to refresh the same token → first wins, rest get "Already Used."
+
+**Decision.** Two layers:
+1. **Self-heal (shipped, PR #1362).** Middleware now detects a definitively-invalid session (`isInvalidSessionError` — auth-server 4xx via `isAuthApiError`, screening out transient `AuthRetryableFetchError`/5xx so a Supabase blip can't mass-log-out) with a present auth cookie, deletes the auth cookies scoped to `getAuthCookieDomain`, and redirects to `/auth/reauth` ("redirect everywhere" per operator). Clear-only (no redirect) on the auth/sign-up surface (`/auth/*`, `/api/auth/*`, `/signup`, `/signup/*`) to avoid a loop — except `/signup/complete` (login-gated, #1050, must re-auth). New helpers in `ssr-client.ts`; shared `AUTH_TOKEN_COOKIE_RE`.
+2. **Rotation-race frequency (chosen path, config).** Bump Supabase `refresh_token_reuse_interval` (default 10s → target 30s) so concurrent refreshes at expiry return the same rotated token. Operator to apply in the prod dashboard (auth config = per-instance approval per [[feedback_no_prod_deploys_without_asking]]); confirm current value first.
+
+**Rejected.** (a) Code-side single-flight refresh lock — no shared state across serverless invocations; a Redis lock adds latency to every refresh and real complexity. (b) Separate apex/subdomain sessions — eliminates the cross-host race but regresses the cross-subdomain SSO that `getAuthCookieDomain` exists to provide (operator would log in per domain). (c) #1363 (reauth return-param double-encode) — investigated, NOT a bug (encode/decode chain is balanced; `safeNextFor` preserves query); closed.
+
+**Related artifacts.** #1361 (open — config action remaining), #1362 (merged), #1363 (closed not-a-bug), `apps/main/src/proxy.ts` (heal branch + `isAuthFlowPath`), `apps/main/src/lib/auth/ssr-client.ts` (`isInvalidSessionError`, `clearAuthCookies`, `AUTH_TOKEN_COOKIE_RE`). Open nit (not blocking): the `/api/auth/*` arm of `isAuthFlowPath` is currently unreachable (PKCE paths skip getUser) — both audit agents flagged a documenting comment; fold in next time proxy.ts is touched.
+
+---
+
 ## D-292 — 2026-06-23 — Seeded prod stripe_price_map (16 rows); prod Stripe is TEST-mode; price-ID source is a gitignored file, NOT Vercel env (EPIC #1336)
 
 **Decision.** Ran `seed-stripe-price-map.ts --target=prod --apply` → upserted all 16 rows into the (previously empty) prod `stripe_price_map`. Unblocks the Phase 3 admin pricing screen (was returning `409 price_not_seeded`) and clears the prod-seeded precondition for Phase 4 ([[#1340]]).

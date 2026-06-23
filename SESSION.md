@@ -1,26 +1,22 @@
-# Session state — last updated 2026-06-23 16:15 CT
+# Session state — last updated 2026-06-23 16:55 CT
 
 ## Just completed
-- Diagnosed superadmin admin-access failure reported on `booking.ai-travelconcierge.com/admin`:
-  - `/admin` on a tenant subdomain → proxy 404 by design (admin only on apex `ai-travelconcierge.com`).
-  - On the apex → Next 404 from the admin layout gate. Operator IS a valid `platform_admins` row (auth_user_id `9ac93c3f-…`, current account). NOT a lost-creds issue.
-  - Root cause: `getUser()` returns `AuthApiError: Invalid Refresh Token` on the apex — a present-but-invalid session cookie that was never cleared, so it failed on every request and the fail-closed admin gate wedged at 404. Confirmed via prod runtime logs (dpl_6hZLQaEUKMzkZ2Sdn68bEmfMYuRL).
-  - Immediate user fix: full sign-out + clear `.ai-travelconcierge.com` cookies + fresh sign-in on the apex. User confirmed it works.
-- Opened issue #1361 (self-heal + rotation-race follow-up).
-- Implemented self-heal (PR #1362, branch `feature/auth-session-self-heal` off dev):
-  - `ssr-client.ts`: `isInvalidSessionError()` (definitive 4xx vs transient) + `clearAuthCookies()` (domain-scoped purge).
-  - `proxy.ts`: heal branch after getUser, before admin/login gates — clears bad cookie + redirects to /auth/reauth everywhere; clear-only on auth-flow paths to avoid loop.
-  - Tests added; `pnpm verify` green (typecheck/lint/4760+147 tests/slop/guards, EXIT=0).
+- Diagnosed superadmin admin-access failure (booking subdomain + apex /admin). NOT lost creds — operator's `platform_admins` row intact (auth_user_id `9ac93c3f-…`). Root cause: `getUser()` → `AuthApiError: Invalid Refresh Token` on a stale cross-subdomain session cookie that never self-cleared, wedging the fail-closed admin gate at 404 (prod runtime logs, dpl_6hZLQaEUKMzkZ2Sdn68bEmfMYuRL).
+- Immediate fix (operator confirmed working): full sign-out + clear `.ai-travelconcierge.com` cookies + fresh sign-in on the apex.
+- **PR #1362 (merged to dev)** — middleware self-heal: `isInvalidSessionError` + `clearAuthCookies` in `ssr-client.ts`; heal branch in `proxy.ts` (clear bad cookie + redirect to /auth/reauth everywhere; clear-only on /auth,/api/auth,/signup funnel except /signup/complete). Both audit agents clean. Verify green. Playwright (non-required) red = pre-existing missing TEST_E2E_OWNER_* creds, unrelated.
+- Issue #1361 root-caused (rotation race); decision logged D-293.
+- Issue #1363 (reauth double-encode) — investigated, NOT a bug (balanced encode/decode; `safeNextFor` preserves query), CLOSED.
+- D-293 written to MEMORY.md + MEMORY-INDEX.md.
 
 ## In flight
-- PR #1362 — pushed, CI running. Background poll (task bsybbifca) waits for required checks to settle.
-- NEXT after green: run audit agents — d091-reviewer FIRST (Sonnet; no Opus triggers met), then pre-pr-reviewer. Then squash-merge + delete branch.
+- Docs PR for MEMORY/MEMORY-INDEX/SESSION updates (this checkpoint) — on a docs/* branch, doc-only (audit-exempt).
 
 ## Next step
-- When CI green: invoke d091-reviewer then pre-pr-reviewer on PR #1362, fix any findings, merge.
+- Operator action (their call, approved): bump Supabase `refresh_token_reuse_interval` 10s → 30s in the prod dashboard (project mfaknjyqiwcjojukcnea → Authentication settings). Confirm current value first. Then #1361 can close.
+- Minor deferred: add a doc-comment noting the `/api/auth/*` arm of `isAuthFlowPath` (proxy.ts) is currently unreachable — fold in next time proxy.ts is touched (both audit agents flagged; not blocking).
 
 ## Blocked on user
-- Nothing. (User confirmed the manual fix works and chose "redirect everywhere" behavior.)
+- Reuse-interval dashboard change is the operator's to apply (prod auth config). Waiting on them to confirm current value / apply.
 
 ## Open questions
-- Deeper fix for the cross-subdomain rotating refresh-token race (why cookies go bad) — tracked as follow-up in #1361, not built this session.
+- Pre-existing CI gap: authed Playwright specs can't run (missing TEST_E2E_OWNER_* secrets) — surfaced but not tracked; raise with operator whether to provision CI test creds.
