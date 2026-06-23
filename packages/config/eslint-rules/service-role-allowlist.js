@@ -134,6 +134,12 @@ module.exports = [
   "/app/api/onboarding/connect/link/route.ts",
   // BP16: Subscription Checkout — reads tier/seat/billing_period for Checkout session. §15.8.
   "/app/api/onboarding/subscription/checkout/route.ts",
+  // §15.8 / EPIC #1336 — Public pricing preview: anonymous pre-signup endpoint
+  // reads global pricing reference data (tier_definitions price columns +
+  // pricing_seat_ladder, both RLS-zero-policy + PLATFORM_READABLE) via
+  // loadPricingTable. No tenant context exists; data is public marketing pricing
+  // (no PII). Read-only.
+  "/app/api/pricing/preview/route.ts",
   // BP16: Platform settings host-agency-name — reads platform_settings. §15.7.
   "/app/api/platform/settings/host-agency-name/route.ts",
   // BP16: Admin review queue — paginated cross-tenant read. §15.11.

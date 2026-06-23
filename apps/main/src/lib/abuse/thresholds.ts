@@ -16,7 +16,9 @@ import {
   computeEffectiveMonthlyRevenue,
   tierReferenceRevenueCents,
   type TenantRevenueSnapshot,
+  type PricingTable,
 } from "./revenue";
+import { loadPricingTable } from "@/lib/pricing/pricing-table";
 
 export type AbuseDimension = "ai_cost" | "chat_volume" | "email_volume" | "group_invite" | "rag_cap" | "help_submission_rate";
 
@@ -139,6 +141,9 @@ export interface ResolveThresholdsInput {
   // (the migration's seed values) when omitted, so tests that don't pass a
   // row still get sensible numbers.
   tier_bases?: TierBaseCounts;
+  // Subscription pricing from the DB (tier_definitions price columns +
+  // pricing_seat_ladder). Omitted → the compute fns use PRICING_FALLBACK.
+  pricing?: PricingTable;
 }
 
 export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedThresholds {
@@ -151,8 +156,8 @@ export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedTh
   };
 
   // 1. Effective monthly revenue (the multiplier base).
-  const monthlyRevenueCents = computeEffectiveMonthlyRevenue(tenant);
-  const referenceRevenueCents = tierReferenceRevenueCents(tenant.tier_code);
+  const monthlyRevenueCents = computeEffectiveMonthlyRevenue(tenant, input.pricing);
+  const referenceRevenueCents = tierReferenceRevenueCents(tenant.tier_code, input.pricing);
 
   // 2. AI cost: revenue × {30, 50, 70}%.
   const pctSoft1 = BigInt(Number(process.env.ABUSE_AI_COST_SOFT1_PERCENT ?? 30));
@@ -229,7 +234,7 @@ export async function resolveThresholds(
   promoted_chunks_count: number,
 ): Promise<ResolvedThresholds> {
   const today = new Date().toISOString().slice(0, 10);
-  const [overridesRes, tierRes] = await Promise.all([
+  const [overridesRes, tierRes, pricing] = await Promise.all([
     db
       .from("tenant_usage_overrides")
       .select("dimension, tier_override, threshold_value, effective_from, effective_to")
@@ -240,6 +245,7 @@ export async function resolveThresholds(
       .select("chat_base_monthly, email_base_daily, group_invite_base_monthly, rag_base_chunks")
       .eq("code", tenant.tier_code)
       .maybeSingle(),
+    loadPricingTable(db),
   ]);
   const overrides = ((overridesRes.data ?? []) as OverrideRow[]).filter(
     (r) => r.effective_to === null || r.effective_to >= today,
@@ -249,6 +255,7 @@ export async function resolveThresholds(
     tenant,
     promoted_chunks_count,
     overrides,
+    pricing,
     ...(tier_bases ? { tier_bases } : {}),
   });
 }

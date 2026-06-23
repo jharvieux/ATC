@@ -1,12 +1,49 @@
 // §15.8 — GET /api/pricing/preview
 //
-// Tests verify that base prices derive from TIER_BASE_PRICE_CENTS (§3.3 single source of truth)
-// and that agency totals incorporate the corrected SEAT_LADDER via calculateAgencySeatPreviewCents.
-// Canonical values per MEMORY D-060 / §3.3:
+// The route now sources prices from the DB (tier_definitions + pricing_seat_ladder,
+// EPIC #1336) via loadPricingTable, read through the service-role client. These
+// tests mock that client with DB rows derived from PRICING_FALLBACK (the §3.3
+// seed), so they exercise the real DB-read path and still assert the §3.3 values:
 //   sub_host:  starter $49/mo, pro $149/mo, agency $249/mo base
 //   byo_host:  starter $19/mo, pro  $59/mo, agency  $99/mo base
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Mock the service-role client so loadPricingTable reads seeded §3.3 rows
+// instead of hitting a real DB (and so createServiceRoleClient doesn't throw on
+// the missing env in unit tests). Rows are built from PRICING_FALLBACK to keep a
+// single source for the numbers; the final ladder band uses the INT4 sentinel
+// exactly as the migration seeds it.
+vi.mock("@/lib/db/service-role-client", async () => {
+  const { PRICING_FALLBACK } =
+    await vi.importActual<typeof import("@/lib/abuse/revenue")>("@/lib/abuse/revenue");
+  const tierRows = Object.entries(PRICING_FALLBACK.base).map(([code, p]) => ({
+    code,
+    base_price_monthly_cents: p.monthly,
+    base_price_annual_cents: p.annual,
+  }));
+  const ladderRows = PRICING_FALLBACK.seatLadder.map((b, i) => ({
+    up_to_seat: b.upTo === Infinity ? 2147483647 : b.upTo,
+    monthly_cents: b.monthly,
+    annual_cents: b.annual,
+    sort_order: i + 1,
+  }));
+  const byTable: Record<string, { data: unknown; error: null }> = {
+    tier_definitions: { data: tierRows, error: null },
+    pricing_seat_ladder: { data: ladderRows, error: null },
+  };
+  const makeChain = (t: string) => {
+    const result = byTable[t] ?? { data: [], error: null };
+    const chain = {
+      select: () => chain,
+      order: () => chain,
+      eq: () => chain,
+      then: (resolve: (r: unknown) => unknown) => resolve(result),
+    };
+    return chain;
+  };
+  return { createServiceRoleClient: () => ({ from: (t: string) => makeChain(t) }) };
+});
 
 function get(params: Record<string, string>) {
   const qs = new URLSearchParams(params).toString();
