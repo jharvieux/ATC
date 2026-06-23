@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-290 — 2026-06-23 — Prod migration-apply decoupled from the disabled staging pipeline (PR #1351, closes #1349)
+
+**Decision.** Made `deploy-production` in `deploy.yml` depend **directly** on all eight CI gate jobs (typecheck, lint, test, secret-scan, cve-scan, rls-snapshot-diff, cross-tenant-probe, contract-tests) plus `deploy-staging`, instead of `needs: [deploy-staging]` alone. The prod migration-apply logic itself was already correct (`npx supabase db push --include-all` → `check-schema-drift.ts`, behind the `production` environment reviewer gate); only the dependency graph that *reaches* it was broken. Added `docs/runbooks/prod-migration-apply.md`.
+
+**Why.** `deploy-staging`/`db-copy` are gated by `STAGING_PIPELINE_ENABLED` (false today, #533) → skipped. With `needs: [deploy-staging]` + `if: always() && !failure()`, prod-apply ran only by a skipped job's status propagating up the transitive chain (`deploy-staging` → `db-copy` → CI jobs). Since `failure()` evaluates the whole ancestor chain, any failing CI gate silently blocked prod — which forced the manual raw-psql apply behind the [[D-285]] ledger desync. Now `failure()` blocks prod **iff a gate actually failed**; `deploy-staging` stays as an OPTIONAL pre-prod layer (skipped=non-blocking, failed-when-enabled=blocking). Completes the **apply** half of #1349; [[D-289]] fixed the drift-check half.
+
+**Rejected.** (2) Standalone `workflow_dispatch` "apply prod migrations" workflow — splits migrations from the release that needs them (two manual steps per schema change); not built (operator can request a follow-up if an out-of-release hotfix-migration path is ever wanted). (3) Both — unnecessary surface area now.
+
+**Operator caveat.** Approval-gating is real only if the `production` GitHub environment has **required reviewers** configured (a setting outside the repo). Standing rule [[feedback_no_prod_deploys_without_asking]] depends on it.
+
+**Related artifacts.** PR #1351; `.github/workflows/deploy.yml` (`deploy-production` job); `docs/runbooks/prod-migration-apply.md`; issues #1349, #1350, #533; [[D-285]] [[D-288]] [[D-289]].
+
+---
+
 ## D-289 — 2026-06-23 — Pipeline drift-gate fix (PR #1350): grants:check vs TEST on PR+release, prod-drift → nightly; retires the pre-migration PROD gate (extends D-259, supersedes the PROD bits of D-258/D-259)
 
 **Decision.** The `release/*` grants drift gate compared **PROD** *before* the release's own migrations applied — the gate lives in the `rls-snapshot-diff` job, and `db-copy → deploy-staging → deploy-production` (where `supabase db push` applies prod migrations) all `needs` it, so the gate is upstream of the migration apply. Result: it false-failed **every** new-table release. This is what blocked the pricing prod deploy (see [[D-288]]). Caught because the operator (jharvieux) challenged the "it's by design" framing — it is a genuine ordering bug, latent in the automated path (off via `STAGING_PIPELINE_ENABLED=false`) and active on every `release/*` push.

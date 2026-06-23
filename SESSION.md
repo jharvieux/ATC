@@ -1,22 +1,21 @@
-# Session state — last updated 2026-06-23 08:30 CT
+# Session state — last updated 2026-06-23 09:15 CT
 
 ## Just completed
-- **Pricing EPIC #1336 Phases 1–3 shipped** (PRs #1341/#1343/#1345). Phase 4 (#1340) deferred until prod-verified.
-- **Unblocked the prod release** (D-288): a `release/*` deploy failed the grants drift gate because prod lacked `stripe_price_map`. Diagnosed the D-285 ledger desync (Phase 1 applied to prod via raw psql → no ledger row; Phase 2 never applied). Applied both pending migrations to prod via `npx supabase db push --include-all` (ledger-correct, idempotent); grants/rls vs prod now clean.
-- **Pipeline drift-gate fix** (D-289, PR #1350): the release gate compared PROD *before* the release's own migrations applied → false-failed every new-table release. Fix: grants:check now vs TEST DB on PR+release (mirrors RLS); removed the pre-migration prod gate; new nightly `prod-drift-check.yml` (read-only prod grants/RLS drift → deduped `prod-drift` issue), decoupled from releases + `STAGING_PIPELINE_ENABLED`.
-- Filed **#1349** (no automated/approval-gated prod migration-apply path). Created `prod-drift` label.
+- **#1349 done** (D-290, PR #1351 merged): decoupled prod migration-apply from the disabled staging pipeline. `deploy-production` in `deploy.yml` now `needs` all 8 CI gate jobs directly (+ `deploy-staging` as an optional pre-prod layer), instead of `needs: [deploy-staging]` alone. The apply logic was already ledger-correct (`supabase db push` + `check-schema-drift.ts`, behind the `production` env reviewer gate); only the dependency graph reaching it was broken (STAGING_PIPELINE_ENABLED=false skipped deploy-staging → prod-apply rode the transitive `failure()` chain → any failing CI gate silently blocked it = the D-285 manual-psql trigger). Now `failure()` blocks prod iff a gate truly failed.
+- Added `docs/runbooks/prod-migration-apply.md` (automated flow + approval gate + supabase-db-push-only manual fallback, NEVER raw psql).
+- Both audit agents clean (Sonnet). #1349 auto-closed on merge.
 
 ## In flight
-- **PR #1350** open. Just amended with: MEMORY D-288/D-289, MEMORY-INDEX, SESSION, and gitignoring `.claude/scheduled_tasks.lock` (+ `git rm --cached`). Needs: CI green → re-run both audit agents (diff changed) → squash-merge.
+- Nothing in flight — clean checkpoint on `dev`.
 
 ## Next step (when resumed)
-- Get PR #1350 CI green, re-run d091 + pre-pr (Sonnet), squash-merge.
-- **Pricing prod seeding (operator):** prod now has `stripe_price_map` (empty → env fallback still serves). Run `scripts/seed-stripe-price-map.ts --target=prod --apply` with prod Stripe Price IDs pulled from Vercel env, then verify live prod pricing reads the DB. Then the user can re-run the prod release (the drift gate will now pass).
+- **Pricing prod seeding (operator):** prod now has `stripe_price_map` (empty → env fallback still serves). Run `scripts/seed-stripe-price-map.ts --target=prod --apply` with prod Stripe Price IDs pulled from Vercel env, then verify live prod pricing reads the DB. Then re-run the prod release — the drift gate (D-289) now passes AND the migration-apply path (D-290) is no longer fragile.
 - **Phase 4 (#1340):** still gated on prod seeded + verified.
-- Follow-ups: **#1349** (prod migration-apply path), **#1346** (client TIER_CODE dup).
+- Follow-ups: **#1346** (client TIER_CODE dup).
 
 ## Blocked on user
-- Prod seeding + Phase 4 are operator steps (pre-approved in principle). The prod release itself is the user's to re-run once seeding is verified.
+- **Operator setting:** confirm the `production` GitHub environment has **required reviewers** configured — D-290's approval-gating (and the no-prod-deploy-without-asking rule) depends on it. It's outside the repo.
+- Prod seeding + Phase 4 + the prod release re-run are operator steps.
 
 ## Open questions
-- Confirm `STRIPE_PRICE_*` are set in the deployed Vercel envs before the prod seed (absent locally). Until seeded, the Phase 3 admin screen returns 409 `price_not_seeded` on edits — expected.
+- Confirm `STRIPE_PRICE_*` are set in the deployed Vercel envs before the prod seed. Until seeded, the Phase 3 admin screen returns 409 `price_not_seeded` on edits — expected.
