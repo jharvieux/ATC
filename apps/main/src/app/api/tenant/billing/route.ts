@@ -7,7 +7,7 @@ import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { priceIdFor } from "@/lib/stripe/price-ids";
+import { priceIdFor, loadPriceMap } from "@/lib/stripe/price-ids";
 import { inngest } from "@/inngest/client";
 import { withVendorHealthGate } from "@/lib/vendor-health/gate";
 import type { TenantType, Tier, BillingPeriod } from "@/lib/stripe/price-ids";
@@ -111,6 +111,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const stripe = getStripe();
+    const priceMap = await loadPriceMap(srDb);
 
     if (body.action === "change_tier") {
       if (!body.tier) return Response.json({ error: "tier required" }, { status: 422 });
@@ -119,14 +120,14 @@ export async function POST(req: Request): Promise<Response> {
       const billingPeriod = (tenant.billing_period ?? "monthly") as BillingPeriod;
       const newSeatCount = body.tier === "agency" ? Math.max(1, tenant.seat_count ?? 1) : 1;
 
-      const basePriceId = priceIdFor({ tenant_type: tenantType, tier: body.tier, billing_period: billingPeriod, line_item: "base" });
+      const basePriceId = priceIdFor({ tenant_type: tenantType, tier: body.tier, billing_period: billingPeriod, line_item: "base" }, priceMap);
 
       const items: Stripe.SubscriptionUpdateParams.Item[] = [
         { price: basePriceId, quantity: 1 },
       ];
 
       if (body.tier === "agency" && newSeatCount > 1) {
-        const seatPriceId = priceIdFor({ tenant_type: tenantType, tier: "agency", billing_period: billingPeriod, line_item: "additional_seats" });
+        const seatPriceId = priceIdFor({ tenant_type: tenantType, tier: "agency", billing_period: billingPeriod, line_item: "additional_seats" }, priceMap);
         items.push({ price: seatPriceId, quantity: newSeatCount - 1 });
       }
 
@@ -161,7 +162,7 @@ export async function POST(req: Request): Promise<Response> {
       const billingPeriod = (tenant.billing_period ?? "monthly") as BillingPeriod;
 
       if (newSeatCount > 1) {
-        const seatPriceId = priceIdFor({ tenant_type: tenantType, tier: "agency", billing_period: billingPeriod, line_item: "additional_seats" });
+        const seatPriceId = priceIdFor({ tenant_type: tenantType, tier: "agency", billing_period: billingPeriod, line_item: "additional_seats" }, priceMap);
         if (tenant.stripe_subscription_id) {
           await stripe.subscriptions.update(tenant.stripe_subscription_id, {
             items: [{ price: seatPriceId, quantity: newSeatCount - 1 }],
@@ -216,7 +217,7 @@ export async function POST(req: Request): Promise<Response> {
       if (!tierDef) return Response.json({ error: "tier_definition_missing" }, { status: 500 });
       const tier = CODE_TO_TIER[tierDef.code as keyof typeof CODE_TO_TIER];
       if (!tier) return Response.json({ error: "unrecognized_tier_code" }, { status: 500 });
-      const basePriceId = priceIdFor({ tenant_type: tenantType, tier, billing_period: "annual", line_item: "base" });
+      const basePriceId = priceIdFor({ tenant_type: tenantType, tier, billing_period: "annual", line_item: "base" }, priceMap);
 
       if (tenant.stripe_subscription_id) {
         await stripe.subscriptions.update(tenant.stripe_subscription_id, {

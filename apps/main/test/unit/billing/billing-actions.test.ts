@@ -49,6 +49,7 @@ vi.mock("stripe", () => ({
 
 vi.mock("@/lib/stripe/price-ids", () => ({
   priceIdFor: mockPriceIdFor,
+  loadPriceMap: vi.fn(async () => new Map()),
 }));
 
 vi.mock("@/inngest/client", () => ({
@@ -381,6 +382,7 @@ describe("POST /api/tenant/billing §15.15", () => {
     await POST(postRequest({ action: "switch_billing_period", billing_period: "annual" }));
     expect(vi.mocked(mockPriceIdFor)).toHaveBeenCalledWith(
       expect.objectContaining({ billing_period: "annual" }),
+      expect.any(Map),
     );
     expect(vi.mocked(mockStripeSubscriptionsUpdate)).toHaveBeenCalled();
     expect(mockSafeAwait).toHaveBeenCalled();

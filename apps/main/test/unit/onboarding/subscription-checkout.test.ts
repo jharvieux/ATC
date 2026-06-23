@@ -38,6 +38,7 @@ vi.mock("stripe", () => ({
 
 vi.mock("@/lib/stripe/price-ids", () => ({
   priceIdFor: vi.fn(() => "price_test_123"),
+  loadPriceMap: vi.fn(async () => new Map()),
 }));
 
 type TenantRow = {
@@ -134,6 +135,7 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     await POST(postRequest());
     expect(vi.mocked(priceIdFor)).toHaveBeenCalledWith(
       expect.objectContaining({ tenant_type: "byo_host", tier: "agency", billing_period: "annual" }),
+      expect.any(Map),
     );
   });
 
@@ -145,6 +147,7 @@ describe("POST /api/onboarding/subscription/checkout §15.8", () => {
     await POST(postRequest());
     expect(vi.mocked(priceIdFor)).toHaveBeenCalledWith(
       expect.objectContaining({ tenant_type: "sub_host", tier: "pro" }),
+      expect.any(Map),
     );
   });
 
