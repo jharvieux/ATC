@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
+import { TIER_CODE_MAP } from "@/lib/stripe/tier-code-map";
 
 interface TierRow {
   code: string;
@@ -34,11 +35,7 @@ interface PricingData {
   stripe_configured: boolean;
 }
 
-// tenant_type+tier → tier_definitions.code (mirrors lib/stripe/tier-codes.ts).
-const TIER_CODE: Record<string, Record<string, string>> = {
-  byo_host: { starter: "byo_research", pro: "byo_professional", agency: "byo_agency" },
-  sub_host: { starter: "sub_starter", pro: "sub_pro", agency: "sub_agency" },
-};
+const TIER_CODE = TIER_CODE_MAP;
 const TENANT_LABEL: Record<string, string> = { sub_host: "Subscription Host", byo_host: "BYO Host" };
 const LINE_LABEL: Record<string, string> = { base: "Base", additional_seats: "Additional seat" };
 const OPEN_SENTINEL = 2147483647;
