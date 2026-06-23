@@ -167,16 +167,21 @@ function isLoginGatedPath(pathname: string): boolean {
   );
 }
 
-// §17.x self-heal (#1361) — the sign-in surface. A request here with a bad
-// session cookie gets the cookie cleared but is NOT redirected: these pages
-// (and /api/auth/*, which establishes the new session) ARE the re-auth flow,
-// so redirecting them to /auth/reauth would loop. Everything else redirects.
+// §17.x self-heal (#1361) — the sign-in / sign-up surface. A request here with
+// a bad session cookie gets the cookie cleared but is NOT redirected: these
+// pages (and /api/auth/*, which establishes the new session) ARE where the user
+// establishes a session, so bouncing them to /auth/reauth would loop or
+// interrupt the funnel. Everything else redirects.
 function isAuthFlowPath(pathname: string): boolean {
+  // /signup/complete is POST-auth (login-gated, #1050): it needs a live session,
+  // so a dead cookie there must re-auth, not clear-in-place. Exclude it.
+  if (pathname === "/signup/complete") return false;
   return (
     pathname === "/auth" ||
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/api/auth/") ||
-    pathname === "/signup"
+    pathname === "/signup" ||
+    pathname.startsWith("/signup/")
   );
 }
 
@@ -294,6 +299,9 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     hasSupabaseAuthCookie(req) &&
     isInvalidSessionError(sessionResult?.error)
   ) {
+    // Both returns skip applyRefreshedSession by design: a failed getUser()
+    // never ran the middleware setAll, so there are no rotated tokens to flush —
+    // clearAuthCookies is the only Set-Cookie we want here.
     if (isAuthFlowPath(pathname)) {
       const res = NextResponse.next({ request: { headers: cloneAndScrubHeaders(req) } });
       clearAuthCookies(req, res);

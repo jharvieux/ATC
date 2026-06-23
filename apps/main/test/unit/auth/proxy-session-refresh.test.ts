@@ -193,9 +193,27 @@ describe("proxy() invalid-session self-heal", () => {
   it("clears but does NOT redirect on the re-auth surface itself (no loop)", async () => {
     invalidSession();
     const res = await proxy(req("ai-travelconcierge.com", "/auth/reauth", { cookie: COOKIE }));
-    expect(res.status).not.toBe(307);
+    expect(res.status).toBe(200);
     expect(res.headers.get("location")).toBeNull();
     expect(res.cookies.get("sb-abc-auth-token")?.maxAge).toBe(0);
+  });
+
+  it("clears in place (no redirect) across the signup funnel, but redirects on /signup/complete", async () => {
+    // Pre-auth signup pages are part of the sign-in surface: clear the dead
+    // cookie and let the funnel continue. /signup/complete is login-gated
+    // (#1050) — it needs a live session, so it must re-auth instead.
+    for (const p of ["/signup", "/signup/email-verify", "/signup/email-prompt"]) {
+      invalidSession();
+      const res = await proxy(req("ai-travelconcierge.com", p, { cookie: COOKIE }));
+      expect(res.status, p).toBe(200);
+      expect(res.headers.get("location"), p).toBeNull();
+      expect(res.cookies.get("sb-abc-auth-token")?.maxAge, p).toBe(0);
+    }
+
+    invalidSession();
+    const complete = await proxy(req("ai-travelconcierge.com", "/signup/complete", { cookie: COOKIE }));
+    expect(complete.status).toBe(307);
+    expect(new URL(complete.headers.get("location")!).pathname).toBe("/auth/reauth");
   });
 
   it("does NOT heal on a transient auth-server error (no mass logout)", async () => {
