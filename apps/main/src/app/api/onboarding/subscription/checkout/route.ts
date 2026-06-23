@@ -7,7 +7,7 @@
 import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { priceIdFor } from "@/lib/stripe/price-ids";
+import { priceIdFor, loadPriceMap } from "@/lib/stripe/price-ids";
 import type { TenantType, BillingPeriod } from "@/lib/stripe/price-ids";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { CODE_TO_TIER } from "@/lib/stripe/tier-codes";
@@ -45,13 +45,14 @@ export async function POST(req: Request): Promise<Response> {
     const billingPeriod = (tenant.billing_period ?? "monthly") as BillingPeriod;
     const seatCount = tenant.seat_count ?? 1;
 
+    const priceMap = await loadPriceMap(srDb);
     const lineItems = [
-      { price: priceIdFor({ tenant_type: tenantType, tier, billing_period: billingPeriod, line_item: "base" }), quantity: 1 },
+      { price: priceIdFor({ tenant_type: tenantType, tier, billing_period: billingPeriod, line_item: "base" }, priceMap), quantity: 1 },
     ];
 
     if (tier === "agency" && seatCount > 1) {
       lineItems.push({
-        price: priceIdFor({ tenant_type: tenantType, tier, billing_period: billingPeriod, line_item: "additional_seats" }),
+        price: priceIdFor({ tenant_type: tenantType, tier, billing_period: billingPeriod, line_item: "additional_seats" }, priceMap),
         quantity: seatCount - 1,
       });
     }

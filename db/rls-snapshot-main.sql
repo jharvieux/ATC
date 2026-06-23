@@ -99,6 +99,7 @@
 -- public.sailing_port_calls (rls_enabled)
 -- public.security_incidents (rls_enabled)
 -- public.staging_cron_skips (rls_enabled)
+-- public.stripe_price_map (rls_enabled)
 -- public.stripe_webhook_events (rls_enabled)
 -- public.sub_host_subcontractors (rls_enabled)
 -- public.subcontractors (rls_enabled)

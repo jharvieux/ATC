@@ -354,6 +354,9 @@ GRANT DELETE, INSERT, SELECT, UPDATE ON public.security_incidents TO service_rol
 -- TABLE: public.staging_cron_skips
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.staging_cron_skips TO service_role;
 
+-- TABLE: public.stripe_price_map
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.stripe_price_map TO service_role;
+
 -- TABLE: public.stripe_webhook_events
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.stripe_webhook_events TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.stripe_webhook_events TO service_role;
