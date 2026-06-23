@@ -287,22 +287,24 @@ jobs:
 
       # Grant-drift (#546). The RLS snapshot above captures rowsecurity + policies
       # but NOT table GRANTs, so a table shipped without its service_role grant
-      # (the #544 prod outage) produced no diff. These steps diff live GRANTs
+      # (the #544 prod outage) produced no diff. This step diffs live GRANTs
       # against the committed baseline (db/grants-snapshot-{main,rag}.sql).
       #
-      # PR-time check runs against the TEST DBs (same target as rls:check above).
-      # The dedicated test DB derives its grants from the migrations' per-table
-      # GRANTs — db:reset recreates the public schema (wiping Supabase's default
-      # ACLs) and the migrations restore grants — so the committed baseline matches
-      # it with no false drift (verified empirically), AND it still catches the #544
-      # class: a table shipped without its grant shows as missing on the
-      # migration-built DB. This keeps PR checks decoupled from prod state + prod
-      # secrets. Regenerate the baseline from the TEST DB: `pnpm grants:snapshot`.
-      # (The earlier "must compare against prod" rationale was stale — it described
-      #  a legacy test project that auto-granted via default privileges; the #257
-      #  dedicated test DB does not.)
-      - name: Check grants drift (fail on PR — vs test DB)
-        if: github.event_name == 'pull_request'
+      # PR and release/* both check against the TEST DBs (same target as the RLS
+      # check above). The dedicated test DB derives its grants from the migrations'
+      # per-table GRANTs — db:reset recreates the public schema (wiping Supabase's
+      # default ACLs) and the migrations restore grants — so the committed baseline
+      # matches it with no false drift (verified empirically), AND it still catches
+      # the #544 class: a table shipped without its grant shows as missing on the
+      # migration-built DB. Regenerate the baseline from the TEST DB: `pnpm grants:snapshot`.
+      #
+      # Out-of-band PROD grant/RLS drift is caught by .github/workflows/prod-drift-check.yml
+      # (nightly, read-only), decoupled from releases AND STAGING_PIPELINE_ENABLED.
+      # The old pre-migration prod gate here was REMOVED: it compared prod BEFORE the
+      # release's own migrations applied (deploy-production is downstream), so it
+      # false-failed every new-table release. See #1349 for the prod migration-apply path.
+      - name: Check grants drift (fail on PR and release/* — vs test DB)
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
           SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
@@ -311,25 +313,10 @@ jobs:
           GRANTS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
         run: pnpm grants:check
 
-      # Release gate additionally verifies PROD's live grants against the baseline,
-      # catching any out-of-band/manual grant change in prod that migrations (and
-      # therefore the test DB) would not surface. Read-only PROD URLs.
-      - name: Check grants drift (fail on release/* — vs prod DB)
-        if: startsWith(github.ref, 'refs/heads/release/')
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
-          SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
-          GRANTS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
-        run: pnpm grants:check
-
-      - name: Check grants drift (warn on dev push)
+      # Warn-only on dev push, vs the TEST DB (inherits the job-level env, like the
+      # RLS dev-push warn above). Prod drift now lives in prod-drift-check.yml.
+      - name: Check grants drift (warn on dev push — vs test DB)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_PROD_DB_URL }}
-          SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_PROD_DB_URL }}
-          # Warn-only step: if the prod secrets aren't set yet, skip quietly
-          # rather than mislabel "no targets" as drift in the warning below.
-          GRANTS_ALLOW_NO_TARGETS: "true"
         run: pnpm grants:check || echo "::warning::Grants drift detected on dev — run pnpm grants:snapshot and commit db/grants-snapshot-{main,rag}.sql"
 
   contract-tests:
