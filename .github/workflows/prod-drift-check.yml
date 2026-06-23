@@ -23,6 +23,12 @@ on:
     - cron: "0 8 * * *" # 8am UTC, before working hours (after nightly tests)
   workflow_dispatch: # manual trigger
 
+# The default workflow token is read-only in this repo; the drift-issue step
+# needs issues:write to open/comment the prod-drift issue.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   prod-drift:
     name: Prod grants + RLS drift
@@ -60,11 +66,13 @@ jobs:
         if: failure() && (steps.rls.outcome == 'failure' || steps.grants.outcome == 'failure')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RLS_OUTCOME: ${{ steps.rls.outcome }}
+          GRANTS_OUTCOME: ${{ steps.grants.outcome }}
         run: |
           # Dedupe: only one open prod-drift issue at a time — comment instead of
           # spawning a new issue every night while the drift persists.
           existing=$(gh issue list --state open --label prod-drift --json number --jq '.[0].number')
-          summary="RLS: ${{ steps.rls.outcome }}, grants: ${{ steps.grants.outcome }} (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          summary="RLS: ${RLS_OUTCOME}, grants: ${GRANTS_OUTCOME} (run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "Prod drift still present on $(date -u +%Y-%m-%dT%H:%M:%SZ). ${summary}"
           else
