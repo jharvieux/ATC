@@ -9,12 +9,18 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const REJECT_RETENTION_HOURS = 24;
 const RETAIN_FOLLOWUP_HOURS = 7 * 24;
+
+// A reviewer can reject (discard) an item awaiting their decision OR one the
+// pipeline gave up on. parse_failed is terminal for unparseable uploads (e.g. a
+// scanned image-only PDF with no text layer that even a retry can't extract), so
+// it must be dismissable — otherwise the row is stuck until the purge timer.
+const REJECTABLE_STATUSES = ["pending_review", "parse_failed"] as const;
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
   try {
@@ -41,23 +47,41 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     if (!rowData) return Response.json({ error: "not_found" }, { status: 404 });
     const row = rowData as { tenant_id: string; status: string; document_type: string | null };
     if (row.tenant_id !== ctx.tenant_id) return Response.json({ error: "forbidden" }, { status: 403 });
-    if (row.status !== "pending_review") {
-      return Response.json({ error: `row_not_in_pending_review:${row.status}` }, { status: 409 });
+    if (!REJECTABLE_STATUSES.includes(row.status as (typeof REJECTABLE_STATUSES)[number])) {
+      return Response.json({ error: `row_not_rejectable:${row.status}` }, { status: 409 });
     }
 
     const hours = retainForFollowup ? RETAIN_FOLLOWUP_HOURS : REJECT_RETENTION_HOURS;
     const purgable_at = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 
-    await safeAwait(svc
-      .from("import_queue")
-      .update({
-        status: "rejected",
-        rejected_at: new Date().toISOString(),
-        rejected_by_user_id: user.id,
-        rejected_reason: body.reason,
-        purgable_at,
-      })
-      .eq("id", queueRowId), "import_queue.update");
+    // CAS-guarded on tenant_id + the rejectable statuses so a concurrent
+    // accept/retry/reject can't double-transition. select('id') returns matched
+    // rows; exactly one must match or another writer won the race.
+    try {
+      await safeAwaitRowCount(
+        svc
+          .from("import_queue")
+          .update({
+            status: "rejected",
+            rejected_at: new Date().toISOString(),
+            rejected_by_user_id: user.id,
+            rejected_reason: body.reason,
+            purgable_at,
+          })
+          .eq("id", queueRowId)
+          .eq("tenant_id", ctx.tenant_id)
+          .in("status", REJECTABLE_STATUSES)
+          .select("id"),
+        "import_queue.reject",
+        1,
+      );
+    } catch (err) {
+      if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+        return Response.json({ error: "reject_conflict" }, { status: 409 });
+      }
+      if (err instanceof SupabaseMutationError) return dbErrorResponse(err.pgError);
+      throw err;
+    }
 
     await writeAuditLog({
       tenant_id: ctx.tenant_id,
