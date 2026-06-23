@@ -11,7 +11,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
-import { loadPricingTable } from "@/lib/pricing/pricing-table";
+import { loadPricingTable, tierMonthlyPriceCents } from "@/lib/pricing/pricing-table";
 import { respondToAuthError } from "@/lib/auth/respond";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/db/tenant-context";
@@ -325,9 +325,7 @@ export async function GET(req: Request): Promise<Response> {
       const pricing = await loadPricingTable(db);
       const tierBase = pricing.base[tierCode as keyof typeof pricing.base];
       if (tierBase) {
-        const monthlyCents =
-          billingPeriod === "annual" ? Math.round(tierBase.annual / 12) : tierBase.monthly;
-        priceMonthly = monthlyCents / 100;
+        priceMonthly = tierMonthlyPriceCents(tierBase, billingPeriod) / 100;
       }
     } catch {
       /* null — card shows "—" */

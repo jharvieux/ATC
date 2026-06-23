@@ -10,7 +10,11 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { loadPricingTable, _resetPricingCacheForTests } from "@/lib/pricing/pricing-table";
+import {
+  loadPricingTable,
+  tierMonthlyPriceCents,
+  _resetPricingCacheForTests,
+} from "@/lib/pricing/pricing-table";
 import {
   PRICING_FALLBACK,
   computeEffectiveMonthlyRevenue,
@@ -121,6 +125,19 @@ describe("DB pricing flows into the compute functions", () => {
       pricing,
     );
     expect(cents).toBe(20000n); // DB value, not the 14900 fallback
+  });
+});
+
+describe("tierMonthlyPriceCents — period-aware plan price (dashboard #1332)", () => {
+  it("returns the monthly base under monthly billing", () => {
+    expect(tierMonthlyPriceCents({ monthly: 14900, annual: 149000 }, "monthly")).toBe(14900);
+  });
+  it("returns the monthly-equivalent (annual / 12, rounded) under annual billing", () => {
+    // 149000 / 12 = 12416.67 → 12417, so a "$X/mo" card is honest for annual plans.
+    expect(tierMonthlyPriceCents({ monthly: 14900, annual: 149000 }, "annual")).toBe(Math.round(149000 / 12));
+  });
+  it("treats a null/unknown billing period as monthly", () => {
+    expect(tierMonthlyPriceCents({ monthly: 4900, annual: 49000 }, null)).toBe(4900);
   });
 });
 

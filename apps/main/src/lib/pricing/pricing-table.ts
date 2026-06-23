@@ -84,6 +84,20 @@ export async function loadPricingTable(db: SupabaseClient): Promise<PricingTable
   }
 }
 
+/**
+ * Monthly-equivalent price in cents for a tier's base price under a billing
+ * period. Annual plans return annual / 12 (rounded) so a "$X/mo" display is
+ * honest; any non-"annual" period is treated as monthly. Shared by the
+ * dashboard plan card (and Phase 3 billing/admin surfaces) so the period-aware
+ * rule lives in one tested place.
+ */
+export function tierMonthlyPriceCents(
+  base: { monthly: number; annual: number },
+  billingPeriod: string | null,
+): number {
+  return billingPeriod === "annual" ? Math.round(base.annual / 12) : base.monthly;
+}
+
 /** Test-only: clear the in-process cache between specs. */
 export function _resetPricingCacheForTests(): void {
   cache = null;
