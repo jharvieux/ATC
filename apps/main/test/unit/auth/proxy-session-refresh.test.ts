@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import { AuthApiError, AuthRetryableFetchError } from "@supabase/supabase-js";
 
 const mocks = vi.hoisted(() => ({
   getTenantBySlug: vi.fn(),
@@ -22,7 +23,10 @@ vi.mock("@/lib/tenancy/resolve-tenant", () => ({
   getTenantByCustomDomain: mocks.getTenantByCustomDomain,
 }));
 
-vi.mock("@/lib/auth/ssr-client", () => ({
+// Keep the real isInvalidSessionError + clearAuthCookies (the self-heal logic
+// under test); only the client factory is stubbed so we can drive getUser().
+vi.mock("@/lib/auth/ssr-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/ssr-client")>()),
   createMiddlewareClient: () => ({
     supabase: { auth: { getUser: mocks.getUser } },
     applyRefreshedSession: mocks.applyRefreshedSession,
@@ -143,5 +147,71 @@ describe("proxy() session refresh", () => {
     );
     expect(mocks.getUser).not.toHaveBeenCalled();
     expect(mocks.applyRefreshedSession).not.toHaveBeenCalled();
+  });
+});
+
+// §17.x self-heal (#1361) — a present-but-invalid session cookie must be purged
+// and the user re-authenticated, instead of being replayed (and wedging
+// fail-closed gates at a 404) on every subsequent request.
+describe("proxy() invalid-session self-heal", () => {
+  const COOKIE = "sb-abc-auth-token=dead-token";
+  function invalidSession() {
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: new AuthApiError("Invalid Refresh Token: Already Used", 400, "refresh_token_already_used"),
+    });
+  }
+
+  it("clears the dead cookie and redirects to /auth/reauth on a gated path", async () => {
+    invalidSession();
+    const res = await proxy(req("ai-travelconcierge.com", "/admin", { cookie: COOKIE }));
+
+    expect(res.status).toBe(307);
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.pathname).toBe("/auth/reauth");
+    expect(loc.searchParams.get("return")).toBe("/admin");
+
+    const cleared = res.cookies.get("sb-abc-auth-token");
+    expect(cleared?.value).toBe("");
+    expect(cleared?.maxAge).toBe(0);
+    // Deleted on the same shared scope it was set with, or the browser keeps it.
+    expect(cleared?.domain).toBe(".ai-travelconcierge.com");
+
+    // We are clearing, not refreshing — the rotate-and-flush path must not run.
+    expect(mocks.applyRefreshedSession).not.toHaveBeenCalled();
+  });
+
+  it("redirects on a public path too (redirect-everywhere), preserving the return target", async () => {
+    invalidSession();
+    const res = await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
+    expect(res.status).toBe(307);
+    const loc = new URL(res.headers.get("location")!);
+    expect(loc.pathname).toBe("/auth/reauth");
+    expect(loc.searchParams.get("return")).toBe("/");
+  });
+
+  it("clears but does NOT redirect on the re-auth surface itself (no loop)", async () => {
+    invalidSession();
+    const res = await proxy(req("ai-travelconcierge.com", "/auth/reauth", { cookie: COOKIE }));
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.cookies.get("sb-abc-auth-token")?.maxAge).toBe(0);
+  });
+
+  it("does NOT heal on a transient auth-server error (no mass logout)", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: new AuthRetryableFetchError("auth server unreachable", 0),
+    });
+    const res = await proxy(req("ai-travelconcierge.com", "/", { cookie: COOKIE }));
+    expect(res.headers.get("location")).toBeNull();
+    expect(mocks.applyRefreshedSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT heal when no auth cookie is present (anonymous visitor)", async () => {
+    invalidSession();
+    const res = await proxy(req("ai-travelconcierge.com", "/"));
+    expect(res.headers.get("location")).toBeNull();
+    expect(mocks.applyRefreshedSession).toHaveBeenCalledTimes(1);
   });
 });

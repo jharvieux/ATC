@@ -14,7 +14,11 @@ import {
 } from "@/lib/tenancy/resolve-tenant";
 import { derivePaymentState } from "@/lib/billing/payment-state";
 import { extractAttributionFromRequest } from "@/lib/attribution/extract-utm";
-import { createMiddlewareClient } from "@/lib/auth/ssr-client";
+import {
+  createMiddlewareClient,
+  clearAuthCookies,
+  isInvalidSessionError,
+} from "@/lib/auth/ssr-client";
 import { constantTimeEqual } from "@/lib/auth/constant-time-equal";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
 
@@ -162,6 +166,19 @@ function isLoginGatedPath(pathname: string): boolean {
   );
 }
 
+// §17.x self-heal (#1361) — the sign-in surface. A request here with a bad
+// session cookie gets the cookie cleared but is NOT redirected: these pages
+// (and /api/auth/*, which establishes the new session) ARE the re-auth flow,
+// so redirecting them to /auth/reauth would loop. Everything else redirects.
+function isAuthFlowPath(pathname: string): boolean {
+  return (
+    pathname === "/auth" ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/api/auth/") ||
+    pathname === "/signup"
+  );
+}
+
 function hasSupabaseAuthCookie(req: NextRequest): boolean {
   for (const c of req.cookies.getAll()) {
     if (/^sb-.+-auth-token(\.\d+)?$/.test(c.name)) return true;
@@ -255,9 +272,39 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   //     throws AuthPKCECodeVerifierMissingError. Auth routes manage their own
   //     session state and do not need server-side refresh.
   const { supabase, applyRefreshedSession } = createMiddlewareClient(req);
-  const authUser = pathname.startsWith("/api/auth/")
+  const sessionResult = pathname.startsWith("/api/auth/")
     ? null
-    : (await supabase.auth.getUser()).data.user;
+    : await supabase.auth.getUser();
+  const authUser = sessionResult?.data.user ?? null;
+
+  // 1b-heal (§17.x, #1361) — self-heal a present-but-invalid session. When the
+  //   request carries an auth cookie but getUser() DEFINITIVELY rejects it (a
+  //   bad/expired/rotated refresh token — not a transient auth-server blip),
+  //   delete the dead cookie so the browser stops replaying it, then send the
+  //   user to re-authenticate. Without this the stale cookie fails on every
+  //   subsequent request and fail-closed gates (e.g. /admin) wedge at an opaque
+  //   404. isInvalidSessionError() screens out transient failures so a brief
+  //   Supabase outage can't mass-log-out everyone. Runs before the admin/login
+  //   gates so a bad-cookie visitor re-auths instead of hitting a 404. The
+  //   re-auth surface itself (isAuthFlowPath) is cleared but not redirected, to
+  //   avoid a loop.
+  if (
+    !authUser &&
+    hasSupabaseAuthCookie(req) &&
+    isInvalidSessionError(sessionResult?.error)
+  ) {
+    if (isAuthFlowPath(pathname)) {
+      const res = NextResponse.next({ request: { headers: cloneAndScrubHeaders(req) } });
+      clearAuthCookies(req, res);
+      return res;
+    }
+    const url = req.nextUrl.clone();
+    url.pathname = "/auth/reauth";
+    url.search = `?return=${encodeURIComponent(pathname + (req.nextUrl.search || ""))}`;
+    const res = NextResponse.redirect(url);
+    clearAuthCookies(req, res);
+    return res;
+  }
 
   const host = req.headers.get("host") ?? "";
   // Strip port for local dev comparisons.
