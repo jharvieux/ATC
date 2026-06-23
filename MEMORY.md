@@ -4,6 +4,23 @@ Newest entries on top.
 
 ---
 
+## D-292 — 2026-06-23 — Seeded prod stripe_price_map (16 rows); prod Stripe is TEST-mode; price-ID source is a gitignored file, NOT Vercel env (EPIC #1336)
+
+**Decision.** Ran `seed-stripe-price-map.ts --target=prod --apply` → upserted all 16 rows into the (previously empty) prod `stripe_price_map`. Unblocks the Phase 3 admin pricing screen (was returning `409 price_not_seeded`) and clears the prod-seeded precondition for Phase 4 ([[#1340]]).
+
+**Key facts (these tripped me up — record them).**
+- **Prod Stripe runs in TEST/sandbox mode** (`sk_test`); this is a pre-launch beta. So "sandbox" price IDs are CORRECT for prod — no D-285 mode mismatch. Verified: each ID returns `active:true, livemode:false` against the prod key.
+- **The `STRIPE_PRICE_*` values are NOT in `.env.local`, and NOT readable via `vercel env pull`** — pull returns blank (`=""`) for EVERY var in this environment (incl. STRIPE_SECRET_KEY), a CLI/token artifact. **Don't trust `vercel env pull` for value inspection here.** The real values live in **`apps/main/stripe-sandbox-price-ids.env`** (gitignored). To re-seed: `set -a; . apps/main/stripe-sandbox-price-ids.env; . .env.local; set +a; pnpm exec tsx scripts/seed-stripe-price-map.ts --target=prod --apply`.
+- `amount_cents` left NULL by the seed (intended — the Phase 3 editor populates live unit amounts from Stripe).
+
+**Verification.** All 16 keys the checkout code queries (`PRICE_ID_ENV_MAP`) are present in the DB → `priceIdFor()` resolves from DB, env fallback never hit. All 16 IDs active + test-mode in the prod Stripe account. Deployed prod build (`8e5b4fe9`) includes the Phase 2 DB-read path.
+
+**Corrects** the prior open question / SESSION assumption "env fallback still serves / confirm STRIPE_PRICE_* in Vercel" — the env vars are blank in the pull; the canonical source for re-seeding is the gitignored file. [[D-285]] [[D-286]] [[D-287]]
+
+**Related artifacts.** `scripts/seed-stripe-price-map.ts`; `apps/main/src/lib/stripe/price-ids.ts` (loadPriceMap/priceIdFor); `apps/main/stripe-sandbox-price-ids.env` (gitignored); EPIC #1336; #1340.
+
+---
+
 ## D-291 — 2026-06-23 — Prod PDF imports were crashing on pdf-parse's native canvas dep (NOT image-only); swapped to unpdf + fixed reject (#1330/#1353/#1354/#1355)
 
 **Decision.** (a) Replaced pdf-parse with **unpdf** for all PDF text extraction (PR #1355, closes #1353), behind a shared helper `apps/main/src/lib/pdf/extract-pdf-text.ts` used by both call sites: `inngest/import-pipeline.ts` (document imports) and `lib/rag-ingest/extract-content.ts` (RAG ingest; OCR fallback preserved). Removed pdf-parse from `next.config` `serverExternalPackages` and dropped the dep. (b) Fixed the import **reject** route to allow `parse_failed` rows (was `pending_review`-only), CAS-guarded, error code `row_not_in_pending_review`→`row_not_rejectable` (PR #1354). (c) Deleted Lisa's two stuck imports from prod (DB rows + storage files), operator-approved.
