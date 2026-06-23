@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-286 — 2026-06-22 — Pricing Phase 2 shipped (PR #1343): Stripe Price-IDs move to a DB table, env stays the fallback; seeding needs Vercel env, not local
+
+**Decision.** EPIC #1336 Phase 2 (#1338) is merged. The 16 `STRIPE_PRICE_*` env vars are no longer the source of truth for Stripe Price IDs — a new `stripe_price_map` table is, read by `loadPriceMap(serviceRoleClient)` (cached, TTL 60s) and injected into `priceIdFor(query, map)`. DB value wins; env var is the fallback per key; throws only when neither has it. Both callers (checkout + billing routes) load the map once per request. Mirrors the Phase 1 `loadPricingTable` pattern exactly.
+
+**Why this shape.** Same as Phase 1: DB-first with the code/env value as a safety net means zero behavior change until rows exist, and a DB read failure degrades to env rather than hard-failing checkout. `loadPriceMap` returns an empty map **uncached** on read error / unseeded table, so the next call retries the DB instead of pinning the env path for a full TTL.
+
+**Seeding is runtime, not SQL** (a migration can't read env secrets, unlike Phase 1's code-constant prices). `scripts/seed-stripe-price-map.ts` is an idempotent upsert (`--target=test|prod`, dry-run default, `--apply` to write). User granted permission to run it in prod. **BUT: the STRIPE_PRICE_* values are NOT in local `.env.local` (0/16 found) — they live in Vercel env.** So seeding requires pulling the right Vercel env first, and prod also needs the table (the migration is gated through the release pipeline, only on the TEST DB so far). Until seeded, the env fallback covers everything, so there's no functional gap and no urgency. See [[feedback_secret_handling]].
+
+**`amount_cents` deferred to Phase 3 (#1339).** The column exists (nullable) but the backfill leaves it null; populating the live Stripe `unit_amount` belongs to Phase 3, which already creates/queries Stripe Prices. Noted on #1339.
+
+**Rejected.** (1) Seeding rows in the migration — impossible, env secrets unreadable from SQL. (2) Env-as-fallback-only with no script (lazy fill via Phase 3) — user wanted an actual backfill. (3) Retrieving `amount_cents` from Stripe in the backfill — adds a Stripe-mode-matching dependency to a one-shot script; better placed in Phase 3.
+
+**Pre-existing gap found + fixed inline.** The §30.8 `rls-coverage-check` (reads `db/rls-exceptions.sql`, runs only inside the **non-required** Playwright job) flags every RLS-enabled-zero-policy table regardless of `tenant_id`. Phase 1's `pricing_seat_ladder` was never excepted, so that check has been red since Phase 1 (it doesn't block merge — Playwright isn't required). Added both `pricing_seat_ladder` and `stripe_price_map` to `rls-exceptions.sql` AND `.txt` (kept in sync). Note: `pnpm verify` does NOT run `rls:coverage` (needs a live DB), which is why this class of failure only surfaces in CI's Playwright job.
+
+**Related artifacts.** PR #1343 (closes #1338). Migration `apps/main/supabase/migrations/20260708000000_stripe_price_map.sql`. `apps/main/src/lib/stripe/price-ids.ts` (loadPriceMap + priceIdFor), `price-id-map.ts` (alias-free shared `PRICE_ID_ENV_MAP`, importable by scripts). `scripts/seed-stripe-price-map.ts`. Tests `apps/main/test/unit/stripe/price-ids.test.ts`. Both Opus audits clean. Builds on [[D-285]]; remaining: Phase 3 (#1339), Phase 4 (#1340).
+
+---
+
 ## D-285 — 2026-06-22 — Pricing moves to the DB as single source of truth (EPIC #1336); Phase 1 shipped (PR #1341); + a prod-apply incident
 
 **Decision.** Subscription tier pricing (per-tier base prices + the agency seat ladder) moves out of the `lib/abuse/revenue.ts` code constants into the DB as the single in-app source of truth, with a platform-admin screen to edit prices that **pushes changes to Stripe**. Operator decisions: (1) admin edits create new Stripe Prices + repoint the product default + update the DB Price-ID ref (true end-to-end single source), existing subscriptions stay on their locked-in price; (2) **phased PRs**. Tracked as EPIC **#1336** → Phase 1 **#1337**, Phase 2 **#1338** (Stripe Price-ID mapping → DB), Phase 3 **#1339** (admin screen + Stripe push), Phase 4 **#1340** (remove constants).

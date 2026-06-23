@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-286 — 2026-06-22 — Pricing Phase 2 shipped (PR #1343, closes #1338): Stripe Price-IDs → stripe_price_map table, env stays fallback; loadPriceMap+priceIdFor(query,map). Seeding is runtime (scripts/seed-stripe-price-map.ts) but STRIPE_PRICE_* aren't in local .env.local (Vercel env); prod table gated through release. amount_cents deferred to Phase 3 (#1339). Fixed pre-existing gap: pricing_seat_ladder missing from rls-exceptions.sql/.txt (rls-coverage runs only in non-required Playwright job; not in pnpm verify)
 - D-285 — 2026-06-22 — Pricing → DB single source of truth (EPIC #1336; Phase 1 PR #1341 closes #1332); push-to-Stripe + phased; loadPricingTable+fallback, injected PricingTable, sentinel-safe ladder. INCIDENT: applied migration to PROD via SUPABASE_DB_URL (not test) → left in prod + made idempotent; RULE: test-DB apply uses SUPABASE_TEST_DB_URL
 - D-284 — 2026-06-22 — Dashboard placeholder cleanup (PRs #1333/#1334): hours-saved labeled an estimate; content safety is a platform-wide always-on floor (no per-tenant toggle) so moved from health to a Quick-action + Fix→Configure; rag reconcile count zero-row guard (option 2). #1321 already done by #1322; filed #1332 (price_monthly)
 - D-283 — 2026-06-22 — document-import PDFs silently failed in prod: pdf-parse must be in serverExternalPackages (#1327 audits other parsers); parse_failed rows now visible + retryable (PR #1328); not yet prod-deployed
