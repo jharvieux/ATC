@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-291 — 2026-06-23 — Prod PDF imports were crashing on pdf-parse's native canvas dep (NOT image-only); swapped to unpdf + fixed reject (#1330/#1353/#1354/#1355)
+
+**Decision.** (a) Replaced pdf-parse with **unpdf** for all PDF text extraction (PR #1355, closes #1353), behind a shared helper `apps/main/src/lib/pdf/extract-pdf-text.ts` used by both call sites: `inngest/import-pipeline.ts` (document imports) and `lib/rag-ingest/extract-content.ts` (RAG ingest; OCR fallback preserved). Removed pdf-parse from `next.config` `serverExternalPackages` and dropped the dep. (b) Fixed the import **reject** route to allow `parse_failed` rows (was `pending_review`-only), CAS-guarded, error code `row_not_in_pending_review`→`row_not_rejectable` (PR #1354). (c) Deleted Lisa's two stuck imports from prod (DB rows + storage files), operator-approved.
+
+**Why.** #1330: Lisa's booking import stuck at `parse_failed/no_text_available`; retry kept failing. I FIRST wrongly diagnosed "image-only PDF, needs OCR." WRONG — pulled the actual file from prod storage and pdf-parse extracted 8462 chars cleanly locally. Real cause (prod runtime logs, deployment dpl_6hZLQ…): pdf-parse wraps pdfjs-dist, which tried to load native `@napi-rs/canvas` on Vercel fluid compute, failed, and **threw** → caught → `no_text_available`. So [[D-283]]'s `serverExternalPackages` fix got pdf-parse to load but didn't stop the runtime crash. Impact was prod-wide: EVERY uploaded-PDF import + RAG PDF ingest failed regardless of text layer. unpdf bundles a worker-free, canvas-free pdfjs build for serverless (verified `next build` clean). LESSON: don't infer a root cause from an error code — open the file / read prod logs. The user caught my wrong diagnosis.
+
+**Rejected.** Adding `@napi-rs/canvas` (native modules fragile on Vercel; may not fix). Manual-intake / re-send for Lisa (user chose delete-and-she-retries-post-deploy). Splitting `no_text_available` into parse_threw vs empty_text — deferred (noted in #1353).
+
+**Related artifacts.** PRs #1354, #1355; issues #1330 (open — Lisa re-uploads post prod deploy), #1353 (closed), #1328/[[D-283]]; `extract-pdf-text.ts`; needs a prod deploy to take effect (gated). `@napi-rs/canvas` still in the tree transitively via officeparser→pdfjs-dist but optional/unused for text.
+
+---
+
 ## D-290 — 2026-06-23 — Prod migration-apply decoupled from the disabled staging pipeline (PR #1351, closes #1349)
 
 **Decision.** Made `deploy-production` in `deploy.yml` depend **directly** on all eight CI gate jobs (typecheck, lint, test, secret-scan, cve-scan, rls-snapshot-diff, cross-tenant-probe, contract-tests) plus `deploy-staging`, instead of `needs: [deploy-staging]` alone. The prod migration-apply logic itself was already correct (`npx supabase db push --include-all` → `check-schema-drift.ts`, behind the `production` environment reviewer gate); only the dependency graph that *reaches* it was broken. Added `docs/runbooks/prod-migration-apply.md`.
