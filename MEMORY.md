@@ -4,6 +4,28 @@ Newest entries on top.
 
 ---
 
+## D-287 — 2026-06-23 — Pricing Phase 3 shipped (PR #1345): platform-admin pricing screen pushes edits to Stripe; Phase 4 deferred until prod-verified
+
+**Decision.** EPIC #1336 Phase 3 (#1339) is merged. New platform-admin area `pricing` (superadmin + finance) with a screen at `(admin)/admin/pricing` and `GET/PUT /api/admin/pricing`. Operator edits a price → the API creates a NEW Stripe Price (Stripe Prices are immutable), repoints the product's `default_price`, and updates the DB. Existing subscriptions keep their locked-in price; new prices apply to new checkouts only.
+
+**Scope (operator chose "base + seat prices").** The PUT is discriminated: `kind:"stripe_price"` edits any of the 16 `stripe_price_map` line items (12 base + 4 additional_seats) and pushes to Stripe; base edits ALSO update `tier_definitions` (display + §27 abuse-revenue math). `kind:"seat_ladder"` is a DB-only replacement of `pricing_seat_ladder` (graduated bands; no Stripe linkage), validated for contiguous sort_order + open-ended final band. Editing a base price finally populates the `amount_cents` that [[D-286]] (Phase 2) left null.
+
+**Correctness design.** Orchestration lives in `lib/stripe/pricing-admin.ts` with Stripe + db **injected** (unit-tested without network). Ordering = create Price → repoint default → CAS-update `stripe_price_map` (guarded `.eq("stripe_price_id", oldId)` via `safeAwaitRowCount(...,1)`) → update `tier_definitions`. Fail-closed: an unseeded key throws `price_not_seeded` (409) BEFORE any Stripe call — never invents a Product, never points the DB at a non-existent Price. Deterministic idempotency key → network retry reuses the same new Price. No-op edits (amount unchanged) create nothing. Mid-flight failure is recoverable (DB stays on the live old Price until CAS succeeds). Both Opus audits clean (shared diff hash).
+
+**Auth model note.** Platform-admin routes use `assertPlatformAdminArea(req, area)` + `withPlatformAdminAudit` (service-role db, one audit_log row per call) — NOT the tenant RBAC `assertPermission`/permission-grants matrix. So "permission grant + matrix rows" for an admin route = adding the area to `ADMIN_AREA_GRANTS` + reasons to `PLATFORM_ADMIN_REASONS`, not `permission-grants.ts`. `check:permission-matrix` only scans `assertPermission` routes.
+
+**Cache.** `pricing-table.ts` + `price-ids.ts` hold 60s in-process caches per serverless instance; no cross-instance hard-invalidate, so an edit propagates within ≤60s (TTL). Acceptable for rarely-changed prices; documented in the route + screen rather than faking an invalidation that can't work cross-instance.
+
+**Phase 4 (#1340) DEFERRED until prod-verified** (operator decision). The `TIER_BASE_PRICE_CENTS`/`SEAT_LADDER` constants are still the FALLBACK and the DB isn't seeded in prod yet, so removing them now would break prod pricing. Gating checklist posted on #1340 (prod migration + backfill + verify-live before Phase 4 starts).
+
+**Follow-up filed.** #1346 (sonnet) — extract an alias-free tier-code map so the pricing client stops hand-duplicating `TIER_CODE` (mirrors the Phase 2 `price-id-map.ts` split); audit-flagged NIT, low priority.
+
+**Rejected.** (1) Cross-instance cache invalidation via a DB version row — defeats the cache, overkill for rare edits. (2) Editing the graduated seat ladder AS a single Stripe price — the ladder is display/abuse-only; the flat additional_seats Stripe price is the billed one (pre-existing mismatch, not introduced here). (3) Doing Phase 4 now — gated on prod verification.
+
+**Related artifacts.** PR #1345 (closes #1339). `lib/stripe/pricing-admin.ts`, `app/api/admin/pricing/route.ts`, `(admin)/admin/pricing/{page,_client}.tsx`, `platform-admin-roles.ts` (+area), `platform-admin-reasons.ts` (+reasons), sidebar + hub nav. Tests `test/unit/stripe/pricing-admin.test.ts` + area-grant test. No migration (reuses Phase 1/2 tables). Builds on [[D-286]] / [[D-285]].
+
+---
+
 ## D-286 — 2026-06-22 — Pricing Phase 2 shipped (PR #1343): Stripe Price-IDs move to a DB table, env stays the fallback; seeding needs Vercel env, not local
 
 **Decision.** EPIC #1336 Phase 2 (#1338) is merged. The 16 `STRIPE_PRICE_*` env vars are no longer the source of truth for Stripe Price IDs — a new `stripe_price_map` table is, read by `loadPriceMap(serviceRoleClient)` (cached, TTL 60s) and injected into `priceIdFor(query, map)`. DB value wins; env var is the fallback per key; throws only when neither has it. Both callers (checkout + billing routes) load the map once per request. Mirrors the Phase 1 `loadPricingTable` pattern exactly.
