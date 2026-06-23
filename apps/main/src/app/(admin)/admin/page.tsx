@@ -54,6 +54,7 @@ const SECTIONS: HubSection[] = [
     heading: "Support & Operations",
     items: [
       { href: "/admin/help-triage",          label: "Help Triage",                desc: "Review bug submissions, feature requests, and help sessions across all tenants.", requiredRoles: ["superadmin", "support"] },
+      { href: "/admin/pricing",              label: "Subscription Pricing",       desc: "Edit tier base prices and seat pricing — pushes new Stripe Prices and updates the DB.", requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/reconciliation",       label: "Commission Reconciliation",  desc: "Upload a CSV commission statement to auto-match line items against open bookings.", requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/resources",            label: "Cost & Resource Monitoring", desc: "30-day cost trends, per-model AI breakdown, tenant threshold table, pricing catalog.", requiredRoles: ["superadmin", "finance", "support"] },
       { href: "/admin/vendor-status",        label: "Vendor Status",              desc: "Live snapshot of vendor health (AI, email, weather, payment processors).", requiredRoles: ["superadmin", "support"] },
