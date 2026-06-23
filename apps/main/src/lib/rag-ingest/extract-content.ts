@@ -3,8 +3,8 @@
 // Routes by MIME type to a parser. All major formats are now implemented:
 //   - text/plain, text/markdown: direct read.
 //   - text/html: cheerio (strip nav/footer/scripts).
-//   - application/pdf: pdf-parse, falling back to OCR if the PDF has no
-//     extractable text (image-only PDFs).
+//   - application/pdf: unpdf (serverless-safe), falling back to OCR if the
+//     PDF has no extractable text (image-only PDFs).
 //   - DOCX: mammoth.
 //   - DOC: NOT auto-converted (requires libreoffice binary on the function
 //     host); returns 'unavailable' with a clear "convert to .docx" message.
@@ -107,20 +107,12 @@ async function extractHtml(html: string): Promise<ExtractionResult> {
   }
 }
 
-// ── PDF — pdf-parse, OCR fallback on empty text ─────────────────────────────
+// ── PDF — unpdf (serverless-safe), OCR fallback on empty text ───────────────
 
 async function extractPdf(bytes: ArrayBuffer): Promise<ExtractionResult> {
   try {
-    const mod = (await import("pdf-parse")) as unknown as {
-      default?: (b: Buffer) => Promise<{ text?: string }>;
-    } | ((b: Buffer) => Promise<{ text?: string }>);
-    const pdfParse =
-      typeof mod === "function"
-        ? mod
-        : (mod.default ?? (mod as unknown as (b: Buffer) => Promise<{ text?: string }>));
-    const buf = Buffer.from(bytes);
-    const parsed = await pdfParse(buf);
-    const text = (parsed.text ?? "").trim();
+    const { extractPdfText } = await import("@/lib/pdf/extract-pdf-text");
+    const text = await extractPdfText(bytes);
 
     if (text.length > 0) {
       return { status: "extracted", content: text };
