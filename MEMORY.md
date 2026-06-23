@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-284 — 2026-06-22 — Dashboard placeholder cleanup: content safety is a platform-wide always-on floor (no per-tenant toggle)
+
+**Decision.** Resolved the three D-282 dashboard placeholders flagged by the PR #1323 audit, plus a separate D-091 count gap, across two PRs:
+
+1. **#1324 (hours-saved) — operator chose "label as estimate."** The AI-messages "desk time saved" stat was `ai_messages × 2min ÷ 60` presented as fact. Now rendered as `~N hrs estimated (≈2 min/msg)` with the per-message minutes single-sourced in `EST_DESK_MINUTES_PER_AI_MESSAGE` so math and label can't drift. Kept the estimate (operator preference) rather than removing it or making it an env var.
+2. **#1325 (content safety) — architectural finding + reframe.** Content safety in this platform is a **platform-wide always-on floor** — `persona_safety_config` is a seeded singleton (`id='default'`, edited only by platform admins, D-138) applied to every tenant/persona, and forum moderation is fail-closed Haiku. **There is no per-tenant content-safety toggle.** So the hardcoded `ok: true` "Content safety" Workspace-health row was a meaningless literal. Operator decision: remove it from the pass/fail health list, surface it instead as a "Content safety" Quick-action linking to the tenant *supplemental* deny-list config (`/tenant-admin/safety`, the only tenant-configurable safety knob, Pro+ additive), and rename all dashboard "Fix →" action links to "Configure →". (PR #1333 — closes #1324, #1325.)
+3. **#1314 (rag reconcile count) — option 2: fix the count, keep retry behavior.** The `tenant_registry_shadow` drift UPDATE used `safeAwait` without asserting a row matched, so a benign select-vs-delete race no-op'd while `updated++` still ran. Now chains `.select("tenant_id")` and only increments when matched. Deliberately did NOT use `safeAwaitRowCount`/throw (rejected option 1 — would force Inngest retries on a self-correcting race for no gain). Counts are observability-only. (PR #1334 — closes #1314.)
+
+**Why.** All three replaced dishonest/placeholder signals (a fabricated metric, an always-green literal, an inflatable counter) with honest ones. The content-safety finding matters most: future work touching dashboard health or "content safety" must know it's a non-removable platform floor, not a per-tenant setting.
+
+**Rejected.** #1324 env-var constant (still an estimate, more plumbing) and removing the sub-label entirely. #1325 deriving green from the tenant supplemental deny-list (misleading — absence ≠ unsafe) or dropping the row. #1314 fail-loud/`safeAwaitRowCount` (retry noise).
+
+**Also.** #1321 (extract shared `TaSidebarLink`) was **already done by PR #1322** (commit 6810a256) — closed as completed, no new PR. Filed **#1332** for the separate `price_monthly: null` dashboard placeholder (no real pricing columns on `tier_definitions` yet) and re-pointed two mislabeled `TODO(#1324)` refs in the dashboard API to it.
+
+**Related artifacts.** PRs #1333, #1334; issues #1321 (closed), #1332 (open); `apps/main/src/app/(console)/settings/page.tsx`; `apps/main/src/app/api/tenant/dashboard/route.ts`; `apps/rag/src/inngest/tenant-registry-reconcile.ts`; `persona_safety_config` (platform safety floor); `apps/main/src/lib/ta-theme/ta-sidebar-link.tsx`.
+
+---
+
 ## D-283 — 2026-06-22 — Document-import PDFs need pdf-parse in serverExternalPackages; failed imports must be visible
 
 **Decision.** Document-path imports (BP34 §34.3) silently failed in production — every uploaded PDF landed in `import_queue.status='parse_failed'` (reason `no_text_available`) and vanished from every screen. Two root causes, both fixed in PR #1328:
