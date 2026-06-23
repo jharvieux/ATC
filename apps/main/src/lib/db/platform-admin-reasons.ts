@@ -106,6 +106,10 @@ export const PLATFORM_ADMIN_REASONS = [
   "ai_pricing_read",
   "ai_pricing_update",
 
+  // EPIC #1336 Phase 3 — operator-managed subscription pricing (pushes to Stripe).
+  "pricing_read",
+  "pricing_update",
+
   // Resource utilization dashboard — Resend per-email cost rate + Apify budget cap.
   "resend_pricing_update",
   "apify_budget_update",

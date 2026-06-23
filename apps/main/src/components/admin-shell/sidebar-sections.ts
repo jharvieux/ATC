@@ -56,6 +56,7 @@ export const ADMIN_NAV_SECTIONS: AdminNavSection[] = [
     heading: "Support & Operations",
     items: [
       { href: "/admin/help-triage",           label: "Help Triage",               requiredRoles: ["superadmin", "support"] },
+      { href: "/admin/pricing",               label: "Subscription Pricing",       requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/reconciliation",        label: "Commission Reconciliation",  requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/resources",             label: "Cost & Resource Monitoring", requiredRoles: ["superadmin", "finance"] },
       { href: "/admin/vendor-status",         label: "Vendor Status",             requiredRoles: ["superadmin", "support"] },

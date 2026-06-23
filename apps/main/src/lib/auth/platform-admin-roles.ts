@@ -49,6 +49,7 @@ export const ADMIN_AREA_GRANTS = {
   vendor_status:     ["superadmin", "support"] as const,
 
   // Financial
+  pricing:           ["superadmin", "finance"] as const,
   ai_pricing:        ["superadmin", "finance"] as const,
   reconciliation:    ["superadmin", "finance"] as const,
   resource_util:     ["superadmin", "finance"] as const,

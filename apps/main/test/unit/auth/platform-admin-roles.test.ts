@@ -40,7 +40,7 @@ describe("ADMIN_AREA_GRANTS — superadmin is present in every area", () => {
 });
 
 describe("ADMIN_AREA_GRANTS — reviewer access boundaries", () => {
-  const REVIEWER_DENIED = ["abuse", "tenants", "personas", "persona_safety", "ai_pricing", "reconciliation", "resource_util", "admins", "legal_docs", "pause_ai", "ai_kill_switch", "integrations"] as const;
+  const REVIEWER_DENIED = ["abuse", "tenants", "personas", "persona_safety", "pricing", "ai_pricing", "reconciliation", "resource_util", "admins", "legal_docs", "pause_ai", "ai_kill_switch", "integrations"] as const;
   const REVIEWER_GRANTED = ["rag", "chunks", "retrieval_weights", "travel_news", "cruise_catalog", "denylist", "email_samples"] as const;
 
   for (const area of REVIEWER_DENIED) {
@@ -57,8 +57,8 @@ describe("ADMIN_AREA_GRANTS — reviewer access boundaries", () => {
 });
 
 describe("ADMIN_AREA_GRANTS — finance access boundaries", () => {
-  it("finance can access ai_pricing, reconciliation, resource_util", () => {
-    for (const area of ["ai_pricing", "reconciliation", "resource_util"] as const) {
+  it("finance can access pricing, ai_pricing, reconciliation, resource_util", () => {
+    for (const area of ["pricing", "ai_pricing", "reconciliation", "resource_util"] as const) {
       expect((ADMIN_AREA_GRANTS[area] as readonly string[]).includes("finance")).toBe(true);
     }
   });
