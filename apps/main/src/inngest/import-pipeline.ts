@@ -19,6 +19,7 @@ import { extractIntakeForm } from "@/lib/import/extractors/intake-form";
 import { validate, type ValidationFlag, type ValidationInput } from "@/lib/import/validation";
 import { decideRoute } from "@/lib/import/auto-accept";
 import { promoteImport } from "@/lib/import/promote";
+import { extractPdfText } from "@/lib/pdf/extract-pdf-text";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 type ImportQueueRow = {
@@ -223,12 +224,11 @@ async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row:
   if (row.import_path === "manual") {
     return row.source_ref;
   }
-  // Document path: download the PDF from the imported-documents bucket
-  // and run pdf-parse on it. text-only PDFs work fine; scanned-image
-  // PDFs return empty (resolveText returns "") which the caller treats
-  // as parse_failed (correct behavior — operator can re-submit as a
-  // manual entry or via Gmail). OCR for scanned PDFs is a separate
-  // capability we haven't shipped yet.
+  // Document path: download the PDF from the imported-documents bucket and
+  // extract its text via unpdf (serverless-safe — see extract-pdf-text.ts,
+  // #1353). text-only PDFs work fine; scanned-image PDFs return empty, which
+  // the caller treats as parse_failed (operator can re-submit as a manual
+  // entry or via Gmail). OCR for scanned PDFs is a separate capability.
   if (row.import_path === "document" && row.uploaded_file_path) {
     try {
       const { data, error } = await svc.storage
@@ -242,20 +242,7 @@ async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row:
         );
         return null;
       }
-      const buf = Buffer.from(await data.arrayBuffer());
-      // pdf-parse is dynamic-imported so the heavy module doesn't load
-      // until the document path actually runs. pdf-parse v2 exposes a
-      // PDFParse class; create one, getText() returns { text, pages }.
-      const { PDFParse } = await import("pdf-parse");
-      const parser = new PDFParse({ data: buf });
-      let extracted = "";
-      try {
-        const result = await parser.getText();
-        extracted = result.text ?? "";
-      } finally {
-        await parser.destroy();
-      }
-      const text = extracted.trim();
+      const text = await extractPdfText(await data.arrayBuffer());
       if (!text) {
         console.info(
           "[import-pipeline] PDF parsed but text is empty (likely scanned/image-only) for %s",
@@ -266,7 +253,7 @@ async function resolveText(svc: ReturnType<typeof createServiceRoleClient>, row:
       return text;
     } catch (err) {
       console.warn(
-        "[import-pipeline] pdf-parse threw for %s: %s",
+        "[import-pipeline] PDF extraction threw for %s: %s",
         row.id,
         err instanceof Error ? err.message : String(err),
       );
