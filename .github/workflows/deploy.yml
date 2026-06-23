@@ -592,14 +592,36 @@ jobs:
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    # always() lets this run even when staging jobs were skipped (not yet provisioned).
-    # !failure() + !cancelled() still block production if staging ran and failed.
+    # #1349 — prod migration-apply + deploy depends DIRECTLY on the CI gates, not
+    # only on deploy-staging. deploy-staging/db-copy are gated by
+    # STAGING_PIPELINE_ENABLED (false today, #533); when that's off they're SKIPPED,
+    # so listing deploy-staging as the sole `needs` made prod-apply rely on a skipped
+    # job's status propagating up the transitive chain (db-copy → CI jobs). That's
+    # fragile and implicit: it false-blocked prod whenever ANY ancestor CI gate failed
+    # — the exact failure that forced the manual raw-psql apply behind the D-285 ledger
+    # desync. Listing every required CI gate as a direct `needs` makes the intent
+    # explicit: failure() blocks prod iff a gate ACTUALLY failed. deploy-staging stays
+    # in `needs` as an OPTIONAL pre-prod layer — skipped (disabled) doesn't block,
+    # failed (enabled) does, via !failure(). The `production` GitHub environment's
+    # required-reviewer gate remains the per-instance operator approval; no prod
+    # migration or deploy happens without it.
     if: |
       always() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       startsWith(github.ref, 'refs/heads/release/') &&
       !failure() && !cancelled()
-    needs: [deploy-staging]
+    needs:
+      [
+        typecheck,
+        lint,
+        test,
+        secret-scan,
+        cve-scan,
+        rls-snapshot-diff,
+        cross-tenant-probe,
+        contract-tests,
+        deploy-staging,
+      ]
     permissions:
       contents: write
       pull-requests: write
