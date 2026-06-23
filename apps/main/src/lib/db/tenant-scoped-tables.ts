@@ -148,6 +148,10 @@ export const PLATFORM_READABLE_TABLES: ReadonlySet<string> = new Set([
   "tenants",
   // Platform catalogs (no tenant_id column) — see db/rls-exceptions.txt.
   "tier_definitions",
+  // Global agency seat ladder (no tenant_id) — read via tenantClient by the
+  // pricing loader (lib/pricing/pricing-table.ts) for the dashboard plan card
+  // and abuse-revenue math. RLS-zero-policy; service-role read only. EPIC #1336.
+  "pricing_seat_ladder",
   "host_adapters",
   "host_booking_fee_configs",
   "pricing_cache",

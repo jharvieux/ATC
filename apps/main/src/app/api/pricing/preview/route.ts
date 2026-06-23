@@ -1,12 +1,18 @@
 // §15.8 — Live pricing preview for tier selection page.
 // Returns monthly or annual total for a given tier + seat count.
-// For Agency: applies the §3.3 seat ladder ($59/$49/$39/seat/month).
-// Annual = monthly × 10 (2 months free, per pricing model).
+// For Agency: applies the §3.3 seat ladder.
+//
+// Prices come from the DB (tier_definitions price columns + pricing_seat_ladder,
+// EPIC #1336) via loadPricingTable — the single source of truth. This is a
+// public, pre-auth endpoint, so it reads the global pricing reference data via
+// the service-role client (both tables are RLS-zero-policy + PLATFORM_READABLE);
+// allowlisted in service-role-allowlist.js (§15.8).
 
 import { calculateAgencySeatPreviewCents } from "@/lib/stripe/price-ids";
 import type { BillingPeriod, Tier, TenantType } from "@/lib/stripe/price-ids";
-import { TIER_BASE_PRICE_CENTS } from "@/lib/abuse/revenue";
 import { TIER_CODE } from "@/lib/stripe/tier-codes";
+import { loadPricingTable } from "@/lib/pricing/pricing-table";
+import { createServiceRoleClient } from "@/lib/db/service-role-client";
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
@@ -31,12 +37,14 @@ export async function GET(req: Request): Promise<Response> {
 
   const tierCode = TIER_CODE[tenantType]?.[tier];
   if (!tierCode) return Response.json({ error: "invalid_tier_for_tenant_type" }, { status: 422 });
-  const basePrices = TIER_BASE_PRICE_CENTS[tierCode];
+
+  const pricing = await loadPricingTable(createServiceRoleClient());
+  const basePrices = pricing.base[tierCode];
   const baseTotal = billingPeriod === "annual" ? basePrices.annual : basePrices.monthly;
 
   let additionalSeatCents = 0;
   if (tier === "agency" && seatCount > 1) {
-    additionalSeatCents = calculateAgencySeatPreviewCents(seatCount - 1, billingPeriod);
+    additionalSeatCents = calculateAgencySeatPreviewCents(seatCount - 1, billingPeriod, pricing.seatLadder);
   }
 
   const totalCents = baseTotal + additionalSeatCents;

@@ -11,6 +11,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { loadPricingTable } from "@/lib/pricing/pricing-table";
 import { respondToAuthError } from "@/lib/auth/respond";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/db/tenant-context";
@@ -295,8 +296,6 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   // ── Plan ─────────────────────────────────────────────────────────────────
-  // tier_definitions is still a stub (§14 pricing columns not yet added).
-  // TODO(#1332): wire price_monthly once real pricing columns land.
   let tierCode: string | null = null;
   let tierName: string | null = null;
   if (tenantTierId) {
@@ -313,6 +312,25 @@ export async function GET(req: Request): Promise<Response> {
       }
     } catch {
       /* nulls */
+    }
+  }
+
+  // Plan price (#1336/#1332): the tier's headline monthly price from the DB,
+  // shown as "$X/mo". Period-aware — annual billing shows the monthly-equivalent
+  // (annual / 12). Seat-ladder add-ons are NOT folded in; the card shows the
+  // plan's list price, not the all-in invoice. Degrades to null on any failure.
+  let priceMonthly: number | null = null;
+  if (tierCode) {
+    try {
+      const pricing = await loadPricingTable(db);
+      const tierBase = pricing.base[tierCode as keyof typeof pricing.base];
+      if (tierBase) {
+        const monthlyCents =
+          billingPeriod === "annual" ? Math.round(tierBase.annual / 12) : tierBase.monthly;
+        priceMonthly = monthlyCents / 100;
+      }
+    } catch {
+      /* null — card shows "—" */
     }
   }
 
@@ -344,7 +362,7 @@ export async function GET(req: Request): Promise<Response> {
     plan: {
       tier_code: tierCode,
       tier_name: tierName,
-      price_monthly: null, // TODO(#1332): real value once pricing columns exist
+      price_monthly: priceMonthly,
       billing_period: billingPeriod,
       status: tenantStatus,
     },
