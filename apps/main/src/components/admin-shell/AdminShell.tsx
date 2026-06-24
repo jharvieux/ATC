@@ -53,7 +53,7 @@ export function AdminShell({
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            aria-label={open ? "Hide sidebar" : "Show sidebar"}
+            aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
             style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
@@ -96,7 +96,7 @@ export function AdminShell({
         </button>
       </header>
       <div className="flex flex-1">
-        <AdminSidebar open={open} initialCollapsed={initialCollapsed} adminRole={adminRole} />
+        <AdminSidebar pinned={open} initialCollapsed={initialCollapsed} adminRole={adminRole} />
         <main className="flex-1 overflow-x-hidden">{children}</main>
       </div>
     </div>
