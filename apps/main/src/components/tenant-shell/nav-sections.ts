@@ -95,19 +95,6 @@ const HAMBURGER_NAV_SECTIONS: readonly TenantNavSection[] = [
     items: [{ href: "/", label: "Support chat" }],
   },
   {
-    heading: "Workspace",
-    roles: STAFF,
-    items: [
-      { href: "/crm/contacts", label: "Contacts" },
-      { href: "/crm/quotes", label: "Quotes" },
-      { href: "/crm/bookings", label: "Bookings" },
-      { href: "/groups", label: "Group Bookings" },
-      { href: "/crm/imports", label: "Imports" },
-      { href: "/crm/reports", label: "Reports" },
-      { href: "/settings/price-watches", label: "Price watches" },
-    ],
-  },
-  {
     // Staff: My account without price watches (those are in Workspace)
     heading: "My account",
     roles: STAFF,

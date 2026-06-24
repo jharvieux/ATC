@@ -62,16 +62,20 @@ describe("navSectionsForRole", () => {
     expect(hrefs).toContain("/settings/privacy");
   });
 
-  it("agents get the workspace but not owner administration", () => {
+  it("agents see account links but not workspace CRM or owner administration", () => {
+    // Workspace items (CRM, Groups, etc.) are sidebar-only; the hamburger
+    // shows only account-level links for staff.
     const hrefs = hrefsFor("agent");
-    expect(hrefs).toContain("/crm/contacts");
+    expect(hrefs).toContain("/settings/conversations");
+    expect(hrefs).not.toContain("/crm/contacts");
     expect(hrefs).not.toContain("/settings");
     expect(hrefs).not.toContain("/settings/usage");
   });
 
-  it("owners see workspace, account, and the Admin Console entry", () => {
+  it("owners see account links and Admin Console but not workspace CRM", () => {
+    // Same as agents: workspace items are sidebar-only.
     const hrefs = hrefsFor("tenant_owner");
-    expect(hrefs).toContain("/crm/contacts");
+    expect(hrefs).not.toContain("/crm/contacts");
     expect(hrefs).toContain("/settings/conversations");
     expect(hrefs).toContain("/settings");
   });
