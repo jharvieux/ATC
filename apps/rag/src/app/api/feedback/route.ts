@@ -76,6 +76,8 @@ export async function POST(req: Request): Promise<Response> {
   // Bucket on the verified message_id (from the signed body) — never the
   // spoofable x-forwarded-for. Defense-in-depth: bounds blast radius of a
   // leaked secret.
+  // null message_id: all no-id events share one "msg:global" bucket — acceptable
+  // at the 120 rpm default; the main app sends a message_id for normal feedback.
   const rl = await checkFeedbackRateLimit(`msg:${parsed.message_id ?? "global"}`);
   if (!rl.allowed) {
     return Response.json(
