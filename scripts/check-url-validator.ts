@@ -23,13 +23,13 @@ const SCAN_DIRS = ["apps/main/src", "apps/rag/src", "packages/contracts/src"];
 const URL_RE = /z\.string\(\)\.url\(\)/g;
 
 export interface UrlHit {
-  file: string;
-  key: string;
+  key: string; // <relpath>:<line>
 }
 
 // Exempt operator-config env validation (trusted; non-http schemes allowed).
+// Exact basename match so a stored-URL file like `deploy-env.ts` is NOT exempt.
 function isExempt(rel: string): boolean {
-  return rel.endsWith("/env.ts") || rel.endsWith("env.ts");
+  return path.basename(rel) === "env.ts";
 }
 
 export function findUrlValidators(rel: string, content: string): UrlHit[] {
@@ -37,8 +37,8 @@ export function findUrlValidators(rel: string, content: string): UrlHit[] {
   content.split("\n").forEach((line, i) => {
     const trimmed = line.trim();
     if (trimmed.startsWith("//") || trimmed.startsWith("*")) return; // skip comments
-    if (URL_RE.test(line)) out.push({ file: rel, key: `${rel}:${i + 1}` });
-    URL_RE.lastIndex = 0;
+    // One hit per occurrence (a line could carry more than one), keyed by line.
+    for (const _m of line.matchAll(URL_RE)) out.push({ key: `${rel}:${i + 1}` });
   });
   return out;
 }
@@ -68,20 +68,18 @@ function loadBaseline(): Set<string> {
 function main(): void {
   const baseline = loadBaseline();
   const hits: UrlHit[] = [];
-  let scanned = 0;
   for (const dir of SCAN_DIRS) {
     const abs = path.join(ROOT, dir);
-    if (!fs.existsSync(abs)) continue;
-    scanned++;
+    // Fail-closed: a missing expected dir means we'd silently skip its files.
+    if (!fs.existsSync(abs)) {
+      console.error(`URL-validator check: expected scan dir missing: ${dir}. Run from repo root.`);
+      process.exit(1);
+    }
     for (const file of walk(abs)) {
       const rel = path.relative(ROOT, file);
       if (isExempt(rel)) continue;
       hits.push(...findUrlValidators(rel, fs.readFileSync(file, "utf8")));
     }
-  }
-  if (scanned === 0) {
-    console.error("URL-validator check: no scan dirs found. Run from repo root.");
-    process.exit(1);
   }
 
   const fresh = hits.filter((h) => !baseline.has(h.key));
