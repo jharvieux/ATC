@@ -20,19 +20,15 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function req(): Request {
-  return new Request("http://test/api/feedback", { method: "POST" });
-}
-
 describe("checkFeedbackRateLimit — fail-closed when Redis unavailable (#393)", () => {
   it("THROWS in production when REDIS_URL is unset", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    await expect(checkFeedbackRateLimit(req(), "hint")).rejects.toThrow(/REDIS_URL is not set/);
+    await expect(checkFeedbackRateLimit("msg:test")).rejects.toThrow(/REDIS_URL is not set/);
   });
 
   it("fails OPEN in non-production so local dev stays usable", async () => {
     vi.stubEnv("NODE_ENV", "development");
-    const res = await checkFeedbackRateLimit(req(), "hint");
+    const res = await checkFeedbackRateLimit("msg:test");
     expect(res.allowed).toBe(true);
   });
 });

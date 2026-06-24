@@ -52,19 +52,12 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "rag_webhook_secret_not_configured" }, { status: 500 });
   }
 
-  // §6.10 / D-087 rate limit. Defense-in-depth: HMAC verifies the caller
-  // shares the secret; rate limit bounds blast radius if the secret leaks.
-  // Short prefix of the secret (8 chars) is the bucket hint so legitimate
-  // rotations don't bleed buckets across keys.
-  const secretHint = secret.slice(0, 8);
-  const rl = await checkFeedbackRateLimit(req, secretHint);
-  if (!rl.allowed) {
-    return Response.json(
-      { error: "rate_limited", reset_seconds: rl.reset_seconds },
-      { status: 429, headers: { "Retry-After": String(rl.reset_seconds) } },
-    );
-  }
-
+  // F-rag-wh-01: verify the HMAC signature BEFORE anything attacker-influenced.
+  // Previously the rate limit ran first and bucketed on the spoofable
+  // x-forwarded-for, so an unauthenticated caller could (a) force a pre-auth
+  // Redis write on every request and (b) spoof the main app's egress IP to
+  // share + exhaust the legitimate caller's bucket — 429'ing real feedback
+  // before its signature was ever checked.
   const rawBody = await req.text();
   const provided = req.headers.get("x-webhook-signature") ?? "";
   const expected = await hmacHex(secret, rawBody);
@@ -77,6 +70,20 @@ export async function POST(req: Request): Promise<Response> {
     parsed = bodySchema.parse(JSON.parse(rawBody));
   } catch {
     return Response.json({ error: "invalid_body" }, { status: 400 });
+  }
+
+  // §6.10 / D-087 rate limit, applied only to AUTHENTICATED requests now.
+  // Bucket on the verified message_id (from the signed body) — never the
+  // spoofable x-forwarded-for. Defense-in-depth: bounds blast radius of a
+  // leaked secret.
+  // null message_id: all no-id events share one "msg:global" bucket — acceptable
+  // at the 120 rpm default; the main app sends a message_id for normal feedback.
+  const rl = await checkFeedbackRateLimit(`msg:${parsed.message_id ?? "global"}`);
+  if (!rl.allowed) {
+    return Response.json(
+      { error: "rate_limited", reset_seconds: rl.reset_seconds },
+      { status: 429, headers: { "Retry-After": String(rl.reset_seconds) } },
+    );
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_RAG_URL;

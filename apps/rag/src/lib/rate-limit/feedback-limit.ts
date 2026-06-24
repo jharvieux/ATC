@@ -6,12 +6,11 @@
 // spam signal. The rate limit is a defense-in-depth layer that bounds
 // blast radius independent of the auth secret.
 //
-// Counter keyed by ${remote_addr}+${secret_hint} so:
-//   - A leaked secret used from one host can be rate-limited at that host
-//   - A legitimate caller on a different IP can use the same secret
-//   - The remote_addr falls back to "unknown" if upstream doesn't set
-//     the standard headers; the rate-limit still applies, just bucketed
-//     under the catch-all key.
+// Called ONLY after the HMAC signature has verified (see feedback/route.ts), so
+// the request is already authenticated here. The bucket is keyed on a value
+// derived from the *verified* body (the message_id) — never on x-forwarded-for,
+// which is attacker-spoofable and previously let an unauthenticated caller share
+// and exhaust the legitimate caller's bucket (F-rag-wh-01).
 
 import { getRedis } from "@/lib/redis/client";
 
@@ -30,12 +29,9 @@ export interface RateLimitResult {
 }
 
 export async function checkFeedbackRateLimit(
-  req: Request,
-  secretHint: string,
+  bucketId: string,
 ): Promise<RateLimitResult> {
-  const fwd = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip");
-  const remote = (fwd ?? "unknown").split(",")[0]!.trim();
-  const key = `rl:feedback:${remote}:${secretHint}`;
+  const key = `rl:feedback:${bucketId}`;
   const limit = limitPerMinute();
 
   let redis;
