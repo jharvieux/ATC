@@ -37,11 +37,14 @@ describe("safeUrl — rejects internal/loopback/link-local hosts", () => {
 
   it("blocks decimal/hex-encoded loopback and IPv6 internal forms", () => {
     for (const u of [
-      "http://2130706433/", // 127.0.0.1
-      "http://0x7f.0.0.1/",
+      "http://2130706433/", // decimal → 127.0.0.1
+      "http://0x7f000001/", // full-word hex → 127.0.0.1
+      "http://0x7f.0.0.1/", // per-octet hex → 127.0.0.1
       "http://[::1]/",
-      "http://[fe80::1]/",
-      "http://[::ffff:169.254.169.254]/",
+      "http://[fe80::1]/", // link-local
+      "http://[fc00::1]/", // unique-local fc00::/7
+      "http://[fd12::1]/", // unique-local
+      "http://[::ffff:169.254.169.254]/", // v4-mapped metadata
     ]) {
       expect(ok(u)).toBe(false);
     }

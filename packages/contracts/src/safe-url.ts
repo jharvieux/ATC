@@ -63,6 +63,7 @@ export const safeUrl = z
   .url()
   .refine(
     (value) => {
+      // z.string().url() already verified parsability; this is defensive only.
       let parsed: URL;
       try {
         parsed = new URL(value);
