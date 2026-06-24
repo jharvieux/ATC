@@ -44,8 +44,9 @@ export function findUrlValidators(rel: string, content: string): UrlHit[] {
 }
 
 function walk(dir: string): string[] {
+  // Callers guarantee `dir` exists (main() checks per scan dir; recursion only
+  // descends into real subdirs), so no existence guard is needed here.
   const out: string[] = [];
-  if (!fs.existsSync(dir)) return out;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...walk(p));

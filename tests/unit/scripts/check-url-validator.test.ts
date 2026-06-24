@@ -28,4 +28,9 @@ describe("findUrlValidators", () => {
     const hits = findUrlValidators("r.ts", src);
     expect(hits.map((h) => h.key)).toEqual(["r.ts:2", "r.ts:4"]);
   });
+
+  it("counts two occurrences on the same line (matchAll, not test/g)", () => {
+    const hits = findUrlValidators("r.ts", `a: z.string().url(), b: z.string().url(),`);
+    expect(hits.map((h) => h.key)).toEqual(["r.ts:1", "r.ts:1"]);
+  });
 });
