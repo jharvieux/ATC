@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import {
   navSectionsForRole,
+  sidebarSectionsForRole,
   defaultPanelForRole,
 } from "@/components/tenant-shell/nav-sections";
 
@@ -62,16 +63,20 @@ describe("navSectionsForRole", () => {
     expect(hrefs).toContain("/settings/privacy");
   });
 
-  it("agents get the workspace but not owner administration", () => {
+  it("agents see account links but not workspace CRM or owner administration", () => {
+    // Workspace items (CRM, Groups, etc.) are sidebar-only; the hamburger
+    // shows only account-level links for staff.
     const hrefs = hrefsFor("agent");
-    expect(hrefs).toContain("/crm/contacts");
+    expect(hrefs).toContain("/settings/conversations");
+    expect(hrefs).not.toContain("/crm/contacts");
     expect(hrefs).not.toContain("/settings");
     expect(hrefs).not.toContain("/settings/usage");
   });
 
-  it("owners see workspace, account, and the Admin Console entry", () => {
+  it("owners see account links and Admin Console but not workspace CRM", () => {
+    // Same as agents: workspace items are sidebar-only.
     const hrefs = hrefsFor("tenant_owner");
-    expect(hrefs).toContain("/crm/contacts");
+    expect(hrefs).not.toContain("/crm/contacts");
     expect(hrefs).toContain("/settings/conversations");
     expect(hrefs).toContain("/settings");
   });
@@ -81,6 +86,27 @@ describe("navSectionsForRole", () => {
     // (/settings); /settings/usage and friends moved into the console's own
     // sidebar, so the dropdown must not list them.
     expect(hrefsFor("tenant_owner")).not.toContain("/settings/usage");
+  });
+});
+
+describe("sidebarSectionsForRole", () => {
+  function sidebarHrefsFor(role: Parameters<typeof sidebarSectionsForRole>[0]): string[] {
+    return sidebarSectionsForRole(role).flatMap((s) => s.items.map((i) => i.href));
+  }
+
+  it("staff see all workspace items including Group Bookings in the sidebar", () => {
+    for (const role of ["agent", "tenant_owner"] as const) {
+      const hrefs = sidebarHrefsFor(role);
+      expect(hrefs).toContain("/crm/contacts");
+      expect(hrefs).toContain("/crm/bookings");
+      expect(hrefs).toContain("/groups");
+    }
+  });
+
+  it("viewers do not see workspace CRM or Group Bookings in the sidebar", () => {
+    const hrefs = sidebarHrefsFor("viewer");
+    expect(hrefs).not.toContain("/crm/contacts");
+    expect(hrefs).not.toContain("/groups");
   });
 });
 
