@@ -109,7 +109,8 @@ export function WorkspaceSidebar({ role }: WorkspaceSidebarProps): React.ReactEl
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: expanded ? "flex-end" : "center",
+            // collapsed: button starts at paddingLeft=8px → center at 24px = center of 48px aside
+            justifyContent: expanded ? "flex-end" : "flex-start",
             padding: "10px 8px 4px",
           }}
         >

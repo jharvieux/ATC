@@ -39,9 +39,10 @@ export function TaSidebarLink({
     fontWeight: fw,
     textDecoration: "none",
     transition: "background 0.12s, color 0.12s",
-    // collapsed: 48 px wide, centered icon; expanded: normal padding
-    padding: collapsed ? "8px 0" : variant === "workspace" ? "7px 10px" : "6px 8px",
-    justifyContent: collapsed ? "center" : "flex-start",
+    // collapsed: icon-only at left edge so it's visible in the 48px window;
+    // paddingLeft 16px centers a 16px icon in the 48px collapsed aside.
+    padding: collapsed ? "8px 0 8px 16px" : variant === "workspace" ? "7px 10px" : "6px 8px",
+    justifyContent: "flex-start",
     gap: 8,
     background: active ? "var(--ta-accent-soft)" : hovered ? "var(--ta-hover)" : "transparent",
     color: active ? "var(--ta-accent)" : hovered ? "var(--ta-text)" : "var(--ta-text-soft)",
