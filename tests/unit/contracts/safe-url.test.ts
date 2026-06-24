@@ -35,11 +35,12 @@ describe("safeUrl — rejects internal/loopback/link-local hosts", () => {
     }
   });
 
-  it("blocks decimal/hex-encoded loopback and IPv6 internal forms", () => {
+  it("blocks decimal/hex/octal-encoded loopback and IPv6 internal forms", () => {
     for (const u of [
       "http://2130706433/", // decimal → 127.0.0.1
       "http://0x7f000001/", // full-word hex → 127.0.0.1
       "http://0x7f.0.0.1/", // per-octet hex → 127.0.0.1
+      "http://0177.0.0.1/", // octal → 127.0.0.1 (pins WHATWG octal normalization)
       "http://[::1]/",
       "http://[fe80::1]/", // link-local
       "http://[fc00::1]/", // unique-local fc00::/7
