@@ -23,6 +23,11 @@ interface Body {
 }
 
 export const POST = withServiceAuth(async (req, ctx) => {
+  // Require write scope — read-scoped tokens must not mutate (the read|write
+  // claim is independent of service_identifier). Mirrors replace-chunk. F-rag-auth-02.
+  if (ctx.scope !== "write") {
+    return Response.json({ error: "insufficient_scope" }, { status: 403 });
+  }
   if (ctx.service_identifier !== "platform-admin") {
     return Response.json(
       { error: "authority_override_requires_platform_admin" },

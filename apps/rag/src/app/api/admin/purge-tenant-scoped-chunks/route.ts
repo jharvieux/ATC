@@ -11,6 +11,12 @@ interface PurgeBody {
 }
 
 export const POST = withServiceAuth(async (req, ctx) => {
+  // Require write scope — the read|write claim is set independently of
+  // service_identifier, so a read-scoped platform-admin token must not mutate.
+  // Mirrors replace-chunk / media-assets/upsert. F-rag-auth-02 (Day-1 scan).
+  if (ctx.scope !== "write") {
+    return Response.json({ error: "insufficient_scope" }, { status: 403 });
+  }
   // §15.14.3 — Platform-admin only. The 2026-05-25 RAG audit (Finding 1)
   // showed that without this gate, any active tenant JWT could pass
   // body.tenant_id pointing at a victim tenant and physically delete

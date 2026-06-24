@@ -17,6 +17,11 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 export const POST = withServiceAuth(async (req, ctx) => {
+  // Require write scope — read-scoped tokens must not mutate (the read|write
+  // claim is independent of service_identifier). Mirrors replace-chunk. F-rag-auth-02.
+  if (ctx.scope !== "write") {
+    return Response.json({ error: "insufficient_scope" }, { status: 403 });
+  }
   // §15.14.4 — Platform-admin only. The 2026-05-25 RAG audit (Finding 2)
   // showed that without this gate, any active tenant JWT could hard-delete
   // arbitrary chunks (including global ones) by id, or demote+purge them.
