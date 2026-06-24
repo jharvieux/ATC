@@ -105,7 +105,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
 
     if (body.action === "invite" && body.invitee_email) {
       const email = (body.invitee_email as string).trim().toLowerCase();
-      if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return Response.json({ error: "Invalid invitee_email" }, { status: 400 });
       }
       const vis = (body.visibility_choice as string | undefined) ?? "no_opinion";
