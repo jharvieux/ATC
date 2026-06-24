@@ -1,0 +1,6 @@
+# URL-validator guard baseline (scripts/check-url-validator.ts, epic #1393 / G2).
+#
+# One <relpath>:<line> per grandfathered z.string().url() site in app/contract
+# code. Currently EMPTY — all stored/rendered URL fields use safeUrl
+# (@atc/contracts) and operator-config env.ts URLs are auto-exempt. Keep it
+# empty: a new z.string().url() on a stored/ingested URL field must use safeUrl.

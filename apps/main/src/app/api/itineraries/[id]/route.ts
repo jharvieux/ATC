@@ -2,6 +2,7 @@
 // draft→sent + regenerate PDF + dispatch email).
 
 import { z } from "zod";
+import { safeUrl } from "@atc/contracts";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { newAccessToken } from "@/lib/deliverables/token";
@@ -12,7 +13,7 @@ import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const PatchSchema = z.object({
   agent_notes: z.string().optional(),
-  cover_image_url: z.string().url().optional(),
+  cover_image_url: safeUrl.optional(),
   day_overrides: z.array(z.unknown()).optional(),
   send: z.boolean().optional(),       // true → transition to 'sent' + regen PDF
   rotate_token: z.boolean().optional(), // true → mint new token
