@@ -53,10 +53,9 @@ const EXPANDED_W = 240;
 
 export interface WorkspaceSidebarProps {
   role: UserRole;
-  onNavigate?: () => void;
 }
 
-export function WorkspaceSidebar({ role, onNavigate }: WorkspaceSidebarProps): React.ReactElement {
+export function WorkspaceSidebar({ role }: WorkspaceSidebarProps): React.ReactElement {
   const pathname = usePathname();
   const sections = sidebarSectionsForRole(role);
 
@@ -66,12 +65,11 @@ export function WorkspaceSidebar({ role, onNavigate }: WorkspaceSidebarProps): R
   const expanded = pinned || hovered;
 
   const handleNavigate = React.useCallback(() => {
-    onNavigate?.();
     // Auto-unpin on mobile so the sidebar doesn't stay open after nav
     if (typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches) {
       setPinned(false);
     }
-  }, [onNavigate]);
+  }, []);
 
   const ICON_BTN: React.CSSProperties = {
     display: "flex",

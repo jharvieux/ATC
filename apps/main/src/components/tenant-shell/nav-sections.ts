@@ -1,5 +1,8 @@
-// #962 — Left-nav and hamburger dropdown contents for the tenant shell, gated
-// by the signed-in user's role so viewers never see staff-only links.
+// #962 — Left-nav and hamburger dropdown contents for the tenant shell,
+// role-filtered so viewers never see staff-only links. NOTE: this filtering is
+// UI convenience only (it hides dead links); it is NOT an access-control
+// boundary. Real authorization is enforced per-page via assertPermission and
+// the API 403s — never rely on a hidden nav entry to keep a user out.
 //
 // Two distinct section sets are exported:
 //   sidebarSectionsForRole()   — left sidebar only; no "My account" (those
