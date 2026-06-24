@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
 
 const { rlSpy } = vi.hoisted(() => ({
-  rlSpy: vi.fn(async () => ({ allowed: true, remaining: 120, reset_seconds: 60 })),
+  rlSpy: vi.fn(async (_bucketId: string) => ({ allowed: true, remaining: 120, reset_seconds: 60 })),
 }));
 vi.mock("@/lib/rate-limit/feedback-limit", () => ({ checkFeedbackRateLimit: rlSpy }));
 // On the authenticated path the route builds a Supabase client and inserts;
