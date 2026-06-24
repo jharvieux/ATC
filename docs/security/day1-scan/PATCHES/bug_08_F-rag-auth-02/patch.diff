@@ -1,0 +1,45 @@
+# Adds the missing `scope==='write'` guard (matching replace-chunk / media-
+# assets/upsert) to the 5 destructive admin routes that gated on
+# service_identifier only.
+
+--- a/apps/rag/src/app/api/admin/purge-tenant-scoped-chunks/route.ts
++++ b/apps/rag/src/app/api/admin/purge-tenant-scoped-chunks/route.ts
+@@ export const POST = withServiceAuth(async (req, ctx) => {
++  if (ctx.scope !== "write") {
++    return Response.json({ error: "insufficient_scope" }, { status: 403 });
++  }
+
+--- a/apps/rag/src/app/api/admin/demote-chunk/route.ts
++++ b/apps/rag/src/app/api/admin/demote-chunk/route.ts
+@@ export const POST = withServiceAuth(async (req, ctx) => {
++  if (ctx.scope !== "write") {
++    return Response.json({ error: "insufficient_scope" }, { status: 403 });
++  }
+
+--- a/apps/rag/src/app/api/admin/post-termination-mark/route.ts
++++ b/apps/rag/src/app/api/admin/post-termination-mark/route.ts
+@@ export const POST = withServiceAuth(async (req, ctx) => {
++  if (ctx.scope !== "write") {
++    return Response.json({ error: "insufficient_scope" }, { status: 403 });
++  }
+
+--- a/apps/rag/src/app/api/admin/post-termination-review/route.ts
++++ b/apps/rag/src/app/api/admin/post-termination-review/route.ts
+@@ export const POST = withServiceAuth(async (req, ctx) => {
++  if (ctx.scope !== "write") {
++    return Response.json({ error: "insufficient_scope" }, { status: 403 });
++  }
+
+--- a/apps/rag/src/app/api/admin/set-authority-override/route.ts
++++ b/apps/rag/src/app/api/admin/set-authority-override/route.ts
+@@ export const POST = withServiceAuth(async (req, ctx) => {
++  if (ctx.scope !== "write") {
++    return Response.json({ error: "insufficient_scope" }, { status: 403 });
++  }
+   if (ctx.service_identifier !== "platform-admin") {
+
+# Both gates now required (AND). Read-only admin routes (export-user-chunks,
+# list-chunks-for-curation, post-termination-queue, tenant-chunk-counts) and
+# the already-guarded replace-chunk / media-assets/upsert are untouched.
+# Recommended test: each of the 5 handlers returns 403 insufficient_scope for a
+# read-scoped platform-admin context and never touches the DB.

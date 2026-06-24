@@ -1,0 +1,83 @@
+diff --git a/apps/main/src/lib/chat/public-token-resolver.ts b/apps/main/src/lib/chat/public-token-resolver.ts
+--- a/apps/main/src/lib/chat/public-token-resolver.ts
++++ b/apps/main/src/lib/chat/public-token-resolver.ts
+@@ -45,3 +45,21 @@ export async function resolvePublicToken(
+
+   return null;
+ }
++
++// §38.8.1 / §39.5 — A resolved token alone is not enough to load customer
++// PII into an LLM conversation: the resource must also be in a
++// customer-viewable state. Mirrors the allowlist enforced by the sibling
++// quote-select route (apps/.../public/quote/[token]/select/route.ts), which
++// permits only 'sent'/'viewed' quotes — that allowlist already excludes
++// 'expired' (the status an out-of-date quote carries), so a separate
++// valid_until comparison would be redundant with the established gate.
++// Itineraries are 'draft' | 'sent' | 'archived'; the public itinerary page
++// already hides 'draft', and 'archived' is a past trip, so only 'sent' loads.
++export function isPublicTokenViewable(resolved: ResolvedPublicToken): boolean {
++  if (resolved.kind === "quote") {
++    return resolved.status === "sent" || resolved.status === "viewed";
++  }
++  return resolved.status === "sent";
++}
+diff --git a/apps/main/src/app/api/public/chat/[token]/route.ts b/apps/main/src/app/api/public/chat/[token]/route.ts
+--- a/apps/main/src/app/api/public/chat/[token]/route.ts
++++ b/apps/main/src/app/api/public/chat/[token]/route.ts
+@@ -25,7 +25,11 @@
+ import { createHash, randomUUID } from "node:crypto";
+ import { createServiceRoleClient } from "@/lib/db/service-role-client";
+-import { resolvePublicToken, type ResolvedPublicToken } from "@/lib/chat/public-token-resolver";
++import {
++  resolvePublicToken,
++  isPublicTokenViewable,
++  type ResolvedPublicToken,
++} from "@/lib/chat/public-token-resolver";
+ import { resolveCustomerContext, type CustomerContextRef } from "@/lib/chat/customer-context";
+
+   const resolved: ResolvedPublicToken | null = await resolvePublicToken(svc, token);
+   if (!resolved) {
+     return Response.json({ error: "not_found" }, { status: 404 });
+   }
++  // Reject tokens for resources the customer should no longer see (declined/
++  // expired/accepted quotes, archived itineraries) BEFORE any PII context load.
++  // 410 Gone, not 404 — the token is real but the resource is no longer active.
++  if (!isPublicTokenViewable(resolved)) {
++    return Response.json({ error: "resource_unavailable" }, { status: 410 });
++  }
+
+   const rl = checkRateLimit(token);
+
+# --- regression test (new describe block) ---
+diff --git a/apps/main/test/unit/chat/public-token-resolver.test.ts b/apps/main/test/unit/chat/public-token-resolver.test.ts
+--- a/apps/main/test/unit/chat/public-token-resolver.test.ts
++++ b/apps/main/test/unit/chat/public-token-resolver.test.ts
+@@ -1,7 +1,7 @@
+ // §38.8.1 / §39.5 — Token resolver: quotes first, then trip_itineraries, null otherwise.
+ import { describe, it, expect } from "vitest";
+-import { resolvePublicToken } from "@/lib/chat/public-token-resolver";
++import { resolvePublicToken, isPublicTokenViewable } from "@/lib/chat/public-token-resolver";
+@@ -81,3 +81,40 @@ describe("resolvePublicToken", () => {
+ });
++
++describe("isPublicTokenViewable", () => {
++  // WHY: the public-chat route loads customer PII into an LLM conversation as
++  // soon as a token resolves. The status gate is the only thing stopping a
++  // stale token (declined/expired/accepted quote, archived itinerary) from
++  // re-exposing that PII. If this allowlist silently widens, that regresses.
++  it("allows only sent/viewed quotes", () => {
++    expect(isPublicTokenViewable({ kind: "quote", quote_id: "q", tenant_id: "t", status: "sent" })).toBe(true);
++    expect(isPublicTokenViewable({ kind: "quote", quote_id: "q", tenant_id: "t", status: "viewed" })).toBe(true);
++  });
++  it("refuses non-active quote statuses", () => {
++    for (const status of ["draft", "accepted", "declined", "expired", "converted"]) {
++      expect(isPublicTokenViewable({ kind: "quote", quote_id: "q", tenant_id: "t", status })).toBe(false);
++    }
++  });
++  it("allows only sent itineraries, refusing draft and archived", () => {
++    const itin = (status: string) => ({ kind: "trip_itinerary" as const, itinerary_id: "i", booking_id: "b", tenant_id: "t", status });
++    expect(isPublicTokenViewable(itin("sent"))).toBe(true);
++    expect(isPublicTokenViewable(itin("draft"))).toBe(false);
++    expect(isPublicTokenViewable(itin("archived"))).toBe(false);
++  });
++});

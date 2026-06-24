@@ -1,18 +1,22 @@
-# Session state — last updated 2026-06-23 22:30 PT
+# Session state — last updated 2026-06-24 00:30 PT
 
 ## Just completed
-- Triaged the two `opus` issues the user asked to "work on": #1361 and #1369.
-- **#1361** — found its substantive scope (middleware session self-heal) already shipped in PR #1362 (merged), per D-293. Remaining items are NOT agent work: operator config #1365 (bump Supabase `refresh_token_reuse_interval` 10s→30s in prod dashboard) and a documenting-comment nit on proxy.ts:182 that D-293 deliberately deferred. User chose to leave the nit deferred. No code change made.
-- **#1369** — verified the advisor's proposed `REVOKE EXECUTE ... FROM authenticated` is UNSAFE: it breaks every tenant RLS policy (the 3 SECURITY DEFINER helpers are called inside policy USING/WITH CHECK as the querying role; EXECUTE is checked). Proven on a throwaway Postgres 18 container (post-REVOKE: `permission denied for function`). Exposure is minimal (caller-scoped booleans). User chose accept-risk + dismiss. Logged as D-295; closing #1369 not-planned.
+- #1361 closed (self-heal shipped #1362; gated on operator config #1365). #1369 closed not-planned (D-295). PR #1374 merged.
+- Ran the defending-code-reference-harness **Day-1 static loop** on apps/main + apps/rag. Installed the one uninstalled harness update first (`_lib/checkpoint.py` was stale + interface-broken). 38 candidates → 14 confirmed real (D-296).
+- Opened 14 issues #1375-#1388 (severity + opus/sonnet + security + triage:confirmed).
+- Committed scan artifacts under `docs/security/day1-scan/` (branch `docs/day1-security-scan` → doc-only PR).
 
 ## In flight
-- Branch `docs/d295-security-definer-rls-accept-risk`: MEMORY.md (D-295) + MEMORY-INDEX.md + SESSION.md. Doc-only → audit-exempt. Needs `pnpm verify`, push, PR, squash-merge. Then close #1369.
+- Branch `docs/day1-security-scan`: docs/security/day1-scan/** + MEMORY D-296 + index + SESSION. Doc-exempt. Needs push + PR + merge.
+- NEXT after that: branch `fix/f-pay-01-clawback-cas` for the F-pay-01 (#1375) code-only fix (payout-row status-CAS before the reversal+ledger insert; `reversed` status already exists, no migration) + regression test → full PR (pnpm verify + d091/pre-pr audit agents, Opus first run — financial path).
 
 ## Next step
-- Run `pnpm verify`, push the branch, open the doc-only PR into dev, merge it, then `gh issue close 1369 --reason "not planned"` with the D-295 rationale comment.
+- Push docs branch, open + merge the doc-only PR. Then implement and PR the F-pay-01 fix.
 
 ## Blocked on user
-- #1361 / #1365: operator must bump `refresh_token_reuse_interval` 10s→30s in the prod Supabase auth dashboard (no-prod-without-asking). This is what keeps #1361 open.
+- #1365: operator bump of Supabase `refresh_token_reuse_interval` 10s→30s (prod dashboard).
+- F-sm-01 (#1376) / F-sm-02 (#1377) fixes ship SQL migrations → prod-gated (need approval).
+- F-auth-01 (#1379) needs a product decision on the OTP/identity-binding flow.
 
 ## Open questions
-- Nothing.
+- Whether to generate patches + PRs for the remaining confirmed findings (recommendations are in TRIAGE.json).
