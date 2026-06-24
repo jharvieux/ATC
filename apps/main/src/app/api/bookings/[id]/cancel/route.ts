@@ -246,6 +246,24 @@ export async function POST(
       }
 
       if (payout.stripe_transfer_id) {
+        // F-pay-01 / #1375 — settled-payout clawback must be single-entry:
+        // platform_revenue has no idempotency key / unique constraint, so before
+        // this guard two concurrent cancels (double-click / retry / parallel
+        // tabs) both inserted a negative ledger row, double-counting the clawback
+        // in §36's "Lost revenue from cancellations" report.
+        //
+        // Order matters (D-091 #10 — idempotency/ordering): the Stripe reversal
+        // runs FIRST (it is idempotency-keyed, so concurrent duplicates collapse
+        // to one actual reversal and a failed call leaves the payout untouched
+        // and retryable). Only AFTER the reversal succeeds do we claim the row
+        // with a status-CAS (.eq("status", payout.status) → 'reversed'): the
+        // single winner inserts the ledger row; the loser matches 0 rows → 409.
+        // Flipping to the terminal 'reversed' status before the reversal would
+        // strand the payout (reversed-but-not-reversed, retries dead-ended at
+        // 409) if Stripe failed. NOTE: a crash between the CAS and the ledger
+        // insert still strands a tiny window — the fully-robust fix is a unique
+        // idempotency key on platform_revenue (ON CONFLICT DO NOTHING), tracked
+        // as a follow-up migration in #1391.
         const stripeKey = process.env.STRIPE_SECRET_KEY;
         if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
         const stripe = new Stripe(stripeKey);
@@ -256,6 +274,28 @@ export async function POST(
           {},
           { idempotencyKey: reversalKey },
         );
+
+        try {
+          await safeAwaitRowCount(
+            adminDb
+              .from("payout_records")
+              .update({ status: "reversed", reversed_at: new Date().toISOString() })
+              .eq("tenant_id", ctx.tenant_id)
+              .eq("id", payout.id)
+              .eq("status", payout.status)
+              .select("id"),
+            "payout_records.cas_reverse",
+            1,
+          );
+        } catch (err) {
+          if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+            return Response.json(
+              { error: "payout_state_changed", message: "Payout status changed concurrently — retry" },
+              { status: 409 },
+            );
+          }
+          throw err;
+        }
 
         // Negative revenue row for the reversal
         await safeAwait(adminDb.from("platform_revenue").insert({
