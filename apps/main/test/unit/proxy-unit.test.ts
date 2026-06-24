@@ -28,7 +28,8 @@ vi.mock("@/lib/tenancy/resolve-tenant", () => ({
 // Session refresh is exercised separately (proxy-session-refresh.test.ts);
 // here we just want createMiddlewareClient to be a no-op so the gate +
 // tenant-resolution logic this file owns runs untouched.
-vi.mock("@/lib/auth/ssr-client", () => ({
+vi.mock("@/lib/auth/ssr-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/ssr-client")>()),
   createMiddlewareClient: () => ({
     supabase: { auth: { getUser: mocks.getUser } },
     applyRefreshedSession: <T>(res: T): T => res,

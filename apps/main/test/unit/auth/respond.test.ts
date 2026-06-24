@@ -32,6 +32,16 @@ describe("respondToAuthError — unknown error", () => {
     const logged = spy.mock.calls[0]?.[0] as string;
     expect(logged).toContain(body.ref);
   });
+
+  // #86: a multiline error message must be flattened to one log line so an
+  // attacker-influenced error can't inject forged log entries via CR/LF.
+  it("flattens CR/LF out of the logged error detail (no log forging)", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    respondToAuthError(new Error("first line\nFORGED-SECOND-LINE"));
+    const logged = (spy.mock.calls[0] ?? []).join(" ");
+    expect(logged).toContain("FORGED-SECOND-LINE");
+    expect(logged).not.toMatch(/[\r\n]/);
+  });
 });
 
 describe("respondToAuthError — known auth failures still bypass the 500 path", () => {
