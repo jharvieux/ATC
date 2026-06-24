@@ -4,6 +4,25 @@ Newest entries on top.
 
 ---
 
+## D-294 — 2026-06-23 — Security/quality alerts folded into auto-triage (auto-fix-safe / surface-rest); 81 open alerts triaged to zero phantom signal
+
+**Decision.** Added a "Security & quality alerts" subsection to the session-start Auto-triage rules in CLAUDE.md (#1368), covering the three GitHub surfaces (Dependabot, code scanning, secret scanning) + Supabase advisors, with an **auto-fix-the-safe / surface-the-rest** posture (mirrors the existing issue/PR auto-triage philosophy). Then triaged the full backlog of 81 open alerts:
+
+- **Secret scanning (2 → 0).** Both false positives, confirmed by decoding: "Supabase Service Key" was a local-dev **anon** JWT (`role=anon, iss=tier2-local`, no prod ref) in e2e/CI test setup; "Stripe Webhook Signing Secret" was a fabricated `whsec_` **test fixture** (Resend/Svix, not Stripe). Dismissed `used_in_tests`. No rotation needed.
+- **Code scanning (41 → 0 noise + 4 fixed).** Only 4 lived in production app code → fixed + regression-tested in #1366 (polynomial-redos email regex → `[^\s@]` + 254-char cap; overly-large-range = raw control bytes rewritten as `\x`/`\u` escapes, identical matched set; two log-injection = CR/LF strip before logging). The other 37 (test fixtures, dev scripts) dismissed `used in tests` / `won't fix`.
+- **Dependabot (38 → patched).** 28 were **phantom** — a stray root `package-lock.json` (npm lockfile accidentally committed 2026-05-16 in this pnpm repo, unused by CI/Vercel) raised alerts against versions the app never builds (all 14 `next` highs — app runs next 16.2.9 — and the "critical" vitest). Deleted + gitignored it (#1367). The 10 real `pnpm-lock.yaml` advisories (undici ×7 high, js-yaml, esbuild, @babel/core) patched via **bounded** overrides in `pnpm-workspace.yaml`.
+- **Supabase advisors** surfaced (prod-DB → no auto-fix): SECURITY DEFINER tenant-helper RPC exposure → issue #1369 (`opus`); leaked-password protection disabled → issue #1370. RLS-enabled-no-policy hits are safe-by-design (service-role-only deny-all). **Vercel** clean (all deploys READY).
+
+**Why.** The dashboards were burying real signal under phantom/false-positive noise; codifying the triage posture makes future sessions handle alerts the same way without re-deciding.
+
+**Rejected.** (a) The literal "auto-*rotate* secrets" reading of the request — auto-rotating prod Stripe/Supabase keys is a spicy prod op gated by no-prod-without-asking; confirmed with operator it meant auto-*triage*. (b) Bumping `next` — phantom (app already on 16.2.9); the fix was removing the stale lockfile. (c) **Unbounded** `>=` overrides — they pulled undici 8.5.0 and js-yaml 5.1.0 (surprise majors); bounded each to the advisory's patched major instead. (d) Auto-fixing app-code CodeQL findings without tests — pinned each new sanitizer with a test so it can't silently regress.
+
+**Gotcha.** pnpm 11 no longer reads `pnpm.overrides` from `package.json` — overrides live in `pnpm-workspace.yaml`.
+
+**Related artifacts.** PRs #1366 (code-scan fixes), #1367 (lockfile + overrides), #1368 (CLAUDE.md rule). Issues #1369, #1370. Pre-existing CI gap noted: the Playwright E2E job fails on every PR for missing `TEST_E2E_OWNER_*` secrets (non-required; not investigated this session).
+
+---
+
 ## D-293 — 2026-06-23 — Auth session self-heal shipped (#1362); rotation-race mitigation = bump Supabase refresh_token_reuse_interval, not code
 
 **Context.** Superadmin reported admin lockout: apex `/admin` → Next 404. Root-caused (prod runtime logs) to `getUser()` returning `AuthApiError: Invalid Refresh Token` on the apex — a present-but-invalid session cookie that was never cleared, so the fail-closed admin gate wedged at 404 on every request. Operator's `platform_admins` row was intact (auth_user_id `9ac93c3f-…`) — NOT a creds-loss issue. Cause of the bad cookie: 1h access-token expiry + refresh-token rotation-on-every-use; concurrent in-flight requests (parallel calls / multiple tabs / apex + `booking.` subdomain sharing the `.ai-travelconcierge.com` cookie) race to refresh the same token → first wins, rest get "Already Used."
