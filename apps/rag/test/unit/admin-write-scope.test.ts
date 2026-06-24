@@ -67,5 +67,18 @@ describe("RAG admin mutating routes — write-scope guard (F-rag-auth-02)", () =
       const body = (await res.json()) as { error: string };
       expect(body.error).toBe("insufficient_scope");
     });
+
+    it(`${name}: a write-scoped non-platform-admin token is still rejected (gates are AND, not OR)`, async () => {
+      // Pins the AND invariant: passing the scope gate must NOT bypass the
+      // service_identifier gate. A future refactor collapsing the two early
+      // returns into one `||` would pass the scope test above but fail here.
+      currentCtx.scope = "write";
+      currentCtx.service_identifier = "tenant-app";
+      const res = await handler(req());
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string };
+      // The service_identifier gate fired, not the scope gate.
+      expect(body.error).not.toBe("insufficient_scope");
+    });
   }
 });
