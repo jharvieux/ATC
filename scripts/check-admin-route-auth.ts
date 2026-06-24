@@ -30,7 +30,7 @@ const BASELINE_FILE = path.join(ROOT, "scripts/admin-route-auth-baseline.txt");
 // main — RBAC/platform-admin asserts + the service-to-service bearer compare.
 // rag  — withServiceAuth authenticates ANY service JWT, so the platform-admin
 //        discriminator is the `service_identifier` check; that token is required.
-const ADMIN_SURFACES: { dir: string; tokens: string[] }[] = [
+export const ADMIN_SURFACES: { dir: string; tokens: string[] }[] = [
   {
     dir: "apps/main/src/app/api/admin",
     tokens: [
@@ -53,6 +53,13 @@ const ADMIN_SURFACES: { dir: string; tokens: string[] }[] = [
     ],
   },
 ];
+
+// A route is gated if its source contains any of the surface's authority
+// tokens. Presence check (not flow analysis) — see the header note. Exported
+// for the unit test that pins this semantics.
+export function routeHasAuthorityToken(content: string, tokens: string[]): boolean {
+  return tokens.some((t) => content.includes(t));
+}
 
 function walkRoutes(dir: string): string[] {
   const out: string[] = [];
@@ -103,7 +110,7 @@ function main(): void {
       const rel = path.relative(ROOT, file);
       if (baseline.has(rel)) continue;
       const content = fs.readFileSync(file, "utf8");
-      if (!surface.tokens.some((t) => content.includes(t))) {
+      if (!routeHasAuthorityToken(content, surface.tokens)) {
         ungated.push(rel);
       }
     }
