@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-295 — 2026-06-23 — SECURITY DEFINER tenant-helper RPC advisor (#1369) accepted-risk, NOT revoked — proposed REVOKE breaks all tenant RLS (verified)
+
+**Context.** Supabase `get_advisors(security)` flagged `authenticated_security_definer_function_executable` (WARN ×3) on the three tenant-isolation helpers `public.auth_user_in_tenant`, `public.tenant_is_active`, `public.auth_user_can_access_conversation` — directly callable by `authenticated` via `/rest/v1/rpc/*`. Issue #1369 proposed the advisor's "likely fix": `REVOKE EXECUTE ... FROM authenticated`.
+
+**Decision.** Do NOT revoke. Accept the risk and close #1369 (not planned) with rationale; advisor stays as a documented accepted item.
+
+**Why.** The proposed REVOKE would cause a **prod outage**. These three functions are called *inside* the RLS policy `USING`/`WITH CHECK` clauses of every tenant-scoped table (~50 policies via `auth_user_in_tenant`/`tenant_is_active`, plus the conversations/messages policies via `auth_user_can_access_conversation`). Postgres evaluates RLS policy expressions as the **querying role** (`authenticated`), and the EXECUTE-privilege check applies to the helper call. Verified on a throwaway Postgres 18 container: with the grant a query returns its rows; after `REVOKE EXECUTE ... FROM authenticated` the same query fails with `ERROR: permission denied for function`. So the grant is **load-bearing for RLS**, not an oversight. (`SECURITY INVOKER` is also wrong: it still needs the grant AND would subject the helper's internal reads to RLS → recursion.)
+
+**Why accept-risk is responsible.** The actual exposure is minimal — all three return **caller-scoped booleans**: `auth_user_in_tenant` reveals only the *caller's own* membership (`auth.uid()`); `auth_user_can_access_conversation` only the caller's own access; `tenant_is_active` is a weak "is this (unguessable) tenant UUID active" oracle. None leak other users' data.
+
+**Rejected.** (a) REVOKE FROM authenticated — breaks all tenant RLS (proven). (b) `SECURITY INVOKER` — needs the grant anyway + recursive-RLS. (c) **Move helpers to a non-API-exposed schema** (e.g. `private`) so PostgREST `/rpc` can't reach them while RLS still can — the genuinely clean defense-in-depth fix, but a large prod migration: function references in policies bind by OID, so it requires drop+recreate of every dependent policy AND the functions, branch-tested then operator-applied. Not worth the blast radius for caller-scoped-boolean exposure; left as a future option if the advisor must be cleared from the dashboard.
+
+**Related artifacts.** #1369 (closed not-planned), advisor `0029_authenticated_security_definer_function_executable`, `apps/main/supabase/migrations/20260521120001_rls_helper_functions.sql` (auth_user_in_tenant, tenant_is_active), `apps/main/supabase/migrations/20260629000003_conversation_member_isolation.sql` (auth_user_can_access_conversation), `scripts/lint-migrations.ts` (§5.1.1 gate requires `SET search_path=''` + `REVOKE ... FROM public`; the `GRANT ... TO authenticated` is intentional). [[feedback_no_prod_deploys_without_asking]]
+
+---
+
 ## D-294 — 2026-06-23 — Security/quality alerts folded into auto-triage (auto-fix-safe / surface-rest); 81 open alerts triaged to zero phantom signal
 
 **Decision.** Added a "Security & quality alerts" subsection to the session-start Auto-triage rules in CLAUDE.md (#1368), covering the three GitHub surfaces (Dependabot, code scanning, secret scanning) + Supabase advisors, with an **auto-fix-the-safe / surface-the-rest** posture (mirrors the existing issue/PR auto-triage philosophy). Then triaged the full backlog of 81 open alerts:
