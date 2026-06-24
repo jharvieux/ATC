@@ -93,7 +93,7 @@ function personaFallback(slug: string, reason: string): LoadedPersona {
   if (!def) {
     throw new Error(`Unknown persona slug '${slug}' (no DB row and no code default; ${reason})`);
   }
-  console.warn(`[persona-repository] persona '${slug}' falling back to code default: ${reason}`);
+  console.warn(`[persona-repository] persona ${JSON.stringify(slug)} falling back to code default: ${String(reason).replace(/[\r\n]+/g, " ")}`);
   return { persona: def, version: 0 };
 }
 

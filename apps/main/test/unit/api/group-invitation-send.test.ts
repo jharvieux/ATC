@@ -190,6 +190,18 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(mocks.safeAwait).not.toHaveBeenCalled();
   });
 
+  // #84: the email regex is the ReDoS guard. A >254-char address matches the
+  // format but must be rejected by the length cap before the regex runs, so a
+  // crafted long string can't drive polynomial backtracking or reach the DB.
+  it("oversized email (>254 chars) → 400, no DB write", async () => {
+    const huge = `${"a".repeat(250)}@e.com`; // 256 chars, valid format
+    const res = await POST(postReq({ action: "invite", invitee_email: huge }), PARAMS);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("invitee_email");
+    expect(mocks.safeAwait).not.toHaveBeenCalled();
+  });
+
   it("invalid visibility_choice → 400, no DB write", async () => {
     const res = await POST(
       postReq({ action: "invite", invitee_email: "guest@example.com", visibility_choice: "reveal_all" }),
