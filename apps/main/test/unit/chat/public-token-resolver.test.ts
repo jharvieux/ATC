@@ -1,7 +1,7 @@
 // §38.8.1 / §39.5 — Token resolver: quotes first, then trip_itineraries, null otherwise.
 
 import { describe, it, expect } from "vitest";
-import { resolvePublicToken } from "@/lib/chat/public-token-resolver";
+import { resolvePublicToken, isPublicTokenViewable } from "@/lib/chat/public-token-resolver";
 
 function makeDb(routes: Record<string, { table: string; row: Record<string, unknown> | null }>) {
   return {
@@ -78,5 +78,37 @@ describe("resolvePublicToken", () => {
     });
     const r = await resolvePublicToken(db, "dup1234567890123");
     expect(r?.kind).toBe("quote");
+  });
+});
+
+describe("isPublicTokenViewable", () => {
+  // WHY: the public-chat route loads customer PII into an LLM conversation as
+  // soon as a token resolves. The status gate is the only thing stopping a
+  // stale token (declined/expired/accepted quote, archived itinerary) from
+  // re-exposing that PII. If this allowlist silently widens, that regresses.
+  const quote = (status: string) => ({ kind: "quote" as const, quote_id: "q", tenant_id: "t", status });
+  const itin = (status: string) => ({
+    kind: "trip_itinerary" as const,
+    itinerary_id: "i",
+    booking_id: "b",
+    tenant_id: "t",
+    status,
+  });
+
+  it("allows only sent/viewed quotes", () => {
+    expect(isPublicTokenViewable(quote("sent"))).toBe(true);
+    expect(isPublicTokenViewable(quote("viewed"))).toBe(true);
+  });
+
+  it("refuses non-viewable quote statuses", () => {
+    for (const s of ["draft", "accepted", "declined", "expired", "converted"]) {
+      expect(isPublicTokenViewable(quote(s))).toBe(false);
+    }
+  });
+
+  it("allows only sent itineraries (refuses draft, archived)", () => {
+    expect(isPublicTokenViewable(itin("sent"))).toBe(true);
+    expect(isPublicTokenViewable(itin("draft"))).toBe(false);
+    expect(isPublicTokenViewable(itin("archived"))).toBe(false);
   });
 });

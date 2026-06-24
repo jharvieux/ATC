@@ -46,3 +46,18 @@ export async function resolvePublicToken(
 
   return null;
 }
+
+// F-tok-02 (#1382) — a resolved token alone is not enough to load customer PII
+// into an LLM conversation: the resource must be in a customer-viewable state.
+// The public chat route loads cruise/ship/cabin/price/agent_notes context as
+// soon as a token resolves, so a declined/expired/accepted quote or an archived
+// itinerary token (forwarded or leaked) would otherwise re-expose that PII.
+// Mirrors the allowlist the sibling quote-select route enforces.
+//   quotes:          'draft','sent','viewed','accepted','declined','expired','converted' → only sent/viewed
+//   trip_itineraries:'draft','sent','archived'                                            → only sent
+export function isPublicTokenViewable(resolved: ResolvedPublicToken): boolean {
+  if (resolved.kind === "quote") {
+    return resolved.status === "sent" || resolved.status === "viewed";
+  }
+  return resolved.status === "sent";
+}
