@@ -7,10 +7,14 @@
 // tenant_id.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { QuoteStatus } from "@/lib/quotes/state-machine";
+
+// trip_itineraries.status CHECK (migration 20260622000000) — keep in sync.
+export type ItineraryStatus = "draft" | "sent" | "archived";
 
 export type ResolvedPublicToken =
-  | { kind: "quote"; quote_id: string; tenant_id: string; status: string }
-  | { kind: "trip_itinerary"; itinerary_id: string; booking_id: string; tenant_id: string; status: string };
+  | { kind: "quote"; quote_id: string; tenant_id: string; status: QuoteStatus }
+  | { kind: "trip_itinerary"; itinerary_id: string; booking_id: string; tenant_id: string; status: ItineraryStatus };
 
 export async function resolvePublicToken(
   db: SupabaseClient,
@@ -24,7 +28,7 @@ export async function resolvePublicToken(
     .eq("customer_access_token", token)
     .maybeSingle();
   if (quoteData) {
-    const q = quoteData as { id: string; tenant_id: string; status: string };
+    const q = quoteData as { id: string; tenant_id: string; status: QuoteStatus };
     return { kind: "quote", quote_id: q.id, tenant_id: q.tenant_id, status: q.status };
   }
 
@@ -34,7 +38,7 @@ export async function resolvePublicToken(
     .eq("access_token", token)
     .maybeSingle();
   if (itinData) {
-    const it = itinData as { id: string; booking_id: string; tenant_id: string; status: string };
+    const it = itinData as { id: string; booking_id: string; tenant_id: string; status: ItineraryStatus };
     return {
       kind: "trip_itinerary",
       itinerary_id: it.id,

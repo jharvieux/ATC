@@ -1,7 +1,12 @@
 // §38.8.1 / §39.5 — Token resolver: quotes first, then trip_itineraries, null otherwise.
 
 import { describe, it, expect } from "vitest";
-import { resolvePublicToken, isPublicTokenViewable } from "@/lib/chat/public-token-resolver";
+import {
+  resolvePublicToken,
+  isPublicTokenViewable,
+  type ItineraryStatus,
+} from "@/lib/chat/public-token-resolver";
+import { VALID_STATUSES, type QuoteStatus } from "@/lib/quotes/state-machine";
 
 function makeDb(routes: Record<string, { table: string; row: Record<string, unknown> | null }>) {
   return {
@@ -86,13 +91,18 @@ describe("isPublicTokenViewable", () => {
   // soon as a token resolves. The status gate is the only thing stopping a
   // stale token (declined/expired/accepted quote, archived itinerary) from
   // re-exposing that PII. If this allowlist silently widens, that regresses.
-  const quote = (status: string) => ({ kind: "quote" as const, quote_id: "q", tenant_id: "t", status });
+  const quote = (status: string) => ({
+    kind: "quote" as const,
+    quote_id: "q",
+    tenant_id: "t",
+    status: status as QuoteStatus,
+  });
   const itin = (status: string) => ({
     kind: "trip_itinerary" as const,
     itinerary_id: "i",
     booking_id: "b",
     tenant_id: "t",
-    status,
+    status: status as ItineraryStatus,
   });
 
   it("allows only sent/viewed quotes", () => {
@@ -103,6 +113,14 @@ describe("isPublicTokenViewable", () => {
   it("refuses non-viewable quote statuses", () => {
     for (const s of ["draft", "accepted", "declined", "expired", "converted"]) {
       expect(isPublicTokenViewable(quote(s))).toBe(false);
+    }
+  });
+
+  it("auto-widens: across EVERY QuoteStatus, only sent/viewed are viewable", () => {
+    // Iterates the real enum so a new status added to state-machine.ts is
+    // covered here automatically (and must be deliberately allowlisted to pass).
+    for (const s of VALID_STATUSES) {
+      expect(isPublicTokenViewable(quote(s))).toBe(s === "sent" || s === "viewed");
     }
   });
 
