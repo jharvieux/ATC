@@ -63,15 +63,22 @@ function walk(dir: string): string[] {
   return out;
 }
 
-function loadBaseline(): Set<string> {
-  if (!fs.existsSync(BASELINE_FILE)) return new Set();
-  return new Set(
-    fs
-      .readFileSync(BASELINE_FILE, "utf8")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("#")),
-  );
+// Count-aware: each baseline line is `<count> <key>`. Keying by snippet alone
+// would let a SECOND identical egress snippet in an already-baselined file slip
+// through (it shares the key). The count caps how many occurrences of a key are
+// grandfathered; a new duplicate pushes the live count over the baseline → fail.
+function loadBaseline(): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!fs.existsSync(BASELINE_FILE)) return map;
+  for (const raw of fs.readFileSync(BASELINE_FILE, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const sp = line.indexOf(" ");
+    const count = Number(line.slice(0, sp));
+    const key = line.slice(sp + 1);
+    if (Number.isFinite(count) && count > 0 && key) map.set(key, count);
+  }
+  return map;
 }
 
 function main(): void {
@@ -92,17 +99,29 @@ function main(): void {
     process.exit(1);
   }
 
-  const fresh = found.filter((e) => !baseline.has(e.key));
-  // Stale baseline entries (a site was fixed but its entry left behind) are not
-  // a failure, but report them so the baseline can be trimmed.
-  const liveKeys = new Set(found.map((e) => e.key));
-  const stale = [...baseline].filter((k) => !liveKeys.has(k));
+  // Count occurrences per key in the live tree; fail if any key exceeds its
+  // baselined count (a NEW occurrence — even a duplicate snippet in a file that
+  // already has one).
+  const liveCounts = new Map<string, { count: number; file: string; snippet: string }>();
+  for (const e of found) {
+    const cur = liveCounts.get(e.key);
+    if (cur) cur.count++;
+    else liveCounts.set(e.key, { count: 1, file: e.file, snippet: e.snippet });
+  }
+  const fresh: { file: string; snippet: string; excess: number }[] = [];
+  for (const [key, v] of liveCounts) {
+    const based = baseline.get(key) ?? 0;
+    if (v.count > based) fresh.push({ file: v.file, snippet: v.snippet, excess: v.count - based });
+  }
+  // Stale baseline entries (a site was fixed / count dropped) are not a failure,
+  // but report them so the baseline can be trimmed.
+  const stale = [...baseline].filter(([key, based]) => (liveCounts.get(key)?.count ?? 0) < based);
 
   if (fresh.length > 0) {
     console.error(
       "Error-message-egress violations — raw error .message/.details echoed into an API response:\n",
     );
-    for (const e of fresh) console.error(`  ${e.file}: ${e.snippet}`);
+    for (const e of fresh) console.error(`  ${e.file}: ${e.snippet}${e.excess > 1 ? ` (x${e.excess} new)` : ""}`);
     console.error(
       `\n${fresh.length} NEW occurrence(s). Route the error through dbErrorResponse(error) ` +
         "(lib/api/db-error-response.ts) — log server-side under a ref, return a generic message. " +
