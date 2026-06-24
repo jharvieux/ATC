@@ -11,6 +11,14 @@ overrides:
   # regardless. Pin >=11.1.1 across all transitive paths to clear audit.
   # Also patches the dev-only @lhci/cli>uuid path.
   uuid: ">=11.1.1"
+  # Security patches for transitive deps flagged by Dependabot on pnpm-lock.yaml:
+  #   undici  GHSA-vxpw-j846-p89q / -hm92-r4w5-c3mj / -vmh5-mc38-953g (high)
+  #   js-yaml GHSA-h67p-54hq-rp68 (moderate) · esbuild GHSA-g7r4-m6w7-qqqr (low)
+  #   @babel/core GHSA-4x5r-pxfx-6jf8 (low)
+  undici: ">=7.28.0 <8"
+  js-yaml: ">=4.2.0 <5"
+  esbuild: ">=0.28.1 <0.29"
+  "@babel/core": ">=7.29.6 <8"
 allowBuilds:
   '@sentry/cli': false
   esbuild: true
