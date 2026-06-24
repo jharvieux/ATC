@@ -19,6 +19,11 @@ import { getRagDb } from "@/lib/db/supabase";
 type DemoteMode = "to_tenant_scope" | "hard_delete";
 
 export const POST = withServiceAuth(async (req, ctx) => {
+  // Require write scope — read-scoped tokens must not mutate (the read|write
+  // claim is independent of service_identifier). Mirrors replace-chunk. F-rag-auth-02.
+  if (ctx.scope !== "write") {
+    return Response.json({ error: "insufficient_scope" }, { status: 403 });
+  }
   // Platform-admin only — demoting a global chunk affects every tenant
   // that was reading it, so this MUST never be reachable from a tenant
   // JWT. Same posture as purge-tenant-scoped-chunks + post-termination-mark.
