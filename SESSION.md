@@ -1,26 +1,18 @@
-# Session state — last updated 2026-06-23 21:05 CT
+# Session state — last updated 2026-06-23 22:30 PT
 
 ## Just completed
-- **Security-alert triage** across all five surfaces (81 open alerts → real signal only):
-  - **Secret scanning (2 → 0):** both false positives (local-dev anon JWT mislabeled "Service Key"; `whsec_` test fixture). Dismissed. No rotation needed.
-  - **Code scanning (41 → 0):** 4 prod-code findings fixed + regression-tested (**PR #1366**); 37 test/fixture/script alerts dismissed.
-  - **Dependabot (38 → patched):** 28 phantom from a stray root `package-lock.json` (deleted + gitignored); 10 real `pnpm-lock` advisories patched via bounded `pnpm-workspace.yaml` overrides (**PR #1367**). Auto-close on next scan.
-  - **Supabase advisors:** surfaced → issues **#1369** (SECURITY DEFINER RPCs, `opus`), **#1370** (leaked-password). **Vercel:** clean.
-- **CLAUDE.md auto-triage rule** extended with a "Security & quality alerts" subsection (**PR #1368**).
-- MEMORY **D-294** logged (**PR #1371**).
-- **Cleared the two stalled feature PRs** the user asked about: **#1359** (pricing tier-code-map refactor) and **#1360** (nav UX overhaul) — update-branched, audited, fixed #1360's audit findings (nav-gating caveat restored, dead `onNavigate` prop removed), merged both. Test-coverage follow-up for #1360 tracked as **#1372** (`sonnet`).
+- Triaged the two `opus` issues the user asked to "work on": #1361 and #1369.
+- **#1361** — found its substantive scope (middleware session self-heal) already shipped in PR #1362 (merged), per D-293. Remaining items are NOT agent work: operator config #1365 (bump Supabase `refresh_token_reuse_interval` 10s→30s in prod dashboard) and a documenting-comment nit on proxy.ts:182 that D-293 deliberately deferred. User chose to leave the nit deferred. No code change made.
+- **#1369** — verified the advisor's proposed `REVOKE EXECUTE ... FROM authenticated` is UNSAFE: it breaks every tenant RLS policy (the 3 SECURITY DEFINER helpers are called inside policy USING/WITH CHECK as the querying role; EXECUTE is checked). Proven on a throwaway Postgres 18 container (post-REVOKE: `permission denied for function`). Exposure is minimal (caller-scoped booleans). User chose accept-risk + dismiss. Logged as D-295; closing #1369 not-planned.
 
 ## In flight
-- Nothing in flight — clean checkpoint. **No open PRs.** On `dev`.
+- Branch `docs/d295-security-definer-rls-accept-risk`: MEMORY.md (D-295) + MEMORY-INDEX.md + SESSION.md. Doc-only → audit-exempt. Needs `pnpm verify`, push, PR, squash-merge. Then close #1369.
 
 ## Next step
-- Nothing pending from this session. Next session's auto-triage will run the new security-alert sweep.
-- Confirm the 38 Dependabot alerts auto-resolved on the next scan.
+- Run `pnpm verify`, push the branch, open the doc-only PR into dev, merge it, then `gh issue close 1369 --reason "not planned"` with the D-295 rationale comment.
 
 ## Blocked on user
-- **Issue #1370** — enable Supabase leaked-password protection (dashboard toggle; operator action).
-- **Issue #1369** — SECURITY DEFINER RPC `REVOKE EXECUTE` migration needs operator approval (prod-DB).
-- Carried from D-293: bump Supabase `refresh_token_reuse_interval` 10s→30s.
+- #1361 / #1365: operator must bump `refresh_token_reuse_interval` 10s→30s in the prod Supabase auth dashboard (no-prod-without-asking). This is what keeps #1361 open.
 
 ## Open questions
-- **Playwright E2E fails on every PR** (`authedPage: no storageState found` — missing `TEST_E2E_OWNER_*` / Supabase env in CI). Non-required, so it never blocks merges, but the authed e2e tier never actually runs. Likely intentional (secrets withheld from PR CI) — confirm whether to wire CI secrets or leave as-is. No issue opened pending that call.
+- Nothing.
