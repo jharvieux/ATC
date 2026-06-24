@@ -71,11 +71,33 @@ For each PR, classify:
 - **Failing CI with the `regression-suspected` label** — triage.
 - **Open > 7 days with no progress AND no `regression-suspected` label** — surface for triage; ask whether to close or push forward.
 
+### Security & quality alerts
+
+After the issue/PR sweep, pull the three GitHub security surfaces and the Supabase advisors:
+
+```bash
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+gh api "repos/$repo/dependabot/alerts?state=open&per_page=100"
+gh api "repos/$repo/code-scanning/alerts?state=open&per_page=100"
+gh api "repos/$repo/secret-scanning/alerts?state=open&per_page=100"
+```
+
+Posture is **auto-fix the safe, surface the rest** — the same philosophy as the issue/PR rules above.
+
+- **Dependabot — auto-fix when safe.** For an alert with a patched version, open a bump PR; for a transitive dep, prefer a **bounded** `overrides` entry in `pnpm-workspace.yaml` (pnpm 11 does NOT read `pnpm.overrides` from `package.json`) held *within the advisory's patched major* — never an unbounded `>=`, which pulls a surprise major bump. **First confirm the alert reflects what the app actually builds:** alerts on a stale or secondary lockfile (e.g. a stray root `package-lock.json` in this pnpm repo) are phantom — fix/remove the lockfile, don't bump. Group by package; one change can clear many alerts. Dev-tooling bumps with known break-risk (vite/vitest/esbuild — see MEMORY) still get a PR, but flagged "verify carefully," never blind-merged.
+- **Code scanning — triage by location.** Findings in production app code (`apps/*/src/**`, not tests/fixtures/scripts) → open a fix PR, and pin the new security behavior with a test (a sanitizer that can't fail a test will silently regress). Findings in test files, fixtures, or dev-only scripts → dismiss with a reason (`used in tests` / `won't fix`) and a one-line comment. **Never dismiss a finding in shipped code without fixing it.**
+- **Secret scanning — verify before alarm, never echo.** Decode/inspect the flagged value (mask it in any output). A real production credential (service-role JWT with a prod project `ref`, a live Stripe/Supabase key) → **STOP and surface for rotation**; do NOT auto-dismiss. A local-dev key (e.g. `iss=*-local`, no prod ref), a test fixture, or a mislabeled detector hit → resolve as `used_in_tests` / `false_positive` with an explaining comment.
+- **Supabase advisors (`get_advisors` security + performance, both projects) — surface, don't auto-fix.** Every remediation touches the prod DB, which the "no prod deploys without asking" rule gates. RLS-enabled-no-policy on a service-role-only table is safe-by-design (deny-all) — note and move on. `SECURITY DEFINER` RPC exposure, disabled leaked-password protection, extension-in-public, etc. → surface for the operator's call.
+
+Add a `Security alerts:` block to the state summary: open counts per surface, what was auto-fixed/dismissed, and what needs a call. If all clean: `Security alerts: clean.`
+
 ### What auto-triage MUST NOT do
 
 - Don't merge PRs whose only blocker is a real test/typecheck failure on the application surface (those need investigation).
 - Don't override branch protection or skip required checks.
 - Don't run `gh pr update-branch` on a PR more than once per session — repeated update-branches with no other changes are wasted CI cycles.
+- Don't auto-dismiss a secret-scanning alert without first decoding/verifying it is NOT a live production credential — and never paste the secret value into chat or a comment.
+- Don't bump a dependency to satisfy a Dependabot alert that lives on a stale/unused lockfile — remove the lockfile instead.
 
 ### Output format in the state summary
 
@@ -91,9 +113,14 @@ Auto-triage:
   - PR #M — <one line: what's blocking, what I'd do if I knew the answer>
   - Issue #P — <one line: why I can't auto-fix>
 - Skipped (waiting on workflow): #Q (dependabot, retry workflow handles)
+Security alerts:
+- Dependabot: <open count> (auto-fixed in PR #R / phantom-lockfile / surfaced)
+- Code scanning: <open count> (fixed #S, dismissed N test/script)
+- Secret scanning: <open count> (dismissed N false-positive / SURFACED for rotation)
+- Supabase advisors: <N security / N perf> surfaced
 ```
 
-If nothing needed action, the line is `Auto-triage: clean — nothing open needed attention.`
+If nothing needed action, the line is `Auto-triage: clean — nothing open needed attention.` and `Security alerts: clean.`
 
 -----
 

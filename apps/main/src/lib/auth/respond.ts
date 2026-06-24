@@ -95,6 +95,7 @@ export function respondToAuthError(err: unknown): Response {
   // ref; the operator greps logs for it. This is what turns the opaque
   // "internal_error" into a diagnosable failure.
   const ref = crypto.randomUUID().slice(0, 8);
-  console.error(`[respondToAuthError] unhandled error [ref=${ref}]:`, err);
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  console.error(`[respondToAuthError] unhandled error [ref=${ref}]: ${detail.replace(/[\r\n]+/g, " | ")}`);
   return Response.json({ error: "internal_error", ref }, { status: 500 });
 }

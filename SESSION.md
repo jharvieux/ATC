@@ -1,23 +1,28 @@
-# Session state — last updated 2026-06-23 11:40 CT
+# Session state — last updated 2026-06-23 20:35 CT
 
 ## Just completed
-- **#1349** (D-290, PR #1351): decoupled prod migration-apply from the disabled staging pipeline + `docs/runbooks/prod-migration-apply.md`.
-- **#1330 / #1353** (D-291, PRs #1354 + #1355): root-caused prod PDF import failures = pdf-parse/pdfjs-dist crashing on native `@napi-rs/canvas` in Vercel serverless (NOT image-only — my first diagnosis was wrong; user caught it). Swapped pdf-parse → **unpdf** (serverless-safe) via shared `lib/pdf/extract-pdf-text.ts` across both call sites (document import + RAG ingest); fixed the import reject route to allow `parse_failed` rows; deleted Lisa's 2 stuck imports from prod.
-- **Pricing prod seed** (D-292): seeded prod `stripe_price_map` with all 16 rows from the gitignored `apps/main/stripe-sandbox-price-ids.env`. **Prod Stripe is TEST-mode (sk_test)** — sandbox IDs are correct (verified active + livemode:false). Verified all 16 checkout keys resolve from the DB and all 16 IDs are active in the prod Stripe account. Unblocks the Phase 3 admin pricing screen + the Phase 4 prereq.
+- **Security-alert triage sweep** across all five surfaces (81 open alerts → real signal only):
+  - **Secret scanning (2 → 0):** both false positives (local-dev anon JWT mislabeled "Service Key"; `whsec_` test fixture). Dismissed `used_in_tests`. No rotation needed.
+  - **Code scanning (41 → 0):** 4 prod-code findings fixed + regression-tested (**PR #1366**, merged); 37 test/fixture/script alerts dismissed.
+  - **Dependabot (38 → patched):** 28 phantom from a stray root `package-lock.json` — deleted + gitignored; 10 real `pnpm-lock` advisories patched via bounded `pnpm-workspace.yaml` overrides (**PR #1367**, merged). Auto-close on next scan.
+  - **Supabase advisors:** surfaced → issues **#1369** (SECURITY DEFINER RPCs, `opus`) and **#1370** (leaked-password). RLS-no-policy hits are safe-by-design.
+  - **Vercel:** clean — all atc-main/atc-rag deploys READY.
+- **CLAUDE.md auto-triage rule** extended with a "Security & quality alerts" subsection (auto-fix-safe / surface-rest) — **PR #1368**, merged.
+- MEMORY **D-294** logged; MEMORY-INDEX updated.
 
 ## In flight
-- Doc PR for D-292 (MEMORY + SESSION) — opening now.
+- Branch `docs/session-d294` (MEMORY / MEMORY-INDEX / SESSION) — PR being opened. Nothing else uncommitted.
 
-## Next step (when resumed)
-- **The unpdf fix (#1353) + reject fix (#1354) still need a prod deploy** to take effect (merged to dev, gated behind the prod release). Once deployed, Lisa re-uploads her PDF and it imports.
-- **Phase 4 (#1340):** prod is now seeded — Phase 4 can proceed once its code is deployed (removes the STRIPE_PRICE_* env constants; the DB is now the source).
-- Re-run the prod release when ready: drift gate (D-289) + migration-apply (D-290) both fixed; pricing table seeded (D-292).
-- Other follow-ups: **#1346** (client TIER_CODE dup).
+## Next step
+- Merge the `docs/session-d294` PR (doc-only, audit-exempt).
+- Decide on the two pre-existing open PRs (see "Blocked on user").
+- Confirm the 38 Dependabot alerts auto-resolved on the next scan.
 
 ## Blocked on user
-- **Operator setting:** confirm the `production` GitHub environment has **required reviewers** (D-290's approval gate).
-- Prod release re-run + Phase 4 deploy are operator steps.
+- **Pre-existing open PRs #1359 (pricing tier-code-map refactor) and #1360 (nav sidebar UX)** — both MERGEABLE but BEHIND dev, audit gate unsatisfied (agents never ran). Not from this session. #1360 changes user-facing nav → wants product sign-off before merge. Awaiting decision on whether to update-branch + audit + merge.
+- **Issue #1370** — enable Supabase leaked-password protection (dashboard toggle; operator action).
+- **Issue #1369** — SECURITY DEFINER RPC `REVOKE EXECUTE` migration needs operator approval (prod-DB).
+- Carried from D-293: bump Supabase `refresh_token_reuse_interval` 10s→30s.
 
-## Open questions / notes
-- Re-seeding prod pricing: source is `apps/main/stripe-sandbox-price-ids.env` (gitignored). `vercel env pull` returns blanks for ALL vars in this environment — don't trust it for value inspection (D-292).
-- Import pipeline still conflates `no_text_available` (parser-threw vs genuinely-empty) — minor, noted in #1353.
+## Open questions
+- **Playwright E2E fails on every PR** (`authedPage: no storageState found` — missing `TEST_E2E_OWNER_*` / Supabase env in CI). Non-required so it doesn't block merges, but the authed e2e tier never actually runs. Likely intentional (secrets withheld from PR CI) — confirm whether to wire CI secrets or leave as-is. No issue opened pending that call.
