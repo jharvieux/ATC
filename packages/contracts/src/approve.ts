@@ -2,6 +2,7 @@
 // Spec: §8.5 (tenant approval), §6.7 (global promotion).
 
 import { z } from "zod";
+import { safeUrl } from "./safe-url";
 
 const UUID = z.string().uuid();
 
@@ -11,7 +12,7 @@ export const ApproveRequestSchema = z.object({
     .object({
       content: z.string().optional(),
       category: z.string().optional(),
-      source_url: z.string().url().optional(),
+      source_url: safeUrl.optional(),
       authority_override: z.number().min(0).max(1).optional(),
       authority_override_reason: z.string().optional(),
       expires_at: z.string().datetime().optional(),

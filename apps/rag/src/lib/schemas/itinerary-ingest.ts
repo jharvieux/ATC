@@ -6,6 +6,7 @@
 // content_hash short-circuit.
 
 import { z } from "zod";
+import { safeUrl } from "@atc/contracts";
 
 const SailingDaySchema = z.object({
   day_number: z.number().int().positive(),
@@ -24,7 +25,7 @@ export const ItineraryIngestRequestSchema = z.object({
   ports_of_call: z.array(z.string()).default([]),
   region: z.string().optional(),
   starting_price_usd: z.number().nonnegative().optional(),
-  source_url: z.string().url().optional(),
+  source_url: safeUrl.optional(),
   text: z.string().min(20), // chunk body — §B.5 sized prose
   fetched_at: z.string().datetime().optional(),
   day_by_day: z.array(SailingDaySchema).optional(),
