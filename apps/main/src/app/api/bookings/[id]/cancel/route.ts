@@ -246,6 +246,40 @@ export async function POST(
       }
 
       if (payout.stripe_transfer_id) {
+        // F-pay-01 / #1375 — claim the settled payout row with a status-CAS
+        // BEFORE the Stripe reversal + negative-ledger insert. platform_revenue
+        // has no idempotency key / unique constraint and this branch never moved
+        // the payout off its settled status, so two concurrent cancels
+        // (double-click / retry / parallel tabs) both passed the status read
+        // above and both inserted a negative ledger row — double-counting the
+        // clawback in §36's "Lost revenue from cancellations" report. The CAS
+        // (.eq("status", payout.status) → 'reversed') makes the money-movement
+        // path single-entry: the loser matches 0 rows → 409. Mirrors the
+        // pending branch (D-091 R2 / #846). The Stripe reversal is
+        // idempotency-keyed as a second line of defense, but the ledger insert
+        // relies on this guard.
+        try {
+          await safeAwaitRowCount(
+            adminDb
+              .from("payout_records")
+              .update({ status: "reversed", reversed_at: new Date().toISOString() })
+              .eq("tenant_id", ctx.tenant_id)
+              .eq("id", payout.id)
+              .eq("status", payout.status)
+              .select("id"),
+            "payout_records.cas_reverse",
+            1,
+          );
+        } catch (err) {
+          if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
+            return Response.json(
+              { error: "payout_state_changed", message: "Payout status changed concurrently — retry" },
+              { status: 409 },
+            );
+          }
+          throw err;
+        }
+
         const stripeKey = process.env.STRIPE_SECRET_KEY;
         if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
         const stripe = new Stripe(stripeKey);

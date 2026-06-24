@@ -186,3 +186,48 @@ describe("POST /api/bookings/[id]/cancel — CAS guard (#846)", () => {
     expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/bookings/[id]/cancel — settled-payout clawback CAS (F-pay-01 / #1375)", () => {
+  it("returns 409 on a settled-payout CAS-miss, inserting no duplicate clawback ledger row", async () => {
+    // A settled payout (status 'paid', stripe_transfer_id set) takes the
+    // reversal + negative-ledger branch. Before F-pay-01 that branch had NO
+    // re-entry guard, so two concurrent cancels each inserted a negative
+    // platform_revenue row — double-counting the clawback in §36's report. The
+    // new status-CAS (.eq("status", payout.status) → 'reversed', context
+    // "payout_records.cas_reverse") makes the loser match 0 rows → 409 before
+    // any Stripe reversal or ledger write. WHY this test: it fails pre-fix
+    // (the unguarded branch falls through to `new Stripe()` and 500s on the
+    // missing key) and passes post-fix — so it cannot pass without the guard.
+    mocks.payoutMaybeSingle.mockResolvedValue({
+      data: {
+        id: PAYOUT_ID,
+        status: "paid",
+        stripe_transfer_id: "tr_123",
+        settled_at: null,
+        amount_cents: BigInt(45000),
+      },
+      error: null,
+    });
+    mocks.safeAwaitRowCount.mockRejectedValue(
+      new SupabaseMutationError("payout_records.cas_reverse", {
+        message: "Expected 1 row(s); got 0. CAS guard or constraint mismatch.",
+        code: "ROW_COUNT_MISMATCH",
+        hint: "",
+        details: null,
+        name: "RowCountMismatch",
+      } as never),
+    );
+
+    const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("payout_state_changed");
+    // The CAS fired on the SETTLED branch (context cas_reverse), not the
+    // pending #846 branch (cas_cancel) — proves we exercised this code path.
+    expect(mocks.safeAwaitRowCount).toHaveBeenCalledTimes(1);
+    expect(mocks.safeAwaitRowCount.mock.calls[0]?.[1]).toBe("payout_records.cas_reverse");
+    // Loser performed no reversal / ledger insert / commission transition.
+    expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
+  });
+});
