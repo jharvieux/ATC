@@ -1,14 +1,18 @@
 // F-ssrf-01 — the outbound-fetch SSRF guard. Pins the static scheme/host
 // classification and the DNS-resolution screen (public name → private A record).
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
 import { lookup } from "node:dns/promises";
 import {
   validateOutboundUrlStatic,
   validateOutboundUrlResolved,
+  fetchGuarded,
+  SsrfBlockedError,
 } from "@/lib/net/ssrf-guard";
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("validateOutboundUrlStatic", () => {
   it("rejects unsafe schemes, internal hosts, and garbage", () => {
@@ -50,5 +54,26 @@ describe("validateOutboundUrlResolved — DNS screen", () => {
     const r = await validateOutboundUrlResolved("http://169.254.169.254/");
     expect(r.allowed).toBe(false);
     expect(lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchGuarded — re-screens every redirect hop", () => {
+  it("rejects a redirect from a public host into an internal address (no fetch of the internal target)", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } }),
+    );
+    await expect(fetchGuarded("https://feeds.example.com/rss")).rejects.toBeInstanceOf(SsrfBlockedError);
+    // The internal Location is caught by the static re-check before a second fetch.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("follows a redirect to another public host and returns the final response", async () => {
+    vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 301, headers: { location: "https://cdn.example.com/final" } }))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    const res = await fetchGuarded("https://feeds.example.com/rss");
+    expect(res.status).toBe(200);
   });
 });
