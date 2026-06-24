@@ -1,0 +1,60 @@
+# NOTE: introduces a shared SSRF guard (apps/main/src/lib/net/ssrf-guard.ts)
+# used at ingest-time (feeds POST) and fetch-time (travel-news-refresh).
+# Full helper body in the patch subagent transcript; key pieces below.
+
+diff --git a/apps/main/src/lib/net/ssrf-guard.ts b/apps/main/src/lib/net/ssrf-guard.ts
+new file mode 100644
+--- /dev/null
++++ b/apps/main/src/lib/net/ssrf-guard.ts
+@@
++// F-ssrf-01 — shared SSRF guard for admin-supplied outbound URLs.
++// Layers: (1) validateUrlStatic — scheme allowlist (http/https) + block
++// loopback/link-local(169.254/16 incl. IMDS)/RFC1918/CGNAT/reserved + IPv6
++// loopback/link-local/ULA/v4-mapped + localhost/*.internal/*.local +
++// decimal/hex IP literals; (2) validateUrlResolved — static + DNS-resolve and
++// reject if any resolved addr is private; (3) fetchGuarded — redirect:'manual'
++// with per-hop re-validation (bounded to 5 hops). Fails closed throughout.
++import { isIP } from "node:net";
++import { lookup } from "node:dns/promises";
++const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
++const BLOCKED_HOST_SUFFIXES = [".internal", ".local", ".localhost"];
++const BLOCKED_HOSTNAMES = new Set(["localhost"]);
++export interface SsrfCheck { allowed: boolean; reason?: string }
++// ... ipv4ToInt / isBlockedIpv4 (0/8,10/8,127/8,100.64/10,169.254/16,172.16/12,
++//     192.168/16,224/4,240/4) / isBlockedIpv6 (::1,::,fe80,fc,fd,::ffff:v4) ...
++export function validateUrlStatic(url: string): SsrfCheck { /* scheme + host/IP checks */ }
++export async function validateUrlResolved(url: string): Promise<SsrfCheck> { /* static + DNS */ }
++export async function fetchGuarded(url: string, init): Promise<Response> { /* manual redirects + per-hop revalidation */ }
+
+diff --git a/apps/main/src/inngest/travel-news-refresh.ts b/apps/main/src/inngest/travel-news-refresh.ts
+--- a/apps/main/src/inngest/travel-news-refresh.ts
++++ b/apps/main/src/inngest/travel-news-refresh.ts
+@@ -7,6 +7,7 @@
+ import { XMLParser } from "fast-xml-parser";
+ import { inngest } from "./client";
+ import { createServiceRoleClient } from "@/lib/db/service-role-client";
++import { fetchGuarded } from "@/lib/net/ssrf-guard";
+@@ async function fetchFeedItems(url: string): Promise<RssItem[]> {
+-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
++  const res = await fetchGuarded(url, { timeoutMs: 10_000 });
+   if (!res.ok) return [];
+
+diff --git a/apps/main/src/app/api/admin/travel-news/feeds/route.ts b/apps/main/src/app/api/admin/travel-news/feeds/route.ts
+--- a/apps/main/src/app/api/admin/travel-news/feeds/route.ts
++++ b/apps/main/src/app/api/admin/travel-news/feeds/route.ts
+@@
++import { validateUrlStatic } from "@/lib/net/ssrf-guard";
+@@ export async function POST(req: Request): Promise<Response> {
+-  try {
+-    new URL(body.url);
+-  } catch {
+-    return Response.json({ error: "invalid_url" }, { status: 400 });
++  const urlCheck = validateUrlStatic(body.url);
++  if (!urlCheck.allowed) {
++    return Response.json({ error: "invalid_url", reason: urlCheck.reason }, { status: 400 });
+   }
+
+# + new test: apps/main/test/unit/ssrf-guard.test.ts (scheme rejection, IMDS,
+#   RFC1918, IPv6, decimal/hex encodings, hostname suffixes, malformed input).
+# Residual (documented): DNS-rebinding TOCTOU not fully closed statically —
+# would require pinning the validated IP into the connection (undici dispatcher).

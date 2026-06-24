@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-296 — 2026-06-23 — Day-1 security scan (defending-code-reference-harness) run on apps/main + apps/rag; 14 confirmed findings ticketed (#1375-#1388)
+
+**Decision.** Ran the harness Day-1 static loop (`/threat-model` → `/vuln-scan` → `/triage` → `/patch`) against both apps and committed the artifacts under `docs/security/day1-scan/`. First installed the one uninstalled harness update: `_lib/checkpoint.py` was stale (4.5KB, missing prompt-injection hardening from upstream PR "harden-untrusted-data-tags") AND interface-incompatible with the current skill markdown (skills call `--key`/`-state` the old file didn't support — effectively broken). Replaced with upstream (7.7KB), verified compile + round-trip + the cwd-confinement guard.
+
+**Results.** 38 scan candidates → triage: **14 confirmed real** (1 HIGH, 12 MED, 1 downgraded LOW), 16 defense-in-depth LOW, 5 operational/unconfirmed, 3 false-positive. Top: **F-pay-01 (HIGH, #1375)** — concurrent booking-cancel double-counts the clawback in `platform_revenue` (settled-payout branch has no CAS gate / idempotency key; pending branch does). Issues #1375-#1388 (severity + opus/sonnet + security + triage:confirmed labels). 8 inert candidate patches in `docs/security/day1-scan/PATCHES/`. Code-only fix PR opened for F-pay-01.
+
+**Why these choices.** (a) Triage used **votes=1** on MED+HIGH (dedicated adversarial verifier each) + inline triage for LOWs — a deliberate cost cut vs the default 3 votes, recorded in TRIAGE.json. (b) Artifacts consolidated under `docs/security/day1-scan/` (not scattered in `apps/*/` + repo root) so the commit is doc-exempt AND the sensitive vuln roadmap lives in one place. (c) F-pay-01's fix is code-only — the `reversed` status + `reversed_at` column already exist (migration 20260703000000) — so no prod migration needed; F-sm-01/F-sm-02 fixes DO need migrations and stay prod-gated.
+
+**Rejected.** Generating patches for all 14 confirmed (cost) — did 8 spanning each fix class, rest keep recommendations in TRIAGE.json. Running the per-patch independent-reviewer pass (Phase 3) — skipped to bound cost; the normal PR audit agents are the second set of eyes.
+
+**Related artifacts.** Issues #1375-#1388, `docs/security/day1-scan/**`, harness `https://github.com/anthropics/defending-code-reference-harness` (Day-2 = `vuln-pipeline run`, execution-verified C/C++, N/A to this TS monorepo as-written). [[feedback_no_prod_deploys_without_asking]]
+
+---
+
 ## D-295 — 2026-06-23 — SECURITY DEFINER tenant-helper RPC advisor (#1369) accepted-risk, NOT revoked — proposed REVOKE breaks all tenant RLS (verified)
 
 **Context.** Supabase `get_advisors(security)` flagged `authenticated_security_definer_function_executable` (WARN ×3) on the three tenant-isolation helpers `public.auth_user_in_tenant`, `public.tenant_is_active`, `public.auth_user_can_access_conversation` — directly callable by `authenticated` via `/rest/v1/rpc/*`. Issue #1369 proposed the advisor's "likely fix": `REVOKE EXECUTE ... FROM authenticated`.

@@ -1,0 +1,69 @@
+# NOTE: adds an atomic-increment RPC migration + rewires customer-limit.ts to
+# consume-then-check. Mirrors the increment_tenant_ai_cost precedent. Schema +
+# the load-bearing TS hunk below; full migration body in the patch transcript.
+
+diff --git a/apps/main/supabase/migrations/20260701000000_customer_chat_atomic_increment.sql b/apps/main/supabase/migrations/20260701000000_customer_chat_atomic_increment.sql
+new file mode 100644
+--- /dev/null
++++ b/apps/main/supabase/migrations/20260701000000_customer_chat_atomic_increment.sql
+@@
++-- F-sm-01 — atomic increment RPC for customer_chat_counters (replaces the
++-- read-modify-write TOCTOU in lib/chat/customer-limit.ts:enforceCustomerLimit).
++CREATE OR REPLACE FUNCTION public.increment_customer_chat_count(
++  p_user_id UUID, p_tenant_id UUID, p_seed INTEGER,
++  p_window_start TIMESTAMPTZ, p_now TIMESTAMPTZ)
++RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
++DECLARE v_count INTEGER;
++BEGIN
++  INSERT INTO public.customer_chat_counters (user_id, tenant_id, current_count, last_message_at)
++  VALUES (p_user_id, p_tenant_id, GREATEST(p_seed,0)+1, p_now)
++  ON CONFLICT (user_id, tenant_id) DO UPDATE
++    SET current_count = CASE
++          WHEN public.customer_chat_counters.last_message_at IS NULL
++            OR public.customer_chat_counters.last_message_at < p_window_start
++          THEN GREATEST(p_seed,0)+1
++          ELSE public.customer_chat_counters.current_count + 1 END,
++        last_message_at = p_now
++  RETURNING current_count INTO v_count;
++  RETURN v_count;
++END; $$;
++-- + reset_customer_chat_count(...) refund helper (clamp back to hard_cap)
++REVOKE EXECUTE ON FUNCTION public.increment_customer_chat_count(UUID,UUID,INTEGER,TIMESTAMPTZ,TIMESTAMPTZ) FROM PUBLIC;
++GRANT  EXECUTE ON FUNCTION public.increment_customer_chat_count(UUID,UUID,INTEGER,TIMESTAMPTZ,TIMESTAMPTZ) TO service_role;
+
+diff --git a/apps/main/src/lib/chat/customer-limit.ts b/apps/main/src/lib/chat/customer-limit.ts
+--- a/apps/main/src/lib/chat/customer-limit.ts
++++ b/apps/main/src/lib/chat/customer-limit.ts
+@@
+-import { safeAwait } from "@/lib/db/safe-mutation";
++import { safeAwait, safeAwaitRequired } from "@/lib/db/safe-mutation";
+@@
+-  const nextCount = counter.current_count + 1;
+   const now = new Date().toISOString();
++  // Atomic consume-then-check (F-sm-01). nextCount derives from the RPC's
++  // post-increment return, never the stale read — K concurrent requests at
++  // hard_cap-1 can no longer all pass the cap check.
++  const nextCount = await safeAwaitRequired<number>(
++    db.rpc("increment_customer_chat_count", {
++      p_user_id: args.user_id, p_tenant_id: args.tenant_id,
++      p_seed: seed, p_window_start: windowStart.toISOString(), p_now: now,
++    }) as unknown as PromiseLike<{ data: number | null; error: unknown }>,
++    "customer_chat_counters.rpc.increment",
++  );
+@@
+   if (nextCount > resolved.hard_cap) {
+-    // ... upsertCounter({ current_count: counter.current_count, ... })
+-    return { tier: "hard", ..., current_count: counter.current_count, ... };
++    // Refund: clamp back to hard_cap (the blocked request delivered no AI
++    // response). Convergent — concurrent racers all clamp to hard_cap.
++    await upsertCounter(db, args.user_id, args.tenant_id, { current_count: resolved.hard_cap, hard_limit_hit_at: now, ... });
++    return { tier: "hard", resolved, current_count: resolved.hard_cap, reset_at: oldestSince };
+   }
+   // Non-hard: RPC already committed the increment; upsert only persists the
+   // resolved-caps snapshot + last_message_at (no count math).
+-  await upsertCounter(db, ..., { current_count: nextCount, ... });
++  await upsertCounter(db, ..., { last_message_at: now, ... });
+
+# Note: anonymous-limit.ts (F-sm-02) has the same pattern — fix with the same
+# RPC treatment in a follow-up. Maintainer to confirm the safeAwaitRequired
+# cast typechecks under this tsconfig (the .rpc scalar return isn't SupabaseResult<T>).

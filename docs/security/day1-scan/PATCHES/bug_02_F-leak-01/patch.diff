@@ -1,0 +1,39 @@
+--- a/apps/main/src/app/api/chat/route.ts
++++ b/apps/main/src/app/api/chat/route.ts
+@@ -91,7 +91,9 @@ type SseEvent =
+   | { type: "escalation"; body: string }
+   | { type: "supervisor"; action: "allow" | "regenerate" | "escalate"; regens: number }
+   | { type: "done" }
+-  | { type: "error"; message: string };
++  // `ref` correlates a client-reported failure to the server log line that
++  // holds the real (possibly DB-internal) error — never streamed to the client.
++  | { type: "error"; message: string; ref?: string };
+
+ function sseEncode(ev: SseEvent): string {
+   return `data: ${JSON.stringify(ev)}\n\n`;
+@@ -232,9 +234,11 @@ export async function POST(req: Request): Promise<Response> {
+     send,
+     close,
+   }).catch(async (err) => {
+-    const msg = err instanceof Error ? err.message : String(err);
++    // Log the real error server-side under a correlation ref; stream only a
++    // generic message so DB/internal details never reach the (anon) caller.
++    const ref = crypto.randomUUID();
++    console.error("[chat] ref=%s", ref, err);
+     try {
+-      await send({ type: "error", message: msg });
++      await send({ type: "error", message: "Something went wrong", ref });
+     } finally {
+       await close();
+     }
+@@ -456,7 +460,9 @@ async function handleChat({
+       .select("id")
+       .single();
+     if (createErr || !created) {
+-      await send({ type: "error", message: `conversation_create_failed: ${createErr?.message}` });
++      const ref = crypto.randomUUID();
++      console.error("[chat] ref=%s conversation_create_failed", ref, createErr);
++      await send({ type: "error", message: "Something went wrong", ref });
+       await close();
+       return;
+     }

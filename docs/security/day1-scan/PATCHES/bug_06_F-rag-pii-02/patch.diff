@@ -1,0 +1,67 @@
+# Adds a shared safeUrl zod schema at the contract chokepoint and swaps it into
+# all 6 stored-URL fields across both packages. (Corrects the finding: media-
+# asset-upsert lives under apps/rag/src/lib/schemas/, not packages/contracts.)
+
+diff --git a/packages/contracts/src/safe-url.ts b/packages/contracts/src/safe-url.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/contracts/src/safe-url.ts
+@@
++// Shared URL validator for stored/rendered URL fields. Replaces bare
++// z.string().url() (which accepts file://, 169.254.169.254, internal hosts).
++// Two guards: (1) scheme allowlist http:/https: only; (2) host denylist —
++// loopback / link-local (incl. cloud metadata) / RFC1918 / unqualified
++// single-label hosts, in decimal/octal/hex IPv4 + IPv6 + v4-mapped forms.
++// Residual (documented): a DNS name resolving to internal passes (sync
++// validation, no resolve) — the render-sink http(s) gate is the backstop.
++import { z } from "zod";
++function isBlockedHostname(hostname: string): boolean { /* localhost/*.localhost,
++  ::1/::/fe80/fc/fd, ::ffff:v4, dotted v4 (127/10/172.16-31/192.168/169.254/0),
++  bare decimal/hex host, single-label no-dot host */ }
++export const safeUrl = z.string().url().refine((value) => {
++  let parsed: URL; try { parsed = new URL(value); } catch { return false; }
++  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
++  return !isBlockedHostname(parsed.hostname);
++}, { message: "URL must be http(s) and must not target an internal, loopback, or link-local host" });
+
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+@@
++export * from "./safe-url";
+ export * from "./approve";
+ export * from "./ingest";
+
+diff --git a/packages/contracts/src/ingest.ts b/packages/contracts/src/ingest.ts
+@@
++import { safeUrl } from "./safe-url";
+-  source_url: z.string().url().optional(),
++  source_url: safeUrl.optional(),
+
+diff --git a/packages/contracts/src/approve.ts b/packages/contracts/src/approve.ts
+@@
++import { safeUrl } from "./safe-url";
+-      source_url: z.string().url().optional(),
++      source_url: safeUrl.optional(),
+
+diff --git a/apps/rag/src/lib/schemas/reference-ingest.ts b/apps/rag/src/lib/schemas/reference-ingest.ts
+@@
++import { safeUrl } from "@atc/contracts";
+-  source_url: z.string().url().optional(),
++  source_url: safeUrl.optional(),
+
+diff --git a/apps/rag/src/lib/schemas/itinerary-ingest.ts b/apps/rag/src/lib/schemas/itinerary-ingest.ts
+@@
++import { safeUrl } from "@atc/contracts";
+-  source_url: z.string().url().optional(),
++  source_url: safeUrl.optional(),
+
+diff --git a/apps/rag/src/lib/schemas/media-asset-upsert.ts b/apps/rag/src/lib/schemas/media-asset-upsert.ts
+@@
++import { safeUrl } from "@atc/contracts";
+-  image_url: z.string().url(),
+-  source_page_url: z.string().url(),
++  image_url: safeUrl,
++  source_page_url: safeUrl,
+
+# + recommended test: packages/contracts/src/safe-url.test.ts (reject file://,
+#   169.254.169.254, 127.0.0.1, RFC1918, 2130706433, 0x7f.., [::1], localhost,
+#   single-label; allow https://example.com, http://cdn.example.com:8080).
