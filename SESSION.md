@@ -1,22 +1,27 @@
-# Session state — last updated 2026-06-24 00:30 PT
+# Session state — last updated 2026-06-24 09:50 PT
 
 ## Just completed
-- #1361 closed (self-heal shipped #1362; gated on operator config #1365). #1369 closed not-planned (D-295). PR #1374 merged.
-- Ran the defending-code-reference-harness **Day-1 static loop** on apps/main + apps/rag. Installed the one uninstalled harness update first (`_lib/checkpoint.py` was stale + interface-broken). 38 candidates → 14 confirmed real (D-296).
-- Opened 14 issues #1375-#1388 (severity + opus/sonnet + security + triage:confirmed).
-- Committed scan artifacts under `docs/security/day1-scan/` (branch `docs/day1-security-scan` → doc-only PR).
+Day-1 security scan (D-296, `docs/security/day1-scan/`) + remediation batch. Merged to dev:
+- **Fixes:** F-pay-01 #1375 (payout clawback CAS, PR #1390), F-rag-auth-02 (rag admin write-scope, #1392), F-leak-01 #1380 (anon chat error leak, #1396), F-tok-02 #1382 (public-token status gate, #1397), F-rag-wh-01 #1384 (feedback HMAC-before-rate-limit, #1398).
+- **Prevention guards (epic #1393):** G5 admin-route-auth (`check:admin-auth`, #1394), G1 error-message-egress (`check:error-egress`, #1396). Both wired into `pnpm verify` + ci.yml guards, with baselines + unit tests + CLAUDE.md D-091 #15/#16.
+- Artifacts PR #1389; closed earlier #1361, #1369.
+
+Working style: grinding the batch autonomously (implement → verify → PR → d091+pre-pr audits → merge), self-correcting on audit findings. See [[feedback_autonomous_batch_no_checkpoint]].
 
 ## In flight
-- Branch `docs/day1-security-scan`: docs/security/day1-scan/** + MEMORY D-296 + index + SESSION. Doc-exempt. Needs push + PR + merge.
-- NEXT after that: branch `fix/f-pay-01-clawback-cas` for the F-pay-01 (#1375) code-only fix (payout-row status-CAS before the reversal+ledger insert; `reversed` status already exists, no migration) + regression test → full PR (pnpm verify + d091/pre-pr audit agents, Opus first run — financial path).
+Nothing uncommitted — clean checkpoint on dev (this SESSION refresh is on `docs/session-refresh-day1-batch`).
 
 ## Next step
-- Push docs branch, open + merge the doc-only PR. Then implement and PR the F-pay-01 fix.
+Continue the batch. Remaining, in suggested order:
+- **Prevention guards (#1393):** G2 (URL/SSRF — pairs with F-ssrf-01/#1381 + F-rag-pii-02/#1383 fixes, which create the `safeUrl`/`ssrf-guard` helpers it enforces), G3 (atomic-mutation — covers the HIGH F-sm class), G4 (Redis rate-limit), G6 (webhook replay).
+- **Per-finding fixes (candidate patches in `docs/security/day1-scan/PATCHES/`):** F-ssrf-01 #1381, F-rag-pii-02 #1383, F-rag-wh-02 #1385, F-tok-01 #1386, F-inp-02 #1387, F-sm-03 #1378, F-rag-pii-01 #1388.
+- **G1 baseline burn-down:** #1395 (route the ~69 frozen raw-error sites through dbErrorResponse).
 
 ## Blocked on user
-- #1365: operator bump of Supabase `refresh_token_reuse_interval` 10s→30s (prod dashboard).
-- F-sm-01 (#1376) / F-sm-02 (#1377) fixes ship SQL migrations → prod-gated (need approval).
-- F-auth-01 (#1379) needs a product decision on the OTP/identity-binding flow.
+- #1365: operator bump Supabase `refresh_token_reuse_interval` 10s→30s (prod dashboard).
+- F-sm-01 #1376 / F-sm-02 #1377: fixes ship SQL migrations → prod-gated (need approval).
+- F-auth-01 #1379: needs a product decision on the OTP/identity-binding flow.
+- #1391: robust F-pay-01 idempotency key on platform_revenue (migration → prod-gated).
 
 ## Open questions
-- Whether to generate patches + PRs for the remaining confirmed findings (recommendations are in TRIAGE.json).
+Nothing.
