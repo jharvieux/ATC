@@ -25,7 +25,11 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { resolvePublicToken, type ResolvedPublicToken } from "@/lib/chat/public-token-resolver";
+import {
+  resolvePublicToken,
+  isPublicTokenViewable,
+  type ResolvedPublicToken,
+} from "@/lib/chat/public-token-resolver";
 import { resolveCustomerContext, type CustomerContextRef } from "@/lib/chat/customer-context";
 import { instrumentedClaudeCall, AiCostHardStateError } from "@/lib/ai/call-wrapper";
 import { tenantContextForPublicTokenChat } from "@/lib/db/factories";
@@ -87,6 +91,12 @@ export async function POST(
   const resolved: ResolvedPublicToken | null = await resolvePublicToken(svc, token);
   if (!resolved) {
     return Response.json({ error: "not_found" }, { status: 404 });
+  }
+  // F-tok-02 (#1382): reject tokens for resources the customer should no longer
+  // see (declined/expired/accepted quotes, archived itineraries) BEFORE any PII
+  // context load. 410 Gone — the token is real but the resource is inactive.
+  if (!isPublicTokenViewable(resolved)) {
+    return Response.json({ error: "resource_unavailable" }, { status: 410 });
   }
 
   const rl = checkRateLimit(token);

@@ -26,7 +26,7 @@ export class InvalidQuoteTransitionError extends Error {
   }
 }
 
-const VALID_STATUSES = new Set<QuoteStatus>(["draft", "sent", "viewed", "accepted", "declined", "expired", "converted"]);
+export const VALID_STATUSES = new Set<QuoteStatus>(["draft", "sent", "viewed", "accepted", "declined", "expired", "converted"]);
 
 const ALLOWED_TRANSITIONS: Record<QuoteStatus, ReadonlySet<QuoteStatus>> = {
   draft:     new Set<QuoteStatus>(["sent"]),
