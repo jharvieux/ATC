@@ -29,6 +29,7 @@ import {
   freshAnonSession,
   verifyAnonSession,
 } from "@/lib/chat/anon-session-cookie";
+import { randomUUID } from "node:crypto";
 import { redactPii } from "@/lib/pii/redact";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -91,7 +92,9 @@ type SseEvent =
   | { type: "escalation"; body: string }
   | { type: "supervisor"; action: "allow" | "regenerate" | "escalate"; regens: number }
   | { type: "done" }
-  | { type: "error"; message: string };
+  // `ref` correlates a client-reported failure to the server log line holding
+  // the real (possibly DB-internal) error — the error text is never streamed.
+  | { type: "error"; message: string; ref?: string };
 
 function sseEncode(ev: SseEvent): string {
   return `data: ${JSON.stringify(ev)}\n\n`;
@@ -232,9 +235,13 @@ export async function POST(req: Request): Promise<Response> {
     send,
     close,
   }).catch(async (err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    // F-leak-01: log the real error server-side under a correlation ref; stream
+    // only a generic message so DB/internal details never reach the (anonymous)
+    // caller. supabase-js / Postgres error messages embed table/column names.
+    const ref = randomUUID();
+    console.error("[chat] ref=%s", ref, err);
     try {
-      await send({ type: "error", message: msg });
+      await send({ type: "error", message: "Something went wrong", ref });
     } finally {
       await close();
     }
@@ -457,10 +464,14 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
       .select("id")
       .single();
     if (createErr || !created) {
-      await send({ type: "error", message: `conversation_create_failed: ${createErr?.message}` });
+      // F-leak-01: generic message + server-logged ref, never the raw DB error.
+      const ref = randomUUID();
+      console.error("[chat] ref=%s conversation_create_failed", ref, createErr);
+      await send({ type: "error", message: "Something went wrong", ref });
       await close();
       return;
     }
+
     conversationId = (created as { id: string }).id;
   }
 
