@@ -251,6 +251,8 @@ export function ChatExperience({
     }
   }
 
+  const [chatPanelOpen, setChatPanelOpen] = useState(true);
+
   return (
     // `h-full` so the consumer owns the height container. /chat/[slug]
     // wraps this in an h-screen column under its agent header; /chat
@@ -261,10 +263,21 @@ export function ChatExperience({
       {!hideBanner && <NewsTickerBanner />}
       {!hideBanner && <AIDisclosureBanner />}
       <div className="flex flex-1 overflow-hidden">
-        {!hideSidebar && (
+        {!hideSidebar && chatPanelOpen && (
           <aside className="hidden md:block w-[260px] border-r border-border p-4 overflow-y-auto shrink-0">
             <ChatSidebar />
           </aside>
+        )}
+        {/* Slider handle — only on chat screens (ChatExperience), only md+ */}
+        {!hideSidebar && (
+          <button
+            type="button"
+            className="hidden md:flex flex-col items-center justify-center w-3 shrink-0 cursor-pointer hover:bg-muted/40 transition-colors border-r border-border"
+            onClick={() => setChatPanelOpen((v) => !v)}
+            aria-label={chatPanelOpen ? "Collapse history panel" : "Expand history panel"}
+          >
+            <span className="block w-1 h-10 rounded-full bg-border/80" />
+          </button>
         )}
 
         <main className="flex-1 flex flex-col overflow-hidden">
