@@ -8,6 +8,7 @@ import {
   PlatformAdminError,
 } from "@/lib/auth/assert-platform-admin";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { validateOutboundUrlStatic } from "@/lib/net/ssrf-guard";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
 export async function GET(req: Request): Promise<Response> {
@@ -65,10 +66,11 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "name_required" }, { status: 400 });
   }
 
-  try {
-    new URL(body.url);
-  } catch {
-    return Response.json({ error: "invalid_url" }, { status: 400 });
+  // F-ssrf-01: reject file://, internal/loopback/link-local hosts at ingest
+  // time (defense-in-depth with the fetch-time guard in travel-news-refresh).
+  const urlCheck = validateOutboundUrlStatic(body.url);
+  if (!urlCheck.allowed) {
+    return Response.json({ error: "invalid_url", reason: urlCheck.reason }, { status: 400 });
   }
 
   const feed = await withPlatformAdminAudit(

@@ -17,11 +17,18 @@
 
 import { z } from "zod";
 
+// True for hosts that must never be reached from a stored/ingested URL:
+// loopback, link-local (incl. cloud metadata), RFC1918/CGNAT, IPv6 internal
+// classes, and unqualified single-label names. Exported so a server-side SSRF
+// fetch guard can classify both a URL hostname AND a DNS-resolved IP with the
+// same logic (single source of truth).
+//
 // NOTE: `new URL()` (WHATWG) has already normalized numeric IPv4 forms before
-// this runs — decimal (2130706433), hex (0x7f000001), and octal all become
-// dotted-decimal "127.0.0.1". So the dotted-octet range check below catches
-// them; we don't re-parse those encodings here.
-function isBlockedHost(hostname: string): boolean {
+// this runs on a URL hostname — decimal (2130706433), hex (0x7f000001), and
+// octal all become dotted-decimal "127.0.0.1". So the dotted-octet range check
+// below catches them; we don't re-parse those encodings here. A raw resolved IP
+// (already dotted-decimal or an IPv6 literal) is classified directly.
+export function isInternalHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
   if (host === "localhost" || host.endsWith(".localhost")) return true;
@@ -71,7 +78,7 @@ export const safeUrl = z
         return false;
       }
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-      return !isBlockedHost(parsed.hostname);
+      return !isInternalHost(parsed.hostname);
     },
     { message: "URL must be http(s) and must not target an internal, loopback, or link-local host" },
   );

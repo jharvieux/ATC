@@ -7,6 +7,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { fetchGuarded } from "@/lib/net/ssrf-guard";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import {
   instrumentedClaudeCall,
@@ -45,7 +46,9 @@ function passesKeywordFilter(item: RssItem): boolean {
 }
 
 async function fetchFeedItems(url: string): Promise<RssItem[]> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  // F-ssrf-01: feed URL is admin-stored — guard against file://, internal hosts,
+  // and redirects to internal addresses (incl. cloud metadata).
+  const res = await fetchGuarded(url, { timeoutMs: 10_000 });
   if (!res.ok) return [];
   const xml = await res.text();
 
