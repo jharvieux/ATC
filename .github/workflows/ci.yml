@@ -131,6 +131,13 @@ jobs:
         # bypass it via role='tenant_owner'. Only this static sweep catches it.
         run: pnpm check:permission-matrix
 
+      - name: Admin-route auth guard (#1393/G5)
+        # Fails if any apps/*/src/app/api/admin/**/route.ts lacks an in-handler
+        # platform-admin assertion. proxy.ts's admin gate is only a cookie shape
+        # check; real authority is per-route. tsc cannot see this gap (root cause
+        # of F-auth-02 / F-rag-auth-02 in the Day-1 scan).
+        run: pnpm check:admin-auth
+
       - name: AI-purpose constraint guard (#1271)
         # Fails if AICallPurpose union in call-wrapper.ts diverges from the
         # ai_call_log_purpose_check CHECK constraint in the latest migration.

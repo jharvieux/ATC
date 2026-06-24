@@ -1,0 +1,10 @@
+# Admin-route auth guard baseline (scripts/check-admin-route-auth.ts, epic #1393 / G5).
+#
+# One repo-relative route path per line. Lists app/api/admin/** routes that are
+# INTENTIONALLY exempt from the in-handler platform-admin assertion (e.g. an
+# admin-surface health check with no authority). The guard fails on any NEW
+# ungated admin route not listed here.
+#
+# Currently EMPTY — all 65 admin routes assert platform-admin authority. Keep it
+# that way; add an entry only with a reason, e.g.:
+#   apps/main/src/app/api/admin/health/route.ts  # liveness only, no authority needed
