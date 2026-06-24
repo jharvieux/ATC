@@ -2,11 +2,12 @@
 // Spec: §8.3 (ingest), §6.5 (queue).
 
 import { z } from "zod";
+import { safeUrl } from "./safe-url";
 
 const UUID = z.string().uuid();
 
 export const IngestRequestSchema = z.object({
-  source_url: z.string().url().optional(),
+  source_url: safeUrl.optional(),
   source_domain: z.string().optional(),
   raw_content: z.string().min(1),
   scope: z.enum(["tenant", "global"]),
