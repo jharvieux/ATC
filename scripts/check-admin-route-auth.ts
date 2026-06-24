@@ -43,10 +43,14 @@ const ADMIN_SURFACES: { dir: string; tokens: string[] }[] = [
   },
   {
     dir: "apps/rag/src/app/api/admin",
-    // Exact check substring (not a bare "service_identifier" mention) so a
-    // comment or import can't satisfy the guard. All current rag admin routes
-    // use this literal form.
-    tokens: ['service_identifier !== "platform-admin"'],
+    // Exact check substrings (not a bare "service_identifier" mention) so a
+    // comment or import can't satisfy the guard. Accept both comparison
+    // directions: routes today use the negative deny-form (`!== → 403`), but a
+    // positive proceed-form (`===`) is an equally valid gate.
+    tokens: [
+      'service_identifier !== "platform-admin"',
+      'service_identifier === "platform-admin"',
+    ],
   },
 ];
 
@@ -115,7 +119,7 @@ function main(): void {
     );
     console.error(
       "Add an in-handler assertion (main: assertPlatformAdmin* / MAIN_APP_ADMIN_API_KEY compare; " +
-        "rag: a service_identifier === 'platform-admin' check), or, if intentionally exempt, " +
+        "rag: a service_identifier check against 'platform-admin'), or, if intentionally exempt, " +
         "add the path to scripts/admin-route-auth-baseline.txt with a reason.",
     );
     process.exit(1);
