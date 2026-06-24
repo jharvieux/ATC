@@ -43,7 +43,10 @@ const ADMIN_SURFACES: { dir: string; tokens: string[] }[] = [
   },
   {
     dir: "apps/rag/src/app/api/admin",
-    tokens: ["service_identifier"],
+    // Exact check substring (not a bare "service_identifier" mention) so a
+    // comment or import can't satisfy the guard. All current rag admin routes
+    // use this literal form.
+    tokens: ['service_identifier !== "platform-admin"'],
   },
 ];
 
@@ -81,6 +84,16 @@ function main(): void {
   for (const surface of ADMIN_SURFACES) {
     const absDir = path.join(ROOT, surface.dir);
     const routes = walkRoutes(absDir);
+    // Per-surface, not global: if one admin surface disappears (rename/restructure)
+    // its routes must not silently fall out of coverage while the other surface
+    // keeps the check green.
+    if (routes.length === 0) {
+      console.error(
+        `Admin-route auth check: 0 route files under ${surface.dir}. ` +
+          `If this surface was intentionally removed, update ADMIN_SURFACES in scripts/check-admin-route-auth.ts.`,
+      );
+      process.exit(1);
+    }
     for (const file of routes) {
       scanned++;
       const rel = path.relative(ROOT, file);
@@ -90,13 +103,6 @@ function main(): void {
         ungated.push(rel);
       }
     }
-  }
-
-  if (scanned === 0) {
-    console.error(
-      "Admin-route auth check: 0 admin route files found. Run from repo root.",
-    );
-    process.exit(1);
   }
 
   if (ungated.length > 0) {
