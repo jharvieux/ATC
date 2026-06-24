@@ -138,6 +138,12 @@ jobs:
         # of F-auth-02 / F-rag-auth-02 in the Day-1 scan).
         run: pnpm check:admin-auth
 
+      - name: Error-message-egress guard (#1393/G1)
+        # Fails on NEW raw DB error.message/.details echoed into an API response
+        # (schema disclosure). Pre-existing sites frozen in the baseline; route
+        # new ones through dbErrorResponse. Root cause of F-leak-01/02/03.
+        run: pnpm check:error-egress
+
       - name: AI-purpose constraint guard (#1271)
         # Fails if AICallPurpose union in call-wrapper.ts diverges from the
         # ai_call_log_purpose_check CHECK constraint in the latest migration.
