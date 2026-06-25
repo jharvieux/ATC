@@ -42,6 +42,15 @@ describe("findInMemoryLimiters", () => {
     expect(findInMemoryLimiters("r.ts", src)).toEqual([]);
   });
 
+  it("does NOT honor an allow-comment separated from the declaration by another comment line", () => {
+    // The escape hatch only scans the declaration line and the FIRST non-blank
+    // line above it (per CLAUDE.md "on or directly above"). An allow-comment
+    // pushed up by an intervening comment is not recognized — pin that boundary
+    // so a developer who hits the confusing false-positive can find the reason.
+    const src = J(`// inmem-ratelimit-allow: accepted risk`, `// unrelated note`, `const rateBucket = new Map();`);
+    expect(findInMemoryLimiters("r.ts", src).map((h) => h.varName)).toEqual(["rateBucket"]);
+  });
+
   it("matches an exported limiter declaration", () => {
     expect(findInMemoryLimiters("r.ts", `export const requestRateLimitMap = new Map();`).map((h) => h.varName)).toEqual(["requestRateLimitMap"]);
   });
