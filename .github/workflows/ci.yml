@@ -150,6 +150,13 @@ jobs:
         # and RFC1918 hosts. env.ts operator config is exempt. (F-rag-pii-02.)
         run: pnpm check:url-validator
 
+      - name: In-memory rate-limit guard (#1393/G4)
+        # Fails on a NEW module-level Map/Set-backed rate limiter — per-instance
+        # under Fluid Compute, so trivially bypassed across instances/cold starts.
+        # Public/anon limiters must use Redis (incr/expire) or a DB-atomic counter.
+        # Root cause of F-tok-01 / F-rag-wh-01. Pre-existing limiters baselined.
+        run: pnpm check:rate-limit-store
+
       - name: AI-purpose constraint guard (#1271)
         # Fails if AICallPurpose union in call-wrapper.ts diverges from the
         # ai_call_log_purpose_check CHECK constraint in the latest migration.

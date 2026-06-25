@@ -1,0 +1,6 @@
+# In-memory rate-limit guard baseline (#1393/G4). One <relpath>::<varName> per line.
+# These are pre-existing per-instance limiters; the gate fails on NEW ones.
+# Regenerate: pnpm check:rate-limit-store --update-baseline. Prefer a Redis/DB-backed
+# limiter (see apps/rag/src/lib/rate-limit/feedback-limit.ts) over growing this list.
+apps/main/src/app/api/auth/microsoft-email-verify/route.ts::ipAttempts
+apps/main/src/app/api/public/chat/[token]/route.ts::rateMap
