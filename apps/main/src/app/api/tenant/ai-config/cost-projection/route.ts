@@ -10,6 +10,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { fromCents, type Cents } from "@/lib/money";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 function currentPeriodRange(): { rangeLiteral: string; periodStart: Date; periodEnd: Date } {
   const now = new Date();
@@ -36,9 +37,7 @@ export async function GET(req: Request): Promise<Response> {
     .eq("billing_period", rangeLiteral)
     .maybeSingle();
 
-  if (error) {
-    return Response.json({ error: "lookup_failed", detail: error.message }, { status: 500 });
-  }
+  if (error) return dbErrorResponse(error);
 
   // ai_cost_cents is BIGINT in DB; Supabase returns string or number depending
   // on driver settings — coerce to BigInt for safe arithmetic.

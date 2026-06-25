@@ -11,6 +11,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createSubmission } from "@/lib/rag-ingest/create-submission";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const SUPPORTED_MIMES = new Set([
   "application/pdf",
@@ -95,7 +96,9 @@ export async function POST(req: Request): Promise<Response> {
         upsert: false,
       });
     if (uploadErr) {
-      return Response.json({ error: "storage_upload_failed", detail: uploadErr.message }, { status: 502 });
+      const ref = crypto.randomUUID();
+      console.error("[rag/submit/file] ref=%s storage_upload_failed", ref, uploadErr);
+      return Response.json({ error: "storage_upload_failed", ref }, { status: 502 });
     }
 
     // Insert the submission row with the pre-generated ID.
@@ -111,9 +114,7 @@ export async function POST(req: Request): Promise<Response> {
         original_file_mime_type: file.type,
         extraction_status: "pending",
       });
-    if (insertErr) {
-      return Response.json({ error: "submission_insert_failed", detail: insertErr.message }, { status: 500 });
-    }
+    if (insertErr) return dbErrorResponse(insertErr);
 
     // Trigger the pipeline via the same helper — but the row already exists,
     // so just fire the Inngest event.

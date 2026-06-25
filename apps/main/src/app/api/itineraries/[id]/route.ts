@@ -183,15 +183,16 @@ export async function PATCH(
             .from("trip-itinerary-pdfs")
             .upload(path, pdfBuf, { contentType: "application/pdf", upsert: true });
           if (upErr) {
-            return Response.json({ error: `pdf_upload_failed:${upErr.message}` }, { status: 500 });
+            const ref = crypto.randomUUID();
+            console.error("[itineraries] ref=%s pdf_upload_failed", ref, upErr);
+            return Response.json({ error: "pdf_upload_failed", ref }, { status: 500 });
           }
           update.pdf_storage_key = path;
           update.last_pdf_generated_at = new Date().toISOString();
         } catch (err) {
-          return Response.json(
-            { error: `pdf_render_failed:${err instanceof Error ? err.message : String(err)}` },
-            { status: 500 },
-          );
+          const ref = crypto.randomUUID();
+          console.error("[itineraries] ref=%s pdf_render_failed", ref, err);
+          return Response.json({ error: "pdf_render_failed", ref }, { status: 500 });
         }
       }
 

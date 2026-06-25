@@ -143,12 +143,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
         .select("token_bound_email")
         .eq("id", invitation_id)
         .maybeSingle();
-      if (refetchError) {
-        return Response.json(
-          { error: "invitation_refetch_failed", detail: refetchError.message },
-          { status: 500 },
-        );
-      }
+      if (refetchError) return dbErrorResponse(refetchError);
       const boundEmail = (refetch as { token_bound_email: string | null } | null)?.token_bound_email ?? null;
       if (boundEmail && currentEmail && boundEmail !== currentEmail) {
         return Response.json({

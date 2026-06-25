@@ -97,7 +97,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     if (upsertError) {
-      console.error("[host-config] credential upsert failed", { tenant_id: ctx.tenant_id, adapter_id, error: upsertError.message });
+      console.error("[host-config] credential upsert failed", { tenant_id: ctx.tenant_id, adapter_id }, upsertError);
       return Response.json({ error: "Failed to save credentials." }, { status: 500 });
     }
 

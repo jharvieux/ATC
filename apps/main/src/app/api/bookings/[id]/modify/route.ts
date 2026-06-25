@@ -12,6 +12,7 @@ import { selectAdapterForCall } from "@/lib/host-adapters/select-adapter";
 import type { ModificationRequest } from "@atc/shared-types";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(
   req: Request,
@@ -52,10 +53,8 @@ export async function POST(
       .single();
 
     if (tenantErr || !tenantRow) {
-      return Response.json(
-        { error: "tenant_lookup_failed", detail: tenantErr?.message ?? "no row" },
-        { status: 500 },
-      );
+      if (tenantErr) return dbErrorResponse(tenantErr);
+      return Response.json({ error: "tenant_lookup_failed" }, { status: 500 });
     }
 
     const tenantForAdapter = tenantRow as { tenant_type: string; is_sandbox: boolean };
@@ -91,7 +90,7 @@ export async function POST(
     );
 
     if (!result.ok) {
-      return Response.json({ error: result.error.message ?? "adapter_modify_failed", code: result.error.code }, { status: 502 });
+      return Response.json({ error: "adapter_modify_failed", code: result.error.code }, { status: 502 });
     }
 
     // D-091 Pattern 5 — service-role bypasses RLS. Add tenant_id filter for

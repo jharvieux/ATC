@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface Item {
   content: string;
@@ -66,9 +67,7 @@ export async function POST(req: Request): Promise<Response> {
       .from("rag_submissions")
       .insert(rows)
       .select("id");
-    if (error) {
-      return Response.json({ error: "batch_insert_failed", detail: error.message }, { status: 500 });
-    }
+    if (error) return dbErrorResponse(error);
 
     const ids = (data as Array<{ id: string }>).map((r) => r.id);
     await Promise.all(

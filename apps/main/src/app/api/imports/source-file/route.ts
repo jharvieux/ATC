@@ -7,6 +7,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const SIGNED_URL_TTL_SECONDS = 300;
 
@@ -29,7 +30,10 @@ export async function GET(req: Request): Promise<Response> {
       .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
 
     if (error || !data?.signedUrl) {
-      return Response.json({ error: `signing_failed: ${error?.message ?? "unknown"}` }, { status: 500 });
+      if (error) return dbErrorResponse(error);
+      const ref = crypto.randomUUID();
+      console.error("[imports/source-file] ref=%s signing_failed no signedUrl returned", ref);
+      return Response.json({ error: "signing_failed", ref }, { status: 500 });
     }
 
     return Response.redirect(data.signedUrl, 302);

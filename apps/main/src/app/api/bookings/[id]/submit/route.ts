@@ -21,6 +21,7 @@ import { writeAuditLog } from "@/lib/audit/write";
 import type { BookingSubmissionRequest } from "@atc/shared-types";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { withIdempotencyKey } from "@/lib/http/idempotency";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 type BookingRow = {
   id: string;
@@ -183,10 +184,8 @@ async function submitBooking(
       .single();
 
     if (tenantErr || !tenantData) {
-      return Response.json(
-        { error: "tenant_lookup_failed", detail: tenantErr?.message ?? "no row" },
-        { status: 500 },
-      );
+      if (tenantErr) return dbErrorResponse(tenantErr);
+      return Response.json({ error: "tenant_lookup_failed" }, { status: 500 });
     }
 
     const tenant = tenantData as TenantRow;
@@ -476,10 +475,9 @@ async function submitBooking(
           .eq("status", "submitting"),
         "bookings.update.revert_lock_on_host_failure",
       );
-      return Response.json(
-        { error: `Host adapter error: ${submitResult.error.message}`, code: submitResult.error.code },
-        { status: 502 },
-      );
+      const ref = crypto.randomUUID();
+      console.error("[bookings/submit] ref=%s host_adapter_error", ref, submitResult.error);
+      return Response.json({ error: "host_adapter_error", code: submitResult.error.code, ref }, { status: 502 });
     }
 
     const { provider_booking_ref } = submitResult.value;

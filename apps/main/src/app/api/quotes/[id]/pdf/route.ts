@@ -38,16 +38,22 @@ export async function GET(
     const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
       if (loaded.status !== 500) {
-        return Response.json({ error: loaded.message }, { status: loaded.status });
+        return Response.json({ error: "quote_not_found" }, { status: loaded.status });
       }
-      return dbErrorResponse(loaded.message);
+      const ref = crypto.randomUUID();
+      console.error("[quotes/pdf] ref=%s quote_load_failed", ref, loaded.message);
+      return Response.json({ error: "quote_load_failed", ref }, { status: 500 });
     }
     const enriched = await buildRenderInputFromQuote({
       ctx,
       adminDb,
       quote: loaded.quote,
     });
-    if (!enriched.ok) return dbErrorResponse(enriched.message);
+    if (!enriched.ok) {
+      const ref = crypto.randomUUID();
+      console.error("[quotes/pdf] ref=%s render_input_failed", ref, enriched.message);
+      return Response.json({ error: "render_input_failed", ref }, { status: 500 });
+    }
 
     const buf = await renderQuotePdf(enriched.input);
 

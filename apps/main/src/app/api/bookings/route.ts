@@ -10,6 +10,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { escapeIlikeOrTerm } from "@/lib/db/postgrest-filter";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { fromCents, type Cents } from "@/lib/money";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const QuerySchema = z.object({
   status: z.string().optional(),
@@ -58,10 +59,8 @@ export async function GET(req: Request): Promise<Response> {
     contact_query: url.searchParams.get("contact_query") ?? undefined,
   });
   if (!parsed.success) {
-    return Response.json(
-      { error: "invalid_query", detail: parsed.error.message },
-      { status: 400 },
-    );
+    console.error("[bookings] invalid_query", parsed.error.issues);
+    return Response.json({ error: "invalid_request" }, { status: 400 });
   }
   const { status, page, page_size, contact_query } = parsed.data;
   const from = (page - 1) * page_size;
@@ -78,12 +77,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("id")
       .or(`first_name.ilike.${q},last_name.ilike.${q},email.ilike.${q}`)
       .limit(200);
-    if (matchErr) {
-      return Response.json(
-        { error: "lookup_failed", detail: matchErr.message },
-        { status: 500 },
-      );
-    }
+    if (matchErr) return dbErrorResponse(matchErr);
     contactIds = ((matches ?? []) as Array<{ id: string }>).map((m) => m.id);
     if (contactIds.length === 0) {
       return Response.json({ bookings: [], total: 0, page, page_size });
@@ -105,12 +99,7 @@ export async function GET(req: Request): Promise<Response> {
   if (contactIds) query = query.in("primary_contact_id", contactIds);
 
   const { data: rows, error: queryErr, count } = await query;
-  if (queryErr) {
-    return Response.json(
-      { error: "lookup_failed", detail: queryErr.message },
-      { status: 500 },
-    );
-  }
+  if (queryErr) return dbErrorResponse(queryErr);
   const bookings = (rows ?? []) as BookingRow[];
 
   // Resolve primary contacts in one round-trip.
@@ -123,12 +112,7 @@ export async function GET(req: Request): Promise<Response> {
       .from("contacts")
       .select("id, first_name, last_name, email")
       .in("id", uniqueContactIds);
-    if (contactErr) {
-      return Response.json(
-        { error: "lookup_failed", detail: contactErr.message },
-        { status: 500 },
-      );
-    }
+    if (contactErr) return dbErrorResponse(contactErr);
     contactsById = new Map(
       ((contactRows ?? []) as ContactRow[]).map((c) => [c.id, c]),
     );

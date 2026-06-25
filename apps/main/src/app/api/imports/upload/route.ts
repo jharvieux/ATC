@@ -24,6 +24,7 @@ import { assertIntakePathPermitted } from "@/lib/import/tier-gate";
 import { inngest } from "@/inngest/client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const BUCKET = "imported-documents";
@@ -93,7 +94,10 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (insErr || !inserted) {
-      return Response.json({ error: `queue_insert_failed: ${insErr?.message ?? "unknown"}` }, { status: 500 });
+      if (insErr) return dbErrorResponse(insErr);
+      const ref = crypto.randomUUID();
+      console.error("[imports/upload] ref=%s queue_insert_failed no row returned", ref);
+      return Response.json({ error: "queue_insert_failed", ref }, { status: 500 });
     }
 
     const queueRowId = (inserted as { id: string }).id;
@@ -107,7 +111,9 @@ export async function POST(req: Request): Promise<Response> {
       // Roll back the queue row so we don't leave an orphan.
       // D-091 Pattern 5 — tenant_id filter as defense-in-depth.
       await safeAwait(svc.from("import_queue").delete().eq("id", queueRowId).eq("tenant_id", ctx.tenant_id), "import_queue.delete");
-      return Response.json({ error: `upload_failed: ${upErr.message}` }, { status: 500 });
+      const ref = crypto.randomUUID();
+      console.error("[imports/upload] ref=%s upload_failed", ref, upErr);
+      return Response.json({ error: "upload_failed", ref }, { status: 500 });
     }
 
     await safeAwait(svc.from("import_queue").update({ uploaded_file_path: objectPath }).eq("id", queueRowId).eq("tenant_id", ctx.tenant_id), "import_queue.update");

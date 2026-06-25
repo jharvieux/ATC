@@ -17,6 +17,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { assertIntakePathPermitted } from "@/lib/import/tier-gate";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const MAX_TEXT_BYTES = 100_000;
 
@@ -73,7 +74,10 @@ export async function POST(req: Request): Promise<Response> {
       .single();
 
     if (insErr || !inserted) {
-      return Response.json({ error: `queue_insert_failed: ${insErr?.message ?? "unknown"}` }, { status: 500 });
+      if (insErr) return dbErrorResponse(insErr);
+      const ref = crypto.randomUUID();
+      console.error("[imports/manual] ref=%s queue_insert_failed no row returned", ref);
+      return Response.json({ error: "queue_insert_failed", ref }, { status: 500 });
     }
 
     const queueRowId = (inserted as { id: string }).id;

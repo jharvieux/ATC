@@ -50,9 +50,7 @@ export async function POST(req: Request): Promise<Response> {
     .from("tenant_branding")
     .select("email_from_domain, resend_domain_id, email_from_domain_dns_records, email_from_domain_verified_at")
     .maybeSingle();
-  if (brandingErr) {
-    return Response.json({ error: "branding_lookup_failed", detail: brandingErr.message }, { status: 500 });
-  }
+  if (brandingErr) return dbErrorResponse(brandingErr);
   const branding = (brandingRow ?? null) as BrandingRow | null;
   if (!branding?.email_from_domain) {
     return Response.json({ error: "no_email_from_domain_set" }, { status: 400 });
