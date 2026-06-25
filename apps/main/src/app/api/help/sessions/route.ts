@@ -11,6 +11,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface OpenSessionBody {
   session_type?: string;
@@ -51,7 +52,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (error || !data) {
-      return Response.json({ error: "db_error", message: error?.message ?? "unknown" }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     const session = data as { id: string };

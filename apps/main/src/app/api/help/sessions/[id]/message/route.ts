@@ -346,8 +346,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
           console.warn("[help-ai-stream] stream error before completion", {
             session_id: sessionId,
             tenant_id: ctx.tenant_id,
-            error: streamErr instanceof Error ? streamErr.message : String(streamErr),
-          });
+          }, streamErr);
           await writer.write(encoder.encode(sseLine("Our AI is temporarily unavailable. Please try again in a moment.")));
           await writer.write(encoder.encode(sseLine("[DONE]")));
           await writer.close();
@@ -382,8 +381,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
           console.warn("[help-ai-stream] done promise rejected", {
             session_id: sessionId,
             tenant_id: ctx.tenant_id,
-            error: doneErr instanceof Error ? doneErr.message : String(doneErr),
-          });
+          }, doneErr);
           await writer.write(encoder.encode(sseLine("Our AI is temporarily unavailable. Please try again in a moment.")));
           await writer.write(encoder.encode(sseLine("[DONE]")));
           await writer.close();

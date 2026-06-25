@@ -48,10 +48,8 @@ export async function POST(req: Request): Promise<Response> {
   try {
     await jwtVerify(token, jwks, { issuer: GOOGLE_ISS, audience: expectedAud });
   } catch (err) {
-    return Response.json(
-      { error: "jwt_verification_failed", message: err instanceof Error ? err.message : String(err) },
-      { status: 401 },
-    );
+    console.warn("[gmailpubsub] jwt_verification_failed", err);
+    return Response.json({ error: "jwt_verification_failed" }, { status: 401 });
   }
 
   // ── 2. Decode the Pub/Sub envelope ────────────────────────────────────
@@ -107,12 +105,13 @@ export async function POST(req: Request): Promise<Response> {
     await markHealth(svc, tokenRow.tenant_id, "token_expired", `decrypt_failed:${refreshResult.error.code}`);
     return Response.json({ error: "refresh_token_decrypt_failed" }, { status: 500 });
   }
-  const accessToken = await mintAccessToken(refreshResult.value).catch((err) => {
-    return { error: err instanceof Error ? err.message : String(err) };
+  const accessToken = await mintAccessToken(refreshResult.value).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { mintError: msg };
   });
   if (typeof accessToken !== "string") {
-    await markHealth(svc, tokenRow.tenant_id, "token_expired", `oauth_refresh_failed:${accessToken.error}`);
-    return Response.json({ error: "oauth_refresh_failed", detail: accessToken.error }, { status: 502 });
+    await markHealth(svc, tokenRow.tenant_id, "token_expired", `oauth_refresh_failed:${accessToken.mintError}`);
+    return Response.json({ error: "oauth_refresh_failed" }, { status: 502 });
   }
 
   const startHistoryId = tokenRow.pubsub_history_id ?? payload.historyId;

@@ -6,6 +6,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { inngest } from "@/inngest/client";
@@ -45,8 +46,9 @@ export async function POST(req: Request): Promise<Response> {
     // soft2 can't bypass via the feature endpoint.
     const rateCheck = await checkHelpSubmissionRate(db, ctx.tenant_id);
     if (!rateCheck.allowed) {
+      const { message: rateMsg, state: rateState, count_today: rateCountToday } = rateCheck;
       return Response.json(
-        { error: "rate_limited", message: rateCheck.message, state: rateCheck.state, count_today: rateCheck.count_today },
+        { error: "rate_limited", message: rateMsg, state: rateState, count_today: rateCountToday },
         { status: 429 },
       );
     }
@@ -70,7 +72,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (insertErr || !inserted) {
-      return Response.json({ error: "db_error", message: insertErr?.message ?? "unknown" }, { status: 500 });
+      return dbErrorResponse(insertErr);
     }
     const submission_id = (inserted as { id: string }).id;
 
@@ -169,7 +171,7 @@ export async function GET(req: Request): Promise<Response> {
       .select("id, source_type, what, why, github_issue_number, github_issue_url, github_issue_state, decision, submitted_at, decided_at")
       .order("submitted_at", { ascending: false })
       .limit(100);
-    if (error) return Response.json({ error: "db_error", message: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     return Response.json({ items: data ?? [] });
   } catch (err) {
     return respondToAuthError(err);

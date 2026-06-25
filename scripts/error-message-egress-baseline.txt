@@ -5,21 +5,3 @@
 # Broad cleanup tracked in #1395; lower a count / remove a line once that site routes
 # through dbErrorResponse(error). DO NOT add new entries to silence the guard.
 #
-1 apps/main/src/app/api/auth/transfer-session/undo/route.ts::detail: readErr.message
-1 apps/main/src/app/api/help/bugs/[id]/route.ts::message: error.message
-1 apps/main/src/app/api/help/bugs/route.ts::message: error.message
-1 apps/main/src/app/api/help/bugs/route.ts::message: insertErr?.message
-1 apps/main/src/app/api/help/bugs/route.ts::message: rateCheck.message
-1 apps/main/src/app/api/help/docs/export/[jobId]/route.ts::message: error.message
-1 apps/main/src/app/api/help/docs/export/route.ts::message: insertErr?.message
-1 apps/main/src/app/api/help/features/[id]/route.ts::message: error.message
-1 apps/main/src/app/api/help/features/route.ts::message: error.message
-1 apps/main/src/app/api/help/features/route.ts::message: insertErr?.message
-1 apps/main/src/app/api/help/features/route.ts::message: rateCheck.message
-1 apps/main/src/app/api/help/sessions/[id]/close/route.ts::message: error.message
-1 apps/main/src/app/api/help/sessions/[id]/escalate/route.ts::message: error.message
-1 apps/main/src/app/api/help/sessions/[id]/message/route.ts::error: doneErr instanceof Error ? doneErr.message
-1 apps/main/src/app/api/help/sessions/[id]/message/route.ts::error: streamErr instanceof Error ? streamErr.message
-1 apps/main/src/app/api/help/sessions/route.ts::message: error?.message
-1 apps/main/src/app/api/webhooks/gmailpubsub/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/webhooks/gmailpubsub/route.ts::message: err instanceof Error ? err.message
