@@ -25,6 +25,7 @@ import {
   ConsentPendingError,
 } from "./assert-permission";
 import { PlatformAdminError } from "./assert-platform-admin";
+import { sanitizeForLog } from "@/lib/log/sanitize";
 
 // Known-shape error messages that `assertPermission` throws as a plain
 // Error. We surface these to the client as 401 so the UX matches "log in
@@ -95,7 +96,8 @@ export function respondToAuthError(err: unknown): Response {
   // ref; the operator greps logs for it. This is what turns the opaque
   // "internal_error" into a diagnosable failure.
   const ref = crypto.randomUUID().slice(0, 8);
-  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  console.error(`[respondToAuthError] unhandled error [ref=${ref}]: ${detail.replace(/[\r\n]+/g, " | ")}`);
+  // #1412: route the error through sanitizeForLog (CWE-117) — strips CR/LF so a
+  // user-derived value embedded in the error can't forge extra log lines.
+  console.error(`[respondToAuthError] unhandled error [ref=${ref}]: ${sanitizeForLog(err)}`);
   return Response.json({ error: "internal_error", ref }, { status: 500 });
 }

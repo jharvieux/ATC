@@ -31,6 +31,7 @@ import {
 } from "@/lib/chat/anon-session-cookie";
 import { randomUUID } from "node:crypto";
 import { redactPii } from "@/lib/pii/redact";
+import { sanitizeForLog } from "@/lib/log/sanitize";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
@@ -239,7 +240,9 @@ export async function POST(req: Request): Promise<Response> {
     // only a generic message so DB/internal details never reach the (anonymous)
     // caller. supabase-js / Postgres error messages embed table/column names.
     const ref = randomUUID();
-    console.error("[chat] ref=%s", ref, err);
+    // #1412: sanitize before logging — err can embed user-provided text with
+    // CR/LF that would otherwise forge extra log lines (CWE-117).
+    console.error("[chat] ref=%s error=%s", ref, sanitizeForLog(err));
     try {
       await send({ type: "error", message: "Something went wrong", ref });
     } finally {
