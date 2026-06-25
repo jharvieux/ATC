@@ -105,6 +105,9 @@ describe("post-termination-review — row-count assert (#394)", () => {
     reviewResult = { data: null, error: { message: "connection reset" } };
     const res = await callPost({ chunk_id: "c-1", action: "demote" });
     expect(res.status).toBe(500);
-    await expect(res.json()).resolves.toEqual({ error: "connection reset" });
+    // Must NOT echo the raw DB error message to clients (CWE-209 / #1395).
+    const json = await res.json() as { error: string; ref: string };
+    expect(json.error).toBe("db_error");
+    expect(json.ref).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

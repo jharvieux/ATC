@@ -8,7 +8,7 @@
 //   - Tampered signature → 401.
 //   - Invalid body shape → 400.
 //   - Missing Supabase env → 500.
-//   - DB insert error → 500 (route surfaces error.message). Main app
+//   - DB insert error → 500 ({ error: "db_error", ref: <uuid> }). Main app
 //     will retry; the bulk insert is idempotent at the application
 //     level (chunk_id + message_id + signal_direction repeats are
 //     scored at retrieval time, not deduped at write).
