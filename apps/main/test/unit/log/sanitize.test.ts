@@ -41,6 +41,6 @@ describe("sanitizeForLog", () => {
 
   it("truncates past maxLen with a marker (bounds log size)", () => {
     const out = sanitizeForLog("x".repeat(50), 10);
-    expect(out).toBe(`${"x".repeat(10)}…[truncated]`);
+    expect(out).toBe(`${"x".repeat(10)}...[truncated]`);
   });
 });
