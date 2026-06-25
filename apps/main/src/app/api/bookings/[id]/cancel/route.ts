@@ -152,12 +152,18 @@ export async function POST(
       return Response.json({ ok: true, clawback: "not_applicable" });
     }
 
-    // Load payout record
+    // Load payout record. Exclude 'recovery' rows: transfer.reversed (#1127)
+    // writes a negative recovery row sharing this commission_id with a newer
+    // created_at, so an unscoped newest-row select could surface it here. Today
+    // a reversal also sets the commission to 'disputed' (this branch already
+    // early-returned not_applicable above), so it's unreachable — but scope the
+    // query explicitly rather than rely on that distant gate on a money path.
     const { data: payoutData } = await adminDb
       .from("payout_records")
       .select("id, status, stripe_transfer_id, settled_at, amount_cents")
       .eq("tenant_id", ctx.tenant_id)
       .eq("commission_id", commission.id)
+      .neq("status", "recovery")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();

@@ -158,13 +158,16 @@ export async function handleStripeWebhook(
     switch (event.type as string) {
       case "transfer.reversed": {
         // §14.9 — Stripe transfer reversed (clawback). process_transfer_reversal()
-        // atomically: flips payout_records paid→reversed, credits
-        // payout_balances.available_cents, marks the commission disputed, and
-        // opens a reconciliation_review_queue row. Single RPC prevents the
-        // crash window that would exist between a multi-call sequence (D-091 P8).
-        // Returns 0 only when no payout_records row exists for this transfer
-        // (not ours). Subsequent partial reversals on an already-reversed row
-        // return > 0 (balance credited, second review row opened — #1156).
+        // atomically: flips payout_records paid→reversed, writes a negative
+        // 'recovery' payout_records row (the ledger entry, keyed
+        // transfer_id:event_id), debits payout_balances.available_cents, marks
+        // the commission disputed, and opens a reconciliation_review_queue row.
+        // Single RPC prevents the crash window of a multi-call sequence (D-091 P8).
+        // The recovery row's unique key is the ledger idempotency guard (#1127):
+        // money moves ONLY when that row inserts. Returns 1 when a reversal delta
+        // was applied; 0 when no payout row exists (not ours) OR this exact
+        // (transfer, event) was already applied. Each partial reversal is a
+        // distinct event → its own recovery row + balance delta (#1156).
         const rawEvent = event as {
           data: {
             object: Stripe.Transfer;
@@ -198,7 +201,7 @@ export async function handleStripeWebhook(
           processingOutcome = "success";
         } else {
           console.warn(
-            "[stripe-webhook] transfer.reversed: no payout_records row for transfer %s — not ours",
+            "[stripe-webhook] transfer.reversed: no reversal applied for transfer %s — not ours or already processed",
             transfer.id,
           );
         }
