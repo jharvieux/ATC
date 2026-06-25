@@ -1,6 +1,6 @@
 // AI call-wrapper — branch coverage for selectModelForPurpose, payload
 // shape assertions, vendor-health recording, and the state-transition
-// fire-and-forget. The sibling call-wrapper-hard-state.test.ts covers the
+// check (#1378: now awaited). The sibling call-wrapper-hard-state.test.ts covers the
 // D-091 R3 #56/#58 enforcement; this file fills the gap mutation testing
 // flagged on the rest of the wrapper.
 
@@ -142,6 +142,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({
     rag_storage_state: "ok",
   }),
   _resetSnapshotCacheForTests: () => {},
+  evictTenantSnapshot: () => {},
 }));
 
 vi.mock("@/lib/db/service-role-client", () => ({
@@ -444,7 +445,7 @@ describe("instrumentedClaudeCall — happy path", () => {
     expect(dbCalls.some((c) => c.table === "ai_call_log")).toBe(true);
   });
 
-  it("fires the state-transition check after the call (fire-and-forget)", async () => {
+  it("calls the state-transition check after the call (#1378: now awaited, not fire-and-forget)", async () => {
     await instrumentedClaudeCall({
       tenant_id: "t-1",
       model: "claude-haiku-4-5-20251001",
@@ -452,8 +453,6 @@ describe("instrumentedClaudeCall — happy path", () => {
       max_tokens: 100,
       messages: [{ role: "user", content: "hi" }],
     });
-    // Fire-and-forget: at least started. Allow microtask flush.
-    await new Promise((r) => setTimeout(r, 0));
     expect(stateTransitionCalls).toBeGreaterThan(0);
   });
 });

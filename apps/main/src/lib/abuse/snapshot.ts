@@ -124,3 +124,9 @@ export async function loadTenantSnapshot(
 export function _resetSnapshotCacheForTests(): void {
   cache.clear();
 }
+
+/** Evict a single tenant's cached snapshot — call after a state transition so the
+ *  next loadTenantSnapshot on this instance forces a fresh DB read. */
+export function evictTenantSnapshot(tenant_id: string): void {
+  cache.delete(tenant_id);
+}

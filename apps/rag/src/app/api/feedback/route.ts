@@ -8,12 +8,19 @@
 // HMAC-SHA256 over the raw body with RAG_WEBHOOK_SECRET — same scheme
 // as /api/tenant-events. Does NOT use withServiceAuth (no per-tenant
 // JWT for this cross-cutting concern; the HMAC is the auth surface).
+//
+// F-rag-wh-02 (#1385): replay protection via a Redis dedup key keyed on a
+// SHA-256 fingerprint of (message_id + signal_direction + sorted chunk_ids).
+// A captured signed request re-delivers the same fingerprint → SET NX fails
+// → 409 Conflict. TTL = 24h (far beyond any legitimate retry window).
 
 export const dynamic = "force-dynamic";
 
 import { createClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { checkFeedbackRateLimit } from "@/lib/rate-limit/feedback-limit";
+import { getRedis } from "@/lib/redis/client";
 
 const bodySchema = z.object({
   message_id: z.string().uuid().nullable(),
@@ -70,6 +77,28 @@ export async function POST(req: Request): Promise<Response> {
     parsed = bodySchema.parse(JSON.parse(rawBody));
   } catch {
     return Response.json({ error: "invalid_body" }, { status: 400 });
+  }
+
+  // F-rag-wh-02 (#1385): replay protection. The HMAC proves the body was signed
+  // by a holder of RAG_WEBHOOK_SECRET; it does NOT prove freshness. A captured
+  // signed request can be re-delivered indefinitely. Dedup on a content fingerprint
+  // (message_id + signal_direction + sorted chunk_ids) with a 24h Redis TTL.
+  // A replayed delivery will have an identical fingerprint → SET NX returns 0 → 409.
+  const fingerprint = createHash("sha256")
+    .update(`${parsed.message_id ?? ""}:${parsed.signal_direction}:${[...parsed.chunk_ids].sort().join(",")}`)
+    .digest("hex");
+  const dedupKey = `feedback:dedup:${fingerprint}`;
+  try {
+    const redis = getRedis();
+    const inserted = await redis.set(dedupKey, "1", "EX", 86_400, "NX");
+    if (inserted === null) {
+      return Response.json({ error: "duplicate_delivery" }, { status: 409 });
+    }
+  } catch (err) {
+    // Redis unavailable: in production verifyEnvAtBoot enforces REDIS_URL, so
+    // this only occurs in local dev — fail open to keep the endpoint usable.
+    if (process.env.NODE_ENV === "production") throw err;
+    console.warn("[feedback] Redis unavailable for dedup — fail-open (non-production)");
   }
 
   // §6.10 / D-087 rate limit, applied only to AUTHENTICATED requests now.

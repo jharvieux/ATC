@@ -23,6 +23,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({
     rag_chunk_count_state: "ok",
     rag_storage_state: "ok",
   }),
+  evictTenantSnapshot: () => {},
 }));
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({

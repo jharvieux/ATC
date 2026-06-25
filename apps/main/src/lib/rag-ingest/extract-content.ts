@@ -14,11 +14,71 @@
 //   - PPTX / PPT: officeparser (handles both).
 //   - image/jpeg, image/png: OCR provider chain (GCV → tesseract fallback).
 //
+// ZIP-based formats (DOCX/XLSX/PPTX) are pre-screened for zip-bomb attack
+// (#1387 / F-inp-02): the ZIP central directory is read from the buffer to sum
+// uncompressed sizes BEFORE handing the buffer to the parser. A file whose
+// entries expand beyond MAX_ZIP_UNCOMPRESSED_BYTES is rejected immediately so
+// the OOXML parser never starts decompressing gigabytes into memory.
+//
 // All parser imports are dynamic — keeps cold-start light for handlers that
 // don't extract files.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ocrImage } from "./ocr";
+
+// ── ZIP bomb pre-check ───────────────────────────────────────────────────────
+// Reads the ZIP End-of-Central-Directory record + per-entry uncompressed sizes
+// from the central directory WITHOUT decompressing anything. Returns an error
+// string if the archive would expand beyond the cap, or null if safe.
+//
+// OOXML files (DOCX/XLSX/PPTX) are ZIP archives. mammoth/exceljs/officeparser
+// fully decompress before parsing — a ~50MB high-ratio DEFLATE bomb (~50:1 to
+// 1000:1) OOMs the function before any output cap runs. This check runs first.
+
+const MAX_ZIP_UNCOMPRESSED_BYTES = 100 * 1024 * 1024; // 100 MB
+
+/** Exported for unit testing. Returns an error string if the buffer looks like a
+ *  zip bomb, null if safe (or not a ZIP). */
+export function checkZipBomb(bytes: ArrayBuffer): string | null {
+  const buf = Buffer.from(bytes);
+  const EOCD_SIG = 0x06054b50;
+  const CD_SIG   = 0x02014b50;
+  const MIN_EOCD  = 22;
+
+  if (buf.length < MIN_EOCD) return null; // not a ZIP
+
+  // Search backwards from the end for the EOCD signature.
+  // ZIP allows up to 65535 bytes of comment after EOCD; clamp the search.
+  const searchStart = Math.max(0, buf.length - 65535 - MIN_EOCD);
+  let eocdOffset = -1;
+  for (let i = buf.length - MIN_EOCD; i >= searchStart; i--) {
+    if (buf.readUInt32LE(i) === EOCD_SIG) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) return null; // not a recognized ZIP
+
+  const totalEntries = buf.readUInt16LE(eocdOffset + 10);
+  const cdOffset     = buf.readUInt32LE(eocdOffset + 16);
+  if (cdOffset >= buf.length) return "zip_eocd_cd_offset_overflow";
+
+  let totalUncompressed = 0;
+  let pos = cdOffset;
+  for (let e = 0; e < totalEntries; e++) {
+    if (pos + 46 > buf.length) break;
+    if (buf.readUInt32LE(pos) !== CD_SIG) break;
+    totalUncompressed += buf.readUInt32LE(pos + 24); // uncompressed size field
+    if (totalUncompressed > MAX_ZIP_UNCOMPRESSED_BYTES) {
+      return `zip_bomb: total uncompressed size exceeds ${MAX_ZIP_UNCOMPRESSED_BYTES / 1024 / 1024}MB`;
+    }
+    const fnLen      = buf.readUInt16LE(pos + 28);
+    const extraLen   = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    pos += 46 + fnLen + extraLen + commentLen;
+  }
+  return null; // safe
+}
 
 export type ExtractionStatus = "extracted" | "failed" | "unavailable";
 
@@ -135,6 +195,8 @@ async function extractPdf(bytes: ArrayBuffer): Promise<ExtractionResult> {
 // ── DOCX — mammoth (extract raw text, no styling) ───────────────────────────
 
 async function extractDocx(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  const bombErr = checkZipBomb(bytes);
+  if (bombErr) return { status: "failed", error: `docx_zip_bomb: ${bombErr}` };
   try {
     const mammoth = await import("mammoth");
     const buf = Buffer.from(bytes);
@@ -150,6 +212,8 @@ async function extractDocx(bytes: ArrayBuffer): Promise<ExtractionResult> {
 // ── XLSX — exceljs, one labeled block per sheet (CSV rows) ───────────────────
 
 async function extractXlsx(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  const bombErr = checkZipBomb(bytes);
+  if (bombErr) return { status: "failed", error: `xlsx_zip_bomb: ${bombErr}` };
   try {
     const { Workbook } = await import("exceljs");
     const workbook = new Workbook();
@@ -183,6 +247,8 @@ async function extractXlsx(bytes: ArrayBuffer): Promise<ExtractionResult> {
 // ── PPTX / PPT — officeparser ───────────────────────────────────────────────
 
 async function extractPptx(bytes: ArrayBuffer): Promise<ExtractionResult> {
+  const bombErr = checkZipBomb(bytes);
+  if (bombErr) return { status: "failed", error: `pptx_zip_bomb: ${bombErr}` };
   try {
     const { convert } = await import("officeparser");
     const buf = Buffer.from(bytes);

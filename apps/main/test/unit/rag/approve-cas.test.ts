@@ -60,6 +60,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({
   // call-wrapper (imported by haikuPiiRedact) re-exports this from snapshot.
   PLATFORM_TENANT_ID: "00000000-0000-0000-0000-000000000000",
   _resetSnapshotCacheForTests: () => {},
+  evictTenantSnapshot: () => {},
 }));
 
 vi.mock("@/lib/rag-ingest/haiku-pii-redact", () => ({

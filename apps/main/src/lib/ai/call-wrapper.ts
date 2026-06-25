@@ -36,6 +36,7 @@ import {
   loadTenantSnapshot as loadSharedTenantSnapshot,
   PLATFORM_TENANT_ID as SHARED_PLATFORM_TENANT_ID,
   _resetSnapshotCacheForTests,
+  evictTenantSnapshot,
   type CachedTenantSnapshot,
 } from "@/lib/abuse/snapshot";
 
@@ -359,14 +360,17 @@ export async function instrumentedClaudeCall(
     cost_cents: cost,
   });
 
-  // Fire-and-forget state-transition check. Don't await — the call
-  // result already exists and we don't want to block on the state read.
-  void checkStateTransitionIfNeeded({
+  // #1378: await the transition AND evict the snapshot cache so the next call on
+  // this instance re-reads fresh state from DB rather than serving the stale
+  // soft2→hard lag window. Fire-and-forget let the hard-boundary flip stay undetected
+  // for up to 30s (the snapshot TTL), allowing overspend.
+  await checkStateTransitionIfNeeded({
     db,
     tenant: snapshot.tenant,
     dimension: "ai_cost",
     metric_value: cost,
   }).catch((err) => console.warn("[call-wrapper] state-transition check failed:", err));
+  evictTenantSnapshot(args.tenant_id);
 
   const text = resp.content
     .map((c) => (c.type === "text" ? c.text : ""))
