@@ -80,9 +80,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
         });
         return self();
       }
-      // platform_revenue.insert + commissions.update — passed to safeAwait (mocked)
+      // platform_revenue.insert / .upsert().select() + commissions.update —
+      // passed to safeAwait (mocked), so the chain just needs to be navigable.
       return {
         insert: () => ({}),
+        upsert: () => ({ select: () => ({}) }),
         update: () => ({ eq: () => ({ eq: () => ({}) }) }),
       };
     },
@@ -195,7 +197,7 @@ describe("POST /api/bookings/[id]/cancel — CAS guard (#846)", () => {
   });
 });
 
-describe("POST /api/bookings/[id]/cancel — settled-payout clawback CAS (F-pay-01 / #1375)", () => {
+describe("POST /api/bookings/[id]/cancel — settled-payout clawback idempotency (F-pay-01 / #1391)", () => {
   const settledPayout = {
     data: {
       id: PAYOUT_ID,
@@ -207,65 +209,52 @@ describe("POST /api/bookings/[id]/cancel — settled-payout clawback CAS (F-pay-
     error: null,
   };
 
+  // Route the platform_revenue ledger upsert's result through safeAwait by
+  // context: [{id}] = this call did the insert (winner); [] = ON CONFLICT DO
+  // NOTHING claimed by a concurrent cancel / post-crash retry (duplicate).
+  function ledgerReturns(rows: Array<{ id: string }>) {
+    mocks.safeAwait.mockImplementation(async (_q: unknown, ctx: string) =>
+      ctx === "platform_revenue.insert" ? rows : null,
+    );
+  }
+
   beforeEach(() => {
-    // The settled branch instantiates `new Stripe(STRIPE_SECRET_KEY)` and
-    // calls transfers.createReversal BEFORE the CAS claim, so the key must
-    // be present for these cases to reach the guard.
+    // The settled branch instantiates `new Stripe(STRIPE_SECRET_KEY)` and calls
+    // transfers.createReversal (idempotency-keyed) before the ledger insert.
     process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
     mocks.payoutMaybeSingle.mockResolvedValue(settledPayout);
   });
 
-  it("returns 409 on a settled-payout CAS-miss, inserting no duplicate clawback ledger row", async () => {
-    // A settled payout ('paid', stripe_transfer_id set) takes the reversal +
-    // negative-ledger branch. Before F-pay-01 that branch had NO re-entry guard,
-    // so two concurrent cancels each inserted a negative platform_revenue row —
-    // double-counting the clawback in §36's report. The status-CAS
-    // (.eq("status", payout.status) → 'reversed', context "payout_records.cas_reverse")
-    // makes the loser match 0 rows → 409 after the idempotency-keyed reversal but
-    // before the ledger write. WHY: this cannot pass without the guard.
-    mocks.safeAwaitRowCount.mockRejectedValue(
-      new SupabaseMutationError("payout_records.cas_reverse", {
-        message: "Expected 1 row(s); got 0. CAS guard or constraint mismatch.",
-        code: "ROW_COUNT_MISMATCH",
-        hint: "",
-        details: null,
-        name: "RowCountMismatch",
-      } as never),
-    );
+  it("winner: reverses (idempotency-keyed), inserts the ledger row, and finalizes the commission", async () => {
+    // The idempotency_key + ON CONFLICT DO NOTHING make the INSERT the
+    // single-entry guard. The request that actually inserts (.select() → a row)
+    // is the one that records the §36 clawback and waives the commission.
+    ledgerReturns([{ id: "rev_1" }]);
 
     const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("payout_state_changed");
-    // Ordering (D-091 #10): the idempotency-keyed reversal ran first; the loser's
-    // call collapses to the same reversal, so no double reversal.
+    expect(res.status).toBe(200);
+    expect((await res.json()).clawback).toBe("stripe_reversal_initiated");
     expect(mocks.stripeCreateReversal).toHaveBeenCalledTimes(1);
-    // The CAS fired on the SETTLED branch (context cas_reverse), not the pending
-    // #846 branch (cas_cancel) — proves we exercised this code path.
-    expect(mocks.safeAwaitRowCount).toHaveBeenCalledTimes(1);
-    expect(mocks.safeAwaitRowCount.mock.calls[0]?.[1]).toBe("payout_records.cas_reverse");
-    // Loser performed no ledger insert / commission transition.
-    expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
+    expect(mocks.transitionCommissionState).toHaveBeenCalledTimes(1);
+    // The settled branch no longer uses a status-CAS (no 409 dead-end path).
+    expect(mocks.safeAwaitRowCount).not.toHaveBeenCalled();
   });
 
-  it("re-throws (→ 500) when the settled-branch CAS fails for a non-concurrency DB reason", async () => {
-    // A non-ROW_COUNT_MISMATCH error on the settled CAS (e.g. connection reset)
-    // must surface as 500, not be silently swallowed into a 409 — same posture
-    // as the pending branch (#846).
-    mocks.safeAwaitRowCount.mockRejectedValue(
-      new SupabaseMutationError("payout_records.cas_reverse", {
-        message: "connection reset by server",
-        code: "CONNECTION_ERROR",
-        hint: "",
-        details: null,
-        name: "DBError",
-      } as never),
-    );
+  it("duplicate (concurrent cancel / post-crash retry): ON CONFLICT DO NOTHING → no double-count, no re-finalize, still 200", async () => {
+    // The losing/retrying request's upsert returns no row (the winner already
+    // wrote it). It must NOT insert a second negative ledger row and must NOT
+    // re-run the commission transition (which would re-trip the state-machine
+    // guard) — yet it still succeeds (200) rather than 409-dead-ending.
+    ledgerReturns([]);
 
     const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
+    expect((await res.json()).clawback).toBe("stripe_reversal_initiated");
+    // Reversal is idempotency-keyed → at most one actual reversal.
+    expect(mocks.stripeCreateReversal).toHaveBeenCalledTimes(1);
+    // Finalize is gated on having inserted → skipped on the duplicate path.
     expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
   });
 });
