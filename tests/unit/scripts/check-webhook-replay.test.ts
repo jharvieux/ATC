@@ -22,9 +22,28 @@ describe("findUnprotectedWebhooks", () => {
     expect(findUnprotectedWebhooks("apps/rag/src/app/api/feedback/route.ts", unprotected)).toHaveLength(1);
   });
 
-  it("does NOT flag when a timestamp-tolerance window is present", () => {
-    const src = J(unprotected, `const ts = req.headers.get("x-webhook-timestamp"); assertWithinTolerance(ts);`);
+  it("does NOT flag a Svix signed-timestamp handler", () => {
+    const src = J(`const ts = req.headers.get("svix-timestamp");`, `if (!verifyResendSignature({ msgId, timestamp: ts, sig })) return;`);
+    expect(findUnprotectedWebhooks("apps/main/src/app/api/webhooks/resend/route.ts", src)).toEqual([]);
+  });
+
+  it("does NOT flag when a nonce dedup is present", () => {
+    const src = J(unprotected, `if (await seen(nonce)) return json({ error: "replayed" }, 409);`);
     expect(findUnprotectedWebhooks("r.ts", src)).toEqual([]);
+  });
+
+  it("does NOT flag a monotonic source_revision guard (replay of any applied revision is a no-op)", () => {
+    const src = J(unprotected, `if (existing && existing.source_revision >= parsed.source_revision) return json({ ignored: "stale_revision" });`);
+    expect(findUnprotectedWebhooks("apps/rag/src/app/api/tenant-events/route.ts", src)).toEqual([]);
+  });
+
+  it("STILL flags when the only 'timestamp' is an incidental column (bare timestamp is not a replay signal)", () => {
+    // Pins the fix for the over-broad bare \btimestamp\b token: a handler that
+    // merely writes a created_timestamp column, with no actual freshness/dedup
+    // defense, must not be silently exempted. If bare timestamp ever returns to
+    // REPLAY_RE, this test fails.
+    const src = J(unprotected, `await db.from("events").insert({ created_timestamp: now });`);
+    expect(findUnprotectedWebhooks("r.ts", src)).toHaveLength(1);
   });
 
   it("does NOT flag when a dedup/idempotency row backs the handler (Stripe shape)", () => {

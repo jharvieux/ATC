@@ -3,5 +3,3 @@
 # on NEW ones. Regenerate: pnpm check:webhook-replay --update-baseline. Prefer
 # adding replay protection (timestamp tolerance / dedup row / nonce) over growing this.
 apps/rag/src/app/api/feedback/route.ts
-apps/rag/src/app/api/platform-settings-events/route.ts
-apps/rag/src/app/api/tenant-events/route.ts

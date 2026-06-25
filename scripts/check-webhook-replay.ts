@@ -42,10 +42,16 @@ const SCAN_DIRS = ["apps/main/src", "apps/rag/src"];
 const INBOUND_SIG_RE =
   /\.headers\.get\(\s*["'`][a-z0-9-]*signature\b|\.headers\.get\(\s*["'`]svix-id\b|\bconstructEvent\s*\(|\bverify[A-Za-z]*Signature\s*\(/i;
 
-// Any of these means replay was at least considered: a timestamp/tolerance
-// window, a dedup/idempotency row, a nonce, or a state-guarded "already handled".
+// Any of these means replay was at least considered: a timestamp-tolerance
+// window (Stripe constructEvent / Svix signed timestamp), a dedup/idempotency
+// row, a nonce, a monotonic version guard (`source_revision >= …` makes a
+// replayed delivery a no-op), or a state-guarded "already handled" check.
+// NB: a BARE `timestamp` token is deliberately NOT a signal — it matches any
+// incidental "created_timestamp" column / comment and would silently exempt an
+// unprotected handler. The real timestamp-window paths carry `svix-timestamp` or
+// `tolerance`; `constructEvent` covers Stripe's internal tolerance.
 const REPLAY_RE =
-  /\bconstructEvent\b|_webhook_events\b|idempoten|dedup|\bnonce\b|\breplay\b|svix-timestamp|svix-id|\btolerance\b|already_|processed_at\b|\.expire\(|seen_at\b|delivery_id\b|\btimestamp\b/i;
+  /\bconstructEvent\b|_webhook_events\b|idempoten|dedup|\bnonce\b|\breplay\b|svix-timestamp|svix-id|\btolerance\b|source_revision\b|already_|processed_at\b|\.expire\(|seen_at\b|delivery_id\b/i;
 
 export interface WebhookHit {
   key: string; // relpath
