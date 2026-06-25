@@ -266,7 +266,7 @@ export async function PUT(req: Request): Promise<Response> {
       );
       result.resend_rate = value;
     } catch (err) {
-      return Response.json({ error: String(err) }, { status: 500 });
+      return dbErrorResponse(err);
     }
   }
 
@@ -300,7 +300,7 @@ export async function PUT(req: Request): Promise<Response> {
       );
       result.apify_monthly_budget_usd = value;
     } catch (err) {
-      return Response.json({ error: String(err) }, { status: 500 });
+      return dbErrorResponse(err);
     }
   }
 
