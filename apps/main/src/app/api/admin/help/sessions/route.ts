@@ -2,6 +2,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
@@ -27,6 +28,6 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json({ items });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "internal_error" }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

@@ -130,11 +130,11 @@ function errorResponse(err: unknown): Response {
           : err.code.startsWith("invalid")
             ? 400
             : 502;
-    return Response.json({ error: err.code, message: err.message }, { status });
+    return Response.json({ error: err.code }, { status });
   }
   if (err instanceof SupabaseMutationError) {
     // CAS guard tripped (concurrent edit) or a mutation failed.
-    return Response.json({ error: "write_conflict", message: err.message }, { status: 409 });
+    return Response.json({ error: "write_conflict" }, { status: 409 });
   }
   const ref = crypto.randomUUID();
   console.error("[pricing-admin] PUT failed ref=%s", ref, err);

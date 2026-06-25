@@ -15,6 +15,7 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 type DemoteMode = "to_tenant_scope" | "hard_delete";
 
@@ -54,8 +55,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
       .eq("id", id)
       .select("id");
     if (error) {
-      console.error("[demote-chunk] hard_delete failed: %s", error.message);
-      return Response.json({ error: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
     if ((data ?? []).length === 0) {
       return Response.json({ error: "chunk_not_found" }, { status: 404 });
@@ -73,8 +73,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .eq("scope", "global")
     .select("id");
   if (error) {
-    console.error("[demote-chunk] to_tenant_scope update failed: %s", error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
   if ((data ?? []).length === 0) {
     return Response.json({ error: "chunk_not_found_or_not_global" }, { status: 404 });

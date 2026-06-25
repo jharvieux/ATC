@@ -5,15 +5,6 @@
 # Broad cleanup tracked in #1395; lower a count / remove a line once that site routes
 # through dbErrorResponse(error). DO NOT add new entries to silence the guard.
 #
-1 apps/main/src/app/api/admin/help/bugs/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/admin/help/features/[id]/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/admin/help/features/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/admin/help/sessions/route.ts::error: err instanceof Error ? err.message
-2 apps/main/src/app/api/admin/pricing/route.ts::message: err.message
-1 apps/main/src/app/api/admin/rag/authority/[chunk_id]/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/admin/rag/authority/list/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/admin/resource-utilization/route.ts::error: err instanceof Error ? err.message
-1 apps/main/src/app/api/admin/tenants/[id]/custom-domain/verify/route.ts::error: err.message
 1 apps/main/src/app/api/auth/transfer-session/undo/route.ts::detail: readErr.message
 1 apps/main/src/app/api/help/bugs/[id]/route.ts::message: error.message
 1 apps/main/src/app/api/help/bugs/route.ts::message: error.message
@@ -32,17 +23,3 @@
 1 apps/main/src/app/api/help/sessions/route.ts::message: error?.message
 1 apps/main/src/app/api/webhooks/gmailpubsub/route.ts::error: err instanceof Error ? err.message
 1 apps/main/src/app/api/webhooks/gmailpubsub/route.ts::message: err instanceof Error ? err.message
-2 apps/rag/src/app/api/admin/demote-chunk/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/export-user-chunks/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/list-chunks-for-curation/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/post-termination-mark/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/post-termination-queue/route.ts::error: error.message
-3 apps/rag/src/app/api/admin/post-termination-review/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/purge-tenant-scoped-chunks/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/replace-chunk/route.ts::error: fetchErr.message
-1 apps/rag/src/app/api/admin/replace-chunk/route.ts::error: updErr.message
-1 apps/rag/src/app/api/admin/set-authority-override/route.ts::error: error.message
-1 apps/rag/src/app/api/admin/tenant-chunk-counts/route.ts::error: error.message
-1 apps/rag/src/app/api/feedback/route.ts::error: error.message
-1 apps/rag/src/app/api/platform-settings-events/route.ts::error: error.message
-1 apps/rag/src/app/api/platform-settings-events/route.ts::reason: `db_error: ${error.message

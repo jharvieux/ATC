@@ -2,6 +2,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const DECISIONS = new Set(["accepted", "rejected", "deferred", "duplicate"]);
 
@@ -38,6 +39,6 @@ export async function PATCH(req: Request, props: { params: Promise<{ id: string 
     );
     return Response.json({ ok: true });
   } catch (err) {
-    return Response.json({ error: err instanceof Error ? err.message : "internal_error" }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

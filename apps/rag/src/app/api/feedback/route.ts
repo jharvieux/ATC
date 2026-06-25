@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { checkFeedbackRateLimit } from "@/lib/rate-limit/feedback-limit";
 import { getRedis } from "@/lib/redis/client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const bodySchema = z.object({
   message_id: z.string().uuid().nullable(),
@@ -126,8 +127,7 @@ export async function POST(req: Request): Promise<Response> {
     .select("id");
 
   if (error) {
-    console.error("[feedback] insert error:", error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   // Write the dedup key only after the insert confirms success (D-091 Pattern 10).

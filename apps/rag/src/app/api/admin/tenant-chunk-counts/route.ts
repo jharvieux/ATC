@@ -57,7 +57,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
       .eq("status", "approved")
       .is("superseded_by_chunk_id", null);
     if (error) {
-      console.error("[admin/tenant-chunk-counts] read failed", { tenant_id, error: error.message });
+      console.error("[admin/tenant-chunk-counts] read failed for tenant=%s: %s", tenant_id, error.message);
       // Skip this tenant rather than fail the whole batch; caller can detect
       // missing rows by intersecting requested ids vs returned ids.
       continue;
