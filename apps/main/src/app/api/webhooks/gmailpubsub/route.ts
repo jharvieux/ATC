@@ -49,7 +49,7 @@ export async function POST(req: Request): Promise<Response> {
     // Google Pub/Sub OIDC JWT — RS256 (jose resolves alg from JWK header automatically)
     await jwtVerify(token, jwks, { issuer: GOOGLE_ISS, audience: expectedAud });
   } catch (err) {
-    console.warn("[gmailpubsub] jwt_verification_failed", err);
+    console.error("[gmailpubsub] jwt_verification_failed", err);
     return Response.json({ error: "jwt_verification_failed" }, { status: 401 });
   }
 
