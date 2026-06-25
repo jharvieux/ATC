@@ -33,6 +33,11 @@ const API_DIRS = [
 const EGRESS_RE =
   /\b(?:detail|details|message|error|hint|reason)\s*:\s*[^,}\n]*\.(?:message|details)\b/g;
 
+// <key>: String(<err-like expr>) — String(err) renders as "Error: <err.message>",
+// disclosing the same schema info as .message directly.
+const EGRESS_STRING_RE =
+  /\b(?:detail|details|message|error|hint|reason)\s*:\s*String\s*\([^)]*(?:err|error|e|ex)\b[^)]*\)/g;
+
 export interface Egress {
   file: string; // repo-relative
   key: string; // relpath::normalized-match
@@ -44,9 +49,11 @@ export function findEgress(relPath: string, content: string): Egress[] {
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue; // skip comments
-    for (const m of line.matchAll(EGRESS_RE)) {
-      const snippet = m[0].trim().replace(/\s+/g, " ");
-      out.push({ file: relPath, key: `${relPath}::${snippet}`, snippet });
+    for (const re of [EGRESS_RE, EGRESS_STRING_RE]) {
+      for (const m of line.matchAll(re)) {
+        const snippet = m[0].trim().replace(/\s+/g, " ");
+        out.push({ file: relPath, key: `${relPath}::${snippet}`, snippet });
+      }
     }
   }
   return out;

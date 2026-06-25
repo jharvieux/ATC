@@ -44,6 +44,24 @@ describe("findEgress — does NOT flag safe forms", () => {
   });
 });
 
+describe("findEgress — String(err) egress (EGRESS_STRING_RE, #1429)", () => {
+  it("flags error: String(err) in a response object", () => {
+    expect(keys(`return Response.json({ error: String(err) }, { status: 500 });`)).toContain(
+      "error: String(err)",
+    );
+  });
+
+  it("flags message : String(e) with space before colon", () => {
+    expect(keys(`return Response.json({ message : String(e) }, { status: 500 });`)).toContain(
+      "message : String(e)",
+    );
+  });
+
+  it("does NOT flag String(someId) — non-err-like variable name", () => {
+    expect(keys(`return Response.json({ id: String(someId), count: String(n) });`)).toEqual([]);
+  });
+});
+
 describe("findEgress — key format", () => {
   it("keys by relpath::normalized-snippet", () => {
     const e = findEgress("apps/main/src/app/api/x/route.ts", `{ detail: err.message }`);
