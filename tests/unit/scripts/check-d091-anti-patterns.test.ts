@@ -89,6 +89,18 @@ describe("detectCounterRmw (6)", () => {
     const v = detectCounterRmw("f.ts", L(`await db.from("x").update({\n  submission_count: row.submission_count + 1,\n  last_at: now,\n}).eq("id", id);`));
     expect(v.map((x) => x.id)).toEqual(["counter-rmw"]);
   });
+  it("STILL flags a CAS-guarded counter increment — the detector can't tell CAS from naive RMW", () => {
+    // A CAS-guarded increment (`.eq("attempt_count", expected)`) IS safe, but the
+    // text heuristic can't distinguish it from a naive read-modify-write, so it
+    // fires. That's intentional: the truly-safe sites are handled by the baseline
+    // (existing debt) or an inline `d091-allow:counter-rmw <reason>`, not by the
+    // detector silently passing them. This pins that contract.
+    const v = detectCounterRmw(
+      "f.ts",
+      L(`await db.from("x").update({ attempt_count: expected + 1 }).eq("id", id).eq("attempt_count", expected).select("id");`),
+    );
+    expect(v.map((x) => x.id)).toEqual(["counter-rmw"]);
+  });
   it("does NOT flag an absolute/literal assignment to a counter field", () => {
     expect(detectCounterRmw("f.ts", L(`await db.from("x").update({ current_count: 0 }).eq("id", id);`))).toEqual([]);
   });

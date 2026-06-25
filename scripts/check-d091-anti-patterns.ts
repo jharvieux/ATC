@@ -198,6 +198,9 @@ export function detectCounterRmw(file: string, lines: string[]): Violation[] {
   const out: Violation[] = [];
   lines.forEach((ln, i) => {
     if (!/\.update\(/.test(ln)) return;
+    // Gather the statement: this line + following lines until ';' or a blank.
+    // 12-line window covers every real .update() payload in this codebase;
+    // a payload deeper than that isn't the read-modify-write shape we flag.
     const chunk: string[] = [];
     for (let j = i; j < lines.length && j < i + 12; j += 1) {
       chunk.push(lines[j] ?? "");
