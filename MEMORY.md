@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-298 — 2026-06-25 — Overnight opus batch: 4 of 6 engineering-ready opus issues shipped; 2 spec-features skipped (don't-guess-at-money)
+
+**Decision.** Operator authorized an autonomous overnight run of all engineering-ready `opus`-labelled issues (migrations applied to staging/test only, prod gated; merge each to dev). Shipped 4 (3 PRs), skipped 2 with documented blockers.
+
+**Shipped:** (#1376+#1377, PR #1414) atomic chat-limit counters — `increment_customer_chat_count` / `increment_anon_chat_counter` RPCs (INSERT…ON CONFLICT DO UPDATE…RETURNING, rolling-window reset folded in); consume-then-check replaces the read-modify-write TOCTOU; `checkAnonLimit`+`incrementAnonCounters`→one `enforceAnonLimit`; concurrency tests model the atomic RPC. (#1391, PR #1416) clawback idempotency_key on platform_revenue (non-partial unique index so ON CONFLICT can infer it; NULLs distinct so existing rows don't collide) — ledger insert is now the single-entry guard; reversal→idempotent upsert→idempotent status flip→idempotent finalize (terminal waived→waived self-transition tolerated, everything else rethrows→500). (#1379, PR #1417) OTP no-email flow: prompt route requires a session, OTP keyed by auth_user_id, attempts carried across re-mints, per-IP(10)+per-email(5) in-memory regen caps; verify resolves session first + matches minted email; collision-refusal already enforced by auth.users unique-email constraint.
+
+**Skipped (don't-guess-at-money — both need spec-owner decisions; commented on each):** #1247 host-fee `tiered`/`minimum_commission_threshold` — §12.6/§14 define the columns but NOT the tiered_rules JSONB shape, the commission-vs-fare basis, or the threshold rule. #1127 transfer.reversed ledger unwind — §14.9 says only "reversal within 60 days then contractual recovery", no balance-bucket / commission-state / partial-reversal semantics.
+
+**Follow-ups filed:** #1415 (DB-level concurrency integration test for the chat-limit RPCs — unit tests model the RPC but don't exercise Postgres ON CONFLICT atomicity), #1418 (G4 `check:rate-limit-store` misses limiter Maps named `regen`/`cooldown` — same false-negative class as #1408). Reopened #735 (OTP limiters stay in-memory/per-instance per operator; remains the Redis-upgrade handle).
+
+**Process notes.** Migrations applied to the staging/test DB via SUPABASE_TEST_DB_URL (locally == SUPABASE_DB_URL host); `check:schema-drift` skips locally (env not loaded) + isn't a required CI check. Each PR ran the full cycle (verify→CI green→opus d091+pre-pr→fix→re-audit→squash-merge). Audits caught real issues each time: F-sm DB-atomicity test gap (#1415), F-pay finalize crash-window over-claim (→ idempotent unconditional finalize) + global-vs-tenant index nit, F-auth stale #735 reference. Sequential (not pipelined) to avoid the audit agents' branch checkouts clobbering an in-progress branch.
+
+---
+
 ## D-297 — 2026-06-24 — EPIC #1393 complete — Day-1 finding classes turned into 6 shift-left CI guards (G1–G6)
 
 **Decision.** Shipped the last 3 of the 6 prevention guards from #1393 (G1/G2/G5 were already merged): **G3** counter-rmw (PR #1407), **G4** in-memory rate-limit (PR #1409), **G6** webhook-replay (PR #1411). All wired into `pnpm verify` + `ci.yml`, each with a baseline of pre-existing debt (gate fails on NEW only), unit tests, and a CLAUDE.md D-091 doctrine entry (#18/#19/#20). EPIC #1393 closed.
