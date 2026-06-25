@@ -68,7 +68,11 @@ export function checkZipBomb(bytes: ArrayBuffer): string | null {
   for (let e = 0; e < totalEntries; e++) {
     if (pos + 46 > buf.length) break;
     if (buf.readUInt32LE(pos) !== CD_SIG) break;
-    totalUncompressed += buf.readUInt32LE(pos + 24); // uncompressed size field
+    const entrySize = buf.readUInt32LE(pos + 24); // uncompressed size field
+    // 0xFFFFFFFF is the ZIP64 sentinel — the real size is in a zip64 extra
+    // field we don't parse. Fail closed: treat it as exceeding the cap.
+    if (entrySize === 0xFFFFFFFF) return "zip_bomb: zip64 uncompressed-size sentinel — fail closed";
+    totalUncompressed += entrySize;
     if (totalUncompressed > MAX_ZIP_UNCOMPRESSED_BYTES) {
       return `zip_bomb: total uncompressed size exceeds ${MAX_ZIP_UNCOMPRESSED_BYTES / 1024 / 1024}MB`;
     }

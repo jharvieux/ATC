@@ -87,4 +87,11 @@ describe("checkZipBomb", () => {
     const text = Buffer.from("hello world this is not a zip file");
     expect(checkZipBomb(text.buffer.slice(text.byteOffset, text.byteOffset + text.byteLength))).toBeNull();
   });
+
+  it("flags a ZIP64 entry whose uncompressed-size field is 0xFFFFFFFF (sentinel)", () => {
+    // ZIP64 archives use 0xFFFFFFFF in the 32-bit CD field as a sentinel; the real
+    // size lives in a zip64 extra field we don't parse. Fail closed on the sentinel.
+    const zip64 = buildZip([{ uncompressedSize: 0xFFFFFFFF }]);
+    expect(checkZipBomb(zip64)).toMatch(/zip64/);
+  });
 });
