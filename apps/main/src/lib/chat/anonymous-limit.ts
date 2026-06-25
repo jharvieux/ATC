@@ -50,102 +50,72 @@ export function capsFromEnv(under_abuse: boolean): CapsBundle {
 const TWENTY_FOUR_HOURS_AGO = () =>
   new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-async function getCountSince(
+async function incrementAnonCounter(
   db: SupabaseClient,
   tenant_id: string,
   identifier_type: "session" | "ip" | "fingerprint",
   identifier_value: string,
-  since: string | null,
+  window_seconds: number | null,
 ): Promise<number> {
+  // Atomic consume-then-check: the RPC increments and RETURNs the post-increment
+  // count in one statement (rolling-window reset folded in for windowed
+  // identifiers). Returns 0 for an absent identifier so the caller skips it.
   if (!identifier_value) return 0;
-  let q = db
-    .from("anonymous_chat_counters")
-    .select("current_count, last_message_at")
-    .eq("tenant_id", tenant_id)
-    .eq("identifier_type", identifier_type)
-    .eq("identifier_value", identifier_value);
-  if (since) q = q.gte("last_message_at", since);
-  const { data, error } = await q.maybeSingle();
-  if (error) throw new Error(`anonymous_chat_counters.read failed: ${error.message}`);
-  return (data as { current_count?: number } | null)?.current_count ?? 0;
+  const { data, error } = await db.rpc("increment_anon_chat_counter", {
+    p_tenant_id: tenant_id,
+    p_identifier_type: identifier_type,
+    p_identifier_value: identifier_value,
+    p_window_seconds: window_seconds,
+  });
+  if (error) throw new Error(`increment_anon_chat_counter failed: ${error.message}`);
+  const count = Number(data);
+  if (!Number.isFinite(count)) {
+    throw new Error("increment_anon_chat_counter returned a non-numeric count");
+  }
+  return count;
 }
 
-export async function checkAnonLimit(
+const TWENTY_FOUR_HOURS_SECONDS = 24 * 60 * 60;
+
+// F-sm-02 (#1377): consume-then-check across all three identifiers. The old
+// path read all counters (checkAnonLimit) and only later wrote them
+// (incrementAnonCounters) — a TOCTOU window where N parallel requests on a
+// fresh session/IP/fingerprint all passed the gate and reached the paid model.
+//
+// Now each identifier is incremented atomically up front and the decision is
+// made against the returned count, so exactly `cap` requests cross each
+// boundary. Session is lifetime (null window); IP and fingerprint are 24h
+// rolling. Most-restrictive identifier wins; the result MUST NOT reveal which
+// one hit (§24.8). All present identifiers are incremented even on a block
+// (consume-then-check) — that only tightens the wall.
+export async function enforceAnonLimit(
   db: SupabaseClient,
   input: AnonLimitInput,
 ): Promise<AnonLimitResult> {
   const caps = capsFromEnv(Boolean(input.under_abuse));
 
-  // Session counter is lifetime-of-row (no time window). IP and fingerprint
-  // are 24h rolling.
-  const sessionCount = await getCountSince(
-    db, input.tenant_id, "session", input.session_id, null,
-  );
-  if (sessionCount >= caps.session) {
-    return { allowed: false, hit_identifier_type: "session" };
-  }
-
-  const since24h = TWENTY_FOUR_HOURS_AGO();
-  const ipCount = input.ip
-    ? await getCountSince(db, input.tenant_id, "ip", input.ip, since24h)
-    : 0;
-  if (input.ip && ipCount >= caps.ip) {
-    return { allowed: false, hit_identifier_type: "ip" };
-  }
-
-  const fpCount = input.fingerprint
-    ? await getCountSince(db, input.tenant_id, "fingerprint", input.fingerprint, since24h)
-    : 0;
-  if (input.fingerprint && fpCount >= caps.fingerprint) {
-    return { allowed: false, hit_identifier_type: "fingerprint" };
-  }
-
-  return { allowed: true };
-}
-
-// Increment all three identifier counters atomically(ish). Service-role db.
-// Upserts on (identifier_type, identifier_value, tenant_id) PK.
-export async function incrementAnonCounters(
-  db: SupabaseClient,
-  input: AnonLimitInput,
-): Promise<void> {
-  const now = new Date().toISOString();
-  const ids: Array<["session" | "ip" | "fingerprint", string]> = [
-    ["session", input.session_id],
+  // Priority order = most-restrictive-first, so the first over-cap identifier
+  // is the reported one (matches the prior session→ip→fingerprint precedence).
+  const identifiers: Array<{
+    type: "session" | "ip" | "fingerprint";
+    value: string;
+    cap: number;
+    window: number | null;
+  }> = [
+    { type: "session", value: input.session_id, cap: caps.session, window: null },
+    { type: "ip", value: input.ip, cap: caps.ip, window: TWENTY_FOUR_HOURS_SECONDS },
+    { type: "fingerprint", value: input.fingerprint, cap: caps.fingerprint, window: TWENTY_FOUR_HOURS_SECONDS },
   ];
-  if (input.ip) ids.push(["ip", input.ip]);
-  if (input.fingerprint) ids.push(["fingerprint", input.fingerprint]);
 
-  for (const [type, value] of ids) {
-    if (!value) continue;
-    // Read-then-write because PostgREST UPSERT can't ON CONFLICT increment.
-    const { data: existing, error: readErr } = await db
-      .from("anonymous_chat_counters")
-      .select("current_count")
-      .eq("tenant_id", input.tenant_id)
-      .eq("identifier_type", type)
-      .eq("identifier_value", value)
-      .maybeSingle();
-    if (readErr) throw new Error(`anonymous_chat_counters.read failed: ${readErr.message}`);
-    const current = (existing as { current_count?: number } | null)?.current_count ?? 0;
-    if (existing) {
-      await safeAwait(db
-        .from("anonymous_chat_counters")
-        .update({ current_count: current + 1, last_message_at: now })
-        .eq("tenant_id", input.tenant_id)
-        .eq("identifier_type", type)
-        .eq("identifier_value", value), "anonymous_chat_counters.update");
-    } else {
-      await safeAwait(db.from("anonymous_chat_counters").insert({
-        tenant_id: input.tenant_id,
-        identifier_type: type,
-        identifier_value: value,
-        current_count: 1,
-        first_message_at: now,
-        last_message_at: now,
-      }), "anonymous_chat_counters.insert");
-    }
+  let hit: "session" | "ip" | "fingerprint" | undefined;
+  for (const id of identifiers) {
+    if (!id.value) continue;
+    const count = await incrementAnonCounter(db, input.tenant_id, id.type, id.value, id.window);
+    // post-increment count > cap ⇒ this request is the (cap+1)-th ⇒ blocked.
+    if (count > id.cap && !hit) hit = id.type;
   }
+
+  return hit ? { allowed: false, hit_identifier_type: hit } : { allowed: true };
 }
 
 // Record the limit-hit timestamp on the most-restrictive identifier, then

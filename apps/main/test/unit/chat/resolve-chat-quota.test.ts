@@ -12,8 +12,7 @@ import { resolveChatQuota } from "@/lib/chat/resolve-chat-quota";
 import { enforceTaDailyLimit } from "@/lib/chat/ta-daily-limit";
 import { enforceCustomerLimit, generateHardLimitSummary } from "@/lib/chat/customer-limit";
 import {
-  checkAnonLimit,
-  incrementAnonCounters,
+  enforceAnonLimit,
   recordLimitHitAndCheckBurst,
 } from "@/lib/chat/anonymous-limit";
 import { writeAuditLog } from "@/lib/audit/write";
@@ -24,8 +23,7 @@ vi.mock("@/lib/chat/customer-limit", () => ({
   generateHardLimitSummary: vi.fn(async () => "summary"),
 }));
 vi.mock("@/lib/chat/anonymous-limit", () => ({
-  checkAnonLimit: vi.fn(),
-  incrementAnonCounters: vi.fn(async () => undefined),
+  enforceAnonLimit: vi.fn(),
   recordLimitHitAndCheckBurst: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/audit/write", () => ({ writeAuditLog: vi.fn(async () => undefined) }));
@@ -97,7 +95,7 @@ describe("platform-admin bypass (#860)", () => {
     expect(d).toEqual({ allowed: true, personaAugmentation: null, customerCurrentCount: 0 });
     expect(enforceCustomerLimit).not.toHaveBeenCalled();
     expect(enforceTaDailyLimit).not.toHaveBeenCalled();
-    expect(checkAnonLimit).not.toHaveBeenCalled();
+    expect(enforceAnonLimit).not.toHaveBeenCalled();
   });
 
   it("lookup ERROR → fail-closed: no bypass, the customer limiter still runs", async () => {
@@ -118,7 +116,7 @@ describe("platform-admin bypass (#860)", () => {
         throw new Error(`unexpected table: ${table}`);
       },
     } as unknown as SupabaseClient;
-    vi.mocked(checkAnonLimit).mockResolvedValue({ allowed: true });
+    vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true });
     const d = await resolveChatQuota({
       ...baseArgs(svc),
       userId: null,
@@ -246,9 +244,9 @@ describe("anonymous caps (§24.8)", () => {
     anonSessionId: "anon-1",
   });
 
-  it("over limit → signup wall that does NOT reveal which identifier hit; burst recorded; no increment", async () => {
+  it("over limit → signup wall that does NOT reveal which identifier hit; burst recorded", async () => {
     const { svc } = svcStub();
-    vi.mocked(checkAnonLimit).mockResolvedValue({ allowed: false, hit_identifier_type: "ip" });
+    vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: false, hit_identifier_type: "ip" });
     const d = await resolveChatQuota(anonArgs(svc));
     expect(d.allowed).toBe(false);
     if (d.allowed) return;
@@ -258,15 +256,16 @@ describe("anonymous caps (§24.8)", () => {
       svc,
       expect.objectContaining({ hit_identifier_type: "ip", session_id: "anon-1" }),
     );
-    expect(incrementAnonCounters).not.toHaveBeenCalled();
   });
 
-  it("under limit → allowed, and the turn is counted against all three identifiers", async () => {
+  it("under limit → allowed; enforceAnonLimit consumes-and-checks all three identifiers", async () => {
     const { svc } = svcStub();
-    vi.mocked(checkAnonLimit).mockResolvedValue({ allowed: true });
+    vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true });
     const d = await resolveChatQuota(anonArgs(svc));
     expect(d).toEqual({ allowed: true, personaAugmentation: null, customerCurrentCount: 0 });
-    expect(incrementAnonCounters).toHaveBeenCalledWith(
+    // The atomic increment is now folded into enforceAnonLimit (consume-then-check),
+    // so the single call carries all three identifiers — no separate increment step.
+    expect(enforceAnonLimit).toHaveBeenCalledWith(
       svc,
       expect.objectContaining({
         tenant_id: "tenant-1",

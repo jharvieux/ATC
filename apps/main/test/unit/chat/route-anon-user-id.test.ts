@@ -26,8 +26,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 vi.mock("@/lib/db/factories", () => ({ tenantContextFromRequest: vi.fn(), tenantContextForId: vi.fn() }));
 vi.mock("@/lib/db/tenant-context", () => ({}));
 vi.mock("@/lib/chat/anonymous-limit", () => ({
-  checkAnonLimit: vi.fn(),
-  incrementAnonCounters: vi.fn(),
+  enforceAnonLimit: vi.fn(),
   recordLimitHitAndCheckBurst: vi.fn(),
 }));
 vi.mock("@/lib/chat/customer-limit", () => ({ enforceCustomerLimit: vi.fn(), generateHardLimitSummary: vi.fn() }));
@@ -64,7 +63,7 @@ vi.mock("@/lib/db/safe-mutation", () => ({ safeAwait: vi.fn() }));
 
 import { POST } from "@/app/api/chat/route";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
-import { checkAnonLimit } from "@/lib/chat/anonymous-limit";
+import { enforceAnonLimit } from "@/lib/chat/anonymous-limit";
 import { freshAnonSession, verifyAnonSession, buildAnonCookieHeader } from "@/lib/chat/anon-session-cookie";
 import { detectBugIntent } from "@/lib/help-ai/bug-intent-recognizer";
 import { resolveActivePersonaSlug } from "@/lib/personas/resolve-active-persona-slug";
@@ -84,7 +83,7 @@ beforeEach(() => {
   vi.mocked(verifyAnonSession).mockReturnValue(null);
   vi.mocked(freshAnonSession).mockReturnValue({ id: ANON_SESSION_ID, cookieValue: "cv" });
   vi.mocked(buildAnonCookieHeader).mockReturnValue("_atc_anon=cv");
-  vi.mocked(checkAnonLimit).mockResolvedValue({ allowed: true });
+  vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true });
   vi.mocked(detectBugIntent).mockResolvedValue({ triggered: false } as never);
   vi.mocked(loadConversationHistory).mockResolvedValue([] as never);
   vi.mocked(resolveActivePersonaSlug).mockResolvedValue("marcus-cole");
