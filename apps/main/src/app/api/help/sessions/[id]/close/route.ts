@@ -7,6 +7,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const OUTCOMES = new Set(["resolved", "submitted", "escalated", "abandoned"]);
 
@@ -25,7 +26,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .update({ ended_at: new Date().toISOString(), outcome: body.outcome })
       .eq("id", params.id);
     if (error) {
-      return Response.json({ error: "db_error", message: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     await writeAuditLog({

@@ -5,6 +5,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour per §32.3.3
 
@@ -24,7 +25,7 @@ export async function GET(req: Request, props: { params: Promise<{ jobId: string
       .select("storage_path, format, expires_at")
       .eq("id", params.jobId)
       .maybeSingle();
-    if (error) return Response.json({ error: "db_error", message: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     const row = data as { storage_path: string; format: string; expires_at: string };
     if (!row.storage_path) {

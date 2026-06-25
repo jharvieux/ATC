@@ -9,6 +9,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createHash } from "node:crypto";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 function shortReferenceId(bug_id: string): string {
   // BR-{first 8 chars of sha256(bug_id) in lowercase hex}.
@@ -29,7 +30,7 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
       )
       .eq("id", params.id)
       .maybeSingle();
-    if (error) return Response.json({ error: "db_error", message: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
 
     const row = data as Record<string, unknown> & { submitter_user_id: string; id: string; github_issue_state: string };

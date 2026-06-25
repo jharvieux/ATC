@@ -3,6 +3,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
   const params = await props.params;
@@ -16,7 +17,7 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
       )
       .eq("id", params.id)
       .maybeSingle();
-    if (error) return Response.json({ error: "db_error", message: error.message }, { status: 500 });
+    if (error) return dbErrorResponse(error);
     if (!data) return Response.json({ error: "not_found" }, { status: 404 });
     return Response.json(data);
   } catch (err) {

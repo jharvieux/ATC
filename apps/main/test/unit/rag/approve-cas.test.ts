@@ -153,6 +153,22 @@ describe("approve — review_status CAS row-count assert (#394)", () => {
     expect(json.ref).toBeTruthy();
   });
 
+  // ── 500KB content cap (#1388) ────────────────────────────────────────────
+
+  it("returns 422 content_too_large when DB row content exceeds 500KB (backward-compat guard for pre-cap rows)", async () => {
+    // WHY: rows stored before the IngestRequestSchema.max(500_000) cap was added
+    // would silently receive a 400 from the ingest endpoint and be permanently
+    // unapprovable through the UI. This guard surfaces a meaningful 422 before the
+    // ingest POST fires, so operators know the content must be trimmed.
+    mocks.read = { ...mocks.read, redacted_content: "x".repeat(500_001), extracted_content: null };
+    const res = await callApprove();
+    expect(res.status).toBe(422);
+    const json = await res.json() as { error: string; max_bytes: number; actual_bytes: number };
+    expect(json.error).toBe("content_too_large");
+    expect(json.max_bytes).toBe(500_000);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
   // ── PII pipeline on reviewer edits (f012) ────────────────────────────────
 
   it("returns 422 pii_check_failed when Haiku redaction fails for edits.content (fail-closed)", async () => {

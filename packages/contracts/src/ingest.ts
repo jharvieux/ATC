@@ -9,7 +9,7 @@ const UUID = z.string().uuid();
 export const IngestRequestSchema = z.object({
   source_url: safeUrl.optional(),
   source_domain: z.string().optional(),
-  raw_content: z.string().min(1),
+  raw_content: z.string().min(1).max(500_000),
   scope: z.enum(["tenant", "global"]),
   tenant_id: UUID,
   category: z.string().min(1),
