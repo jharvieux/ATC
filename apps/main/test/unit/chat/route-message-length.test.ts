@@ -15,8 +15,7 @@ vi.mock("@/lib/db/service-role-client", () => ({ createServiceRoleClient: vi.fn(
 vi.mock("@/lib/db/factories", () => ({ tenantContextFromRequest: vi.fn(), tenantContextForId: vi.fn() }));
 vi.mock("@/lib/db/tenant-context", () => ({}));
 vi.mock("@/lib/chat/anonymous-limit", () => ({
-  checkAnonLimit: vi.fn(),
-  incrementAnonCounters: vi.fn(),
+  enforceAnonLimit: vi.fn(),
   recordLimitHitAndCheckBurst: vi.fn(),
 }));
 vi.mock("@/lib/chat/customer-limit", () => ({

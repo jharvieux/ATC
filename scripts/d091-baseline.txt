@@ -84,7 +84,6 @@
 1	apps/main/src/lib/ai/batch/reconcile.ts	service-role-tenant	.from("ai_batch_requests")
 1	apps/main/src/lib/ai/stream-wrapper.ts	service-role-tenant	.from("tenant_usage_metrics")
 1	apps/main/src/lib/booking/dob-gate.ts	service-role-tenant	.from("booking_passengers")
-1	apps/main/src/lib/chat/anonymous-limit.ts	counter-rmw	.update({ current_count: current + 1, last_message_at: now })
 1	apps/main/src/lib/consent/pending.ts	service-role-tenant	.from("user_consent_pending")
 1	apps/main/src/lib/cron/auth-failure-monitor.ts	service-role-tenant	.from("auth_attempts")
 1	apps/main/src/lib/cron/auth-failure-monitor.ts	unbounded-limit	.limit(10000);

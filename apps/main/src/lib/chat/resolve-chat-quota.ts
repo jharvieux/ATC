@@ -16,8 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import {
-  checkAnonLimit,
-  incrementAnonCounters,
+  enforceAnonLimit,
   recordLimitHitAndCheckBurst,
 } from "@/lib/chat/anonymous-limit";
 import {
@@ -147,7 +146,11 @@ export async function resolveChatQuota(args: ResolveChatQuotaArgs): Promise<Chat
   // Anonymous path
   const ip = extractClientIp(args.req);
   const fingerprint = deriveFingerprint(args.req);
-  const limit = await checkAnonLimit(svc, {
+  // F-sm-02 (#1377): atomic consume-then-check — increments all identifier
+  // counters and decides against the returned counts in one pass (no
+  // check-then-increment TOCTOU). A blocked request has already consumed,
+  // which only tightens the wall.
+  const limit = await enforceAnonLimit(svc, {
     tenant_id: tenantId,
     session_id: anonSessionId!,
     ip,
@@ -172,11 +175,5 @@ export async function resolveChatQuota(args: ResolveChatQuotaArgs): Promise<Chat
       },
     };
   }
-  await incrementAnonCounters(svc, {
-    tenant_id: tenantId,
-    session_id: anonSessionId!,
-    ip,
-    fingerprint,
-  });
   return { allowed: true, personaAugmentation: null, customerCurrentCount: 0 };
 }

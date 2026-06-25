@@ -68,28 +68,20 @@ export async function resolveCaps(
 // Recompute current_count from messages table (safety net + initial seed).
 // Used when the counter row doesn't exist or appears stale. Counts only
 // USER-sent messages (AI responses don't count) in the rolling window.
-async function recountFromMessages(
-  db: SupabaseClient,
-  user_id: string,
-  tenant_id: string,
-  windowDays: number,
-): Promise<number> {
-  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await db
-    .from("messages")
-    .select("id, conversations!inner(user_id, tenant_id)")
-    .eq("role", "user")
-    .gte("created_at", since)
-    .eq("conversations.user_id", user_id)
-    .eq("conversations.tenant_id", tenant_id);
-  if (error) throw new Error(`customer_chat.recount_from_messages failed: ${error.message}`);
-  return Array.isArray(data) ? data.length : 0;
-}
-
 // Increment the per-(user, tenant) counter and decide which tier the
 // incoming message lands in. Caller is responsible for: if 'hard', NOT
 // calling the AI; otherwise running the AI with persona_augmentation
 // prepended to the system prompt.
+//
+// F-sm-01 (#1376): the increment is DB-atomic (increment_customer_chat_count
+// RPC — INSERT … ON CONFLICT DO UPDATE … RETURNING, with the rolling-window
+// reset folded in). We CONSUME first, then decide the tier against the returned
+// post-increment count, so K concurrent requests at hard_cap-1 each get a
+// distinct count and exactly one lands on the boundary (non-hard). The old
+// SELECT→compute→UPDATE path let them all read the stale count and pass,
+// bypassing the hard ceiling. A consequence of consume-then-check: a blocked
+// (hard) attempt now also increments — harmless, since the window reset
+// restarts the count after `windowDays` of inactivity.
 export async function enforceCustomerLimit(
   db: SupabaseClient,
   args: { user_id: string; tenant_id: string },
@@ -100,75 +92,61 @@ export async function enforceCustomerLimit(
 
   const resolved = await resolveCaps(db, args.user_id, args.tenant_id);
 
-  // Load (or seed) the counter row.
-  const { data: existing, error: counterErr } = await db
+  // Atomic consume-then-check. The RPC returns the post-increment count and
+  // guarantees the row exists afterward.
+  const { data: incremented, error: incErr } = await db.rpc("increment_customer_chat_count", {
+    p_user_id: args.user_id,
+    p_tenant_id: args.tenant_id,
+    p_window_days: windowDays,
+  });
+  if (incErr) throw new Error(`increment_customer_chat_count failed: ${incErr.message}`);
+  const nextCount = Number(incremented);
+  if (!Number.isFinite(nextCount)) {
+    throw new Error("increment_customer_chat_count returned a non-numeric count");
+  }
+  const now = new Date().toISOString();
+
+  // Read the cooldown timestamps (row exists post-increment). Not
+  // security-critical: a race here at worst issues a duplicate soft nudge.
+  const { data: meta, error: metaErr } = await db
     .from("customer_chat_counters")
-    .select(
-      "current_count, last_message_at, soft1_last_issued_at, soft2_last_issued_at, hard_limit_hit_at",
-    )
+    .select("soft1_last_issued_at, soft2_last_issued_at")
     .eq("user_id", args.user_id)
     .eq("tenant_id", args.tenant_id)
     .maybeSingle();
-  if (counterErr) throw new Error(`customer_chat_counters.read failed: ${counterErr.message}`);
+  if (metaErr) throw new Error(`customer_chat_counters.read failed: ${metaErr.message}`);
+  const cooldowns = (meta ?? {}) as {
+    soft1_last_issued_at?: string | null;
+    soft2_last_issued_at?: string | null;
+  };
 
-  let counter = existing as {
-    current_count: number;
-    last_message_at: string | null;
-    soft1_last_issued_at: string | null;
-    soft2_last_issued_at: string | null;
-    hard_limit_hit_at: string | null;
-  } | null;
-
-  // If the row doesn't exist OR last_message_at is stale (outside window),
-  // recount from messages so we don't double-charge for old activity.
-  if (!counter || (counter.last_message_at && new Date(counter.last_message_at).getTime() < Date.now() - windowDays * 24 * 60 * 60 * 1000)) {
-    const recount = await recountFromMessages(db, args.user_id, args.tenant_id, windowDays);
-    if (counter) {
-      counter.current_count = recount;
-    } else {
-      counter = {
-        current_count: recount,
-        last_message_at: null,
-        soft1_last_issued_at: null,
-        soft2_last_issued_at: null,
-        hard_limit_hit_at: null,
-      };
-    }
-  }
-
-  const nextCount = counter.current_count + 1;
-  const now = new Date().toISOString();
-
-  // Hard tier: would push over hard_cap → block. DO NOT increment counter
-  // (we never delivered an AI response). Persist hard_limit_hit_at.
-  if (nextCount > resolved.hard_cap) {
-    const oldestSince = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-    await upsertCounter(db, args.user_id, args.tenant_id, {
-      current_count: counter.current_count,
-      hard_limit_hit_at: now,
+  // Persist the resolved-caps snapshot (diagnostic — what caps were applied).
+  await safeAwait(db
+    .from("customer_chat_counters")
+    .update({
       resolved_soft1_cap: resolved.soft1_cap,
       resolved_soft2_cap: resolved.soft2_cap,
       resolved_hard_cap: resolved.hard_cap,
       resolved_booking_bonus_percent: resolved.booking_bonus_percent,
       resolved_at: now,
-    });
-    return { tier: "hard", resolved, current_count: counter.current_count, reset_at: oldestSince };
-  }
+    })
+    .eq("user_id", args.user_id)
+    .eq("tenant_id", args.tenant_id), "customer_chat_counters.update.resolved");
 
-  // Increment for any non-hard tier.
-  await upsertCounter(db, args.user_id, args.tenant_id, {
-    current_count: nextCount,
-    last_message_at: now,
-    resolved_soft1_cap: resolved.soft1_cap,
-    resolved_soft2_cap: resolved.soft2_cap,
-    resolved_hard_cap: resolved.hard_cap,
-    resolved_booking_bonus_percent: resolved.booking_bonus_percent,
-    resolved_at: now,
-  });
+  // Hard tier: the consumed count is over hard_cap → block (AI not called).
+  if (nextCount > resolved.hard_cap) {
+    const oldestSince = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
+    await safeAwait(db
+      .from("customer_chat_counters")
+      .update({ hard_limit_hit_at: now })
+      .eq("user_id", args.user_id)
+      .eq("tenant_id", args.tenant_id), "customer_chat_counters.update.hard");
+    return { tier: "hard", resolved, current_count: nextCount, reset_at: oldestSince };
+  }
 
   // Soft2 (between soft2_cap and hard_cap, cooldown 3d)
   if (nextCount >= resolved.soft2_cap) {
-    if (!withinCooldown(counter.soft2_last_issued_at, soft2Cooldown)) {
+    if (!withinCooldown(cooldowns.soft2_last_issued_at ?? null, soft2Cooldown)) {
       const augmentation = String(
         await loadPlatformSetting(
           db,
@@ -193,7 +171,7 @@ export async function enforceCustomerLimit(
       return { tier: "soft2", resolved, current_count: nextCount, persona_augmentation: augmentation };
     }
   } else if (nextCount >= resolved.soft1_cap) {
-    if (!withinCooldown(counter.soft1_last_issued_at, soft1Cooldown)) {
+    if (!withinCooldown(cooldowns.soft1_last_issued_at ?? null, soft1Cooldown)) {
       const augmentation = String(
         await loadPlatformSetting(
           db,
@@ -225,36 +203,6 @@ export async function enforceCustomerLimit(
 function withinCooldown(lastAt: string | null, cooldownDays: number): boolean {
   if (!lastAt) return false;
   return new Date(lastAt).getTime() > Date.now() - cooldownDays * 24 * 60 * 60 * 1000;
-}
-
-async function upsertCounter(
-  db: SupabaseClient,
-  user_id: string,
-  tenant_id: string,
-  fields: Record<string, unknown>,
-): Promise<void> {
-  // Manual upsert: PostgREST's .upsert() requires onConflict columns to be
-  // available; here PK is (user_id, tenant_id).
-  const { data: row, error: existenceErr } = await db
-    .from("customer_chat_counters")
-    .select("user_id")
-    .eq("user_id", user_id)
-    .eq("tenant_id", tenant_id)
-    .maybeSingle();
-  if (existenceErr) throw new Error(`customer_chat_counters.read failed: ${existenceErr.message}`);
-  if (row) {
-    await safeAwait(db
-      .from("customer_chat_counters")
-      .update(fields)
-      .eq("user_id", user_id)
-      .eq("tenant_id", tenant_id), "customer_chat_counters.update");
-  } else {
-    await safeAwait(db.from("customer_chat_counters").insert({
-      user_id,
-      tenant_id,
-      ...fields,
-    }), "customer_chat_counters.insert");
-  }
 }
 
 // §24.9 Haiku-generated conversation summary when a customer hits the hard

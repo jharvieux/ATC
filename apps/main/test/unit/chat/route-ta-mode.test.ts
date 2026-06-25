@@ -36,7 +36,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
 }));
 vi.mock("@/lib/db/factories", () => ({ tenantContextFromRequest: vi.fn(), tenantContextForId: vi.fn() }));
 vi.mock("@/lib/db/tenant-context", () => ({}));
-vi.mock("@/lib/chat/anonymous-limit", () => ({ checkAnonLimit: vi.fn(), incrementAnonCounters: vi.fn(), recordLimitHitAndCheckBurst: vi.fn() }));
+vi.mock("@/lib/chat/anonymous-limit", () => ({ enforceAnonLimit: vi.fn(), recordLimitHitAndCheckBurst: vi.fn() }));
 vi.mock("@/lib/chat/customer-limit", () => ({ enforceCustomerLimit: vi.fn(), generateHardLimitSummary: vi.fn() }));
 vi.mock("@/lib/chat/ta-daily-limit", () => ({ enforceTaDailyLimit: vi.fn() }));
 vi.mock("@/lib/chat/help-context", () => ({ buildHelpContextBlock: vi.fn() }));
@@ -75,7 +75,7 @@ import { tenantContextFromRequest } from "@/lib/db/factories";
 import { enforceCustomerLimit } from "@/lib/chat/customer-limit";
 import { enforceTaDailyLimit } from "@/lib/chat/ta-daily-limit";
 import { buildHelpContextBlock } from "@/lib/chat/help-context";
-import { checkAnonLimit } from "@/lib/chat/anonymous-limit";
+import { enforceAnonLimit } from "@/lib/chat/anonymous-limit";
 import { detectToneOverride } from "@/lib/chat/customer-tone-override";
 import { resolveToneLevel } from "@/lib/chat/tone-resolution";
 import { freshAnonSession, verifyAnonSession } from "@/lib/chat/anon-session-cookie";
@@ -106,7 +106,7 @@ beforeEach(() => {
     tier: "below", current_count: 1,
     resolved: { soft1_cap: 20, soft2_cap: 30, hard_cap: 40, booking_bonus_percent: 0 },
   } as never);
-  vi.mocked(checkAnonLimit).mockResolvedValue({ allowed: true } as never);
+  vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true } as never);
   vi.mocked(detectBugIntent).mockResolvedValue({ triggered: false } as never);
   vi.mocked(buildHelpContextBlock).mockReturnValue(null);
   vi.mocked(resolveToneLevel).mockReturnValue({ level: 3 } as never);
@@ -140,7 +140,7 @@ describe("POST /api/chat mode:'ta' — audience boundary (#902)", () => {
     const res = await POST(taReq({ cookie: false }));
     expect(res.status).toBe(403);
     expect(retrieveForChat).not.toHaveBeenCalled();
-    expect(checkAnonLimit).not.toHaveBeenCalled();
+    expect(enforceAnonLimit).not.toHaveBeenCalled();
   });
 
   it("viewer-role member (i.e. a customer): 403 — role, not membership, is the boundary", async () => {
@@ -154,7 +154,7 @@ describe("POST /api/chat mode:'ta' — audience boundary (#902)", () => {
     vi.mocked(tenantContextFromRequest).mockRejectedValue(new Error("not a member"));
     const res = await POST(taReq());
     expect(res.status).toBe(403);
-    expect(checkAnonLimit).not.toHaveBeenCalled();
+    expect(enforceAnonLimit).not.toHaveBeenCalled();
   });
 
   it("member with no users row: 403 (fail closed on unresolvable identity)", async () => {
@@ -173,7 +173,7 @@ describe("POST /api/chat mode:'ta' — audience boundary (#902)", () => {
     expect(vi.mocked(retrieveForChat).mock.calls[0]![0].customer_has_booking).toBe(true);
     expect(enforceTaDailyLimit).toHaveBeenCalledWith(expect.anything(), { tenant_id: "tenant-1", user_id: "users-1" });
     expect(enforceCustomerLimit).not.toHaveBeenCalled();
-    expect(checkAnonLimit).not.toHaveBeenCalled();
+    expect(enforceAnonLimit).not.toHaveBeenCalled();
     expect(detectToneOverride).not.toHaveBeenCalled();
     expect(detectBugIntent).not.toHaveBeenCalled();
     expect(buildHelpContextBlock).toHaveBeenCalled();
