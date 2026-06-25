@@ -1,27 +1,28 @@
-# Session state — last updated 2026-06-24 09:50 PT
+# Session state — last updated 2026-06-24 22:35 PT
 
 ## Just completed
-Day-1 security scan (D-296, `docs/security/day1-scan/`) + remediation batch. Merged to dev:
-- **Fixes:** F-pay-01 #1375 (payout clawback CAS, PR #1390), F-rag-auth-02 (rag admin write-scope, #1392), F-leak-01 #1380 (anon chat error leak, #1396), F-tok-02 #1382 (public-token status gate, #1397), F-rag-wh-01 #1384 (feedback HMAC-before-rate-limit, #1398).
-- **Prevention guards (epic #1393):** G5 admin-route-auth (`check:admin-auth`, #1394), G1 error-message-egress (`check:error-egress`, #1396). Both wired into `pnpm verify` + ci.yml guards, with baselines + unit tests + CLAUDE.md D-091 #15/#16.
-- Artifacts PR #1389; closed earlier #1361, #1369.
-
-Working style: grinding the batch autonomously (implement → verify → PR → d091+pre-pr audits → merge), self-correcting on audit findings. See [[feedback_autonomous_batch_no_checkpoint]].
+- **EPIC #1393 COMPLETE** — all 6 shift-left guards shipped (G1–G6). This session shipped the last 3:
+  - PR #1407 (G3): `counter-rmw` detector added to `check:d091` — flags non-atomic read-modify-write on counter/financial fields. 7 sites baselined.
+  - PR #1409 (G4): `scripts/check-inmemory-rate-limit.ts` (`check:rate-limit-store`) — flags module-level Map/Set rate limiters. 2 baselined.
+  - PR #1411 (G6): `scripts/check-webhook-replay.ts` (`check:webhook-replay`) — flags inbound-signature webhook handlers with no replay defense. 1 baselined (feedback).
+- All wired into `pnpm verify` + `ci.yml`; CLAUDE.md doctrine #18/#19/#20 added.
+- Filed #1408 (pre-existing `detectServiceRoleTenant` false-negative: `.select(...tenant_id...)` masks a missing `.eq("tenant_id")` filter — surfaced by G3 audit).
+- Closed #1410 not-a-bug (tenant-events/platform-settings-events `source_revision >= incoming` guard DOES defeat replay; my filing premise was wrong).
+- MEMORY D-297 added.
 
 ## In flight
-Nothing uncommitted — clean checkpoint on dev (this SESSION refresh is on `docs/session-refresh-day1-batch`).
+- Nothing committed in flight. NOTE: `MEMORY.md`, `MEMORY-INDEX.md`, `SESSION.md` are edited locally on `dev` but NOT yet committed — these need a docs PR (branch protection: no direct commits to dev). Doc-only PR → fast checks, no audit agents.
 
 ## Next step
-Continue the batch. Remaining, in suggested order:
-- **Prevention guards (#1393):** G2 (URL/SSRF — pairs with F-ssrf-01/#1381 + F-rag-pii-02/#1383 fixes, which create the `safeUrl`/`ssrf-guard` helpers it enforces), G3 (atomic-mutation — covers the HIGH F-sm class), G4 (Redis rate-limit), G6 (webhook replay).
-- **Per-finding fixes (candidate patches in `docs/security/day1-scan/PATCHES/`):** F-ssrf-01 #1381, F-rag-pii-02 #1383, F-rag-wh-02 #1385, F-tok-01 #1386, F-inp-02 #1387, F-sm-03 #1378, F-rag-pii-01 #1388.
-- **G1 baseline burn-down:** #1395 (route the ~69 frozen raw-error sites through dbErrorResponse).
+- Open a `docs/*` branch with the MEMORY.md + MEMORY-INDEX.md + SESSION.md updates, PR into dev, merge once fast checks settle. (Was about to do this at session end.)
+- Then: the per-finding security fixes remain open (the guards prevent NEW instances; existing baselined debt still needs fixing): F-ssrf-01 #1381, F-rag-pii-02 #1383, F-rag-wh-02 #1385, F-tok-01 #1386, F-inp-02 #1387, F-sm-01/02/03 #1376/#1377/#1378, F-rag-pii-01 #1388, plus #1395 (G1 baseline burn-down), #1408, #1410-sibling feedback fix.
 
 ## Blocked on user
-- #1365: operator bump Supabase `refresh_token_reuse_interval` 10s→30s (prod dashboard).
-- F-sm-01 #1376 / F-sm-02 #1377: fixes ship SQL migrations → prod-gated (need approval).
-- F-auth-01 #1379: needs a product decision on the OTP/identity-binding flow.
-- #1391: robust F-pay-01 idempotency key on platform_revenue (migration → prod-gated).
+- **2 open code-scanning alerts (medium, shipped code):** `js/log-injection` at `apps/main/src/app/api/chat/route.ts:242` (#92) and `apps/main/src/lib/auth/respond.ts:99` (#91). User-provided value into a log entry. Surfaced at session start as "needs your call" — not yet routed (fold into a fix PR vs. dismiss-if-acceptable). Still open.
+- #1365: operator bump Supabase refresh_token_reuse_interval 10s→30s (prod dashboard)
+- F-sm-01 #1376 / F-sm-02 #1377: SQL migrations → prod-gated
+- F-auth-01 #1379: OTP/identity-binding product decision
+- #1391: robust F-pay-01 idempotency key (migration → prod-gated)
 
 ## Open questions
-Nothing.
+- Playwright E2E still failing in CI (missing TEST_E2E_OWNER_* secrets, #1286) — non-required, not caused by our changes.
