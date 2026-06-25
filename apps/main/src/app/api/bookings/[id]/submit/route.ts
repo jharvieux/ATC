@@ -506,7 +506,7 @@ async function submitBooking(
       });
 
       if (commissionError) {
-        return Response.json({ error: "Failed to record commission." }, { status: 500 });
+        return dbErrorResponse(commissionError);
       }
     }
 

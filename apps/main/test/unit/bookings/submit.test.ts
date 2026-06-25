@@ -397,7 +397,7 @@ describe("POST /api/bookings/[id]/submit — commission record", () => {
     mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "constraint violation" } });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
-    expect((await res.json() as { error: string }).error).toMatch(/commission/i);
+    expect((await res.json() as { error: string }).error).toBe("db_error");
   });
 });
 

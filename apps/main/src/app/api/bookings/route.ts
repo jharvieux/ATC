@@ -60,7 +60,7 @@ export async function GET(req: Request): Promise<Response> {
   });
   if (!parsed.success) {
     console.error("[bookings] invalid_query", parsed.error.issues);
-    return Response.json({ error: "invalid_request" }, { status: 400 });
+    return Response.json({ error: "invalid_query" }, { status: 400 });
   }
   const { status, page, page_size, contact_query } = parsed.data;
   const from = (page - 1) * page_size;
