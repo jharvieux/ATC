@@ -28,4 +28,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS platform_revenue_idempotency_key_uniq
   ON public.platform_revenue (idempotency_key);
 
 COMMENT ON COLUMN public.platform_revenue.idempotency_key IS
-  'F-pay-01 (#1391): single-entry guard for clawback/reversal ledger rows. The clawback insert uses ON CONFLICT DO NOTHING on this key so concurrent cancels and post-crash retries collapse to exactly one negative row, independent of payout status. NULL for ordinary (non-idempotent) revenue rows.';
+  'F-pay-01 (#1391): single-entry guard for clawback/reversal ledger rows. The clawback insert uses ON CONFLICT DO NOTHING on this key so concurrent cancels and post-crash retries collapse to exactly one negative row, independent of payout status. NULL for ordinary (non-idempotent) revenue rows. NOTE: the unique index is GLOBAL (not tenant-scoped), so any key written here MUST be globally unique — clawback keys embed the payout UUID (clawback-<payout_id>). A future non-globally-unique key would cross-tenant-collide and be silently swallowed by DO NOTHING; scope the key (or the index) to tenant_id in that case.';

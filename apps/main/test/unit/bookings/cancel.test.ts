@@ -93,6 +93,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
 
 vi.mock("@/lib/commissions/state-machine", () => ({
   transitionCommissionState: mocks.transitionCommissionState,
+  // Real-shaped error so the route's `err instanceof InvalidCommissionTransitionError`
+  // tolerance check works against the same class the tests construct.
+  InvalidCommissionTransitionError: class extends Error {
+    constructor(public readonly from: string, public readonly to: string) {
+      super(`Invalid commission state transition: ${from} → ${to}`);
+      this.name = "InvalidCommissionTransitionError";
+    }
+  },
 }));
 
 vi.mock("@/lib/audit/write", () => ({
@@ -209,15 +217,6 @@ describe("POST /api/bookings/[id]/cancel — settled-payout clawback idempotency
     error: null,
   };
 
-  // Route the platform_revenue ledger upsert's result through safeAwait by
-  // context: [{id}] = this call did the insert (winner); [] = ON CONFLICT DO
-  // NOTHING claimed by a concurrent cancel / post-crash retry (duplicate).
-  function ledgerReturns(rows: Array<{ id: string }>) {
-    mocks.safeAwait.mockImplementation(async (_q: unknown, ctx: string) =>
-      ctx === "platform_revenue.insert" ? rows : null,
-    );
-  }
-
   beforeEach(() => {
     // The settled branch instantiates `new Stripe(STRIPE_SECRET_KEY)` and calls
     // transfers.createReversal (idempotency-keyed) before the ledger insert.
@@ -225,36 +224,46 @@ describe("POST /api/bookings/[id]/cancel — settled-payout clawback idempotency
     mocks.payoutMaybeSingle.mockResolvedValue(settledPayout);
   });
 
-  it("winner: reverses (idempotency-keyed), inserts the ledger row, and finalizes the commission", async () => {
-    // The idempotency_key + ON CONFLICT DO NOTHING make the INSERT the
-    // single-entry guard. The request that actually inserts (.select() → a row)
-    // is the one that records the §36 clawback and waives the commission.
-    ledgerReturns([{ id: "rev_1" }]);
-
+  it("reverses (idempotency-keyed), idempotently upserts the ledger row, and finalizes — no status-CAS", async () => {
+    // The unique idempotency_key + ON CONFLICT DO NOTHING make the INSERT the
+    // single-entry guard, so the duplicate negative-ledger row can't happen and
+    // the settled branch no longer needs a status-CAS.
     const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
 
     expect(res.status).toBe(200);
     expect((await res.json()).clawback).toBe("stripe_reversal_initiated");
     expect(mocks.stripeCreateReversal).toHaveBeenCalledTimes(1);
     expect(mocks.transitionCommissionState).toHaveBeenCalledTimes(1);
-    // The settled branch no longer uses a status-CAS (no 409 dead-end path).
+    // No status-CAS on the settled branch → no 409 dead-end path.
     expect(mocks.safeAwaitRowCount).not.toHaveBeenCalled();
   });
 
-  it("duplicate (concurrent cancel / post-crash retry): ON CONFLICT DO NOTHING → no double-count, no re-finalize, still 200", async () => {
-    // The losing/retrying request's upsert returns no row (the winner already
-    // wrote it). It must NOT insert a second negative ledger row and must NOT
-    // re-run the commission transition (which would re-trip the state-machine
-    // guard) — yet it still succeeds (200) rather than 409-dead-ending.
-    ledgerReturns([]);
+  it("crash-recovery / concurrent loser: an already-'waived' terminal self-transition is tolerated → still 200 (not 500)", async () => {
+    // Finalize runs unconditionally so a post-crash retry converges. If a
+    // concurrent winner already waived the commission, the terminal self-
+    // transition throws InvalidCommissionTransitionError(waived→waived); the
+    // route must swallow exactly that case and still return 200.
+    const { InvalidCommissionTransitionError } = await import("@/lib/commissions/state-machine");
+    mocks.transitionCommissionState.mockRejectedValueOnce(
+      new (InvalidCommissionTransitionError as new (f: string, t: string) => Error)("waived", "waived"),
+    );
 
     const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
 
     expect(res.status).toBe(200);
     expect((await res.json()).clawback).toBe("stripe_reversal_initiated");
-    // Reversal is idempotency-keyed → at most one actual reversal.
-    expect(mocks.stripeCreateReversal).toHaveBeenCalledTimes(1);
-    // Finalize is gated on having inserted → skipped on the duplicate path.
-    expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
+  });
+
+  it("re-throws (→ 500) when finalize fails for any other reason", async () => {
+    // A non-terminal-self-transition error (e.g. a different invalid transition,
+    // or a DB error) must surface as 500, not be swallowed.
+    const { InvalidCommissionTransitionError } = await import("@/lib/commissions/state-machine");
+    mocks.transitionCommissionState.mockRejectedValueOnce(
+      new (InvalidCommissionTransitionError as new (f: string, t: string) => Error)("received", "waived"),
+    );
+
+    const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
+
+    expect(res.status).toBe(500);
   });
 });
