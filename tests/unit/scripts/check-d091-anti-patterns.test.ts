@@ -11,6 +11,7 @@ import {
   detectUnboundedLimit,
   detectEventDataCast,
   detectCasRowcount,
+  detectCounterRmw,
   detectServiceRoleTenant,
   computeNewViolations,
 } from "../../../scripts/check-d091-anti-patterns";
@@ -72,6 +73,38 @@ describe("detectCasRowcount (2)", () => {
   });
   it("does NOT flag a plain (non-status) update", () => {
     expect(detectCasRowcount("f.ts", L(`await db.from("quotes").update({ title: t }).eq("id", id);`))).toEqual([]);
+  });
+});
+
+describe("detectCounterRmw (6)", () => {
+  it("flags a counter incremented from a previously-read value (the RMW double-spend bug)", () => {
+    const v = detectCounterRmw("f.ts", L(`await db.from("limits").update({ current_count: current + 1 }).eq("id", id);`));
+    expect(v.map((x) => x.id)).toEqual(["counter-rmw"]);
+  });
+  it("flags a balance decremented in app code (financial double-count)", () => {
+    const v = detectCounterRmw("f.ts", L(`await db.from("ledger").update({ balance: row.balance - amount }).eq("id", id);`));
+    expect(v.map((x) => x.id)).toEqual(["counter-rmw"]);
+  });
+  it("flags a multi-line update payload", () => {
+    const v = detectCounterRmw("f.ts", L(`await db.from("x").update({\n  submission_count: row.submission_count + 1,\n  last_at: now,\n}).eq("id", id);`));
+    expect(v.map((x) => x.id)).toEqual(["counter-rmw"]);
+  });
+  it("does NOT flag an absolute/literal assignment to a counter field", () => {
+    expect(detectCounterRmw("f.ts", L(`await db.from("x").update({ current_count: 0 }).eq("id", id);`))).toEqual([]);
+  });
+  it("does NOT flag a negative literal (no leading read value before the operator)", () => {
+    expect(detectCounterRmw("f.ts", L(`await db.from("x").update({ balance: -500 }).eq("id", id);`))).toEqual([]);
+  });
+  it("does NOT flag a non-counter field built from a string concat", () => {
+    expect(detectCounterRmw("f.ts", L(`await db.from("x").update({ title: prev + suffix }).eq("id", id);`))).toEqual([]);
+  });
+  it("honors the inline escape hatch (e.g. a derived absolute value, not an RMW)", () => {
+    expect(
+      detectCounterRmw(
+        "f.ts",
+        L(`// d091-allow:counter-rmw absolute total, not a read-modify-write of the stored counter\nawait db.from("x").update({ total_credits: subtotal + tax }).eq("id", id);`),
+      ),
+    ).toEqual([]);
   });
 });
 

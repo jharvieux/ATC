@@ -12,6 +12,11 @@
 // Detectors (id):
 //   secret-eq           (3) — ===/!== on a secret/token/key/hmac/signature var
 //   cas-rowcount        (2) — .update().eq("status",…) CAS without a row-count check
+//   counter-rmw         (6) — .update({ <counter/balance/quota>: <var> ± … }) — a
+//                             non-atomic read-modify-write; concurrent requests
+//                             double-spend. Use a DB-side atomic increment (RPC /
+//                             SQL expression) or a CAS reserve-row. (#1393/G3;
+//                             Day-1 F-pay-01 / F-sm-01 / F-sm-02.)
 //   unbounded-limit     (4) — .limit(n) with n > 1000 (PostgREST cap; paginate)
 //   event-data-cast     (5) — Inngest `event.data as` without a Zod parse
 //   service-role-tenant (1) — service-role .from(tenant-table) filtered but
@@ -168,6 +173,51 @@ export function detectCasRowcount(file: string, lines: string[]): Violation[] {
   return out;
 }
 
+// --- Detector (6): non-atomic read-modify-write on a counter/financial field ---
+// The dangerous form is `.update({ messages_used: usage + 1 })` /
+// `.update({ balance: current - amount })`: the new value is computed in app code
+// from a previously-read row value, so two concurrent requests both read the old
+// value and the second write clobbers the first → quota/limit overrun or money
+// double-counted (Day-1 F-pay-01, F-sm-01, F-sm-02). The fix is a DB-side atomic
+// increment (an RPC running `col = col + n` in SQL) or a CAS reserve-row.
+//
+// Heuristic: inside a `.update({…})` payload, a key whose name contains a
+// counter/quota/financial token, assigned to an expression that begins with an
+// identifier and applies `+`/`-`. The leading-identifier requirement keeps
+// absolute/literal assignments out (`amount: -500`, `count: 0`, `balance: row`),
+// firing only on the read-modify-write shape (`x + 1`, `row.count - n`). Derived
+// absolute computations on the same fields (`total: subtotal + tax`) are the
+// known false-positive class — suppress those with `d091-allow:counter-rmw <why>`.
+const COUNTER_KEY =
+  "[a-z_]*(?:count|used|usage|remaining|balance|attempts|quota|credits|tokens|spend|spent)[a-z_]*";
+const COUNTER_RMW_RE = new RegExp(
+  `\\b${COUNTER_KEY}\\s*:\\s*[A-Za-z_$][\\w.$]*\\s*[+\\-]`,
+  "i",
+);
+export function detectCounterRmw(file: string, lines: string[]): Violation[] {
+  const out: Violation[] = [];
+  lines.forEach((ln, i) => {
+    if (!/\.update\(/.test(ln)) return;
+    const chunk: string[] = [];
+    for (let j = i; j < lines.length && j < i + 12; j += 1) {
+      chunk.push(lines[j] ?? "");
+      if ((lines[j] ?? "").includes(";")) break;
+      if (j > i && (lines[j] ?? "").trim() === "") break;
+    }
+    const stmt = chunk.join("\n");
+    if (!COUNTER_RMW_RE.test(stmt)) return;
+    if (isInlineAllowed(lines, i, "counter-rmw")) return;
+    out.push({
+      id: "counter-rmw",
+      file,
+      line: i + 1,
+      snippet: ln.trim(),
+      why: "non-atomic read-modify-write on a counter/financial field — concurrent requests double-spend; use a DB-side atomic increment (RPC / SQL expression) or a CAS reserve-row",
+    });
+  });
+  return out;
+}
+
 // --- Detector (1): service-role .from(tenant-table) missing tenant_id ------
 export function detectServiceRoleTenant(file: string, lines: string[]): Violation[] {
   const text = lines.join("\n");
@@ -252,6 +302,7 @@ function main(): void {
     all.push(...detectUnboundedLimit(file, lines));
     all.push(...detectEventDataCast(file, lines));
     all.push(...detectCasRowcount(file, lines));
+    all.push(...detectCounterRmw(file, lines));
     all.push(...detectServiceRoleTenant(file, lines));
   }
 
