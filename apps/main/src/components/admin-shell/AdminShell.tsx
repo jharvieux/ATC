@@ -15,6 +15,7 @@ import { Menu, Moon, Sun } from "lucide-react";
 import { Logo } from "@/components/branding/Logo";
 import { LogoMark } from "@/components/branding/LogoMark";
 import { AdminSidebar } from "./AdminSidebar";
+import { AdminHeaderMenu } from "./AdminHeaderMenu";
 import { useTaTheme, ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import type { PlatformAdminRole } from "@/lib/auth/platform-admin-roles";
 
@@ -79,21 +80,24 @@ export function AdminShell({
             </span>
           </Link>
         </div>
-        <button
-          type="button"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-          title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
-          style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-          }}
-        >
-          {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+            title={`Switch to ${taTheme === "dark" ? "light" : "dark"} theme`}
+            style={{ ...ICON_BTN_STYLE, color: "var(--ta-text-soft)" }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+            }}
+          >
+            {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+          <AdminHeaderMenu />
+        </div>
       </header>
       <div className="flex flex-1">
         <AdminSidebar pinned={open} initialCollapsed={initialCollapsed} adminRole={adminRole} />
