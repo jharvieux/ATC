@@ -79,27 +79,15 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  // F-rag-wh-02 (#1385): replay protection. The HMAC proves the body was signed
-  // by a holder of RAG_WEBHOOK_SECRET; it does NOT prove freshness. A captured
-  // signed request can be re-delivered indefinitely. Dedup on a content fingerprint
-  // (message_id + signal_direction + sorted chunk_ids) with a 24h Redis TTL.
-  // A replayed delivery will have an identical fingerprint → SET NX returns 0 → 409.
+  // F-rag-wh-02 (#1385): build the dedup fingerprint here so the dedup check
+  // can run AFTER the insert succeeds (D-091 Pattern 10: idempotency rows must
+  // mean "fully processed," not "received"). The key is written only once the
+  // DB write is confirmed, so a failed insert leaves no fingerprint — the main
+  // app's retry can proceed cleanly.
   const fingerprint = createHash("sha256")
     .update(`${parsed.message_id ?? ""}:${parsed.signal_direction}:${[...parsed.chunk_ids].sort().join(",")}`)
     .digest("hex");
   const dedupKey = `feedback:dedup:${fingerprint}`;
-  try {
-    const redis = getRedis();
-    const inserted = await redis.set(dedupKey, "1", "EX", 86_400, "NX");
-    if (inserted === null) {
-      return Response.json({ error: "duplicate_delivery" }, { status: 409 });
-    }
-  } catch (err) {
-    // Redis unavailable: in production verifyEnvAtBoot enforces REDIS_URL, so
-    // this only occurs in local dev — fail open to keep the endpoint usable.
-    if (process.env.NODE_ENV === "production") throw err;
-    console.warn("[feedback] Redis unavailable for dedup — fail-open (non-production)");
-  }
 
   // §6.10 / D-087 rate limit, applied only to AUTHENTICATED requests now.
   // Bucket on the verified message_id (from the signed body) — never the
@@ -140,6 +128,21 @@ export async function POST(req: Request): Promise<Response> {
   if (error) {
     console.error("[feedback] insert error:", error.message);
     return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  // Write the dedup key only after the insert confirms success (D-091 Pattern 10).
+  // If Redis is unavailable: fail-open in non-production, fail-closed in production.
+  // Reverse risk (insert ok, Redis write fails): a replay would insert a duplicate row —
+  // far less harmful than stranding a legitimate event behind a 409 for 24h.
+  try {
+    const redis = getRedis();
+    const prevInserted = await redis.set(dedupKey, "1", "EX", 86_400, "NX");
+    if (prevInserted === null) {
+      return Response.json({ error: "duplicate_delivery" }, { status: 409 });
+    }
+  } catch (err) {
+    if (process.env.NODE_ENV === "production") throw err;
+    console.warn("[feedback] Redis unavailable for dedup — fail-open (non-production)");
   }
 
   return Response.json({
