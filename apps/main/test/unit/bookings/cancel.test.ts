@@ -80,9 +80,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
         });
         return self();
       }
-      // platform_revenue.insert + commissions.update — passed to safeAwait (mocked)
+      // platform_revenue.insert / .upsert().select() + commissions.update —
+      // passed to safeAwait (mocked), so the chain just needs to be navigable.
       return {
         insert: () => ({}),
+        upsert: () => ({ select: () => ({}) }),
         update: () => ({ eq: () => ({ eq: () => ({}) }) }),
       };
     },
@@ -91,6 +93,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
 
 vi.mock("@/lib/commissions/state-machine", () => ({
   transitionCommissionState: mocks.transitionCommissionState,
+  // Real-shaped error so the route's `err instanceof InvalidCommissionTransitionError`
+  // tolerance check works against the same class the tests construct.
+  InvalidCommissionTransitionError: class extends Error {
+    constructor(public readonly from: string, public readonly to: string) {
+      super(`Invalid commission state transition: ${from} → ${to}`);
+      this.name = "InvalidCommissionTransitionError";
+    }
+  },
 }));
 
 vi.mock("@/lib/audit/write", () => ({
@@ -195,7 +205,7 @@ describe("POST /api/bookings/[id]/cancel — CAS guard (#846)", () => {
   });
 });
 
-describe("POST /api/bookings/[id]/cancel — settled-payout clawback CAS (F-pay-01 / #1375)", () => {
+describe("POST /api/bookings/[id]/cancel — settled-payout clawback idempotency (F-pay-01 / #1391)", () => {
   const settledPayout = {
     data: {
       id: PAYOUT_ID,
@@ -208,64 +218,52 @@ describe("POST /api/bookings/[id]/cancel — settled-payout clawback CAS (F-pay-
   };
 
   beforeEach(() => {
-    // The settled branch instantiates `new Stripe(STRIPE_SECRET_KEY)` and
-    // calls transfers.createReversal BEFORE the CAS claim, so the key must
-    // be present for these cases to reach the guard.
+    // The settled branch instantiates `new Stripe(STRIPE_SECRET_KEY)` and calls
+    // transfers.createReversal (idempotency-keyed) before the ledger insert.
     process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
     mocks.payoutMaybeSingle.mockResolvedValue(settledPayout);
   });
 
-  it("returns 409 on a settled-payout CAS-miss, inserting no duplicate clawback ledger row", async () => {
-    // A settled payout ('paid', stripe_transfer_id set) takes the reversal +
-    // negative-ledger branch. Before F-pay-01 that branch had NO re-entry guard,
-    // so two concurrent cancels each inserted a negative platform_revenue row —
-    // double-counting the clawback in §36's report. The status-CAS
-    // (.eq("status", payout.status) → 'reversed', context "payout_records.cas_reverse")
-    // makes the loser match 0 rows → 409 after the idempotency-keyed reversal but
-    // before the ledger write. WHY: this cannot pass without the guard.
-    mocks.safeAwaitRowCount.mockRejectedValue(
-      new SupabaseMutationError("payout_records.cas_reverse", {
-        message: "Expected 1 row(s); got 0. CAS guard or constraint mismatch.",
-        code: "ROW_COUNT_MISMATCH",
-        hint: "",
-        details: null,
-        name: "RowCountMismatch",
-      } as never),
+  it("reverses (idempotency-keyed), idempotently upserts the ledger row, and finalizes — no status-CAS", async () => {
+    // The unique idempotency_key + ON CONFLICT DO NOTHING make the INSERT the
+    // single-entry guard, so the duplicate negative-ledger row can't happen and
+    // the settled branch no longer needs a status-CAS.
+    const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).clawback).toBe("stripe_reversal_initiated");
+    expect(mocks.stripeCreateReversal).toHaveBeenCalledTimes(1);
+    expect(mocks.transitionCommissionState).toHaveBeenCalledTimes(1);
+    // No status-CAS on the settled branch → no 409 dead-end path.
+    expect(mocks.safeAwaitRowCount).not.toHaveBeenCalled();
+  });
+
+  it("crash-recovery / concurrent loser: an already-'waived' terminal self-transition is tolerated → still 200 (not 500)", async () => {
+    // Finalize runs unconditionally so a post-crash retry converges. If a
+    // concurrent winner already waived the commission, the terminal self-
+    // transition throws InvalidCommissionTransitionError(waived→waived); the
+    // route must swallow exactly that case and still return 200.
+    const { InvalidCommissionTransitionError } = await import("@/lib/commissions/state-machine");
+    mocks.transitionCommissionState.mockRejectedValueOnce(
+      new (InvalidCommissionTransitionError as new (f: string, t: string) => Error)("waived", "waived"),
     );
 
     const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("payout_state_changed");
-    // Ordering (D-091 #10): the idempotency-keyed reversal ran first; the loser's
-    // call collapses to the same reversal, so no double reversal.
-    expect(mocks.stripeCreateReversal).toHaveBeenCalledTimes(1);
-    // The CAS fired on the SETTLED branch (context cas_reverse), not the pending
-    // #846 branch (cas_cancel) — proves we exercised this code path.
-    expect(mocks.safeAwaitRowCount).toHaveBeenCalledTimes(1);
-    expect(mocks.safeAwaitRowCount.mock.calls[0]?.[1]).toBe("payout_records.cas_reverse");
-    // Loser performed no ledger insert / commission transition.
-    expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect((await res.json()).clawback).toBe("stripe_reversal_initiated");
   });
 
-  it("re-throws (→ 500) when the settled-branch CAS fails for a non-concurrency DB reason", async () => {
-    // A non-ROW_COUNT_MISMATCH error on the settled CAS (e.g. connection reset)
-    // must surface as 500, not be silently swallowed into a 409 — same posture
-    // as the pending branch (#846).
-    mocks.safeAwaitRowCount.mockRejectedValue(
-      new SupabaseMutationError("payout_records.cas_reverse", {
-        message: "connection reset by server",
-        code: "CONNECTION_ERROR",
-        hint: "",
-        details: null,
-        name: "DBError",
-      } as never),
+  it("re-throws (→ 500) when finalize fails for any other reason", async () => {
+    // A non-terminal-self-transition error (e.g. a different invalid transition,
+    // or a DB error) must surface as 500, not be swallowed.
+    const { InvalidCommissionTransitionError } = await import("@/lib/commissions/state-machine");
+    mocks.transitionCommissionState.mockRejectedValueOnce(
+      new (InvalidCommissionTransitionError as new (f: string, t: string) => Error)("received", "waived"),
     );
 
     const res = await POST(makeReq(), { params: Promise.resolve({ id: BOOKING_ID }) });
 
     expect(res.status).toBe(500);
-    expect(mocks.transitionCommissionState).not.toHaveBeenCalled();
   });
 });

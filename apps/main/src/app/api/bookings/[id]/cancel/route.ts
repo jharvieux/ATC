@@ -10,7 +10,7 @@ import Stripe from "stripe";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
-import { transitionCommissionState } from "@/lib/commissions/state-machine";
+import { transitionCommissionState, InvalidCommissionTransitionError } from "@/lib/commissions/state-machine";
 import { writeAuditLog } from "@/lib/audit/write";
 import { safeAwait, safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
@@ -246,24 +246,19 @@ export async function POST(
       }
 
       if (payout.stripe_transfer_id) {
-        // F-pay-01 / #1375 — settled-payout clawback must be single-entry:
-        // platform_revenue has no idempotency key / unique constraint, so before
-        // this guard two concurrent cancels (double-click / retry / parallel
-        // tabs) both inserted a negative ledger row, double-counting the clawback
-        // in §36's "Lost revenue from cancellations" report.
+        // F-pay-01 (#1375 / #1391) — settled-payout clawback must be
+        // single-entry AND crash-recoverable. The unique idempotency_key on
+        // platform_revenue makes the ledger INSERT itself the guard
+        // (ON CONFLICT DO NOTHING), so correctness no longer depends on payout
+        // status ordering.
         //
-        // Order matters (D-091 #10 — idempotency/ordering): the Stripe reversal
-        // runs FIRST (it is idempotency-keyed, so concurrent duplicates collapse
-        // to one actual reversal and a failed call leaves the payout untouched
-        // and retryable). Only AFTER the reversal succeeds do we claim the row
-        // with a status-CAS (.eq("status", payout.status) → 'reversed'): the
-        // single winner inserts the ledger row; the loser matches 0 rows → 409.
-        // Flipping to the terminal 'reversed' status before the reversal would
-        // strand the payout (reversed-but-not-reversed, retries dead-ended at
-        // 409) if Stripe failed. NOTE: a crash between the CAS and the ledger
-        // insert still strands a tiny window — the fully-robust fix is a unique
-        // idempotency key on platform_revenue (ON CONFLICT DO NOTHING), tracked
-        // as a follow-up migration in #1391.
+        // Order (D-091 #10): Stripe reversal FIRST (idempotency-keyed, so
+        // concurrent duplicates collapse to one and a failed call leaves the
+        // payout untouched + retryable) → idempotent ledger insert (the
+        // single-entry guard) → idempotent payout status flip → idempotent
+        // finalize. A crash anywhere in this branch is recoverable on retry:
+        // the reversal no-ops, the ledger upsert DO-NOTHINGs (no duplicate),
+        // the status flip converges, and the finalize re-runs idempotently.
         const stripeKey = process.env.STRIPE_SECRET_KEY;
         if (!stripeKey) throw new Error("STRIPE_SECRET_KEY not set");
         const stripe = new Stripe(stripeKey);
@@ -275,43 +270,55 @@ export async function POST(
           { idempotencyKey: reversalKey },
         );
 
-        try {
-          await safeAwaitRowCount(
-            adminDb
-              .from("payout_records")
-              .update({ status: "reversed", reversed_at: new Date().toISOString() })
-              .eq("tenant_id", ctx.tenant_id)
-              .eq("id", payout.id)
-              .eq("status", payout.status)
-              .select("id"),
-            "payout_records.cas_reverse",
-            1,
-          );
-        } catch (err) {
-          if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
-            return Response.json(
-              { error: "payout_state_changed", message: "Payout status changed concurrently — retry" },
-              { status: 409 },
-            );
-          }
-          throw err;
-        }
+        // The single-entry guard: ignoreDuplicates → ON CONFLICT DO NOTHING on
+        // the unique idempotency_key. A concurrent cancel / post-crash retry can
+        // re-run this with no duplicate negative ledger row.
+        await safeAwait(
+          adminDb
+            .from("platform_revenue")
+            .upsert(
+              {
+                tenant_id: ctx.tenant_id,
+                commission_id: commission.id,
+                amount_cents: (-BigInt(commission.platform_retained_cents)).toString(),
+                currency: commission.currency,
+                tier_rate_applied: commission.platform_split_rate,
+                notes: `stripe_reversal:${reversalKey}`,
+                idempotency_key: reversalKey,
+              },
+              { onConflict: "idempotency_key", ignoreDuplicates: true },
+            ),
+          "platform_revenue.insert",
+        );
 
-        // Negative revenue row for the reversal
-        await safeAwait(adminDb.from("platform_revenue").insert({
-          tenant_id: ctx.tenant_id,
-          commission_id: commission.id,
-          amount_cents: (-BigInt(commission.platform_retained_cents)).toString(),
-          currency: commission.currency,
-          tier_rate_applied: commission.platform_split_rate,
-          notes: `stripe_reversal:${reversalKey}`,
-        }), "platform_revenue.insert");
+        // Converge the payout to reversed — idempotent (no status-CAS), so a
+        // retry never dead-ends at 409.
+        await safeAwait(
+          adminDb
+            .from("payout_records")
+            .update({ status: "reversed", reversed_at: new Date().toISOString() })
+            .eq("tenant_id", ctx.tenant_id)
+            .eq("id", payout.id),
+          "payout_records.update.reversed",
+        );
 
-        // §34.8.2 — record clawback for §36 report.
+        // Finalize (§34.8.2): record the clawback for §36 + waive the
+        // commission. Run unconditionally so a post-crash retry converges — both
+        // steps are idempotent: writeClawbackFields writes fixed values, and a
+        // commission already 'waived' by a concurrent winner makes the terminal
+        // self-transition a tolerated no-op (reaching this branch means it
+        // wasn't 'waived' at entry — §14.9 early-returns otherwise — so the
+        // throw only happens in the concurrent-loser race).
         const receivedAmount = commission.received_commission_cents ?? commission.gross_commission_cents;
         await writeClawbackFields(adminDb, commission.id, ctx.tenant_id, receivedAmount, `stripe_reversal:${reversalKey}`);
-
-        await transitionCommissionState(commission.id, "waived", { reason: "stripe_reversal" });
+        try {
+          await transitionCommissionState(commission.id, "waived", { reason: "stripe_reversal" });
+        } catch (err) {
+          if (!(err instanceof InvalidCommissionTransitionError && err.from === "waived" && err.to === "waived")) {
+            throw err;
+          }
+          // Already waived by a concurrent winner — idempotent no-op.
+        }
         return Response.json({ ok: true, clawback: "stripe_reversal_initiated" });
       }
     }
