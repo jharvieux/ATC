@@ -54,4 +54,22 @@ describe("findInMemoryLimiters", () => {
   it("matches an exported limiter declaration", () => {
     expect(findInMemoryLimiters("r.ts", `export const requestRateLimitMap = new Map();`).map((h) => h.varName)).toEqual(["requestRateLimitMap"]);
   });
+
+  // #1418 — regen/cooldown/window were missing from the token set
+  it("flags a regenMap (per-instance regen rate limiter)", () => {
+    expect(findInMemoryLimiters("r.ts", `const ipRegenMap = new Map<string, number>();`).map((h) => h.varName)).toEqual(["ipRegenMap"]);
+  });
+
+  it("flags a cooldownMap (per-instance cooldown limiter)", () => {
+    expect(findInMemoryLimiters("r.ts", `const emailCooldownMap = new Map<string, number>();`).map((h) => h.varName)).toEqual(["emailCooldownMap"]);
+  });
+
+  it("flags a windowMap (per-instance sliding-window limiter)", () => {
+    expect(findInMemoryLimiters("r.ts", `const requestWindowMap = new Map<string, number[]>();`).map((h) => h.varName)).toEqual(["requestWindowMap"]);
+  });
+
+  it("honors allow-comment on regen/cooldown too", () => {
+    const src = `// inmem-ratelimit-allow: single-instance cron\nconst ipRegenMap = new Map<string, number>();`;
+    expect(findInMemoryLimiters("r.ts", src)).toEqual([]);
+  });
 });

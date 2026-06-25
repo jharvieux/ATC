@@ -39,6 +39,7 @@ vi.mock("@/lib/groups/hero-image", () => ({
 
 vi.mock("@/lib/abuse/snapshot", () => ({
   loadTenantSnapshot: mocks.loadTenantSnapshot,
+  evictTenantSnapshot: () => {},
 }));
 
 vi.mock("@/lib/abuse/counters", () => ({

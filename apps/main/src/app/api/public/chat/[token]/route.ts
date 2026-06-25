@@ -18,10 +18,12 @@
 //      instruction and loop; if escalate, surface escalation copy.
 //   4. Persist supervisor_findings on the assistant message.
 //
-// Rate limiting: per-token in-memory counter — 30 messages per token per
-// hour. Token-gated access is itself a rate limit (one token = one
-// customer engagement). If a token is being scraped, that's a separate
-// abuse signal handled elsewhere.
+// Rate limiting: DB-backed counter via conversations + messages, enforced
+// against the token's conversation before the LLM call (#1386 / F-tok-01).
+// 30 user messages per token per hour. A conversation row is required to
+// exist for the counter to matter, so a first-ever message is always allowed
+// (conversation not yet created) — after that the DB count is authoritative
+// and enforces the cap across all Fluid Compute instances.
 
 import { createHash, randomUUID } from "node:crypto";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
@@ -41,22 +43,8 @@ const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 1024;
 const MAX_REGEN_ATTEMPTS = 2; // matches the regular chat budget
 
-const RATE_WINDOW_MS = 60 * 60 * 1000;
 const RATE_LIMIT_PER_WINDOW = 30;
-const rateMap: Map<string, number[]> = new Map();
-
-function checkRateLimit(token: string): { allowed: boolean; remaining: number } {
-  const now = Date.now();
-  const cutoff = now - RATE_WINDOW_MS;
-  const hits = (rateMap.get(token) ?? []).filter((t) => t > cutoff);
-  if (hits.length >= RATE_LIMIT_PER_WINDOW) {
-    rateMap.set(token, hits);
-    return { allowed: false, remaining: 0 };
-  }
-  hits.push(now);
-  rateMap.set(token, hits);
-  return { allowed: true, remaining: RATE_LIMIT_PER_WINDOW - hits.length };
-}
+const RATE_WINDOW_SECONDS = 60 * 60; // 1 hour
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -99,15 +87,35 @@ export async function POST(
     return Response.json({ error: "resource_unavailable" }, { status: 410 });
   }
 
-  const rl = checkRateLimit(token);
-  if (!rl.allowed) {
-    return Response.json(
-      {
-        error: "rate_limit_exceeded",
-        message: "You're sending messages a bit fast. Take a quick break and try again in an hour.",
-      },
-      { status: 429 },
-    );
+  // F-tok-01 (#1386): DB-backed rate limit — counts user messages in the last
+  // hour for this token's conversation. Shared across all instances.
+  // Two-step: look up the conversation ID for this token, then count messages.
+  // A first-ever message (no conversation yet) always passes — count is 0.
+  const tokenHash = sha256Hex(token);
+  const { data: convRow } = await svc
+    .from("conversations")
+    .select("id")
+    .eq("tenant_id", resolved.tenant_id)
+    .eq("public_access_token_hash", tokenHash)
+    .maybeSingle();
+  if (convRow) {
+    const hourAgo = new Date(Date.now() - RATE_WINDOW_SECONDS * 1000).toISOString();
+    const { count: recentCount } = await svc
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", resolved.tenant_id)
+      .eq("conversation_id", (convRow as { id: string }).id)
+      .eq("role", "user")
+      .gte("created_at", hourAgo);
+    if ((recentCount ?? 0) >= RATE_LIMIT_PER_WINDOW) {
+      return Response.json(
+        {
+          error: "rate_limit_exceeded",
+          message: "You're sending messages a bit fast. Take a quick break and try again in an hour.",
+        },
+        { status: 429 },
+      );
+    }
   }
 
   let body: RequestBody;
@@ -125,8 +133,7 @@ export async function POST(
     return Response.json({ error: "message_too_long" }, { status: 400 });
   }
 
-  // F1 — hash the token for a stable conversation key.
-  const tokenHash = sha256Hex(token);
+  // tokenHash already computed above for the rate-limit query.
   const ctx = tenantContextForPublicTokenChat({
     tenant_id: resolved.tenant_id,
     token_hash: tokenHash,

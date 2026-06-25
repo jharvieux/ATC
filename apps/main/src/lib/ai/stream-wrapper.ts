@@ -34,6 +34,7 @@ import {
   type AICallPurpose,
   type InstrumentedClaudeArgs,
 } from "./call-wrapper";
+import { evictTenantSnapshot } from "@/lib/abuse/snapshot";
 
 export interface InstrumentedClaudeStreamArgs extends InstrumentedClaudeArgs {
   // Caller may abort the stream early (per-sentence supervisor flagged something
@@ -244,12 +245,13 @@ export function instrumentedClaudeStream(
           cost_cents,
         });
 
-        void checkStateTransitionIfNeeded({
+        await checkStateTransitionIfNeeded({
           db,
           tenant: snapshot.tenant,
           dimension: "ai_cost",
           metric_value: cost_cents,
         }).catch((err) => console.warn("[stream-wrapper] state-transition check failed:", err));
+        evictTenantSnapshot(args.tenant_id);
 
         streamEnded = true;
         notify();

@@ -29,6 +29,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({
     rag_storage_state: "ok",
   }),
   _resetSnapshotCacheForTests: () => {},
+  evictTenantSnapshot: () => {},
 }));
 
 vi.mock("@/lib/db/service-role-client", () => ({

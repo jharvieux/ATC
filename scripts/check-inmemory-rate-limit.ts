@@ -31,8 +31,9 @@ const SCAN_DIRS = ["apps/main/src", "apps/rag/src"];
 // Column-0 declaration of a Map/Set whose variable name reads like a limiter
 // store. `^(?!\s)` anchors to module scope — an in-function cache is indented and
 // would not survive across requests anyway, so it isn't the bug we hunt.
+// #1418: added regen|cooldown|window — same semantics, previously slipped the guard.
 const LIMITER_DECL_RE =
-  /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_]*(?:rate|limit|throttle|attempt|bucket|quota|hits)[A-Za-z0-9_]*)\b[^=]*=\s*new\s+(?:Map|Set)\b/i;
+  /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z0-9_]*(?:rate|limit|throttle|attempt|bucket|quota|hits|regen|cooldown|window)[A-Za-z0-9_]*)\b[^=]*=\s*new\s+(?:Map|Set)\b/i;
 
 export interface RateLimitHit {
   key: string; // <relpath>::<varName>

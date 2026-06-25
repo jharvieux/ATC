@@ -66,6 +66,7 @@ vi.mock("@/lib/abuse/snapshot", () => ({
     rag_storage_state: "ok",
   }),
   _resetSnapshotCacheForTests: () => {},
+  evictTenantSnapshot: () => {},
 }));
 
 // Chainable service-role client stub. The done-promise logging path does an

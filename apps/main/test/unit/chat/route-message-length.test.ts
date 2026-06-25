@@ -45,7 +45,7 @@ vi.mock("@/lib/ai/display-assets-block", () => ({ buildDisplayableAssetsBlock: v
 vi.mock("@/lib/ai/hallucination-defense/asset-id-validation", () => ({ runAssetIdValidationLayer: vi.fn() }));
 vi.mock("@/lib/help-ai/bug-intent-recognizer", () => ({ detectBugIntent: vi.fn() }));
 vi.mock("@/lib/chat/customer-context", () => ({ resolveCustomerContext: vi.fn() }));
-vi.mock("@/lib/abuse/snapshot", () => ({ loadTenantSnapshot: vi.fn() }));
+vi.mock("@/lib/abuse/snapshot", () => ({ loadTenantSnapshot: vi.fn(), evictTenantSnapshot: () => {} }));
 vi.mock("@/lib/abuse/counters", () => ({ incrementChatMessages: vi.fn() }));
 vi.mock("@/lib/supervisor/run-supervisor", () => ({
   runSupervisor: vi.fn(),
