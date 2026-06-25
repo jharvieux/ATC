@@ -1,11 +1,9 @@
-# Session state — last updated 2026-06-25 19:45 UTC
+# Session state — last updated 2026-06-25 21:00 UTC
 
 ## Just completed
 
-- **#1402** — SSRF DNS-rebinding TOCTOU fix: `validateOutboundUrlResolved` returns `pinnedIp`/`pinnedFamily`; `fetchGuarded` uses `node:http`/`node:https` `request()` with a `lookup` callback that pins the pre-validated IP, closing the window between DNS check and connection.
-- **#1388** — `IngestRequestSchema.raw_content` capped at `.max(500_000)`. Backward-compat 422 guard added to the approve route for pre-existing oversized queue rows.
-- **#1395** — Error-egress baseline burned from 65 → 0 across three PRs (#1427 by agent, #1428 by agent, #1430 by this session). All raw `.message`/`.details` API response egress sites now route through `dbErrorResponse()`. Created `apps/rag/src/lib/api/db-error-response.ts`.
-- All three issues closed. MEMORY.md D-299 added. PR #1430 merged.
+- **#1429** — Replaced two `String(err)` catch blocks in `resource-utilization/route.ts` PUT handler with `dbErrorResponse(err)`. Extended `check-error-message-egress.ts` with `EGRESS_STRING_RE` to catch `String(err)` patterns going forward. Baselined 40 pre-existing `String(err)` sites as frozen debt. Added 3 test cases for the new regex branch. PR #1432 merged.
+- **#1402 / #1388 / #1395** — All LOW security issues closed and merged (prior context window, PRs #1427/#1428/#1430).
 
 ## In flight
 
@@ -13,7 +11,7 @@ Nothing in flight — clean checkpoint.
 
 ## Next step
 
-Run auto-triage at next session start to pick up open issues. Check #1429 (two `String(err)` leaks in `resource-utilization/route.ts` PUT handler, surfaced by d091-reviewer, not caught by the guard regex — small sonnet fix).
+Run auto-triage at next session start to pick up any new open issues labeled `sonnet` or `opus`.
 
 ## Blocked on user
 
@@ -21,4 +19,4 @@ Nothing.
 
 ## Open questions
 
-- #1429: `String(err)` leaks in `resource-utilization/route.ts:269,303` PUT handler (`resend-cost` and `apify-budget` catch blocks). Guard regex doesn't catch `String(err)` indirection. Small fix, labeled sonnet.
+- 40 pre-existing `String(err)` egress sites now baselined in `scripts/error-message-egress-baseline.txt`. Frozen debt on the same burn-down track as #1395. No tracking issue yet — may be worth opening one.
