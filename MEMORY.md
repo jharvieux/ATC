@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-299 — 2026-06-25 — LOW security batch shipped: #1402 DNS-pinned SSRF, #1388 ingest size cap, #1395 error-egress baseline burned to zero
+
+**Decision.** Shipped three LOW-priority security issues from the epic #1393 / #1381 track.
+
+**#1402 (SSRF DNS-rebinding TOCTOU):** `validateOutboundUrlResolved` now returns `pinnedIp`/`pinnedFamily`. `fetchGuarded` routes all connections through `fetchPinnedHop` which overrides the kernel `lookup` callback on `node:http`/`node:https` request to return only the pre-validated address — DNS cannot rebind between check and connect. No new runtime dependencies (used Node.js builtins).
+
+**#1388 (ingest content size cap):** Added `.max(500_000)` to `IngestRequestSchema.raw_content`. Added a 422 guard in the approve route for queue rows stored before the cap — without it they would silently fail the ingest POST and be permanently unapprovable.
+
+**#1395 (error-egress burn-down):** All 65 pre-existing raw `.message`/`.details` API response egress sites routed through `dbErrorResponse()` or an equivalent ref-logged response. Three PRs (#1427, #1428, #1430) covered the batch. Baseline file `scripts/error-message-egress-baseline.txt` is now empty. Also created `apps/rag/src/lib/api/db-error-response.ts` (the rag app lacked this helper).
+
+**Why deferred to LOW:** None of these were direct user-data exposures. SSRF required a live DNS rebind attack; ingest cap was an ops concern; error egress was schema-disclosure not credential-disclosure.
+
+---
+
 ## D-298 — 2026-06-25 — Overnight opus batch: 4 of 6 engineering-ready opus issues shipped; 2 spec-features skipped (don't-guess-at-money)
 
 **Decision.** Operator authorized an autonomous overnight run of all engineering-ready `opus`-labelled issues (migrations applied to staging/test only, prod gated; merge each to dev). Shipped 4 (3 PRs), skipped 2 with documented blockers.
