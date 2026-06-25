@@ -157,6 +157,13 @@ jobs:
         # Root cause of F-tok-01 / F-rag-wh-01. Pre-existing limiters baselined.
         run: pnpm check:rate-limit-store
 
+      - name: Webhook replay-protection guard (#1393/G6)
+        # Fails on a NEW inbound-signature webhook handler with no replay defense
+        # (timestamp tolerance / dedup row / nonce). A valid signature proves the
+        # body was signed, not that it's fresh — a captured delivery can be
+        # re-POSTed. Root cause of F-rag-wh-02. Pre-existing gaps baselined.
+        run: pnpm check:webhook-replay
+
       - name: AI-purpose constraint guard (#1271)
         # Fails if AICallPurpose union in call-wrapper.ts diverges from the
         # ai_call_log_purpose_check CHECK constraint in the latest migration.
