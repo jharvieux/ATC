@@ -12,6 +12,7 @@ import { encryptCredential } from "@/lib/crypto/credential-cipher";
 import { getAdapter, listActiveAdapters } from "@/lib/host-adapters/registry";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   try {
@@ -96,10 +97,7 @@ export async function POST(req: Request): Promise<Response> {
       upsertError = error;
     }
 
-    if (upsertError) {
-      console.error("[host-config] credential upsert failed", { tenant_id: ctx.tenant_id, adapter_id }, upsertError);
-      return Response.json({ error: "Failed to save credentials." }, { status: 500 });
-    }
+    if (upsertError) return dbErrorResponse(upsertError);
 
     // Verify credentials by invoking the adapter's healthCheck
     let newStatus: "verified" | "rejected" = "rejected";
