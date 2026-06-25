@@ -10,6 +10,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { sendOperatorAlert } from "@/lib/monitoring/send-operator-alert";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
   const params = await props.params;
@@ -24,7 +25,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       .update({ escalated_to_human: true, escalation_reason: reason })
       .eq("id", params.id);
     if (error) {
-      return Response.json({ error: "db_error", message: error.message }, { status: 500 });
+      return dbErrorResponse(error);
     }
 
     await writeAuditLog({

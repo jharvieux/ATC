@@ -12,6 +12,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { inngest } from "@/inngest/client";
 import { respondToAuthError } from "@/lib/auth/respond";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const VALID_FORMATS = new Set(["pdf", "docx"]);
 
@@ -67,7 +68,7 @@ export async function POST(req: Request): Promise<Response> {
       .select("id")
       .single();
     if (insertErr || !placeholder) {
-      return Response.json({ error: "db_error", message: insertErr?.message ?? "unknown" }, { status: 500 });
+      return dbErrorResponse(insertErr);
     }
     const job_id = (placeholder as { id: string }).id;
 

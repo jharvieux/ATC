@@ -19,6 +19,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const BodySchema = z.object({
   anonymous_session_id: z.string().uuid(),
@@ -53,7 +54,7 @@ export async function POST(req: Request): Promise<Response> {
       .maybeSingle();
 
     if (readErr) {
-      return Response.json({ error: "session_lookup_failed", detail: readErr.message }, { status: 500 });
+      return dbErrorResponse(readErr);
     }
     if (!session) {
       // Could be "doesn't exist" or "belongs to a different tenant" — same

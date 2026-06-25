@@ -164,7 +164,7 @@ describe("transfer-session undo — DB lookup", () => {
     const res = await POST(req());
     expect(res.status).toBe(500);
     const body = await res.json() as { error: string };
-    expect(body.error).toBe("session_lookup_failed");
+    expect(body.error).toBe("db_error");
     expect(h.writeAuditCalled).toBe(false);
   });
 
