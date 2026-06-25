@@ -49,6 +49,9 @@ export const POST = withServiceAuth(async (req, ctx) => {
   }
 
   const content = body.edits?.content ?? item.raw_content;
+  if (content.length > 500_000) {
+    return Response.json({ error: "content_too_large", max_bytes: 500_000, actual_bytes: content.length }, { status: 422 });
+  }
   const category = body.edits?.category ?? item.raw_metadata?.category ?? "general";
 
   // Embed. Batch mode (issue #686): omit embedding from insert (NULL means
