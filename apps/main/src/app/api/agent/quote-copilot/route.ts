@@ -92,10 +92,8 @@ export async function POST(req: Request): Promise<Response> {
   try {
     body = Body.parse(await req.json());
   } catch (err) {
-    return Response.json(
-      { error: "invalid_body", detail: err instanceof Error ? err.message : "parse_failed" },
-      { status: 400 },
-    );
+    console.error("[quote-copilot] invalid_body", err);
+    return Response.json({ error: "invalid_body" }, { status: 400 });
   }
 
   const db = tenantClient(auth.ctx);
@@ -169,7 +167,9 @@ export async function POST(req: Request): Promise<Response> {
         { status: 503 },
       );
     }
-    return Response.json({ error: "ai_call_failed", detail: msg }, { status: 500 });
+    const ref = crypto.randomUUID();
+    console.error("[quote-copilot] ref=%s ai_call_failed", ref, err);
+    return Response.json({ error: "ai_call_failed", ref }, { status: 500 });
   }
 }
 

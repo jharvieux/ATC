@@ -14,17 +14,7 @@
 1 apps/main/src/app/api/admin/rag/authority/list/route.ts::error: err instanceof Error ? err.message
 1 apps/main/src/app/api/admin/resource-utilization/route.ts::error: err instanceof Error ? err.message
 1 apps/main/src/app/api/admin/tenants/[id]/custom-domain/verify/route.ts::error: err.message
-1 apps/main/src/app/api/agent/quote-copilot/route.ts::detail: err instanceof Error ? err.message
 1 apps/main/src/app/api/auth/transfer-session/undo/route.ts::detail: readErr.message
-1 apps/main/src/app/api/bookings/[id]/modify/route.ts::detail: tenantErr?.message
-1 apps/main/src/app/api/bookings/[id]/modify/route.ts::error: result.error.message
-1 apps/main/src/app/api/bookings/[id]/submit/route.ts::detail: tenantErr?.message
-1 apps/main/src/app/api/bookings/[id]/submit/route.ts::error: `Host adapter error: ${submitResult.error.message
-1 apps/main/src/app/api/bookings/route.ts::detail: contactErr.message
-1 apps/main/src/app/api/bookings/route.ts::detail: matchErr.message
-1 apps/main/src/app/api/bookings/route.ts::detail: parsed.error.message
-1 apps/main/src/app/api/bookings/route.ts::detail: queryErr.message
-1 apps/main/src/app/api/groups/invite/[token]/route.ts::detail: refetchError.message
 1 apps/main/src/app/api/help/bugs/[id]/route.ts::message: error.message
 1 apps/main/src/app/api/help/bugs/route.ts::message: error.message
 1 apps/main/src/app/api/help/bugs/route.ts::message: insertErr?.message
@@ -40,20 +30,6 @@
 1 apps/main/src/app/api/help/sessions/[id]/message/route.ts::error: doneErr instanceof Error ? doneErr.message
 1 apps/main/src/app/api/help/sessions/[id]/message/route.ts::error: streamErr instanceof Error ? streamErr.message
 1 apps/main/src/app/api/help/sessions/route.ts::message: error?.message
-1 apps/main/src/app/api/imports/manual/route.ts::error: `queue_insert_failed: ${insErr?.message
-1 apps/main/src/app/api/imports/source-file/route.ts::error: `signing_failed: ${error?.message
-1 apps/main/src/app/api/imports/upload/route.ts::error: `queue_insert_failed: ${insErr?.message
-1 apps/main/src/app/api/imports/upload/route.ts::error: `upload_failed: ${upErr.message
-1 apps/main/src/app/api/itineraries/[id]/route.ts::error: `pdf_render_failed:${err instanceof Error ? err.message
-1 apps/main/src/app/api/itineraries/[id]/route.ts::error: `pdf_upload_failed:${upErr.message
-1 apps/main/src/app/api/quotes/[id]/pdf/route.ts::error: loaded.message
-1 apps/main/src/app/api/quotes/[id]/send/route.ts::error: loaded.message
-1 apps/main/src/app/api/rag/submit/batch/route.ts::detail: error.message
-1 apps/main/src/app/api/rag/submit/file/route.ts::detail: insertErr.message
-1 apps/main/src/app/api/rag/submit/file/route.ts::detail: uploadErr.message
-1 apps/main/src/app/api/tenant/ai-config/cost-projection/route.ts::detail: error.message
-1 apps/main/src/app/api/tenant/branding/email-domain/verify/route.ts::detail: brandingErr.message
-1 apps/main/src/app/api/tenant/host-config/route.ts::error: upsertError.message
 1 apps/main/src/app/api/webhooks/gmailpubsub/route.ts::error: err instanceof Error ? err.message
 1 apps/main/src/app/api/webhooks/gmailpubsub/route.ts::message: err instanceof Error ? err.message
 2 apps/rag/src/app/api/admin/demote-chunk/route.ts::error: error.message

@@ -318,7 +318,7 @@ describe("POST /api/bookings/[id]/submit — tenant lookup (fail-closed)", () =>
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
     const body = await res.json() as { error: string };
-    expect(body.error).toBe("tenant_lookup_failed");
+    expect(body.error).toBe("db_error");
   });
 });
 
@@ -380,7 +380,7 @@ describe("POST /api/bookings/[id]/submit — host adapter failure", () => {
 
     expect(res.status).toBe(502);
     const body = await res.json() as { error: string; code: string };
-    expect(body.error).toContain("host timeout");
+    expect(body.error).toBe("host_adapter_error");
 
     // CAS revert: safeAwait called with the revert label
     expect(mocks.safeAwait).toHaveBeenCalledWith(
@@ -397,7 +397,7 @@ describe("POST /api/bookings/[id]/submit — commission record", () => {
     mocks.commissionsInsert.mockResolvedValue({ data: null, error: { message: "constraint violation" } });
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
-    expect((await res.json() as { error: string }).error).toMatch(/commission/i);
+    expect((await res.json() as { error: string }).error).toBe("db_error");
   });
 });
 

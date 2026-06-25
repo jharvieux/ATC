@@ -39,9 +39,11 @@ export async function POST(
     const loaded = await loadQuoteRow({ db, quoteId: id, tenant_id: ctx.tenant_id });
     if (!loaded.ok) {
       if (loaded.status !== 500) {
-        return Response.json({ error: loaded.message }, { status: loaded.status });
+        return Response.json({ error: "quote_not_found" }, { status: loaded.status });
       }
-      return dbErrorResponse(loaded.message);
+      const ref = crypto.randomUUID();
+      console.error("[quotes/send] ref=%s quote_load_failed", ref, loaded.message);
+      return Response.json({ error: "quote_load_failed", ref }, { status: 500 });
     }
     const { quote } = loaded;
 
