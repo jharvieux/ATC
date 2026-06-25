@@ -91,16 +91,29 @@ export async function POST(req: NextRequest): Promise<Response> {
     return errorRedirect(url, "Enter the 6-digit code from your email.");
   }
 
-  const stored = OTP_STORE.get(pendingEmail);
-  if (!stored || stored.expires < Date.now()) {
-    OTP_STORE.delete(pendingEmail);
+  // F-auth-01 (#1379): resolve the session FIRST — the OTP is keyed by the auth
+  // identity that minted it (session set by /api/auth/callback), NOT by the
+  // attacker-settable pending-email cookie. Requiring the session here, plus the
+  // minted-email match below, means a code can only be redeemed by the same
+  // logged-in identity that requested it.
+  const supabase = createRequestScopedClient(req);
+  const { data: authData, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !authData?.user) {
+    return errorRedirect(url, "Session expired. Please sign in again.");
+  }
+  const authUserId = authData.user.id;
+
+  const stored = OTP_STORE.get(authUserId);
+  // Must exist, be unexpired, AND have been minted for this same email.
+  if (!stored || stored.expires < Date.now() || stored.email !== pendingEmail) {
+    OTP_STORE.delete(authUserId);
     return errorRedirect(
       url,
       "Verification code expired. Please request a new one.",
     );
   }
   if (stored.attempts >= MAX_OTP_ATTEMPTS) {
-    OTP_STORE.delete(pendingEmail);
+    OTP_STORE.delete(authUserId);
     return errorRedirect(
       url,
       "Too many attempts. Please request a new code.",
@@ -108,26 +121,21 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
   if (stored.code !== code) {
     stored.attempts += 1;
-    OTP_STORE.set(pendingEmail, stored);
+    OTP_STORE.set(authUserId, stored);
     return errorRedirect(url, "Verification code is incorrect.");
   }
-  OTP_STORE.delete(pendingEmail);
-
-  // Resolve the auth user from the cookie session set by /api/auth/callback.
-  const supabase = createRequestScopedClient(req);
-  const { data: authData, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !authData?.user) {
-    return errorRedirect(url, "Session expired. Please sign in again.");
-  }
+  OTP_STORE.delete(authUserId);
 
   // Persist the OTP-verified email onto the auth user. Until now auth.users.email
   // is null (that's why we ran the OTP), so /signup/complete and every other
   // auth.email reader would still see null — and the user would re-OTP on every
   // future login. admin.updateUserById + email_confirm sets it directly (no
   // confirmation round-trip) because we already proved ownership via the OTP.
+  // If the email already belongs to another account the unique-email constraint
+  // makes this fail — the collision-refusal that blocks identity hijack.
   const svc = createServiceRoleClient();
   const { error: emailErr } = await svc.auth.admin.updateUserById(
-    authData.user.id,
+    authUserId,
     { email: pendingEmail, email_confirm: true },
   );
   if (emailErr) {

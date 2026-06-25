@@ -84,7 +84,7 @@ function postReq(
 
 describe("POST /api/auth/microsoft-email-verify", () => {
   it("on a valid code: upserts the users row with the cookie-pending email and lands on /", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -101,11 +101,11 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     // The pending-email cookie should be cleared.
     expect(res.headers.get("set-cookie")).toMatch(/_ms_pending_email=;.*Max-Age=0/);
     // OTP is consumed.
-    expect(OTP_STORE.has("alice@example.com")).toBe(false);
+    expect(OTP_STORE.has("auth-user-1")).toBe(false);
   });
 
   it("on a wrong code: does NOT upsert, increments attempts, lands on /auth/error", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -113,11 +113,11 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     const res = await POST(postReq("999999", { email: "alice@example.com" }));
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
-    expect(OTP_STORE.get("alice@example.com")?.attempts).toBe(1);
+    expect(OTP_STORE.get("auth-user-1")?.attempts).toBe(1);
   });
 
   it("after MAX_OTP_ATTEMPTS wrong codes: locks out and deletes the entry (no further upserts even with the right code)", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: MAX_OTP_ATTEMPTS,
@@ -125,11 +125,11 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     const res = await POST(postReq("123456", { email: "alice@example.com" }));
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
-    expect(OTP_STORE.has("alice@example.com")).toBe(false);
+    expect(OTP_STORE.has("auth-user-1")).toBe(false);
   });
 
   it("on an expired code: deletes the entry, no upsert", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() - 1000,
       attempts: 0,
@@ -137,11 +137,11 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     const res = await POST(postReq("123456", { email: "alice@example.com" }));
     expect(mockUpsert).not.toHaveBeenCalled();
     expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
-    expect(OTP_STORE.has("alice@example.com")).toBe(false);
+    expect(OTP_STORE.has("auth-user-1")).toBe(false);
   });
 
   it("when the pending-email cookie is absent: refuses (cookie is the binding authority, not the form)", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -152,7 +152,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
   });
 
   it("when the form code is not 6 digits: refuses without consulting OTP_STORE or session", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -162,8 +162,18 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
   });
 
+  it("F-auth-01: refuses when the OTP was minted for a DIFFERENT email than the pending cookie", async () => {
+    // The session's OTP was minted for alice; a request carrying a bob cookie
+    // must not redeem it (stored.email !== pendingEmail).
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com", code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    const res = await POST(postReq("123456", { email: "bob@example.com" }));
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/auth/error");
+  });
+
   it("when the cookie session is missing/expired: refuses (auth_user_id must come from a verified session)", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -175,7 +185,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
   });
 
   it("on the platform domain with no default tenant configured: does NOT upsert, still lands on /", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -188,7 +198,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
   });
 
   it("persists the OTP-verified email onto the auth user so /signup/complete can read it (#441)", async () => {
-    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com", code: "123456", expires: Date.now() + 60_000, attempts: 0 });
     await POST(postReq("123456", { email: "alice@example.com" }));
     expect(mockUpdateUserById).toHaveBeenCalledWith("auth-user-1", {
       email: "alice@example.com",
@@ -197,7 +207,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
   });
 
   it("fails loud (/auth/error, no upsert) when the auth email update errors — e.g. email already linked", async () => {
-    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com", code: "123456", expires: Date.now() + 60_000, attempts: 0 });
     mockUpdateUserById.mockResolvedValue({ data: null, error: { message: "email exists" } });
     const res = await POST(postReq("123456", { email: "alice@example.com" }));
     expect(mockUpsert).not.toHaveBeenCalled();
@@ -206,7 +216,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
 
   it("on the agency flow (next cookie = /signup/complete): persists email, SKIPS the upsert, returns to /signup/complete (#441)", async () => {
     process.env.PLATFORM_DEFAULT_TENANT_ID = "f5665f08-3ebb-40e0-ad6b-000000000001";
-    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com", code: "123456", expires: Date.now() + 60_000, attempts: 0 });
     const res = await POST(
       postReq("123456", { email: "alice@example.com", tenant: "platform", next: "/signup/complete" }),
     );
@@ -220,7 +230,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
 
   it("on the platform domain WITH a default tenant (customer flow): upserts a viewer membership into it (#441)", async () => {
     process.env.PLATFORM_DEFAULT_TENANT_ID = "f5665f08-3ebb-40e0-ad6b-000000000001";
-    OTP_STORE.set("alice@example.com", { code: "123456", expires: Date.now() + 60_000, attempts: 0 });
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com", code: "123456", expires: Date.now() + 60_000, attempts: 0 });
     const res = await POST(
       postReq("123456", { email: "alice@example.com", tenant: "platform" }),
     );
@@ -235,7 +245,7 @@ describe("POST /api/auth/microsoft-email-verify", () => {
   });
 
   it("after 10 attempts from the same IP: the 11th is rejected before consulting OTP_STORE", async () => {
-    OTP_STORE.set("alice@example.com", {
+    OTP_STORE.set("auth-user-1", { email: "alice@example.com",
       code: "123456",
       expires: Date.now() + 60_000,
       attempts: 0,
@@ -244,7 +254,10 @@ describe("POST /api/auth/microsoft-email-verify", () => {
     for (let i = 0; i < 10; i++) {
       await POST(postReq("999999", { email: "alice@example.com", ip: "1.2.3.4" }));
     }
-    // 11th attempt: IP bucket is full — route must reject before touching OTP_STORE or session.
+    // 11th attempt: IP bucket is full — route must reject before touching the
+    // session or OTP_STORE. Clear the call counts so we observe only the 11th.
+    mockGetUser.mockClear();
+    mockUpsert.mockClear();
     const res = await POST(postReq("123456", { email: "alice@example.com", ip: "1.2.3.4" }));
     expect(mockGetUser).not.toHaveBeenCalled();
     expect(mockUpsert).not.toHaveBeenCalled();
