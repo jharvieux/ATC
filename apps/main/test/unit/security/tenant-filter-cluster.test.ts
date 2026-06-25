@@ -23,7 +23,7 @@ function recordingChain(eqLog: string[], table: string, resp: { data?: unknown; 
   const self = () => chain;
   Object.assign(chain, {
     select: self, update: self, insert: self, upsert: self, delete: self,
-    order: self, limit: self, in: self, or: self, filter: self,
+    order: self, limit: self, in: self, or: self, filter: self, neq: self,
     eq: (col: string) => { eqLog.push(`${table}.${col}`); return chain; },
     maybeSingle: async () => r,
     single: async () => r,
