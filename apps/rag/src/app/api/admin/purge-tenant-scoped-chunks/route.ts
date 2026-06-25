@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface PurgeBody {
   tenant_id: string;
@@ -48,8 +49,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .select("id");
 
   if (error) {
-    console.error("[purge-tenant-scoped-chunks] delete failed: %s", error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   const count = (data ?? []).length;

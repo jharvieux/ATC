@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface ExportBody {
   auth_user_id: string;
@@ -43,8 +44,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .eq("ingest_user_id", body.auth_user_id);
 
   if (error) {
-    console.error("[export-user-chunks] select failed: %s", error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   return Response.json({ ok: true, chunks: data ?? [] });

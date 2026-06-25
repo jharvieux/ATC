@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const PAGE_SIZE = 25;
 
@@ -52,7 +53,7 @@ export const GET = withServiceAuth(async (req, ctx) => {
 
   const { data, count, error } = await q;
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
 
   return Response.json({

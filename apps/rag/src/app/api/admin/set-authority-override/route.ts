@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface Body {
   authority_manual_override: number | null;
@@ -77,7 +78,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .maybeSingle();
 
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return dbErrorResponse(error);
   }
   if (!data) {
     return Response.json({ error: "chunk_not_found" }, { status: 404 });

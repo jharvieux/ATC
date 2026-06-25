@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 import { createHash } from "node:crypto";
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { embedWithUsage } from "@/lib/embeddings/openai";
 import { logEmbeddingCall } from "@/lib/embeddings/cost-log";
 import { enqueueEmbedding } from "@/lib/embeddings/batch/enqueue";
@@ -54,8 +55,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .eq("id", body.chunk_id)
     .maybeSingle();
   if (fetchErr) {
-    console.error("[replace-chunk] fetch failed: %s", fetchErr.message);
-    return Response.json({ error: fetchErr.message }, { status: 500 });
+    return dbErrorResponse(fetchErr);
   }
   if (!existing) {
     return Response.json({ error: "chunk_not_found" }, { status: 404 });
@@ -122,8 +122,7 @@ export const POST = withServiceAuth(async (req, ctx) => {
     .eq("id", body.chunk_id)
     .select("id");
   if (updErr) {
-    console.error("[replace-chunk] update failed: %s", updErr.message);
-    return Response.json({ error: updErr.message }, { status: 500 });
+    return dbErrorResponse(updErr);
   }
   if ((updated ?? []).length === 0) {
     // Existence was checked above; a zero-row update means the chunk was

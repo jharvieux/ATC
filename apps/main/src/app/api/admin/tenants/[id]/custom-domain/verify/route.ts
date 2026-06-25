@@ -104,7 +104,7 @@ export async function POST(
         action: "security.crown_jewel_guard_blocked",
         resource_type: "tenant",
         resource_id: tenantId,
-        changes: { error: err.message },
+        changes: { blocked_reason: err.message },
       });
       return Response.json({ error: "non_production_binding_refused" }, { status: 403 });
     }

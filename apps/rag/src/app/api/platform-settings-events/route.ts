@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 import { timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const bodySchema = z.object({
   event_type: z.literal("platform_settings.updated"),
@@ -107,8 +108,8 @@ export async function POST(req: Request): Promise<Response> {
       });
 
     if (error) {
-      console.error("[platform-settings-events] upsert failed:", { key: change.key, error: error.message });
-      skipped.push({ key: change.key, reason: `db_error: ${error.message}` });
+      console.error("[platform-settings-events] upsert failed:", { key: change.key }, error);
+      skipped.push({ key: change.key, reason: "db_error" });
       continue;
     }
     applied.push(change.key);

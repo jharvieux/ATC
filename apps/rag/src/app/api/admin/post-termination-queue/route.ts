@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { withServiceAuth } from "@/lib/auth/with-service-auth";
 import { getRagDb } from "@/lib/db/supabase";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export const GET = withServiceAuth(async (req, ctx) => {
   // §15.14.4 — Platform-admin only. The 2026-05-25 RAG audit (Finding 3)
@@ -35,7 +36,7 @@ export const GET = withServiceAuth(async (req, ctx) => {
     .order("ingested_at", { ascending: false })
     .range(from, from + limit - 1);
 
-  if (error) return Response.json({ error: error.message }, { status: 500 });
+  if (error) return dbErrorResponse(error);
 
   return Response.json({ chunks: data ?? [], total: count ?? 0 });
 });

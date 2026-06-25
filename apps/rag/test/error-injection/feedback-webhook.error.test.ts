@@ -8,7 +8,7 @@
 //   - Tampered signature → 401.
 //   - Invalid body shape → 400.
 //   - Missing Supabase env → 500.
-//   - DB insert error → 500 (route surfaces error.message). Main app
+//   - DB insert error → 500 ({ error: "db_error", ref: <uuid> }). Main app
 //     will retry; the bulk insert is idempotent at the application
 //     level (chunk_id + message_id + signal_direction repeats are
 //     scored at retrieval time, not deduped at write).
@@ -142,12 +142,14 @@ describe("RAG feedback webhook — Pattern 2 (config + signature fail-closed)", 
 });
 
 describe("RAG feedback webhook — Pattern 1 (DB insert error)", () => {
-  it("returns 500 + the error message when the bulk insert fails", async () => {
+  it("returns 500 with safe db_error code (not raw message) when the bulk insert fails", async () => {
     mocks.insertResult = { data: null, error: { message: "synthetic db failure" } };
     const res = await POST(makeReq());
     expect(res.status).toBe(500);
-    const json = await res.json() as { error: string };
-    expect(json.error).toBe("synthetic db failure");
+    const json = await res.json() as { error: string; ref: string };
+    // Must NOT echo the raw DB error message (CWE-209 / #1395).
+    expect(json.error).toBe("db_error");
+    expect(json.ref).toMatch(/^[0-9a-f-]{36}$/); // UUID ref for server-side log lookup
   });
 });
 
