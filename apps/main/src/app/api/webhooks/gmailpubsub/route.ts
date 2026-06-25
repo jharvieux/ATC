@@ -46,6 +46,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "server_misconfig" }, { status: 500 });
   }
   try {
+    // Google Pub/Sub OIDC JWT — RS256 (jose resolves alg from JWK header automatically)
     await jwtVerify(token, jwks, { issuer: GOOGLE_ISS, audience: expectedAud });
   } catch (err) {
     console.warn("[gmailpubsub] jwt_verification_failed", err);

@@ -95,6 +95,12 @@ export async function POST(
     if (content.length === 0) {
       return Response.json({ error: "empty_content" }, { status: 400 });
     }
+    // Guard added with IngestRequestSchema.raw_content.max(500_000) — rows stored before
+    // the cap existed would silently fail the ingest POST with a 400, permanently blocking
+    // approval through the UI. Surface a helpful error here instead.
+    if (content.length > 500_000) {
+      return Response.json({ error: "content_too_large", max_bytes: 500_000, actual_bytes: content.length }, { status: 422 });
+    }
 
     const ragUrl = process.env.RAG_SERVICE_URL;
     if (!ragUrl) {

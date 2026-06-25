@@ -102,7 +102,7 @@ function fetchPinnedHop(
       ) => cb(null, pinnedIp, pinnedFamily),
     } as import("node:http").RequestOptions;
 
-    const req = u.protocol === "https:" ? httpsRequest(opts, (res) => {
+    function onResponse(res: import("node:http").IncomingMessage): void {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
@@ -115,21 +115,10 @@ function fetchPinnedHop(
         resolve(new Response(Buffer.concat(chunks), { status, headers: resHeaders }));
       });
       res.on("error", reject);
-    }) : httpRequest(opts, (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => {
-          const status = res.statusCode ?? 0;
-          const resHeaders = new Headers();
-          for (const [k, v] of Object.entries(res.headers)) {
-            if (typeof v === "string") resHeaders.set(k, v);
-            else if (Array.isArray(v)) v.forEach((h) => resHeaders.append(k, h));
-          }
-          resolve(new Response(Buffer.concat(chunks), { status, headers: resHeaders }));
-        });
-        res.on("error", reject);
-      },
-    );
+    }
+
+    const reqFn = (u.protocol === "https:" ? httpsRequest : httpRequest) as typeof httpRequest;
+    const req = reqFn(opts, onResponse);
     req.setTimeout(init.timeoutMs, () => req.destroy(new Error("fetch_timeout")));
     req.on("error", reject);
     req.end();
