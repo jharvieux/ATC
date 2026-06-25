@@ -1,28 +1,22 @@
-# Session state — last updated 2026-06-25 01:00 PT
+# Session state — last updated 2026-06-25 07:25 PT
 
 ## Just completed
-- **Overnight opus batch** (D-298). Of the 6 engineering-ready opus issues:
-  - ✅ **#1376 + #1377** — atomic chat-limit counters (PR #1414, merged). Follow-up #1415.
-  - ✅ **#1391** — clawback idempotency key (PR #1416, merged).
-  - ✅ **#1379** — session-bound + throttled OTP flow (PR #1417, merged). Reopened #735.
-  - ⛔ **#1247** — host-fee tiered/threshold: SKIPPED, blocked on spec-owner decision (tiered_rules shape + threshold rule undefined in §12.6/§14). Commented.
-  - ⛔ **#1127** — transfer.reversed ledger unwind: SKIPPED, blocked on spec-owner decision (§14.9 defines no money-movement semantics). Commented.
-- All three merged PRs shipped **migrations applied to staging/test only; prod apply gated**.
-- Follow-ups filed: #1415 (DB-level concurrency test for chat-limit RPCs), #1418 (G4 guard misses `regen`-named limiter Maps).
+- **#1412** (CWE-117 log-injection) — FIXED + merged (PR #1421): shared `sanitizeForLog()` (lib/log/sanitize.ts) applied at chat/route.ts + auth/respond.ts, with tests. (Audit caught literal-control-bytes-in-source → rebuilt the class via String.fromCharCode for readable source.)
+- **#1247 strawman** — built + merged (PR #1420, `docs/proposals/1247-host-fee-tiered-strawman.md`) and linked on #1247: proposes the `tiered_rules` JSONB shape + the 3 `minimum_commission_threshold` options (recommends A) + worked examples + the Q1–Q5 decisions the spec owner must answer.
+- Earlier this session (overnight opus batch, D-298): #1376/#1377 (PR #1414), #1391 (PR #1416), #1379 (PR #1417) all merged.
 
 ## In flight
-- This MEMORY/SESSION/INDEX update is on branch `docs/opus-batch-session` (about to PR → dev). Otherwise nothing uncommitted; all feature work merged.
+- Nothing uncommitted except this SESSION update (on a docs branch → PR). No open code PRs.
 
 ## Next step
-- Merge the `docs/opus-batch-session` doc PR.
-- Awaiting operator decisions to unblock #1247 and #1127 (both need money-movement semantics defined — see the issue comments for the exact questions).
+- Nothing queued. Awaiting operator/spec-owner inputs below before more engineering on the deferred items.
 
 ## Blocked on user
-- **#1247** — define host-fee `tiered_rules` JSONB shape, commission-vs-fare basis, and `minimum_commission_threshold` rule.
-- **#1127** — define the transfer.reversed ledger unwind (balance bucket, commission state, partial-reversal representation).
-- **#1412** — 2 `js/log-injection` code-scanning alerts (shipped code): fix vs. dismiss.
-- Prod migration applies for the 3 merged PRs (20260709 atomic chat limits, 20260710 platform_revenue idempotency_key) when ready.
-- Standing user-gated items: #1365 (Supabase refresh interval), #1379-class prod auth config, live-Stripe cutover (#1358).
+- **#1247** — answer Q1–Q5 in `docs/proposals/1247-host-fee-tiered-strawman.md` (tiered_rules shape, basis, flat-per-bracket vs marginal, threshold rule). Then it's a ~1-file resolver change + Zod validator + tests (no migration).
+- **#1127** — define the transfer.reversed ledger unwind (balance bucket, commission state, partial-reversal representation) — see issue comment.
+- **Prod migration applies** — operator to apply in the next prod deployment (confirmed): `20260709000000_atomic_chat_limit_counters`, `20260710000000_platform_revenue_idempotency_key` (both already on dev, applied to staging/test only).
+- Standing user-gated: #1365 (Supabase refresh interval), #1358/#1336 (live-Stripe cutover), #735 (OTP limiters → Redis, reopened).
 
 ## Open questions
-- Playwright E2E still red in CI on missing TEST_E2E_OWNER_* secrets (#1286) — non-required, not caused by these changes.
+- CodeQL alerts #91/#92 should clear on the next scan now that both flows route through sanitizeForLog; if CodeQL doesn't model it as a barrier, dismiss with the test as evidence.
+- Playwright E2E still red in CI on missing TEST_E2E_OWNER_* secrets (#1286) — non-required.
