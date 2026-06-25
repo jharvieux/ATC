@@ -175,7 +175,7 @@ describe("POST /api/bookings/[id]/modify — tenant lookup", () => {
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(500);
     const body = await res.json() as { error: string };
-    expect(body.error).toBe("tenant_lookup_failed");
+    expect(body.error).toBe("db_error");
   });
 });
 
@@ -204,7 +204,7 @@ describe("POST /api/bookings/[id]/modify — adapter failure", () => {
     const res = await POST(makeReq(), PARAMS);
     expect(res.status).toBe(502);
     const body = await res.json() as { error: string; code: string };
-    expect(body.error).toBe("host error");
+    expect(body.error).toBe("adapter_modify_failed");
     expect(body.code).toBe("HOST_ERR");
   });
 });
