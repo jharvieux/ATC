@@ -248,7 +248,9 @@ export function detectServiceRoleTenant(file: string, lines: string[]): Violatio
     // out of scope here (covered by other gates). The bug pattern is a query
     // filtered by some id but NOT tenant-scoped.
     if (!/\.(eq|in|match)\(/.test(stmt)) return;
-    if (/tenant_id/.test(stmt)) return;
+    // #1408: require a filter predicate (.eq/.in/.match), not a bare token —
+    // .select("id, tenant_id") mentions tenant_id but doesn't scope the query.
+    if (/\.(eq|in)\(\s*['"`]tenant_id['"`]/.test(stmt) || /\.match\(\s*\{[^}]*\btenant_id\b/.test(stmt)) return;
     if (isInlineAllowed(lines, i, "service-role-tenant")) return;
     out.push({ id: "service-role-tenant", file, line: i + 1, snippet: ln.trim(), why: `service-role .from("${table}") filtered without .eq("tenant_id",…) — cross-tenant read/write risk` });
   });

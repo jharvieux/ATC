@@ -152,6 +152,33 @@ describe("detectServiceRoleTenant (1)", () => {
     );
     expect(v).toEqual([]);
   });
+
+  // #1408 — selecting tenant_id as a column must not suppress the flag
+  it("still flags when tenant_id appears only in a .select() column list", () => {
+    const v = detectServiceRoleTenant(
+      "f.ts",
+      svc(`await db.from("bookings").select("id, tenant_id, status").eq("id", id);`),
+    );
+    expect(v.map((x) => x.id)).toEqual(["service-role-tenant"]);
+  });
+
+  it("does NOT flag when both .select(tenant_id column) and .eq(tenant_id filter) are present", () => {
+    expect(
+      detectServiceRoleTenant(
+        "f.ts",
+        svc(`await db.from("bookings").select("id, tenant_id, status").eq("id", id).eq("tenant_id", tid);`),
+      ),
+    ).toEqual([]);
+  });
+
+  it("does NOT flag a .match({ tenant_id }) filter even without .eq", () => {
+    expect(
+      detectServiceRoleTenant(
+        "f.ts",
+        svc(`await db.from("bookings").select("*").eq("id", id).match({ tenant_id: tid });`),
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("computeNewViolations — count-based baseline", () => {
