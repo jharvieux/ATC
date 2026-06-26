@@ -13,7 +13,7 @@ import { safeUrl } from "@atc/contracts";
 export const ReferenceIngestRequestSchema = z.object({
   source_identifier: z.string().min(8).max(200), // e.g. 'cruisemapper:ship:<slug>'
   category: z.string().min(1),                   // 'ship_intel' | 'port_intel' | future
-  text: z.string().min(20),
+  text: z.string().min(20).max(500_000),
   source_url: safeUrl.optional(),
   source_domain: z.string().optional(),
   authority: z.number().min(0).max(1).optional(),
