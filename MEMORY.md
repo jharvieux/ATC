@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-303 — 2026-06-26 — Sailing catalog backfilled from RAG (issue #1472 resolved; group-booking dropdown now populates)
+
+**Decision.** Per user's call on [[D-302]] bug 2, executed the **copy-from-RAG** option (not the scrape backfill): populated the empty main `cruise_sailings` + `sailing_port_calls` catalog from the RAG project's `public.itineraries` table, which already holds every future sailing (used by the concierge region search). One-shot, idempotent, no CruiseMapper re-scrape.
+
+**How.** `scripts/backfill-cruise-sailings-from-rag.sql`: `\copy` future RAG itineraries → CSV → temp table in main → resolve ship via `lower(cruise_ships.canonical_name) = lower(itineraries.ship)` (227/237 distinct future RAG ships matched; the 10 misses are lines/ships not in main's 17-line catalog — correctly skipped) → `DISTINCT ON (ship_id, departure_date)` to collapse RAG's (ship,date,port) grain to main's `UNIQUE(cruise_ship_id, departure_date)` (alphabetically-first port wins same-day collisions) → upsert `cruise_sailings`, then `unnest(ports_of_call) WITH ORDINALITY` (0-based `day_index`, `port_id` left NULL, matching the live `persistPortCalls`) → upsert `sailing_port_calls`. Ran in a txn with a rolled-back dry-run first.
+
+**Result (live main DB, was 0/0):** `cruise_sailings` = 20,901 future sailings / 227 ships; `sailing_port_calls` = 98,835 rows. Verified the exact `/api/cruise-sailings` query returns sailings + ports for a sample ship. The monthly `refresh-cruisemapper-sailings` cron maintains rows going forward; the backfill only fixed the never-initialized state.
+
+**Key facts.** RAG `itineraries.source_url` is null on all but 11 of 21,577 future rows, so the slug-from-URL join was NOT viable — the text ship-name join is the reliable key. RAG ship/line text == main display names (`canonical_name` / `cruise_lines.display_name`). This was a one-time DATA load on the prod-serving main DB (user-approved), NOT a schema migration — the D-288 "prod migrations via `supabase db push`, never raw psql" ledger rule does not apply to a data backfill.
+
+**Rejected.** Option 1 (trigger the `cruisemapper/port-backfill.requested` force-scrape) — slower, re-fetches ~251 rate-limited pages, and its catalog-write path was never verified end-to-end; the RAG data was already present and trustworthy.
+
+**Related artifacts.** Issue #1472 (closed); `scripts/backfill-cruise-sailings-from-rag.sql`; RAG `apps/rag/supabase/migrations/0012_itineraries.sql`; main `apps/main/supabase/migrations/20260702000000_cruise_sailings_catalog.sql`. Continues [[D-302]], [[D-231]].
+
+---
+
 ## D-302 — 2026-06-26 — Two user-reported bugs: chat "responding" indicator (fixed, PR #1471) + empty group-booking sailing catalog (data gap, issue #1472)
 
 **Decision.** Diagnosed two bugs the user reported in one go. Shipped a code fix for the first; surfaced the second as an operator/prod-gated data backfill (issue, not a code fix).
