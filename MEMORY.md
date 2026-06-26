@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-304 — 2026-06-26 — Group-booking trio fixed: invitee-add 500 (missing token), Forum 404 (no forums row), app-wide email dead (unverified Resend domain) (PR #1475)
+
+**Decision.** Diagnosed + fixed three user-reported bugs surfacing once sailings worked ([[D-303]]).
+
+**Bug 1 — add-invitee `internal_error` (500).** The `invite`-action insert into `invitations` (`api/groups/[id]/invitations/route.ts`) omitted `token` (NOT NULL UNIQUE); the group-create and `reissue_all` paths both set it. The bad insert → `safeAwait` throw → 500. Fix: `token: generateToken(invId)`. The existing invite-action test passed because its insert mock ignored the payload (false confidence) — hardened it to capture + assert `token`.
+
+**Bug 2 — Forum tab "Failed to load forum (404)".** A group needs a one-per-group `forums` row, but group creation never created it and the forum GET route only reads (`maybeSingle` → 404 on miss). Fix: insert the `forums` row `{group_id, tenant_id: ctx.tenant_id}` on group create, **non-fatal** (group already exists; don't 500/orphan). Backfilled the 2 existing groups directly (now 0 lack a forum) — so the user's current group's Forum tab works against the *deployed* app immediately (data, no deploy). d091 should-fix: a future non-fatal insert failure would 404 permanently with no repair path → filed #1476 (lazy-create-on-GET self-heal) rather than expand this PR's forum-test surface.
+
+**Bug 3 — no email ever sent app-wide (nothing in Resend).** Decisive: `email_log` = 0 rows (no send ever executed). A direct Resend API probe with the env key returned **403 "ai-travelconcierge.com domain is not verified."** The verified sender is the **`email.` subdomain** — user re-added `email.ai-travelconcierge.com`, a probe send returned 200 and the user received it. Fix: repointed every hardcoded platform sender apex→`email.` subdomain across 5 files (`send.ts` PLATFORM_DEFAULT_FROM, `notifications.ts`, `send-tenant-email.ts`, microsoft-OTP route, persona from-identity `email-customer.ts`). Left `support@ai-travelconcierge.com` **mailto** contact links on the apex (inbound, not senders). **CONTRADICTS** the earlier MEMORY claim that the apex was "the verified platform sending domain" — it is not, in this Resend account; the `email.` subdomain is. The restricted send-only key can't list domains, so I can't enumerate which others are verified.
+
+**Key facts / non-bugs.** Create-time invitees are NOT emailed immediately, but the daily reminder-cadence cron (§18.8 `group-reminder-cadence`, 08:00 UTC, `rsvp_state='pending'`) emails all pending invitations → they're delivered (within a day), not stranded; immediate-send-on-create is a product decision, not filed. **All three CODE fixes need the operator main-app prod deploy to be live** — until then the running app still sends from the unverified apex (the user's working test email went via direct curl, NOT the app). Only the forum *data* backfill is live now.
+
+**Rejected.** Lazy-create-on-forum-GET in this PR (would rework 3 forum test files for a low-probability edge — deferred to #1476). Changing group-create to email invitees immediately (cron already covers delivery; product call). Editing the prior MEMORY "apex verified" entry (append-only — surfaced the contradiction here instead).
+
+**Related artifacts.** PR #1475 (Opus audit, 11 files, both agents clean); issue #1476 (forum self-heal); `api/groups/route.ts`, `api/groups/[id]/invitations/route.ts`, `lib/email/{send,notifications,send-tenant-email}.ts`, `api/auth/microsoft-email-prompt/route.ts`, `lib/personas/tools/handlers/email-customer.ts`. Continues [[D-303]], relates to [[D-231]].
+
+---
+
 ## D-303 — 2026-06-26 — Sailing catalog backfilled from RAG (issue #1472 resolved; group-booking dropdown now populates)
 
 **Decision.** Per user's call on [[D-302]] bug 2, executed the **copy-from-RAG** option (not the scrape backfill): populated the empty main `cruise_sailings` + `sailing_port_calls` catalog from the RAG project's `public.itineraries` table, which already holds every future sailing (used by the concierge region search). One-shot, idempotent, no CruiseMapper re-scrape.
