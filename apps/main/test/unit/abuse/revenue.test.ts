@@ -1,25 +1,8 @@
 // §27.4.1 / §3.3 — Revenue computation worked examples.
 
 import { describe, it, expect } from "vitest";
-import type { PricingTable } from "@/lib/abuse/revenue";
 import { computeEffectiveMonthlyRevenue } from "@/lib/abuse/revenue";
-
-// §3.3 seed values — local fixture, not a runtime fallback.
-const PRICING: PricingTable = {
-  base: {
-    byo_research:     { monthly:  1900, annual:  19000 },
-    byo_professional: { monthly:  5900, annual:  59000 },
-    byo_agency:       { monthly:  9900, annual:  99000 },
-    sub_starter:      { monthly:  4900, annual:  49000 },
-    sub_pro:          { monthly: 14900, annual: 149000 },
-    sub_agency:       { monthly: 24900, annual: 249000 },
-  },
-  seatLadder: [
-    { upTo:        4, monthly: 5900, annual: 59000 },
-    { upTo:       10, monthly: 4900, annual: 49000 },
-    { upTo: Infinity, monthly: 3900, annual: 39000 },
-  ],
-};
+import { PRICING_FIXTURE as PRICING } from "../../fixtures/pricing";
 
 describe("computeEffectiveMonthlyRevenue", () => {
   it("single-seat monthly Sub-Host Agency = $249.00", () => {
