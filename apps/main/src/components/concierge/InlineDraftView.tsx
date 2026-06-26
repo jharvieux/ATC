@@ -11,7 +11,7 @@ import { AGENT_CATALOG } from "@/lib/agents/catalog";
 import { parseEmlFile, parseMsgFile, type ParsedInquiry } from "@/lib/draft/parse-inquiry";
 import { deriveGreetingName } from "@/lib/draft/greeting-name";
 import { Copy, RefreshCw } from "lucide-react";
-import { TONE_LABELS, type ToneLabel } from "@/lib/tone/constants";
+import { TONE_LABELS, toneLevelToLabel, type ToneLabel } from "@/lib/tone/constants";
 
 // Exported for unit testing — resolves which fields to populate from a
 // parsed email, encoding the customerName-only-if-empty invariant and the
@@ -43,7 +43,7 @@ export function InlineDraftView({ agentSlug }: InlineDraftViewProps): React.JSX.
         if (!r.ok) return;
         const data = (await r.json()) as { rapport_tone_level?: number | null } | null;
         const lvl = data?.rapport_tone_level;
-        if (lvl != null) setTone(TONE_LABELS[lvl - 1] ?? "Friendly");
+        if (lvl != null) setTone(toneLevelToLabel(lvl));
       } catch {
         // network failure — leave the default tone in place
       }
