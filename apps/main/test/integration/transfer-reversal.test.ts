@@ -206,19 +206,54 @@ describeIf("process_transfer_reversal", () => {
 
     try {
       // Delete in FK-dependency order for both chains.
-      await admin
+      // Each delete is checked so a silent FK violation surfaces rather than
+      // leaving fixture rows that corrupt the next nightly run.
+      const tids = [tenantId, tenantId2];
+
+      const { error: rqErr } = await admin
         .from("reconciliation_review_queue")
         .delete()
-        .in("tenant_id", [tenantId, tenantId2]);
-      // payout_records: delete recovery rows (stripe_transfer_id IS NULL for those)
-      // and the original row — filter by tenant_id covers both.
-      await admin.from("payout_records").delete().in("tenant_id", [tenantId, tenantId2]);
-      await admin.from("payout_balances").delete().in("tenant_id", [tenantId, tenantId2]);
-      await admin.from("commissions").delete().in("tenant_id", [tenantId, tenantId2]);
-      await admin.from("bookings").delete().in("tenant_id", [tenantId, tenantId2]);
+        .in("tenant_id", tids);
+      if (rqErr) throw new Error(`reconciliation_review_queue cleanup: ${rqErr.message}`);
+
+      // payout_records: covers both the original rows and recovery rows
+      // (recovery rows have stripe_transfer_id IS NULL; tenant_id filter catches both).
+      const { error: prErr } = await admin
+        .from("payout_records")
+        .delete()
+        .in("tenant_id", tids);
+      if (prErr) throw new Error(`payout_records cleanup: ${prErr.message}`);
+
+      const { error: pbErr } = await admin
+        .from("payout_balances")
+        .delete()
+        .in("tenant_id", tids);
+      if (pbErr) throw new Error(`payout_balances cleanup: ${pbErr.message}`);
+
+      const { error: commErr } = await admin
+        .from("commissions")
+        .delete()
+        .in("tenant_id", tids);
+      if (commErr) throw new Error(`commissions cleanup: ${commErr.message}`);
+
+      const { error: bookErr } = await admin
+        .from("bookings")
+        .delete()
+        .in("tenant_id", tids);
+      if (bookErr) throw new Error(`bookings cleanup: ${bookErr.message}`);
+
       // audit_log has no ON DELETE CASCADE from tenants; clear before deleting tenants.
-      await admin.from("audit_log").delete().in("tenant_id", [tenantId, tenantId2]);
-      await admin.from("tenants").delete().in("id", [tenantId, tenantId2]);
+      const { error: auditErr } = await admin
+        .from("audit_log")
+        .delete()
+        .in("tenant_id", tids);
+      if (auditErr) throw new Error(`audit_log cleanup: ${auditErr.message}`);
+
+      const { error: tenantErr } = await admin
+        .from("tenants")
+        .delete()
+        .in("id", tids);
+      if (tenantErr) throw new Error(`tenants cleanup: ${tenantErr.message}`);
     } finally {
       await sql.end();
     }
