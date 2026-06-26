@@ -2,29 +2,28 @@
 
 ## Just completed
 
-Five user-reported bugs across two areas (D-302, D-303, D-304):
+Bug fixes + two feature requests across the group-booking + chat surfaces (D-302 → D-305):
 
-- **Chat "responding" indicator** (D-302, PR #1471 merged) — thinking bubble hidden during pre-first-token wait; fixed. **Needs main-app deploy to be live.**
-- **Group sailing dropdown empty** (D-303, PR #1474 merged, issue #1472 closed) — backfilled `cruise_sailings` from RAG (0→20,901 / 227 ships, port calls 0→98,835). **Live now (data).**
-- **Add-invitee `internal_error`** (D-304, PR #1475 merged) — invite insert was missing the NOT NULL `token`; fixed. **Needs main-app deploy.**
-- **Forum tab 404** (D-304, PR #1475) — group-create now creates the `forums` row; **2 existing groups backfilled (live now)** so the current group's Forum tab works against the deployed app. Self-heal/lazy-create deferred to issue #1476.
-- **No email sent app-wide** (D-304, PR #1475) — root cause: Resend apex domain `ai-travelconcierge.com` is UNVERIFIED (probe = 403; `email_log`=0). Verified sender is `email.ai-travelconcierge.com` (user re-added it; probe send = 200, user received it). Repointed all 5 hardcoded platform senders apex→subdomain. **Needs main-app deploy** — until then the running app still sends from the unverified apex.
+- **Chat "responding" indicator** (D-302, PR #1471) — fixed. Needs main-app deploy.
+- **Sailing dropdown empty** (D-303, PR #1474, #1472 closed) — backfilled `cruise_sailings` from RAG (live now).
+- **Add-invitee 500 / Forum 404 / app-wide email dead** (D-304, PR #1475) — token fix + forum auto-create (+ 2 groups backfilled, live) + Resend domain repointed apex→verified `email.` subdomain. Code needs deploy. Forum self-heal follow-up: issue #1476.
+- **Immediate invitation emails on group create + coordinator group delete** (D-305, PR #1478) — create now emails invitees immediately (shared `lib/groups/send-invitation-email.ts`); `DELETE /api/groups/[id]` coordinator-only with a "type the sailing date to confirm" guard; danger-zone UI on the Edit tab. Needs deploy.
 
 ## In flight
 
-Nothing in flight — clean checkpoint. Doc PR pending for D-304 MEMORY/INDEX + this SESSION (see Next step).
+Nothing in flight — clean checkpoint. Doc PR pending for D-305 MEMORY/INDEX + this SESSION (see Next step).
 
 ## Next step
 
-Land the `docs/d304-group-email-fixes` doc PR (MEMORY D-304 + INDEX + SESSION) into dev. Then the work is blocked on the operator deploy.
+Land the `docs/d305-group-features` doc PR into dev. Then everything is blocked on the operator main-app deploy.
 
 ## Blocked on user / operator
 
-- **Main-app prod deploy (operator-owned):** makes live the chat indicator (D-302) + invitee-token + forum-auto-create + email-domain (D-304) fixes, plus the still-pending D-300/D-301 chat changes and migration 20260712000000 (#1437). **Email will not work in the app until this deploys** (the test email that worked went via direct curl, not the app).
-- **Confirm after deploy:** add an invitee (should email + no 500), Forum tab (already works for existing groups), and that a real app email send lands (e.g. trigger an invite or wait for the §18.8 daily reminder cron).
+- **Main-app prod deploy (operator-owned):** makes live ALL of D-302/D-304/D-305 (chat indicator, invitee-token, forum auto-create, email-domain repoint, immediate invites, group delete) + the pending D-300/D-301 chat changes + migration 20260712000000 (#1437). **Email + the new group features do not work in the running app until this deploys.**
+- **After deploy, verify:** add an invitee (emails + no 500); create a group with invitees (each gets an immediate email); delete a group (type sailing date to confirm → redirects to /groups); a real in-app email lands from `email.ai-travelconcierge.com`.
 
 ## Open questions
 
-- Immediate-send-on-create for invitees? Currently the daily §18.8 reminder cron emails pending invitations (delivered within a day), not instantly. Product decision — not filed as a bug.
-- #1476: forum self-heal (lazy-create-on-GET). #1470, #1418, baselined `String(err)` egress sites — pre-existing, deferred.
-- Prior MEMORY note claiming the apex was the "verified platform sending domain" is contradicted by D-304 (apex unverified; `email.` subdomain is the verified one). Left as-is (append-only); noted in D-304.
+- #1476 forum self-heal (lazy-create-on-GET). Pre-existing deferrals: #1470, baselined `String(err)` egress sites.
+- Prior MEMORY "apex verified" note is contradicted by D-304 (apex unverified; `email.` subdomain is verified). Left as-is (append-only); noted in D-304.
+- d091 helper test (delete-group) stubs safeAwait → error-propagation untested at that layer (non-blocking nit; safeAwait tested elsewhere; not filed).
