@@ -27,12 +27,16 @@ export interface AdminShellProps {
   initialCollapsed: Record<string, boolean>;
   /** The current admin's role — controls which sidebar sections are shown. */
   adminRole: PlatformAdminRole | "service";
+  avatarUrl?: string | null;
+  displayName?: string | null;
 }
 
 export function AdminShell({
   children,
   initialCollapsed,
   adminRole,
+  avatarUrl = null,
+  displayName = null,
 }: Readonly<AdminShellProps>): React.ReactElement {
   const [open, setOpen] = React.useState(true);
   const [taTheme, toggleTheme] = useTaTheme();
@@ -96,7 +100,7 @@ export function AdminShell({
           >
             {taTheme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
           </button>
-          <AdminHeaderMenu />
+          <AdminHeaderMenu avatarUrl={avatarUrl} displayName={displayName} />
         </div>
       </header>
       <div className="flex flex-1">

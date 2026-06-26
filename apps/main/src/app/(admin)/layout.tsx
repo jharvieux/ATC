@@ -20,6 +20,8 @@ import React from "react";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { getCachedAdminContext } from "@/lib/auth/assert-platform-admin";
+import { getCachedUser } from "@/lib/auth/get-cached-user";
+import { extractUserDisplayMeta } from "@/lib/auth/user-meta";
 import { AdminShell } from "@/components/admin-shell/AdminShell";
 import { COOKIE_NAME, parseCollapsedCookie } from "@/components/admin-shell/collapsed-cookie";
 
@@ -33,6 +35,9 @@ export default async function AdminLayout({
     notFound();
   }
 
+  const { user } = await getCachedUser();
+  const { avatarUrl, displayName } = extractUserDisplayMeta(user);
+
   // Read the persisted sidebar-collapsed state cookie-side so the initial
   // SSR HTML matches the operator's saved state — no all-open-flash on
   // hydration (#669).
@@ -41,7 +46,12 @@ export default async function AdminLayout({
   );
 
   return (
-    <AdminShell initialCollapsed={initialCollapsed} adminRole={ctx.role}>
+    <AdminShell
+      initialCollapsed={initialCollapsed}
+      adminRole={ctx.role}
+      avatarUrl={avatarUrl}
+      displayName={displayName}
+    >
       {children}
     </AdminShell>
   );

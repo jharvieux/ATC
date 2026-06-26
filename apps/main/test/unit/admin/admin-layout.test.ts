@@ -14,6 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const mocks = vi.hoisted(() => ({
   getCachedAdminContext: vi.fn(),
+  getCachedUser: vi.fn().mockResolvedValue({ isAuthenticated: true, user: null }),
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
   }),
@@ -37,6 +38,14 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/auth/assert-platform-admin", () => ({
   getCachedAdminContext: mocks.getCachedAdminContext,
+}));
+
+vi.mock("@/lib/auth/get-cached-user", () => ({
+  getCachedUser: mocks.getCachedUser,
+}));
+
+vi.mock("@/lib/auth/user-meta", () => ({
+  extractUserDisplayMeta: () => ({ avatarUrl: null, displayName: null }),
 }));
 
 import AdminLayout from "../../../src/app/(admin)/layout";
