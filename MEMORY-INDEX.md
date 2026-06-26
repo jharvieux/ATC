@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-303 — 2026-06-26 — Sailing catalog backfilled from RAG itineraries (copy, not scrape) — main cruise_sailings 0→20,901 / 227 ships, sailing_port_calls 0→98,835; join lower(canonical_name)=lower(ship); idempotent scripts/backfill-cruise-sailings-from-rag.sql; issue #1472 closed (resolves D-302 bug 2)
 - D-302 — 2026-06-26 — Two user-reported bugs: chat "responding" indicator hidden during pre-first-token wait (streaming buffer seeded "" not null; fixed PR #1471) + group-booking sailing dropdown empty because main cruise_sailings catalog never populated (inventory hashes all stamped → cron conditional-GET skips every page; data gap, issue #1472, backfill options operator-gated)
 - D-301 — 2026-06-26 — Region-search origin filter ("from US to Australia", RAG migration 0032 p_origin_port_terms, PR #1465) + gazetteer Europe/country coverage (PR #1467); known substring collision #1466 (Sydney NSW vs Sydney NS)
 - D-300 — 2026-06-26 — Concierge region/area sailing search (RAG migration 0031 region_lookup RPC + destination gazetteer) + current-date/Northern-season injection + BYO/TA booking-tool gating (PR #1463); operator follow-up #1462 (prod RAG migrate+deploy)
