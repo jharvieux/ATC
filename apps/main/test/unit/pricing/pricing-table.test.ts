@@ -13,12 +13,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   loadPricingTable,
   tierMonthlyPriceCents,
+  PRICING_FALLBACK,
   _resetPricingCacheForTests,
 } from "@/lib/pricing/pricing-table";
-import {
-  PRICING_FALLBACK,
-  computeEffectiveMonthlyRevenue,
-} from "@/lib/abuse/revenue";
+import { computeEffectiveMonthlyRevenue } from "@/lib/abuse/revenue";
 import { calculateAgencySeatPreviewCents } from "@/lib/stripe/price-ids";
 
 type Result = { data: unknown; error: { message: string } | null };
