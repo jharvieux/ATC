@@ -318,6 +318,64 @@ describe("proxy()", () => {
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
     });
 
+    // Console paths: /settings, /crm/*, /groups/*, /api/tenant/* on the
+    // platform domain must resolve the user's tenant so assertPermission
+    // can check membership. Without this the dashboard returns 403 because
+    // tenantContextFromRequest rejects the "platform" literal (prod bug).
+    it("resolves user's tenant for /settings on platform domain when authenticated", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/settings" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalledWith("auth-user-1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("resolves user's tenant for /crm/contacts on platform domain", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/crm/contacts" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("resolves user's tenant for /api/tenant/dashboard on platform domain", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/api/tenant/dashboard" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("keeps platform sentinel for /settings when unauthenticated (no auth user)", async () => {
+      // WHY: unauthenticated users can't have a tenant resolved; they'll hit
+      // the console layout's auth guard and be redirected to login.
+      mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/settings" }));
+      expect(mocks.getTenantByAuthUserId).not.toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
+    it("keeps platform sentinel for /admin on platform domain (admin routes must not be tenant-scoped)", async () => {
+      // WHY: /admin/* page routes use the "platform" sentinel to identify
+      // themselves as the platform-admin surface. A session cookie is required
+      // to pass step 1c; without it the proxy 404s before step 2.
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      const res = await proxy(makeReq({
+        host: "ai-travelconcierge.com",
+        pathname: "/admin/users",
+        headers: { cookie: "sb-abcdef-auth-token=opaque-session-blob" },
+      }));
+      expect(mocks.getTenantByAuthUserId).not.toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
+    it("falls back to platform sentinel on /settings when authenticated user has no tenant", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(null);
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/settings" }));
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+    });
+
     it("falls back to platform sentinel on /chat when authenticated user has no tenant", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
       mocks.getTenantByAuthUserId.mockResolvedValue(null);
