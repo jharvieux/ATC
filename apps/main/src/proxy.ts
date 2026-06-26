@@ -353,11 +353,11 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
 
   // 2. Platform admin domain — passes through with "platform" sentinel.
   //
-  // Exception: for chat-adjacent paths (/chat, /api/chat/*, /api/memory),
-  // attempt to resolve the authenticated user's primary tenant so platform
-  // staff who are also tenant members can use the chat UI. Falls back to
-  // "platform" if the user is unauthenticated, has no tenant, or the DB
-  // lookup fails.
+  // Exceptions: for chat-adjacent paths AND tenant-console paths, attempt to
+  // resolve the authenticated user's primary tenant. This lets platform staff
+  // who are also tenant members use the chat UI and the admin console
+  // (/settings, /crm/*, etc.) on the platform domain. Falls back to "platform"
+  // if the user is unauthenticated, has no tenant, or the DB lookup fails.
   if (hostname === primaryDomain) {
     const headers = cloneAndScrubHeaders(req);
 
@@ -368,7 +368,18 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
       pathname.startsWith("/api/chat/") ||
       pathname.startsWith("/api/memory");
 
-    if (isChatPath && authUser) {
+    // Tenant console and workspace paths that require a resolved tenant ID.
+    // /admin/* is intentionally excluded — those routes use the "platform" sentinel.
+    const isConsolePath =
+      pathname === "/settings" ||
+      pathname.startsWith("/settings/") ||
+      pathname === "/crm" ||
+      pathname.startsWith("/crm/") ||
+      pathname === "/groups" ||
+      pathname.startsWith("/groups/") ||
+      pathname.startsWith("/api/tenant/");
+
+    if ((isChatPath || isConsolePath) && authUser) {
       try {
         const tenant = await getTenantByAuthUserId(authUser.id);
         if (tenant) {
