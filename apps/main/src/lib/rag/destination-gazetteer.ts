@@ -24,7 +24,10 @@ const US_ORIGIN: LookupTerms = {
   portTerms: [
     // East / Gulf coast
     "Miami", "Fort Lauderdale", "Port Canaveral", "Tampa", "Jacksonville", "Galveston", "New Orleans", "Mobile",
-    "New York", "Cape Liberty", "Bayonne", "Baltimore", "Boston", "Norfolk", "Charleston",
+    // "Cape Liberty Bayonne" is a single space-joined segment in the data; only
+    // this combined token matches under segment-exact (bare "Cape Liberty" /
+    // "Bayonne" segments never occur, so they'd be dead tokens) (#1466).
+    "New York", "Cape Liberty Bayonne", "Baltimore", "Boston", "Norfolk", "Charleston",
     // West coast + Alaska embarkation
     "Los Angeles", "Long Beach", "San Diego", "San Francisco", "Seattle", "Seward", "Whittier", "Anchorage",
     // Hawaii + US territories
@@ -37,9 +40,13 @@ const UK_ORIGIN: LookupTerms = {
 };
 
 // Keys are normalized (lowercased, trimmed) destination phrases and common
-// synonyms. Region terms match itineraries.region (ILIKE, substring); port terms
-// match departure_port / ports_of_call (ILIKE, substring) — so "Sydney" also
-// catches "Sydney, Australia".
+// synonyms. Region terms match itineraries.region (substring ILIKE on the clean
+// region column); port terms match a comma/hyphen-delimited SEGMENT of
+// departure_port / ports_of_call by case-insensitive EQUALITY (migration 0033,
+// #1466) — so a token must be a whole port segment ("Sydney" matches "Sydney" or
+// "Sydney, NSW Australia" but not "Sydney NS, Nova Scotia"). Multi-word ports
+// that appear as a single space-joined segment (e.g. "Cape Liberty Bayonne") must
+// be listed as that exact combined token.
 const GAZETTEER: Record<string, LookupTerms> = {
   australia: {
     // NOTE(collision): "Sydney" is needed here — 406 Australian sailings depart a
