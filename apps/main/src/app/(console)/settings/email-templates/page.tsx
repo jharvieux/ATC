@@ -156,6 +156,8 @@ export default function EmailTemplatesSettingsPage() {
 
   // ── Template edit validation ─────────────────────────────────────────────
   const allowedNames = useMemo(() => (selected ? selected.variables.map((v) => v.name) : []), [selected]);
+  // {{ai_content}} is body-only: its value is multi-paragraph text that can't
+  // fit in a subject line, so it's excluded from allowedNames for subject validation.
   const bodyAllowedNames = useMemo(
     () => (selected?.ai_content ? [...allowedNames, "ai_content"] : allowedNames),
     [selected, allowedNames],
@@ -177,6 +179,9 @@ export default function EmailTemplatesSettingsPage() {
   const missingAiContent =
     !!selected?.ai_content && body.trim().length > 0 && !AI_CONTENT_TOKEN_RE.test(body);
 
+  // Body preview as segments: text between {{ai_content}} tokens renders as
+  // escaped HTML; each token position renders as a labeled AI placeholder
+  // block so tenants see exactly where the AI content lands.
   const textPreview = useMemo(() => {
     if (!selected || issues.length > 0) return null;
     try {
