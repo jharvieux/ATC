@@ -105,7 +105,7 @@ export function WorkspaceSidebar({ role }: WorkspaceSidebarProps): React.ReactEl
           <button
             type="button"
             aria-label={pinned ? "Collapse navigation" : "Pin navigation open"}
-            style={ICON_BTN_STYLE}
+            style={{ ...ICON_BTN_STYLE, borderRadius: 6, color: "var(--ta-text-soft)", flexShrink: 0, transition: "background 0.12s, color 0.12s" }}
             onClick={() => setPinned((p) => !p)}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";
