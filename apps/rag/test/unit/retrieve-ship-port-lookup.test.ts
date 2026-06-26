@@ -13,11 +13,11 @@ vi.mock("@/lib/auth/with-service-auth", () => ({ withServiceAuth: (h: unknown) =
 vi.mock("@/lib/embeddings/openai", () => ({ embed: async () => [] }));
 vi.mock("@/lib/db/supabase", () => ({ getRagDb: () => ({}) }));
 
-import { fetchShipLookupChunks, fetchPortLookupChunks } from "../../src/app/api/retrieve/route";
+import { fetchShipLookupChunks, fetchPortLookupChunks, fetchRegionLookupChunks } from "../../src/app/api/retrieve/route";
 
 type Result = { data: unknown; error: unknown };
 
-function makeDb(byTable: Record<string, Result>) {
+function makeDb(byTable: Record<string, Result>, rpcResult?: Result) {
   function builder(table: string) {
     const result = byTable[table] ?? { data: [], error: null };
     const b: Record<string, unknown> = {};
@@ -27,7 +27,10 @@ function makeDb(byTable: Record<string, Result>) {
     b.then = (resolve: (v: Result) => void) => resolve(result);
     return b;
   }
-  return { from: (t: string) => builder(t) } as unknown as Parameters<typeof fetchShipLookupChunks>[0];
+  return {
+    from: (t: string) => builder(t),
+    rpc: async () => rpcResult ?? { data: [], error: null },
+  } as unknown as Parameters<typeof fetchShipLookupChunks>[0];
 }
 
 // ── fetchShipLookupChunks ─────────────────────────────────────────────────────
@@ -138,8 +141,61 @@ describe("fetchPortLookupChunks", () => {
       itineraries: { data: [{ related_chunk_id: "c1" }], error: null },
       knowledge_chunks: { data: null, error: { message: "timeout" } },
     });
+    // The by-id chunk fetch is shared across the structured lookups, so the
+    // error message is the unified "structured chunk fetch failed".
     await expect(
       fetchPortLookupChunks(db, "tenant-1", { departure_port: "Miami", date_from: "2026-06-01" }),
-    ).rejects.toThrow(/port chunk fetch failed/);
+    ).rejects.toThrow(/structured chunk fetch failed/);
+  });
+});
+
+describe("fetchRegionLookupChunks", () => {
+  const lookup = {
+    region_terms: ["Australia"],
+    port_terms: ["Sydney", "Brisbane"],
+    date_from: "2027-03-01",
+    date_to: "2027-05-31",
+  };
+
+  it("resolves the RPC's matched chunk ids to real chunks, boosted to 1.0", async () => {
+    const db = makeDb(
+      {
+        knowledge_chunks: {
+          data: [
+            { id: "s1", scope: "global", authority_auto: 0.6, authority_manual_override: null },
+            { id: "s2", scope: "global", authority_auto: 0.4, authority_manual_override: null },
+          ],
+          error: null,
+        },
+      },
+      { data: [{ related_chunk_id: "s1", first_departure: "2027-03-04" }, { related_chunk_id: "s2", first_departure: "2027-03-09" }], error: null },
+    );
+    const out = await fetchRegionLookupChunks(db, "tenant-1", lookup);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ match_score: 1, recency_score: 1, composite_confidence: 1 });
+  });
+
+  it("drops chunks from a different tenant (second isolation layer)", async () => {
+    const db = makeDb(
+      {
+        knowledge_chunks: {
+          data: [{ id: "g1", scope: "global" }, { id: "other", scope: "tenant", tenant_id: "tenant-2" }],
+          error: null,
+        },
+      },
+      { data: [{ related_chunk_id: "g1", first_departure: "2027-03-04" }, { related_chunk_id: "other", first_departure: "2027-03-05" }], error: null },
+    );
+    const out = await fetchRegionLookupChunks(db, "tenant-1", lookup);
+    expect(out.map((c) => (c as { id: string }).id)).toEqual(["g1"]);
+  });
+
+  it("returns [] when the RPC matches no sailings", async () => {
+    const db = makeDb({}, { data: [], error: null });
+    expect(await fetchRegionLookupChunks(db, "tenant-1", lookup)).toEqual([]);
+  });
+
+  it("throws on RPC error so the caller degrades to vector-only", async () => {
+    const db = makeDb({}, { data: null, error: { message: "function missing" } });
+    await expect(fetchRegionLookupChunks(db, "tenant-1", lookup)).rejects.toThrow(/region itinerary lookup failed/);
   });
 });

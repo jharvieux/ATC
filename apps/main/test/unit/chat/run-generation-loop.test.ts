@@ -100,6 +100,7 @@ function harness(overrides: Partial<RunGenerationLoopArgs> = {}) {
     generationModel: "model-x",
     chatPurpose: "chat_main",
     streamingEnabled: false,
+    tools: [],
     slurDenyList: [],
     retrieval: { retrieved_chunk_ids: [], citations: [], entities: { intent: "research", categories_hint: [] } },
     tenantMaxTone: 3,

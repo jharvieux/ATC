@@ -48,6 +48,7 @@ import { resolveToneLevel } from "@/lib/chat/tone-resolution";
 import { retrieveForChat } from "@/lib/rag/retrieve-for-chat";
 import { loadConversationHistory } from "@/lib/chat/conversation-history";
 import { buildSystemPrompt, type ChatAudience } from "@/lib/personas/build-system-prompt";
+import { selectPersonaTools } from "@/lib/personas/tools";
 import { resolveActivePersonaSlug } from "@/lib/personas/resolve-active-persona-slug";
 import { buildDisplayableAssetsBlock } from "@/lib/ai/display-assets-block";
 import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-id-validation";
@@ -781,6 +782,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     generationModel,
     chatPurpose,
     streamingEnabled,
+    // BYO tenants / TA-mode turns never see the "our booking system" tools — the
+    // concierge grounds sailing questions in the RAG itinerary data instead.
+    tools: selectPersonaTools({ audience, tenantTier }),
     slurDenyList,
     retrieval,
     tenantMaxTone,

@@ -200,6 +200,23 @@ export async function buildSystemPrompt(opts: BuildSystemPromptOpts): Promise<Sy
     layers.push(`\n\nCUSTOMER CONTEXT:\n${customer_context}`);
   }
 
+  // CURRENT DATE & SEASON CONVENTION — without an explicit "today" the model
+  // guesses a year (often a past one, anchored to its training cutoff) and a
+  // season's hemisphere. Both were live bugs: a "cruise next spring" query drew
+  // a "2025 or 2026?" reply and a Southern-Hemisphere (Australian) spring. This
+  // block is appended last so the stable persona/safety prefix still caches.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  layers.push(
+    `\n\nCURRENT DATE: ${todayIso}. Resolve any relative time the customer uses ` +
+      `("next spring", "this fall", "next year") against this date, and confirm ` +
+      `the concrete year when there's any ambiguity. Interpret seasons as ` +
+      `Northern-Hemisphere / the customer's home-market seasons (spring = Mar–May, ` +
+      `summer = Jun–Aug, fall = Sep–Nov, winter = Dec–Feb) UNLESS the customer ` +
+      `explicitly says they want to be in the destination during its local season ` +
+      `— do not assume a Southern-Hemisphere season for an Australia/New Zealand ` +
+      `request. Never propose or ask about dates that are already in the past.`,
+  );
+
   const prompt = layers.join("");
 
   // Cache key for Anthropic prompt caching — changes when any input changes.

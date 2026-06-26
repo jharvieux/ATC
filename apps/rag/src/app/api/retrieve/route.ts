@@ -110,6 +110,19 @@ export const POST = withServiceAuth(async (req, ctx) => {
       }
     }
 
+    // region_lookup — region/area + date window → itinerary chunks. Catches the
+    // open "what sails Australia next spring?" query where no single ship or
+    // port is named (and most regional rows carry a NULL region column).
+    if (body.region_lookup) {
+      try {
+        structuredRows.push(...await fetchRegionLookupChunks(db, ctx.tenant_id, body.region_lookup));
+      } catch (e) {
+        // Server-side log only (not an API response): pass the error as a separate
+        // console arg so the egress guard sees no `.message`/String(err) in a response.
+        console.warn("[retrieve] region_lookup failed (degrading to vector-only):", e);
+      }
+    }
+
     const structuredIds = new Set(structuredRows.map((c) => c.id as string));
     const chunkRows = [...structuredRows, ...vectorRows.filter((c) => !structuredIds.has(c.id as string))];
     const chunkIds = chunkRows.map((c) => c.id as string);
@@ -243,61 +256,22 @@ export const POST = withServiceAuth(async (req, ctx) => {
   }
 });
 
-// #826 — resolve an exact ship+date lookup to the REAL knowledge chunks for the
-// matching sailings (via itineraries.related_chunk_id), shaped like the
-// match_knowledge_chunks RPC output with a top-rank synthetic score. Using real
-// chunk ids keeps the §6.10 feedback loop intact. Two-layer tenant isolation:
-// the .or() restricts to global OR this tenant's chunks (defense-in-depth — the
-// itineraries rows are global, but never trust that alone).
-export async function fetchItineraryLookupChunks(
-  db: ReturnType<typeof getRagDb>,
+// Column list pulled for every structured-lookup chunk fetch — mirrors the
+// match_knowledge_chunks RPC projection so structured rows shape-match vector rows.
+const STRUCTURED_CHUNK_SELECT =
+  "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override";
+
+// Shape raw knowledge_chunks rows like match_knowledge_chunks output with a
+// synthetic top-rank `score`. Applies the SECOND tenant-isolation layer (D-091):
+// the query's .or() is layer one; this never returns another tenant's chunk even
+// if a related_chunk_id pointed at it.
+function shapeStructuredChunks(
+  rows: unknown[] | null,
   tenantId: string,
-  lookup: { ship: string; sail_date_from: string; sail_date_to?: string | undefined },
-): Promise<Array<Record<string, unknown>>> {
-  const from = lookup.sail_date_from;
-  const to = lookup.sail_date_to ?? lookup.sail_date_from;
-
-  const { data: itins, error: itinErr } = await db
-    .from("itineraries")
-    .select("related_chunk_id")
-    .ilike("ship", `%${lookup.ship}%`)
-    .gte("departure_date", from)
-    .lte("departure_date", to)
-    .not("related_chunk_id", "is", null)
-    .order("departure_date", { ascending: true })
-    .limit(6);
-  if (itinErr) throw new Error(`itineraries lookup failed: ${itinErr.message}`);
-
-  const chunkIds = [
-    ...new Set(
-      (itins ?? [])
-        .map((r) => (r as { related_chunk_id: string | null }).related_chunk_id)
-        .filter((id): id is string => !!id),
-    ),
-  ];
-  if (chunkIds.length === 0) return [];
-
-  const { data: rows, error: chunkErr } = await db
-    .from("knowledge_chunks")
-    .select(
-      "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override",
-    )
-    .in("id", chunkIds)
-    .eq("status", "approved")
-    // #826 audit — mirror the freshness gates match_knowledge_chunks applies so
-    // the boost can't surface stale content: skip superseded chunks, require an
-    // embedding, and never boost a promo chunk (any sell_by_at) — promo chunks
-    // fall through to the vector path, which runs the full promo-lifecycle gate.
-    .is("superseded_by_chunk_id", null)
-    .not("embedding", "is", null)
-    .is("sell_by_at", null)
-    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
-  if (chunkErr) throw new Error(`itinerary chunk fetch failed: ${chunkErr.message}`);
-
+  score: number,
+): Array<Record<string, unknown>> {
   return (rows ?? [])
     .filter((c) => {
-      // Second tenant-isolation layer (D-091): the .or() above is layer one;
-      // never return another tenant's chunk even if related_chunk_id pointed at it.
       const row = c as { scope?: string | null; tenant_id?: string | null };
       return row.scope === "global" || row.tenant_id === tenantId;
     })
@@ -305,16 +279,74 @@ export async function fetchItineraryLookupChunks(
       const row = c as Record<string, unknown>;
       return {
         ...row,
-        match_score: 1,
+        match_score: score,
         authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
-        recency_score: 1,
-        composite_confidence: 1,
+        recency_score: score,
+        composite_confidence: score,
       };
     });
 }
 
+// Fetch approved, non-stale knowledge_chunks by id with the freshness gates
+// match_knowledge_chunks applies so a structured boost can't surface stale
+// content: skip superseded chunks, require an embedding, and never boost a promo
+// chunk (any sell_by_at) — promo chunks fall through to the vector path, which
+// runs the full promo-lifecycle gate. Layer-one tenant isolation via .or().
+async function fetchApprovedChunksByIds(
+  db: ReturnType<typeof getRagDb>,
+  tenantId: string,
+  chunkIds: string[],
+): Promise<unknown[]> {
+  if (chunkIds.length === 0) return [];
+  const { data: rows, error } = await db
+    .from("knowledge_chunks")
+    .select(STRUCTURED_CHUNK_SELECT)
+    .in("id", chunkIds)
+    .eq("status", "approved")
+    .is("superseded_by_chunk_id", null)
+    .not("embedding", "is", null)
+    .is("sell_by_at", null)
+    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
+  if (error) throw new Error(`structured chunk fetch failed: ${error.message}`);
+  return rows ?? [];
+}
+
+function dedupeChunkIds(rows: unknown[] | null): string[] {
+  return [
+    ...new Set(
+      (rows ?? [])
+        .map((r) => (r as { related_chunk_id: string | null }).related_chunk_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+}
+
+// #826 — resolve an exact ship+date lookup to the REAL knowledge chunks for the
+// matching sailings (via itineraries.related_chunk_id), with a top-rank synthetic
+// score. Real chunk ids keep the §6.10 feedback loop intact.
+export async function fetchItineraryLookupChunks(
+  db: ReturnType<typeof getRagDb>,
+  tenantId: string,
+  lookup: { ship: string; sail_date_from: string; sail_date_to?: string | undefined },
+): Promise<Array<Record<string, unknown>>> {
+  const to = lookup.sail_date_to ?? lookup.sail_date_from;
+
+  const { data: itins, error: itinErr } = await db
+    .from("itineraries")
+    .select("related_chunk_id")
+    .ilike("ship", `%${lookup.ship}%`)
+    .gte("departure_date", lookup.sail_date_from)
+    .lte("departure_date", to)
+    .not("related_chunk_id", "is", null)
+    .order("departure_date", { ascending: true })
+    .limit(6);
+  if (itinErr) throw new Error(`itineraries lookup failed: ${itinErr.message}`);
+
+  const rows = await fetchApprovedChunksByIds(db, tenantId, dedupeChunkIds(itins));
+  return shapeStructuredChunks(rows, tenantId, 1);
+}
+
 // ship_lookup — fetch deck_intel and ship_intel chunks for the named ship.
-// Two-layer tenant isolation matches the pattern in fetchItineraryLookupChunks.
 export async function fetchShipLookupChunks(
   db: ReturnType<typeof getRagDb>,
   tenantId: string,
@@ -322,39 +354,20 @@ export async function fetchShipLookupChunks(
 ): Promise<Array<Record<string, unknown>>> {
   const { data: rows, error } = await db
     .from("knowledge_chunks")
-    .select(
-      "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override",
-    )
+    .select(STRUCTURED_CHUNK_SELECT)
     .ilike("ship_or_property", `%${lookup.ship}%`)
     .in("category", ["deck_intel", "ship_intel"])
     .eq("status", "approved")
     .is("superseded_by_chunk_id", null)
     .not("embedding", "is", null)
-    // Mirror the freshness gate from fetchItineraryLookupChunks: promo chunks
-    // fall through to the vector path where the full lifecycle gate applies.
     .is("sell_by_at", null)
     .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
   if (error) throw new Error(`ship lookup failed: ${error.message}`);
-
-  return (rows ?? [])
-    .filter((c) => {
-      const row = c as { scope?: string | null; tenant_id?: string | null };
-      return row.scope === "global" || row.tenant_id === tenantId;
-    })
-    .map((c) => {
-      const row = c as Record<string, unknown>;
-      return {
-        ...row,
-        match_score: 0.95,
-        authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
-        recency_score: 0.95,
-        composite_confidence: 0.95,
-      };
-    });
+  return shapeStructuredChunks(rows, tenantId, 0.95);
 }
 
 // port_lookup — fetch itinerary chunks for sailings departing FROM the named
-// port on/near the given date. Two-layer tenant isolation.
+// port on/near the given date.
 export async function fetchPortLookupChunks(
   db: ReturnType<typeof getRagDb>,
   tenantId: string,
@@ -373,42 +386,31 @@ export async function fetchPortLookupChunks(
     .limit(10);
   if (itinErr) throw new Error(`port lookup failed: ${itinErr.message}`);
 
-  const chunkIds = [
-    ...new Set(
-      (itins ?? [])
-        .map((r) => (r as { related_chunk_id: string | null }).related_chunk_id)
-        .filter((id): id is string => !!id),
-    ),
-  ];
-  if (chunkIds.length === 0) return [];
+  const rows = await fetchApprovedChunksByIds(db, tenantId, dedupeChunkIds(itins));
+  return shapeStructuredChunks(rows, tenantId, 1);
+}
 
-  const { data: rows, error: chunkErr } = await db
-    .from("knowledge_chunks")
-    .select(
-      "id, content, content_hash, scope, tenant_id, category, cruise_line_or_supplier, ship_or_property, destination, agent_scope, tags, source_type, source_url, source_domain, ingested_at, expires_at, contains_pricing, sell_by_at, authority_auto, authority_manual_override",
-    )
-    .in("id", chunkIds)
-    .eq("status", "approved")
-    .is("superseded_by_chunk_id", null)
-    .not("embedding", "is", null)
-    // Mirror the freshness gate: promo chunks fall through to the vector path.
-    .is("sell_by_at", null)
-    .or(`scope.eq.global,tenant_id.eq.${tenantId}`);
-  if (chunkErr) throw new Error(`port chunk fetch failed: ${chunkErr.message}`);
+// region_lookup — fetch itinerary chunks for sailings in a REGION/AREA over a
+// date window, when no single ship or port is named. The match_region_itinerary_chunks
+// RPC matches region terms OR port terms against itineraries.region /
+// departure_port / ports_of_call (most regional rows carry a NULL region column,
+// so port-token matching is what surfaces the bulk of the inventory).
+export async function fetchRegionLookupChunks(
+  db: ReturnType<typeof getRagDb>,
+  tenantId: string,
+  lookup: { region_terms: string[]; port_terms: string[]; date_from: string; date_to?: string | undefined },
+): Promise<Array<Record<string, unknown>>> {
+  const to = lookup.date_to ?? lookup.date_from;
 
-  return (rows ?? [])
-    .filter((c) => {
-      const row = c as { scope?: string | null; tenant_id?: string | null };
-      return row.scope === "global" || row.tenant_id === tenantId;
-    })
-    .map((c) => {
-      const row = c as Record<string, unknown>;
-      return {
-        ...row,
-        match_score: 1,
-        authority_score: (row.authority_manual_override ?? row.authority_auto) ?? null,
-        recency_score: 1,
-        composite_confidence: 1,
-      };
-    });
+  const { data: matched, error: rpcErr } = await db.rpc("match_region_itinerary_chunks", {
+    p_region_terms: lookup.region_terms,
+    p_port_terms: lookup.port_terms,
+    p_date_from: lookup.date_from,
+    p_date_to: to,
+    p_limit: 12,
+  });
+  if (rpcErr) throw new Error(`region itinerary lookup failed: ${rpcErr.message}`);
+
+  const rows = await fetchApprovedChunksByIds(db, tenantId, dedupeChunkIds(matched));
+  return shapeStructuredChunks(rows, tenantId, 1);
 }

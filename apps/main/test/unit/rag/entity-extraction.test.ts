@@ -11,7 +11,28 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock("@/lib/ai/call-wrapper", () => ({ instrumentedClaudeCall: mocks.call }));
 
-import { extractEntities, _clearEntityCacheForTests } from "@/lib/rag/entity-extraction";
+import { extractEntities, buildDateDirective, _clearEntityCacheForTests } from "@/lib/rag/entity-extraction";
+
+describe("buildDateDirective — relative-date + season resolution (live 'next spring' bug)", () => {
+  it("anchors resolution on the supplied current date", () => {
+    // The model can't resolve "next spring" to a year without knowing today; the
+    // live bug had it offering past years (2025/2026). The date must be present.
+    expect(buildDateDirective("2026-06-26")).toContain("CURRENT DATE: 2026-06-26");
+  });
+
+  it("pins the Northern-Hemisphere season convention with the destination-season exception", () => {
+    const d = buildDateDirective("2026-06-26");
+    expect(d).toMatch(/NORTHERN-HEMISPHERE/i);
+    expect(d).toMatch(/spring = Mar–May/);
+    // The exact carve-out the user asked for: only flip to the destination's local
+    // (e.g. Southern-Hemisphere) season when the customer explicitly asks for it.
+    expect(d).toMatch(/UNLESS the customer explicitly/i);
+  });
+
+  it("forbids resolving to a past date", () => {
+    expect(buildDateDirective("2026-06-26")).toMatch(/Never output a travel_dates value that is in the past/i);
+  });
+});
 
 describe("extractEntities — §21.2", () => {
   beforeEach(() => {

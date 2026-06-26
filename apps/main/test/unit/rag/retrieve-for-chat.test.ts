@@ -187,3 +187,68 @@ describe("buildPortLookup — departure port + date → port-departure structure
     expect(buildPortLookup(entities({ travel_dates: { earliest: "2026-06-01", latest: null } }))).toBeNull(); // no port
   });
 });
+
+describe("buildRegionLookup — region/area + date window → region structured fetch", () => {
+  type Ents = Parameters<typeof import("@/lib/rag/retrieve-for-chat")["buildRegionLookup"]>[0];
+  function entities(over: Partial<Ents> = {}): Ents {
+    return {
+      destinations: [], departure_ports: [], cruise_lines: [], ships: [],
+      travel_dates: { earliest: null, latest: null },
+      passenger_composition: "", intent: "research", categories_hint: [],
+      ...over,
+    } as Ents;
+  }
+
+  it("fires for a region + date window with no ship — the open 'Australia next spring' case", async () => {
+    const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
+    // WHY: this is the exact query the concierge previously had no grounded answer
+    // for (it fell back to a stub tool). It must expand "Australia" to its ports so
+    // the rag RPC catches the NULL-region sailings that depart Australian ports.
+    const lookup = buildRegionLookup(entities({
+      destinations: ["Australia"],
+      travel_dates: { earliest: "2027-03-01", latest: "2027-05-31" },
+    }));
+    expect(lookup).not.toBeNull();
+    expect(lookup!.region_terms).toContain("Australia");
+    expect(lookup!.port_terms).toEqual(expect.arrayContaining(["Sydney", "Brisbane", "Melbourne"]));
+    expect(lookup!.date_from).toBe("2027-03-01");
+    expect(lookup!.date_to).toBe("2027-05-31");
+  });
+
+  it("includes named departure ports as additional port terms (US→Australia transpacific)", async () => {
+    const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
+    const lookup = buildRegionLookup(entities({
+      destinations: ["Australia"],
+      departure_ports: ["Los Angeles"],
+      travel_dates: { earliest: "2027-01-01", latest: "2027-06-30" },
+    }));
+    // Australia's ports drive the destination-side match; the named US embark port
+    // rides along as an extra term so a transpacific sailing is matchable either way.
+    expect(lookup!.port_terms).toEqual(expect.arrayContaining(["Sydney", "Los Angeles"]));
+  });
+
+  it("omits date_to when only a start date is known", async () => {
+    const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
+    const lookup = buildRegionLookup(entities({
+      destinations: ["Caribbean"],
+      travel_dates: { earliest: "2027-02-01", latest: null },
+    }));
+    expect(lookup).not.toBeNull();
+    expect(lookup).not.toHaveProperty("date_to");
+  });
+
+  it("does not fire when a specific ship is named — itinerary_lookup is the precise path then", async () => {
+    const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(buildRegionLookup(entities({
+      destinations: ["Australia"],
+      ships: ["Ovation of the Seas"],
+      travel_dates: { earliest: "2027-03-01", latest: "2027-05-31" },
+    }))).toBeNull();
+  });
+
+  it("does not fire without a date (window must be bounded) or without a destination", async () => {
+    const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
+    expect(buildRegionLookup(entities({ destinations: ["Australia"] }))).toBeNull(); // no date
+    expect(buildRegionLookup(entities({ travel_dates: { earliest: "2027-03-01", latest: null } }))).toBeNull(); // no destination
+  });
+});
