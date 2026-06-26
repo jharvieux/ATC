@@ -24,7 +24,9 @@ const US_ORIGIN: LookupTerms = {
   portTerms: [
     // East / Gulf coast
     "Miami", "Fort Lauderdale", "Port Canaveral", "Tampa", "Jacksonville", "Galveston", "New Orleans", "Mobile",
-    "New York", "Cape Liberty", "Bayonne", "Baltimore", "Boston", "Norfolk", "Charleston",
+    // "Cape Liberty Bayonne" is a single space-joined segment in the data; the
+    // combined token recovers it under segment-exact matching (#1466).
+    "New York", "Cape Liberty Bayonne", "Cape Liberty", "Bayonne", "Baltimore", "Boston", "Norfolk", "Charleston",
     // West coast + Alaska embarkation
     "Los Angeles", "Long Beach", "San Diego", "San Francisco", "Seattle", "Seward", "Whittier", "Anchorage",
     // Hawaii + US territories
