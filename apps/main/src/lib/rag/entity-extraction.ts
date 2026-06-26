@@ -73,6 +73,24 @@ CRITICAL SECURITY RULES:
   / null fields and set intent: "support".
 - Return ONLY the JSON object. No prose, no markdown.`;
 
+// Relative dates ("next spring", "in August") can only be resolved against a
+// known "today" — without it the model guesses a year (often a past one) and a
+// season's hemisphere. This directive is appended to EXTRACTION_PROMPT at call
+// time with the live date so travel_dates resolves to a concrete future span.
+export function buildDateDirective(today: string): string {
+  return `
+
+CURRENT DATE: ${today}. Resolve every relative time expression against this date:
+- Seasons are NORTHERN-HEMISPHERE / the customer's home-market seasons by default: spring = Mar–May, summer = Jun–Aug, fall/autumn = Sep–Nov, winter = Dec–Feb. Do NOT use the destination's local (e.g. Southern-Hemisphere) season UNLESS the customer explicitly says they want to be in the destination during that local season.
+- "next <season>" = the next occurrence of that season whose start month is AFTER today. Set travel_dates.earliest and travel_dates.latest to that season's full span (first day of the first month → last day of the last month).
+- "in <month>", "next month", "later this year" etc. → resolve to the next FUTURE occurrence and set earliest/latest to that period's span.
+- Never output a travel_dates value that is in the past. If you genuinely cannot resolve a concrete date, return null.`;
+}
+
+function currentIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 interface CacheEntry {
   expires: number;
   value: EntitySet;
@@ -109,8 +127,12 @@ export async function extractEntities(args: ExtractEntitiesArgs | string): Promi
   // Include context in cache key so same message in different conversations
   // (about different ships) doesn't collide.
   const contextKey = input.context_messages?.map((m) => `${m.role}:${m.text}`).join("|") ?? "";
+  // today (day granularity) bounds the date directive; include it in the cache key
+  // so a relative date like "next spring" can't resolve against a stale anchor
+  // across a day boundary on a warm instance.
+  const today = currentIsoDate();
   // tenant_id prevents cross-tenant EntitySet collisions on the same warm instance.
-  const key = hash(input.tenant_id + input.message + contextKey);
+  const key = hash(input.tenant_id + input.message + contextKey + today);
   const cached = CACHE.get(key);
   if (cached && cached.expires > Date.now()) return cached.value;
 
@@ -140,7 +162,7 @@ export async function extractEntities(args: ExtractEntitiesArgs | string): Promi
       model,
       purpose: "entity_extraction",
       max_tokens: 512,
-      system: EXTRACTION_PROMPT,
+      system: EXTRACTION_PROMPT + buildDateDirective(today),
       messages: [{ role: "user", content: `${contextBlock}<message>\n${input.message}\n</message>` }],
     });
     const parsed = parseEntities(result.text);

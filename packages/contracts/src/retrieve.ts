@@ -72,6 +72,24 @@ export const RetrieveRequestSchema = z.object({
     .nullable()
     .optional()
     .default(null),
+  // When the message names a REGION/AREA (e.g. "Australia", "Caribbean") plus a
+  // date window — but no single ship or departure port — run a structured
+  // region lookup against the itineraries table. Vector search can't enumerate
+  // sailings across a region, and the itineraries.region column is unset on a
+  // large share of rows, so the caller passes BOTH a set of region terms AND a
+  // set of port tokens (a country expands to its major cruise ports); the rag
+  // RPC matches region OR departure_port OR any port_of_call against either set.
+  // sail_date_from is required so the window is always bounded.
+  region_lookup: z
+    .object({
+      region_terms: z.array(z.string().min(1)).default([]),
+      port_terms: z.array(z.string().min(1)).default([]),
+      date_from: z.string(), // ISO YYYY-MM-DD
+      date_to: z.string().optional(),
+    })
+    .nullable()
+    .optional()
+    .default(null),
 });
 export type RetrieveRequest = z.infer<typeof RetrieveRequestSchema>;
 

@@ -24,7 +24,7 @@ import {
 import { instrumentedClaudeStream } from "@/lib/ai/stream-wrapper";
 import { bufferToSentences } from "@/lib/ai/sentence-buffer";
 import { checkSentence } from "@/lib/supervisor/per-sentence-check";
-import { PERSONA_TOOLS } from "@/lib/personas/tools";
+import type { ToolDefinition } from "@/lib/personas/tools";
 import { runToolUseLoop } from "@/lib/personas/tools/run-tool-use-loop";
 import {
   runSupervisor,
@@ -69,6 +69,10 @@ export type RunGenerationLoopArgs = {
   generationModel: string;
   chatPurpose: "chat_main" | "ta_chat_main";
   streamingEnabled: boolean;
+  // Tool set exposed to the model this turn — already filtered by audience +
+  // tenant tier at the route layer (selectPersonaTools). BYO/TA turns omit the
+  // "our booking system" tools, so the loop must use this, not PERSONA_TOOLS.
+  tools: ToolDefinition[];
   slurDenyList: string[];
   retrieval: {
     retrieved_chunk_ids: string[];
@@ -114,6 +118,7 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
     generationModel,
     chatPurpose,
     streamingEnabled,
+    tools,
     slurDenyList,
     retrieval,
     tenantMaxTone,
@@ -154,7 +159,7 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
       max_tokens: 1024,
       system: sys,
       messages,
-      tools: PERSONA_TOOLS as unknown as AnthropicTool[],
+      tools: tools as unknown as AnthropicTool[],
       signal: abortController.signal,
     });
 
@@ -283,7 +288,7 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
       }
     } else {
       // ── Non-streaming branch ──
-      // §9.6 tool-use loop: pass PERSONA_TOOLS; if the response includes
+      // §9.6 tool-use loop: pass the audience/tier-selected tools; if the response includes
       // tool_use blocks, dispatch them and make a follow-up call with
       // tool_result blocks attached. The streaming branch above runs the
       // same single-pass loop (#421). Single-pass: if the follow-up itself
@@ -303,7 +308,7 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
         let result = await instrumentedClaudeCall({
           ...baseArgs,
           messages: chatHistory,
-          tools: PERSONA_TOOLS as unknown as AnthropicTool[],
+          tools: tools as unknown as AnthropicTool[],
         });
 
         // Tool-use loop. Returns null if no tool_use blocks — common case.
@@ -324,7 +329,7 @@ export async function runGenerationLoop(args: RunGenerationLoopArgs): Promise<Ge
           result = await instrumentedClaudeCall({
             ...baseArgs,
             messages: loopOut.followUpMessages,
-            tools: PERSONA_TOOLS as unknown as AnthropicTool[],
+            tools: tools as unknown as AnthropicTool[],
           });
           console.info(
             `[chat:tool-use] dispatched=${loopOut.dispatchedTools.join(",")} mutated=${loopOut.mutated}`,

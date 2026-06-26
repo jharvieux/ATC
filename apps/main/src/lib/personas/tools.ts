@@ -175,3 +175,39 @@ export const PERSONA_TOOLS: ToolDefinition[] = [
     },
   },
 ];
+
+// Tools that drive OUR booking system (platform host-adapter inventory search,
+// quoting, and booking capture). BYO agencies run their OWN booking system and
+// never ours, so these are removed for BYO tenants (operator directive: never try
+// to use our booking system for a BYO agency). In TA mode they don't fit either —
+// the audience is the agency's own staff, not a customer, and search_host_inventory
+// returns a "not connected yet" stub that reads as "our inventory isn't live",
+// which is the wrong thing to tell a travel professional. With these removed the
+// concierge grounds sailing questions in the RAG itinerary data (region/port/ship
+// structured lookups) instead of reaching for a broken tool.
+const OUR_BOOKING_SYSTEM_TOOLS: ReadonlySet<string> = new Set([
+  "search_host_inventory",
+  "generate_quote",
+  "collect_booking_details",
+]);
+
+// update_memory writes CUSTOMER rapport/preferences; in TA mode there is no
+// customer on the far end, so it is dropped there too.
+const CUSTOMER_ONLY_TOOLS: ReadonlySet<string> = new Set(["update_memory"]);
+
+// Select the tool set exposed to the model for a given audience + tenant tier.
+// A BYO tenant or a TA-mode turn never sees the "our booking system" tools; a
+// TA-mode turn also drops customer-only tools.
+export function selectPersonaTools(opts: {
+  audience: "customer" | "tenant_member";
+  tenantTier: string;
+}): ToolDefinition[] {
+  const isByo = opts.tenantTier.startsWith("byo_");
+  const isTa = opts.audience === "tenant_member";
+  if (!isByo && !isTa) return PERSONA_TOOLS;
+  return PERSONA_TOOLS.filter((t) => {
+    if ((isByo || isTa) && OUR_BOOKING_SYSTEM_TOOLS.has(t.name)) return false;
+    if (isTa && CUSTOMER_ONLY_TOOLS.has(t.name)) return false;
+    return true;
+  });
+}

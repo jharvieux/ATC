@@ -81,6 +81,18 @@ describe("buildSystemPrompt audience dimension (#902)", () => {
     expect(a.prompt).not.toContain("TA mode");
   });
 
+  it("appends a CURRENT DATE block with the Northern-Hemisphere season convention (live date/season bug)", async () => {
+    // Two live bugs this pins: (1) the model guessed a past year for "next spring"
+    // with no date anchor; (2) it assumed the destination's (Southern-Hemisphere)
+    // season for Australia. The prompt must carry today's date and the convention.
+    const { prompt } = await buildSystemPrompt(baseOpts(dbStub().db));
+    const today = new Date().toISOString().slice(0, 10);
+    expect(prompt).toContain(`CURRENT DATE: ${today}`);
+    expect(prompt).toMatch(/Northern-Hemisphere/i);
+    expect(prompt).toMatch(/do not assume a Southern-Hemisphere season for an Australia/i);
+    expect(prompt).toMatch(/Never propose or ask about dates that are already in the past/i);
+  });
+
   it("tenant_member: TA rules replace the editable safety block; legal kernel survives", async () => {
     const { prompt } = await buildSystemPrompt({ ...baseOpts(dbStub().db), audience: "tenant_member" });
     expect(prompt).toContain(TA_MEMBER_RULES);
