@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-300 — 2026-06-26 — Concierge region/area sailing search (RAG migration 0031 region_lookup RPC + destination gazetteer) + current-date/Northern-season injection + BYO/TA booking-tool gating (PR #1463); operator follow-up #1462 (prod RAG migrate+deploy)
 - D-299 — 2026-06-25 — LOW security batch: #1402 DNS-pinned SSRF + #1388 ingest size cap + #1395 error-egress baseline burned to 0 (PRs #1427/#1428/#1430)
 - D-298 — 2026-06-25 — Overnight opus batch: shipped #1376+#1377 (atomic chat-limit RPCs, PR #1414), #1391 (clawback idempotency_key, PR #1416), #1379 (session-bound throttled OTP, PR #1417); skipped #1247 + #1127 (don't-guess-at-money — spec-owner decisions needed, commented). Follow-ups #1415 (DB concurrency test), #1418 (G4 regen-name gap); reopened #735. Migrations staged to test DB, prod gated.
 - D-297 — 2026-06-24 — EPIC #1393 complete: Day-1 finding classes → 6 shift-left CI guards (G1–G6). Shipped last 3: G3 counter-rmw (d091 detector, PR #1407), G4 in-memory rate-limit (check:rate-limit-store, #1409), G6 webhook-replay (check:webhook-replay, #1411); each baseline+escape-hatch+tests+doctrine #18/#19/#20. Audit caught REPLAY_RE bare-timestamp too broad + source_revision >= defeats replay → closed #1410 not-a-bug; filed #1408 (detectServiceRoleTenant false-neg). Heuristic matchers, presence-checks not correctness proofs.

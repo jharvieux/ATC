@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-300 — 2026-06-26 — Concierge region/area sailing search + date resolution + BYO booking-tool gating (PR #1463)
+
+Live TA chat session (BYO agency, "high-end suite, ship-within-a-ship, Australia, next spring") surfaced two classes of bug; fixed together.
+
+**Dates.** The model was NEVER given "today" — so "next spring" drew a "2025 or 2026?" reply (past years) and a Southern-Hemisphere (Australian) spring. Fix: inject current date into BOTH the entity-extraction prompt (`buildDateDirective`, folded into the message-hash cache key) and the concierge system prompt (`build-system-prompt.ts`, appended last so the stable persona/safety prefix still caches). Season convention = Northern-Hemisphere / home-market seasons UNLESS the customer explicitly asks to be in the destination during its local season (user's explicit ruling — encode, don't re-ask).
+
+**"Our inventory system isn't live yet."** NOT the model freelancing — it relayed the `search_host_inventory` stub tool's hardcoded "not connected yet" message. Two root causes: (1) `PERSONA_TOOLS` was passed to the model unfiltered in every context. New `selectPersonaTools({audience, tenantTier})` withholds the "our booking system" tools (`search_host_inventory`/`generate_quote`/`collect_booking_details`) from BYO tenants AND TA mode; also drops `update_memory` in TA mode. **Standing directive: never use our booking system for a BYO agency — they bring their own** (see [[project_booking_customer_tenant]] for the related tenant-type nuance). (2) There was no RAG retrieval path for "region + date window" — structured lookups only fired on a named ship or named port, so an open regional query returned nothing and the model fell back to the stub.
+
+**region_lookup (new retrieval path).** contracts `region_lookup {region_terms, port_terms, date_from, date_to}` → RAG migration **0031** `match_region_itinerary_chunks` RPC (matches `region` OR `departure_port` OR any `ports_of_call` via ILIKE-any over a date window) → main-side destination→ports **gazetteer** + `buildRegionLookup`. KEY DATA FACT grounding the design: itineraries.region is NULL on ~96% of Australian-port sailings (719 NULL-region vs 30 tagged), so region-column matching ALONE misses almost everything — a country/area MUST expand to its major cruise PORTS (the gazetteer) and match against departure_port + ports_of_call. Validated read-only vs prod RAG: 111 sailings for Australia Mar–May 2027 (RCL Star Class / CEL Retreat / NCL Haven + Seabourn/Viking/Regent). Also catches US→Australia transpacific voyages because AU ports appear in ports_of_call (the match is destination-driven, not origin-driven). Dropped a `cruise_line` filter param: itineraries.cruise_line stores CODES (RCL/CEL/NCL) that won't ILIKE-match extracted names — a name filter would silently match nothing (stub-shaped), so the model filters by line over returned sailings instead.
+
+Refactored the 3 structured-lookup handlers' identical by-id chunk fetch into `fetchApprovedChunksByIds` + `shapeStructuredChunks` (avoids a 4th jscpd-tripping copy; unified error message "structured chunk fetch failed"). Operator follow-up #1462 (GATED): apply migration 0031 to prod RAG via psql + redeploy atc-rag (dev merge does NOT deploy RAG); until then region_lookup fails closed in prod (degrades to vector-only).
+
+---
+
 ## D-299 — 2026-06-25 — LOW security batch shipped: #1402 DNS-pinned SSRF, #1388 ingest size cap, #1395 error-egress baseline burned to zero
 
 **Decision.** Shipped three LOW-priority security issues from the epic #1393 / #1381 track.
