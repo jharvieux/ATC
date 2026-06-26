@@ -35,9 +35,14 @@ interface Fixtures {
   sql: ReturnType<typeof postgres>;
   tenantId: string;
   userId: string; // public.users.id (not auth.users.id)
+  authId: string; // auth.users.id for direct cleanup
 }
 
 let fx: Fixtures;
+
+// Boundary fixture IDs tracked here so afterAll can clean up even if test 3 assertions fail.
+let boundaryTenantIdToClean: string | null = null;
+let boundaryAuthIdToClean: string | null = null;
 
 describeIf("chat-limit RPC concurrency (DB integration)", () => {
   beforeAll(async () => {
@@ -89,27 +94,33 @@ describeIf("chat-limit RPC concurrency (DB integration)", () => {
     `;
     if (!userRow) throw new Error("user insert returned no row");
 
-    fx = { admin, sql, tenantId, userId: userRow.id };
+    fx = { admin, sql, tenantId, userId: userRow.id, authId };
   }, 60000);
 
   afterAll(async () => {
     if (!fx) return;
-    const { admin, sql, tenantId, userId } = fx;
+    const { admin, sql, tenantId, userId, authId } = fx;
     try {
       // Delete counter rows first (FK dependencies), then the tenant fixture.
       await sql`DELETE FROM public.customer_chat_counters WHERE user_id = ${userId}`;
       await sql`DELETE FROM public.anonymous_chat_counters WHERE tenant_id = ${tenantId}`;
-      // Delete auth user (find via email).
-      const authUsers = await admin.auth.admin.listUsers();
-      const authUser = authUsers.data.users.find((u) => u.email?.startsWith(RUN_TAG));
-      if (authUser) {
-        await admin.auth.admin.deleteUser(authUser.id).catch(() => {});
-      }
+      await admin.auth.admin.deleteUser(authId).catch(() => {});
       await sql`DELETE FROM public.users WHERE tenant_id = ${tenantId}`;
       await sql.begin(async (tx) => {
         await tx`SET LOCAL app.allow_tenant_hard_delete = 'true'`;
         await tx`DELETE FROM public.tenants WHERE id = ${tenantId}`;
       });
+      // Clean up boundary fixture from test 3 (tracked at module level so cleanup
+      // runs even if the test assertions threw before reaching the inline cleanup).
+      if (boundaryTenantIdToClean) {
+        await sql`DELETE FROM public.customer_chat_counters WHERE tenant_id = ${boundaryTenantIdToClean}`;
+        await sql`DELETE FROM public.users WHERE tenant_id = ${boundaryTenantIdToClean}`;
+        if (boundaryAuthIdToClean) await admin.auth.admin.deleteUser(boundaryAuthIdToClean).catch(() => {});
+        await sql.begin(async (tx) => {
+          await tx`SET LOCAL app.allow_tenant_hard_delete = 'true'`;
+          await tx`DELETE FROM public.tenants WHERE id = ${boundaryTenantIdToClean}`;
+        });
+      }
     } finally {
       await sql.end();
     }
@@ -196,18 +207,20 @@ describeIf("chat-limit RPC concurrency (DB integration)", () => {
     30000,
   );
 
-  // ── Test 3: increment_customer_chat_count — boundary crossing at cap-1 ───
+  // ── Test 3: increment_customer_chat_count — no duplicate/gap at an arbitrary boundary ──
   //
-  // Seed the counter row at count=39 (cap-1, where cap=40). Fire K=10 parallel
-  // calls. Exactly one caller must receive 40 (the boundary-crossing increment)
-  // and the rest must receive values > 40. No caller should receive ≤ 39
-  // (meaning the pre-seeded value was returned) because the RPC always
-  // increments before returning. This proves consume-then-check works under
-  // concurrency: exactly one request is allowed through the cap boundary.
+  // Seed the counter row at 39. Fire K=10 parallel calls. The RPC is a pure
+  // atomic counter — it does not enforce any cap (cap enforcement is app-layer
+  // in customer-limit.ts). The "30" arg is p_window_days, not a cap value.
+  //
+  // This test proves atomicity across a boundary:
+  //   - No caller receives ≤ 39 (all incremented from the seed).
+  //   - Exactly one caller receives 40 (the increment from 39 is not duplicated).
+  //   - The remaining K-1 callers receive > 40 (no lost updates).
   it(
-    "increment_customer_chat_count: exactly one caller crosses the boundary at cap-1=39",
+    "increment_customer_chat_count: exactly one caller crosses the boundary at seed=39",
     async () => {
-      const { sql, userId, tenantId } = fx;
+      const { sql } = fx;
 
       // Fresh user/tenant pair to avoid interference from Test 1.
       const sessionUserTag = `${RUN_TAG}-boundary`;
@@ -225,10 +238,9 @@ describeIf("chat-limit RPC concurrency (DB integration)", () => {
       `;
       if (!tenantRow) throw new Error("boundary tenant insert returned no row");
       const boundaryTenantId = tenantRow.id;
+      // Register for afterAll cleanup before any await that might throw.
+      boundaryTenantIdToClean = boundaryTenantId;
 
-      // Re-use the same userId (public.users.id references tenant via tenant_id,
-      // but customer_chat_counters is keyed on (user_id, tenant_id) independently
-      // — we need a user row in the new tenant).
       const email2 = `${sessionUserTag}@example.test`;
       const created2 = await fx.admin.auth.admin.createUser({
         email: email2,
@@ -239,6 +251,7 @@ describeIf("chat-limit RPC concurrency (DB integration)", () => {
         throw new Error(`createUser failed: ${created2.error?.message}`);
       }
       const authId2 = created2.data.user.id;
+      boundaryAuthIdToClean = authId2;
       const [userRow2] = await sql<{ id: string }[]>`
         INSERT INTO public.users (auth_user_id, tenant_id, email, status)
         VALUES (${authId2}, ${boundaryTenantId}, ${email2}, 'active')
@@ -286,22 +299,15 @@ describeIf("chat-limit RPC concurrency (DB integration)", () => {
       const belowBoundary = results.filter((c) => c <= 39);
       expect(belowBoundary).toHaveLength(0);
 
-      // Exactly one caller crosses the cap boundary at 40.
-      const atCap = results.filter((c) => c === 40);
-      expect(atCap).toHaveLength(1);
+      // Exactly one caller crosses the boundary at 40 (the seed+1 slot is not duplicated).
+      const atBoundary = results.filter((c) => c === 40);
+      expect(atBoundary).toHaveLength(1);
 
       // The rest received counts above 40 (no lost updates).
-      const aboveCap = results.filter((c) => c > 40);
-      expect(aboveCap).toHaveLength(K - 1);
+      const aboveBoundary = results.filter((c) => c > 40);
+      expect(aboveBoundary).toHaveLength(K - 1);
 
-      // Cleanup boundary fixtures.
-      await sql`DELETE FROM public.customer_chat_counters WHERE user_id = ${boundaryUserId}`;
-      await sql`DELETE FROM public.users WHERE id = ${boundaryUserId}`;
-      await fx.admin.auth.admin.deleteUser(authId2).catch(() => {});
-      await sql.begin(async (tx) => {
-        await tx`SET LOCAL app.allow_tenant_hard_delete = 'true'`;
-        await tx`DELETE FROM public.tenants WHERE id = ${boundaryTenantId}`;
-      });
+      // Cleanup handled in afterAll via boundaryTenantIdToClean / boundaryAuthIdToClean.
     },
     60000,
   );
