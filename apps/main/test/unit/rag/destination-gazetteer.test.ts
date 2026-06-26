@@ -33,6 +33,26 @@ describe("resolveDestinationToLookupTerms", () => {
     expect(upper.portTerms).toEqual(expect.arrayContaining(["Sydney"]));
   });
 
+  it("fans 'Europe' out to the European sub-regions AND major ports (not just the literal region='Europe')", () => {
+    // WHY: a bare "Europe" matched only ~11% of real European inventory. It must
+    // expand to Mediterranean / Northern Europe / Greek Isles / Fjords / Baltic
+    // plus embarkation ports so it reaches the bulk of European sailings.
+    const { regionTerms, portTerms } = resolveDestinationToLookupTerms(["Europe"]);
+    expect(regionTerms).toEqual(expect.arrayContaining(["Mediterranean", "Northern Europe", "Greek Isles", "Norwegian Fjords", "Baltic"]));
+    expect(portTerms).toEqual(expect.arrayContaining(["Barcelona", "Civitavecchia", "Athens"]));
+  });
+
+  it("expands individual European countries to their cities (region/port fields don't hold country names)", () => {
+    // "Italy" is neither a region value nor a port; it must expand to Italian
+    // cities (substring match also catches "Civitavecchia-Rome").
+    const italy = resolveDestinationToLookupTerms(["Italy"]);
+    expect(italy.portTerms).toEqual(expect.arrayContaining(["Rome", "Venice", "Naples", "Genoa"]));
+    expect(italy.regionTerms).toContain("Mediterranean");
+
+    const spain = resolveDestinationToLookupTerms(["Spain"]);
+    expect(spain.portTerms).toEqual(expect.arrayContaining(["Barcelona", "Malaga"]));
+  });
+
   it("dedupes overlapping terms across multiple destinations", () => {
     const { portTerms } = resolveDestinationToLookupTerms(["Australia", "Australia and New Zealand"]);
     expect(portTerms.filter((p) => p === "Sydney")).toHaveLength(1);
