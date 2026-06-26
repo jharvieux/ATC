@@ -43,9 +43,29 @@ export const POST = withServiceAuth(async (req, ctx) => {
     return Response.json({ error: "itinerary_ingest_requires_platform_admin" }, { status: 403 });
   }
 
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return Response.json({ error: "invalid_request" }, { status: 400 });
+  }
+
+  // Content-size guard — check before schema parse so the error is structured
+  // 422 with machine-readable metadata rather than a generic 400.
+  const MAX_BYTES = 500_000;
+  const rawText = typeof (raw as Record<string, unknown>)?.text === "string"
+    ? (raw as Record<string, unknown>).text as string
+    : "";
+  const actualBytes = Buffer.byteLength(rawText, "utf8");
+  if (actualBytes > MAX_BYTES) {
+    return Response.json(
+      { error: "content_too_large", max_bytes: MAX_BYTES, actual_bytes: actualBytes },
+      { status: 422 },
+    );
+  }
+
   let body: ReturnType<typeof ItineraryIngestRequestSchema.parse>;
   try {
-    const raw = await req.json();
     body = ItineraryIngestRequestSchema.parse(raw);
   } catch {
     return Response.json({ error: "invalid_request" }, { status: 400 });
