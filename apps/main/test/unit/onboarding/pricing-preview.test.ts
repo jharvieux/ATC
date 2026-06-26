@@ -16,7 +16,7 @@ import { describe, it, expect, vi } from "vitest";
 // exactly as the migration seeds it.
 vi.mock("@/lib/db/service-role-client", async () => {
   const { PRICING_FALLBACK } =
-    await vi.importActual<typeof import("@/lib/abuse/revenue")>("@/lib/abuse/revenue");
+    await vi.importActual<typeof import("@/lib/pricing/pricing-table")>("@/lib/pricing/pricing-table");
   const tierRows = Object.entries(PRICING_FALLBACK.base).map(([code, p]) => ({
     code,
     base_price_monthly_cents: p.monthly,
