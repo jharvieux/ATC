@@ -13,7 +13,7 @@ import { MessageBubble, type ChatMessage } from "./MessageBubble";
 
 function ThinkingBubble(): React.JSX.Element {
   return (
-    <div className="flex gap-3 items-start my-3">
+    <div className="flex gap-3 items-start my-3" role="status" aria-label="Assistant is responding">
       {/* Avatar matches assistant bubble style in MessageBubble */}
       <div className="w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-semibold shrink-0 text-white bg-emerald-500">
         AI
@@ -92,8 +92,11 @@ export function StreamingArea({
           showMemoryIndicator={false}
         />
       )}
-      {/* Show thinking bubble only when waiting for first token, not while streaming */}
-      {thinking && streamingDelta === null && <ThinkingBubble />}
+      {/* Thinking bubble shows while a turn is in flight and no assistant text is
+          visible yet — buffer is null before the first token AND "" after a
+          delta_start/rewriting reset. Gating on `=== null` alone left the long
+          pre-first-token wait blank, since send() seeds the buffer with "". */}
+      {thinking && (streamingDelta === null || streamingDelta.length === 0) && <ThinkingBubble />}
       <div ref={sentinelRef} aria-hidden="true" />
       {!atBottom && (
         <button
