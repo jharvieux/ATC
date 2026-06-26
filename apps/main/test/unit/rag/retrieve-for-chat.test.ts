@@ -211,20 +211,25 @@ describe("buildRegionLookup — region/area + date window → region structured 
     expect(lookup).not.toBeNull();
     expect(lookup!.region_terms).toContain("Australia");
     expect(lookup!.port_terms).toEqual(expect.arrayContaining(["Sydney", "Brisbane", "Melbourne"]));
+    expect(lookup!.origin_port_terms).toEqual([]); // no origin named → no origin constraint
     expect(lookup!.date_from).toBe("2027-03-01");
     expect(lookup!.date_to).toBe("2027-05-31");
   });
 
-  it("includes named departure ports as additional port terms (US→Australia transpacific)", async () => {
+  it("puts a named departure origin in origin_port_terms, not the destination match (US→Australia)", async () => {
     const { buildRegionLookup } = await import("@/lib/rag/retrieve-for-chat");
     const lookup = buildRegionLookup(entities({
       destinations: ["Australia"],
-      departure_ports: ["Los Angeles"],
+      departure_ports: ["United States"],
       travel_dates: { earliest: "2027-01-01", latest: "2027-06-30" },
     }));
-    // Australia's ports drive the destination-side match; the named US embark port
-    // rides along as an extra term so a transpacific sailing is matchable either way.
-    expect(lookup!.port_terms).toEqual(expect.arrayContaining(["Sydney", "Los Angeles"]));
+    // WHY: "from the US to Australia" must show only sailings that START in the US.
+    // Australia drives the destination match; "United States" expands to US embark
+    // ports as an ORIGIN constraint — it must NOT leak into the destination terms
+    // (that would match sailings merely VISITING a US port).
+    expect(lookup!.port_terms).toContain("Sydney");
+    expect(lookup!.port_terms).not.toContain("Miami");
+    expect(lookup!.origin_port_terms).toEqual(expect.arrayContaining(["Miami", "Los Angeles", "Seward"]));
   });
 
   it("omits date_to when only a start date is known", async () => {

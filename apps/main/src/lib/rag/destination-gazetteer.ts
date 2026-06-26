@@ -18,6 +18,24 @@ export interface LookupTerms {
   portTerms: string[];
 }
 
+// Shared origin term objects (referenced by several synonym keys below).
+const US_ORIGIN: LookupTerms = {
+  regionTerms: ["United States"],
+  portTerms: [
+    // East / Gulf coast
+    "Miami", "Fort Lauderdale", "Port Canaveral", "Tampa", "Jacksonville", "Galveston", "New Orleans", "Mobile",
+    "New York", "Cape Liberty", "Bayonne", "Baltimore", "Boston", "Norfolk", "Charleston",
+    // West coast + Alaska embarkation
+    "Los Angeles", "Long Beach", "San Diego", "San Francisco", "Seattle", "Seward", "Whittier", "Anchorage",
+    // Hawaii + US territories
+    "Honolulu", "San Juan",
+  ],
+};
+const UK_ORIGIN: LookupTerms = {
+  regionTerms: ["United Kingdom"],
+  portTerms: ["Southampton", "Dover", "London", "Liverpool", "Greenock", "Edinburgh"],
+};
+
 // Keys are normalized (lowercased, trimmed) destination phrases and common
 // synonyms. Region terms match itineraries.region (ILIKE, substring); port terms
 // match departure_port / ports_of_call (ILIKE, substring) — so "Sydney" also
@@ -115,10 +133,36 @@ const GAZETTEER: Record<string, LookupTerms> = {
     regionTerms: ["New England", "Canada"],
     portTerms: ["Boston", "New York", "Bar Harbor", "Portland", "Halifax"],
   },
+
+  // ── Origin countries/areas (used to expand a departure origin like "the US"
+  // to its major embarkation ports). regionTerms are unused for origin matching
+  // (departure_port holds city names), but kept for the shared shape. The
+  // synonym keys all point at the same shared term object.
+  "united states": US_ORIGIN,
+  usa: US_ORIGIN,
+  "the us": US_ORIGIN,
+  "united kingdom": UK_ORIGIN,
+  uk: UK_ORIGIN,
 };
 
 function normalize(s: string): string {
   return s.trim().toLowerCase();
+}
+
+// Expand a place phrase to the port tokens used for an ORIGIN (departure)
+// constraint. A country/area resolves to its major embarkation ports via the
+// gazetteer; a literal port name passes through unchanged. Region labels are
+// dropped (departure_port holds city names, not region labels).
+export function resolveOriginPortTerms(places: string[]): string[] {
+  const portTerms = new Set<string>();
+  for (const place of places) {
+    const phrase = place.trim();
+    if (!phrase) continue;
+    portTerms.add(phrase);
+    const hit = GAZETTEER[normalize(phrase)];
+    if (hit) for (const p of hit.portTerms) portTerms.add(p);
+  }
+  return [...portTerms];
 }
 
 // Resolve extracted destinations + departure ports to the region/port term sets a

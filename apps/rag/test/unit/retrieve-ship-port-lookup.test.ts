@@ -7,7 +7,7 @@
 // miss the right chunks because the question vocabulary doesn't match the chunk
 // text. The structured paths guarantee the right content reaches the concierge.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/auth/with-service-auth", () => ({ withServiceAuth: (h: unknown) => h }));
 vi.mock("@/lib/embeddings/openai", () => ({ embed: async () => [] }));
@@ -16,6 +16,10 @@ vi.mock("@/lib/db/supabase", () => ({ getRagDb: () => ({}) }));
 import { fetchShipLookupChunks, fetchPortLookupChunks, fetchRegionLookupChunks } from "../../src/app/api/retrieve/route";
 
 type Result = { data: unknown; error: unknown };
+
+// Captures the args of the most recent rpc() call so tests can assert what the
+// region lookup forwarded to match_region_itinerary_chunks.
+const rpcCalls: Array<{ fn: string; params: Record<string, unknown> }> = [];
 
 function makeDb(byTable: Record<string, Result>, rpcResult?: Result) {
   function builder(table: string) {
@@ -29,7 +33,10 @@ function makeDb(byTable: Record<string, Result>, rpcResult?: Result) {
   }
   return {
     from: (t: string) => builder(t),
-    rpc: async () => rpcResult ?? { data: [], error: null },
+    rpc: async (fn: string, params: Record<string, unknown>) => {
+      rpcCalls.push({ fn, params });
+      return rpcResult ?? { data: [], error: null };
+    },
   } as unknown as Parameters<typeof fetchShipLookupChunks>[0];
 }
 
@@ -150,12 +157,35 @@ describe("fetchPortLookupChunks", () => {
 });
 
 describe("fetchRegionLookupChunks", () => {
+  beforeEach(() => {
+    rpcCalls.length = 0;
+  });
+
   const lookup = {
     region_terms: ["Australia"],
     port_terms: ["Sydney", "Brisbane"],
+    origin_port_terms: [] as string[],
     date_from: "2027-03-01",
     date_to: "2027-05-31",
   };
+
+  it("forwards origin_port_terms to the RPC (the US→Australia origin filter)", async () => {
+    const db = makeDb({}, { data: [], error: null });
+    await fetchRegionLookupChunks(db, "tenant-1", {
+      ...lookup,
+      origin_port_terms: ["Miami", "Los Angeles", "Seward"],
+    });
+    expect(rpcCalls).toHaveLength(1);
+    const call = rpcCalls[0]!;
+    expect(call.fn).toBe("match_region_itinerary_chunks");
+    expect(call.params.p_origin_port_terms).toEqual(["Miami", "Los Angeles", "Seward"]);
+  });
+
+  it("forwards an empty origin set when no origin is named", async () => {
+    const db = makeDb({}, { data: [], error: null });
+    await fetchRegionLookupChunks(db, "tenant-1", lookup);
+    expect(rpcCalls[0]!.params.p_origin_port_terms).toEqual([]);
+  });
 
   it("resolves the RPC's matched chunk ids to real chunks, boosted to 1.0", async () => {
     const db = makeDb(

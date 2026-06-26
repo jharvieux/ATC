@@ -8,7 +8,7 @@
 // returning almost nothing for "cruises in Australia".
 
 import { describe, it, expect } from "vitest";
-import { resolveDestinationToLookupTerms } from "@/lib/rag/destination-gazetteer";
+import { resolveDestinationToLookupTerms, resolveOriginPortTerms } from "@/lib/rag/destination-gazetteer";
 
 describe("resolveDestinationToLookupTerms", () => {
   it("expands a country/area to its region label AND major cruise ports", () => {
@@ -53,5 +53,30 @@ describe("resolveDestinationToLookupTerms", () => {
     const { regionTerms, portTerms } = resolveDestinationToLookupTerms(["", "   "], []);
     expect(regionTerms).toEqual([]);
     expect(portTerms).toEqual([]);
+  });
+});
+
+describe("resolveOriginPortTerms", () => {
+  it("expands a country origin to its major embarkation ports, including Alaska and US territories", () => {
+    const terms = resolveOriginPortTerms(["United States"]);
+    // East/Gulf/West coast, Alaska embarkation, Hawaii, and Puerto Rico all count
+    // as "the US" for an origin filter.
+    expect(terms).toEqual(expect.arrayContaining([
+      "Miami", "Galveston", "Los Angeles", "Seattle",
+      "Seward", "Whittier", "Anchorage", "Honolulu", "San Juan",
+    ]));
+  });
+
+  it("matches the 'the us' / 'usa' synonyms to the same US port set", () => {
+    expect(resolveOriginPortTerms(["the US"])).toContain("Seward");
+    expect(resolveOriginPortTerms(["usa"])).toContain("Miami");
+  });
+
+  it("passes a literal embark port through unchanged", () => {
+    expect(resolveOriginPortTerms(["Los Angeles"])).toContain("Los Angeles");
+  });
+
+  it("returns [] for no origin", () => {
+    expect(resolveOriginPortTerms([])).toEqual([]);
   });
 });
