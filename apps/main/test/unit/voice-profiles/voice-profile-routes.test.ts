@@ -40,7 +40,11 @@ const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   // tenantClient query stubs — keyed by (table, op) pattern.
   usersMaybeSingle: vi.fn(),
-  sampleSelect: vi.fn(),
+  // Own-samples: select().order().eq() — matches the route's ownBase chain.
+  ownSampleSelectEq: vi.fn(),
+  // Own-samples: select().order().is() — used when publicUserId is null.
+  ownSampleSelectIs: vi.fn(),
+  // House-samples: select().is().order() — tenant_owner only.
   houseSampleSelect: vi.fn(),
   cardMaybeSingle: vi.fn(),
   houseCardMaybeSingle: vi.fn(),
@@ -69,16 +73,12 @@ vi.mock("@/lib/db/tenant-client", () => ({
       if (table === "voice_samples") {
         return {
           select: () => ({
+            // Route's ownBase: select().order(), then .eq() or .is() for user filtering.
             order: () => ({
-              // own samples — will be further filtered by .eq or .is
-              eq: () => ({ data: [{ id: "s1", body: "sample text", source_label: "Email", created_at: "2026-01-01" }], error: null }),
-              is: (_col: string, _val: null) => ({
-                order: () => mocks.houseSampleSelect(),
-              }),
+              eq: () => mocks.ownSampleSelectEq(),
+              is: () => mocks.ownSampleSelectIs(),
             }),
-            eq: () => ({
-              order: () => mocks.sampleSelect(),
-            }),
+            // House-samples: select().is().order() (tenant_owner branch).
             is: () => ({
               order: () => mocks.houseSampleSelect(),
             }),
@@ -149,11 +149,16 @@ beforeEach(() => {
     error: null,
   });
 
-  // Default own samples — one sample.
-  mocks.sampleSelect.mockResolvedValue({
+  // Default own samples — one sample (select().order().eq() path).
+  mocks.ownSampleSelectEq.mockResolvedValue({
     data: [{ id: "s1", body: "My sample", source_label: "Email", created_at: "2026-01-01" }],
     error: null,
   });
+
+  // Default own samples via .is() path (null publicUserId — structurally
+  // unreachable from the GET route given assertPermission requires a session,
+  // but wired for completeness).
+  mocks.ownSampleSelectIs.mockResolvedValue({ data: [], error: null });
 
   // House samples empty by default.
   mocks.houseSampleSelect.mockResolvedValue({ data: [], error: null });
