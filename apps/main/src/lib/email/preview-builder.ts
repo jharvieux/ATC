@@ -196,6 +196,6 @@ export async function buildPreviewHtml(
     }
 
     default:
-      return `<html><body><p>Unknown template type: ${type}</p></body></html>`;
+      throw new Error(`buildPreviewHtml: unhandled type — callers must guard with isEmailTemplateType`);
   }
 }

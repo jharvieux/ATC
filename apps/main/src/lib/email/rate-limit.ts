@@ -66,8 +66,8 @@ export async function checkRateLimit(opts: {
   }
 
   if (category === "template_preview") {
-    // 10 template-preview sends per tenant per 24h. Cap is per-tenant, not
-    // per-recipient — the feature always sends to the logged-in owner's inbox.
+    // Cap is per-tenant, not per-recipient — the feature always sends to the
+    // logged-in owner's inbox, so recipient-level throttling adds nothing.
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await db
       .from("email_log")
