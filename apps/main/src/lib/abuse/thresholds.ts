@@ -142,8 +142,8 @@ export interface ResolveThresholdsInput {
   // row still get sensible numbers.
   tier_bases?: TierBaseCounts;
   // Subscription pricing from the DB (tier_definitions price columns +
-  // pricing_seat_ladder). Omitted → the compute fns use PRICING_FALLBACK.
-  pricing?: PricingTable;
+  // pricing_seat_ladder). Loaded by resolveThresholds; tests pass a fixture.
+  pricing: PricingTable;
 }
 
 export function resolveThresholdsSync(input: ResolveThresholdsInput): ResolvedThresholds {
