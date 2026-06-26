@@ -6,24 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { resolveThresholdsSync, type ResolveThresholdsInput } from "@/lib/abuse/thresholds";
-import type { PricingTable } from "@/lib/abuse/revenue";
-
-// §3.3 seed values — local test fixture, not a runtime fallback.
-const PRICING: PricingTable = {
-  base: {
-    byo_research:     { monthly:  1900, annual:  19000 },
-    byo_professional: { monthly:  5900, annual:  59000 },
-    byo_agency:       { monthly:  9900, annual:  99000 },
-    sub_starter:      { monthly:  4900, annual:  49000 },
-    sub_pro:          { monthly: 14900, annual: 149000 },
-    sub_agency:       { monthly: 24900, annual: 249000 },
-  },
-  seatLadder: [
-    { upTo:        4, monthly: 5900, annual: 59000 }, // users 2–4
-    { upTo:       10, monthly: 4900, annual: 49000 }, // users 5–10
-    { upTo: Infinity, monthly: 3900, annual: 39000 }, // users 11+
-  ],
-};
+import { PRICING_FIXTURE as PRICING } from "../../fixtures/pricing";
 
 
 // ── env management ─────────────────────────────────────────────────────────
