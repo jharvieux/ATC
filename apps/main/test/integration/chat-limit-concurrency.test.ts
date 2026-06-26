@@ -7,7 +7,7 @@
 // gap-free counter increments under K concurrent callers — proving the
 // Postgres-level atomicity that unit tests cannot exercise.
 //
-// Requires a live Supabase project. Gated on SUPABASE_DB_URL; CI runs this as
+// Requires a live Supabase project. Gated on SUPABASE_dbUrl; CI runs this as
 // a nightly job, not on every PR.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,11 +15,11 @@ import postgres from "postgres";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const DB_URL = process.env.SUPABASE_DB_URL;
+const supabaseUrl = process.env.NEXT_PUBLIC_supabaseUrl;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const dbUrl = process.env.SUPABASE_dbUrl;
 
-const haveSupabase = Boolean(SUPABASE_URL && SERVICE_KEY && DB_URL);
+const haveSupabase = Boolean(supabaseUrl && serviceRoleKey && dbUrl);
 
 const describeIf = haveSupabase ? describe : describe.skip;
 
@@ -41,13 +41,13 @@ let fx: Fixtures;
 
 describeIf("chat-limit RPC concurrency (DB integration)", () => {
   beforeAll(async () => {
-    const admin = createClient(SUPABASE_URL!, SERVICE_KEY!, {
+    const admin = createClient(supabaseUrl!, serviceRoleKey!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
     // Use a pool size > 1 so concurrent RPC calls actually hit Postgres in
     // parallel rather than being serialised through a single connection.
-    const sql = postgres(DB_URL!, { max: K + 2, idle_timeout: 20, onnotice: () => {} });
+    const sql = postgres(dbUrl!, { max: K + 2, idle_timeout: 20, onnotice: () => {} });
 
     // Resolve a tier id — required FK on tenants.
     const tier = await sql<{ id: string }[]>`
