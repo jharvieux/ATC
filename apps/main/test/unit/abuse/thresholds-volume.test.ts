@@ -5,7 +5,26 @@
 // and RAG cap. This file adds chat/email/group volume + scale multiplier tests.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resolveThresholdsSync } from "@/lib/abuse/thresholds";
+import { resolveThresholdsSync, type ResolveThresholdsInput } from "@/lib/abuse/thresholds";
+import type { PricingTable } from "@/lib/abuse/revenue";
+
+// §3.3 seed values — local test fixture, not a runtime fallback.
+const PRICING: PricingTable = {
+  base: {
+    byo_research:     { monthly:  1900, annual:  19000 },
+    byo_professional: { monthly:  5900, annual:  59000 },
+    byo_agency:       { monthly:  9900, annual:  99000 },
+    sub_starter:      { monthly:  4900, annual:  49000 },
+    sub_pro:          { monthly: 14900, annual: 149000 },
+    sub_agency:       { monthly: 24900, annual: 249000 },
+  },
+  seatLadder: [
+    { upTo:        4, monthly: 5900, annual: 59000 }, // users 2–4
+    { upTo:       10, monthly: 4900, annual: 49000 }, // users 5–10
+    { upTo: Infinity, monthly: 3900, annual: 39000 }, // users 11+
+  ],
+};
+
 
 // ── env management ─────────────────────────────────────────────────────────
 
@@ -36,6 +55,8 @@ describe("resolveThresholdsSync — chat_volume thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.soft1).toBe(5000);
   });
@@ -44,6 +65,8 @@ describe("resolveThresholdsSync — chat_volume thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.soft2).toBe(7500);
   });
@@ -52,6 +75,8 @@ describe("resolveThresholdsSync — chat_volume thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.hard).toBe(10000);
   });
@@ -62,6 +87,8 @@ describe("resolveThresholdsSync — chat_volume thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "annual" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.soft1).toBe(4166);
   });
@@ -75,6 +102,8 @@ describe("resolveThresholdsSync — email_volume_daily thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.email_volume_daily.soft1).toBe(500);
     expect(t.email_volume_daily.soft2).toBe(750);   // floor(500 * 1.5) = 750
@@ -85,6 +114,8 @@ describe("resolveThresholdsSync — email_volume_daily thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.email_volume_daily.soft1).toBe(50);
     expect(t.email_volume_daily.soft2).toBe(75);
@@ -100,6 +131,8 @@ describe("resolveThresholdsSync — group_invite_monthly thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.group_invite_monthly.soft1).toBe(1000);
     expect(t.group_invite_monthly.soft2).toBe(1500);
@@ -111,6 +144,8 @@ describe("resolveThresholdsSync — group_invite_monthly thresholds", () => {
       const t = resolveThresholdsSync({
         tenant: { tier_code, seat_count: 1, billing_period: "monthly" },
         promoted_chunks_count: 0,
+        pricing: PRICING,
+
       });
       expect(t.group_invite_monthly.per_group_max).toBe(100);
     }
@@ -120,6 +155,8 @@ describe("resolveThresholdsSync — group_invite_monthly thresholds", () => {
     const t = resolveThresholdsSync({
       tenant: { tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.group_invite_monthly.soft1).toBe(0);
     expect(t.group_invite_monthly.soft2).toBe(0);
@@ -135,6 +172,8 @@ describe("resolveThresholdsSync — ABUSE_RAG_APPROACHING_PERCENT env var", () =
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.rag_cap_total.approaching).toBe(Math.floor(t.rag_cap_total.effective * 0.85));
   });
@@ -144,6 +183,8 @@ describe("resolveThresholdsSync — ABUSE_RAG_APPROACHING_PERCENT env var", () =
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.rag_cap_total.approaching).toBe(Math.floor(t.rag_cap_total.effective * 0.70));
   });
@@ -160,6 +201,8 @@ describe("resolveThresholdsSync — override date range filtering", () => {
       overrides: [
         { dimension: "chat_volume", tier_override: "soft1", threshold_value: 999999, effective_from: future, effective_to: null },
       ],
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.soft1).toBe(5000); // unchanged
   });
@@ -172,6 +215,8 @@ describe("resolveThresholdsSync — override date range filtering", () => {
       overrides: [
         { dimension: "chat_volume", tier_override: "hard", threshold_value: 99999, effective_from: today, effective_to: null },
       ],
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.hard).toBe(99999);
   });
@@ -185,6 +230,8 @@ describe("resolveThresholdsSync — override date range filtering", () => {
         { dimension: "chat_volume", tier_override: "soft2", threshold_value: 2222, effective_from: "2020-01-01", effective_to: null },
         { dimension: "chat_volume", tier_override: "hard",  threshold_value: 3333, effective_from: "2020-01-01", effective_to: null },
       ],
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.soft1).toBe(1111);
     expect(t.chat_volume_messages_monthly.soft2).toBe(2222);
@@ -198,6 +245,8 @@ describe("resolveThresholdsSync — override date range filtering", () => {
       overrides: [
         { dimension: "email_volume", tier_override: "soft1", threshold_value: 777, effective_from: "2020-01-01", effective_to: null },
       ],
+      pricing: PRICING,
+
     });
     expect(t.email_volume_daily.soft1).toBe(777);
     expect(t.email_volume_daily.soft2).toBe(750); // unchanged
@@ -210,6 +259,8 @@ describe("resolveThresholdsSync — override date range filtering", () => {
       overrides: [
         { dimension: "group_invite", tier_override: "hard", threshold_value: 5000, effective_from: "2020-01-01", effective_to: null },
       ],
+      pricing: PRICING,
+
     });
     expect(t.group_invite_monthly.hard).toBe(5000);
     expect(t.group_invite_monthly.soft1).toBe(1000); // unchanged
@@ -225,10 +276,14 @@ describe("resolveThresholdsSync — revenue-scaled thresholds for multi-seat age
     const single = resolveThresholdsSync({
       tenant: { tier_code: "byo_agency", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     const two = resolveThresholdsSync({
       tenant: { tier_code: "byo_agency", seat_count: 2, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(two.chat_volume_messages_monthly.soft1).toBeGreaterThan(single.chat_volume_messages_monthly.soft1);
   });
@@ -239,6 +294,8 @@ describe("resolveThresholdsSync — revenue-scaled thresholds for multi-seat age
     const t = resolveThresholdsSync({
       tenant: { tier_code: "byo_agency", seat_count: 2, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.chat_volume_messages_monthly.soft1).toBe(7979);
   });
@@ -251,6 +308,8 @@ describe("resolveThresholdsSync — effective_monthly_revenue_cents field", () =
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "monthly" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.effective_monthly_revenue_cents).toBe(14900n);
   });
@@ -259,6 +318,8 @@ describe("resolveThresholdsSync — effective_monthly_revenue_cents field", () =
     const t = resolveThresholdsSync({
       tenant: { tier_code: "sub_pro", seat_count: 1, billing_period: "annual" },
       promoted_chunks_count: 0,
+      pricing: PRICING,
+
     });
     expect(t.effective_monthly_revenue_cents).toBe(12416n); // floor(149000/12)
   });

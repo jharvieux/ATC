@@ -9,7 +9,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
-import { SEAT_LADDER, type SeatBand } from "@/lib/abuse/revenue";
+import type { SeatBand } from "@/lib/abuse/revenue";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { PRICE_ID_ENV_MAP } from "@/lib/stripe/price-id-map";
 
@@ -105,7 +105,7 @@ export function _resetPriceMapCacheForTests(): void {
 
 // The ladder is indexed by total seat number; this function receives the count
 // of ADDITIONAL seats (caller passes seatCount - 1, since seat 1 is covered by
-// the base price). The ladder defaults to the SEAT_LADDER fallback; runtime
+// the base price). The ladder must be supplied by the caller (from the DB
 // callers inject the DB-loaded ladder. Uses a Math.min walk (matching
 // ladderTotalCents) so the open-ended final band works whether its `upTo` is
 // Infinity (fallback) or the INT4-max sentinel (DB) — never an `=== Infinity`
@@ -113,7 +113,7 @@ export function _resetPriceMapCacheForTests(): void {
 export function calculateAgencySeatPreviewCents(
   additionalSeats: number,
   billingPeriod: BillingPeriod,
-  ladder: SeatBand[] = SEAT_LADDER,
+  ladder: SeatBand[],
 ): number {
   if (additionalSeats <= 0) return 0;
   const totalSeats = additionalSeats + 1; // seat 1 is the base seat
