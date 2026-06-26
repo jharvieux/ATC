@@ -16,10 +16,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const adminToken = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const dbUrl = process.env.SUPABASE_DB_URL;
 
-const haveSupabase = Boolean(supabaseUrl && serviceRoleKey && dbUrl);
+const haveSupabase = Boolean(supabaseUrl && adminToken && dbUrl);
 
 const describeIf = haveSupabase ? describe : describe.skip;
 
@@ -41,7 +41,7 @@ let fx: Fixtures;
 
 describeIf("chat-limit RPC concurrency (DB integration)", () => {
   beforeAll(async () => {
-    const admin = createClient(supabaseUrl!, serviceRoleKey!, {
+    const admin = createClient(supabaseUrl!, adminToken!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
