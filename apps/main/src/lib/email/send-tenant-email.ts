@@ -60,7 +60,7 @@ export async function sendTenantEmail(
   opts: SendEmailOpts,
 ): Promise<SendEmailResult> {
   const fromName = branding.email_from_name ?? "AI Travel Concierge";
-  const fromAddr = branding.email_from_address ?? "noreply@ai-travelconcierge.com";
+  const fromAddr = branding.email_from_address ?? "noreply@email.ai-travelconcierge.com";
   const from = `${fromName} <${fromAddr}>`;
 
   if (branding.email_send_pattern === "tenant_resend") {

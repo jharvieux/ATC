@@ -69,21 +69,21 @@ beforeEach(async () => {
 });
 
 describe("personaFromIdentity", () => {
-  it("derives marcus@ai-travelconcierge.com / Marcus Cole from 'marcus-cole'", () => {
+  it("derives marcus@email.ai-travelconcierge.com / Marcus Cole from 'marcus-cole'", () => {
     expect(personaFromIdentity("marcus-cole")).toEqual({
-      fromAddress: "marcus@ai-travelconcierge.com",
+      fromAddress: "marcus@email.ai-travelconcierge.com",
       fromName: "Marcus Cole",
     });
   });
   it("handles a single-segment slug", () => {
     expect(personaFromIdentity("sofia")).toEqual({
-      fromAddress: "sofia@ai-travelconcierge.com",
+      fromAddress: "sofia@email.ai-travelconcierge.com",
       fromName: "Sofia",
     });
   });
   it("falls back to concierge for empty/nullish slug", () => {
     expect(personaFromIdentity(null)).toEqual({
-      fromAddress: "concierge@ai-travelconcierge.com",
+      fromAddress: "concierge@email.ai-travelconcierge.com",
       fromName: "AI Travel Concierge",
     });
   });
@@ -108,7 +108,7 @@ describe("email_customer handler", () => {
     const arg = mocks.sendEmail.mock.calls[0]?.[0];
     expect(arg.to).toBe("jane@example.com"); // the account email, NOT the input's addresses
     expect(arg.to).not.toBe("attacker@evil.com");
-    expect(arg.tenant.email_from_address).toBe("marcus@ai-travelconcierge.com");
+    expect(arg.tenant.email_from_address).toBe("marcus@email.ai-travelconcierge.com");
     expect(arg.tenant.email_from_name).toBe("Marcus Cole");
     expect(arg.tenant.email_send_pattern).toBe("platform_resend");
     expect(arg.category).toBe("concierge"); // rate-limited, not unbounded transactional

@@ -120,7 +120,7 @@ export async function POST(req: Request): Promise<Response> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "noreply@ai-travelconcierge.com",
+      from: "noreply@email.ai-travelconcierge.com",
       to: email,
       subject: "Verify your email — AI Travel Concierge",
       html: `<p>Your verification code is: <strong>${code}</strong>. It expires in 10 minutes.</p>`,

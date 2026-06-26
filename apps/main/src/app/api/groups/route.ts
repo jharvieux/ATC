@@ -107,6 +107,17 @@ export async function POST(req: Request): Promise<Response> {
       return dbErrorResponse(groupErr);
     }
 
+    // One forum per group (§19.1). The forum GET route only reads, so the row
+    // must be created here — without it the group's Forum tab 404s. Non-fatal:
+    // the group already exists; a forum-insert failure shouldn't 500 the create
+    // (it's backfillable and the unique constraint makes a retry idempotent).
+    const { error: forumErr } = await svc
+      .from("forums")
+      .insert({ group_id: group.id, tenant_id: ctx.tenant_id });
+    if (forumErr) {
+      console.error(`[groups] forum auto-create failed for group=${group.id}: ${forumErr.message}`);
+    }
+
     // Generate HMAC tokens and insert invitations.
     if (invitees.length > 0) {
       const rows = invitees.map((inv) => {

@@ -14,7 +14,7 @@ describe("resolveFromAddress (§16.4 precedence)", () => {
         email_from_domain: null,
         email_from_domain_verified_at: null,
       }),
-    ).toBe("noreply@ai-travelconcierge.com");
+    ).toBe("noreply@email.ai-travelconcierge.com");
   });
 
   it("uses a full email_from_address as-is (legacy override)", () => {
@@ -56,7 +56,7 @@ describe("resolveFromAddress (§16.4 precedence)", () => {
         email_from_domain: "acme.example",
         email_from_domain_verified_at: null,
       }),
-    ).toBe("noreply@ai-travelconcierge.com");
+    ).toBe("noreply@email.ai-travelconcierge.com");
   });
 
   it("IGNORES an unverified domain even when local-part is set", () => {

@@ -65,7 +65,9 @@ export interface EmailSendResult {
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
-const PLATFORM_DEFAULT_FROM = "noreply@ai-travelconcierge.com";
+// Verified Resend sending domain is the `email.` subdomain (the apex is not
+// verified). All platform-default senders use it.
+const PLATFORM_DEFAULT_FROM = "noreply@email.ai-travelconcierge.com";
 
 /**
  * §16.4 from-address resolver. Precedence:
@@ -76,7 +78,7 @@ const PLATFORM_DEFAULT_FROM = "noreply@ai-travelconcierge.com";
  *      already typed a full address, so honor it.)
  *   3. If a verified email_from_domain exists but no email_from_address,
  *      use "noreply@<verified-domain>".
- *   4. Fall back to the platform default "noreply@ai-travelconcierge.com".
+ *   4. Fall back to the platform default "noreply@email.ai-travelconcierge.com".
  *
  * "Verified" means email_from_domain_verified_at is non-null. An unverified
  * domain (set in the UI but DNS not yet confirmed) is ignored to prevent

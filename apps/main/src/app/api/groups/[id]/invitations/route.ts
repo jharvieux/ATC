@@ -123,6 +123,9 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
           invitee_name: (body.invitee_name as string | undefined) ?? null,
           personal_note: (body.personal_note as string | undefined) ?? null,
           visibility_choice: vis,
+          // invitations.token is NOT NULL UNIQUE — omitting it 500'd every
+          // single-invitee add (the create + reissue_all paths set it too).
+          token: generateToken(invId),
         }).select("id"),
         "invitations.insert",
       );

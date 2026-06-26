@@ -15,9 +15,10 @@ import type { ToolDispatchContext, ToolResult } from "../dispatch";
 import { sendEmail } from "@/lib/email/send";
 import { ConciergeMessage } from "@/emails/ConciergeMessage";
 
-// The persona's from-identity. Slug "marcus-cole" → marcus@ai-travelconcierge.com
+// The persona's from-identity. Slug "marcus-cole" → marcus@email.ai-travelconcierge.com
 // / "Marcus Cole". Local-part is the first slug segment (lowercased, alnum only).
-const PLATFORM_EMAIL_DOMAIN = "ai-travelconcierge.com";
+// Uses the verified `email.` sending subdomain (the apex is not verified in Resend).
+const PLATFORM_EMAIL_DOMAIN = "email.ai-travelconcierge.com";
 
 export function personaFromIdentity(slug: string | null | undefined): {
   fromAddress: string;
