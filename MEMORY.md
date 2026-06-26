@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-302 — 2026-06-26 — Two user-reported bugs: chat "responding" indicator (fixed, PR #1471) + empty group-booking sailing catalog (data gap, issue #1472)
+
+**Decision.** Diagnosed two bugs the user reported in one go. Shipped a code fix for the first; surfaced the second as an operator/prod-gated data backfill (issue, not a code fix).
+
+**Bug 1 — chat thinking indicator (FIXED, PR #1471).** In TA-mode AND customer concierge chat, no "agent is responding" signal appeared during the long pre-first-token pause ("thought it was fixed"). Root cause: `StreamingArea`'s `ThinkingBubble` was gated on `streamingDelta === null`, but `ChatExperience.send()` seeds the streaming buffer with `""` (empty string, not null) on submit — and `delta_start`/`rewriting` reset it to `""` mid-stream too — so `thinking && streamingDelta === null` was false for the entire wait and the bubble never rendered. With `CHAT_STREAMING_ENABLED` unset (default), the route computes the whole answer before fake-streaming it, so that wait is exactly when the signal is needed. Fix: show the bubble whenever a turn is in flight and no assistant text is visible yet — buffer `null` OR `length===0`; pass `thinking={sending}`; added `role="status"`/`aria-label="Assistant is responding"` (accessibility + stable test hook) + regression test whose `""`-buffer case fails under the old gate. Frontend-only; both audit agents clean. **Caveat: not live until the next main-app prod deploy (operator-owned, same as the D-300/D-301 chat changes).**
+
+**Bug 2 — group-booking sailing dropdown empty (DATA GAP, issue #1472, opus).** Line→ship works; ship→sailing shows nothing. UI/API/query all correct (ship `<option>` emits `cruise_ships.id`, client sends `cruise_ship_id`, query `.eq("cruise_ship_id",…).gte("departure_date",today)`). Live main DB: `cruise_sailings`=0 and `sailing_port_calls`=0 rows, while `cruise_ships`=234 (all 234 have `cruisemapper_slug`), `cruise_lines`=17, and `cruisemapper_url_inventory(kind=ship)`=251 with ALL 251 `content_hash` stamped. Root cause: the main-app catalog is written only as a best-effort side-effect inside `processSailingHtml` (`persistSailing`/`persistPortCalls`), which runs only when the monthly `refresh-cruisemapper-sailings` cron actually fetches+parses a ship page — but the conditional GET keyed on the already-fully-stamped inventory hashes short-circuits every page as "unchanged," so the catalog never got its initial backfill (empty since the D-231/#783-Phase-3 dropdown shipped). The RAG-side sailing data (concierge region search) is a SEPARATE, fully-populated table — don't conflate. **Fix options (all operator/prod-gated, involve scraping):** (1) trigger the existing force-backfill `inngest.send({name:"cruisemapper/port-backfill.requested"})` — force-fetches all ship pages ignoring the hash and writes the catalog via `processSailingHtml`; needs `CRUISEMAPPER_SAILING_INGEST_ENABLED=true`+UA in prod; never verified end-to-end for the catalog; (2) one-shot copy from the RAG DB (already has every sailing) into the main catalog, no re-scrape. Surfaced for the user's call rather than auto-running scraping in prod.
+
+**Rejected.** For bug 1, the minimal `setStreaming("") → null` one-liner — leaves the same `null`-vs-`""` fragility for the `delta_start`/`rewriting` resets; broadening the render condition removes the coupling and is directly testable. For bug 2, silently triggering the backfill (scraping + prod, gated by the no-prod-without-asking rule) or guessing whether option 1 vs 2 is wanted.
+
+**Related artifacts.** PR #1471 (merged); issue #1472; `apps/main/src/components/chat/{StreamingArea,ChatExperience}.tsx`; `apps/main/test/unit/chat/streaming-area-thinking.test.tsx`; `apps/main/src/lib/external/cruisemapper/sailing-ingest.ts`; `apps/main/src/inngest/{refresh-cruisemapper-sailings,backfill-cruisemapper-ports}.ts`; `apps/main/src/app/api/cruise-sailings/route.ts`. Relates to [[D-231]], [[D-300]].
+
+---
+
 ## D-301 — 2026-06-26 — Region-search origin filter + gazetteer Europe/country coverage (PRs #1465/#1467)
 
 Extends [[D-300]]. Two follow-ons after the base region search:
