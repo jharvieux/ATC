@@ -84,6 +84,12 @@ export const RetrieveRequestSchema = z.object({
     .object({
       region_terms: z.array(z.string().min(1)).default([]),
       port_terms: z.array(z.string().min(1)).default([]),
+      // Optional ORIGIN constraint: when the customer says "from the US to
+      // Australia", the destination match (region/port terms) is AND'd with a
+      // requirement that the DEPARTURE port is one of these, so round-trip
+      // sailings that merely visit the destination are excluded. Empty = no
+      // origin constraint (destination match only).
+      origin_port_terms: z.array(z.string().min(1)).default([]),
       date_from: z.string(), // ISO YYYY-MM-DD
       date_to: z.string().optional(),
     })

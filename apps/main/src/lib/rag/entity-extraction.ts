@@ -43,7 +43,7 @@ Return JSON ONLY, no prose. Schema:
 
 {
   "destinations": string[],       // WHERE the cruise goes ("Greek Isles", "Caribbean", "Barcelona")
-  "departure_ports": string[],    // WHERE the cruise DEPARTS FROM ("Port Canaveral", "Miami") — only when the user explicitly asks about departures/sailings FROM a port
+  "departure_ports": string[],    // WHERE the cruise DEPARTS FROM / the ORIGIN ("Port Canaveral", "Miami", or a country/area like "the US", "United Kingdom") — whenever the user names where the cruise should leave from ("from the US to Australia" → ["United States"]; "round-trip from Sydney" → ["Sydney"])
   "cruise_lines": string[],       // explicit cruise line names ("Royal Caribbean", "Viking")
   "ships": string[],              // ship names ("Wonder of the Seas", "Norwegian Bliss")
   "travel_dates": { "earliest": string|null, "latest": string|null }, // ISO YYYY-MM-DD or null

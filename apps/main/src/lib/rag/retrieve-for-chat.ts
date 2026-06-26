@@ -11,7 +11,7 @@
 // guard + tenant_registry_shadow before allowing the retrieval.
 
 import { extractEntities, type EntitySet, type ConversationContextMessage } from "./entity-extraction";
-import { resolveDestinationToLookupTerms } from "./destination-gazetteer";
+import { resolveDestinationToLookupTerms, resolveOriginPortTerms } from "./destination-gazetteer";
 import { filterChunks } from "./filter-chunks";
 import { formatKnowledgeBlock, type FormattedBlock } from "./format-block";
 import { RetrieveResponseSchema, type RetrievedChunk, type RetrievedAsset } from "@atc/contracts";
@@ -97,28 +97,34 @@ export function buildPortLookup(
 
 // When the customer names a REGION/AREA + a date window but no single ship — the
 // open "what sails Australia next spring?" case — run a region lookup. The named
-// area is expanded to region labels AND its major cruise ports (the gazetteer),
-// because itineraries.region is unset on most regional rows so a port-token match
-// surfaces the bulk of the inventory. Requires a start date (window is always
-// bounded) and at least one resolved term. Skipped when a ship is named —
-// itinerary_lookup is the precise path then.
+// destination is expanded to region labels AND its major cruise ports (the
+// gazetteer), because itineraries.region is unset on most regional rows so a
+// port-token match surfaces the bulk of the inventory. When the customer also
+// names an ORIGIN ("from the US to Australia"), the departure ports are expanded
+// separately and passed as origin_port_terms, which the rag RPC AND's onto the
+// destination match so round-trip sailings that merely visit the destination are
+// excluded. Requires a start date (window is always bounded) and at least one
+// resolved destination term. Skipped when a ship is named — itinerary_lookup is
+// the precise path then.
 export function buildRegionLookup(
   entities: EntitySet,
-): { region_terms: string[]; port_terms: string[]; date_from: string; date_to?: string } | null {
+): { region_terms: string[]; port_terms: string[]; origin_port_terms: string[]; date_from: string; date_to?: string } | null {
   const from = entities.travel_dates.earliest;
   if (!from) return null;
   if (entities.ships.length > 0) return null;
   if (entities.destinations.length === 0) return null;
 
-  const { regionTerms, portTerms } = resolveDestinationToLookupTerms(
-    entities.destinations,
-    entities.departure_ports,
-  );
+  // Destination terms come from `destinations` only — departure_ports are the
+  // ORIGIN, not an alternative destination, so they go to origin_port_terms.
+  const { regionTerms, portTerms } = resolveDestinationToLookupTerms(entities.destinations);
   if (regionTerms.length === 0 && portTerms.length === 0) return null;
+
+  const originPortTerms = resolveOriginPortTerms(entities.departure_ports);
 
   return {
     region_terms: regionTerms,
     port_terms: portTerms,
+    origin_port_terms: originPortTerms,
     date_from: from,
     ...(entities.travel_dates.latest ? { date_to: entities.travel_dates.latest } : {}),
   };
@@ -211,7 +217,7 @@ interface RagRetrieveCallInput {
   itinerary_lookup: { ship: string; sail_date_from: string; sail_date_to?: string } | null;
   ship_lookup: { ship: string } | null;
   port_lookup: { departure_port: string; date_from: string; date_to?: string } | null;
-  region_lookup: { region_terms: string[]; port_terms: string[]; date_from: string; date_to?: string } | null;
+  region_lookup: { region_terms: string[]; port_terms: string[]; origin_port_terms: string[]; date_from: string; date_to?: string } | null;
 }
 
 interface RagRetrieveCallResult {

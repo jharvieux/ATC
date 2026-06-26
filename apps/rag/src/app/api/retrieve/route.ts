@@ -398,7 +398,7 @@ export async function fetchPortLookupChunks(
 export async function fetchRegionLookupChunks(
   db: ReturnType<typeof getRagDb>,
   tenantId: string,
-  lookup: { region_terms: string[]; port_terms: string[]; date_from: string; date_to?: string | undefined },
+  lookup: { region_terms: string[]; port_terms: string[]; origin_port_terms?: string[]; date_from: string; date_to?: string | undefined },
 ): Promise<Array<Record<string, unknown>>> {
   const to = lookup.date_to ?? lookup.date_from;
 
@@ -407,6 +407,7 @@ export async function fetchRegionLookupChunks(
     p_port_terms: lookup.port_terms,
     p_date_from: lookup.date_from,
     p_date_to: to,
+    p_origin_port_terms: lookup.origin_port_terms ?? [],
     p_limit: 12,
   });
   if (rpcErr) throw new Error(`region itinerary lookup failed: ${rpcErr.message}`);
