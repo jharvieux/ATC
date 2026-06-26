@@ -165,15 +165,13 @@ export function resolveOriginPortTerms(places: string[]): string[] {
   return [...portTerms];
 }
 
-// Resolve extracted destinations + departure ports to the region/port term sets a
-// region_lookup matches against. The raw destination phrase is always included as
-// BOTH a region term and a port term so the long tail (literal region labels and
-// literal port names) works without a gazetteer entry; gazetteer entries add the
-// country/area → major-ports expansion the raw phrase can't do.
-export function resolveDestinationToLookupTerms(
-  destinations: string[],
-  departurePorts: string[],
-): LookupTerms {
+// Resolve extracted DESTINATIONS to the region/port term sets a region_lookup
+// matches against. The raw destination phrase is always included as BOTH a region
+// term and a port term so the long tail (literal region labels and literal port
+// names) works without a gazetteer entry; gazetteer entries add the country/area →
+// major-ports expansion the raw phrase can't do. (Departure origins are handled
+// separately by resolveOriginPortTerms — they constrain origin, not destination.)
+export function resolveDestinationToLookupTerms(destinations: string[]): LookupTerms {
   const regionTerms = new Set<string>();
   const portTerms = new Set<string>();
 
@@ -187,11 +185,6 @@ export function resolveDestinationToLookupTerms(
       for (const r of hit.regionTerms) regionTerms.add(r);
       for (const p of hit.portTerms) portTerms.add(p);
     }
-  }
-
-  for (const port of departurePorts) {
-    const phrase = port.trim();
-    if (phrase) portTerms.add(phrase);
   }
 
   return { regionTerms: [...regionTerms], portTerms: [...portTerms] };

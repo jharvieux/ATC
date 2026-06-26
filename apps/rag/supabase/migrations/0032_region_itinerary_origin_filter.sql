@@ -7,9 +7,13 @@
 -- must ILIKE one of those terms (the caller expands "the US" to its major
 -- embarkation ports). Empty array = no origin constraint (0031 behaviour).
 --
--- CREATE OR REPLACE with the new signature (extra param). 0031 must be applied
--- first (or this migration alone, since it is a complete definition). SECURITY
--- INVOKER / STABLE / search_path pinned, as before.
+-- The extra param changes the argument signature, so Postgres would treat this
+-- as a NEW overload and leave 0031's 5-arg version orphaned. DROP the old
+-- signature first so only the 6-arg function remains. SECURITY INVOKER / STABLE
+-- / search_path pinned, as before. EXECUTE is re-granted to service_role via the
+-- public-schema default privileges (0025).
+
+DROP FUNCTION IF EXISTS public.match_region_itinerary_chunks(TEXT[], TEXT[], DATE, DATE, INTEGER);
 
 CREATE OR REPLACE FUNCTION public.match_region_itinerary_chunks(
   p_region_terms       TEXT[],

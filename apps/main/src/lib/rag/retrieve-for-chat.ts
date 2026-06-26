@@ -116,7 +116,7 @@ export function buildRegionLookup(
 
   // Destination terms come from `destinations` only — departure_ports are the
   // ORIGIN, not an alternative destination, so they go to origin_port_terms.
-  const { regionTerms, portTerms } = resolveDestinationToLookupTerms(entities.destinations, []);
+  const { regionTerms, portTerms } = resolveDestinationToLookupTerms(entities.destinations);
   if (regionTerms.length === 0 && portTerms.length === 0) return null;
 
   const originPortTerms = resolveOriginPortTerms(entities.departure_ports);
