@@ -13,13 +13,28 @@
 // recovers. The fallback is NOT cached, so the next call retries the DB.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  PRICING_FALLBACK,
-  type PricingTable,
-  type SeatBand,
-  type TenantTierCode,
-} from "@/lib/abuse/revenue";
+import type { PricingTable, SeatBand, TenantTierCode } from "@/lib/abuse/revenue";
 import { safeAwait } from "@/lib/db/safe-mutation";
+
+// §3.3 seed values — seeded the DB via migration 20260707000000. This is the
+// defense-in-depth fallback used by loadPricingTable when the DB is
+// unreachable or unseeded (fresh local env). NOT a runtime default for callers:
+// runtime call sites receive a loaded PricingTable from loadPricingTable().
+export const PRICING_FALLBACK: PricingTable = {
+  base: {
+    byo_research:     { monthly:  1900, annual:  19000 },
+    byo_professional: { monthly:  5900, annual:  59000 },
+    byo_agency:       { monthly:  9900, annual:  99000 },
+    sub_starter:      { monthly:  4900, annual:  49000 },
+    sub_pro:          { monthly: 14900, annual: 149000 },
+    sub_agency:       { monthly: 24900, annual: 249000 },
+  },
+  seatLadder: [
+    { upTo:        4, monthly: 5900, annual: 59000 }, // users 2–4
+    { upTo:       10, monthly: 4900, annual: 49000 }, // users 5–10
+    { upTo: Infinity, monthly: 3900, annual: 39000 }, // users 11+
+  ],
+};
 
 const TTL_MS = 60_000;
 let cache: { table: PricingTable; fetched_at: number } | null = null;
