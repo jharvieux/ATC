@@ -4,6 +4,18 @@ Newest entries on top.
 
 ---
 
+## D-301 — 2026-06-26 — Region-search origin filter + gazetteer Europe/country coverage (PRs #1465/#1467)
+
+Extends [[D-300]]. Two follow-ons after the base region search:
+
+**Origin filter (#1465, RAG migration 0032).** "from the US to Australia" was over-returning — region_lookup matched the destination region/ports against departure_port OR ports_of_call, so a round-trip Sydney sailing "visits Australia" and matched even though it doesn't START in the US (prod 2027: 515 AU-touching vs ~48 actually US-departing). Added `region_lookup.origin_port_terms` (contracts) + `p_origin_port_terms` to the RPC (departure_port must ILIKE one when non-empty; empty = no constraint via `coalesce(array_length,0)=0`). `buildRegionLookup` now routes `departure_ports` → origin (gazetteer-expanded) and `destinations` → destination, instead of conflating them. The mechanism is SYMMETRIC (origin + destination both resolve through the same gazetteer), so reverse AU→US works the same. 0032 DROPs the old 5-arg signature before CREATE OR REPLACE (a changed arg signature is a new overload, not a replace).
+
+**Gazetteer Europe/country coverage (#1467).** Coverage is gazetteer-bounded: bare "Europe" reached only 429 of ~7,000 European sailings, and countries like Italy/Spain/France matched 0 (they're neither itineraries.region values nor port names — ports are cities). Added `europe` (fans out to Mediterranean/Northern Europe/Greek Isles/Fjords/Baltic + ports → 7,168) and italy/spain/france/portugal/germany/netherlands/scandinavia/iceland (city expansion → Italy 4,493); rounded out canada/mexico. All port tokens verified against real prod data.
+
+**Known limitation #1466 (substring port collision).** "Sydney" is required for 406 NULL-region Australian departures (departure_port="Sydney", only findable by port token) but is a substring of "Sydney NS, Nova Scotia Canada" (173 ports_of_call), which OR-based ILIKE can't exclude → an Australia query bleeds in ~173 Canadian Maritime sailings. Bare-vs-suffixed forms mean it can't be narrowed without dropping the AU departures. Clean fix needs a structured port→country field (deferred, #1466); documented inline in destination-gazetteer.ts (australia/canada entries). Operator follow-up #1462 now needs BOTH migrations 0031+0032 applied to prod RAG.
+
+---
+
 ## D-300 — 2026-06-26 — Concierge region/area sailing search + date resolution + BYO booking-tool gating (PR #1463)
 
 Live TA chat session (BYO agency, "high-end suite, ship-within-a-ship, Australia, next spring") surfaced two classes of bug; fixed together.
