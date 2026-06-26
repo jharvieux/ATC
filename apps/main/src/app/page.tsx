@@ -56,13 +56,15 @@ export default async function HomePage() {
     if (dest) {
       // #962 — tenant-subdomain members land on the app shell at "/"
       // (collapsible nav + embedded support chat) instead of being
-      // redirected to /crm/contacts or /chat. Platform admins and
-      // onboarding-incomplete staff keep their redirects, as do users
-      // with no active membership in THIS tenant (e.g. staff of a
-      // different tenant) — for them the old dispatch is still right.
+      // redirected to /crm/contacts or /chat. The getTenantRole() check
+      // is the real gate: only users with an active membership in THIS
+      // tenant see TenantShell. Users with no membership in this tenant
+      // (e.g. staff of a different tenant) fall through to redirect(dest).
+      // Platform admins with a tenant_owner membership (e.g. Booking tenant)
+      // also land here so "Dashboard" in the hamburger works correctly;
+      // platform admins with no tenant membership still redirect to /admin.
       if (
         !headerProps.isPlatformDomain &&
-        dest !== "/admin" &&
         !dest.startsWith("/onboarding")
       ) {
         const tenantId = incoming.get(RESOLVED_TENANT_ID_HEADER);
