@@ -58,7 +58,8 @@ export const getCachedTenantRole = _cache(async (): Promise<UserRole | null> => 
 
   try {
     return await getTenantRole(user.id, tenantId);
-  } catch {
+  } catch (err) {
+    console.error("[assert-permission-page] getTenantRole failed:", err);
     return null;
   }
 });
