@@ -425,6 +425,12 @@ module.exports = [
   // Fetches platform-level RSS feeds (news_feeds / news_articles have RLS
   // deny-all for authenticated; service_role is the only write path).
   "/inngest/travel-news-refresh.ts",
+  // §23.1 / §23.7 — Template preview send: uses assertPermission (email_templates:write)
+  // for auth + tenantClient for all reads (tenant-scoped). Service-role is scoped
+  // only to the sendEmail call, which writes to email_log (RLS deny-INSERT for
+  // authenticated). Explicit tenant_id filter applied at the call site. Same
+  // email-send pattern as the groups invitation routes above.
+  "/app/api/tenant/email-templates/[type]/send-preview/route.ts",
   // §TN — Travel news public ticker API: server-side fetch from news_articles
   // (RLS deny-all for authenticated; only service_role can read). No user
   // session required; response is public read-only.

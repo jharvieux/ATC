@@ -6,6 +6,8 @@
 //   group_invitation — 3 / 24h per invitee (enforced in group-reminder-cadence.ts)
 //   marketing        — 4 / month per contact
 //   travel_news      — weekly digest (1 / 7 days per contact)
+//   admin_sample     — 50 / 24h platform-wide (admin test sends)
+//   template_preview — 10 / 24h per tenant (owner "send to me" test sends)
 //   concierge        — AI-driven send (email_customer tool): 10 / 24h per recipient
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -17,6 +19,7 @@ export type EmailCategory =
   | "marketing"
   | "travel_news"
   | "admin_sample"
+  | "template_preview"
   | "concierge";
 
 // AI-driven concierge sends are bounded per recipient per 24h. The recipient is
@@ -58,6 +61,24 @@ export async function checkRateLimit(opts: {
     if (error) return { allowed: false, reason: "rate_limit_query_failed" };
     if ((data?.length ?? 0) >= 50) {
       return { allowed: false, reason: "admin_sample_daily_limit_reached" };
+    }
+    return { allowed: true };
+  }
+
+  if (category === "template_preview") {
+    // 10 template-preview sends per tenant per 24h. Cap is per-tenant, not
+    // per-recipient — the feature always sends to the logged-in owner's inbox.
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await db
+      .from("email_log")
+      .select("id")
+      .eq("tenant_id", tenant_id)
+      .eq("email_category", "template_preview")
+      .gte("sent_at", dayAgo)
+      .not("status", "eq", "suppressed");
+    if (error) return { allowed: false, reason: "rate_limit_query_failed" };
+    if ((data?.length ?? 0) >= 10) {
+      return { allowed: false, reason: "template_preview_daily_limit_reached" };
     }
     return { allowed: true };
   }
