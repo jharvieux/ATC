@@ -288,7 +288,7 @@ export function ChatExperience({
             streamingDelta={streaming}
             showMemoryIndicator={true}
             onFeedback={submitFeedback}
-            thinking={sending && streaming === null}
+            thinking={sending}
           />
 
           {error && (
