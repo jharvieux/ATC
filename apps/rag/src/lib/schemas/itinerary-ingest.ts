@@ -26,7 +26,7 @@ export const ItineraryIngestRequestSchema = z.object({
   region: z.string().optional(),
   starting_price_usd: z.number().nonnegative().optional(),
   source_url: safeUrl.optional(),
-  text: z.string().min(20), // chunk body — §B.5 sized prose
+  text: z.string().min(20).max(500_000), // chunk body — §B.5 sized prose
   fetched_at: z.string().datetime().optional(),
   day_by_day: z.array(SailingDaySchema).optional(),
 });
