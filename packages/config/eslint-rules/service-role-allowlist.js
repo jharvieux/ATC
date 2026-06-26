@@ -198,6 +198,11 @@ module.exports = [
   "/inngest/group-reminder-cadence.ts",
   // BP19: Hero image — reads destination_images and writes cache. §18.3.
   "/lib/groups/hero-image.ts",
+  // §18 — coordinator group deletion clears non-cascading inbound FK refs
+  // (email_log audit rows, group_invite_pending_approval) authenticated RLS
+  // can't DELETE/UPDATE, then hard-deletes the group. Caller pre-verifies
+  // tenant + coordinator ownership before invoking.
+  "/lib/groups/delete-group.ts",
   // BP20: Forum threads list + create — reads/writes forum_threads. §19.7.
   // Service-role matches the established pattern in the forum subsystem (sibling messages
   // route); explicit .eq("tenant_id") provides app-layer isolation on all queries.

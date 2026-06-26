@@ -13,6 +13,7 @@ import { assertPermission } from "@/lib/auth/assert-permission";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { resolveCanonical } from "@/lib/canonical/resolve-canonical";
 import { generateToken } from "@/lib/groups/invitation-token";
+import { sendGroupInvitationEmail, type GroupInvitationGroup } from "@/lib/groups/send-invitation-email";
 import { selectHeroImage } from "@/lib/groups/hero-image";
 import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementGroupInvitees } from "@/lib/abuse/counters";
@@ -147,6 +148,25 @@ export async function POST(req: Request): Promise<Response> {
       } catch (err) {
         console.warn(`[groups] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
       }
+
+      // Send the invitations immediately. Previously create-time invitees only
+      // got the daily §18.8 reminder cron — coordinators expect the invite to go
+      // out now. sendGroupInvitationEmail is fail-silent (logs, never throws), so
+      // a delivery problem can't fail the create; the rows already exist.
+      const emailGroup: GroupInvitationGroup = {
+        id: group.id,
+        cruise_line,
+        ship_name,
+        sailing_date,
+        departure_port,
+        coordinator_message: coordinator_message ?? null,
+        hero_image_url: heroUrl,
+      };
+      await Promise.all(
+        rows.map((r) =>
+          sendGroupInvitationEmail({ svc, invitationId: r.id, group: emailGroup, tenantId: ctx.tenant_id }),
+        ),
+      );
     }
 
     return Response.json({ group_id: group.id, invitation_count: invitees.length }, { status: 201 });

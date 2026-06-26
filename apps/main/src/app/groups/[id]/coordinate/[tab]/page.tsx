@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { BroadcastComposerClient } from "@/components/groups/BroadcastComposerClient";
 import { InviteesTabClient } from "@/components/groups/InviteesTabClient";
 import { ForumTabClient } from "@/components/groups/ForumTabClient";
+import { DeleteGroupClient } from "@/components/groups/DeleteGroupClient";
 
 const VALID_TABS = ["overview", "invitees", "edit", "preview-email", "forum"] as const;
 type Tab = (typeof VALID_TABS)[number];
@@ -96,7 +97,7 @@ function InviteesTab({ groupId }: { groupId: string }): React.ReactElement {
   return <InviteesTabClient groupId={groupId} />;
 }
 
-function EditTab({ groupId: _groupId }: { groupId: string }): React.ReactElement {
+function EditTab({ groupId }: { groupId: string }): React.ReactElement {
   return (
     <section>
       <h2 className="text-[18px] font-bold mb-4">Edit Group</h2>
@@ -123,6 +124,8 @@ function EditTab({ groupId: _groupId }: { groupId: string }): React.ReactElement
           <Button type="submit">Save Changes</Button>
         </div>
       </form>
+
+      <DeleteGroupClient groupId={groupId} />
     </section>
   );
 }

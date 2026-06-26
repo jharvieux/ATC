@@ -7,6 +7,7 @@
 
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
+import { hardDeleteGroup } from "@/lib/groups/delete-group";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -67,6 +68,49 @@ export async function GET(
 
     const group = groupRow as unknown as GroupRow;
     return Response.json({ group, invitation_counts: counts });
+  } catch (err) {
+    return respondToAuthError(err);
+  }
+}
+
+// §18 — Coordinator deletes the group. Safety guard: the request must echo the
+// group's sailing_date (the coordinator re-types it to confirm). Only THE
+// coordinator can delete, not any staff member with the grant.
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  try {
+    const { ctx, user } = await assertPermission(req, { resource: "groups", action: "delete" });
+    const { id } = await params;
+    const db = tenantClient(ctx);
+
+    // RLS scopes this read to the caller's tenant; the coordinator check scopes
+    // it to the owner. Both gate the service-role deletes below.
+    const { data: group, error: gErr } = await db
+      .from("groups")
+      .select("id, coordinator_user_id, sailing_date")
+      .eq("id", id)
+      .maybeSingle();
+    if (gErr) return dbErrorResponse(gErr);
+    if (!group) return Response.json({ error: "not_found" }, { status: 404 });
+
+    const g = group as unknown as { id: string; coordinator_user_id: string; sailing_date: string };
+    if (g.coordinator_user_id !== user.id) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    }
+
+    const body = (await req.json().catch(() => ({}))) as { confirm_sailing_date?: unknown };
+    const confirm = typeof body.confirm_sailing_date === "string" ? body.confirm_sailing_date.trim() : "";
+    if (confirm !== g.sailing_date) {
+      return Response.json({ error: "sailing_date_mismatch" }, { status: 400 });
+    }
+
+    // group + coordinator verified above; the helper hard-deletes (cascading
+    // invitations + forums) and clears the non-cascading FK refs.
+    await hardDeleteGroup(id);
+
+    return Response.json({ ok: true, deleted: true });
   } catch (err) {
     return respondToAuthError(err);
   }

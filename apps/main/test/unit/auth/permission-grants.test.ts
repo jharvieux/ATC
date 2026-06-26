@@ -166,6 +166,7 @@ const AGENT_ONLY_PAIRS: ReadonlyArray<[string, string]> = [
   ["tasks", "update"],
   ["group.invitations", "manage"],
   ["groups", "create"],
+  ["groups", "delete"],
   ["price_watches", "create"],
   ["price_watches", "rearm"],
   ["price_watches", "update"],
