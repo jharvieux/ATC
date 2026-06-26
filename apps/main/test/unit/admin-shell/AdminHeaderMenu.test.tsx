@@ -1,10 +1,11 @@
-// Link-wiring guard for AdminHeaderMenu (#1435).
+// Link-wiring + avatar-trigger guard for AdminHeaderMenu (#1435 / avatar follow-up).
 //
 // WHY: AdminHeaderMenu is the only cross-area navigation for a user who holds
 // both platform-admin and tenant-admin roles. A future refactor that silently
-// drops one of the three hrefs (/settings, /crm/contacts, /admin) or the
+// drops one of the key hrefs (/settings, /crm/contacts, /admin) or the
 // sign-out item would leave that user stranded with no visible recovery path.
-// This test encodes that contract so breakage is caught at CI, not in prod.
+// The avatar tests encode that the trigger degrades gracefully when profile
+// data is unavailable, so the menu is never unreachable.
 
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
@@ -63,5 +64,26 @@ describe("AdminHeaderMenu — cross-area link wiring (#1435)", () => {
 
   it("renders a Sign out item", () => {
     expect(html).toContain("Sign out");
+  });
+});
+
+describe("AdminHeaderMenu — avatar trigger", () => {
+  it("shows Menu icon when no avatar or display name", () => {
+    const html = renderToStaticMarkup(<AdminHeaderMenu />);
+    expect(html).toContain('data-testid="menu-icon"');
+  });
+
+  it("shows initials span when displayName provided but no avatarUrl", () => {
+    const html = renderToStaticMarkup(<AdminHeaderMenu displayName="John Harvieux" />);
+    expect(html).toContain(">J<");
+    expect(html).not.toContain('data-testid="menu-icon"');
+  });
+
+  it("shows avatar img when avatarUrl provided", () => {
+    const html = renderToStaticMarkup(
+      <AdminHeaderMenu avatarUrl="https://example.com/avatar.jpg" displayName="John" />,
+    );
+    expect(html).toContain('src="https://example.com/avatar.jpg"');
+    expect(html).not.toContain('data-testid="menu-icon"');
   });
 });
