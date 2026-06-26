@@ -42,8 +42,6 @@ const mocks = vi.hoisted(() => ({
   usersMaybeSingle: vi.fn(),
   // Own-samples: select().order().eq() — matches the route's ownBase chain.
   ownSampleSelectEq: vi.fn(),
-  // Own-samples: select().order().is() — used when publicUserId is null.
-  ownSampleSelectIs: vi.fn(),
   // House-samples: select().is().order() — tenant_owner only.
   houseSampleSelect: vi.fn(),
   cardMaybeSingle: vi.fn(),
@@ -73,10 +71,10 @@ vi.mock("@/lib/db/tenant-client", () => ({
       if (table === "voice_samples") {
         return {
           select: () => ({
-            // Route's ownBase: select().order(), then .eq() or .is() for user filtering.
+            // Route's ownBase: select().order().eq() — .is() path (null publicUserId) is
+            // structurally unreachable because assertPermission always supplies a session.
             order: () => ({
               eq: () => mocks.ownSampleSelectEq(),
-              is: () => mocks.ownSampleSelectIs(),
             }),
             // House-samples: select().is().order() (tenant_owner branch).
             is: () => ({
@@ -155,11 +153,6 @@ beforeEach(() => {
     error: null,
   });
 
-  // Default own samples via .is() path (null publicUserId — structurally
-  // unreachable from the GET route given assertPermission requires a session,
-  // but wired for completeness).
-  mocks.ownSampleSelectIs.mockResolvedValue({ data: [], error: null });
-
   // House samples empty by default.
   mocks.houseSampleSelect.mockResolvedValue({ data: [], error: null });
 
@@ -210,6 +203,44 @@ describe("GET /api/voice-profiles/samples (#1267)", () => {
     mocks.assertPermission.mockRejectedValue(new Error("Unauthorized"));
     const res = await GET(makeGetRequest());
     expect(res.status).toBe(401);
+  });
+
+  it("returns is_owner: true and house_samples for tenant_owner", async () => {
+    // WHY: a regression removing the `role === "tenant_owner"` check must fail here —
+    // `is_owner` stays false and `house_samples` stays empty if the branch is cut.
+    mocks.usersMaybeSingle.mockResolvedValue({
+      data: { id: PUBLIC_USER_ID, role: "tenant_owner" },
+      error: null,
+    });
+    mocks.houseSampleSelect.mockResolvedValue({
+      data: [{ id: "hs1", body: "House style sample", source_label: "House", created_at: "2026-01-01T00:00:00Z" }],
+      error: null,
+    });
+    const res = await GET(makeGetRequest());
+    expect(res.status).toBe(200);
+    const body = await res.json() as { is_owner: boolean; house_samples: { id: string }[] };
+    expect(body.is_owner).toBe(true);
+    expect(body.house_samples).toHaveLength(1);
+    expect(body.house_samples[0].id).toBe("hs1");
+  });
+
+  it("falls back to house card when tenant_owner has no own card", async () => {
+    // WHY: the `profile: card ?? houseCard ?? null` fallback must surface the
+    // house card; a regression that returns `null` when own card is absent would
+    // leave the owner view with no voice profile card.
+    mocks.usersMaybeSingle.mockResolvedValue({
+      data: { id: PUBLIC_USER_ID, role: "tenant_owner" },
+      error: null,
+    });
+    mocks.cardMaybeSingle.mockResolvedValue({ data: null, error: null });
+    mocks.houseCardMaybeSingle.mockResolvedValue({
+      data: { style_card: { greeting: "House hello" }, card_override: null, extracted_at: "2026-01-01T00:00:00Z" },
+      error: null,
+    });
+    const res = await GET(makeGetRequest());
+    expect(res.status).toBe(200);
+    const body = await res.json() as { profile: { style_card: { greeting: string } } | null };
+    expect(body.profile?.style_card?.greeting).toBe("House hello");
   });
 });
 
