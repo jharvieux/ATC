@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { sidebarSectionsForRole } from "./nav-sections";
 import { TaSidebarLink } from "@/lib/ta-theme/ta-sidebar-link";
+import { ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 const NAV_ICONS: Record<string, React.ElementType> = {
@@ -73,21 +74,6 @@ export function WorkspaceSidebar({ role }: WorkspaceSidebarProps): React.ReactEl
     }
   }, []);
 
-  const ICON_BTN: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    border: "none",
-    background: "transparent",
-    cursor: "pointer",
-    color: "var(--ta-text-soft)",
-    flexShrink: 0,
-    transition: "background 0.12s, color 0.12s",
-  };
-
   return (
     <aside
       onMouseEnter={() => setHovered(true)}
@@ -119,7 +105,7 @@ export function WorkspaceSidebar({ role }: WorkspaceSidebarProps): React.ReactEl
           <button
             type="button"
             aria-label={pinned ? "Collapse navigation" : "Pin navigation open"}
-            style={ICON_BTN}
+            style={ICON_BTN_STYLE}
             onClick={() => setPinned((p) => !p)}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background = "var(--ta-hover)";

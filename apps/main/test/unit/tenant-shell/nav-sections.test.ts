@@ -13,6 +13,7 @@ import { describe, it, expect } from "vitest";
 import {
   navSectionsForRole,
   sidebarSectionsForRole,
+  hamburgerSectionsForRole,
   defaultPanelForRole,
 } from "@/components/tenant-shell/nav-sections";
 
@@ -107,6 +108,95 @@ describe("sidebarSectionsForRole", () => {
     const hrefs = sidebarHrefsFor("viewer");
     expect(hrefs).not.toContain("/crm/contacts");
     expect(hrefs).not.toContain("/groups");
+  });
+
+  // Role-routing invariants: these tests fail if the routing logic is reverted
+  // or if Admin Console / price-watches are moved between roles.
+
+  it("tenant_owner gets Admin Console section in the sidebar", () => {
+    // The Admin Console entry (/settings) must appear for owners in the sidebar
+    // so they can navigate to tenant administration.
+    expect(sidebarHrefsFor("tenant_owner")).toContain("/settings");
+  });
+
+  it("agent (staff) does NOT get Admin Console in the sidebar", () => {
+    // Agents are staff but not owners — /settings is an owner-only surface.
+    expect(sidebarHrefsFor("agent")).not.toContain("/settings");
+  });
+
+  it("viewer does NOT get Admin Console in the sidebar", () => {
+    // Viewers are customers — they must never see the Admin Console entry.
+    expect(sidebarHrefsFor("viewer")).not.toContain("/settings");
+  });
+
+  it("staff get price-watches inside the Workspace section in the sidebar", () => {
+    // Price watches are operational for TAs managing many customer watches,
+    // so they belong under the Workspace heading, not My account.
+    for (const role of ["agent", "tenant_owner"] as const) {
+      const sections = sidebarSectionsForRole(role);
+      const workspaceSection = sections.find((s) => s.heading === "Workspace");
+      expect(workspaceSection, `${role} must have a Workspace sidebar section`).toBeDefined();
+      const workspaceHrefs = workspaceSection!.items.map((i) => i.href);
+      expect(workspaceHrefs).toContain("/settings/price-watches");
+    }
+  });
+
+  it("viewers do not see price-watches in the sidebar at all", () => {
+    // The sidebar has no My account section — price watches for viewers live
+    // in the hamburger dropdown (My account), not the sidebar.
+    expect(sidebarHrefsFor("viewer")).not.toContain("/settings/price-watches");
+  });
+
+});
+
+// ── Price-watches section ownership invariant ────────────────────────────────
+// Pinned so that reverting the 'My account → Workspace' move for staff breaks
+// the test immediately.  The rule: price watches are OPERATIONAL for TAs
+// (many customer watches) → Workspace; PERSONAL for viewers → My account.
+
+describe("hamburgerSectionsForRole — price-watches section ownership", () => {
+  function findSectionContaining(
+    role: Parameters<typeof hamburgerSectionsForRole>[0],
+    href: string,
+  ): string | null | undefined {
+    const section = hamburgerSectionsForRole(role).find((s) =>
+      s.items.some((i) => i.href === href),
+    );
+    return section?.heading;
+  }
+
+  it("price-watches is NOT in any hamburger section for staff (agent)", () => {
+    // Agents manage price watches via the sidebar Workspace section, so the
+    // hamburger dropdown must not also list it — that would be a duplicate
+    // and signals the move was reverted.
+    const hrefs = hamburgerSectionsForRole("agent").flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).not.toContain("/settings/price-watches");
+  });
+
+  it("price-watches is NOT in any hamburger section for tenant_owner", () => {
+    // Same rule as agent: owners access price watches from the sidebar Workspace.
+    const hrefs = hamburgerSectionsForRole("tenant_owner").flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).not.toContain("/settings/price-watches");
+  });
+
+  it("price-watches IS in 'My account' for viewers in the hamburger nav", () => {
+    // Viewers have no sidebar Workspace section, so price watches must appear
+    // in their hamburger My account section (personal setting).
+    expect(findSectionContaining("viewer", "/settings/price-watches")).toBe("My account");
+  });
+
+  it("staff My account section in hamburger does NOT contain price-watches", () => {
+    // The staff My account section was explicitly stripped of price watches
+    // (#962 move to Workspace).  This assertion fails if they're re-added there.
+    for (const role of ["agent", "tenant_owner"] as const) {
+      const myAccountSection = hamburgerSectionsForRole(role).find(
+        (s) => s.heading === "My account",
+      );
+      if (myAccountSection) {
+        const hrefs = myAccountSection.items.map((i) => i.href);
+        expect(hrefs).not.toContain("/settings/price-watches");
+      }
+    }
   });
 });
 
