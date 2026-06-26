@@ -42,6 +42,12 @@ const UK_ORIGIN: LookupTerms = {
 // catches "Sydney, Australia".
 const GAZETTEER: Record<string, LookupTerms> = {
   australia: {
+    // NOTE(collision): "Sydney" is needed here — 406 Australian sailings depart a
+    // bare departure_port "Sydney" and most carry a NULL region, so they are only
+    // findable by this port token. But "Sydney" is a substring of the Canadian
+    // "Sydney NS, Nova Scotia" (173 ports_of_call rows), which an OR-based ILIKE
+    // can't exclude, so an Australia query bleeds in those Canadian sailings.
+    // Cleanly fixing this needs a structured port→country field — TODO(#1466).
     regionTerms: ["Australia"],
     portTerms: ["Sydney", "Brisbane", "Melbourne", "Perth", "Adelaide", "Cairns", "Fremantle", "Hobart", "Darwin"],
   },
@@ -115,7 +121,7 @@ const GAZETTEER: Record<string, LookupTerms> = {
   },
   mexico: {
     regionTerms: ["Mexico", "Mexican Riviera"],
-    portTerms: ["Cabo San Lucas", "Puerto Vallarta", "Cozumel", "Ensenada"],
+    portTerms: ["Cabo San Lucas", "Puerto Vallarta", "Cozumel", "Ensenada", "Mazatlan", "Progreso", "Costa Maya"],
   },
   japan: {
     regionTerms: ["Asia"],
@@ -126,12 +132,61 @@ const GAZETTEER: Record<string, LookupTerms> = {
     portTerms: ["Singapore", "Tokyo", "Yokohama", "Hong Kong", "Shanghai", "Bangkok"],
   },
   canada: {
+    // "Sydney NS" (Nova Scotia) is a real Canadian port but collides with Sydney,
+    // Australia under substring matching — see the note on the `australia` entry
+    // and TODO(#1466). Matched here as "Sydney NS" (the Canadian form) so a Canada
+    // query catches it; the Australia-side bleed is the unsolved direction.
     regionTerms: ["Canada", "New England"],
-    portTerms: ["Vancouver", "Quebec", "Montreal", "Halifax", "Saint John"],
+    portTerms: ["Vancouver", "Quebec", "Montreal", "Halifax", "Saint John", "Victoria", "Charlottetown", "Saguenay", "Sydney NS"],
   },
   "new england": {
     regionTerms: ["New England", "Canada"],
     portTerms: ["Boston", "New York", "Bar Harbor", "Portland", "Halifax"],
+  },
+
+  // ── Europe: a bare "Europe" only matches the literal region='Europe' rows
+  // (~11% of real European inventory). Fan it out to the European sub-regions
+  // AND the major embarkation ports so it reaches Mediterranean / Northern
+  // Europe / Greek Isles / Fjords / Baltic sailings (incl. the NULL-region ones).
+  europe: {
+    regionTerms: ["Europe", "Mediterranean", "Northern Europe", "Greek Isles", "Norwegian Fjords", "Baltic"],
+    portTerms: ["Barcelona", "Civitavecchia", "Rome", "Venice", "Naples", "Genoa", "Marseille", "Athens", "Piraeus", "Southampton", "Amsterdam", "Copenhagen", "Stockholm", "Hamburg", "Lisbon", "Bergen"],
+  },
+  // Individual European countries are neither region values nor ports (ports are
+  // cities), so they need explicit city expansion. Port names are substrings, so
+  // "Rome" also catches "Civitavecchia-Rome". regionTerms point at the cruise
+  // region the country sits in.
+  italy: {
+    regionTerms: ["Mediterranean"],
+    portTerms: ["Rome", "Civitavecchia", "Venice", "Naples", "Genoa", "Trieste", "Bari", "Palermo", "Livorno"],
+  },
+  spain: {
+    regionTerms: ["Mediterranean"],
+    portTerms: ["Barcelona", "Malaga", "Cadiz", "Valencia", "Palma de Mallorca", "Bilbao", "Las Palmas"],
+  },
+  france: {
+    regionTerms: ["Mediterranean"],
+    portTerms: ["Marseille", "Le Havre", "Nice", "Villefranche", "Cannes", "Bordeaux", "Toulon"],
+  },
+  portugal: {
+    regionTerms: ["Mediterranean", "Transatlantic"],
+    portTerms: ["Lisbon", "Porto", "Funchal"],
+  },
+  germany: {
+    regionTerms: ["Northern Europe", "Baltic"],
+    portTerms: ["Hamburg", "Kiel", "Warnemunde", "Rostock", "Bremerhaven"],
+  },
+  netherlands: {
+    regionTerms: ["Northern Europe"],
+    portTerms: ["Amsterdam", "Rotterdam"],
+  },
+  scandinavia: {
+    regionTerms: ["Northern Europe", "Baltic", "Norwegian Fjords"],
+    portTerms: ["Copenhagen", "Stockholm", "Oslo", "Bergen", "Helsinki", "Gothenburg"],
+  },
+  iceland: {
+    regionTerms: ["Northern Europe"],
+    portTerms: ["Reykjavik", "Akureyri"],
   },
 
   // ── Origin countries/areas (used to expand a departure origin like "the US"
