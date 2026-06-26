@@ -150,7 +150,7 @@ async function sendDirectViaResend(
 
   const from =
     process.env.PLATFORM_OPERATOR_FROM_EMAIL ??
-    "AI Travel Concierge <noreply@ai-travelconcierge.com>";
+    "AI Travel Concierge <noreply@email.ai-travelconcierge.com>";
 
   try {
     const res = await fetch("https://api.resend.com/emails", {

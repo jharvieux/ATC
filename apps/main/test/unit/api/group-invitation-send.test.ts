@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   renderOverrideBodyInLayout: vi.fn(),
   signUnsubscribeToken: vi.fn(),
   generateToken: vi.fn(),
+  invitationInsert: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -83,13 +84,16 @@ vi.mock("@/lib/db/service-role-client", () => ({
               is: () => ({ then: (r: (v: unknown) => unknown) => mocks.allInvitations().then(r) }),
             }),
           }),
-          insert: () => ({
-            select: () => ({
-              then: (r: (v: unknown) => unknown) =>
-                // safeAwait intercepts this — return the raw builder thenable
-                ({ then: r }),
-            }),
-          }),
+          insert: (payload: unknown) => {
+            mocks.invitationInsert(payload);
+            return {
+              select: () => ({
+                then: (r: (v: unknown) => unknown) =>
+                  // safeAwait intercepts this — return the raw builder thenable
+                  ({ then: r }),
+              }),
+            };
+          },
         };
       }
       if (table === "tenants") {
@@ -180,6 +184,14 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     // Email is normalized to lowercase
     const safeCall = mocks.safeAwait.mock.calls[0]!;
     expect(safeCall[1]).toBe("invitations.insert");
+  });
+
+  it("includes the NOT NULL token in the insert (regression: missing token 500'd every add)", async () => {
+    const res = await POST(postReq({ action: "invite", invitee_email: "guest@example.com" }), PARAMS);
+    expect(res.status).toBe(200);
+    expect(mocks.invitationInsert).toHaveBeenCalledOnce();
+    const payload = mocks.invitationInsert.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.token).toBe("tok-abc");
   });
 
   it("invalid email → 400, no DB write", async () => {

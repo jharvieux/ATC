@@ -12,6 +12,7 @@ const GROUP_ID = "g-group-create";
 const SAILING_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
 const groupInsert = vi.fn();
+const forumInsert = vi.fn();
 
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
@@ -65,6 +66,14 @@ vi.mock("@/lib/db/service-role-client", () => ({
           },
         };
       }
+      if (table === "forums") {
+        return {
+          insert: (row: Record<string, unknown>) => {
+            forumInsert(row);
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
       // invitations table
       return { insert: () => Promise.resolve({ error: null }) };
     },
@@ -90,6 +99,7 @@ const BASE_BODY = {
 beforeEach(() => {
   vi.clearAllMocks();
   groupInsert.mockClear();
+  forumInsert.mockClear();
   mocks.assertPermission.mockResolvedValue({
     ctx: { tenant_id: TENANT_ID },
     user: { id: "u-1" },
@@ -130,5 +140,20 @@ describe("POST /api/groups — sailing_id FK (#783)", () => {
     const body = await res.json() as { error: string };
     expect(body.error).toContain("UUID");
     expect(groupInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/groups — forum lifecycle", () => {
+  // Without a forum row the group's Forum tab 404s — the forum GET route only
+  // reads, so creation must write the row.
+  it("creates the group's forum row scoped to the tenant", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq(BASE_BODY));
+
+    expect(res.status).toBe(201);
+    expect(forumInsert).toHaveBeenCalledTimes(1);
+    const row = forumInsert.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(row.tenant_id).toBe(TENANT_ID);
+    expect(row.group_id).toBeDefined();
   });
 });
