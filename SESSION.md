@@ -2,13 +2,13 @@
 
 ## Just completed
 
-- **PR #1463** (merged) — concierge region/area sailing search + date resolution + BYO tool gating. Fixes a live TA chat session where (1) "next spring" drew a "2025 or 2026?" reply + Australian-season assumption, and (2) a BYO agency got "our inventory system isn't live yet."
-  - Date: inject current date into entity-extraction prompt + concierge system prompt; Northern-hemisphere season convention (home-market seasons unless customer asks for destination's local season).
-  - Tools: `selectPersonaTools()` withholds `search_host_inventory`/`generate_quote`/`collect_booking_details` from BYO tenants + TA mode; threaded into run-generation-loop (no longer hardcoded PERSONA_TOOLS).
-  - Region search: new `region_lookup` end-to-end — contracts, RAG migration **0031** `match_region_itinerary_chunks` RPC (matches region OR departure_port OR ports_of_call via ILIKE-any over a date window; catches the ~96% NULL-region Australia sailings), destination→ports gazetteer, buildRegionLookup wired into retrieve-for-chat. Validated read-only vs prod RAG: 111 Australia Mar–May 2027 sailings (RCL/CEL/NCL + luxury). Also catches US→Australia transpacific via ports_of_call.
-  - Refactored 3 structured-lookup handlers into shared helpers (fetchApprovedChunksByIds + shapeStructuredChunks); unified error message.
-  - Both audit agents clean (Opus first run). 2 optional NITs, both intentional.
-- Earlier this session: PRs #1459, #1456, #1457, #1461 merged; triage closed #1460.
+Concierge region/area sailing search — shipped across 4 PRs this session (all merged to dev):
+- **#1463** — base region_lookup (RAG migration 0031 RPC + gazetteer) + date/season injection + BYO/TA booking-tool gating. Fixed the live "next spring → 2025/2026?" + Australian-season bug and the "our inventory isn't live yet" stub-tool bug.
+- **#1465** — origin filter ("from the US to Australia" shows only US-departing sailings). RAG migration 0032 adds p_origin_port_terms; buildRegionLookup routes departure_ports to origin_port_terms (symmetric: works reverse too, AU→US). Validated: 48 US-origin AU-visited, 0 round-trip Sydney.
+- **#1467** — gazetteer coverage for Europe (429→7,168 sailings) + European countries (Italy 0→4,493) + rounded out Canada/Mexico.
+- **#1464** — doc-only D-300 MEMORY entry.
+
+Symmetry confirmed (origin↔destination share the gazetteer): reverse AU→US works, Japan works (217 sailings). Coverage is gazetteer-bounded.
 
 ## In flight
 
@@ -20,9 +20,10 @@ Run auto-triage at next session start.
 
 ## Blocked on user
 
-- **Issue #1462** (operator-gated): RAG migration 0031 must be applied to prod via `psql` (SUPABASE_RAG_DB_URL) and `atc-rag` redeployed (`cd apps/rag && vercel deploy --prod --yes`). Merging to dev does NOT deploy RAG. Until then `region_lookup` fails closed in prod (degrades to vector-only). Dev/staging get it via the pipeline.
+- **#1462** (operator-gated): apply RAG migrations **0031 AND 0032** to prod RAG via psql + redeploy atc-rag (dev merge does NOT deploy RAG). Until then region_lookup fails closed in prod (degrades to vector-only). Dev/staging get them via the pipeline.
+- Pre-existing migration 20260712000000 (PR #1437) still needs prod apply.
 
 ## Open questions
 
-- Pre-existing migration 20260712000000 (from PR #1437, prior session) still needs prod apply per the pipeline.
-- 40 pre-existing `String(err)` egress sites baselined in `scripts/error-message-egress-baseline.txt`. No tracking issue yet.
+- **#1466**: substring port collision (Sydney NSW vs Sydney NS Nova Scotia) — an Australia query bleeds in ~173 Canadian sailings. Needs structured port→country disambiguation; documented inline in destination-gazetteer.ts.
+- 40 pre-existing `String(err)` egress sites baselined; no tracking issue yet.

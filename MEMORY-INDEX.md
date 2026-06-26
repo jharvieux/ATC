@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-301 — 2026-06-26 — Region-search origin filter ("from US to Australia", RAG migration 0032 p_origin_port_terms, PR #1465) + gazetteer Europe/country coverage (PR #1467); known substring collision #1466 (Sydney NSW vs Sydney NS)
 - D-300 — 2026-06-26 — Concierge region/area sailing search (RAG migration 0031 region_lookup RPC + destination gazetteer) + current-date/Northern-season injection + BYO/TA booking-tool gating (PR #1463); operator follow-up #1462 (prod RAG migrate+deploy)
 - D-299 — 2026-06-25 — LOW security batch: #1402 DNS-pinned SSRF + #1388 ingest size cap + #1395 error-egress baseline burned to 0 (PRs #1427/#1428/#1430)
 - D-298 — 2026-06-25 — Overnight opus batch: shipped #1376+#1377 (atomic chat-limit RPCs, PR #1414), #1391 (clawback idempotency_key, PR #1416), #1379 (session-bound throttled OTP, PR #1417); skipped #1247 + #1127 (don't-guess-at-money — spec-owner decisions needed, commented). Follow-ups #1415 (DB concurrency test), #1418 (G4 regen-name gap); reopened #735. Migrations staged to test DB, prod gated.
