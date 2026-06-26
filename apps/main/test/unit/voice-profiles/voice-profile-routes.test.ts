@@ -221,7 +221,7 @@ describe("GET /api/voice-profiles/samples (#1267)", () => {
     const body = await res.json() as { is_owner: boolean; house_samples: { id: string }[] };
     expect(body.is_owner).toBe(true);
     expect(body.house_samples).toHaveLength(1);
-    expect(body.house_samples[0].id).toBe("hs1");
+    expect(body.house_samples[0]?.id).toBe("hs1");
   });
 
   it("falls back to house card when tenant_owner has no own card", async () => {
