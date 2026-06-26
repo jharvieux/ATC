@@ -21,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   loadTenantSnapshot: vi.fn(),
   incrementGroupInvitees: vi.fn(),
   generateToken: vi.fn(),
+  sendGroupInvitationEmail: vi.fn(),
+}));
+
+vi.mock("@/lib/groups/send-invitation-email", () => ({
+  sendGroupInvitationEmail: mocks.sendGroupInvitationEmail,
 }));
 
 vi.mock("@/lib/auth/assert-permission", async () => {
@@ -109,6 +114,7 @@ beforeEach(() => {
   mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
   mocks.incrementGroupInvitees.mockResolvedValue(undefined);
   mocks.generateToken.mockReturnValue("tok-stub");
+  mocks.sendGroupInvitationEmail.mockResolvedValue(undefined);
 });
 
 describe("POST /api/groups — sailing_id FK (#783)", () => {
@@ -140,6 +146,31 @@ describe("POST /api/groups — sailing_id FK (#783)", () => {
     const body = await res.json() as { error: string };
     expect(body.error).toContain("UUID");
     expect(groupInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/groups — immediate invitations", () => {
+  // Create-time invitees must be emailed now, not only by the daily reminder cron.
+  it("sends an invitation email per invitee at creation", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({
+      ...BASE_BODY,
+      invitees: [{ email: "a@example.com" }, { email: "b@example.com", name: "Bee" }],
+    }));
+
+    expect(res.status).toBe(201);
+    expect(mocks.sendGroupInvitationEmail).toHaveBeenCalledTimes(2);
+    const sentTo = mocks.sendGroupInvitationEmail.mock.calls.map(
+      (c) => (c[0] as { invitationId: string }).invitationId,
+    );
+    expect(new Set(sentTo).size).toBe(2); // one send per distinct invitation
+  });
+
+  it("sends no invitation emails when there are no invitees", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq(BASE_BODY));
+    expect(res.status).toBe(201);
+    expect(mocks.sendGroupInvitationEmail).not.toHaveBeenCalled();
   });
 });
 

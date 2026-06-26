@@ -176,6 +176,7 @@ const AGENT_GRANTS: ReadonlySet<GrantKey> = new Set<GrantKey>([
   // Groups (write side; read/list live in READ_GRANTS).
   key("groups", "broadcast"),
   key("groups", "create"),
+  key("groups", "delete"),
   key("groups", "invite"),
   key("group.invitations", "manage"),
   // Price watches
