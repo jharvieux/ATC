@@ -2,7 +2,7 @@
 //
 // Intent under test:
 //   1. GET /api/groups/:id/forum returns forum_id + is_locked + is_coordinator.
-//   2. GET /api/groups/:id/forum returns 404 when the group has no forum.
+//   2. GET /api/groups/:id/forum self-heals a missing forum row on first visit (lazy upsert).
 //   3. GET /api/forums/:forumId/threads returns thread list (non-deleted).
 //   4. GET /api/forums/:forumId/threads returns 404 when forum not found.
 //   5. POST /api/forums/:forumId/threads creates a thread (201).
@@ -22,6 +22,7 @@ const THREAD_ID = "th-1";
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   forumQuery: vi.fn(),
+  forumUpsert: vi.fn(),
   threadsQuery: vi.fn(),
   threadInsert: vi.fn(),
   messagesQuery: vi.fn(),
@@ -41,6 +42,11 @@ vi.mock("@/lib/db/tenant-client", () => ({
       select: () => ({
         eq: () => ({
           maybeSingle: mocks.forumQuery,
+        }),
+      }),
+      upsert: () => ({
+        select: () => ({
+          single: mocks.forumUpsert,
         }),
       }),
     }),
@@ -144,15 +150,24 @@ describe("GET /api/groups/[id]/forum", () => {
     expect(body.is_coordinator).toBe(false);
   });
 
-  it("returns 404 when no forum exists for the group", async () => {
+  it("self-heals a missing forum row: upserts on first visit and returns 200", async () => {
+    // WHY: a transient DB error at group-create time can leave a group without a
+    // forums row. The route lazy-creates it on first access rather than 404ing permanently.
     mocks.forumQuery.mockResolvedValue({ data: null, error: null });
+    mocks.forumUpsert.mockResolvedValue({
+      data: { id: FORUM_ID, is_locked: false, groups: { coordinator_user_id: "other-user" } },
+      error: null,
+    });
 
     const { GET } = await import("@/app/api/groups/[id]/forum/route");
     const res = await GET(makeReq(`/api/groups/${GROUP_ID}/forum`), {
       params: Promise.resolve({ id: GROUP_ID }),
     });
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
+    const body: { forum_id: string; is_locked: boolean; is_coordinator: boolean } = await res.json();
+    expect(body.forum_id).toBe(FORUM_ID);
+    expect(body.is_coordinator).toBe(false);
   });
 });
 
