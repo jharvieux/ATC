@@ -54,10 +54,6 @@ describe("AdminHeaderMenu — cross-area link wiring (#1435)", () => {
     expect(html).toContain('href="/settings"');
   });
 
-  it("renders CRM link to /crm/contacts", () => {
-    expect(html).toContain('href="/crm/contacts"');
-  });
-
   it("renders Platform Admin link to /admin", () => {
     expect(html).toContain('href="/admin"');
   });

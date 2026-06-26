@@ -65,11 +65,6 @@ export function AdminHeaderMenu({
           </React.Fragment>
         ))}
 
-        {/* No separator — CRM groups with Admin Console (both tenant-console nav). */}
-        <DropdownMenuItem asChild>
-          <Link href="/crm/contacts">CRM</Link>
-        </DropdownMenuItem>
-
         <DropdownMenuSeparator />
 
         <DropdownMenuItem asChild>
