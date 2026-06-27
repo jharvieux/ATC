@@ -52,9 +52,43 @@ Order strictly by severity. For each finding use this block:
 | **Medium** | Exploitable under conditions / integrity loss | Idempotency-after-dispatch ordering, read-modify-write counter races, CAS without row-count check, SSRF via unvalidated URL field |
 | **Low** | Hardening / defense-in-depth | Missing rate-limit store, error-message schema disclosure, missing input bound |
 
+## 3b. Codebase-health findings (the full-audit modules)
+
+The security findings above (M1/M2) are the headline. These modules make it a *full* audit — lead the pitch
+with security, but this is what justifies the bigger package. See `audit-modules.md` for method per module.
+
+### Hotspots (M3)
+Files that are **both** high-churn and high-complexity — where bugs and maintenance cost concentrate. Cross-
+reference against findings (a hotspot that's also a security finding = top priority).
+
+| File | Churn (commits/Δlines) | Complexity | Overlapping findings | Priority |
+|---|---|---|---|---|
+
+### Duplication (M4)
+Overall % duplication + the worst clone clusters, each with a consolidation suggestion (fix-once vs. fix-in-N-places risk).
+
+### Slop / dead code (M5)
+Grouped delete / inline / simplify list (narrating comments, single-use helpers, dead exports, stub-shaped code,
+orphan TODOs) with an estimated net line reduction.
+
+### Simplification / reuse / maintainability (M6)
+Each hand-rolled-or-over-abstracted item → the concrete replacement (stdlib/framework primitive, existing dep,
+or "collapse to inline") → the maintenance/onboarding cost it removes. The "lower your ongoing support burden" pitch.
+
+### Performance (M7)
+Findings by impact: N+1 / unindexed queries (DB advisor), missing/unused indexes, RLS policies re-evaluated per
+row (`auth.*` not wrapped), over-fetching / missing pagination, bundle weight, missing caching, Core Web Vitals.
+
+| Finding | Layer (DB/API/render/bundle) | Impact | Fix | Effort |
+|---|---|---|---|---|
+
+> Anchor example for the DB layer (from a real engagement): unindexed foreign keys → covering indexes; bare
+> `auth.uid()` in RLS → `(select auth.uid())` to hoist to a once-per-query initplan. Both surfaced by the
+> Supabase performance advisor and verified against a test DB.
+
 ## 4. Remediation plan
 
-- Prioritized fix order (Critical → down), with rough effort per item.
+- Prioritized fix order across **all** modules (Critical security → high-impact perf → hotspot overlaps → maintainability), with rough effort per item.
 - "Fix these 3 before your next enterprise demo" callout — the action the buyer actually needs.
 
 ## 5. Retest & ongoing coverage (the upsell)

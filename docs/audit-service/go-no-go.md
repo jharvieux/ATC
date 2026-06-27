@@ -4,14 +4,27 @@
 > these docs can be lifted into a dedicated repo anytime. Sole-owner IP; no work-product conflict.
 > Last updated 2026-06-27.
 
-## Verdict: GO — as a productized, fixed-fee security audit, not an "AI code review" product
+## Verdict: GO — a productized, fixed-fee codebase audit, **marketed on** multi-tenant security depth
 
-Sell a **multi-tenant security audit for Supabase + Next.js SaaS**: a fixed-scope, fixed-price
-engagement that reads the actual auth / tenant-isolation logic and reports findings ranked by
-blast radius. The D-091 taxonomy is the deliverable's table of contents.
+**Market on the wedge; deliver the breadth.** Lead every pitch with the thing nobody else does well —
+multi-tenant security / cross-tenant isolation for Supabase + Next.js (what's underserved and gets the
+meeting). But the **deliverable is a full codebase-health audit** across 7 modules (see `audit-modules.md`):
 
-Do **not** enter as a generic AI PR-review tool — that lane is per-seat SaaS, crowded, and being
-commoditized by the platforms.
+1. **Multi-tenant security** (M1 — the lead/differentiator)
+2. **Local penetration test** (M2 — dynamic, *proves* the security findings)
+3. **Hotspot analysis** (M3 — churn × complexity)
+4. **Duplication** (M4)
+5. **Slop / dead-code cleanup** (M5)
+6. **Simplification / reuse / maintainability** (M6 — "don't reinvent the wheel," lower support cost)
+7. **Performance tuning** (M7 — N+1/unindexed queries, RLS initplan, bundle, Web Vitals)
+
+Breadth makes each engagement worth more, stickier (maintainability + perf are recurring needs), and widens
+the buyer pool (M6/M7 land even with clients who don't think they have a security problem). Package as a
+**Security audit** (M1+M2, the wedge) with a **Full codebase audit** (M1–M7) upsell.
+
+The **positioning** stays narrow and sharp; only the **deliverable** is broad. Do **not** market as "generic
+AI code review / code quality" — that lane (per-seat SaaS, SonarQube/Code Climate) is crowded and commoditized.
+The D-091 taxonomy + the module briefs are the deliverable's table of contents.
 
 ## Why (evidence)
 
