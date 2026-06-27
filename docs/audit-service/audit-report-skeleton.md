@@ -86,6 +86,19 @@ row (`auth.*` not wrapped), over-fetching / missing pagination, bundle weight, m
 > `auth.uid()` in RLS → `(select auth.uid())` to hoist to a once-per-query initplan. Both surfaced by the
 > Supabase performance advisor and verified against a test DB.
 
+### Test quality & intent (M8)
+Mutation testing (StrykerJS) + tests-for-intent review. The headline: *your coverage number is lying to you, here's where.*
+
+- **Mutation score** overall and per critical module (auth, tenant isolation, payments, state machines). Note the
+  gap vs. line coverage (high coverage + low mutation score = false confidence).
+- **Tests that can't fail** — the dangerous ones: a test whose covered behavior could break and it would still pass
+  (e.g. a tenant-isolation test that passes even with the RLS policy removed). List location + what it fails to assert.
+- **Surviving mutants on a hotspot/finding** — cross-reference M1/M3: an untested mutant on a security-critical or
+  high-churn path is a top remediation priority.
+
+| Module / file | Line cov | Mutation score | Surviving mutants (critical) | Action |
+|---|---|---|---|---|
+
 ## 4. Remediation plan
 
 - Prioritized fix order across **all** modules (Critical security → high-impact perf → hotspot overlaps → maintainability), with rough effort per item.
