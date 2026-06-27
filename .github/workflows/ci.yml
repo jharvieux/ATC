@@ -71,6 +71,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history so the policy-snapshot guard can diff origin/<base>...HEAD.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -97,6 +100,16 @@ jobs:
 
       - name: Lint migrations
         run: pnpm lint:migrations
+
+      - name: Policy-snapshot guard (#1492)
+        # A migration with CREATE/ALTER/DROP POLICY must regenerate its
+        # db/rls-snapshot-<app>.sql in the same PR. DB-free early-catch for the
+        # #1486-class drift; the DB-based rls-snapshot-diff job is the backstop.
+        env:
+          POLICY_SNAPSHOT_BASE_REF: origin/${{ github.base_ref || 'dev' }}
+        run: |
+          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          pnpm check:policy-snapshot
 
       - name: Dropped-column reader guard (BP38/#137)
         run: pnpm check:dropped-columns
