@@ -19,6 +19,7 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 | M7 | Performance tuning | Supabase perf advisors + profiling + bundle/Web-Vitals tools | **net-new** to assemble |
 | M8 | Test quality & intent | StrykerJS mutation testing + tests-for-intent review | **net-new** |
 | M9 | Next.js App Router boundary & rendering | `scan-extras.txt` (M9 section) + static review | **net-new** |
+| M10 | Data classification (PII / PHI / PCI) | schema → PII dictionary (`tools/pii-classify.mjs`) | **prototype built** |
 
 ---
 
@@ -127,6 +128,24 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 - **Status:** **net-new.** This is the gap analysis turned into a module (none of the existing `check:*` guards
   cover the App-Router-specific surface; the DB/RLS/index side is well covered).
 - **Report:** App-Router findings folded into §3 (security) and §3b (performance) by severity, tagged `M9`.
+
+## M10 — Data classification (PII / PHI / PCI) — *detect, don't ask*
+- **Finds:** which tables/columns hold personal data, by **matching column names + types against standard
+  taxonomies** — Google Cloud DLP infoTypes, Microsoft Presidio, GDPR special categories, HIPAA PHI, PCI
+  cardholder data. **Names only, never values** → no real PII handled, privacy-safe, runs on the read-only
+  connection we already have.
+- **Why it's not a question:** data sensitivity is derivable from the schema, so we don't ask the client — we
+  detect it. This is the "detect > ask" principle: reserve the questionnaire for facts genuinely outside the repo.
+- **What it unlocks (the differentiator):** **data-aware severity** — a cross-tenant gap on a table holding
+  `email + date_of_birth + passport_number` auto-escalates to Critical, while a table with only a display name
+  stays Low. Generic tools say "data exposed"; we say *which* data. Also drives **compliance applicability**
+  (detected PHI → HIPAA checks apply; cardholder data → PCI).
+- **Status:** **prototype built** (`tools/pii-classify.mjs`, name-based dictionary + self-test). Validated on ATC:
+  **94 PII-bearing columns across 40 tables** (email, DOB, passport, contacts). It also surfaced its own FP class
+  (`email_category` ≠ email; `awaiting_dob_reprompt` is a boolean; "health" matched `vendor_health` infra) — so
+  hits carry a **confidence** label and ambiguous names ("name") default to low/review. Production version adds an
+  LLM semantic pass (catches obfuscated fields) + the severity-weighting wiring.
+- **Report:** a data map (table → categories) in context; feeds the severity of every exposure finding.
 
 ## How the modules compose into one engagement
 1. Threat-model (focus areas) → 2. M1 static security scan → 3. M3 hotspots + M4 dup + M5 slop + M6 maintainability

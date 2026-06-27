@@ -84,6 +84,9 @@ function findingCard(f) {
     <div class="kv"><b>Evidence</b> ${esc(f.evidence)}</div>
     <div class="kv"><b>Impact</b> ${esc(f.impact)}</div>
     <div class="kv"><b>Fix</b> ${esc(f.fix)}</div>
+    ${f.okWhen || f.notOkWhen ? `<div class="crit"><div class="cu">When this is OK vs. not — confirm against your design:</div>
+      ${f.okWhen ? `<div><span class="ok">✓ OK when</span> ${esc(f.okWhen)}</div>` : ""}
+      ${f.notOkWhen ? `<div><span class="notok">✗ Not OK when</span> ${esc(f.notOkWhen)}</div>` : ""}</div>` : ""}
   </div>`;
 }
 
@@ -148,6 +151,9 @@ function buildHtml(data) {
   .cat{font-size:13px;font-weight:800;margin:18px 0 2px;color:#0f172a}
   .na{border-left:3px solid #cbd5e1;background:#f8fafc;border-radius:6px;padding:8px 12px;margin:7px 0;font-size:11px;color:#475569}
   .na .fid{color:#64748b}
+  .crit{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px 10px;margin:7px 0 2px;font-size:11px}
+  .crit .cu{color:#92400e;font-weight:700;margin-bottom:4px}
+  .crit .ok{color:#15803d;font-weight:700}.crit .notok{color:#b3261e;font-weight:700}
   </style></head><body>
   <div class="cover-band"></div>
   <div class="page">
