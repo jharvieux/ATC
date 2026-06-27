@@ -27,7 +27,23 @@ export async function GET(
       .maybeSingle();
 
     if (error) return dbErrorResponse(error);
-    if (!forum) return Response.json({ error: "forum_not_found" }, { status: 404 });
+
+    if (!forum) {
+      // Self-heal: the forums row should have been created at group-create time
+      // but may be missing due to a transient failure. Upsert idempotently so
+      // the first visit repairs the gap rather than returning a permanent 404.
+      const { data: healed, error: upsertErr } = await db
+        .from("forums")
+        .upsert({ group_id: groupId, tenant_id: ctx.tenant_id }, { onConflict: "group_id" })
+        .select("id, is_locked, groups(coordinator_user_id)")
+        .single();
+      if (upsertErr || !healed) return dbErrorResponse(upsertErr);
+      return Response.json({
+        forum_id: healed.id,
+        is_locked: healed.is_locked,
+        is_coordinator: forumCoordinatorId(healed) === user.id,
+      });
+    }
 
     return Response.json({
       forum_id: forum.id,
