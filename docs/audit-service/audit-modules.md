@@ -17,6 +17,7 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 | M5 | Slop / dead code | slop-check + D-091 + dead-export detection | exists, wire in |
 | M6 | Simplification / reuse / maintainability | `/simplify` + pre-pr-reviewer doctrine + `quality-extras.txt` | exists, wire in |
 | M7 | Performance tuning | Supabase perf advisors + profiling + bundle/Web-Vitals tools | **net-new** to assemble |
+| M8 | Test quality & intent | StrykerJS mutation testing + tests-for-intent review | **net-new** |
 
 ---
 
@@ -87,12 +88,29 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 - **Proof point:** this very dimension is demonstrated in the source repo — unindexed FKs → covering indexes,
   and `auth.uid()` → `(select auth.uid())` RLS initplan fixes, both advisor-surfaced and test-DB-verified.
 
+## M8 — Test quality & intent
+- **Finds:** tests that **can't fail when the logic changes** — the false-confidence layer. Tautological/snapshot-only
+  tests, tests that assert WHAT not WHY, high *line coverage* masking low *mutation* coverage, and the specific code
+  paths with no effective test (surviving mutants). Directly operationalizes the house rule "a test that can't fail
+  when business logic changes is wrong."
+- **Method:** two facets. (1) **Mutation scan** — run **StrykerJS** (or the stack's mutation tester): it injects
+  faults (flip `>` to `>=`, negate conditionals, swap return values, delete statements) and reports the **mutation
+  score** = % of mutants the suite kills. Surviving mutants are the blind spots, located precisely. (2)
+  **Tests-for-intent review** — read the high-value tests (auth, tenant isolation, payments, state machines) and flag
+  the ones that would still pass if the behavior they "cover" were broken.
+- **Status:** **net-new.** Stryker needs a working test runner + a time budget (mutation runs are slow — scope to the
+  critical modules, not the whole repo). Pair the score with the qualitative read for the report.
+- **Report:** mutation score overall + per critical module; a "tests covering X can't actually fail" list (the
+  dangerous ones — e.g. a tenant-isolation test that passes even with RLS removed); and which surviving mutants sit
+  on a security/perf hotspot (cross-reference M1/M3). The pitch: *your coverage number is lying to you, here's where.*
+
 ---
 
 ## How the modules compose into one engagement
 1. Threat-model (focus areas) → 2. M1 static security scan → 3. M3 hotspots + M4 dup + M5 slop + M6 maintainability
-+ M7 performance (can run in parallel) → 4. M2 local pen test to **prove** the high-severity M1 findings → 5. assemble
-into the ranked report (`audit-report-skeleton.md`), cross-referencing hotspots against findings → 6. remediation plan + retest offer.
++ M7 performance + M8 test quality (can run in parallel; scope Stryker to critical modules) → 4. M2 local pen test to
+**prove** the high-severity M1 findings → 5. assemble into the ranked report (`audit-report-skeleton.md`),
+cross-referencing hotspots and surviving mutants against findings → 6. remediation plan + retest offer.
 
 **Packaging:** offer a **Security audit** (M1+M2, the wedge, lower price/faster) and a **Full codebase audit**
-(M1–M7, higher price, the upsell). Lead the pitch with the security depth; show the full report as the reason to buy the bigger package.
+(M1–M8, higher price, the upsell). Lead the pitch with the security depth; show the full report as the reason to buy the bigger package.

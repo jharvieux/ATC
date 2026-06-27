@@ -1,6 +1,6 @@
-# quality-extras — maintainability / simplification / reuse review brief
+# quality-extras — maintainability / simplification / reuse / test-quality review brief
 #
-# The non-security half of the audit (modules M5 slop + M6 simplification/reuse).
+# The non-security half of the audit (modules M5 slop + M6 simplification/reuse + M8 test intent).
 # Use as the brief for a whole-repo quality pass (alongside jscpd for M4 duplication
 # and the hotspot script for M3). Complements scan-extras.txt (security). Generic to
 # any TypeScript/Next.js codebase; derived from the D-091 anti-slop checklist and the
@@ -46,6 +46,26 @@
   stdlib, framework primitive, or "collapse to inline") → the maintenance/onboarding cost it removes.
 - Frame M6 as **lowering ongoing maintenance + onboarding cost** — it lands with clients who don't believe
   they have a security problem, and it's the reason a one-time audit becomes a recurring relationship.
+
+## TEST QUALITY / INTENT (M8) — flag tests that can't fail
+
+The mutation scan (StrykerJS) gives the quantitative score; this brief is the qualitative read of the
+high-value tests (auth, tenant isolation, payments, state machines, money math). Flag a test when:
+
+- TAUTOLOGICAL — it asserts a value it just set, or mocks the very thing under test so the assertion can't fail.
+- SNAPSHOT-ONLY — a snapshot/inline-snapshot is the only assertion; it pins WHAT renders, not WHY it's correct,
+  and "update snapshots" silently absorbs real regressions.
+- ASSERTS WHAT, NOT WHY — checks a shape/count/string but not the business rule (e.g. "returns 200" without
+  asserting the row is actually tenant-scoped; "array has 3 items" without asserting which items).
+- WOULD PASS IF THE BEHAVIOR BROKE — the litmus test: if you deleted/inverted the logic it covers, would this
+  test go red? If no, it's intent-less. (This is exactly what a surviving Stryker mutant proves mechanically.)
+- COVERS THE HAPPY PATH ONLY — no failure/denial/edge assertion on a security- or money-critical path (the
+  denial case is the one that matters for tenant isolation and authz).
+- MOCKS THE DATABASE/RLS — a "tenant isolation" test that mocks the DB layer can't observe an RLS regression;
+  the assertion needs a real (or local) DB to mean anything.
+
+Report: the mutation score per critical module + a ranked "these tests give false confidence" list (location +
+the rule they fail to assert), prioritizing tests on a security/perf hotspot.
 
 ## FALSE POSITIVES (don't flag)
 
