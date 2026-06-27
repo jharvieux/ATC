@@ -63,6 +63,7 @@ Order strictly by severity. For each finding use this block:
 
 > ### F-01 — {Title}
 > - **Severity:** Critical | High | Medium | Low
+> - **Confidence:** Confirmed (repro'd) | Likely (needs one check) | Review (heuristic/candidate) | N/A (ruled out by context)
 > - **BFTB:** {score}/100  (Value {1-5} × Ease {1-5} × Safety {1-5})
 > - **Taxonomy:** {D-091 pattern, e.g. "Two-layer tenant isolation" / "Service-role leakage"}
 > - **Location:** `path/to/file.ts:LINE` (+ the policy/route/migration name)
@@ -127,6 +128,16 @@ Mutation testing (StrykerJS) + tests-for-intent review. The headline: *your cove
 
 | Module / file | Line cov | Mutation score | Surviving mutants (critical) | Action |
 |---|---|---|---|---|
+
+## 3c. Checked & ruled out (applicability gate)
+
+Items a generic checklist/advisor would flag, **suppressed because they don't apply to this app's auth model or
+architecture** (the *applicability* gate, distinct from the *correctness* gate). Listing them is a credibility
+signal — it shows what was checked and *why it's not a finding* — and it stops context-blind false positives from
+reaching the action plan.
+
+> Example: *Leaked-password protection disabled* — **N/A**: this app uses federated/OAuth auth exclusively, so
+> there are no managed passwords to protect. Captured at kickoff via the auth questionnaire.
 
 ## 4. Remediation plan
 
