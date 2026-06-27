@@ -25,6 +25,18 @@ DETECT-first (from code/schema), ask only for facts not in the repo, infer last.
 - Password-strength / leaked-pw    [when: email/password auth is enabled]  (OAuth-only → N/A)
 - Data-sensitivity weighting       DETECTED, never asked — see M10 (PII dictionary)
 
+## DETECT DEEPER before falling back to "confirm intent"
+
+Don't stop at the advisor's summary — read the actual artifacts; most "ambiguous" findings resolve to a verdict:
+- SECURITY DEFINER exposure: READ THE FUNCTION BODY (`pg_get_functiondef`). Uses `auth.uid()`/`auth.jwt()` to
+  constrain by the caller → caller-scoped (OK). Filters only by a parameter (target_tenant_id/user_id) with no
+  caller check → returns data for arbitrary IDs (NOT OK). [ATC: 2 of 3 cleared, only tenant_is_active flagged.]
+- RLS-enabled-no-policy: CHECK THE GRANTS (`information_schema.role_table_grants`). No anon/authenticated SELECT
+  grant → deny-all by design, confirmed server-only (OK). HAS a client SELECT grant but no policy → grant/policy
+  mismatch (vestigial grant, or a silently-broken client read). Also cross-reference code query sites: which
+  client (service-role vs tenant/anon) actually reads the table. [ATC: 11 of 13 confirmed locked, 2 to confirm.]
+The OK-when / Not-OK-when criteria below are the FALLBACK for the genuinely-undetermined residue, not the default.
+
 ## UNCERTAINTY — be upfront; give decision criteria, not "confirm intent"
 
 For findings that are safe-or-not depending on design (RLS-enabled-no-policy, SECURITY DEFINER
