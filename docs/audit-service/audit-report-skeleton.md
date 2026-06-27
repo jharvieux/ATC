@@ -89,7 +89,7 @@ row (`auth.*` not wrapped), over-fetching / missing pagination, bundle weight, m
 ### Test quality & intent (M8)
 Mutation testing (StrykerJS) + tests-for-intent review. The headline: *your coverage number is lying to you, here's where.*
 
-- **Mutation score** overall and per critical module (auth, tenant isolation, payments, state machines). Note the
+- **Mutation score** overall and per module (whole repo). Note the
   gap vs. line coverage (high coverage + low mutation score = false confidence).
 - **Tests that can't fail** — the dangerous ones: a test whose covered behavior could break and it would still pass
   (e.g. a tenant-isolation test that passes even with the RLS policy removed). List location + what it fails to assert.

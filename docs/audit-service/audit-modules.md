@@ -98,9 +98,12 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
   score** = % of mutants the suite kills. Surviving mutants are the blind spots, located precisely. (2)
   **Tests-for-intent review** — read the high-value tests (auth, tenant isolation, payments, state machines) and flag
   the ones that would still pass if the behavior they "cover" were broken.
-- **Status:** **net-new.** Stryker needs a working test runner + a time budget (mutation runs are slow — scope to the
-  critical modules, not the whole repo). Pair the score with the qualitative read for the report.
-- **Report:** mutation score overall + per critical module; a "tests covering X can't actually fail" list (the
+- **Status:** **net-new.** Stryker needs a working test runner. **Run it over the WHOLE repo** — with
+  `coverageAnalysis: "perTest"` (only runs the tests that cover each mutant), `--concurrency` (parallel workers),
+  and `--incremental` (fast re-runs), a full-repo scan is a one-time batch job, not a reason to cut scope. Whole-repo
+  is also the better deliverable: a complete surviving-mutant map cross-referenced against every finding/hotspot.
+  Pair the score with the qualitative read for the report.
+- **Report:** mutation score overall + per module (whole repo); a "tests covering X can't actually fail" list (the
   dangerous ones — e.g. a tenant-isolation test that passes even with RLS removed); and which surviving mutants sit
   on a security/perf hotspot (cross-reference M1/M3). The pitch: *your coverage number is lying to you, here's where.*
 
@@ -108,7 +111,7 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 
 ## How the modules compose into one engagement
 1. Threat-model (focus areas) → 2. M1 static security scan → 3. M3 hotspots + M4 dup + M5 slop + M6 maintainability
-+ M7 performance + M8 test quality (can run in parallel; scope Stryker to critical modules) → 4. M2 local pen test to
++ M7 performance + M8 test quality (can run in parallel; full-repo Stryker, perTest + concurrency) → 4. M2 local pen test to
 **prove** the high-severity M1 findings → 5. assemble into the ranked report (`audit-report-skeleton.md`),
 cross-referencing hotspots and surviving mutants against findings → 6. remediation plan + retest offer.
 
