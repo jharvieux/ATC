@@ -4,6 +4,26 @@ Newest entries on top.
 
 ---
 
+## D-306 — 2026-06-26 — DB perf migrations (auth_rls_initplan + FK covering indexes), snapshot-staleness fix, and the CONCURRENTLY-in-pipeline finding
+
+Shipped the two agent-ready perf advisors as gated migrations, plus fixed a latent CI break.
+
+**What merged (all to `dev`, all gated behind the operator prod-apply — prod advisors still show the findings until then):**
+- #1483 / PR #1490 — `20260714000000_fk_covering_indexes.sql`: 124 covering indexes for unindexed FKs.
+- #1482 / PR #1491 — `20260715000000_rls_initplan_wrap_auth.sql`: wrapped bare `auth.uid()`/`auth.role()` → `(select auth.<fn>())` across 50 RLS policies. Snapshot regenerated in the same PR.
+- #1489 — prerequisite snapshot catch-up (see below).
+- #735 closed **won't-do** (OTP brute-force Redis store): not worth standing up Redis to stop an authenticated user brute-forcing an OTP to their own entered email.
+
+**Reusable finding — CONCURRENTLY can't be used in batch index migrations here.** `supabase db push` runs a migration file's statements in a single pipeline; `CREATE INDEX CONCURRENTLY` errors with `SQLSTATE 25001: cannot be executed within a pipeline` on the *second* statement (a single-statement file works, a multi-statement file does not — verified empirically on the test DB). So batch index migrations use plain `CREATE INDEX IF NOT EXISTS` (also what #1483's own Fix section said; matches the repo's 190× `<table>_<col>_idx` convention). The brief ACCESS SHARE build lock is negligible on the small pre-launch tables. **Why rejected CONCURRENTLY:** infeasible with the migration tooling, not a preference.
+
+**Data-source discipline.** The Supabase advisor's column *numbers* are stale (mis-resolved after column reorders — pointed `canonical_match_reviews_resolved_by_fkey` at `created_at`) and it listed a `users_auth_user_id_fkey` that no longer exists (125 → 124 real FKs). Source FK columns and policy bodies from **live `pg_constraint`/`pg_policy`**, use the advisor only for *which* objects. For #1482, proved zero semantic drift by normalizing the `(( SELECT auth.uid() AS uid))` wrap out of the regenerated snapshot → byte-identical vs HEAD.
+
+**Snapshot-staleness fix (#1489) + guarantee.** Root cause: #1486's policy-merge migration didn't regenerate `db/rls-snapshot-main.sql`; #1488 (apply-migrations-before-the-RLS-diff) then exposed it, failing `rls-snapshot-diff` on *every* code PR. Fixed by regenerating the snapshot (#1489). **Forward guarantee = #1488** — a policy migration without a regenerated snapshot now fails the required check; this was the last pre-#1488 straggler (confirmed: only those 4 policies drifted). Belt-and-suspenders hardening (static `policy-migration-needs-snapshot` lint + post-merge drift→issue) tracked in **#1492**.
+
+**Shared-test-DB hazard (process note).** The `SUPABASE_TEST_DB_URL` test DB is shared with CI. Pre-applying a not-yet-merged migration to it pollutes its `schema_migrations` ledger and breaks other PRs' `supabase db push` (hit this on #1489's first run). Going forward: regenerate snapshots by applying only when the branch containing the migration is the one in flight, and clean up (drop ledger row + objects) if abandoning. Related artifacts: `scripts/rls-snapshot.ts`, `scripts/rls-snapshot-diff.ts`, `.github/workflows/deploy.yml` (rls-snapshot-diff job).
+
+---
+
 ## D-305 — 2026-06-26 — Coordinator group features: immediate invitation emails + group delete with sailing-date guard (PR #1478)
 
 **Decision.** Two user-requested coordinator features.
