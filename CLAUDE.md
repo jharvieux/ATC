@@ -439,6 +439,24 @@ The check is required to merge. **You cannot bypass it.** Two exemptions:
 
 -----
 
+## Migrations & RLS/grants snapshots
+
+Migrations live in `apps/main/supabase/migrations/` (and `apps/rag/…`), timestamp-prefixed and append-only. `db/rls-snapshot-{main,rag}.sql` and `db/grants-snapshot-{main,rag}.sql` are **auto-generated** introspection dumps of the live DB — never hand-edit them. Follow this every time you touch a migration:
+
+1. **A migration that changes a policy or grant MUST regenerate the matching snapshot in the same PR.** CREATE/ALTER/DROP POLICY → `pnpm rls:snapshot:main` (or `:rag`), commit `db/rls-snapshot-<app>.sql`. GRANT/REVOKE or a new table → `pnpm grants:snapshot`. Two checks enforce this and you cannot merge past them: the `check:policy-snapshot` guard (DB-free, in `pnpm verify` + the Guards & Build job) and the DB-based `rls-snapshot-diff` / grants-diff jobs (which apply the PR's migrations to the test DB, then diff). The #1486 stale-snapshot incident is exactly what these prevent.
+
+2. **Regenerating a snapshot needs a DB with the migration applied.** The snapshot scripts introspect a live DB — you can't hand-write the normalized output. Apply to the **test DB** (`SUPABASE_TEST_DB_URL` in `.env.local` — a throwaway CI database, *not* prod, so it's safe): from `apps/main`, `npx supabase db push --include-all --db-url "$URL"` (don't echo the URL), then `npx tsx scripts/rls-snapshot.ts --target=main > db/rls-snapshot-main.sql`. Prove no unintended drift before committing (e.g. for an auth-wrap change, normalize the wrap out of both old and new snapshot and confirm byte-identical).
+
+3. **Never `CREATE INDEX CONCURRENTLY` in a multi-statement migration.** `supabase db push` runs a file's statements in one pipeline, where CONCURRENTLY errors `SQLSTATE 25001`. Use plain `CREATE INDEX IF NOT EXISTS` (the brief lock is negligible on these tables). A single-statement file is the only case CONCURRENTLY survives — not worth it.
+
+4. **Shared-test-DB hazard.** The test DB is shared with CI, and its `supabase_migrations.schema_migrations` ledger must match the branch under CI. Do **not** pre-apply a migration that isn't on a pushed branch — it orphans a ledger row and breaks every other PR's `supabase db push` (and you'll see "repair the migration history table"). If you apply locally to regenerate a snapshot, the migration must be on the branch you push; if you abandon it, delete the ledger row and drop the objects you created.
+
+5. **Source object definitions from the live catalog, not the Supabase advisor.** The advisor's column numbers/names go stale after column reorders and it lists constraints that no longer exist. Use `pg_constraint` / `pg_policy` for the authoritative current definition; use the advisor only for *which* objects are flagged.
+
+6. **Prod apply is gated.** Migrations merge to `dev` autonomously but apply to prod only via the operator step (the no-prod-deploys rule) — so prod advisors keep showing a fixed finding until that apply runs. Say so in the wrap-up.
+
+-----
+
 ## Build prompts and sequencing
 
 The CI/CD implementation prompts are in `ATC_CICD_Implementation___Build_Prompts_for_Claude_Code.md`. Each section is self-contained: manual prerequisites → invocation → prompt → verification → manual follow-ups.
