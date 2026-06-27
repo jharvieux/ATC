@@ -4,6 +4,24 @@ Newest entries on top.
 
 ---
 
+## D-307 — 2026-06-26 — Policy-snapshot consistency guard + CLAUDE.md migration/snapshot section (PR #1494, part of #1492)
+
+Shipped the primary half of the #1492 hardening from D-306.
+
+**What merged (PR #1494):** `scripts/check-policy-snapshot.ts` — a DB-free, diff-based gate: if a migration in `origin/<base>...HEAD` contains `CREATE/ALTER/DROP POLICY`, the matching `db/rls-snapshot-<app>.sql` must change in the same diff, else fail with the `pnpm rls:snapshot:<app>` remediation. Wired into `pnpm verify` and the required **Guards & Build** CI job (checkout now `fetch-depth: 0` + a base fetch so the diff resolves). Escape hatch: inline `-- snapshot-guard-allow:<reason>`. 10 unit tests on the pure `analyze`/`stripSqlComments` core (mirrors `check-schema-drift.ts` structure). Also added a **CLAUDE.md "Migrations & RLS/grants snapshots"** section so the workflow is in-context every session.
+
+**Why a static guard on top of #1488's DB check:** #1488 (apply-migrations-then-diff) is authoritative but needs the test DB and is skipped on secret-less/Dependabot runs; the static guard catches the mistake earlier and on those skipped runs.
+
+**Why RLS-only, not grants (rejected extending it):** a keyword guard can't see the default ACLs a bare `CREATE TABLE` grants, so a grants version would be both noisy (idempotent re-GRANTs) and incomplete (misses the #544 new-table-no-grant class). Grants drift stays with the DB-based `grants:check`. Noted in the script header.
+
+**Why fail-open on git error:** `main()` warns + exits 0 if `git diff` can't run (CI plumbing) — the DB-based `rls-snapshot-diff` job is the backstop, so blocking a PR on a git hiccup would be net-negative.
+
+**Deferred (still open in #1492):** part 2 — upgrade the post-merge `dev` drift `::warning` in `deploy.yml`'s rls-snapshot-diff step to auto-open/update a tracked issue. A `deploy.yml` change (production-pipeline workflow), left for an explicit go-ahead.
+
+Related: [[project_shift_left_queue]]; D-306; `scripts/check-policy-snapshot.ts`, `.github/workflows/ci.yml` (Guards & Build), `CLAUDE.md` (Migrations & RLS/grants snapshots).
+
+---
+
 ## D-306 — 2026-06-26 — DB perf migrations (auth_rls_initplan + FK covering indexes), snapshot-staleness fix, and the CONCURRENTLY-in-pipeline finding
 
 Shipped the two agent-ready perf advisors as gated migrations, plus fixed a latent CI break.
