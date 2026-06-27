@@ -71,6 +71,9 @@ Order strictly by severity. For each finding use this block:
 > - **Blast radius:** what an attacker reaches (e.g. "every tenant's `bookings` rows with the public anon key").
 > - **Evidence / repro:** the minimal query, request, or policy that demonstrates it (sanitized).
 > - **Fix:** the concrete change (e.g. add a `tenant_id` predicate; move to `(select auth.uid())`; add a replay guard).
+> - **OK when / Not OK when:** *(for any finding that is safe-or-not depending on design)* — be upfront about the
+>   uncertainty and give the client the decision criteria, e.g. *"✓ OK when the table is service-role-only (deny-all);
+>   ✗ Not OK when a user feature must read it."* Never assert a context-dependent finding; never silently drop it.
 > - **References:** OWASP/CWE + any framework doc.
 
 ### Severity rubric (map your taxonomy to it)

@@ -9,6 +9,32 @@
 # Supabase/Next.js SaaS. Ordered by blast radius. Stack-generic (no client
 # file paths). Derived from the D-091 taxonomy.
 
+## APPLICABILITY — gate every rule before it becomes a finding
+
+A finding is only real if its PRECONDITION holds for this app. Establish each precondition
+DETECT-first (from code/schema), ask only for facts not in the repo, infer last. Each rule's
+[when: …] tag is its precondition; if the surface is absent, the rule is N/A (not a finding):
+
+- Webhook replay / signature       [when: an inbound SIGNED webhook handler exists]
+- Server Action auth / validation  [when: a `'use server'` action exists]  (e.g. ATC has 0 → N/A)
+- SSRF via stored URL field         [when: server-side code fetches a user-supplied URL]
+- In-memory rate limit             [when: a public/anon limiter exists]
+- Unsafe / missing cache           [when: cacheable read paths exist]
+- Dynamic-rendering opt-in         [when: the page could be static — i.e. doesn't need per-request data]
+- CSRF                             [when: cookie-based auth]  (Bearer-only → N/A)
+- Password-strength / leaked-pw    [when: email/password auth is enabled]  (OAuth-only → N/A)
+- Data-sensitivity weighting       DETECTED, never asked — see M10 (PII dictionary)
+
+## UNCERTAINTY — be upfront; give decision criteria, not "confirm intent"
+
+For findings that are safe-or-not depending on design (RLS-enabled-no-policy, SECURITY DEFINER
+exposure, unused indexes, low-confidence PII names): state it plainly AND give the client an
+OK-when / NOT-OK-when so they can self-resolve. Never assert; never silently drop. Examples:
+- RLS-enabled-no-policy: OK if the table is service-role-only (deny-all by design); NOT OK if a
+  user feature must read it via PostgREST (policy missing → feature silently returns empty).
+- SECURITY DEFINER RPC-exposed: OK if caller-scoped (uses auth.uid()); NOT OK if it returns
+  cross-tenant data or leaks existence/status for arbitrary IDs.
+
 ## CRITICAL — cross-tenant data exposure
 
 - PERMISSIVE OR MISSING RLS. Flag any public table with RLS disabled, and any
