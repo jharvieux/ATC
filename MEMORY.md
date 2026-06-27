@@ -4,6 +4,20 @@ Newest entries on top.
 
 ---
 
+## D-308 — 2026-06-26 — Post-merge snapshot/grants drift opens a tracked issue (PR #1496) — #1492 closed
+
+Shipped the deferred part 2 from D-307; **#1492 is now fully closed**.
+
+**What merged (PR #1496):** in `deploy.yml`'s `rls-snapshot-diff` job, replaced the two warn-only **dev-push** drift steps (RLS + grants) with one consolidated step that runs `pnpm rls:check` + `pnpm grants:check` and, on drift, opens — or reuses — a single `snapshot-drift` GitHub issue. Added `permissions: { contents: read, issues: write }` to the job; pre-created the `snapshot-drift` label.
+
+**Key decision — skip-if-open, not comment-on-recurrence (differs from prod-drift-check.yml on purpose).** `prod-drift-check.yml` *comments* on its existing `prod-drift` issue each run — fine at nightly cadence. Dev pushes are frequent (every merge), so commenting each push would spam; this step instead **skips** when a `snapshot-drift` issue is already open, leaving one tracker until someone regenerates the snapshot and closes it. The `gh issue list … || gh issue create` dedup pattern and `GITHUB_TOKEN` env name mirror prod-drift-check.yml; only the recurrence handling differs.
+
+**Other choices:** one issue covers whichever drifted (RLS, grants, or both — body lists the specific remediation); gated to `push` on `refs/heads/dev` (no-op on PRs, so it couldn't be CI-tested pre-merge — validated locally via js-yaml + `bash -n` + mocked pnpm/gh across all four control-flow paths); alerting failure is fail-open (`|| echo ::warning`) so it never fails the dev build.
+
+The snapshot guard stack is now complete: `check:policy-snapshot` (PR, DB-free) → `rls-snapshot-diff`/`grants` (PR, DB-authoritative) → this (post-merge backstop). Related: D-307, D-306; `.github/workflows/deploy.yml` (rls-snapshot-diff job), `prod-drift-check.yml` (the pattern source).
+
+---
+
 ## D-307 — 2026-06-26 — Policy-snapshot consistency guard + CLAUDE.md migration/snapshot section (PR #1494, part of #1492)
 
 Shipped the primary half of the #1492 hardening from D-306.
