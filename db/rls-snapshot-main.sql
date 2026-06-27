@@ -343,20 +343,17 @@ CREATE POLICY "bookings_update_policy" ON public.bookings
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.bug_submissions
-CREATE POLICY "bug_submissions_customer_self" ON public.bug_submissions
+CREATE POLICY "bug_submissions_select" ON public.bug_submissions
   FOR SELECT TO PUBLIC
   USING ((submitter_user_id IN ( SELECT users.id
    FROM users
-  WHERE users.auth_user_id = auth.uid())));
+  WHERE users.auth_user_id = auth.uid())) OR auth_user_in_tenant(tenant_id));
 CREATE POLICY "bug_submissions_tenant_delete" ON public.bug_submissions
   FOR DELETE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id));
 CREATE POLICY "bug_submissions_tenant_insert" ON public.bug_submissions
   FOR INSERT TO PUBLIC
   WITH CHECK (auth_user_in_tenant(tenant_id));
-CREATE POLICY "bug_submissions_tenant_select" ON public.bug_submissions
-  FOR SELECT TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id));
 CREATE POLICY "bug_submissions_tenant_update" ON public.bug_submissions
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
@@ -622,20 +619,17 @@ CREATE POLICY "escalation_topics_update_policy" ON public.escalation_topics
   WITH CHECK (auth_user_in_tenant(tenant_id) AND tenant_is_active(tenant_id));
 
 -- TABLE: public.feature_requests
-CREATE POLICY "feature_requests_customer_self" ON public.feature_requests
+CREATE POLICY "feature_requests_select" ON public.feature_requests
   FOR SELECT TO PUBLIC
   USING ((submitter_user_id IN ( SELECT users.id
    FROM users
-  WHERE users.auth_user_id = auth.uid())));
+  WHERE users.auth_user_id = auth.uid())) OR auth_user_in_tenant(tenant_id));
 CREATE POLICY "feature_requests_tenant_delete" ON public.feature_requests
   FOR DELETE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id));
 CREATE POLICY "feature_requests_tenant_insert" ON public.feature_requests
   FOR INSERT TO PUBLIC
   WITH CHECK (auth_user_in_tenant(tenant_id));
-CREATE POLICY "feature_requests_tenant_select" ON public.feature_requests
-  FOR SELECT TO PUBLIC
-  USING (auth_user_in_tenant(tenant_id));
 CREATE POLICY "feature_requests_tenant_update" ON public.feature_requests
   FOR UPDATE TO PUBLIC
   USING (auth_user_in_tenant(tenant_id))
