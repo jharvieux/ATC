@@ -21,6 +21,7 @@ const SEV = {
 };
 const bftb = (f) => Math.round((f.value * f.ease * f.safety) / 125 * 100);
 const bftbColor = (s) => (s >= 75 ? "#15803d" : s >= 40 ? "#ca8a04" : s >= 20 ? "#b45309" : "#9ca3af");
+const CONF = { Confirmed: "#15803d", Likely: "#ca8a04", Review: "#3b7ea1", "N/A": "#94a3b8" };
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[m]);
 
 // SVG arc helper (degrees; 0 = +x axis, sweeps clockwise in screen coords).
@@ -76,6 +77,7 @@ function findingCard(f) {
       <span class="ftitle">${esc(f.title)}</span>
       <span class="badge" style="background:${sc}">${esc(f.severity)}</span>
       <span class="badge bftb" style="background:${bftbColor(s)}">BFTB ${s}</span>
+      <span class="badge" style="background:${CONF[f.confidence] ?? "#94a3b8"}">${esc(f.confidence ?? "—")}</span>
     </div>
     <div class="finding-meta">${esc(f.taxonomy)} · <code>${esc(f.location)}</code> · <span class="status">${esc(f.status)}</span>
       · <span class="vesc">V${f.value}·E${f.ease}·S${f.safety}</span></div>
@@ -86,7 +88,9 @@ function findingCard(f) {
 }
 
 function buildHtml(data) {
-  const f = data.findings.map((x) => ({ ...x, _bftb: bftb(x) }));
+  const all = data.findings.map((x) => ({ ...x, _bftb: bftb(x) }));
+  const f = all.filter((x) => x.confidence !== "N/A"); // live findings
+  const na = all.filter((x) => x.confidence === "N/A"); // checked & ruled out (applicability gate)
   const counts = {};
   for (const x of f) counts[x.severity] = (counts[x.severity] || 0) + 1;
   const sevCount = (s) => f.filter((x) => x.severity === s).length;
@@ -142,6 +146,8 @@ function buildHtml(data) {
   .vesc{font-variant-numeric:tabular-nums}
   .kv{margin:4px 0;font-size:11.5px}.kv b{display:inline-block;width:64px;color:var(--muted);font-weight:700}
   .cat{font-size:13px;font-weight:800;margin:18px 0 2px;color:#0f172a}
+  .na{border-left:3px solid #cbd5e1;background:#f8fafc;border-radius:6px;padding:8px 12px;margin:7px 0;font-size:11px;color:#475569}
+  .na .fid{color:#64748b}
   </style></head><body>
   <div class="cover-band"></div>
   <div class="page">
@@ -183,6 +189,9 @@ function buildHtml(data) {
     <div class="kv"><b>Out of scope</b> ${esc(m.outOfScope)}</div>
     <h2>Findings</h2>
     ${Object.entries(byCat).map(([cat, items]) => `<div class="cat">${esc(cat)}</div>${items.map(findingCard).join("")}`).join("")}
+    ${na.length ? `<h2>Checked &amp; ruled out (not applicable)</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Items a checklist would flag, suppressed by the applicability gate (relevant to this app's auth model / architecture). Shown for transparency.</div>
+    ${na.map((x) => `<div class="na"><span class="fid">${esc(x.id)}</span> <b>${esc(x.title)}</b> — ${esc(x.note ?? "Not applicable in context.")}</div>`).join("")}` : ""}
   </div>
   </body></html>`;
 }

@@ -32,22 +32,24 @@ Each finding is scored **1–100** = round( **Value × Ease × Safety ÷ 125 × 
 
 | Rank | Finding | V | E | S | **BFTB** | Severity |
 |------|---------|:-:|:-:|:-:|:--------:|----------|
-| 1 | **Enable leaked-password protection** (HaveIBeenPwned check) | 4 | 5 | 5 | **80** | Security · Med |
 | 1 | **Add commission state-machine test** (Stryker survived mutant on money logic) | 4 | 5 | 5 | **80** | Test · Med |
 | 1 | ✅ *Covering indexes for 124 unindexed FKs* — **completed this period** | 4 | 5 | 5 | **80** | Perf |
-| 4 | ✅ *Wrap `auth.*` in RLS init-plan (50 policies)* — **completed this period** | 4 | 4 | 4 | **51** | Perf |
-| 5 | Parallelize 8 fetch waterfalls (`Promise.all`) | 3 | 4 | 4 | **38** | Perf · Low |
-| 6 | Add `server-only` to the 4 core secret/service-role clients | 2 | 5 | 4 | **32** | Hardening · Low |
+| 3 | ✅ *Wrap `auth.*` in RLS init-plan (50 policies)* — **completed this period** | 4 | 4 | 4 | **51** | Perf |
+| 4 | Parallelize 8 fetch waterfalls (`Promise.all`) | 3 | 4 | 4 | **38** | Perf · Low |
+| 5 | Add `server-only` to the 4 core secret/service-role clients | 2 | 5 | 4 | **32** | Hardening · Low |
+
+> **Note:** *Enable leaked-password protection* (which a checklist would score BFTB 80) is **excluded — N/A**:
+> this app uses federated/OAuth auth exclusively, so there are no managed passwords. See "Checked & ruled out."
 
 ## 1.7 Action plan
 
 **BFTB > 75, plus every Critical/High security finding.** → **No critical or high security issues were found**,
-so the plan is the two open quick wins (the third 80-scorer shipped this period):
+so the plan is the one open quick win (the FK-index 80-scorer shipped this period; the would-be leaked-password
+80-scorer is N/A — see "Checked & ruled out"):
 
 | Order | Action | Why it's here | BFTB | Effort | Owner |
 |-------|--------|---------------|:----:|--------|-------|
-| 1 | Enable Supabase **leaked-password protection** (Auth → Settings) | BFTB 80 | 80 | 1 toggle | Operator |
-| 2 | Add a test asserting `assertValidTransition` **rejects a from-state not in the map** (kills the survived mutant in the commission state machine) | BFTB 80; closes a test gap on **money** logic | 80 | 1 test | Eng |
+| 1 | Add a test asserting `assertValidTransition` **rejects a from-state not in the map** (kills the survived mutant in the commission state machine) | BFTB 80; closes a test gap on **money** logic | 80 | 1 test | Eng |
 
 > Completed during this engagement (pending prod apply): the 124 FK covering indexes and the 50-policy RLS
 > init-plan wrap — both BFTB ≥ 51, both already merged.
@@ -64,8 +66,6 @@ infrastructure, dependencies, social engineering.
 ## 3. Findings
 
 ### Security
-- **F-01 — Leaked-password protection disabled.** Sev **Medium** · **BFTB 80** (4×5×5). Supabase Auth isn't
-  checking new passwords against HaveIBeenPwned → credential-stuffing exposure. *Fix:* one toggle in Auth settings.
 - **F-02 — 3 `SECURITY DEFINER` RLS helpers are RPC-callable by `authenticated`.** Sev **Medium** · **BFTB 10**
   (3×2×2). `auth_user_in_tenant`, `tenant_is_active`, `auth_user_can_access_conversation` are directly callable at
   `/rest/v1/rpc/...`. Mostly caller-scoped (low impact); `tenant_is_active` leaks tenant active-status for arbitrary
@@ -103,6 +103,13 @@ infrastructure, dependencies, social engineering.
 - **F-13 — `app/api/chat/route.ts` is the #1 hotspot** (health 2.4, 29 co-changes). Sev — · **BFTB 4** (5×1×1).
   **High value, low BFTB**: decomposing a central, highly-coupled file is high-impact but slow and risky. Schedule
   deliberately, not as a quick win.
+
+### Checked & ruled out (applicability gate)
+- **F-01 — Leaked-password protection disabled.** **N/A** (confidence: N/A). A checklist/advisor would score this
+  BFTB 80 and put it top of the action plan — but the app uses **federated/OAuth auth exclusively**, so there are
+  no Supabase-managed passwords and nothing for the feature to protect. Captured at kickoff via the auth
+  questionnaire; shown here for transparency, excluded from findings/action-plan. *(This is the "context-blind
+  false positive" class the methodology guards against — correct detection, zero relevance.)*
 
 ## 4. Remediation plan
 Do the **Action Plan (§1.7)** first (the two BFTB-80 quick wins). Then the BFTB 30–55 band (waterfalls,
