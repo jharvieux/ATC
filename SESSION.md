@@ -1,22 +1,28 @@
-# Session state — last updated 2026-06-26 22:40 CT
+# Session state — last updated 2026-06-27 10:30 CT
 
 ## Just completed
-- Triaged the 12 open `opus` issues; closed **#735** won't-do (OTP Redis).
-- Shipped 3 DB PRs (merged to `dev`, **prod-apply gated**): **#1490/#1483** (124 FK covering indexes), **#1491/#1482** (auth_rls_initplan wrap, 50 policies, zero drift), **#1489** (stale-snapshot catch-up).
-- **#1492 fully closed** — both halves of the snapshot-diff hardening:
-  - **#1494** — `check:policy-snapshot` guard (DB-free; policy migration must regen its snapshot in the same PR; in `verify` + Guards & Build) + CLAUDE.md "Migrations & RLS/grants snapshots" section.
-  - **#1496** — `deploy.yml` post-merge backstop: dev-push drift now opens/reuses a single `snapshot-drift` issue (skip-if-open, no spam) instead of warn-only.
-- Logged **D-306, D-307, D-308** in MEMORY.
+**ATC engineering (merged to `dev`, prod-apply gated):**
+- #1482/#1483 DB perf migrations (auth_rls_initplan wrap; 124 FK covering indexes) — **not applied to prod**.
+- #1489 stale RLS snapshot catch-up; #1492 snapshot-diff hardening (check:policy-snapshot guard + CLAUDE.md + post-merge drift→issue backstop).
+
+**Audit-service venture (separate business; docs in `docs/audit-service/`):**
+- 9-module spec (M1–M9): go-no-go, audit-modules, scan-extras, quality-extras, report-skeleton, test-targets.
+- **EPIC #1527** — master tracker with full tooling inventory.
+- Built 4 M9 static detectors: `check:server-only` (#1522), `check:fetch-waterfalls` / `check:dynamic-rendering` / `check:client-data-leak` (#1526). All dev-only, audit-mode, tested.
+- **Dogfooded the full audit on ATC.** Real findings → ATC issues **#1523** (3 SECURITY DEFINER RPC-exposed + leaked-password) and **#1524** (43 lib modules lack `server-only`). M3 via vitals (health 6.3/10), M4 jscpd (465 clones/5.8%), M5 knip (62 unused exports), M8 Stryker (survived mutant in commission state machine), M9 detectors (8 waterfalls / 27 dynamic pages / 0 leaks).
+- Discovered most codebase-health tooling already exists (vitals, knip, Stryker, jscpd, Supabase advisors) → run-not-build.
 
 ## In flight
-- This docs PR (MEMORY.md + MEMORY-INDEX.md + SESSION.md). Otherwise clean checkpoint.
+- Nothing — clean checkpoint. (Background Stryker sample finished.)
 
 ## Next step
-- Nothing required. The snapshot guard stack is complete (check:policy-snapshot → rls-snapshot-diff/grants → post-merge issue backstop).
+- Venture: validate demand (3 free audits #1511) before more building. Or build M2 pen-test (#1505).
 
 ## Blocked on user
-- **Prod apply of the #1482 + #1483 migrations** — gated by no-prod-deploys. Prod advisors still show 50 `auth_rls_initplan` + 124 unindexed FKs + 86 unused indexes until the operator runs the prod migration apply.
+- **Prod apply of #1482/#1483** (no-prod-deploys rule).
+- **#1524 server-only remediation needs the `server-only` runtime dependency** — needs owner approval to add (then apply imports + flip detector to blocking).
+- **#1523** SECURITY DEFINER hardening — operator/DB-gated; revoking EXECUTE may break RLS, test first.
 
 ## Open questions
-- #1484 (drop 86 unused indexes) is the third DB-perf `opus` item — engineering-ready but needs per-index review and is prod-apply gated. Not started.
-- Shared-test-DB residue: my local `tests/security/*` runs (fixed-ID seed rows) may have left state; CI probe jobs seed/serialize, but worth a clean reset if a probe job flakes.
+- Surface the ATC quality findings (knip dead exports, jscpd clones, the Stryker survived mutant) as individual ATC issues? Currently captured in EPIC #1527 only.
+- #1484 (drop 86 unused indexes) still open — per-index review + prod-gated.
