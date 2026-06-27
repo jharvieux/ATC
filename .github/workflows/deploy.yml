@@ -268,6 +268,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Apply main app migrations to test DB
+        # Brings TEST DB to HEAD before the snapshot check so that a PR which
+        # includes a migration + updated snapshot can validate both in one run,
+        # eliminating the need for a follow-up snapshot PR after the nightly apply.
+        # Guarded by URL presence — Dependabot and other secret-less runs skip
+        # gracefully; the rls:check step below handles the empty-URL case via
+        # RLS_ALLOW_NO_TARGETS.
+        working-directory: apps/main
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "SUPABASE_DB_URL not set — skipping migration apply (Dependabot or missing secret)"
+            exit 0
+          fi
+          npx supabase db push --include-all --db-url "$SUPABASE_DB_URL"
+
       - name: Check RLS drift (fail on PR and release/*)
         if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/release/')
         env:
