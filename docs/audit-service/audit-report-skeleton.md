@@ -23,6 +23,34 @@
   |---|-------|----------|--------------|--------|
   | 1 | Cross-tenant read via permissive RLS | Critical | All tenants' rows | Open |
 
+## 1.5 Bang-for-the-buck (BFTB) scoring
+
+Every finding gets a **BFTB score (1–100)** so the client knows what to do *first*. Three 1–5 axes:
+
+- **Value** — 5 = prevents a breach / data loss / outage or large cost saving; 3 = real improvement to important code; 1 = cosmetic.
+- **Ease** — 5 = one-line / one-config / one-toggle; 3 = ~a day; 1 = multi-week.
+- **Safety** — 5 = additive, no logic change (can't break anything); 3 = touches shared code; 1 = central refactor, wide blast radius.
+
+> **BFTB = round( Value × Ease × Safety ÷ 125 × 100 )** — so (5,5,5) = **100** (high value, one-line, zero risk) and (1,1,1) ≈ **1** (low value, multi-week, fragile).
+
+## 1.6 Top bang-for-the-buck (do these first)
+
+The highest-scoring findings — quick, safe, high-impact. Ranked table:
+
+| Rank | Finding | Value | Ease | Safety | **BFTB** | Severity |
+|------|---------|:----:|:----:|:------:|:--------:|----------|
+
+## 1.7 Action plan
+
+**Everything that is BFTB > 75, PLUS every Critical or High security finding regardless of BFTB** (security gets
+fixed even when it's expensive). Ordered: critical/high security first, then by BFTB descending.
+
+| Order | Action | Why it's here | BFTB | Effort | Owner |
+|-------|--------|---------------|:----:|--------|-------|
+
+> If there are no Critical/High security findings, **say so explicitly** — "no critical or high security issues
+> found" is a headline result the buyer wants to hear, not an empty section.
+
 ## 2. Scope & methodology
 
 - What was reviewed (auth flow, RLS policies, service-role code paths, webhooks, API routes, migrations).
@@ -35,6 +63,7 @@ Order strictly by severity. For each finding use this block:
 
 > ### F-01 — {Title}
 > - **Severity:** Critical | High | Medium | Low
+> - **BFTB:** {score}/100  (Value {1-5} × Ease {1-5} × Safety {1-5})
 > - **Taxonomy:** {D-091 pattern, e.g. "Two-layer tenant isolation" / "Service-role leakage"}
 > - **Location:** `path/to/file.ts:LINE` (+ the policy/route/migration name)
 > - **What it is:** plain-English description of the flaw.
