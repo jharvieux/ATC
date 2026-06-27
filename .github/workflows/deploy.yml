@@ -310,7 +310,7 @@ jobs:
         # needed. Alerting failure never fails the dev build (drift already found).
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           drift=""
           pnpm rls:check    || drift="${drift}- RLS snapshot drift — run \`pnpm rls:snapshot\` and commit db/rls-snapshot-{main,rag}.sql"$'\n'
