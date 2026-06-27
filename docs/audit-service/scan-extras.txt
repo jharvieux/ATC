@@ -102,6 +102,13 @@ Framework-specific footguns generic tools miss. Severity in brackets.
   `{...row}`) without projecting to an explicit minimal DTO. Fix: whitelist only the
   fields the client needs.
 
+- MISSING `server-only` GUARD [HIGH]. The enforcement side of the leak above: a
+  server-exclusive module (reads secret env vars, holds service-role/internal business
+  logic) that does NOT import `'server-only'` can be transitively pulled into a Client
+  Component and bundled to the browser with no error. Flag files that touch
+  `process.env.<secret>` / the service-role client / server-internal logic but omit the
+  `import 'server-only'` poison-pill. Cheap, mechanical, high-signal.
+
 - SERVER ACTION MISSING AUTH [HIGH]. A `'use server'` action that mutates data with
   no in-body authority/tenant check. Server Actions are public POST endpoints —
   invocable directly with a crafted request; "only called from a protected page" is
@@ -116,6 +123,18 @@ Framework-specific footguns generic tools miss. Severity in brackets.
   read paths with no `unstable_cache` / cache tags / `'use cache'` → repeated DB+compute
   on every request → Vercel + Supabase bill; (b) over-broad caching of per-tenant/
   per-user data with no per-key tag → cross-user cache bleed (isolation bug). Flag both.
+
+- DATA-FETCHING WATERFALL [MED — cost & latency]. An async Server Component (or loader)
+  issuing consecutive awaited supabase/fetch calls that don't depend on each other
+  (`const a = await getTeams(); const b = await getProjects();`) → serialized round-trips.
+  Flag independent sequential awaits; fix with `Promise.all([...])` or a single combined
+  query (a join/RPC). Compounds latency and DB compute on every render.
+
+- ACCIDENTAL DYNAMIC RENDERING [MED — cost]. A page silently forced from static to
+  per-request dynamic SSR because a dynamic API (`searchParams`, `headers()`, `cookies()`,
+  `noStore()`) is read high in the tree — so every hit re-renders server-side and re-runs
+  its queries. Flag dynamic-API reads that defeat static/ISR on otherwise-cacheable pages;
+  fix by pushing the dynamic read down to a leaf or isolating it in a Suspense boundary.
 
 - UNBOUNDED / SELF-CALLING ROUTE OR EDGE FN [MED]. An API route / edge function with
   an unbounded loop, uncapped retry/fan-out, or a fetch to itself → runaway compute,
