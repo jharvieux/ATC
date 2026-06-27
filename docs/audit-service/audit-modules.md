@@ -18,6 +18,7 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 | M6 | Simplification / reuse / maintainability | `/simplify` + pre-pr-reviewer doctrine + `quality-extras.txt` | exists, wire in |
 | M7 | Performance tuning | Supabase perf advisors + profiling + bundle/Web-Vitals tools | **net-new** to assemble |
 | M8 | Test quality & intent | StrykerJS mutation testing + tests-for-intent review | **net-new** |
+| M9 | Next.js App Router boundary & rendering | `scan-extras.txt` (M9 section) + static review | **net-new** |
 
 ---
 
@@ -109,11 +110,24 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 
 ---
 
+## M9 — Next.js App Router boundary & rendering
+- **Finds:** App-Router-specific footguns that cross the security/perf line and that generic tools miss —
+  server→client data leaks (a full DB row passed to a `'use client'` prop is serialized to the browser),
+  Server Actions with missing auth or missing input validation (they're public POST endpoints), missing/over-
+  broad cache config (Vercel+DB cost, or cross-user cache bleed), unbounded/self-calling routes & edge fns,
+  and SSR-only-API/hydration misuse. The current guard suite is thin here — this is the App-Router blind spot.
+- **Method:** static review with the `scan-extras.txt` **M9 section** as the brief; the security items (leak,
+  Server Action auth/validation) report into §3 Findings, the cost items (caching, unbounded routes) into §3b
+  Performance.
+- **Status:** **net-new.** This is the gap analysis turned into a module (none of the existing `check:*` guards
+  cover the App-Router-specific surface; the DB/RLS/index side is well covered).
+- **Report:** App-Router findings folded into §3 (security) and §3b (performance) by severity, tagged `M9`.
+
 ## How the modules compose into one engagement
 1. Threat-model (focus areas) → 2. M1 static security scan → 3. M3 hotspots + M4 dup + M5 slop + M6 maintainability
-+ M7 performance + M8 test quality (can run in parallel; full-repo Stryker, perTest + concurrency) → 4. M2 local pen test to
-**prove** the high-severity M1 findings → 5. assemble into the ranked report (`audit-report-skeleton.md`),
-cross-referencing hotspots and surviving mutants against findings → 6. remediation plan + retest offer.
++ M7 performance + M8 test quality + M9 App Router (can run in parallel; full-repo Stryker, perTest + concurrency)
+→ 4. M2 local pen test to **prove** the high-severity M1/M9 findings → 5. assemble into the ranked report
+(`audit-report-skeleton.md`), cross-referencing hotspots and surviving mutants against findings → 6. remediation plan + retest offer.
 
-**Packaging:** offer a **Security audit** (M1+M2, the wedge, lower price/faster) and a **Full codebase audit**
-(M1–M8, higher price, the upsell). Lead the pitch with the security depth; show the full report as the reason to buy the bigger package.
+**Packaging:** offer a **Security audit** (M1+M2+the M9 security items, the wedge, lower price/faster) and a
+**Full codebase audit** (M1–M9, higher price, the upsell). Lead the pitch with the security depth; show the full report as the reason to buy the bigger package.

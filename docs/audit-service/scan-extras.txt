@@ -44,6 +44,13 @@
   returns `allowed:true` or HTTP 200 when its backing store (Redis, DB, secret)
   is missing or errors, instead of denying. Worst mode: silent AND retry-killing.
 
+- INSECURE POSTGRES FUNCTIONS / TRIGGERS (SECURITY DEFINER). A `SECURITY DEFINER`
+  function/RPC runs as its definer (often table owner / superuser) and BYPASSES
+  the caller's RLS. Flag definer functions exposed via PostgREST/RPC that read or
+  write tenant data without re-checking the caller's identity inside the function,
+  and triggers that mutate across tenants. `SECURITY INVOKER` is the safe default;
+  a definer function needs an explicit in-function authorization check.
+
 ## MEDIUM — integrity / concurrency / SSRF
 
 - UNCHECKED SUPABASE MUTATIONS. supabase-js v2 does NOT throw. Flag
@@ -82,6 +89,41 @@
 
 - UNJUSTIFIED FIRE-AND-FORGET ASYNC. `void someAsync()` in a serverless route —
   the host can kill the process before the work completes.
+
+## NEXT.JS APP ROUTER — boundary & rendering (M9)
+
+Framework-specific footguns generic tools miss. Severity in brackets.
+
+- SERVER → CLIENT DATA LEAK [HIGH]. A Server Component passing a full DB row/object
+  as a prop to a Client Component (`'use client'`). EVERYTHING crossing the boundary
+  is serialized into the RSC/HTML payload sent to the browser — including fields the
+  client never renders: other-tenant data, secrets, internal flags, password hashes,
+  tokens. Flag `async` Server Component → `<ClientComp data={dbRow} />` (or
+  `{...row}`) without projecting to an explicit minimal DTO. Fix: whitelist only the
+  fields the client needs.
+
+- SERVER ACTION MISSING AUTH [HIGH]. A `'use server'` action that mutates data with
+  no in-body authority/tenant check. Server Actions are public POST endpoints —
+  invocable directly with a crafted request; "only called from a protected page" is
+  NOT a control. Flag actions with no assertPermission/auth gate.
+
+- SERVER ACTION MISSING INPUT VALIDATION [HIGH/MED]. An action reading its args /
+  `formData.get(...)` straight into a DB call with no schema validation (Zod/valibot)
+  — type-unsafe, injectable, and `tenant_id`/ids trusted from the client. Flag
+  unvalidated action inputs (the Server-Action analogue of the route input-validation gap).
+
+- UNSAFE / MISSING CACHE CONFIG [MED — cost & isolation]. Two failure modes: (a) hot
+  read paths with no `unstable_cache` / cache tags / `'use cache'` → repeated DB+compute
+  on every request → Vercel + Supabase bill; (b) over-broad caching of per-tenant/
+  per-user data with no per-key tag → cross-user cache bleed (isolation bug). Flag both.
+
+- UNBOUNDED / SELF-CALLING ROUTE OR EDGE FN [MED]. An API route / edge function with
+  an unbounded loop, uncapped retry/fan-out, or a fetch to itself → runaway compute,
+  cost, and timeouts. Flag missing pagination bounds and self-referential fetches.
+
+- SSR-ONLY API MISUSE / HYDRATION [LOW]. `window`/`document`/`localStorage` referenced
+  on a path that runs during SSR → hydration mismatch or crash. Lower priority (Next
+  warns at runtime) but flag in shipped code.
 
 ## How to report a finding (for the grader)
 

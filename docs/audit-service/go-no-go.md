@@ -18,10 +18,11 @@ meeting). But the **deliverable is a full codebase-health audit** across 7 modul
 6. **Simplification / reuse / maintainability** (M6 — "don't reinvent the wheel," lower support cost)
 7. **Performance tuning** (M7 — N+1/unindexed queries, RLS initplan, bundle, Web Vitals)
 8. **Test quality & intent** (M8 — StrykerJS mutation testing: which tests can't actually fail)
+9. **Next.js App Router** (M9 — server→client data leaks, Server Action auth/validation, cache cost, hydration)
 
 Breadth makes each engagement worth more, stickier (maintainability + perf are recurring needs), and widens
 the buyer pool (M6/M7 land even with clients who don't think they have a security problem). Package as a
-**Security audit** (M1+M2, the wedge) with a **Full codebase audit** (M1–M8) upsell.
+**Security audit** (M1+M2, the wedge) with a **Full codebase audit** (M1–M9) upsell.
 
 The **positioning** stays narrow and sharp; only the **deliverable** is broad. Do **not** market as "generic
 AI code review / code quality" — that lane (per-seat SaaS, SonarQube/Code Climate) is crowded and commoditized.
