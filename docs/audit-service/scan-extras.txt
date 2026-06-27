@@ -1,0 +1,91 @@
+# scan-extras — multi-tenant Supabase/Next.js security brief
+#
+# Pass to the reference harness scan:
+#   /vuln-scan <client-repo>/src --extra docs/audit-service/scan-extras.txt
+#
+# These are ADDITIONAL vulnerability categories to hunt for, on top of the
+# default scan brief — the high-signal, security-adjacent bug classes that
+# generic AI reviewers and presence-checking scanners miss in multi-tenant
+# Supabase/Next.js SaaS. Ordered by blast radius. Stack-generic (no client
+# file paths). Derived from the D-091 taxonomy.
+
+## CRITICAL — cross-tenant data exposure
+
+- PERMISSIVE OR MISSING RLS. Flag any public table with RLS disabled, and any
+  policy whose USING/WITH CHECK is `true`, `auth.role() = 'authenticated'`, or
+  otherwise lacks a tenant predicate. `auth.role() = 'authenticated'` is the
+  canonical footgun: it lets ANY logged-in user read EVERY tenant's rows. The
+  policy looks correct; only reading it catches the leak. Supabase RLS is
+  opt-in — a table with no policy and RLS off is fully exposed via the anon key.
+
+- SERVICE-ROLE RLS BYPASS. The `service_role` key bypasses ALL RLS by design.
+  Flag: service_role key shipped to the client/edge bundle or embedded in a URL;
+  any request path where service-role runs a query built from untrusted input
+  (user text, webhook body, an LLM tool call → SQL); admin/automation endpoints
+  that reach service-role without an in-handler authority check.
+
+## HIGH — auth bypass / isolation / replay
+
+- SINGLE-LAYER TENANT ISOLATION. Tenant scoping enforced by an app-code `.eq(
+  'tenant_id', …)` OR an RLS policy but not BOTH. One defense is one bug from a
+  cross-tenant leak. Flag service-role queries relying solely on app-layer filtering.
+
+- PER-ROUTE / PER-ACTION AUTHORIZATION GAPS. A route that switches on
+  `body.action` or serves multiple HTTP methods behind a SINGLE permission gate
+  (over- or under-permissive). Admin routes whose only gate is a cookie/shape
+  check rather than an in-handler authority assertion.
+
+- WEBHOOK SIGNATURE WITHOUT REPLAY PROTECTION. An inbound signed webhook that
+  verifies the HMAC but has no freshness defense — no timestamp tolerance, no
+  dedup/idempotency row on the provider delivery id, no nonce, no monotonic
+  version guard. A captured signed delivery can be replayed.
+
+- FAIL-OPEN ENFORCEMENT. An auth / quota / rate-limit / signature check that
+  returns `allowed:true` or HTTP 200 when its backing store (Redis, DB, secret)
+  is missing or errors, instead of denying. Worst mode: silent AND retry-killing.
+
+## MEDIUM — integrity / concurrency / SSRF
+
+- UNCHECKED SUPABASE MUTATIONS. supabase-js v2 does NOT throw. Flag
+  `.update/.insert/.delete/.upsert` whose `{ error }` is ignored, and CAS-style
+  `.update(...).eq('status', X)` that doesn't assert the affected-row count
+  (zero matched rows returns `{ error: null }` — a silent no-op).
+
+- READ-MODIFY-WRITE ON COUNTERS / BALANCES. `.update({ count: prev + 1 })` /
+  `.update({ balance: current - amount })` computed in app code from a previously
+  read row → two concurrent requests both read the old value → lost update, quota
+  overrun, money double-counted. Wants a DB-atomic increment or a CAS reserve-row.
+
+- IDEMPOTENCY ROW WRITTEN BEFORE DISPATCH. A dedup/idempotency row that means
+  "received" rather than "fully processed" — a crash mid-handler strands the work
+  behind a duplicate-rejection. Want a separate in-flight marker + a post-dispatch
+  commit.
+
+- IN-MEMORY RATE LIMIT / QUOTA IN SERVERLESS. A module-level `Map`/`Set` used as
+  a limiter is per-instance under serverless and resets on cold start → the cap is
+  bypassable by spreading requests across instances. Needs a shared store (Redis /
+  DB-atomic counter), failing closed.
+
+- SSRF / UNSAFE-SCHEME VIA STORED URL FIELDS. `z.string().url()` on a persisted
+  or rendered `*_url` field accepts `file://`, cloud-metadata (169.254.169.254),
+  and RFC1918 hosts; rendered into `<img src>`/`<a href>` it's client-side SSRF.
+  Server-side fetches of such URLs without an SSRF/host-deny guard.
+
+- STATE-MACHINE TRANSITIONS NOT VALIDATED AT THE BOUNDARY. `transitionTo(
+  body.target)` etc. that trusts a caller-supplied target without asserting it is
+  enum-valid AND a permitted transition from the current state.
+
+## LOW — hardening
+
+- ERROR-MESSAGE SCHEMA DISCLOSURE. Raw DB/Postgres error `.message`/`.details`
+  echoed into an API response — leaks table/column/constraint names.
+
+- UNJUSTIFIED FIRE-AND-FORGET ASYNC. `void someAsync()` in a serverless route —
+  the host can kill the process before the work completes.
+
+## How to report a finding (for the grader)
+
+For each: severity, the table/route/policy, the precise cross-tenant or auth
+impact (blast radius), a minimal repro (the query/request that demonstrates it),
+and the concrete fix. The headline question for every audit is: CAN ONE TENANT
+REACH ANOTHER TENANT'S DATA — yes/no, and how.
