@@ -12,7 +12,7 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 |---|--------|-----------|--------|
 | M1 | Multi-tenant security (lead) | `scan-extras.txt` + `/vuln-scan` + `/triage` | exists (Tier-1 briefs done) |
 | M2 | Local penetration test (dynamic) | local stack + probe scripts; later the Tier-2 pipeline | **net-new** (#1503 dynamic half) |
-| M3 | Hotspot analysis | git churn × complexity | **net-new** |
+| M3 | Hotspot analysis | **`vitals` plugin** (`/vitals:scan`) | exists — run, don't build |
 | M4 | Duplication | jscpd | exists (`pnpm check:duplication`) |
 | M5 | Slop / dead code | slop-check + D-091 + dead-export detection | exists, wire in |
 | M6 | Simplification / reuse / maintainability | `/simplify` + pre-pr-reviewer doctrine + `quality-extras.txt` | exists, wire in |
@@ -45,11 +45,16 @@ A full audit is 7 modules. Each lists what it finds, the method, the tool/skill 
 ## M3 — Hotspot analysis
 - **Finds:** the files that are **both** frequently changed **and** complex — where bugs and maintenance cost
   concentrate. Tells the client *where to spend remediation budget*.
-- **Method:** `git log` churn (commit count / lines changed per file over N months) × a complexity signal
-  (cyclomatic complexity or LOC) → rank. Cross-reference against M1/M5/M6 findings (a hotspot that's also a
-  security finding is the top priority).
-- **Status:** **net-new** (git churn script + a complexity tool, e.g. a TS complexity analyzer).
-- **Report:** a hotspot table (file · churn · complexity · overlapping findings) + a "fix these first" callout.
+- **Method:** the **`vitals` plugin** (`/vitals:scan` / `vitals_cli.py report --json <path>`) — already installed.
+  It does churn × complexity ranked by **ROI** (core > test, central > leaf), plus **co-change coupling**,
+  **knowledge risk** (truck-factor 1 / sole-author files), **AI-provenance** tracking, and health trends across
+  scans. Strictly better than a hand-rolled churn×complexity script. Cross-reference its hotspots against M1/M7/M9
+  findings (a hotspot that's also a security/perf finding is the top remediation priority).
+- **Status:** **exists — run, don't build.** Scope to a subdir on a monorepo (`report --json apps/main/src`).
+- **Report:** the vitals hotspot table (health · churn · complexity · centrality) + coupling + knowledge-risk,
+  with the "fix these first" callout driven by ROI and overlap with findings.
+- **Validated on ATC:** overall health 6.3/10; #1 hotspot `app/api/chat/route.ts` (health 2.4, 41 changes, cx 68,
+  co-changes with 29 files); 50 truck-factor-1 files; 2,857 AI-provenance events tracked.
 
 ## M4 — Duplication
 - **Finds:** copy-paste clones — a bug-multiplier and maintenance tax (fix once, miss the other three copies).
