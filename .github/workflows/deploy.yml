@@ -250,6 +250,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes]
     if: (github.event_name != 'pull_request' || needs.detect-changes.outputs.code == 'true') && needs.detect-changes.outputs.workflows_only != 'true'
+    permissions:
+      contents: read
+      # issues: write — the dev-push drift backstop below opens/reuses a tracked issue.
+      issues: write
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_TEST_DB_URL }}
       SUPABASE_RAG_DB_URL: ${{ secrets.SUPABASE_RAG_TEST_DB_URL }}
@@ -296,9 +300,31 @@ jobs:
           RLS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
         run: pnpm rls:check
 
-      - name: Check RLS drift (warn on dev push)
+      - name: Report snapshot/grants drift on dev (open tracking issue)
+        # Post-merge backstop (#1492 part 2). Every PR is gated by the
+        # rls-snapshot-diff / grants checks above plus the check:policy-snapshot
+        # guard, but a drift that bypassed them (e.g. a secret-less run that
+        # skipped the migration apply) would otherwise only emit a log warning.
+        # Open — or reuse — a single `snapshot-drift` issue so it's actionable.
+        # Runs both checks here so the grants dev-push warn step is no longer
+        # needed. Alerting failure never fails the dev build (drift already found).
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-        run: pnpm rls:check || echo "::warning::RLS drift detected on dev — run pnpm rls:snapshot and commit db/rls-snapshot-{main,rag}.sql"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          drift=""
+          pnpm rls:check    || drift="${drift}- RLS snapshot drift — run \`pnpm rls:snapshot\` and commit db/rls-snapshot-{main,rag}.sql"$'\n'
+          pnpm grants:check || drift="${drift}- Grants drift — run \`pnpm grants:snapshot\` and commit db/grants-snapshot-{main,rag}.sql"$'\n'
+          if [ -z "$drift" ]; then echo "No snapshot/grants drift on dev."; exit 0; fi
+          echo "::warning::Snapshot/grants drift on dev — see the 'snapshot-drift' tracking issue."
+          existing=$(gh issue list --state open --label snapshot-drift --limit 1 --json number --jq '.[0].number // empty' || true)
+          if [ -n "$existing" ]; then
+            echo "Drift issue already open: #$existing — leaving it as the single tracker."
+            exit 0
+          fi
+          body=$(printf 'Snapshot/grants drift detected on `dev` after merge by the deploy.yml post-merge backstop. PR checks (rls-snapshot-diff / grants-diff plus the check:policy-snapshot guard) normally catch this; a drift reaching here bypassed them (e.g. a secret-less run that skipped the migration apply).\n\nDetected:\n%s\nCommit: %s\nRun: %s/%s/actions/runs/%s\n\nFix: regenerate the snapshot(s) (`pnpm rls:snapshot` / `pnpm grants:snapshot`), commit, and close this issue.' "$drift" "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          gh issue create --title "Snapshot drift on dev (auto-detected)" --label snapshot-drift --body "$body" \
+            || echo "::warning::could not open drift issue — check the job's issues:write permission"
 
       # Grant-drift (#546). The RLS snapshot above captures rowsecurity + policies
       # but NOT table GRANTs, so a table shipped without its service_role grant
@@ -328,11 +354,8 @@ jobs:
           GRANTS_ALLOW_NO_TARGETS: ${{ github.actor == 'dependabot[bot]' }}
         run: pnpm grants:check
 
-      # Warn-only on dev push, vs the TEST DB (inherits the job-level env, like the
-      # RLS dev-push warn above). Prod drift now lives in prod-drift-check.yml.
-      - name: Check grants drift (warn on dev push — vs test DB)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-        run: pnpm grants:check || echo "::warning::Grants drift detected on dev — run pnpm grants:snapshot and commit db/grants-snapshot-{main,rag}.sql"
+      # Grants drift on dev push is now reported by the consolidated
+      # "Report snapshot/grants drift on dev" step above (it runs grants:check too).
 
   contract-tests:
     name: Contract Tests
