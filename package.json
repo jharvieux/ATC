@@ -47,6 +47,7 @@
     "check:rate-limit-store": "tsx scripts/check-inmemory-rate-limit.ts",
     "check:webhook-replay": "tsx scripts/check-webhook-replay.ts",
     "check:policy-snapshot": "tsx scripts/check-policy-snapshot.ts",
+    "check:server-only": "tsx scripts/check-server-only.ts",
     "check:schema-drift": "tsx scripts/check-schema-drift.ts",
     "check:schema-drift:main": "tsx scripts/check-schema-drift.ts --target=main",
     "check:schema-drift:rag": "tsx scripts/check-schema-drift.ts --target=rag",
