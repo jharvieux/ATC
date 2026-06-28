@@ -434,7 +434,10 @@ describe("proxy()", () => {
         return payingTenant({ slug: "atc-tenant1", is_platform_internal: false, custom_domain: null, ...overrides });
       }
 
-      it("redirects authenticated SaaS staff from platform-domain root to tenant subdomain", async () => {
+      it("redirects authenticated SaaS staff from platform-domain root to their tenant subdomain", async () => {
+        // WHY: each user's tenant slug comes from getTenantByAuthUserId — a user
+        // in the "acme" tenant redirects to acme.<domain>, one in "booking" redirects
+        // to booking.<domain>. Nothing is hardcoded.
         mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
         mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant());
         const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/" }));

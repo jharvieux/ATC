@@ -384,7 +384,7 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
           if (targetHost) {
             const url = req.nextUrl.clone();
             url.hostname = targetHost;
-            return NextResponse.redirect(url, { status: 302 });
+            return applyRefreshedSession(NextResponse.redirect(url, { status: 302 }));
           }
         }
       } catch {
