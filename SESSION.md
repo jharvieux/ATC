@@ -1,20 +1,21 @@
-# Session state — last updated 2026-06-27 18:00 UTC
+# Session state — last updated 2026-06-28 ~23:55 UTC
 
 ## Just completed
-- Slimmed CLAUDE.md ~8.5k→4.8k tokens (PR #1537, merged to dev). Moved task-specific detail to on-demand runbooks; no rule removed.
-- Auto-triage is now MANUAL — `docs/runbooks/triage.md`, invoked via `/triage`. Session-start protocol is now 5 steps (was 6).
-- New runbooks: `triage.md`, `pr-workflow.md`, `migrations.md`. Added D-091 items 15–20 (#1393 G1–G6) to `anti-patterns.md` (they previously lived only in CLAUDE.md).
-- Logged D-309 in MEMORY.md + MEMORY-INDEX.md (on branch docs/memory-triage-manual, in a PR).
-- Opened #1536 (fail-loud migration hook, deferred option 3b).
+- Fixed 8 bugs: TA Chat nav (Dashboard → /concierge), removed "New chat" from workspace drawer, platform-domain API 401s (isConsolePath expanded) — PR #1540 squash-merged
+- Added 2 tests for new isConsolePath paths (/api/bookings, /concierge) and fixed stale comments (pre-pr-reviewer findings on #1540)
+- Built platform-domain → tenant-subdomain auto-redirect (PR #1541, CI running)
+- Added MEMORY entry D-310 for redirect decision
 
 ## In flight
-- PR for MEMORY/SESSION updates (D-309 + this file) on branch `docs/memory-triage-manual`.
+- PR #1541 (feature/platform-domain-tenant-redirect) — CI running; need audit agents + merge when CI green
 
 ## Next step
-- Merge the docs/memory-triage-manual PR once its (fast, doc-only) checks pass.
+1. Wait for PR #1541 CI to go green (Typecheck, Lint, Test, Guards & Build)
+2. Run d091-reviewer then pre-pr-reviewer on #1541 (diff is 2 files, Sonnet-tier)
+3. Merge #1541
 
 ## Blocked on user
-- Nothing.
+- Nothing
 
 ## Open questions
-- Nothing.
+- pre-pr-reviewer computes a different diff hash than CI by default; workaround is to explicitly instruct it to use the GitHub API files endpoint with the same jq pipeline as the CI gate (see the third pre-pr-reviewer run on #1540 for the working prompt)
