@@ -4,10 +4,11 @@
 // Intent: the nav must never show a link the role can't use. Viewers are
 // end customers — staff surfaces (CRM) and owner surfaces (Admin Console)
 // would 403 via assertPermission, so showing them is a dead link.
-// Every role keeps exactly one home entry at "/", but what it IS differs:
-// staff land in TA mode (operator decision 2026-06-10, #974) because their
-// job is trade work — the customer chat's guardrails actively get in their
-// way; viewers must never default into the unguardrailed TA surface.
+// Staff home entry is /concierge (TA Chat) — a dedicated route that always
+// renders ConciergeExperience, working correctly on both tenant subdomains and
+// the platform domain (where "/" would otherwise redirect to /admin or /crm/contacts).
+// Viewers keep "/" (Support chat).  The split avoids the cross-domain dispatch
+// ambiguity that "#974 home IS concierge" previously relied on.
 
 import { describe, it, expect } from "vitest";
 import {
@@ -24,30 +25,36 @@ function hrefsFor(role: Role): string[] {
 }
 
 function homeLabel(role: Role): string | undefined {
+  // Staff's home is now /concierge; viewers' home remains /.
+  const homeHref = ["tenant_owner", "agent"].includes(role) ? "/concierge" : "/";
   return navSectionsForRole(role)
     .flatMap((s) => s.items)
-    .find((i) => i.href === "/")?.label;
+    .find((i) => i.href === homeHref)?.label;
 }
 
 describe("navSectionsForRole", () => {
-  it("every role gets exactly one home entry at /", () => {
-    for (const role of ["tenant_owner", "agent", "viewer"] as const) {
-      expect(hrefsFor(role).filter((h) => h === "/")).toHaveLength(1);
+  it("staff home entry is /concierge (TA Chat), viewer home entry is /", () => {
+    for (const role of ["tenant_owner", "agent"] as const) {
+      expect(hrefsFor(role).filter((h) => h === "/concierge")).toHaveLength(1);
+      expect(hrefsFor(role).filter((h) => h === "/")).toHaveLength(0);
     }
+    expect(hrefsFor("viewer").filter((h) => h === "/")).toHaveLength(1);
+    expect(hrefsFor("viewer").filter((h) => h === "/concierge")).toHaveLength(0);
   });
 
-  it("home label matches what the role actually lands on (#974)", () => {
-    // Staff's "/" renders the TA dashboard, viewers' renders the support
-    // chat — a label that says otherwise is a lying nav entry.
-    expect(homeLabel("tenant_owner")).toBe("Dashboard");
-    expect(homeLabel("agent")).toBe("Dashboard");
+  it("home label matches what the role actually lands on", () => {
+    // Staff go to TA Chat (/concierge), viewers go to Support chat (/).
+    expect(homeLabel("tenant_owner")).toBe("TA Chat");
+    expect(homeLabel("agent")).toBe("TA Chat");
     expect(homeLabel("viewer")).toBe("Support chat");
   });
 
-  it("no role gets a separate /concierge entry — home IS the concierge for staff (#974)", () => {
-    for (const role of ["tenant_owner", "agent", "viewer"] as const) {
-      expect(hrefsFor(role)).not.toContain("/concierge");
+  it("staff home is /concierge — first sidebar item routes directly to TA chat", () => {
+    for (const role of ["tenant_owner", "agent"] as const) {
+      expect(hrefsFor(role)).toContain("/concierge");
     }
+    // Viewers still use / for their Support chat home
+    expect(hrefsFor("viewer")).not.toContain("/concierge");
   });
 
   it("viewers see no staff or owner surfaces (no dead links)", () => {

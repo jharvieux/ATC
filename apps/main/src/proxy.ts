@@ -373,10 +373,17 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     const isConsolePath =
       pathname === "/settings" ||
       pathname.startsWith("/settings/") ||
+      pathname === "/concierge" ||
+      pathname.startsWith("/concierge/") ||
       pathname === "/crm" ||
       pathname.startsWith("/crm/") ||
+      pathname.startsWith("/api/crm/") ||
       pathname === "/groups" ||
       pathname.startsWith("/groups/") ||
+      pathname.startsWith("/api/bookings") ||
+      pathname.startsWith("/api/quotes") ||
+      pathname.startsWith("/api/groups") ||
+      pathname.startsWith("/api/price-watches") ||
       pathname.startsWith("/api/tenant/");
 
     if ((isChatPath || isConsolePath) && authUser) {

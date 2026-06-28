@@ -17,8 +17,8 @@
 //                                for backwards compatibility.
 //
 // Role rationale:
-//   - Home ("/") differs by role (#974 operator decision 2026-06-10):
-//     staff land on the TA dashboard; viewers keep the guardrailed chat.
+//   - Staff home is /concierge (TA Chat); viewers keep / (guardrailed Support chat).
+//     (#974 operator decision 2026-06-10, updated 2026-06-28 to /concierge)
 //   - Workspace (CRM) is staff-only: ta_chat/quotes/bookings grants
 //     exclude viewers (#902).
 //   - Price watches are operational for TAs (many customer watches) so
@@ -50,7 +50,7 @@ const SIDEBAR_NAV_SECTIONS: readonly TenantNavSection[] = [
   {
     heading: null,
     roles: STAFF,
-    items: [{ href: "/", label: "Dashboard" }],
+    items: [{ href: "/concierge", label: "TA Chat" }],
   },
   {
     heading: null,
@@ -87,7 +87,7 @@ const HAMBURGER_NAV_SECTIONS: readonly TenantNavSection[] = [
   {
     heading: null,
     roles: STAFF,
-    items: [{ href: "/", label: "Dashboard" }],
+    items: [{ href: "/concierge", label: "TA Chat" }],
   },
   {
     heading: null,

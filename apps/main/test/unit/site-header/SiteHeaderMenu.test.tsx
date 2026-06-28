@@ -6,9 +6,9 @@
 // threading so a future refactor can't silently drop the role.
 //
 // What's covered:
-//   - tenant_owner sees Dashboard ("/") + Admin Console ("/settings")
-//   - agent sees Dashboard ("/") but NOT Admin Console ("/settings")
-//   - viewer does NOT see Dashboard ("/") as a nav link
+//   - tenant_owner sees TA Chat ("/concierge") + Admin Console ("/settings")
+//   - agent sees TA Chat ("/concierge") but NOT Admin Console ("/settings")
+//   - viewer does NOT see TA Chat or Dashboard as a nav link
 //   - null role falls back to generic items (no role-specific nav)
 //   - unauthenticated users see Sign up, not role nav
 
@@ -105,26 +105,26 @@ describe("SiteHeaderMenu — trigger icon state (#1302)", () => {
 });
 
 describe("SiteHeaderMenu — role-aware nav wiring (#1199)", () => {
-  it("tenant_owner sees Dashboard and Admin Console links", () => {
+  it("tenant_owner sees TA Chat and Admin Console links", () => {
     const html = render({
       isPlatformDomain: false,
       isAuthenticated: true,
       role: "tenant_owner",
     });
-    expect(html).toContain('href="/"');
-    expect(html).toContain("Dashboard");
+    expect(html).toContain('href="/concierge"');
+    expect(html).toContain("TA Chat");
     expect(html).toContain('href="/settings"');
     expect(html).toContain("Admin Console");
   });
 
-  it("agent sees Dashboard but not Admin Console", () => {
+  it("agent sees TA Chat but not Admin Console", () => {
     const html = render({
       isPlatformDomain: false,
       isAuthenticated: true,
       role: "agent",
     });
-    expect(html).toContain('href="/"');
-    expect(html).toContain("Dashboard");
+    expect(html).toContain('href="/concierge"');
+    expect(html).toContain("TA Chat");
     // Admin Console is owner-only
     expect(html).not.toContain("Admin Console");
   });
