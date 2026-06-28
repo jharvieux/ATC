@@ -351,15 +351,46 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     return applyRefreshedSession(NextResponse.redirect(url));
   }
 
-  // 2. Platform admin domain — passes through with "platform" sentinel.
+  // 2. Platform admin domain.
   //
-  // Exceptions: for chat-adjacent paths AND tenant-console paths, attempt to
-  // resolve the authenticated user's primary tenant. This lets platform staff
-  // who are also tenant members use the chat UI and the admin console
-  // (/settings, /crm/*, etc.) on the platform domain. Falls back to "platform"
-  // if the user is unauthenticated, has no tenant, or the DB lookup fails.
+  // Non-internal-tenant staff are redirected to their tenant subdomain (or
+  // custom domain) so they always work in the correct context. The
+  // is_platform_internal flag distinguishes real SaaS tenants from the
+  // platform's own default tenant (used by platform admins). Falls through on
+  // DB error, no tenant, or missing slug so the fallback sentinel still fires.
+  //
+  // For platform admins and anyone the redirect doesn't fire for, chat-adjacent
+  // and console paths get a resolved tenant header instead of the sentinel.
   if (hostname === primaryDomain) {
     const headers = cloneAndScrubHeaders(req);
+
+    // Redirect non-internal-tenant authenticated staff to their subdomain.
+    // Excluded: admin/auth/login-gated paths (platform-domain-only flows) and
+    // /api/* (browsers don't follow redirects transparently on fetch).
+    if (
+      authUser &&
+      primaryDomain &&
+      !isAdminPagePath(pathname) &&
+      !isAuthFlowPath(pathname) &&
+      !isLoginGatedPath(pathname) &&
+      !pathname.startsWith("/api/")
+    ) {
+      try {
+        const tenant = await getTenantByAuthUserId(authUser.id);
+        if (tenant && !tenant.is_platform_internal) {
+          const targetHost =
+            tenant.custom_domain ??
+            (tenant.slug ? `${tenant.slug}.${primaryDomain}` : "");
+          if (targetHost) {
+            const url = req.nextUrl.clone();
+            url.hostname = targetHost;
+            return NextResponse.redirect(url, { status: 302 });
+          }
+        }
+      } catch {
+        // DB error — fall through to platform-domain handling.
+      }
+    }
 
     const isChatPath =
       pathname === "/chat" ||
