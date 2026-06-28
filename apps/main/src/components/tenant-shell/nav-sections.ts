@@ -50,7 +50,7 @@ const SIDEBAR_NAV_SECTIONS: readonly TenantNavSection[] = [
   {
     heading: null,
     roles: STAFF,
-    items: [{ href: "/", label: "Dashboard" }],
+    items: [{ href: "/concierge", label: "TA Chat" }],
   },
   {
     heading: null,
@@ -87,7 +87,7 @@ const HAMBURGER_NAV_SECTIONS: readonly TenantNavSection[] = [
   {
     heading: null,
     roles: STAFF,
-    items: [{ href: "/", label: "Dashboard" }],
+    items: [{ href: "/concierge", label: "TA Chat" }],
   },
   {
     heading: null,

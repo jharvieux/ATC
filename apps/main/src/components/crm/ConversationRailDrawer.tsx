@@ -11,9 +11,8 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { PanelLeft, X, MessageSquare, Plus } from "lucide-react";
+import { PanelLeft, X, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 
 interface TaConversation {
   id: string;
@@ -98,15 +97,6 @@ export function ConversationRailDrawer(): React.JSX.Element {
           >
             <X className="h-4 w-4" />
           </button>
-        </div>
-
-        <div className="px-3 py-2 border-b border-border">
-          <Button asChild variant="outline" className="h-8 w-full gap-2 text-xs">
-            <Link href="/concierge" onClick={() => setIsOpen(false)}>
-              <Plus className="h-4 w-4" />
-              New chat
-            </Link>
-          </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">

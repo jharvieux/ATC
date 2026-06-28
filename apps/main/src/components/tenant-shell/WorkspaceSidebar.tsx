@@ -16,7 +16,6 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
   MessageSquare,
   Users,
   Users2,
@@ -37,7 +36,7 @@ import { ICON_BTN_STYLE } from "@/lib/ta-theme/use-ta-theme";
 import type { UserRole } from "@/lib/auth/permission-grants";
 
 const NAV_ICONS: Record<string, React.ElementType> = {
-  "Dashboard": LayoutDashboard,
+  "TA Chat": MessageSquare,
   "Support chat": MessageSquare,
   "Contacts": Users,
   "Quotes": FileText,
