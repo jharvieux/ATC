@@ -236,6 +236,36 @@ Recurring bug-class patterns identified in the 2026-05-26 Greptile audit. Each p
 
 ---
 
+## #1393 G1–G6 guards (items 15–20)
+
+These six were added with the #1393 guard sweep. Each has a `pnpm check:*` gate that fails on NEW occurrences while freezing pre-existing debt in a baseline file. CLAUDE.md carries the one-line titles; the full rationale is here.
+
+### 15. Admin route doesn't assert platform-admin in the handler (#1393/G5)
+
+The `proxy.ts` admin gate is only a cookie *shape* check; real authority is the per-route assertion. Any new `app/api/admin/**/route.ts` must call an authority gate in-handler (main: `assertPlatformAdmin*` / `MAIN_APP_ADMIN_API_KEY` constant-time compare; rag: a `service_identifier` check against `"platform-admin"`). `pnpm check:admin-auth` ("Admin-route auth guard") enforces that an authority token is *present* (presence check, not flow analysis); intentional exemptions live in `scripts/admin-route-auth-baseline.txt`. Separately, mutating rag admin routes must also gate `scope === "write"` (convention, not enforced by this guard — see F-rag-auth-02).
+
+### 16. Raw error `.message`/`.details` echoed into an API response (#1393/G1)
+
+Postgres/Supabase error text embeds table/column/constraint names (schema disclosure). Route caught errors through `dbErrorResponse(error)` (`apps/main/src/lib/api/db-error-response.ts`): log server-side under a random ref, return a generic message + ref. `pnpm check:error-egress` ("Error-message-egress guard") blocks NEW `{ detail|message|error: <err>.message }` response shapes; ~70 pre-existing sites are frozen in `scripts/error-message-egress-baseline.txt` (burn-down tracked in #1395). The guard catches the direct form, not indirection (`const m = err.message; send({message:m})`) — the audit agents cover that.
+
+### 17. Stored/rendered URL fields use `z.string().url()` instead of `safeUrl` (#1393/G2)
+
+A bare `z.string().url()` accepts `file://`, cloud-metadata (`169.254.169.254`), and RFC1918 hosts; persisted then rendered into an `<img src>`/`<a href>` it's a client-side SSRF / unsafe-scheme vector. Use `safeUrl` from `@atc/contracts` (http/https + internal-host deny) for `source_url`/`image_url`/`*_url` ingest fields, and route server-side outbound fetches of such URLs through `lib/net/ssrf-guard.ts` (`fetchGuarded`). `pnpm check:url-validator` ("URL-validator guard") blocks new `z.string().url()` in app/contract code; `env.ts` operator-config URLs are exempt (trusted and may be non-http, e.g. `redis://`).
+
+### 18. Counter/financial mutation done as read-modify-write (#1393/G3)
+
+`.update({ count: prevCount + 1 })` / `.update({ balance: current - amount })` computes the new value in app code from a previously-read row, so two concurrent requests both read the old value and the second clobbers the first → quota overrun or money double-counted (Day-1 F-pay-01 / F-sm-01 / F-sm-02). Use a DB-side atomic increment (an RPC running `col = col + n` in SQL) or a CAS reserve-row (`.eq("count", expected)` + `safeAwaitRowCount`). The `counter-rmw` detector in `pnpm check:d091` ("D-091 anti-pattern gates") flags `.update({ <counter/balance/quota field>: <var> ± … })`; existing debt is baselined and the gate fails on NEW occurrences. A derived *absolute* value on such a field (not an RMW of the stored counter) is the false-positive class — suppress with `// d091-allow:counter-rmw <reason>`.
+
+### 19. Public/anon rate limit backed by a module-level `Map`/`Set` (#1393/G4)
+
+A limiter kept in process memory is per-instance under Fluid Compute: each warm instance enforces it independently and a cold start resets it, so spreading requests across instances bypasses the cap (Day-1 F-tok-01, F-rag-wh-01). Use Redis (`incr`/`expire` via `@/lib/redis/client`, failing **closed** in production) or a DB-atomic counter — the reference is `apps/rag/src/lib/rate-limit/feedback-limit.ts`. For signed webhooks, verify the signature **before** the rate-limit check and key the bucket on a value from the *verified* body, never on a spoofable `x-forwarded-for`. `pnpm check:rate-limit-store` ("In-memory rate-limit guard") flags a NEW module-level `new Map()`/`new Set()` whose variable name reads like a limiter (`rate`/`limit`/`throttle`/`attempt`/`bucket`/`quota`/`hits`); in-process *caches* (other names) are fine. Pre-existing limiters are baselined; accepted-risk per-instance limiters carry an inline `// inmem-ratelimit-allow:<reason>`.
+
+### 20. Webhook has a signature but no replay protection (#1393/G6, extends #12)
+
+A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-replayed signed delivery (or a leaked-then-rotated secret) re-applies the effect — re-poisoning a feedback signal (F-rag-wh-02), re-firing a transition, double-counting an event. Every inbound-signature handler must carry a replay defense: a timestamp-tolerance window (Stripe `constructEvent`, Svix signed timestamp), a dedup/idempotency row keyed on the provider's delivery id (`stripe_webhook_events`), a nonce, or a monotonic version guard (`source_revision >= incoming` makes a replay a no-op) — plus a per-provider **replay fixture test** that asserts the second delivery of a captured body is rejected/deduped. `pnpm check:webhook-replay` ("Webhook replay-protection guard") flags a NEW handler that reads an inbound signature but shows no replay signal; signature-primitive `*-signature.ts` helpers are exempt (replay is the caller's job). Pre-existing gaps are baselined; if protection lives in an imported handler or the risk is accepted, add an inline `// webhook-replay-allow:<reason>`.
+
+---
+
 ## How this catalog gets used
 
 - **At authoring time**: the CLAUDE.md doctrine lines (added to the "Things to be wary of" section) shape what gets written. Re-read every session.
