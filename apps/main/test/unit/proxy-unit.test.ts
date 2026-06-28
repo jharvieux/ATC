@@ -318,10 +318,11 @@ describe("proxy()", () => {
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
     });
 
-    // Console paths: /settings, /crm/*, /groups/*, /api/tenant/* on the
-    // platform domain must resolve the user's tenant so assertPermission
-    // can check membership. Without this the dashboard returns 403 because
-    // tenantContextFromRequest rejects the "platform" literal (prod bug).
+    // Console paths on the platform domain must resolve the user's tenant so
+    // assertPermission can check membership. Without this the route returns 403
+    // because tenantContextFromRequest rejects the "platform" literal.
+    // Covered: /settings, /crm/*, /groups/*, /api/tenant/*, /concierge,
+    //          /api/crm/*, /api/bookings, /api/quotes, /api/groups, /api/price-watches.
     it("resolves user's tenant for /settings on platform domain when authenticated", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
       mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
@@ -343,6 +344,24 @@ describe("proxy()", () => {
       mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
       const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/api/tenant/dashboard" }));
       expect(mocks.getTenantByAuthUserId).toHaveBeenCalled();
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("resolves user's tenant for /api/bookings on platform domain (platform-domain 401 fix)", async () => {
+      // WHY: /api/bookings was missing from isConsolePath; authenticated requests
+      // from CRM pages got the 'platform' sentinel → tenantContextFromRequest threw → 401.
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/api/bookings/123" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalledWith("auth-user-1");
+      expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
+    });
+
+    it("resolves user's tenant for /concierge on platform domain", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/concierge" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalledWith("auth-user-1");
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("tenant-1");
     });
 
