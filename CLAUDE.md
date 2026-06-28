@@ -13,114 +13,12 @@ Every session, in this order:
 1. Read `/MEMORY-INDEX.md` (one line per decision, newest first). Do NOT read `/MEMORY.md` in full — it's the append-only archive; `grep` the full entry out of it when a task touches that area.
 2. Read `/SESSION.md` in full.
 3. If a build prompt is being executed, read it.
-4. **Auto-triage open issues + PRs** per the rules in "Auto-triage on session start" below.
-5. State in one short paragraph: what you understand the current state to be, what auto-triage did and found, and what you’re about to do.
-6. Wait for the user to confirm or correct before acting on anything that needed a judgement call.
+4. State in one short paragraph: what you understand the current state to be and what you're about to do.
+5. Wait for the user to confirm or correct before acting on anything that needed a judgement call.
 
-Step 5 is cheap and prevents expensive misreads of context.
+Step 4 is cheap and prevents expensive misreads of context.
 
------
-
-## Auto-triage on session start
-
-After reading MEMORY/SESSION, run the auto-triage sweep. Goal: surface anything the user would otherwise have to ask about, and silently fix anything that doesn’t need judgement.
-
-### Open issues
-
-Enumerate open GitHub issues:
-
-```bash
-gh issue list --state open --json number,title,labels,createdAt
-```
-
-For each issue:
-
-- **`nightly-failure` label** — read the failing test names. If a single test failure is clearly fixable from the diff history (e.g. snapshot drift, fixture mismatch), open a fix branch + PR. Otherwise include in the state summary as "needs decision."
-- **`regression-suspected` label** (from `dependabot-regression-detector`) — read the failure comment. If the regression is a known-broken transitive (e.g. vite 8 / vitest break), add a dependabot ignore + close. Otherwise surface as "needs your call."
-- **Customer/tenant-reported bug labels** (`customer-reported`, `tenant-admin-reported`) — DON'T auto-fix. Surface in the state summary; the user routes these.
-- **Any issue without a label** — DON'T auto-fix. Surface and ask.
-
-**Assign a model label (`opus` or `sonnet`) to every agent-doable engineering issue.** Any issue that an agent can implement without human judgement — i.e. NOT `customer-reported` / `tenant-admin-reported`, and NOT an unlabeled issue that needs routing — gets exactly one model label added with `gh issue edit <n> --add-label opus` (or `--add-label sonnet`). The label marks which model should pick the work up; it does not mean "fix it now." Choose with the same complexity heuristic as the PR-audit model selection below — apply `opus` when ANY of these hold:
-
-- The expected fix touches ≥ 10 files OR ≥ 500 net-added lines.
-- It involves a SQL migration (new tables, RLS policies, grants, column add/drop).
-- It adds a net-new API route under `apps/*/src/app/api/`, a new Inngest function, or a cron handler.
-- It touches webhook signature verification, idempotency rows, or state-machine transitions.
-- It adds a new service-role code path.
-
-Otherwise apply `sonnet`. When scope can't be estimated from the issue text, default to `opus` and say so in the state summary. Do NOT add a model label to issues that need a human (customer/tenant-reported, or unlabeled-and-needs-routing) — those are surfaced, not labeled. If an issue already carries an `opus`/`sonnet` label, leave it unless its scope has clearly changed.
-
-Fix-PRs opened during auto-triage carry the `auto-triaged` label and a comment referencing the source issue.
-
-### Open PRs
-
-Enumerate open PRs:
-
-```bash
-gh pr list --state open --json number,title,mergeStateStatus,author,headRefName,labels,updatedAt
-```
-
-For each PR, classify:
-
-- **MERGEABLE + CLEAN + all required checks green** → merge (squash) and delete branch. No judgement needed.
-- **MERGEABLE + BEHIND** → `gh pr update-branch`. Re-check in next pass.
-- **MERGEABLE + UNSTABLE (only non-required checks failing)** → merge if the PR is yours (Claude-authored) AND was opened in a prior session AND no `regression-suspected` label. Surface otherwise.
-- **DIRTY (merge conflict)** — if the conflict is one we know how to resolve (event-registry additions, ai-batch-flush additions, route registrations, service-role-allowlist.js additions — additive lists), attempt a rebase + push. Otherwise surface as "needs your call."
-- **BLOCKED on missing audit section** — if Claude-authored, run the audit subagents + edit the PR body (the check re-runs automatically on body edits). If human-authored, surface.
-- **Failing CI on dependabot PRs** — let the `dependabot-retry-ci` workflow handle. Don't intervene.
-- **Failing CI with the `regression-suspected` label** — triage.
-- **Open > 7 days with no progress AND no `regression-suspected` label** — surface for triage; ask whether to close or push forward.
-
-### Security & quality alerts
-
-After the issue/PR sweep, pull the three GitHub security surfaces and the Supabase advisors:
-
-```bash
-repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api "repos/$repo/dependabot/alerts?state=open&per_page=100"
-gh api "repos/$repo/code-scanning/alerts?state=open&per_page=100"
-gh api "repos/$repo/secret-scanning/alerts?state=open&per_page=100"
-```
-
-Posture is **auto-fix the safe, surface the rest** — the same philosophy as the issue/PR rules above.
-
-- **Dependabot — auto-fix when safe.** For an alert with a patched version, open a bump PR; for a transitive dep, prefer a **bounded** `overrides` entry in `pnpm-workspace.yaml` (pnpm 11 does NOT read `pnpm.overrides` from `package.json`) held *within the advisory's patched major* — never an unbounded `>=`, which pulls a surprise major bump. **First confirm the alert reflects what the app actually builds:** alerts on a stale or secondary lockfile (e.g. a stray root `package-lock.json` in this pnpm repo) are phantom — fix/remove the lockfile, don't bump. Group by package; one change can clear many alerts. Dev-tooling bumps with known break-risk (vite/vitest/esbuild — see MEMORY) still get a PR, but flagged "verify carefully," never blind-merged.
-- **Code scanning — triage by location.** Findings in production app code (`apps/*/src/**`, not tests/fixtures/scripts) → open a fix PR, and pin the new security behavior with a test (a sanitizer that can't fail a test will silently regress). Findings in test files, fixtures, or dev-only scripts → dismiss with a reason (`used in tests` / `won't fix`) and a one-line comment. **Never dismiss a finding in shipped code without fixing it.**
-- **Secret scanning — verify before alarm, never echo.** Decode/inspect the flagged value (mask it in any output). A real production credential (service-role JWT with a prod project `ref`, a live Stripe/Supabase key) → **STOP and surface for rotation**; do NOT auto-dismiss. A local-dev key (e.g. `iss=*-local`, no prod ref), a test fixture, or a mislabeled detector hit → resolve as `used_in_tests` / `false_positive` with an explaining comment.
-- **Supabase advisors (`get_advisors` security + performance, both projects) — surface, don't auto-fix.** Every remediation touches the prod DB, which the "no prod deploys without asking" rule gates. RLS-enabled-no-policy on a service-role-only table is safe-by-design (deny-all) — note and move on. `SECURITY DEFINER` RPC exposure, disabled leaked-password protection, extension-in-public, etc. → surface for the operator's call.
-
-Add a `Security alerts:` block to the state summary: open counts per surface, what was auto-fixed/dismissed, and what needs a call. If all clean: `Security alerts: clean.`
-
-### What auto-triage MUST NOT do
-
-- Don't merge PRs whose only blocker is a real test/typecheck failure on the application surface (those need investigation).
-- Don't override branch protection or skip required checks.
-- Don't run `gh pr update-branch` on a PR more than once per session — repeated update-branches with no other changes are wasted CI cycles.
-- Don't auto-dismiss a secret-scanning alert without first decoding/verifying it is NOT a live production credential — and never paste the secret value into chat or a comment.
-- Don't bump a dependency to satisfy a Dependabot alert that lives on a stale/unused lockfile — remove the lockfile instead.
-
-### Output format in the state summary
-
-After auto-triage, the state summary (step 5 above) MUST include:
-
-```
-Auto-triage:
-- Merged: #X, #Y
-- Update-branched: #Z
-- Opened fix PR for issue #N (auto-triaged)
-- Labeled for model: #A (opus), #B (sonnet)
-- Needs your call:
-  - PR #M — <one line: what's blocking, what I'd do if I knew the answer>
-  - Issue #P — <one line: why I can't auto-fix>
-- Skipped (waiting on workflow): #Q (dependabot, retry workflow handles)
-Security alerts:
-- Dependabot: <open count> (auto-fixed in PR #R / phantom-lockfile / surfaced)
-- Code scanning: <open count> (fixed #S, dismissed N test/script)
-- Secret scanning: <open count> (dismissed N false-positive / SURFACED for rotation)
-- Supabase advisors: <N security / N perf> surfaced
-```
-
-If nothing needed action, the line is `Auto-triage: clean — nothing open needed attention.` and `Security alerts: clean.`
+> **Triage is manual** (changed 2026-06-27). The old auto-triage-every-session sweep is gone. When the user asks to triage open issues/PRs/security alerts (or types `/triage`), follow `docs/runbooks/triage.md`. Don't run it unprompted.
 
 -----
 
@@ -182,7 +80,7 @@ Required fields (overwrite the file each time — no history):
 - anything you noticed but didn't act on
 ```
 
-At session start, read SESSION.md and resume from “Next step” unless the user redirects.
+At session start, read SESSION.md and resume from "Next step" unless the user redirects.
 
 **Writing it is a plain whole-file overwrite — no hook, no prepend rule (the opposite of MEMORY.md).** Use the Write tool to replace the file with the fields above, freshly filled in. Don't try to preserve or prepend prior state: SESSION.md is transient working state, not history, so last-write-wins is correct.
 
@@ -192,13 +90,13 @@ At session start, read SESSION.md and resume from “Next step” unless the use
 
 Triggered by any of:
 
-- The user signals end of session (“we’re done,” “stop here,” “log off,” etc.).
+- The user signals end of session ("we're done," "stop here," "log off," etc.).
 - You estimate you are approaching the context window limit.
 - A long-running operation is about to start that might not finish in remaining context.
 
 Steps, in order:
 
-1. **Never leave the repo broken.** If there are uncommitted changes, ensure they typecheck and don’t break the build. If they don’t, either fix them or stash them on a WIP branch — don’t leave broken code on a working branch.
+1. **Never leave the repo broken.** If there are uncommitted changes, ensure they typecheck and don't break the build. If they don't, either fix them or stash them on a WIP branch — don't leave broken code on a working branch.
 1. **Slop sweep** (D-091). Before committing, re-read your own diff with an explicit anti-slop lens. Delete:
    - Comments that explain WHAT the code does (delete unless they explain WHY).
    - Helper functions called only once (inline at the call site).
@@ -213,7 +111,7 @@ Steps, in order:
 1. Update SESSION.md with the current state.
 1. Add any MEMORY.md entries for decisions made this session.
 1. If you switched to Opus or Haiku at any point, switch back to Sonnet: `/model claude-sonnet-4-6`.
-1. State briefly what was done and what’s next.
+1. State briefly what was done and what's next.
 
 -----
 
@@ -243,7 +141,6 @@ No features beyond what was asked. No abstractions for single-use code.
 Test: would a senior engineer say this is overcomplicated? If yes, simplify.
 
  — Surgical Changes
-
 Don't refactor what isn't broken. Match existing style.
 
 — Never ignore a bug you find
@@ -268,83 +165,76 @@ Applies to:
 The acceptance bar is *not* "issue exists" — it's "issue is specific enough that someone returning cold could pick it up." Include: what the problem is, where it lives (file paths), what the acceptance criteria are, and why it was deferred.
 
  — Goal-Driven Execution
-Define success criteria. Loop until verified.
-Don't follow steps. Define success and iterate.
-Strong success criteria let you loop independently.
+Define success criteria. Loop until verified. Strong success criteria let you loop independently.
 
  — Use the model only for judgment calls
 Use me for: classification, drafting, summarization, extraction.
-Do NOT use me for: routing, retries, deterministic transforms.
-If code can answer, code answers.
+Do NOT use me for: routing, retries, deterministic transforms. If code can answer, code answers.
 
 — Tests verify intent, not just behavior
-Tests must encode WHY behavior matters, not just WHAT it does.
-A test that can't fail when business logic changes is wrong.
+Tests must encode WHY behavior matters, not just WHAT it does. A test that can't fail when business logic changes is wrong.
 
  — Checkpoint after every significant step
-Summarize what was done, what's verified, what's left.
-Don't continue from a state you can't describe back.
-If you lose track, stop and restate.
+Summarize what was done, what's verified, what's left. Don't continue from a state you can't describe back. If you lose track, stop and restate.
 
  — Match the codebase's conventions, even if you disagree
-Conformance > taste inside the codebase.
-If you genuinely think a convention is harmful, surface it. Don't fork silently.
+Conformance > taste inside the codebase. If you genuinely think a convention is harmful, surface it. Don't fork silently.
 
 — Fail loud
-"Completed" is wrong if anything was skipped silently.
-"Tests pass" is wrong if any were skipped.
-Default to surfacing uncertainty, not hiding it.
+"Completed" is wrong if anything was skipped silently. "Tests pass" is wrong if any were skipped. Default to surfacing uncertainty, not hiding it.
 
-— D-091 anti-patterns (authoring checklist)
-Full catalog — symptoms, examples, codebase instances, prevention — lives in
-`docs/runbooks/anti-patterns.md`. Scan this list before writing app code; the
-`d091-reviewer` agent enforces it at PR time. The actionable specifics are kept
-here so the doctrine is in-context every session; open the runbook for the why.
+-----
 
-1. **No stub-shaped code** — every parameter must affect output; every returned variant reachable; no dead `if/else` branches. A `kid` arg that resolves to one key is worse than no arg.
-2. **Fail-closed** — when an enforcement layer can't run (Redis/DB/secret/signature absent), deny, don't permit. Returning `{ allowed: true }` on error, or 200 on a silent write failure, is the worst mode — silent AND it kills retries.
-3. **Check every Supabase mutation** — supabase-js v2 doesn't throw. Wrap with `safeAwait(...)` or destructure `{ error }` and return non-200. CAS updates use `safeAwaitRowCount` with the expected count. Helpers: `apps/main/src/lib/db/safe-mutation.ts`.
-4. **Two layers of tenant isolation** — app-layer filter AND DB-layer constraint (RLS via `tenantClient`, or explicit `.eq("tenant_id", …)` on service-role queries). One defense is one bug from cross-tenant leakage.
-5. **Credentials in headers, never URLs** — `Authorization: Bearer …`, not `?token=…`. URLs leak into proxy/CDN/APM logs and `TypeError` messages; headers are scrubbed.
-6. **Quota gates re-read between consuming ops** — re-check between batches, or use a DB-atomic reserve-row. A gate read once before a loop misses mid-loop overruns; concurrent crons double-spend.
-7. **CAS status-guarded updates verify row count** — `.update(...).eq("status", 'Y')` returns `{ error: null }` even on zero matched rows. Chain `.select('id')` and assert the affected-row count.
-8. **No unjustified `void` async in serverless** — the host can kill the process before fire-and-forget work completes. `await` it, or add `// allow-void-async: <reason>` (must be idempotent/retry-safe).
-9. **One assertPermission per semantic operation** — routes switching on `body.action` or multiple HTTP methods need a separate gate per (resource, action). Reusing one gate is over- or under-permissive.
-10. **Idempotency rows written AFTER dispatch** — the dedup row must mean "fully processed," not "received," or a crash mid-handler strands the work behind a duplicate-rejection. Use a separate `processing_started_at` for in-flight tracking.
-11. **State-machine transitions validate at the function boundary** — `progressTo`/`revertTo`/`transitionTo` must assert the target is enum-valid and the transition is permitted from current state. Don't trust callers (e.g. `body.target_stage`).
-12. **Webhook signatures: capture the encoding at integration time** — hex vs base64 vs base64url. Mis-decoding silently rejects every valid webhook. Add a recorded-signature fixture test and a comment naming the provider + encoding.
-13. **Destructive migrations ship AFTER the read-switchover, in their own PR** (#137) — expand → switch reads → contract as THREE separate merges. Column names are query-string literals tsc can't see. Never bundle the contract drop with the expand or read-switch. `pnpm check:dropped-columns` ("Dropped-column reader guard") is the backstop.
-14. **Permission grants belong with the route PR** (#1173) — adding a route that calls `assertPermission` requires, in the SAME PR, the `key("resource","action")` entry in `apps/main/src/lib/auth/permission-grants.ts` AND the matching tuple in `permission-grants.test.ts`. `pnpm check:permission-matrix` ("Permission-matrix guard") enforces it; pre-existing gaps live in `scripts/permission-matrix-baseline.txt`.
-15. **Every admin route asserts platform-admin in the handler** (#1393/G5) — the `proxy.ts` admin gate is only a cookie *shape* check; real authority is the per-route assertion. Any new `app/api/admin/**/route.ts` must call an authority gate in-handler (main: `assertPlatformAdmin*` / `MAIN_APP_ADMIN_API_KEY` constant-time compare; rag: a `service_identifier` check against `"platform-admin"`). `pnpm check:admin-auth` ("Admin-route auth guard") enforces that an authority token is *present* (it's a presence check, not flow analysis); intentional exemptions live in `scripts/admin-route-auth-baseline.txt`. Separately, mutating rag admin routes must also gate `scope === "write"` (convention, not enforced by this guard — see F-rag-auth-02).
-16. **Never echo a raw error `.message`/`.details` into an API response** (#1393/G1) — Postgres/Supabase error text embeds table/column/constraint names (schema disclosure). Route caught errors through `dbErrorResponse(error)` (`apps/main/src/lib/api/db-error-response.ts`): log server-side under a random ref, return a generic message + ref. `pnpm check:error-egress` ("Error-message-egress guard") blocks NEW `{ detail|message|error: <err>.message }` response shapes; ~70 pre-existing sites are frozen in `scripts/error-message-egress-baseline.txt` (burn-down tracked in #1395). The guard catches the direct form, not indirection (`const m = err.message; send({message:m})`) — the audit agents cover that.
-17. **Stored/rendered URL fields use `safeUrl`, not `z.string().url()`** (#1393/G2) — a bare `z.string().url()` accepts `file://`, cloud-metadata (`169.254.169.254`), and RFC1918 hosts; persisted then rendered into an `<img src>`/`<a href>` it's a client-side SSRF / unsafe-scheme vector. Use `safeUrl` from `@atc/contracts` (http/https + internal-host deny) for `source_url`/`image_url`/`*_url` ingest fields, and route server-side outbound fetches of such URLs through `lib/net/ssrf-guard.ts` (`fetchGuarded`). `pnpm check:url-validator` ("URL-validator guard") blocks new `z.string().url()` in app/contract code; `env.ts` operator-config URLs are exempt (they're trusted and may be non-http, e.g. `redis://`).
-18. **Counter/financial mutations must be atomic, not read-modify-write** (#1393/G3) — `.update({ count: prevCount + 1 })` / `.update({ balance: current - amount })` computes the new value in app code from a previously-read row, so two concurrent requests both read the old value and the second clobbers the first → quota overrun or money double-counted (Day-1 F-pay-01 / F-sm-01 / F-sm-02). Use a DB-side atomic increment (an RPC running `col = col + n` in SQL) or a CAS reserve-row (`.eq("count", expected)` + `safeAwaitRowCount`). The `counter-rmw` detector in `pnpm check:d091` ("D-091 anti-pattern gates") flags `.update({ <counter/balance/quota field>: <var> ± … })`; existing debt is baselined and the gate fails on NEW occurrences. A derived *absolute* value on such a field (not an RMW of the stored counter) is the false-positive class — suppress with `// d091-allow:counter-rmw <reason>`.
-19. **Public/anon rate limits must be backed by a shared store, not a module-level `Map`/`Set`** (#1393/G4) — a limiter kept in process memory is per-instance under Fluid Compute: each warm instance enforces it independently and a cold start resets it, so spreading requests across instances bypasses the cap (Day-1 F-tok-01, F-rag-wh-01). Use Redis (`incr`/`expire` via `@/lib/redis/client`, failing **closed** in production) or a DB-atomic counter — the reference is `apps/rag/src/lib/rate-limit/feedback-limit.ts`. For signed webhooks, verify the signature **before** the rate-limit check and key the bucket on a value from the *verified* body, never on a spoofable `x-forwarded-for`. `pnpm check:rate-limit-store` ("In-memory rate-limit guard") flags a NEW module-level `new Map()`/`new Set()` whose variable name reads like a limiter (`rate`/`limit`/`throttle`/`attempt`/`bucket`/`quota`/`hits`); in-process *caches* (other names) are fine. Pre-existing limiters are baselined; accepted-risk per-instance limiters carry an inline `// inmem-ratelimit-allow:<reason>`.
-20. **Webhooks need replay protection, not just a signature** (#1393/G6, extends #12) — a valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-replayed signed delivery (or a leaked-then-rotated secret) re-applies the effect — re-poisoning a feedback signal (F-rag-wh-02), re-firing a transition, double-counting an event. Every inbound-signature handler must carry a replay defense: a timestamp-tolerance window (Stripe `constructEvent`, Svix signed timestamp), a dedup/idempotency row keyed on the provider's delivery id (`stripe_webhook_events`), a nonce, or a monotonic version guard (`source_revision >= incoming` makes a replay a no-op) — plus a per-provider **replay fixture test** that asserts the second delivery of a captured body is rejected/deduped. `pnpm check:webhook-replay` ("Webhook replay-protection guard") flags a NEW handler that reads an inbound signature but shows no replay signal; signature-primitive `*-signature.ts` helpers are exempt (replay is the caller's job). Pre-existing gaps are baselined; if protection lives in an imported handler or the risk is accepted, add an inline `// webhook-replay-allow:<reason>`.
+## D-091 anti-patterns (authoring checklist)
+
+Scan these 20 titles before writing app code. **Full catalog — symptom, example, codebase instances, the `pnpm check:*` gate, and the why — lives in `docs/runbooks/anti-patterns.md`.** Open that runbook the moment a title is relevant to what you're writing. The `d091-reviewer` agent enforces all of these at PR time.
+
+1. **No stub-shaped code** — every param affects output; every variant reachable; no dead branches.
+2. **Fail-closed** — when an enforcement layer can't run (Redis/DB/secret/signature absent), deny, don't permit.
+3. **Check every Supabase mutation** — supabase-js v2 doesn't throw; `safeAwait` / destructure `{ error }` (CAS → `safeAwaitRowCount`).
+4. **Two layers of tenant isolation** — app-layer filter AND DB-layer constraint (RLS / explicit `.eq("tenant_id", …)`).
+5. **Credentials in headers, never URLs** — `Authorization: Bearer …`, not `?token=…`.
+6. **Quota gates re-read between consuming ops** — re-check between batches, or DB-atomic reserve-row.
+7. **CAS status-guarded updates verify row count** — `.update(...).eq("status",'Y')` returns `error:null` on zero rows; chain `.select('id')`.
+8. **No unjustified `void` async in serverless** — `await` it, or `// allow-void-async: <reason>` (idempotent/retry-safe).
+9. **One assertPermission per semantic operation** — `body.action`/multi-method routes need a gate per (resource, action).
+10. **Idempotency rows written AFTER dispatch** — the dedup row must mean "fully processed," not "received."
+11. **State-machine transitions validate at the function boundary** — `progressTo`/`revertTo`/`transitionTo` assert enum-valid + permitted; don't trust callers.
+12. **Webhook signatures: capture the encoding at integration time** — hex vs base64 vs base64url; add a recorded-signature fixture test.
+13. **Destructive migrations ship AFTER the read-switchover, in their own PR** (#137) — expand → switch reads → contract as THREE merges.
+14. **Permission grants belong with the route PR** (#1173) — same PR adds the `key(...)` entry + the matrix test tuple.
+15. **Every admin route asserts platform-admin in the handler** (#1393/G5) — `proxy.ts` is only a cookie-shape check.
+16. **Never echo a raw error `.message`/`.details` into an API response** (#1393/G1) — route through `dbErrorResponse(error)`.
+17. **Stored/rendered URL fields use `safeUrl`, not `z.string().url()`** (#1393/G2) — and fetch outbound via `fetchGuarded`.
+18. **Counter/financial mutations must be atomic, not read-modify-write** (#1393/G3) — DB-side increment or CAS reserve-row.
+19. **Public/anon rate limits must be backed by a shared store, not a module-level `Map`/`Set`** (#1393/G4) — Redis/DB, fail closed.
+20. **Webhooks need replay protection, not just a signature** (#1393/G6) — timestamp window / dedup row / nonce / version guard + replay fixture test.
+
+-----
 
 ## Honesty about uncertainty
 
-**Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. “I’m not certain about this, but…” is always better than confident wrong.  If unsure about what was in the spec re-read that section before assuming anything.
+**Never present a guess as a fact.** If uncertain about a fact, statistic, date, quote, API behavior, library version, or anything else, say so explicitly *before* the uncertain claim. "I'm not certain about this, but…" is always better than confident wrong. If unsure about what was in the spec re-read that section before assuming anything.
 
-Do not fill gaps with plausible-sounding information. If you don’t know, say you don’t know and propose how to find out (read a file, run a command, search the docs, ask the user).
+Do not fill gaps with plausible-sounding information. If you don't know, say you don't know and propose how to find out (read a file, run a command, search the docs, ask the user).
 
 Applies especially to:
 
-- Library/API behavior you haven’t verified in this session
+- Library/API behavior you haven't verified in this session
 - Version-specific syntax (Next.js, Supabase, Vercel CLI, GitHub Actions)
-- What’s in spec files you haven’t read or only skimmed in this session — read them, don’t guess
+- What's in spec files you haven't read or only skimmed in this session — read them, don't guess
 - Anything where being wrong would cost the user real time or money
 
 -----
 
 ## Show options before acting when unsure
 
-When facing a choice with non-obvious trade-offs, **present the options before acting.** Don’t pick silently. Format:
+When facing a choice with non-obvious trade-offs, **present the options before acting.** Don't pick silently. Format:
 
 - Brief description of the choice
 - 2–4 labeled options, each with the trade-off in one line
 - Your recommendation and why
-- Stop and wait for the user’s call
+- Stop and wait for the user's call
 
 Exceptions where you can proceed without asking:
 
@@ -354,6 +244,7 @@ Exceptions where you can proceed without asking:
 
 When in doubt, ask. The user prefers an extra question over an unwanted change.
 
+-----
 
 ## Git, commits, pushes, and PRs
 
@@ -369,7 +260,7 @@ When in doubt, ask. The user prefers an extra question over an unwanted change.
 
 - Feature work goes on `feature/<short-name>` branches off `dev`.
 - Never commit directly to `dev` — always via PR.
-- Never commit directly to `main` ever. `main` is updated only by the production pipeline’s auto-merge step.
+- Never commit directly to `main` ever. `main` is updated only by the production pipeline's auto-merge step.
 - Never auto-merge `release/*` branches anywhere. Release branches go through the manual approval gate in the CI/CD pipeline. You may push to `release/*` if executing a release task, but the pipeline owns promotion.
 
 ### Before every push
@@ -380,80 +271,37 @@ The rule is mandatory for application-code PRs. For PRs touching only docs, work
 
 If `pnpm verify` fails, fix and re-verify before pushing. If a failure is pre-existing on dev (not caused by your branch), call it out to the user and don't block.
 
+### Migration PRs — stop-rule
+
+**If your diff touches `**/supabase/migrations/` or `db/*snapshot*.sql`, STOP and follow `docs/runbooks/migrations.md` before opening the PR.** Snapshot regen, the test-DB ledger hazard, the no-CONCURRENTLY rule, and expand→switch→contract sequencing all live there, and two CI guards (`check:policy-snapshot`, `rls-snapshot-diff`) will block you if you skip them.
+
 ### Pull requests
 
-**You can open and merge PRs into `dev`** under these conditions:
+**You can open and merge PRs into `dev`** when (1) all required CI status checks pass, (2) the work is complete (not a WIP), and (3) the merge isn't into a protected release branch.
 
-1. All required CI status checks pass.
-1. The work is complete (not a WIP).
-1. The merge isn’t into a protected release branch.
-
-**Mandatory hash-bound audit comments on every PR.**
-
-The `pr-audit-section-check` gate passes only when each agent has posted a marker comment whose `diff:<sha256>` matches the PR's current effective diff (sorted filename+patch pairs). Markers: `<!-- d091-audit:v1 diff:<hash> -->` and `<!-- prepr-audit:v1 diff:<hash> -->`. Timestamps are irrelevant. The agents post these themselves — never post them manually.
-
-The PR-body `## Audit` block is **not** gated — `pre-pr-reviewer` writes it from both agents' findings, for the user to read. Don't hand-craft it; a missing/short/"TBD" body never blocks.
-
-In practice:
-
-- **`update-branch` (or any merge that doesn't change the effective diff) never stales an audit** — same hash, existing comments stay valid. Don't re-run agents after update-branching a queued PR.
-- **A diff-changing commit** (fix-commit, conflict-resolving merge) changes the hash — re-run the agents for fresh comments.
-- **Editing the PR body re-triggers the check** (it listens for `edited`) — never push a no-op or empty commit to refresh it.
-
-**Workflow (order matters). Run the agents LAST — after required CI is green:**
+Every PR needs **hash-bound audit marker comments** posted by the audit agents (`d091-reviewer` + `pre-pr-reviewer`) — the `pr-audit-section-check` gate is required and you cannot bypass it. **The full mechanics (how the diff-hash works, what stales an audit, exemptions, hard rules) live in `docs/runbooks/pr-workflow.md`.** The essential ordering:
 
 1. `pnpm verify` passes — clean typecheck, lint, tests, slop-check.
 2. Push the branch.
 3. **Open the PR** (`gh pr create`). No `## Audit` block needed — `pre-pr-reviewer` writes it.
-4. **Wait for the required CI checks to go green** (`Typecheck`, `Lint`, `Test`, `Guards & Build`, the security/contract jobs). If any fail, fix + push and let them re-run. Get CI clean BEFORE running the agents — this is the key change: it stops an unrelated lint/type fix from re-staling the audit and forcing a second full agent run.
-5. **Then run both audit agents** (they resolve the PR number from the branch, self-post their hash-bound marker comments, and `pre-pr-reviewer` writes the `## Audit` body):
-   - Invoke `d091-reviewer` FIRST for D-091 anti-pattern coverage.
-   - Then invoke `pre-pr-reviewer` for slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091. (It reads d091's comment to build the combined body, so order matters.)
+4. **Wait for required CI to go green** (`Typecheck`, `Lint`, `Test`, `Guards & Build`, security/contract jobs). Get CI clean BEFORE running the agents — this stops an unrelated fix from re-staling the audit.
+5. **Then run both audit agents, LAST** — `d091-reviewer` FIRST, then `pre-pr-reviewer` (it reads d091's comment to build the combined `## Audit` body). They self-post their marker comments — never post markers manually.
+6. If either reports findings: fix, push, let CI go green again, re-run that agent.
+7. Once all checks pass, squash-merge and delete the branch.
 
-   **Model selection.** Default is Sonnet. Override to Opus on the FIRST audit run (pass `model: "opus"` on the Agent tool call) when ANY of these apply:
-   - Diff ≥ 10 files OR ≥ 500 net-added lines.
-   - Diff includes a SQL migration (new tables, RLS policies, grants, column add/drop).
-   - Diff adds a net-new API route under `apps/*/src/app/api/`, a new Inngest function, or a cron handler.
-   - Diff includes webhook signature verification, idempotency rows, or state-machine transitions (`progressTo`, `transitionTo`, etc.).
-   - Diff adds a new service-role code path (page or route using the service-role client).
+**Model selection for the FIRST audit run:** default Sonnet; override to Opus (`model: "opus"`) when the diff is ≥10 files / ≥500 net-added lines, includes a SQL migration, adds a net-new API route / Inngest fn / cron, touches webhook signatures / idempotency / state-machine transitions, or adds a service-role code path. Re-runs after fix-commits use Sonnet. Full criteria in `pr-workflow.md`.
 
-   Re-runs after fix-commits use Sonnet, even if the original first-run used Opus — re-runs are checking known patterns, not exploring new surface area. Exception: if the fix-commit itself introduced one of the triggers above (rare), use Opus again.
-
-6. If either agent reports findings, fix them, push, **let CI go green again**, then re-run that agent (its fresh comment embeds the new diff hash; the old comment's stale hash no longer matches and is ignored by the check). You do NOT touch the `## Audit` body by hand — the agent rewrites it.
-7. Once all checks pass, merge (squash merge by default). Delete the feature branch after merge.
-
-The check is required to merge. **You cannot bypass it.** Two exemptions:
-
-- **Dependabot PRs** — version bumps with no code logic.
-- **Doc-only PRs** — every changed file matches `*.md`, `docs/**`, or `specs/**`. The audit check short-circuits to success, and the heavy workflows now skip too: `e2e`/CodeQL don't trigger at all, and the required `deploy.yml` jobs + `Guards & Build` skip via a `detect-changes` gate (skipped required jobs report as passing). Don't run the audit agents on doc-only PRs — merge once the (fast) checks settle. A single non-doc file in the diff disqualifies the PR from the exemption.
+**Exemptions** (no audit agents): Dependabot PRs, and doc-only PRs (every changed file matches `*.md`/`docs/**`/`specs/**` — a single non-doc file disqualifies it).
 
 **You may NOT:**
 
-- Run the audit agents before the PR exists — they abort with an error when `gh pr view` returns empty, which is correct.
-- Manually post the `<!-- d091-audit:v1 -->` or `<!-- prepr-audit:v1 -->` marker comments — let the agents do it.
+- Run the audit agents before the PR exists (they abort when `gh pr view` is empty — correct).
+- Manually post the `<!-- d091-audit:v1 -->` / `<!-- prepr-audit:v1 -->` marker comments.
 - Merge a PR with failing or pending checks.
 - Bypass branch protection rules.
 - Force-push to `dev`, `main`, or `release/*`.
 - Merge PRs into `main` (only the production pipeline does this).
-- Open or merge `release/*` PRs — that’s the user’s call and the pipeline’s job.
-
------
-
-## Migrations & RLS/grants snapshots
-
-Migrations live in `apps/main/supabase/migrations/` (and `apps/rag/…`), timestamp-prefixed and append-only. `db/rls-snapshot-{main,rag}.sql` and `db/grants-snapshot-{main,rag}.sql` are **auto-generated** introspection dumps of the live DB — never hand-edit them. Follow this every time you touch a migration:
-
-1. **A migration that changes a policy or grant MUST regenerate the matching snapshot in the same PR.** CREATE/ALTER/DROP POLICY → `pnpm rls:snapshot:main` (or `:rag`), commit `db/rls-snapshot-<app>.sql`. GRANT/REVOKE or a new table → `pnpm grants:snapshot`. Two checks enforce this and you cannot merge past them: the `check:policy-snapshot` guard (DB-free, in `pnpm verify` + the Guards & Build job) and the DB-based `rls-snapshot-diff` / grants-diff jobs (which apply the PR's migrations to the test DB, then diff). The #1486 stale-snapshot incident is exactly what these prevent.
-
-2. **Regenerating a snapshot needs a DB with the migration applied.** The snapshot scripts introspect a live DB — you can't hand-write the normalized output. Apply to the **test DB** (`SUPABASE_TEST_DB_URL` in `.env.local` — a throwaway CI database, *not* prod, so it's safe): from `apps/main`, `npx supabase db push --include-all --db-url "$URL"` (don't echo the URL), then `npx tsx scripts/rls-snapshot.ts --target=main > db/rls-snapshot-main.sql`. Prove no unintended drift before committing (e.g. for an auth-wrap change, normalize the wrap out of both old and new snapshot and confirm byte-identical).
-
-3. **Never `CREATE INDEX CONCURRENTLY` in a multi-statement migration.** `supabase db push` runs a file's statements in one pipeline, where CONCURRENTLY errors `SQLSTATE 25001`. Use plain `CREATE INDEX IF NOT EXISTS` (the brief lock is negligible on these tables). A single-statement file is the only case CONCURRENTLY survives — not worth it.
-
-4. **Shared-test-DB hazard.** The test DB is shared with CI, and its `supabase_migrations.schema_migrations` ledger must match the branch under CI. Do **not** pre-apply a migration that isn't on a pushed branch — it orphans a ledger row and breaks every other PR's `supabase db push` (and you'll see "repair the migration history table"). If you apply locally to regenerate a snapshot, the migration must be on the branch you push; if you abandon it, delete the ledger row and drop the objects you created.
-
-5. **Source object definitions from the live catalog, not the Supabase advisor.** The advisor's column numbers/names go stale after column reorders and it lists constraints that no longer exist. Use `pg_constraint` / `pg_policy` for the authoritative current definition; use the advisor only for *which* objects are flagged.
-
-6. **Prod apply is gated.** Migrations merge to `dev` autonomously but apply to prod only via the operator step (the no-prod-deploys rule) — so prod advisors keep showing a fixed finding until that apply runs. Say so in the wrap-up.
+- Open or merge `release/*` PRs — that's the user's call and the pipeline's job.
 
 -----
 
@@ -461,16 +309,12 @@ Migrations live in `apps/main/supabase/migrations/` (and `apps/rag/…`), timest
 
 The CI/CD implementation prompts are in `ATC_CICD_Implementation___Build_Prompts_for_Claude_Code.md`. Each section is self-contained: manual prerequisites → invocation → prompt → verification → manual follow-ups.
 
-
-
 -----
 
 ## File and directory conventions
 
-- **Specs** (read-only source of truth, `.html`): 
-Separate .html file for each section of the spec.
-. Never modify. If a build prompt disagrees with a spec, the spec wins — flag and stop.
-- **Build prompts** (`.md`): execution instructions. Don’t modify unless the user explicitly asks for a build-prompt edit.
+- **Specs** (read-only source of truth, `.html`): separate `.html` file per spec section. Never modify. If a build prompt disagrees with a spec, the spec wins — flag and stop.
+- **Build prompts** (`.md`): execution instructions. Don't modify unless the user explicitly asks for a build-prompt edit.
 - **Decision log:** `/MEMORY.md` (repo root, uppercase).
 - **Session state:** `/SESSION.md` (repo root, uppercase).
 - **Project docs you create:** `/docs/` (repo root). Organize by concern — `/docs/evals/`, `/docs/testing/`, `/docs/cicd/`, `/docs/runbooks/`. Markdown, lowercase, hyphenated filenames.
@@ -486,10 +330,10 @@ When creating a doc the user will refer to later (design proposals, runbooks, po
 
 The v6 spec and the CI/CD pipeline spec together are the source of truth.
 
-- **Read relevant sections before writing code or docs.** Don’t paraphrase from memory.
+- **Read relevant sections before writing code or docs.** Don't paraphrase from memory.
 - Cross-references in specs use `§N.M` notation. Follow them.
-- **If a spec is ambiguous,** flag it, propose an interpretation, ask the user to confirm. Don’t invent behavior.
-- **If a spec is wrong,** flag it. Don’t silently work around it. Update the spec (with user approval) so the next reader gets the corrected version.
+- **If a spec is ambiguous,** flag it, propose an interpretation, ask the user to confirm. Don't invent behavior.
+- **If a spec is wrong,** flag it. Don't silently work around it. Update the spec (with user approval) so the next reader gets the corrected version.
 
 -----
 
@@ -504,7 +348,6 @@ The v6 spec and the CI/CD pipeline spec together are the source of truth.
 - Merge into `main` or `release/*`
 - Force-push anywhere
 - Install new runtime dependencies (dev-dependencies are OK if obviously needed for a task)
-
 - Disable or bypass branch protection
 - Disable CI checks
 
@@ -516,12 +359,13 @@ The v6 spec and the CI/CD pipeline spec together are the source of truth.
 - Run typecheck, lint, tests, build locally
 - Create new files in `/docs/`, `scripts/`, `tests/`, `.github/workflows/` (per build prompts)
 - Add new entries to `MEMORY.md`
-- Overwrite `SESSION.md` (it’s transient state, not history)
+- Overwrite `SESSION.md` (it's transient state, not history)
 - Commit and push to feature branches
 - Open PRs into `dev`
 - Merge PRs into `dev` when CI passes
 - Delete your own feature branches after merge
 - Switch models with `/model`
+- Run triage on demand (`docs/runbooks/triage.md`) when the user asks
 - Ask the user a clarifying question — always preferred over guessing
 
 -----
@@ -530,9 +374,8 @@ The v6 spec and the CI/CD pipeline spec together are the source of truth.
 
 - State what you did, briefly.
 - Note any verification the user should run (UI checks, dashboards, deploys).
-- Note any follow-ups flagged in the build prompt’s “Manual follow-ups” section.
+- Note any follow-ups flagged in the build prompt's "Manual follow-ups" section.
 - If a decision was made worth logging — write the MEMORY.md entry.
-
 - Update SESSION.md.
 
-Don’t pad the wrap-up. A few lines is enough.
+Don't pad the wrap-up. A few lines is enough.
