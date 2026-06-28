@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-309 — 2026-06-27 — Slim CLAUDE.md (~8.5k→4.8k tokens); session triage goes manual (PR #1537)
+
+**Decision.** CLAUDE.md loads every session and had grown to ~537 lines / ~8.5k tokens, ~half of it task-specific reference only relevant occasionally. Moved that detail into on-demand runbooks, leaving one-line pointers; CLAUDE.md is now a ~4.8k-token router. **No rule removed** — every rule still enforced, some via a pointer.
+
+**Behavior change (user-directed).** Auto-triage no longer runs at session start. The 103-line "Auto-triage on session start" section → `docs/runbooks/triage.md`, invoked manually when the user asks or types `/triage`. Session-start protocol dropped from 6 steps to 5 (removed step 4 + the "what auto-triage found" clause in the state summary). The user reversed the every-session default explicitly: they'll invoke triage on demand.
+
+**Other moves.** (1) D-091 catalog collapsed to 20 bold titles inline; full detail → `docs/runbooks/anti-patterns.md`. (2) PR audit hash-marker mechanics → `docs/runbooks/pr-workflow.md` (ordered workflow + model-selection kept inline). (3) Migrations & RLS detail → `docs/runbooks/migrations.md`, with a stop-rule trigger kept inline for migration-touching diffs.
+
+**Integrity catch.** D-091 items 15–20 (#1393 G1–G6 guards) previously lived ONLY in CLAUDE.md — they were never in anti-patterns.md. Added their full detail to the runbook before collapsing, so nothing was lost.
+
+**Why.** Per-session token cost is paid regardless of task; task-specific procedure belongs in files read on demand. **Rejected:** keeping D-091 fully inline (user chose to collapse); a hook-based migration backstop now (deferred to #1536 — the inline stop-rule ships first as the lightweight version).
+
+**Artifacts.** PR #1537 (merged). New runbooks: triage.md, pr-workflow.md, migrations.md; anti-patterns.md gained items 15–20. Follow-up: #1536 (fail-loud migration hook, option 3b).
+
+---
+
 ## D-308 — 2026-06-26 — Post-merge snapshot/grants drift opens a tracked issue (PR #1496) — #1492 closed
 
 Shipped the deferred part 2 from D-307; **#1492 is now fully closed**.
