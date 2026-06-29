@@ -13,6 +13,7 @@
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { tenantClient } from "@/lib/db/tenant-client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { formatMailingAddress } from "@/lib/groups/send-invitation-email";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { isEmailTemplateType, EMAIL_TEMPLATE_REGISTRY } from "@/lib/email/template-registry";
@@ -116,7 +117,7 @@ export async function POST(
       slogan: branding?.slogan ?? null,
     },
     tenant_legal_name: tenant.legal_name ?? "Your Agency",
-    tenant_business_address: tenant.mailing_address ?? "",
+    tenant_business_address: formatMailingAddress(tenant.mailing_address),
     unsubscribe_url: `${APP_URL}/email/unsubscribe?token=preview`,
   };
 
@@ -191,7 +192,7 @@ export async function POST(
     tenant: {
       id: tenant.id,
       legal_name: tenant.legal_name ?? "Your Agency",
-      mailing_address: tenant.mailing_address,
+      mailing_address: formatMailingAddress(tenant.mailing_address),
       email_send_pattern: branding?.email_send_pattern ?? "platform_resend",
       tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
       email_from_address: branding?.email_from_address ?? null,
