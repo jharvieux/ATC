@@ -18,6 +18,7 @@ import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { isEmailTemplateType, EMAIL_TEMPLATE_REGISTRY } from "@/lib/email/template-registry";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { buildPreviewHtml } from "@/lib/email/preview-builder";
+import { formatMailingAddress } from "@/lib/groups/send-invitation-email";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ function layoutFromRows(
       slogan: branding?.slogan ?? null,
     },
     tenant_legal_name: tenant.legal_name ?? "Your Agency",
-    tenant_business_address: tenant.mailing_address ?? "",
+    tenant_business_address: formatMailingAddress(tenant.mailing_address),
     unsubscribe_url: `${APP_URL}/email/unsubscribe?token=preview`,
   };
 }

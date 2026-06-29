@@ -184,8 +184,31 @@ export async function retrieveForChat(
   });
 
   // Step 5: format the block.
+  // When a structured sailing lookup was attempted (region/itinerary/port) but
+  // returned no results, tell the agent it searched and came up empty — rather
+  // than letting it fall back to general cruise-industry knowledge and suggest
+  // specific ships or dates it can't verify.
+  const sailingLookupAttempted = itinerary_lookup !== null || port_lookup !== null || region_lookup !== null;
+  let structuredLookupDescription: string | undefined;
+  if (sailingLookupAttempted && filtered.length === 0) {
+    const parts: string[] = [];
+    if (itinerary_lookup) {
+      parts.push(`${itinerary_lookup.ship} itinerary`);
+      parts.push(`from ${itinerary_lookup.sail_date_from}${itinerary_lookup.sail_date_to ? ` to ${itinerary_lookup.sail_date_to}` : ""}`);
+    } else if (region_lookup) {
+      if (entities.destinations.length > 0) parts.push(entities.destinations.join(" / "));
+      if (entities.cruise_lines.length > 0) parts.push(`on ${entities.cruise_lines.join(" / ")}`);
+      if (region_lookup.date_from) parts.push(`${region_lookup.date_from}${region_lookup.date_to ? ` to ${region_lookup.date_to}` : " onward"}`);
+    } else if (port_lookup) {
+      parts.push(`departing ${port_lookup.departure_port}`);
+      if (port_lookup.date_from) parts.push(`from ${port_lookup.date_from}${port_lookup.date_to ? ` to ${port_lookup.date_to}` : ""}`);
+    }
+    structuredLookupDescription = parts.join(", ");
+  }
+
   const formatted = formatKnowledgeBlock(filtered, {
     ...(input.categoryHalflives !== undefined && { categoryHalflives: input.categoryHalflives }),
+    ...(structuredLookupDescription !== undefined && { structuredLookupDescription }),
   });
 
   // BP38/39 §33.6.4 / §33.7 — drop any retrieved asset that isn't
