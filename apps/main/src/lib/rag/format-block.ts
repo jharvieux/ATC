@@ -77,27 +77,21 @@ INSTRUCTIONS:
 - Consider escalation if the topic is high-stakes (medical, accessibility,
   legal, contractual).`;
 
-// Used when a structured sailing/itinerary/region lookup was attempted but
-// returned zero results. Different from NO_RESULT_BLOCK: the agent must NOT
-// use general knowledge to suggest specific ships or itineraries — it searched
-// and found nothing, and should say so, then ask the user to redirect.
-function buildEmptyLookupBlock(description: string): string {
-  return `KNOWLEDGE CONTEXT: A sailing search was performed (${description}) but no matching sailings were found in inventory.
-
-INSTRUCTIONS:
-- Tell the user you searched but couldn't find sailings matching those criteria.
-- Ask whether they'd like to try different cruise lines, different dates, or adjust their departure options.
-- Do NOT suggest specific ships, itineraries, or sailing dates from general knowledge — you searched real inventory and it came up empty, so general knowledge would be misleading.
-- Keep it brief and constructive; the goal is to redirect, not apologise at length.`;
-}
-
 export function formatKnowledgeBlock(
   chunks: RetrievedChunk[],
   opts: FormatBlockOpts = {},
 ): FormattedBlock {
   if (chunks.length === 0) {
+    // When a structured lookup ran and came up empty, the agent must NOT fall
+    // back to general knowledge and suggest ships or dates it can't verify.
     const block = opts.structuredLookupDescription
-      ? buildEmptyLookupBlock(opts.structuredLookupDescription)
+      ? `KNOWLEDGE CONTEXT: A sailing search was performed (${opts.structuredLookupDescription}) but no matching sailings were found in inventory.
+
+INSTRUCTIONS:
+- Tell the user you searched but couldn't find sailings matching those criteria.
+- Ask whether they'd like to try different cruise lines, different dates, or adjust their departure options.
+- Do NOT suggest specific ships, itineraries, or sailing dates from general knowledge — you searched real inventory and it came up empty, so general knowledge would be misleading.
+- Keep it brief and constructive; the goal is to redirect, not apologise at length.`
       : NO_RESULT_BLOCK;
     return { knowledge_block: block, citations: [] };
   }

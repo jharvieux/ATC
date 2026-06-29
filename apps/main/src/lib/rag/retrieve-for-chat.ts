@@ -130,30 +130,6 @@ export function buildRegionLookup(
   };
 }
 
-// Build a short human-readable description of what structured lookup was
-// attempted, used in the empty-result knowledge block so the agent can tell
-// the user what was searched.
-function buildLookupDescription(
-  entities: EntitySet,
-  region_lookup: ReturnType<typeof buildRegionLookup>,
-  itinerary_lookup: ReturnType<typeof buildItineraryLookup>,
-  port_lookup: ReturnType<typeof buildPortLookup>,
-): string {
-  const parts: string[] = [];
-  if (itinerary_lookup) {
-    parts.push(`${itinerary_lookup.ship} itinerary`);
-    parts.push(`from ${itinerary_lookup.sail_date_from}${itinerary_lookup.sail_date_to ? ` to ${itinerary_lookup.sail_date_to}` : ""}`);
-  } else if (region_lookup) {
-    if (entities.destinations.length > 0) parts.push(entities.destinations.join(" / "));
-    if (entities.cruise_lines.length > 0) parts.push(`on ${entities.cruise_lines.join(" / ")}`);
-    if (region_lookup.date_from) parts.push(`${region_lookup.date_from}${region_lookup.date_to ? ` to ${region_lookup.date_to}` : " onward"}`);
-  } else if (port_lookup) {
-    parts.push(`departing ${port_lookup.departure_port}`);
-    if (port_lookup.date_from) parts.push(`from ${port_lookup.date_from}${port_lookup.date_to ? ` to ${port_lookup.date_to}` : ""}`);
-  }
-  return parts.length > 0 ? parts.join(", ") : "matching those criteria";
-}
-
 export async function retrieveForChat(
   input: RetrieveForChatInput,
 ): Promise<RetrieveForChatResult> {
@@ -213,9 +189,22 @@ export async function retrieveForChat(
   // than letting it fall back to general cruise-industry knowledge and suggest
   // specific ships or dates it can't verify.
   const sailingLookupAttempted = itinerary_lookup !== null || port_lookup !== null || region_lookup !== null;
-  const structuredLookupDescription = sailingLookupAttempted && filtered.length === 0
-    ? buildLookupDescription(entities, region_lookup, itinerary_lookup, port_lookup)
-    : undefined;
+  let structuredLookupDescription: string | undefined;
+  if (sailingLookupAttempted && filtered.length === 0) {
+    const parts: string[] = [];
+    if (itinerary_lookup) {
+      parts.push(`${itinerary_lookup.ship} itinerary`);
+      parts.push(`from ${itinerary_lookup.sail_date_from}${itinerary_lookup.sail_date_to ? ` to ${itinerary_lookup.sail_date_to}` : ""}`);
+    } else if (region_lookup) {
+      if (entities.destinations.length > 0) parts.push(entities.destinations.join(" / "));
+      if (entities.cruise_lines.length > 0) parts.push(`on ${entities.cruise_lines.join(" / ")}`);
+      if (region_lookup.date_from) parts.push(`${region_lookup.date_from}${region_lookup.date_to ? ` to ${region_lookup.date_to}` : " onward"}`);
+    } else if (port_lookup) {
+      parts.push(`departing ${port_lookup.departure_port}`);
+      if (port_lookup.date_from) parts.push(`from ${port_lookup.date_from}${port_lookup.date_to ? ` to ${port_lookup.date_to}` : ""}`);
+    }
+    structuredLookupDescription = parts.join(", ");
+  }
 
   const formatted = formatKnowledgeBlock(filtered, {
     ...(input.categoryHalflives !== undefined && { categoryHalflives: input.categoryHalflives }),
