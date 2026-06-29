@@ -5,7 +5,10 @@
 //      and returns 200 with invitation_id.
 //   2. invite action with invalid email → 400 (validation gate before any DB write).
 //   3. invite action with invalid visibility_choice → 400.
-//   4. Email send failure is silenced — the invitation_id is still returned.
+//   4. (#1543) Email-send exceptions are swallowed at the function level — the
+//      invitation row is already committed before the send runs, so any throw
+//      inside sendGroupInvitationEmail must not propagate to the route and 500
+//      the response. The invitation_id is still returned.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 

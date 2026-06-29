@@ -36,7 +36,8 @@ export async function sendGroupInvitationEmail(args: {
   group: GroupInvitationGroup;
   tenantId: string;
 }): Promise<void> {
-  const [
+  try {
+    const [
     { data: inv },
     { data: tenant },
     { data: branding },
@@ -148,6 +149,11 @@ export async function sendGroupInvitationEmail(args: {
     // suppressed / rate_limited — expected, not an error.
     console.warn(
       `[group-invitation] send not delivered for inv=${args.invitationId}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
+    );
+  }
+  } catch (err) {
+    console.error(
+      `[group-invitation] send failed for inv=${args.invitationId}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

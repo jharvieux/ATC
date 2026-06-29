@@ -121,20 +121,13 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         return Response.json({ error: "Failed to create invitation" }, { status: 500 });
       }
 
-      // Send invitation email (fail-silent: the invitation row is already committed;
-      // email failure is recoverable and must not roll back the insert).
-      try {
-        await sendGroupInvitationEmail({
-          svc,
-          invitationId: invId,
-          group: group as unknown as GroupInvitationGroup,
-          tenantId: group.tenant_id,
-        });
-      } catch (err) {
-        console.error(
-          `[group-invitation] email send failed for inv=${invId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+      // fail-silent — sendGroupInvitationEmail never throws; errors are logged inside.
+      await sendGroupInvitationEmail({
+        svc,
+        invitationId: invId,
+        group: group as unknown as GroupInvitationGroup,
+        tenantId: group.tenant_id,
+      });
 
       return Response.json({ ok: true, invitation_id: invId });
     }
