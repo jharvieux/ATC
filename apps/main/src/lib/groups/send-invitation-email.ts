@@ -25,21 +25,7 @@ export async function sendGroupInvitationEmail(args: {
   tenantId: string;
 }): Promise<void> {
   try {
-    await _sendGroupInvitationEmailInner(args);
-  } catch (err) {
-    console.error(
-      `[group-invitation] send failed for inv=${args.invitationId}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-async function _sendGroupInvitationEmailInner(args: {
-  svc: SupabaseClient;
-  invitationId: string;
-  group: GroupInvitationGroup;
-  tenantId: string;
-}): Promise<void> {
-  const [
+    const [
     { data: inv },
     { data: tenant },
     { data: branding },
@@ -151,6 +137,11 @@ async function _sendGroupInvitationEmailInner(args: {
     // suppressed / rate_limited — expected, not an error.
     console.warn(
       `[group-invitation] send not delivered for inv=${args.invitationId}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
+    );
+  }
+  } catch (err) {
+    console.error(
+      `[group-invitation] send failed for inv=${args.invitationId}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
