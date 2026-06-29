@@ -90,7 +90,7 @@ describe("formatKnowledgeBlock — §21.4", () => {
     expect(starsFor(0.20)).toBe(0);
   });
 
-  it("returns structured-lookup empty block when structuredLookupDescription is set — agent must not use general knowledge", () => {
+  it("structured-lookup empty block: contains search description and no-fabricate instruction (§21.9)", () => {
     // This path fires when a sailing search ran but found nothing in inventory.
     // The agent must be told it searched and came up empty — not given permission
     // to fall back to general cruise knowledge and suggest ships it can't verify.
