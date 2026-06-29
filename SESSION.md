@@ -1,21 +1,20 @@
-# Session state — last updated 2026-06-28 UTC
+# Session state — last updated 2026-06-29 00:55 UTC
 
 ## Just completed
-- Fixed group-create "internal error": `sendGroupInvitationEmail` was documented as fail-silent but had no try/catch; exceptions during email rendering (HMAC key, React render, template resolution) propagated to outer catch → 500. Group rows were already committed so the error was a lie.
-- PR #1543 open, branch `fix/group-create-email-throws`
-- Issue #1544 opened for prod cleanup of Lisa's duplicate group
+- Fixed 8 bugs (TA Chat nav, workspace "New chat" button, platform-domain API 401s) — PR #1540 merged
+- Added automatic platform-domain → tenant-subdomain redirect for SaaS staff — PR #1541 merged
+- Two d091 findings fixed during audit: missing applyRefreshedSession on redirect, dead primaryDomain guard
+- MEMORY entry D-310 logged
 
 ## In flight
-- PR #1543 needs CI + audit agents before merge (diff is 1 file, 15 lines — Sonnet-tier)
+- Nothing in flight — clean checkpoint
 
 ## Next step
-- Wait for CI on PR #1543, run d091-reviewer then pre-pr-reviewer, then merge
-- After merge: deploy main app so fix is live; then ask Lisa to retry her group creation
-- Coordinate prod cleanup of duplicate group per issue #1544
+- Nothing pending from this session
 
 ## Blocked on user
-- Prod cleanup of Lisa's duplicate group (issue #1544): need to identify which of the two she wants to keep
+- Nothing
 
 ## Open questions
-- What specifically threw inside sendGroupInvitationEmail? Most likely `signUnsubscribeToken` → `hmacKey()` throwing "Missing HMAC key for token purpose 'unsubscribe'" if `INVITATION_TOKEN_HMAC_KEY` is absent in prod. The ref in the server log from respondToAuthError would confirm.
 - pre-pr-reviewer computes a different diff hash than CI by default; workaround: explicitly instruct it to use `gh api --paginate --slurp "repos/jharvieux/ATC/pulls/{PR}/files"` with the same jq+sha256 pipeline as the CI gate
+- d091 NIT (unfixed, deferred): double getTenantByAuthUserId call for platform admins on chat/console paths — both calls are 60s cache hits after the first, no correctness risk; hoisting into a shared `let tenant` variable would clean it up
