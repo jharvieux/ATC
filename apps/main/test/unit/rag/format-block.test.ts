@@ -89,4 +89,16 @@ describe("formatKnowledgeBlock — §21.4", () => {
     expect(starsFor(0.35)).toBe(1);
     expect(starsFor(0.20)).toBe(0);
   });
+
+  it("returns structured-lookup empty block when structuredLookupDescription is set — agent must not use general knowledge", () => {
+    // This path fires when a sailing search ran but found nothing in inventory.
+    // The agent must be told it searched and came up empty — not given permission
+    // to fall back to general cruise knowledge and suggest ships it can't verify.
+    const out = formatKnowledgeBlock([], { structuredLookupDescription: "Australia sailings, spring 2027" });
+    expect(out.knowledge_block).toContain("A sailing search was performed (Australia sailings, spring 2027)");
+    expect(out.knowledge_block).toContain("no matching sailings were found in inventory");
+    expect(out.knowledge_block).toContain("Do NOT suggest specific ships");
+    expect(out.knowledge_block).not.toContain("No retrieved chunks");
+    expect(out.citations).toEqual([]);
+  });
 });
