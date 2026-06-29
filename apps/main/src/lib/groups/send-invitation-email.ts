@@ -24,6 +24,21 @@ export async function sendGroupInvitationEmail(args: {
   group: GroupInvitationGroup;
   tenantId: string;
 }): Promise<void> {
+  try {
+    await _sendGroupInvitationEmailInner(args);
+  } catch (err) {
+    console.error(
+      `[group-invitation] send failed for inv=${args.invitationId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+async function _sendGroupInvitationEmailInner(args: {
+  svc: SupabaseClient;
+  invitationId: string;
+  group: GroupInvitationGroup;
+  tenantId: string;
+}): Promise<void> {
   const [
     { data: inv },
     { data: tenant },
