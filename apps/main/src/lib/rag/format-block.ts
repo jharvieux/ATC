@@ -20,6 +20,12 @@ export interface FormatBlockOpts {
   // "may be outdated" marker per §21.7.
   categoryHalflives?: Record<string, number>;
   now?: Date;
+  // When a structured sailing/itinerary lookup was attempted but returned no
+  // results, pass a human-readable description of what was searched (e.g.
+  // "Australia sailings, spring 2027"). This triggers a different no-result
+  // message that tells the agent to report the miss and ask the user to
+  // redirect — rather than falling back to general cruise-industry knowledge.
+  structuredLookupDescription?: string;
 }
 
 const DEFAULT_HALFLIVES: Record<string, number> = {
@@ -76,7 +82,18 @@ export function formatKnowledgeBlock(
   opts: FormatBlockOpts = {},
 ): FormattedBlock {
   if (chunks.length === 0) {
-    return { knowledge_block: NO_RESULT_BLOCK, citations: [] };
+    // When a structured lookup ran and came up empty, the agent must NOT fall
+    // back to general knowledge and suggest ships or dates it can't verify.
+    const block = opts.structuredLookupDescription
+      ? `KNOWLEDGE CONTEXT: A sailing search was performed (${opts.structuredLookupDescription}) but no matching sailings were found in inventory.
+
+INSTRUCTIONS:
+- Tell the user you searched but couldn't find sailings matching those criteria.
+- Ask whether they'd like to try different cruise lines, different dates, or adjust their departure options.
+- Do NOT suggest specific ships, itineraries, or sailing dates from general knowledge — you searched real inventory and it came up empty, so general knowledge would be misleading.
+- Keep it brief and constructive; the goal is to redirect, not apologise at length.`
+      : NO_RESULT_BLOCK;
+    return { knowledge_block: block, citations: [] };
   }
 
   const halflives = { ...DEFAULT_HALFLIVES, ...(opts.categoryHalflives ?? {}) };
