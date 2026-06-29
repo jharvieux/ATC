@@ -1,21 +1,20 @@
-# Session state — last updated 2026-06-28 ~23:55 UTC
+# Session state — last updated 2026-06-29 00:55 UTC
 
 ## Just completed
-- Fixed 8 bugs: TA Chat nav (Dashboard → /concierge), removed "New chat" from workspace drawer, platform-domain API 401s (isConsolePath expanded) — PR #1540 squash-merged
-- Added 2 tests for new isConsolePath paths (/api/bookings, /concierge) and fixed stale comments (pre-pr-reviewer findings on #1540)
-- Built platform-domain → tenant-subdomain auto-redirect (PR #1541, CI running)
-- Added MEMORY entry D-310 for redirect decision
+- Fixed 8 bugs (TA Chat nav, workspace "New chat" button, platform-domain API 401s) — PR #1540 merged
+- Added automatic platform-domain → tenant-subdomain redirect for SaaS staff — PR #1541 merged
+- Two d091 findings fixed during audit: missing applyRefreshedSession on redirect, dead primaryDomain guard
+- MEMORY entry D-310 logged
 
 ## In flight
-- PR #1541 (feature/platform-domain-tenant-redirect) — CI running; need audit agents + merge when CI green
+- Nothing in flight — clean checkpoint
 
 ## Next step
-1. Wait for PR #1541 CI to go green (Typecheck, Lint, Test, Guards & Build)
-2. Run d091-reviewer then pre-pr-reviewer on #1541 (diff is 2 files, Sonnet-tier)
-3. Merge #1541
+- Nothing pending from this session
 
 ## Blocked on user
 - Nothing
 
 ## Open questions
-- pre-pr-reviewer computes a different diff hash than CI by default; workaround is to explicitly instruct it to use the GitHub API files endpoint with the same jq pipeline as the CI gate (see the third pre-pr-reviewer run on #1540 for the working prompt)
+- pre-pr-reviewer computes a different diff hash than CI by default; workaround: explicitly instruct it to use `gh api --paginate --slurp "repos/jharvieux/ATC/pulls/{PR}/files"` with the same jq+sha256 pipeline as the CI gate
+- d091 NIT (unfixed, deferred): double getTenantByAuthUserId call for platform admins on chat/console paths — both calls are 60s cache hits after the first, no correctness risk; hoisting into a shared `let tenant` variable would clean it up
