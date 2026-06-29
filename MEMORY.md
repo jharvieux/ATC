@@ -4,6 +4,22 @@ Newest entries on top.
 
 ---
 
+## D-310 — 2026-06-28 — Platform-domain SaaS staff auto-redirect to tenant subdomain (PR #1541)
+
+**Decision.** Authenticated non-internal-tenant staff who land on the platform domain are redirected (302) to their tenant subdomain (e.g. `atcapp.com/` → `booking.atcapp.com/`). Custom-domain tenants redirect to `custom_domain` instead of slug-based subdomain. Implemented in `proxy.ts` before the `isConsolePath` fallback block.
+
+**Why.** Staff were landing on the platform shell which dispatched them incorrectly via `postLoginDestination` (→ `/admin` for platform admins, → `/crm/contacts` for tenant staff). The tenant subdomain is the correct context for all SaaS tenant staff.
+
+**Guard.** `is_platform_internal = true` on the tenant record prevents redirecting platform admins (whose primary tenant is the platform-internal Booking/default tenant). They stay on the platform domain and fall through to existing handling.
+
+**Exclusions.** `/api/*` (fetch requests can't follow redirects), `/auth/*` and `/signup/*` (OAuth flow must complete on platform domain), `/admin/*` and `/supervisor/*` (platform-only pages), login-gated paths (`/signup/complete`, `/onboarding/*`). All fall through to platform sentinel.
+
+**Fallback.** DB error or missing slug → falls through silently. No flash of wrong content because the existing `isConsolePath` block still resolves the tenant header as a backstop.
+
+**Rejected.** Redirect only from `/` root — too narrow; staff can deep-link to any path and should always land on the right subdomain.
+
+---
+
 ## D-309 — 2026-06-27 — Slim CLAUDE.md (~8.5k→4.8k tokens); session triage goes manual (PR #1537)
 
 **Decision.** CLAUDE.md loads every session and had grown to ~537 lines / ~8.5k tokens, ~half of it task-specific reference only relevant occasionally. Moved that detail into on-demand runbooks, leaving one-line pointers; CLAUDE.md is now a ~4.8k-token router. **No rule removed** — every rule still enforced, some via a pointer.

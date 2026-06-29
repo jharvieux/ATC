@@ -412,10 +412,106 @@ describe("proxy()", () => {
       expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
     });
 
-    it("does NOT invoke getTenantByAuthUserId for non-chat platform-domain paths", async () => {
+    it("invokes getTenantByAuthUserId on authenticated non-admin platform-domain paths (redirect check)", async () => {
+      // WHY: the redirect check calls getTenantByAuthUserId on every eligible
+      // platform-domain path so it can redirect SaaS users to their subdomain.
+      // Unauthenticated callers skip the check entirely (no authUser).
       mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+      // No slug set → redirect won't fire; falls through to platform sentinel.
+      mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant());
+      await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/for-agencies" }));
+      expect(mocks.getTenantByAuthUserId).toHaveBeenCalledWith("auth-user-1");
+    });
+
+    it("does NOT invoke getTenantByAuthUserId for unauthenticated platform-domain paths", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
       await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/for-agencies" }));
       expect(mocks.getTenantByAuthUserId).not.toHaveBeenCalled();
+    });
+
+    describe("tenant-subdomain redirect", () => {
+      function saaSstaffTenant(overrides: Record<string, unknown> = {}) {
+        return payingTenant({ slug: "atc-tenant1", is_platform_internal: false, custom_domain: null, ...overrides });
+      }
+
+      it("redirects authenticated SaaS staff from platform-domain root to their tenant subdomain", async () => {
+        // WHY: each user's tenant slug comes from getTenantByAuthUserId — a user
+        // in the "acme" tenant redirects to acme.<domain>, one in "booking" redirects
+        // to booking.<domain>. Nothing is hardcoded.
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant());
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/" }));
+        expect(res.status).toBe(302);
+        expect(res.headers.get("location")).toBe("http://atc-tenant1.ai-travelconcierge.com/");
+      });
+
+      it("preserves the original path and query string in the subdomain redirect", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant());
+        const req = makeReq({ host: "ai-travelconcierge.com", pathname: "/crm/contacts?tab=bookings" });
+        const res = await proxy(req);
+        expect(res.status).toBe(302);
+        expect(res.headers.get("location")).toContain("atc-tenant1.ai-travelconcierge.com");
+        expect(res.headers.get("location")).toContain("/crm/contacts");
+      });
+
+      it("redirects to custom_domain when tenant has one set", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant({ custom_domain: "chat.mytravel.com" }));
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/" }));
+        expect(res.status).toBe(302);
+        expect(res.headers.get("location")).toContain("chat.mytravel.com");
+      });
+
+      it("does NOT redirect platform-internal tenant staff (platform admins stay on their domain)", async () => {
+        // WHY: is_platform_internal marks the platform's own default tenant.
+        // Platform admins whose primary row is in that tenant must not be
+        // bounced to a tenant subdomain.
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(
+          payingTenant({ slug: "booking", is_platform_internal: true, custom_domain: null }),
+        );
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/" }));
+        expect(res.status).not.toBe(302);
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+      });
+
+      it("does NOT redirect /api/* paths (fetch requests must not receive a 302)", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant());
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/api/bookings/123" }));
+        expect(res.status).not.toBe(302);
+      });
+
+      it("does NOT redirect auth-flow paths (OAuth callback etc. must complete on platform domain)", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant());
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/auth/callback" }));
+        expect(res.status).not.toBe(302);
+      });
+
+      it("does NOT redirect login-gated paths like /signup/complete", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(saaSstaffTenant());
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/signup/complete" }));
+        expect(res.status).not.toBe(302);
+      });
+
+      it("falls through to platform sentinel on DB error (fail-closed during redirect check)", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockRejectedValue(new Error("connection refused"));
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/" }));
+        expect(res.status).not.toBe(302);
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+      });
+
+      it("falls through to platform sentinel when tenant has no slug and no custom_domain", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: { id: "auth-user-1" } }, error: null });
+        mocks.getTenantByAuthUserId.mockResolvedValue(payingTenant({ is_platform_internal: false }));
+        const res = await proxy(makeReq({ host: "ai-travelconcierge.com", pathname: "/" }));
+        expect(res.status).not.toBe(302);
+        expect(res.headers.get("x-middleware-request-x-resolved-tenant-id")).toBe("platform");
+      });
     });
   });
 
