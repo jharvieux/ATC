@@ -7,6 +7,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email/send";
 
+// mailing_address is JSONB {line1, city, state, zip, country} in the DB but
+// typed as string|null in TypeScript. Coerce to a flat string for email footers
+// so renderToStaticMarkup doesn't receive an object as a React child.
+export function formatMailingAddress(addr: unknown): string {
+  if (!addr) return "";
+  if (typeof addr === "string") return addr;
+  const a = addr as Record<string, string | undefined>;
+  return [a.line1, a.city, a.state && a.zip ? `${a.state} ${a.zip}` : (a.state ?? a.zip), a.country]
+    .filter(Boolean)
+    .join(", ");
+}
+
 // Narrow shape of the group fields the invitation email needs.
 export type GroupInvitationGroup = {
   id: string;
@@ -58,7 +70,7 @@ export async function sendGroupInvitationEmail(args: {
       slogan: branding?.slogan ?? null,
     },
     tenant_legal_name: tenant.legal_name ?? "Travel Agency",
-    tenant_business_address: tenant.mailing_address ?? "",
+    tenant_business_address: formatMailingAddress(tenant.mailing_address),
     unsubscribe_url: `${baseUrl}/email/unsubscribe?token=${unsubToken}`,
   };
 
@@ -110,7 +122,7 @@ export async function sendGroupInvitationEmail(args: {
     tenant: {
       id: tenant.id,
       legal_name: tenant.legal_name ?? "Travel Agency",
-      mailing_address: tenant.mailing_address,
+      mailing_address: formatMailingAddress(tenant.mailing_address),
       // #1190: email send config comes from tenant_branding.
       email_send_pattern: branding?.email_send_pattern ?? "platform_resend",
       tenant_resend_api_key_encrypted: branding?.tenant_resend_api_key_encrypted ?? null,
