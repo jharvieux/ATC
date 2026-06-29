@@ -369,7 +369,6 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     // /api/* (browsers don't follow redirects transparently on fetch).
     if (
       authUser &&
-      primaryDomain &&
       !isAdminPagePath(pathname) &&
       !isAuthFlowPath(pathname) &&
       !isLoginGatedPath(pathname) &&
