@@ -2,10 +2,12 @@ import { test, expect } from "./_fixtures";
 
 // Tenant admin console — settings index, branding, billing.
 //
-// All three tests use the authedPage fixture (GoTrue session established by
-// global-setup.ts). They will throw if TEST_E2E_OWNER_EMAIL /
-// TEST_E2E_OWNER_PASSWORD / NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
-// are not set in the environment — set those secrets to enable this tier.
+// All three tests use the authedPage fixture, which authenticates via one of
+// two paths (see _fixtures.ts):
+//   - Local CI (e2e.yml): TEST_AUTH_BYPASS_TOKEN is set; no GoTrue needed.
+//   - Staging / cloud: GoTrue session written by global-setup.ts using
+//     TEST_E2E_OWNER_EMAIL + TEST_E2E_OWNER_PASSWORD + NEXT_PUBLIC_SUPABASE_URL
+//     + NEXT_PUBLIC_SUPABASE_ANON_KEY.
 
 test("tenant admin can access admin console", async ({ authedPage }) => {
   // /settings renders a personalised welcome message for an authenticated tenant owner.
