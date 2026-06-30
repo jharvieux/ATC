@@ -11,6 +11,7 @@
 /* eslint-disable @next/next/no-head-element, @next/next/no-img-element */
 
 import * as React from "react";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 
 export interface BrandedLayoutProps {
   branding: {
@@ -21,6 +22,9 @@ export interface BrandedLayoutProps {
     slogan?: string | null;
   };
   tenant_legal_name: string;
+  // Typed string, but mailing_address is JSONB and some callers pass the raw
+  // object. Coerced defensively below so a missed call site can never 500 the
+  // render — this is the single choke point every branded email passes through.
   tenant_business_address: string;
   unsubscribe_url: string;
   children: React.ReactNode;
@@ -32,6 +36,7 @@ const DEFAULT_ACCENT = "#3b82f6";
 export function BrandedLayout(props: BrandedLayoutProps): React.ReactElement {
   const primary = props.branding.primary_color ?? DEFAULT_PRIMARY;
   const accent = props.branding.accent_color ?? DEFAULT_ACCENT;
+  const businessAddress = formatMailingAddress(props.tenant_business_address);
 
   return (
     <html lang="en">
@@ -67,7 +72,7 @@ export function BrandedLayout(props: BrandedLayoutProps): React.ReactElement {
                     <tr>
                       <td style={{ padding: "16px 32px", backgroundColor: "#fafafa", borderTop: "1px solid #eee", fontSize: 12, color: "#888" }}>
                         <p style={{ margin: 0 }}>
-                          {props.tenant_legal_name} · {props.tenant_business_address}
+                          {props.tenant_legal_name} · {businessAddress}
                         </p>
                         <p style={{ margin: "8px 0 0 0" }}>
                           <a href={props.unsubscribe_url} style={{ color: "#888" }}>Unsubscribe</a>

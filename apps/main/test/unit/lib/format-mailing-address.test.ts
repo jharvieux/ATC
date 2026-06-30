@@ -4,7 +4,7 @@
 // the raw object — this is the bug fixed in #1546.
 
 import { describe, it, expect } from "vitest";
-import { formatMailingAddress } from "@/lib/groups/send-invitation-email";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 
 describe("formatMailingAddress", () => {
   it("formats a full JSONB address object to a flat string", () => {

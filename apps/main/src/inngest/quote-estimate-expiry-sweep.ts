@@ -20,6 +20,7 @@ import * as React from "react";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { QuoteEstimateExpiredEmail } from "@/emails/QuoteEstimateExpiredEmail";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
@@ -198,7 +199,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
           slogan: (branding as BrandingRow).slogan ?? null,
         },
         tenant_legal_name: tenant.legal_name ?? "Your Travel Agency",
-        tenant_business_address: tenant.mailing_address ? String(tenant.mailing_address) : "",
+        tenant_business_address: formatMailingAddress(tenant.mailing_address),
         unsubscribe_url: unsubscribeUrl,
       };
 

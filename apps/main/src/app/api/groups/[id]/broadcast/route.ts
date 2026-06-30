@@ -18,7 +18,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 import { sendTenantNotification } from "@/lib/email/notifications";
-import { formatMailingAddress } from "@/lib/groups/send-invitation-email";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { GroupBroadcast } from "@/emails/GroupBroadcast";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 

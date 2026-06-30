@@ -18,7 +18,7 @@ import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { isEmailTemplateType, EMAIL_TEMPLATE_REGISTRY } from "@/lib/email/template-registry";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { buildPreviewHtml } from "@/lib/email/preview-builder";
-import { formatMailingAddress } from "@/lib/groups/send-invitation-email";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
