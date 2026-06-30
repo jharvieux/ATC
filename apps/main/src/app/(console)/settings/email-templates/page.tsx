@@ -204,8 +204,7 @@ export default function EmailTemplatesSettingsPage() {
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadSailingLines]);
 
   const selected = templates.find((t) => t.type === selectedType) ?? null;
 
