@@ -8,10 +8,10 @@ import { test, expect } from "./_fixtures";
 // are not set in the environment — set those secrets to enable this tier.
 
 test("tenant admin can access admin console", async ({ authedPage }) => {
-  // /settings renders "Admin Console" for an authenticated tenant owner.
+  // /settings renders a personalised welcome message for an authenticated tenant owner.
   await authedPage.goto("/settings");
   await expect(authedPage).toHaveURL(/\/settings/);
-  await expect(authedPage.locator("h1")).toContainText("Admin Console");
+  await expect(authedPage.locator("h1")).toContainText("Welcome back");
 });
 
 test("admin can update branding settings", async ({ authedPage }) => {
