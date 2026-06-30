@@ -18,6 +18,7 @@ import { tenantClient } from "@/lib/db/tenant-client";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
 import { sendTenantNotification } from "@/lib/email/notifications";
+import { formatMailingAddress } from "@/lib/groups/send-invitation-email";
 import { GroupBroadcast } from "@/emails/GroupBroadcast";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
@@ -159,7 +160,9 @@ export async function POST(
     const branding = (brandingRow ?? null) as BrandingRow | null;
 
     const tenant_legal_name = tenant?.legal_name ?? "Your travel coordinator";
-    const tenant_business_address = tenant?.mailing_address ?? "";
+    // mailing_address is JSONB; coerce to a flat string so renderToStaticMarkup
+    // doesn't receive an object as a React child (would 500 the broadcast).
+    const tenant_business_address = formatMailingAddress(tenant?.mailing_address);
     const groupName = [group.cruise_line, group.ship_name].filter(Boolean).join(" — ") ||
       "Your cruise";
 

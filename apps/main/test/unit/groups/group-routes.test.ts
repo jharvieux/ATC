@@ -319,6 +319,35 @@ describe("POST /api/groups/[id]/broadcast", () => {
     expect(firstCall.html).toContain("Hello");
   });
 
+  it("renders without 500 when mailing_address is a JSONB object, not a string", async () => {
+    // mailing_address is a JSONB column ({line1,city,state,zip,country}). Passed
+    // raw into renderToStaticMarkup it throws "Objects are not valid as a React
+    // child" and the broadcast 500s. The route must coerce it to a flat string.
+    mocks.tenantsMaybeSingle.mockResolvedValue({
+      data: {
+        legal_name: "Acme Travel",
+        mailing_address: { line1: "1 Main St", city: "Miami", state: "FL", zip: "33101", country: "US" },
+      },
+      error: null,
+    });
+    mocks.groupMaybeSingle.mockResolvedValue({
+      data: { id: GROUP_ID, cruise_line: "Norwegian", ship_name: "Bliss", sailing_date: "2026-09-15" },
+      error: null,
+    });
+    mocks.membersBranch.mockResolvedValue({
+      data: [{ invitee_email: "a@example.com" }],
+      error: null,
+    });
+
+    const res = await BROADCAST_POST(
+      postReq({ subject: "Hello", message: "Body." }),
+      PARAMS,
+    );
+    expect(res.status).toBe(200);
+    const firstCall = mocks.sendTenantNotification.mock.calls[0]?.[0] as { html: string };
+    expect(firstCall.html).toContain("1 Main St, Miami, FL 33101, US");
+  });
+
   it("forwards explicit recipient_states to the rsvp_state filter (#1056)", async () => {
     mocks.groupMaybeSingle.mockResolvedValue({
       data: { id: GROUP_ID, cruise_line: null, ship_name: null, sailing_date: null },
