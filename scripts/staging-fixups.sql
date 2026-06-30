@@ -210,6 +210,8 @@ BEGIN
     RAISE EXCEPTION 'E2E auth.users row not found for % — create the user on the staging Supabase project before running the pipeline.', v_email;
   END IF;
 
+  -- Oldest tenant is the original seed org; any valid tenant works for E2E
+  -- (tests verify auth/page load, not tenant-specific data).
   SELECT id INTO v_tenant_id FROM public.tenants ORDER BY created_at ASC LIMIT 1;
   IF v_tenant_id IS NULL THEN
     RAISE EXCEPTION 'No tenants found after restore — cannot create E2E user row.';
