@@ -14,19 +14,38 @@ import { STORAGE_STATE_PATH } from "./global-setup.js";
 
 export const test = base.extend<{ authedPage: Page }>({
   authedPage: async ({ browser }, use) => {
-    if (!fs.existsSync(STORAGE_STATE_PATH)) {
-      throw new Error(
-        "authedPage: no storageState found. " +
-          "Set TEST_E2E_OWNER_EMAIL, TEST_E2E_OWNER_PASSWORD, " +
-          "NEXT_PUBLIC_SUPABASE_URL, and NEXT_PUBLIC_SUPABASE_ANON_KEY " +
-          "then re-run to generate " +
-          STORAGE_STATE_PATH,
-      );
+    if (fs.existsSync(STORAGE_STATE_PATH)) {
+      // Real GoTrue session written by global-setup (staging / cloud Supabase).
+      const context = await browser.newContext({
+        storageState: STORAGE_STATE_PATH,
+      });
+      const page = await context.newPage();
+      await use(page);
+      await context.close();
+      return;
     }
-    const context = await browser.newContext({ storageState: STORAGE_STATE_PATH });
-    const page = await context.newPage();
-    await use(page);
-    await context.close();
+
+    const bypassToken = process.env.TEST_AUTH_BYPASS_TOKEN;
+    if (bypassToken) {
+      // Local CI: no GoTrue running. Inject the bypass Bearer on every request
+      // so the Next.js middleware and getCachedUser() authenticate via the
+      // seeded E2E user (a0000000-... / tenant 22222222-...) without a real
+      // Supabase session. Requires TEST_AUTH_BYPASS_USER_ID + _TENANT_ID set.
+      const context = await browser.newContext({
+        extraHTTPHeaders: { Authorization: `Bearer ${bypassToken}` },
+      });
+      const page = await context.newPage();
+      await use(page);
+      await context.close();
+      return;
+    }
+
+    throw new Error(
+      "authedPage: no storageState found and TEST_AUTH_BYPASS_TOKEN is not set. " +
+        "For cloud/staging: set TEST_E2E_OWNER_EMAIL, TEST_E2E_OWNER_PASSWORD, " +
+        "NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY. " +
+        "For local CI: set TEST_AUTH_BYPASS_TOKEN (already in e2e.yml env).",
+    );
   },
 });
 

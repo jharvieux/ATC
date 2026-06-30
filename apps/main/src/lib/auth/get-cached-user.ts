@@ -17,6 +17,7 @@ import { cache as reactCache } from "react";
 import { headers } from "next/headers";
 import type { User } from "@supabase/supabase-js";
 import { createRequestScopedClient } from "@/lib/auth/ssr-client";
+import { tryTestBypass } from "@/lib/auth/test-bypass";
 
 // React.cache is a server-only API; in vitest's node env it can be
 // undefined depending on how `react` resolves. Outside production fall
@@ -72,9 +73,41 @@ export const getCachedUser = cache(async (): Promise<CachedUserResult> => {
   const forwarded = new Headers();
   const cookie = incoming.get("cookie");
   if (cookie) forwarded.set("cookie", cookie);
-  const supabase = createRequestScopedClient(
-    new Request("https://placeholder.internal/", { headers: forwarded }),
-  );
+  const auth = incoming.get("authorization");
+  if (auth) forwarded.set("authorization", auth);
+
+  const placeholderReq = new Request("https://placeholder.internal/", {
+    headers: forwarded,
+  });
+
+  // Local-CI bypass: the middleware already recognised the bypass Bearer and
+  // set the resolved-tenant-id header; mirror that logic here so server
+  // components see an authenticated user without needing GoTrue.
+  // tryTestBypass guards against production use (NODE_ENV + VERCEL_ENV checks).
+  const bypass = tryTestBypass(placeholderReq);
+  if (bypass) {
+    return {
+      isAuthenticated: true,
+      user: {
+        id: bypass.auth_user_id,
+        aud: "authenticated",
+        role: "authenticated",
+        email: "e2e-test@local",
+        email_confirmed_at: "2024-01-01T00:00:00.000Z",
+        phone: "",
+        confirmed_at: "2024-01-01T00:00:00.000Z",
+        created_at: "2024-01-01T00:00:00.000Z",
+        updated_at: "2024-01-01T00:00:00.000Z",
+        last_sign_in_at: "2024-01-01T00:00:00.000Z",
+        app_metadata: {},
+        user_metadata: {},
+        identities: [],
+        factors: [],
+      } as User,
+    };
+  }
+
+  const supabase = createRequestScopedClient(placeholderReq);
   const { data, error } = await supabase.auth.getUser();
   if (error || !data?.user) {
     return { isAuthenticated: false, user: null };
