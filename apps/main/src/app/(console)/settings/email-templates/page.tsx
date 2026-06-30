@@ -49,6 +49,24 @@ interface SailingResult {
   cruise_line_name: string;
 }
 
+interface CruiseLine {
+  id: string;
+  display_name: string;
+}
+
+interface CruiseShip {
+  id: string;
+  canonical_name: string;
+  ship_class: string | null;
+}
+
+interface CruiseSailingOption {
+  id: string;
+  departure_date: string;
+  departure_port: string;
+  duration_nights: number;
+}
+
 interface BookingResult {
   id: string;
   ship_name: string | null;
@@ -93,10 +111,16 @@ export default function EmailTemplatesSettingsPage() {
 
   // ── Preview & Test state ─────────────────────────────────────────────────
   const [previewSource, setPreviewSource] = useState<PreviewSource>("sample");
-  const [sailingQuery, setSailingQuery] = useState("");
-  const [sailingResults, setSailingResults] = useState<SailingResult[]>([]);
+  // Cascade dropdowns: line → ship → sailing date
+  const [sailingLines, setSailingLines] = useState<CruiseLine[]>([]);
+  const [sailingShips, setSailingShips] = useState<CruiseShip[]>([]);
+  const [sailingOptions, setSailingOptions] = useState<CruiseSailingOption[]>([]);
+  const [selectedLineId, setSelectedLineId] = useState<string>("");
+  const [selectedShipId, setSelectedShipId] = useState<string>("");
+  const [selectedSailingId, setSelectedSailingId] = useState<string>("");
+  const [loadingSailingShips, setLoadingSailingShips] = useState(false);
+  const [loadingSailingOptions, setLoadingSailingOptions] = useState(false);
   const [selectedSailing, setSelectedSailing] = useState<SailingResult | null>(null);
-  const [sailingSearching, setSailingSearching] = useState(false);
   const [bookingQuery, setBookingQuery] = useState("");
   const [bookingResults, setBookingResults] = useState<BookingResult[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<BookingResult | null>(null);
@@ -108,7 +132,6 @@ export default function EmailTemplatesSettingsPage() {
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
-  const sailingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bookingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Load templates ───────────────────────────────────────────────────────
@@ -119,6 +142,51 @@ export default function EmailTemplatesSettingsPage() {
     setTemplates(data.templates);
     return data.templates;
   }
+
+  // ── Load cruise lines (once on mount for the sailing cascade) ────────────
+  const loadSailingLines = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cruise-lines");
+      if (res.ok) {
+        const json = (await res.json()) as { lines: CruiseLine[] };
+        setSailingLines(json.lines ?? []);
+      }
+    } catch {
+      // Silently leave the dropdown empty; user can switch template type to retry.
+    }
+  }, []);
+
+  const loadSailingShips = useCallback(async (lineId: string) => {
+    if (!lineId) { setSailingShips([]); return; }
+    setLoadingSailingShips(true);
+    try {
+      const res = await fetch(`/api/cruise-ships?cruise_line_id=${encodeURIComponent(lineId)}`);
+      if (res.ok) {
+        const json = (await res.json()) as { ships: CruiseShip[] };
+        setSailingShips(json.ships ?? []);
+      }
+    } catch {
+      // Silently leave ships empty; spinner already cleared by finally.
+    } finally {
+      setLoadingSailingShips(false);
+    }
+  }, []);
+
+  const loadSailingOptions = useCallback(async (shipId: string) => {
+    if (!shipId) { setSailingOptions([]); return; }
+    setLoadingSailingOptions(true);
+    try {
+      const res = await fetch(`/api/cruise-sailings?cruise_ship_id=${encodeURIComponent(shipId)}`);
+      if (res.ok) {
+        const json = (await res.json()) as { sailings: CruiseSailingOption[] };
+        setSailingOptions(json.sailings ?? []);
+      }
+    } catch {
+      // Silently leave sailings empty; spinner already cleared by finally.
+    } finally {
+      setLoadingSailingOptions(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,10 +200,11 @@ export default function EmailTemplatesSettingsPage() {
         if (!cancelled) setLoading(false);
       }
     })();
+    void loadSailingLines();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadSailingLines]);
 
   const selected = templates.find((t) => t.type === selectedType) ?? null;
 
@@ -149,7 +218,11 @@ export default function EmailTemplatesSettingsPage() {
     setPreviewHtml(null);
     setSelectedSailing(null);
     setSelectedBooking(null);
-    setSailingQuery("");
+    setSelectedLineId("");
+    setSelectedShipId("");
+    setSelectedSailingId("");
+    setSailingShips([]);
+    setSailingOptions([]);
     setBookingQuery("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedType, templates]);
@@ -262,32 +335,46 @@ export default function EmailTemplatesSettingsPage() {
     }
   }
 
-  // ── Sailing search ───────────────────────────────────────────────────────
-  const searchSailings = useCallback((q: string) => {
-    if (sailingDebounceRef.current) clearTimeout(sailingDebounceRef.current);
-    if (!q.trim()) {
-      setSailingResults([]);
-      return;
-    }
-    sailingDebounceRef.current = setTimeout(async () => {
-      setSailingSearching(true);
-      try {
-        const res = await fetch(
-          `/api/tenant/email-templates/sailings-search?q=${encodeURIComponent(q)}&limit=8`,
-        );
-        if (res.ok) {
-          const data = (await res.json()) as { sailings: SailingResult[] };
-          setSailingResults(data.sailings);
-        }
-      } finally {
-        setSailingSearching(false);
-      }
-    }, 400);
-  }, []);
+  // ── Sailing cascade handlers ─────────────────────────────────────────────
+  function handleSailingLineChange(lineId: string): void {
+    setSelectedLineId(lineId);
+    setSelectedShipId("");
+    setSelectedSailingId("");
+    setSelectedSailing(null);
+    setSailingShips([]);
+    setSailingOptions([]);
+    setPreviewHtml(null);
+    void loadSailingShips(lineId);
+  }
 
-  useEffect(() => {
-    searchSailings(sailingQuery);
-  }, [sailingQuery, searchSailings]);
+  function handleSailingShipChange(shipId: string): void {
+    setSelectedShipId(shipId);
+    setSelectedSailingId("");
+    setSelectedSailing(null);
+    setSailingOptions([]);
+    setPreviewHtml(null);
+    void loadSailingOptions(shipId);
+  }
+
+  function handleSailingDateChange(sailingId: string): void {
+    setSelectedSailingId(sailingId);
+    const s = sailingOptions.find((x) => x.id === sailingId) ?? null;
+    const line = sailingLines.find((x) => x.id === selectedLineId);
+    const ship = sailingShips.find((x) => x.id === selectedShipId);
+    if (s && line && ship) {
+      setSelectedSailing({
+        id: s.id,
+        departure_date: s.departure_date,
+        departure_port: s.departure_port,
+        duration_nights: s.duration_nights,
+        ship_name: ship.canonical_name,
+        cruise_line_name: line.display_name,
+      });
+    } else {
+      setSelectedSailing(null);
+    }
+    setPreviewHtml(null);
+  }
 
   // ── Booking search ───────────────────────────────────────────────────────
   const searchBookings = useCallback((q: string) => {
@@ -623,61 +710,68 @@ export default function EmailTemplatesSettingsPage() {
                   </div>
                 </div>
 
-                {/* Sailing search */}
+                {/* Sailing cascade dropdowns */}
                 {previewSource === "sailing" ? (
-                  <div>
-                    <label className="block text-[13px] font-medium mb-1">Search sailings</label>
-                    <input
-                      className={TEXT_INPUT_CLS}
-                      value={selectedSailing ? `${selectedSailing.ship_name} — ${formatDate(selectedSailing.departure_date)} from ${selectedSailing.departure_port}` : sailingQuery}
-                      onChange={(e) => {
-                        setSelectedSailing(null);
-                        setSailingQuery(e.target.value);
-                        setPreviewHtml(null);
-                      }}
-                      placeholder="Type a ship name…"
-                    />
-                    {sailingSearching ? (
-                      <p className="text-[12px] text-muted-foreground mt-1">Searching…</p>
-                    ) : null}
-                    {!selectedSailing && sailingResults.length > 0 ? (
-                      <ul className="border border-border rounded mt-1 divide-y divide-border max-h-[200px] overflow-y-auto">
-                        {sailingResults.map((s) => (
-                          <li key={s.id}>
-                            <button
-                              onClick={() => {
-                                setSelectedSailing(s);
-                                setSailingResults([]);
-                                setPreviewHtml(null);
-                              }}
-                              className="w-full text-left px-3 py-2 text-[13px] hover:bg-accent"
-                            >
-                              <span className="font-medium">{s.ship_name}</span>
-                              <span className="text-muted-foreground ml-1">
-                                — {s.cruise_line_name}
-                              </span>
-                              <br />
-                              <span className="text-[12px] text-muted-foreground">
-                                {formatDate(s.departure_date)} from {s.departure_port} ·{" "}
-                                {s.duration_nights}n
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {selectedSailing ? (
-                      <button
-                        onClick={() => {
-                          setSelectedSailing(null);
-                          setSailingQuery("");
-                          setPreviewHtml(null);
-                        }}
-                        className="text-[12px] text-blue-600 mt-1 hover:underline"
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="block text-[13px] font-medium">Cruise Line</label>
+                      <select
+                        className="border border-gray-300 rounded h-9 px-3 text-sm bg-white"
+                        value={selectedLineId}
+                        onChange={(e) => handleSailingLineChange(e.target.value)}
                       >
-                        Clear selection
-                      </button>
-                    ) : null}
+                        <option value="">— Select a cruise line —</option>
+                        {sailingLines.map((l) => (
+                          <option key={l.id} value={l.id}>{l.display_name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="block text-[13px] font-medium">Ship</label>
+                      <select
+                        className="border border-gray-300 rounded h-9 px-3 text-sm bg-white disabled:opacity-50"
+                        value={selectedShipId}
+                        onChange={(e) => handleSailingShipChange(e.target.value)}
+                        disabled={!selectedLineId || loadingSailingShips}
+                      >
+                        <option value="">
+                          {loadingSailingShips
+                            ? "Loading…"
+                            : selectedLineId
+                            ? "— Select a ship —"
+                            : "— Select a cruise line first —"}
+                        </option>
+                        {sailingShips.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.canonical_name}{s.ship_class ? ` (${s.ship_class})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="block text-[13px] font-medium">Sail Date</label>
+                      <select
+                        className="border border-gray-300 rounded h-9 px-3 text-sm bg-white disabled:opacity-50"
+                        value={selectedSailingId}
+                        onChange={(e) => handleSailingDateChange(e.target.value)}
+                        disabled={!selectedShipId || loadingSailingOptions}
+                      >
+                        <option value="">
+                          {loadingSailingOptions
+                            ? "Loading…"
+                            : selectedShipId
+                            ? "— Select a sailing —"
+                            : "— Select a ship first —"}
+                        </option>
+                        {sailingOptions.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.departure_date} — {s.departure_port} — {s.duration_nights}n
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 ) : null}
 
