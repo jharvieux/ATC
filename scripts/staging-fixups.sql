@@ -188,12 +188,15 @@ WHERE  status IN ('queued', 'sent');
 -- But getCachedUser() resolves the session via a public.users lookup, so the
 -- row must be re-created here or every authed E2E test fails with a null user.
 --
--- :e2e_email is passed as a psql -v variable from the db-copy workflow step.
+-- The email is passed via PGOPTIONS="-c e2e_email.val=<email>" in the workflow
+-- step, which sets a dot-qualified custom GUC on the connection. psql -v is a
+-- client-side text substitution (separate namespace) and does NOT reach
+-- current_setting() — PGOPTIONS is the correct mechanism.
 -- If unset (local runs, non-E2E pipelines) the block no-ops safely.
 -- =============================================================================
 DO $$
 DECLARE
-  v_email     TEXT := current_setting('e2e_email', true);
+  v_email     TEXT := current_setting('e2e_email.val', true);
   v_auth_id   UUID;
   v_tenant_id UUID;
 BEGIN
@@ -208,7 +211,7 @@ BEGIN
     RETURN;
   END IF;
 
-  SELECT id INTO v_tenant_id FROM public.tenants LIMIT 1;
+  SELECT id INTO v_tenant_id FROM public.tenants ORDER BY created_at ASC LIMIT 1;
   IF v_tenant_id IS NULL THEN
     RAISE EXCEPTION 'No tenants found after restore — cannot create E2E user row.';
   END IF;

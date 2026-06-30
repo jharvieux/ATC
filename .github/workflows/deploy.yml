@@ -541,9 +541,13 @@ jobs:
 
       - name: Apply staging fixups
         env:
-          TEST_E2E_OWNER_EMAIL: ${{ secrets.TEST_E2E_OWNER_EMAIL }}
+          # PGOPTIONS sets a dot-qualified custom GUC on the connection so the
+          # SQL can read it via current_setting('e2e_email.val', true).
+          # psql -v uses client-side text substitution (a different namespace)
+          # and does NOT populate GUC — PGOPTIONS is the correct mechanism.
+          PGOPTIONS: "-c e2e_email.val=${{ secrets.TEST_E2E_OWNER_EMAIL }}"
         run: |
-          psql "$DB_URL" -v e2e_email="$TEST_E2E_OWNER_EMAIL" -f scripts/staging-fixups.sql
+          psql "$DB_URL" -f scripts/staging-fixups.sql
 
   # ============================================================
   # Staging block — deploy + E2E + smoke (job 6)
