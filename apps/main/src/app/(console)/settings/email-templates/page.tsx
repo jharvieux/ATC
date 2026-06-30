@@ -145,10 +145,14 @@ export default function EmailTemplatesSettingsPage() {
 
   // ── Load cruise lines (once on mount for the sailing cascade) ────────────
   const loadSailingLines = useCallback(async () => {
-    const res = await fetch("/api/cruise-lines");
-    if (res.ok) {
-      const json = (await res.json()) as { lines: CruiseLine[] };
-      setSailingLines(json.lines ?? []);
+    try {
+      const res = await fetch("/api/cruise-lines");
+      if (res.ok) {
+        const json = (await res.json()) as { lines: CruiseLine[] };
+        setSailingLines(json.lines ?? []);
+      }
+    } catch {
+      // Silently leave the dropdown empty; user can switch template type to retry.
     }
   }, []);
 
@@ -161,6 +165,8 @@ export default function EmailTemplatesSettingsPage() {
         const json = (await res.json()) as { ships: CruiseShip[] };
         setSailingShips(json.ships ?? []);
       }
+    } catch {
+      // Silently leave ships empty; spinner already cleared by finally.
     } finally {
       setLoadingSailingShips(false);
     }
@@ -175,6 +181,8 @@ export default function EmailTemplatesSettingsPage() {
         const json = (await res.json()) as { sailings: CruiseSailingOption[] };
         setSailingOptions(json.sailings ?? []);
       }
+    } catch {
+      // Silently leave sailings empty; spinner already cleared by finally.
     } finally {
       setLoadingSailingOptions(false);
     }
