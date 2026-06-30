@@ -16,20 +16,18 @@ const BASE = {
   unsubscribe_url: "https://example.com/unsub",
 } as const;
 
+// The exact JSONB shape that 500'd broadcasts/invites before the sweep. Cast to
+// string because that's how the (mis-typed) call sites reach the component.
+const OBJECT_ADDRESS = {
+  line1: "1 Main St", city: "Miami", state: "FL", zip: "33101", country: "US",
+} as unknown as string;
+
 describe("BrandedLayout — defensive mailing_address coercion (#1553)", () => {
   it("renders a raw JSONB object address as a flat string without throwing", () => {
     const html = renderToStaticMarkup(
-      React.createElement(
-        BrandedLayout,
-        {
-          ...BASE,
-          // The exact JSONB shape that 500'd broadcasts/invites before the sweep.
-          tenant_business_address: {
-            line1: "1 Main St", city: "Miami", state: "FL", zip: "33101", country: "US",
-          } as unknown as string,
-        },
-        React.createElement("p", null, "Body"),
-      ),
+      <BrandedLayout {...BASE} tenant_business_address={OBJECT_ADDRESS}>
+        <p>Body</p>
+      </BrandedLayout>,
     );
     expect(html).toContain("1 Main St, Miami, FL 33101, US");
     expect(html).not.toContain("[object Object]");
@@ -37,11 +35,9 @@ describe("BrandedLayout — defensive mailing_address coercion (#1553)", () => {
 
   it("passes a plain string address through unchanged", () => {
     const html = renderToStaticMarkup(
-      React.createElement(
-        BrandedLayout,
-        { ...BASE, tenant_business_address: "456 Oak Ave, Dallas, TX" },
-        React.createElement("p", null, "Body"),
-      ),
+      <BrandedLayout {...BASE} tenant_business_address="456 Oak Ave, Dallas, TX">
+        <p>Body</p>
+      </BrandedLayout>,
     );
     expect(html).toContain("456 Oak Ave, Dallas, TX");
   });
