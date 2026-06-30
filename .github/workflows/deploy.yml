@@ -540,8 +540,10 @@ jobs:
           echo "::notice::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
 
       - name: Apply staging fixups
+        env:
+          TEST_E2E_OWNER_EMAIL: ${{ secrets.TEST_E2E_OWNER_EMAIL }}
         run: |
-          psql "$DB_URL" -f scripts/staging-fixups.sql
+          psql "$DB_URL" -v e2e_email="$TEST_E2E_OWNER_EMAIL" -f scripts/staging-fixups.sql
 
   # ============================================================
   # Staging block — deploy + E2E + smoke (job 6)
