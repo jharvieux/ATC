@@ -207,8 +207,7 @@ BEGIN
 
   SELECT id INTO v_auth_id FROM auth.users WHERE email = v_email;
   IF v_auth_id IS NULL THEN
-    RAISE NOTICE 'E2E auth.users row not found for % — skipping.', v_email;
-    RETURN;
+    RAISE EXCEPTION 'E2E auth.users row not found for % — create the user on the staging Supabase project before running the pipeline.', v_email;
   END IF;
 
   SELECT id INTO v_tenant_id FROM public.tenants ORDER BY created_at ASC LIMIT 1;
