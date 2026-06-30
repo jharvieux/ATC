@@ -138,7 +138,11 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
 
   // 3 — Resolve from-address
   let apiKey: string;
-  const fromName = tenant.email_from_name ?? tenant.legal_name ?? "AI Travel Concierge";
+  // Coalesce empty/whitespace too, not just null: a blank email_from_name
+  // (tenant_branding stores "" rather than NULL) must fall through to
+  // legal_name, else the from header becomes " <addr>" and Resend rejects it
+  // with a 422 "Invalid `from` field" — a silent, fail-soft delivery failure.
+  const fromName = tenant.email_from_name?.trim() || tenant.legal_name?.trim() || "AI Travel Concierge";
   const fromAddr = resolveFromAddress({
     email_from_address: tenant.email_from_address ?? null,
     email_from_domain: tenant.email_from_domain ?? null,

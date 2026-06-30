@@ -99,6 +99,27 @@ describe("sendEmail — §23", () => {
     expect(result.resend_message_id).toBe("resend-msg-123");
   });
 
+  it("falls back to legal_name when email_from_name is an empty string (Resend 422 regression)", async () => {
+    // tenant_branding stores "" (not NULL) for an unset from-name. Nullish
+    // coalescing let "" through, yielding a " <addr>" from header that Resend
+    // rejects with 422 "Invalid `from` field" — a silent fail-soft delivery
+    // failure. Empty/whitespace must fall through to legal_name.
+    const db = makeDb();
+    const result = await sendEmail({
+      db,
+      tenant: { ...baseTenant, email_from_name: "", legal_name: "Lisa Travel LLC", email_from_address: "noreply@test.com" },
+      to: "customer@example.com",
+      subject: "Test",
+      template_id: "t",
+      category: "transactional",
+      html: testHtml,
+    });
+    expect(result.status).toBe("sent");
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    const body = JSON.parse((calls[0]?.[1]?.body as string) ?? "{}") as { from: string };
+    expect(body.from).toBe("Lisa Travel LLC <noreply@test.com>");
+  });
+
   it("returns suppressed when email_suppressions match", async () => {
     const db = makeDb({ suppressions: [{ reason: "hard_bounce" }] });
     const result = await sendEmail({
