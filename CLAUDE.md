@@ -143,6 +143,10 @@ Test: would a senior engineer say this is overcomplicated? If yes, simplify.
  — Surgical Changes
 Don't refactor what isn't broken. Match existing style.
 
+— Don't restate code in prose
+When describing a change you already made via Edit/Write, don't repeat the full function or file in a chat markdown block. Show only the changed lines with a one-line anchor (or point to `file:line`). The tool call already carries the diff — repeating it in prose is pure token waste.
+This doesn't shrink option-presentation, uncertainty disclosures, or other required structure elsewhere in this file — it's about not re-printing code that was already shown.
+
 — Never ignore a bug you find
 If you encounter a bug while doing other work, you must act on it — never leave it noted and unfixed.
 - **Trivial** (one-liner fix, obvious cause, no scope risk): fix it inline in your current PR. Note it in the commit message.
