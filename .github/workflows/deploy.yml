@@ -540,6 +540,12 @@ jobs:
           echo "::notice::Staging restore OK (pg_restore rc=${restore_rc}); tolerated ${tolerated:-0} auth-FK constraint(s) + Supabase default-privilege noise. Table grants restored from prod (matches grants snapshot)."
 
       - name: Apply staging fixups
+        env:
+          # PGOPTIONS sets a dot-qualified custom GUC on the connection so the
+          # SQL can read it via current_setting('e2e_email.val', true).
+          # psql -v uses client-side text substitution (a different namespace)
+          # and does NOT populate GUC — PGOPTIONS is the correct mechanism.
+          PGOPTIONS: "-c e2e_email.val=${{ secrets.TEST_E2E_OWNER_EMAIL }}"
         run: |
           psql "$DB_URL" -f scripts/staging-fixups.sql
 

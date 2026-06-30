@@ -178,3 +178,48 @@ SELECT 'email_log_active_statuses' AS check_name,
        COUNT(*)::TEXT AS result
 FROM   public.email_log
 WHERE  status IN ('queued', 'sent');
+
+-- =============================================================================
+-- 6. Re-create E2E test user row in public.users
+-- =============================================================================
+-- db-copy wipes public.users along with the rest of the public schema.
+-- The E2E test account lives in auth.users (not copied — staging's auth.users
+-- is left intact after the restore), so GoTrue password sign-in still works.
+-- But getCachedUser() resolves the session via a public.users lookup, so the
+-- row must be re-created here or every authed E2E test fails with a null user.
+--
+-- The email is passed via PGOPTIONS="-c e2e_email.val=<email>" in the workflow
+-- step, which sets a dot-qualified custom GUC on the connection. psql -v is a
+-- client-side text substitution (separate namespace) and does NOT reach
+-- current_setting() — PGOPTIONS is the correct mechanism.
+-- If unset (local runs, non-E2E pipelines) the block no-ops safely.
+-- =============================================================================
+DO $$
+DECLARE
+  v_email     TEXT := current_setting('e2e_email.val', true);
+  v_auth_id   UUID;
+  v_tenant_id UUID;
+BEGIN
+  IF v_email IS NULL OR v_email = '' THEN
+    RAISE NOTICE 'e2e_email not set — skipping E2E user fixup.';
+    RETURN;
+  END IF;
+
+  SELECT id INTO v_auth_id FROM auth.users WHERE email = v_email;
+  IF v_auth_id IS NULL THEN
+    RAISE EXCEPTION 'E2E auth.users row not found for % — create the user on the staging Supabase project before running the pipeline.', v_email;
+  END IF;
+
+  -- Oldest tenant is the original seed org; any valid tenant works for E2E
+  -- (tests verify auth/page load, not tenant-specific data).
+  SELECT id INTO v_tenant_id FROM public.tenants ORDER BY created_at ASC LIMIT 1;
+  IF v_tenant_id IS NULL THEN
+    RAISE EXCEPTION 'No tenants found after restore — cannot create E2E user row.';
+  END IF;
+
+  INSERT INTO public.users (auth_user_id, tenant_id, email, role)
+  VALUES (v_auth_id, v_tenant_id, v_email, 'tenant_owner')
+  ON CONFLICT (auth_user_id, tenant_id) DO UPDATE SET role = 'tenant_owner';
+
+  RAISE NOTICE 'E2E user re-created: % → tenant %', v_email, v_tenant_id;
+END $$;
