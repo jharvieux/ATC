@@ -289,6 +289,36 @@ describe("POST /api/tenant/email-templates/[type]/send-preview", () => {
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
+  it("coerces a JSONB-object mailing_address before render (no 500 from the email-templates screen) (#1553)", async () => {
+    // The tenants row stores mailing_address as JSONB {line1,city,...}. Passed
+    // raw into the layout it would throw "Objects are not valid as a React child"
+    // and 500 the send-test. The route must format it to a flat string first.
+    const objAddrChain = makeChain({
+      single: vi.fn().mockResolvedValue({
+        data: {
+          id: "t-abc",
+          legal_name: "Acme Travel",
+          mailing_address: { line1: "1 Main St", city: "Miami", state: "FL", zip: "33101", country: "US" },
+        },
+        error: null,
+      }),
+    });
+    mocks.fromFn.mockImplementation((table: string) => {
+      if (table === "tenants") return objAddrChain;
+      return makeChain();
+    });
+
+    const res = await sendPreviewPOST(
+      sendReq({ to_email: "agent@example.com" }),
+      params("pre_cruise_t_90"),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalled();
+    // layout is buildPreviewHtml's 3rd arg; its address must be the flat string.
+    const layoutArg = mocks.buildPreviewHtml.mock.calls[0]?.[2] as { tenant_business_address: string };
+    expect(layoutArg.tenant_business_address).toBe("1 Main St, Miami, FL 33101, US");
+  });
+
   it("calls sendEmail with the service-role client and [Preview] subject prefix", async () => {
     const res = await sendPreviewPOST(
       sendReq({ to_email: "agent@example.com" }),

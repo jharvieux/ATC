@@ -15,6 +15,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { cadenceIntervalDays, monthsBetween } from "@/lib/groups/reminder-cadence";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { sendEmail } from "@/lib/email/send";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
 import { generateToken } from "@/lib/groups/invitation-token";
@@ -166,7 +167,7 @@ export const groupReminderCadence = inngest.createFunction(
           slogan: branding?.slogan ?? null,
         },
         tenant_legal_name: tenant?.legal_name ?? "Travel Agency",
-        tenant_business_address: tenant?.mailing_address ?? "",
+        tenant_business_address: formatMailingAddress(tenant?.mailing_address),
         unsubscribe_url: `${baseUrl}/email/unsubscribe?token=${unsubToken}`,
       };
 

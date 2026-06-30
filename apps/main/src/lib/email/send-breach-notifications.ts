@@ -13,6 +13,7 @@
 import * as React from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email/send";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import {
   BreachNotificationUser,
   type BreachNotificationUserProps,
@@ -80,7 +81,7 @@ export async function sendBreachNotifications(
         layout: {
           branding: {},
           tenant_legal_name: tenant.legal_name,
-          tenant_business_address: tenant.mailing_address,
+          tenant_business_address: formatMailingAddress(tenant.mailing_address),
           unsubscribe_url: input.platform_unsubscribe_url,
         },
         recipient_name: admin.recipient_name,
@@ -117,7 +118,7 @@ export async function sendBreachNotifications(
         layout: {
           branding: {},
           tenant_legal_name: tenant.legal_name,
-          tenant_business_address: tenant.mailing_address,
+          tenant_business_address: formatMailingAddress(tenant.mailing_address),
           unsubscribe_url: input.platform_unsubscribe_url,
         },
         customer_name: u.customer_name,

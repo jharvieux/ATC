@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email/send";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { TaskReminder } from "@/emails/TaskReminder";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
@@ -114,7 +115,7 @@ export async function sendTaskReminderEmail(args: {
       slogan: branding.slogan ?? null,
     },
     tenant_legal_name: tenant.legal_name,
-    tenant_business_address: tenant.mailing_address ?? "",
+    tenant_business_address: formatMailingAddress(tenant.mailing_address),
     unsubscribe_url: unsubscribeUrl,
   };
 
@@ -143,7 +144,7 @@ export async function sendTaskReminderEmail(args: {
       html = renderToStaticMarkup(TaskReminder({
         branding,
         tenant_legal_name: tenant.legal_name,
-        tenant_business_address: tenant.mailing_address ?? "",
+        tenant_business_address: formatMailingAddress(tenant.mailing_address),
         recipient_name: recipientName,
         task_title: task.title,
         task_description: task.description,

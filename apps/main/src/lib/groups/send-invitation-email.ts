@@ -6,18 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail } from "@/lib/email/send";
-
-// mailing_address is JSONB {line1, city, state, zip, country} in the DB but
-// typed as string|null in TypeScript. Coerce to a flat string for email footers
-// so renderToStaticMarkup doesn't receive an object as a React child.
-export function formatMailingAddress(addr: unknown): string {
-  if (!addr) return "";
-  if (typeof addr === "string") return addr;
-  const a = addr as Record<string, string | undefined>;
-  return [a.line1, a.city, a.state && a.zip ? `${a.state} ${a.zip}` : (a.state ?? a.zip), a.country]
-    .filter(Boolean)
-    .join(", ");
-}
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 
 // Narrow shape of the group fields the invitation email needs.
 export type GroupInvitationGroup = {

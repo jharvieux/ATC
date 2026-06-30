@@ -23,6 +23,7 @@ import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { signCompanionToken } from "@/lib/email/unsubscribe-token";
 import { signUnsubscribeToken } from "@/lib/email/unsubscribe-token";
@@ -400,7 +401,7 @@ export async function loadEmailContext(args: {
       slogan: branding.slogan ?? null,
     },
     tenant_legal_name: tenant.legal_name ?? "Travel Agency",
-    tenant_business_address: tenant.mailing_address ?? "",
+    tenant_business_address: formatMailingAddress(tenant.mailing_address),
     unsubscribe_url: unsubscribeUrl,
   };
 

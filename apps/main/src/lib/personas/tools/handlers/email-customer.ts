@@ -13,6 +13,7 @@
 
 import type { ToolDispatchContext, ToolResult } from "../dispatch";
 import { sendEmail } from "@/lib/email/send";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { ConciergeMessage } from "@/emails/ConciergeMessage";
 
 // The persona's from-identity. Slug "marcus-cole" → marcus@email.ai-travelconcierge.com
@@ -105,7 +106,7 @@ export async function emailCustomer(
   const jsx = ConciergeMessage({
     branding,
     tenant_legal_name: tenant.legal_name,
-    tenant_business_address: tenant.mailing_address ?? "",
+    tenant_business_address: formatMailingAddress(tenant.mailing_address),
     persona_name: fromName,
     body,
     unsubscribe_url: unsubscribeUrl,

@@ -17,6 +17,7 @@ import { z } from "zod";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { sendTenantEmail } from "@/lib/email/send-tenant-email";
+import { formatMailingAddress } from "@/lib/email/format-mailing-address";
 import { AbuseStateTransition } from "@/emails/AbuseStateTransition";
 import { safeAwait } from "@/lib/db/safe-mutation";
 
@@ -137,7 +138,7 @@ export const abuseStateTransitionNotify = inngest.createFunction(
                   slogan: branding?.slogan ?? null,
                 },
                 tenant_legal_name: tenantRow.legal_name ?? "Your tenant",
-                tenant_business_address: tenantRow.mailing_address ?? "",
+                tenant_business_address: formatMailingAddress(tenantRow.mailing_address),
                 unsubscribe_url: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/email/unsubscribe?u=${admin.id}`,
               },
               recipient_name: admin.display_name ?? "tenant administrator",
