@@ -314,6 +314,11 @@ module.exports = [
   "/app/api/groups/[id]/invitations/route.ts",
   "/app/api/groups/invite/[token]/route.ts",
   "/app/api/groups/invite/[token]/rsvp/route.ts",
+  // §19.x — anonymous invitee forum access (group-landing redesign PR6).
+  // Shared checks 1-4 of the invite-token contract for the guest forum
+  // routes below it — same public, session-less, HMAC-token-gated shape as
+  // the two invite/rsvp routes directly above.
+  "/lib/groups/invitation-token-checks.ts",
   // BP40 §40.5 — booking line items list/create.
   "/app/api/bookings/[id]/line-items/route.ts",
   // BP34: import pipeline (§34.3) — Inngest function with no user session.
