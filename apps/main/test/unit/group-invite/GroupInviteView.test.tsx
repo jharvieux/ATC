@@ -55,6 +55,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("GroupInviteView coordinator message", () => {
+  it("renders the coordinator's message when present", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const data = baseData();
+    data.group.coordinator_message = "Can't wait to see everyone on board!";
+
+    render(<GroupInviteView data={data} token="tok-1" />);
+
+    expect(screen.getByText("Can't wait to see everyone on board!")).toBeTruthy();
+  });
+
+  it("renders nothing for the message when the coordinator hasn't written one", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const { container } = render(<GroupInviteView data={baseData()} token="tok-1" />);
+
+    expect(container.querySelector("blockquote")).toBeNull();
+  });
+});
+
 describe("GroupInviteView RSVP", () => {
   it("optimistically updates the selection and stat counts before the PATCH resolves, then keeps them on success", async () => {
     let resolveFetch: (v: unknown) => void = () => {};
