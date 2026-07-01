@@ -5,6 +5,7 @@ import { useCruiseTheme } from "@/lib/group-invite/use-cruise-theme";
 import { quicksand } from "@/lib/fonts/quicksand";
 import { Nav } from "./Nav";
 import { Hero } from "./Hero";
+import { CoordinatorMessage } from "./CoordinatorMessage";
 import { StatsAndSocialProof } from "./StatsAndSocialProof";
 import { ShipSection } from "./ShipSection";
 import { ItinerarySection } from "./ItinerarySection";
@@ -53,7 +54,14 @@ export function GroupInviteView({ data, token, tenantLogoUrl = null }: { data: I
       await patchInvitation({ rsvp_state: next });
     } catch {
       setRsvpState(prevState);
-      setCabinGrid(data.cabin_grid);
+      // Undo the exact delta relative to current state, not the stale
+      // mount-time data.cabin_grid — otherwise reverting a second failed
+      // change would also wipe out any earlier successful one.
+      setCabinGrid((prev) => ({
+        ...prev,
+        [prevState]: (prev[prevState as keyof CabinGrid] ?? 0) + 1,
+        [next]: Math.max(0, (prev[next] ?? 0) - 1),
+      }));
     } finally {
       setPending(false);
     }
@@ -89,6 +97,7 @@ export function GroupInviteView({ data, token, tenantLogoUrl = null }: { data: I
         sailingDate={data.group.sailing_date}
         itinerary={data.itinerary}
       />
+      <CoordinatorMessage message={data.group.coordinator_message} />
       <StatsAndSocialProof cabinGrid={cabinGrid} roster={data.roster} onOpenGuestList={() => setGuestListOpen(true)} />
       <ShipSection shipName={data.group.ship_name} heroImageUrl={data.group.hero_image_url} shipStats={data.ship_stats} />
       <ItinerarySection itinerary={data.itinerary} />

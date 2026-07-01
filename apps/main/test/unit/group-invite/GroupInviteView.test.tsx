@@ -96,6 +96,32 @@ describe("GroupInviteView RSVP", () => {
     expect(screen.getByText("3")).toBeTruthy();
   });
 
+  it("reverting a second failed change doesn't wipe out an earlier successful one — regression for reverting to a stale mount-time snapshot", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) }) // first click succeeds
+      .mockResolvedValueOnce({ ok: false }); // second click fails
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GroupInviteView data={baseData()} token="tok-1" />);
+
+    // First: pending(3) -> interested. Succeeds and stays (interested 1->2, pending 3->2).
+    fireEvent.click(screen.getByRole("button", { name: "I'm Interested" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // Second: interested -> booked. Fails and must revert to the post-first-change
+    // state (interested=2, pending=2), not the original mount-time snapshot
+    // (interested=1, pending=3).
+    fireEvent.click(screen.getByRole("button", { name: "I've Booked" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "I've Booked" }).className).not.toContain("bg-[var(--cruise-accent)]");
+    });
+    expect(screen.getByRole("button", { name: "I'm Interested" }).className).toContain("bg-[var(--cruise-accent)]");
+    // Booked count is back to its original 2 (never should have shown 3).
+    // Interested count stays at its post-first-change value of 2, not reverted to 1.
+    expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("PATCHes visibility_choice when the anonymous checkbox is toggled", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
     vi.stubGlobal("fetch", fetchMock);
