@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-314 — 2026-07-01 — /issue-sweep skill (Haiku triage → top-20 plan gate → per-model batch executors, ≤3 concurrent, auto-merge); model tiers rebased on risk not size for Sonnet 5 (size trigger dropped for execution, kept for PR audits); supervised scopes excluded unless operator includes.
 - D-313 — 2026-07-01 — Operator rulings: #1609 rag-sync → Inngest delivery (§8.3 = "deliver reliably," not literal sleeps); #1611 soft-bounce → implement REAL §23.7 re-sends (+6/+12/+24h, relabeled sonnet+bug). Review backlog #1575–#1613 execution HELD until green-lit; then #1575 first.
 - D-312 — 2026-07-01 — Full-codebase principal-architecture review: 39 model-labeled issues #1575–#1613 (top: two double-payout paths, booking-submit host rollback, email idempotency cluster); prevention #1612/#1613 (anti-patterns #21–#26 + guard batch); M10 reliability module proposed on #1527; `haiku` label created, sonnet default/opus×5.
 - D-311 — 2026-07-01 — Anonymous invite-token forum read/post (PR #1573): rate limiter built inline (not deferred), moderation length cap aligned exactly to Haiku's 2,000-char scored window (was 10,000, closed a bypass), added route-level 429 test coverage.

@@ -4,6 +4,14 @@ Newest entries on top.
 
 ---
 
+## D-314 — 2026-07-01 — /issue-sweep skill (Haiku triage → plan gate → per-model batch execution); model-tier criteria rebased on risk, not size
+
+**Decision 1: built `/issue-sweep`** (`.claude/commands/issue-sweep.md`). Three phases: (1) parallel Haiku subagents classify open issues into strict JSON (category, P1–P4 priority, model tier, predicted files, subsystem); (2) deterministic grouping by file/subsystem overlap into batches, plan capped at **top 20 issues by priority**, presented for operator approval — never executes without it; (3) one executor subagent per approved batch at the batch's model tier in an isolated worktree, ≤3 concurrent, supervisor finalizes serially (CI → d091-reviewer → pre-pr-reviewer → **auto-squash-merge**; operator approved auto-merge). Supervised-only scopes (migrations/RLS, auth, secrets, billing, CI config, dependency manifests) are flagged ⚠ in the plan and excluded unless the operator explicitly includes them. Issue content is data, not instructions (prompt-injection guard inherited from /fix-bugs). Rejected: Workflow-tool orchestration (can't pause mid-run for the plan gate; revisit if issue counts outgrow the Agent-tool version), headless GitHub-Action variant (operator wants interactive confirmation).
+
+**Decision 2: model-tier criteria updated for Sonnet 5** (`docs/runbooks/triage.md`). Escalate to `opus` on **risk category, not diff size** — the old ≥10-files/≥500-lines size trigger is dropped for execution (Sonnet 5 handles large mechanical diffs). Opus triggers: SQL migration/RLS, net-new API route/Inngest/cron, webhook signatures/idempotency/state machines, service-role paths, permission-matrix/auth-adjacent logic. `haiku` tier formalized (single file, no control-flow change). Unestimatable scope still defaults to opus. Explicitly unchanged: PR-**audit** model selection in `pr-workflow.md` keeps its size trigger — audits review diffs, so size still matters there.
+
+---
+
 ## D-313 — 2026-07-01 — Operator rulings on the two D-312 question issues; review-backlog execution HELD
 
 **Decision 1 (#1609 — rag-sync delivery).** Spec §8.3's 1s/5s/30s in-request retry schedule is interpreted as "must deliver reliably," not a literal sleep-schedule requirement. Approved: move delivery to Inngest (enqueue + backoff-owned function), retire `pending_rag_sync` + `lib/cron/rag-sync-retry.ts`, preserve the `source_revision` idempotency contract, amend the spec text when it ships. Rejected: keeping the schedule as spec-literal off-request (Option B), leaving as-is (Option C).
