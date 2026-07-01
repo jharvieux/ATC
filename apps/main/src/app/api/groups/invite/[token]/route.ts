@@ -40,6 +40,7 @@ export interface Group {
   visibility_default: "visible" | "hidden";
   hero_image_url: string | null;
   sailing_id: string | null;
+  tenant_id: string;
 }
 
 export interface ItineraryStop {
@@ -120,7 +121,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
   // Fetch parent group.
   const { data: group, error: groupErr } = await svc
     .from("groups")
-    .select("id,status,cruise_line,ship_name,sailing_date,departure_port,coordinator_message,visibility_default,hero_image_url,sailing_id")
+    .select("id,status,cruise_line,ship_name,sailing_date,departure_port,coordinator_message,visibility_default,hero_image_url,sailing_id,tenant_id")
     .eq("id", invitation.group_id)
     .single();
 
@@ -212,7 +213,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
     ? await fetchItineraryAndShipStats(svc, grp.sailing_id)
     : { itinerary: null, shipStats: null };
 
-  const chatPreview = await fetchChatPreview(svc, grp.id);
+  const chatPreview = await fetchChatPreview(svc, grp.id, grp.tenant_id);
 
   return Response.json({
     invitation: {
@@ -387,12 +388,12 @@ async function fetchItineraryAndShipStats(
   return { itinerary, shipStats };
 }
 
-async function fetchChatPreview(svc: SupabaseClient, groupId: string): Promise<ChatPreview | null> {
+async function fetchChatPreview(svc: SupabaseClient, groupId: string, tenantId: string): Promise<ChatPreview | null> {
   const { data: forum } = await svc
-    // d091-allow:service-role-tenant — public HMAC-verified invite route; groupId came from the invitation chain already resolved above, no tenant ctx on this endpoint (mirrors invitations/groups reads earlier in this file).
     .from("forums")
     .select("id")
     .eq("group_id", groupId)
+    .eq("tenant_id", tenantId)
     .maybeSingle();
   const forumId = (forum as { id?: string } | null)?.id;
   if (!forumId) return null;
@@ -400,19 +401,19 @@ async function fetchChatPreview(svc: SupabaseClient, groupId: string): Promise<C
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: recent } = await svc
-    // d091-allow:service-role-tenant — forumId resolved from the group above; same public-route rationale as fetchChatPreview's own forums read.
     .from("forum_messages")
     .select("id, content, created_at, users(display_name, first_name, last_name)")
     .eq("forum_id", forumId)
+    .eq("tenant_id", tenantId)
     .eq("status", "visible")
     .order("created_at", { ascending: false })
     .limit(2);
 
   const { count } = await svc
-    // d091-allow:service-role-tenant — same forumId scope as the read above.
     .from("forum_messages")
     .select("id", { count: "exact", head: true })
     .eq("forum_id", forumId)
+    .eq("tenant_id", tenantId)
     .eq("status", "visible")
     .gte("created_at", weekAgo);
 

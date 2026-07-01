@@ -78,17 +78,17 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       if (table === "forums") {
         return {
-          select: () => ({ eq: () => ({ maybeSingle: mocks.forumLookup }) }),
+          select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: mocks.forumLookup }) }) }),
         };
       }
       if (table === "forum_messages") {
         return {
           select: (_cols: string, opts?: { count?: string }) => {
             if (opts?.count) {
-              return { eq: () => ({ eq: () => ({ gte: mocks.forumMessagesCount }) }) };
+              return { eq: () => ({ eq: () => ({ eq: () => ({ gte: mocks.forumMessagesCount }) }) }) };
             }
             return {
-              eq: () => ({ eq: () => ({ order: () => ({ limit: mocks.forumMessagesRecent }) }) }),
+              eq: () => ({ eq: () => ({ eq: () => ({ order: () => ({ limit: mocks.forumMessagesRecent }) }) }) }),
             };
           },
         };
@@ -115,6 +115,7 @@ const GROUP_BASE = {
   visibility_default: "visible" as const,
   hero_image_url: null,
   sailing_id: null as string | null,
+  tenant_id: "tenant-1",
 };
 
 const INVITATION_BASE = {
