@@ -1,4 +1,4 @@
-# Session state — last updated 2026-07-01 (issue-sweep skill session)
+# Session state — last updated 2026-07-01 (issue-sweep skill session, cont.)
 
 ## Just completed
 - Built and merged `/issue-sweep` skill (PR #1616, D-314): Haiku fan-out triage → deterministic file-overlap batching → top-20 priority-capped plan gate (operator approval required) → per-batch model executors in worktrees (≤3 concurrent) → serial CI + audit + auto-squash-merge finalization. Supervised scopes (migrations/RLS, auth, secrets, billing, CI config, dependency manifests) are flagged ⚠ and excluded unless the operator explicitly includes them.
@@ -8,10 +8,10 @@
 - Nothing in flight — clean checkpoint. (Prior session's docs PR merged as #1615.)
 
 ## Next step
-- Run `/issue-sweep` for its first real pass when the operator wants it. **Note the D-313 hold:** review-backlog #1575–#1613 execution is HELD until green-lit — a sweep run before that must exclude those issues from the plan. When green-lit: #1575 (unique indexes) first, migrations per docs/runbooks/migrations.md.
+- Run `/issue-sweep` for its first real pass when the operator invokes it. **D-315 supersedes the earlier exclusion note:** the #1575–#1613 backlog goes THROUGH the sweep — the operator invoking `/issue-sweep` IS the green light; do not hand-execute #1575 outside it. Migration-touching backlog items will be ⚠ supervised in the plan and need the operator's explicit include (then follow docs/runbooks/migrations.md).
 
 ## Blocked on user
-- Green light to start executing the review backlog (#1575–#1613) — carried from D-313.
+- Operator invoking `/issue-sweep` (their chosen route for the #1575–#1613 backlog, per D-315).
 
 ## Open questions
 - First `/issue-sweep` run will shake out prompt tuning (Haiku JSON discipline, batch sizing); expect one iteration.
