@@ -1,22 +1,20 @@
-# Session state — last updated 2026-07-02 01:15 UTC
+# Session state — last updated 2026-07-01 (issue-sweep skill session)
 
 ## Just completed
-- Full-codebase principal-architecture review → **39 model-labeled issues #1575–#1613** (see D-312 for the full tiering; PR #1614 merged the log).
-- #1527 (audit-service epic) commented with M10 Reliability/idempotency module proposal + detector candidates.
-- **Both operator questions answered and recorded (D-313):**
-  - #1609: rag-sync delivery moves to Inngest; §8.3 read as "deliver reliably," spec text to be amended when it ships. `question` label removed.
-  - #1611: implement REAL soft-bounce re-sends per §23.7 (+6h/+12h/+24h; store template ref + vars; via `sendEmail` with Idempotency-Key). Relabeled sonnet+bug, re-scoped acceptance criteria in issue comment. (Research basis: Resend never re-attempts after a final transient bounce; only the pre-bounce deferral window is auto-retried.)
+- Built and merged `/issue-sweep` skill (PR #1616, D-314): Haiku fan-out triage → deterministic file-overlap batching → top-20 priority-capped plan gate (operator approval required) → per-batch model executors in worktrees (≤3 concurrent) → serial CI + audit + auto-squash-merge finalization. Supervised scopes (migrations/RLS, auth, secrets, billing, CI config, dependency manifests) are flagged ⚠ and excluded unless the operator explicitly includes them.
+- Rebased model-tier criteria in `docs/runbooks/triage.md` for Sonnet 5: opus on risk category only (size trigger dropped for execution), haiku tier formalized. PR-audit model selection in `pr-workflow.md` intentionally unchanged (audits review diffs; size still matters there).
 
 ## In flight
-- Docs PR on branch `docs/operator-decisions-1609-1611` (MEMORY D-313 + index + this file) — open/merge is the immediate next mechanical step if the session ended mid-flight.
+- Nothing in flight — clean checkpoint. (Prior session's docs PR merged as #1615.)
 
 ## Next step
-- Merge the docs PR.
-- Then: **NOTHING until the operator green-lights** — the entire #1575–#1613 backlog is explicitly HELD ("hold off," 2026-07-01). When green-lit: Tier 1 in order, #1575 (unique indexes) first, one PR per issue, autonomous batch per standing preference, migrations per docs/runbooks/migrations.md.
+- Run `/issue-sweep` for its first real pass when the operator wants it. **Note the D-313 hold:** review-backlog #1575–#1613 execution is HELD until green-lit — a sweep run before that must exclude those issues from the plan. When green-lit: #1575 (unique indexes) first, migrations per docs/runbooks/migrations.md.
 
 ## Blocked on user
-- Green light to start executing the review backlog (#1575–#1613). Both former question-issues are resolved; nothing else pending.
+- Green light to start executing the review backlog (#1575–#1613) — carried from D-313.
 
 ## Open questions
+- First `/issue-sweep` run will shake out prompt tuning (Haiku JSON discipline, batch sizing); expect one iteration.
 - Carried: RAG ship-stats backfill script (PR #1566) never dry-run against any DB; `signature_feature` curation path (#1565) deferred.
-- Resend's exact pre-bounce retry window is unpublished — if the number ever matters, ask Resend support (noted in #1611).
+- Carried: Resend's exact pre-bounce retry window is unpublished — if the number ever matters, ask Resend support (noted in #1611).
+- Untracked in repo (pre-existing, untouched): `specs/GroupLandingPage.zip`, `specs/design_handoff_group_landing/`.
