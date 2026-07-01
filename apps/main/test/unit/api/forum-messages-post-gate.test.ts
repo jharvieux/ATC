@@ -304,4 +304,12 @@ describe("POST /api/forums/:forumId/threads/:threadId/messages — gate checks (
     expect(mocks.messageInsertSingle).toHaveBeenCalledOnce();
     expect(mocks.safeAwait).toHaveBeenCalledOnce();
   });
+
+  it("content over 10,000 chars → 400 before any write (moderation only scores the first 2,000)", async () => {
+    const res = await POST(postReq({ content: "a".repeat(10_001) }), PARAMS);
+
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe("content_too_long");
+    expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
+  });
 });

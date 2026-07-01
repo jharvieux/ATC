@@ -115,6 +115,13 @@ export async function insertAndModerateForumMessage(
     return { body: { error: "content_required" }, status: 400 };
   }
 
+  // callHaikuModeration only scores the first 2000 chars, so unbounded
+  // content lets padded abusive/PII text past the gate. Cap well above that
+  // so real messages are unaffected.
+  if (content.length > 10_000) {
+    return { body: { error: "content_too_long" }, status: 400 };
+  }
+
   // Audit pass 2, Finding 5: a reply's parent_message_id must resolve to a
   // message in the SAME thread + tenant — otherwise a caller could attach
   // their reply to any message UUID (cross-tenant, cross-forum, cross-thread).

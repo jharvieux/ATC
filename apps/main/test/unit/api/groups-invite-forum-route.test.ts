@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   forumLookup: vi.fn(),
   threadsListLookup: vi.fn(),
   threadInsert: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock("@/lib/groups/invitation-token", () => ({
@@ -54,6 +55,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       throw new Error(`unmocked table: ${table}`);
     },
+    rpc: mocks.rpc,
   }),
 }));
 
@@ -87,6 +89,7 @@ beforeEach(() => {
   mocks.groupLookup.mockResolvedValue({ data: GROUP_BASE, error: null });
   mocks.forumLookup.mockResolvedValue({ data: OPEN_FORUM, error: null });
   mocks.threadsListLookup.mockResolvedValue({ data: [], error: null });
+  mocks.rpc.mockResolvedValue({ data: 1, error: null });
 });
 
 describe("GET /api/groups/invite/[token]/forum", () => {

@@ -9,6 +9,7 @@
 import { validateInviteTokenChecks1to4 } from "@/lib/groups/invitation-token-checks";
 import { resolveGuestForum } from "@/lib/forums/guest-forum";
 import { canPost } from "@/lib/forums/permissions";
+import { enforceGuestForumWriteLimit } from "@/lib/forums/guest-write-limit";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 type RouteProps = { params: Promise<{ token: string }> };
@@ -70,6 +71,11 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
   });
   if (!canCreate) {
     return Response.json({ error: "posting_not_permitted" }, { status: 403 });
+  }
+
+  const withinLimit = await enforceGuestForumWriteLimit(svc, invitation.id, group.tenant_id);
+  if (!withinLimit) {
+    return Response.json({ error: "rate_limited" }, { status: 429 });
   }
 
   const body = await req.json() as { title?: string };

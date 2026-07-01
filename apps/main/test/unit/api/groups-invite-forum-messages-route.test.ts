@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   recordStrike: vi.fn(),
   checkStrikePatterns: vi.fn(),
   fetch: vi.fn(),
+  rpc: vi.fn(),
 }));
 
 vi.mock("@/lib/groups/invitation-token", () => ({
@@ -78,6 +79,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       throw new Error(`unmocked table: ${table}`);
     },
+    rpc: mocks.rpc,
   }),
 }));
 
@@ -129,6 +131,7 @@ beforeEach(() => {
   mocks.messagesListLookup.mockResolvedValue({ data: [], error: null });
   mocks.parentMaybeSingle.mockResolvedValue({ data: null, error: null });
   mocks.updateEq.mockResolvedValue({ data: null, error: null });
+  mocks.rpc.mockResolvedValue({ data: 1, error: null });
   mocks.verifyEnvAtBoot.mockReturnValue({
     FORUM_MODERATION_HAIKU_TIMEOUT_MS: 5000,
     HAIKU_FORUM_MODERATION_MODEL: "claude-haiku-4-5-20251001",
