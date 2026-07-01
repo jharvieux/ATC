@@ -4,6 +4,16 @@ Newest entries on top.
 
 ---
 
+## D-313 — 2026-07-01 — Operator rulings on the two D-312 question issues; review-backlog execution HELD
+
+**Decision 1 (#1609 — rag-sync delivery).** Spec §8.3's 1s/5s/30s in-request retry schedule is interpreted as "must deliver reliably," not a literal sleep-schedule requirement. Approved: move delivery to Inngest (enqueue + backoff-owned function), retire `pending_rag_sync` + `lib/cron/rag-sync-retry.ts`, preserve the `source_revision` idempotency contract, amend the spec text when it ships. Rejected: keeping the schedule as spec-literal off-request (Option B), leaving as-is (Option C).
+
+**Decision 2 (#1611 — soft-bounce handling).** §23.7 stands as written: implement REAL re-sends at +6h/+12h/+24h (store template ref + variables, not rendered HTML; re-sends via `sendEmail` with a deterministic Idempotency-Key, pairing with #1580), suppress after the 4th soft bounce. Basis: Resend only retries during the pre-bounce SMTP deferral window (duration unpublished); after a final transient bounce it never re-attempts — so today a briefly-full mailbox means the customer silently never gets the email and is then suppressed, contradicting the spec the file itself cites. Issue relabeled haiku→sonnet+bug and re-scoped with acceptance criteria. Rejected: amending the spec to bless suppress-without-resend (Option A).
+
+**Execution posture.** The entire #1575–#1613 backlog is HELD — operator said "hold off." Do not start Tier 1 until green-lit. When green-lit, sequence per D-312: #1575 unique indexes first.
+
+---
+
 ## D-312 — 2026-07-01 — Full-codebase principal-architecture review: 39 issues (#1575–#1613), model-labeled; M10 reliability module proposed on #1527
 
 **Decision.** Ran a 6-lens parallel-agent review (idempotency/retry-safety, performance@1000+users, duplication, reinvented-wheels, complexity, data-layer) over apps/main + apps/rag. All findings filed as GitHub issues #1575–#1613 with model labels per the user's directive: `sonnet` is the default (Sonnet 5 capability uplift shifts former opus work down), `opus` reserved for 5 genuinely architectural items (booking-submit state machine #1577, auth-tax trust boundary #1585, chat hot-path #1586, proxy route manifest #1601, chat residual refactor #1602), new `haiku` label created for trivial/mechanical fixes. Two `question`-labeled issues need operator decisions (#1609 rag-sync §8.3 retry schedule, #1611 soft-bounce suppress-without-resend semantics).
