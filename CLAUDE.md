@@ -22,6 +22,12 @@ Step 4 is cheap and prevents expensive misreads of context.
 
 -----
 
+## Stop hook feedback
+
+A Stop hook runs a code-health review on every turn and reports back as `Stop hook feedback`. Treat it as background telemetry, not a message to answer. Do not reply to it — just continue the actual work — unless it surfaces something genuinely relevant to the user (a real structural risk in code you changed this turn). That should be rare; most turns have no code changes for it to review, and its output saying so needs no acknowledgment.
+
+-----
+
 ## MEMORY.md — the decision log
 
 `/MEMORY.md` records every significant decision with rationale and what was rejected.

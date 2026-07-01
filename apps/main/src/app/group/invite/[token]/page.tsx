@@ -1,13 +1,17 @@
 // §18.5 — Invitee canonical landing page.
-// Validates the token server-side (five checks); renders group details,
-// cabin grid, and RSVP buttons if valid.
+// Validates the token server-side (five checks, via the API route); renders
+// the group-landing redesign (specs/design_handoff_group_landing/) if valid.
+//
+// Deliberately does NOT render <TenantTheme/> — that injects the tenant's
+// colors/font as unscoped :root CSS, which would override this page's fixed
+// "Bright & Vacation-y" identity. Tenant branding here is limited to the
+// nav's logo + <title>/favicon, matching the design's own scope.
 
-import * as React from "react";
 import type { Metadata } from "next";
-import { TenantTheme } from "@/components/branding/TenantTheme";
 import { getRequestTenantBranding } from "@/lib/branding/request-branding";
+import { GroupInviteView } from "@/components/group-invite/GroupInviteView";
+import type { InviteData } from "@/components/group-invite/types";
 
-// §16.2 — tenant subdomains show the tenant's name + favicon on the invite page.
 export async function generateMetadata(): Promise<Metadata> {
   const branding = await getRequestTenantBranding();
   if (!branding) return {};
@@ -19,23 +23,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
 type PageProps = { params: Promise<{ token: string }> };
 
-interface InviteData {
-  invitation: { id: string; rsvp_state: string };
-  group: {
-    cruise_line: string;
-    ship_name: string;
-    sailing_date: string;
-    departure_port: string;
-    coordinator_message: string | null;
-    hero_image_url: string | null;
-    status: string;
-  };
-  cabin_grid: { booked: number; interested: number; pending: number; not_going: number };
-}
-
 async function fetchInviteData(token: string, origin: string): Promise<{ data?: InviteData; error?: string; reason?: string }> {
   const res = await fetch(`${origin}/api/groups/invite/${encodeURIComponent(token)}`, { cache: "no-store" });
-  const body = await res.json() as InviteData & { error?: string; reason?: string };
+  const body = (await res.json()) as InviteData & { error?: string; reason?: string };
   if (!res.ok) {
     const result: { data?: InviteData; error?: string; reason?: string } = { error: body.error ?? "unknown_error" };
     if (body.reason !== undefined) result.reason = body.reason;
@@ -44,101 +34,30 @@ async function fetchInviteData(token: string, origin: string): Promise<{ data?: 
   return { data: body };
 }
 
-export default async function InvitePage(props: PageProps): Promise<React.ReactElement> {
+const REASON_MESSAGES: Record<string, string> = {
+  expired_natural: "This invitation has expired.",
+  invitee_removed: "You have been removed from this trip invitation.",
+};
+
+export default async function InvitePage(props: PageProps) {
   const params = await props.params;
-  const origin = process.env.NEXT_PUBLIC_SUPABASE_URL
-    ? (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000")
-    : "http://localhost:3000";
+  const origin = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
-  const { data, error, reason } = await fetchInviteData(params.token, origin);
+  const [{ data, error, reason }, branding] = await Promise.all([
+    fetchInviteData(params.token, origin),
+    getRequestTenantBranding(),
+  ]);
 
-  if (error) {
+  if (error || !data) {
     return (
-      <main className="flex flex-col items-center justify-center min-h-screen gap-4 p-8">
-        <h1 className="text-[22px] font-bold text-red-600 dark:text-red-400">Invitation unavailable</h1>
-        <p className="text-muted-foreground max-w-[400px] text-center">
-          {reason === "expired_natural"
-            ? "This invitation has expired."
-            : reason === "invitee_removed"
-            ? "You have been removed from this trip invitation."
-            : "This invitation link is invalid or has been revoked. Please contact the trip coordinator."}
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#f4faff] p-8">
+        <h1 className="text-[22px] font-bold text-[#0b3a52]">Invitation unavailable</h1>
+        <p className="max-w-[400px] text-center text-[#5c7f91]">
+          {(reason && REASON_MESSAGES[reason]) ?? "This invitation link is invalid or has been revoked. Please contact the trip coordinator."}
         </p>
       </main>
     );
   }
 
-  if (!data) return <main><p>Loading…</p></main>;
-
-  const { group, invitation, cabin_grid } = data;
-  const isSailed = group.status === "sailed";
-
-  return (
-    <main className="max-w-[680px] mx-auto px-4 py-8">
-      {/* §16.2 — tenant colors/font when viewed on the tenant subdomain. */}
-      <TenantTheme />
-      {group.hero_image_url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        (<img src={group.hero_image_url} alt={group.departure_port} className="w-full rounded-xl mb-6 max-h-[300px] object-cover" />)
-      )}
-      <h1 className="text-[26px] font-bold mb-1">{group.cruise_line} — {group.ship_name}</h1>
-      <p className="text-muted-foreground mb-6">
-        Sailing {new Date(group.sailing_date).toLocaleDateString("en-US", { dateStyle: "long" })} · {group.departure_port}
-      </p>
-      {group.coordinator_message && (
-        <blockquote className="mb-6 pl-5 border-l-4 border-primary bg-muted/40 py-4 pr-5 font-serif text-[15px] leading-[1.7]">
-          {group.coordinator_message}
-        </blockquote>
-      )}
-      <div className="grid grid-cols-3 gap-3 mb-8">
-        <StatCard label="Booked" value={cabin_grid.booked} className="text-emerald-600 dark:text-emerald-400" />
-        <StatCard label="Interested" value={cabin_grid.interested} className="text-amber-600 dark:text-amber-400" />
-        <StatCard label="Pending" value={cabin_grid.pending} className="text-muted-foreground" />
-      </div>
-      {!isSailed && (
-        <div className="mb-8">
-          <h2 className="text-[16px] font-semibold mb-4">Your RSVP</h2>
-          <RsvpButtons token={params.token} current={invitation.rsvp_state} />
-        </div>
-      )}
-      {isSailed && (
-        <p className="text-muted-foreground italic">This group has sailed — the page is now read-only.</p>
-      )}
-    </main>
-  );
-}
-
-function StatCard(props: { label: string; value: number; className: string }): React.ReactElement {
-  return (
-    <div className="bg-muted rounded-lg p-4 text-center">
-      <div className={`text-[28px] font-bold ${props.className}`}>{props.value}</div>
-      <div className="text-[13px] text-muted-foreground">{props.label}</div>
-    </div>
-  );
-}
-
-function RsvpButtons(props: { token: string; current: string }): React.ReactElement {
-  const options: { state: string; label: string }[] = [
-    { state: "interested", label: "I'm interested" },
-    { state: "not_going", label: "Can't make it" },
-    { state: "booked", label: "I've booked" },
-  ];
-  return (
-    <div className="flex gap-3 flex-wrap">
-      {options.map((opt) => (
-        <form key={opt.state} method="POST" action={`/api/groups/invite/${props.token}/rsvp`}>
-          <input type="hidden" name="rsvp_state" value={opt.state} />
-          <button
-            type="submit"
-            className={`px-5 py-2.5 rounded-lg text-[14px] transition-colors ${
-              props.current === opt.state
-                ? "border-2 border-primary bg-primary/10 font-bold"
-                : "border border-border bg-card hover:bg-accent"
-            }`}
-          >
-            {opt.label}
-          </button>
-        </form>
-      ))}
-    </div>
-  );
+  return <GroupInviteView data={data} token={params.token} tenantLogoUrl={branding?.logo_url ?? null} />;
 }
