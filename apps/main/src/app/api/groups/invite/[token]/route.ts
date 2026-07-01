@@ -205,7 +205,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
     .eq("group_id", grp.id);
 
   const invitationRows = (allInvitations as (Invitation & { id: string })[] | null) ?? [];
-  const cabinGrid = buildCabinGrid(grp, invitationRows);
+  const cabinGrid = buildCabinGrid(invitationRows);
   const roster = buildRoster(grp, invitationRows);
 
   const { itinerary, shipStats } = grp.sailing_id
@@ -300,7 +300,7 @@ export async function PATCH(req: Request, props: RouteProps): Promise<Response> 
   return Response.json({ ok: true });
 }
 
-export function buildCabinGrid(group: Group, invitations: Invitation[]): { booked: number; interested: number; pending: number; not_going: number } {
+export function buildCabinGrid(invitations: Invitation[]): { booked: number; interested: number; pending: number; not_going: number } {
   // Anonymity (§18.6) hides a name from the roster, not the person from the
   // count — every invitee counts here regardless of visibility.
   const counts = { booked: 0, interested: 0, pending: 0, not_going: 0 };
