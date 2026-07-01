@@ -1,9 +1,11 @@
 "use client";
 
 // §18 / BP19 — Coordinator invitees tab.
+// Restyled to the group-landing "Bright & Vacation-y" cruise identity
+// (specs/design_handoff_group_landing/) — raw elements + --cruise-* tokens
+// instead of shadcn Button (which hardcodes the app-wide indigo/Geist theme).
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Button } from "@/components/ui/button";
 
 type RsvpState = "pending" | "interested" | "not_going" | "booked";
 
@@ -18,10 +20,10 @@ interface Invitation {
 }
 
 const RSVP_CHIP_STYLES: Record<RsvpState, string> = {
-  pending: "bg-gray-100 text-gray-700",
-  interested: "bg-amber-100 text-amber-700",
-  not_going: "bg-red-100 text-red-600",
-  booked: "bg-emerald-100 text-emerald-700",
+  pending: "border-[var(--cruise-border)] text-[var(--cruise-text-muted)]",
+  interested: "border-[#e8a017] text-[#e8a017]",
+  not_going: "border-[var(--cruise-coral)] text-[var(--cruise-coral)]",
+  booked: "border-[var(--cruise-success)] text-[var(--cruise-success)]",
 };
 
 const RSVP_LABEL: Record<RsvpState, string> = {
@@ -30,6 +32,17 @@ const RSVP_LABEL: Record<RsvpState, string> = {
   not_going: "Not going",
   booked: "Booked",
 };
+
+const CARD = "rounded-[var(--cruise-radius-card)] bg-[var(--cruise-surface)] p-6 shadow-[var(--cruise-card-shadow)]";
+const HEADING = "font-[family-name:var(--font-quicksand)] text-xl font-bold text-[var(--cruise-text)]";
+const INPUT =
+  "h-9 rounded-[var(--cruise-radius-itinerary)] border border-[var(--cruise-border)] bg-[var(--cruise-bg)] px-3 text-sm text-[var(--cruise-text)] placeholder:text-[var(--cruise-text-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cruise-accent)]";
+const BUTTON_PRIMARY =
+  "rounded-[var(--cruise-radius-pill)] bg-[var(--cruise-accent)] px-4 h-9 font-[family-name:var(--font-quicksand)] text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60";
+const BUTTON_OUTLINE =
+  "rounded-[var(--cruise-radius-pill)] border border-[var(--cruise-border)] bg-transparent px-4 py-2 font-[family-name:var(--font-quicksand)] text-sm font-bold text-[var(--cruise-text)] transition-colors hover:bg-[var(--cruise-bg)] disabled:opacity-60";
+const BUTTON_DANGER =
+  "rounded-[var(--cruise-radius-pill)] border border-[var(--cruise-coral)] bg-transparent px-3 py-1 text-xs font-semibold text-[var(--cruise-coral)] transition-opacity hover:opacity-80 disabled:opacity-60";
 
 export function InviteesTabClient({ groupId }: { groupId: string }) {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -130,9 +143,9 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
 
   if (loading) {
     return (
-      <section>
-        <h2 className="text-[18px] font-bold mb-4">Invitees</h2>
-        <p className="text-muted-foreground text-[14px]">Loading invitees…</p>
+      <section className="flex flex-col gap-4">
+        <h2 className={HEADING}>Invitees</h2>
+        <p className="text-sm font-medium text-[var(--cruise-text-muted)]">Loading invitees…</p>
       </section>
     );
   }
@@ -145,19 +158,16 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
   );
 
   return (
-    <section>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-[18px] font-bold">Invitees</h2>
-        <Button variant="outline" onClick={load} disabled={loading}>
+    <section className="flex flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <h2 className={HEADING}>Invitees</h2>
+        <button type="button" className={BUTTON_OUTLINE} onClick={load} disabled={loading}>
           Refresh
-        </Button>
+        </button>
       </div>
 
-      <form
-        onSubmit={inviteSubmit}
-        className="mb-5 rounded-lg border border-border bg-muted/30 p-4 flex flex-col gap-3"
-      >
-        <p className="text-[13px] font-semibold">Add Invitee</p>
+      <form onSubmit={inviteSubmit} className={`${CARD} flex flex-col gap-3`}>
+        <p className="text-[13px] font-semibold text-[var(--cruise-text)]">Add Invitee</p>
         <div className="flex gap-3">
           <input
             type="email"
@@ -165,14 +175,14 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
             placeholder="Email address"
             value={inviteEmail}
             onChange={(e) => setInviteEmail(e.target.value)}
-            className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-[14px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={`${INPUT} flex-1`}
           />
           <input
             type="text"
             placeholder="Name (optional)"
             value={inviteName}
             onChange={(e) => setInviteName(e.target.value)}
-            className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-[14px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={`${INPUT} flex-1`}
           />
         </div>
         <textarea
@@ -180,33 +190,33 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
           value={personalNote}
           onChange={(e) => setPersonalNote(e.target.value)}
           rows={2}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-[14px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+          className={`${INPUT} h-auto w-full resize-none py-2`}
         />
         <div className="flex items-center gap-3">
           <select
             value={visibilityChoice}
             onChange={(e) => setVisibilityChoice(e.target.value)}
-            className="h-9 rounded-md border border-input bg-background px-3 text-[14px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className={INPUT}
           >
             <option value="no_opinion">No preference</option>
             <option value="be_anonymous">Keep me anonymous</option>
             <option value="show_me_anyway">Show coordinator info</option>
           </select>
-          <Button type="submit" disabled={inviting} className="h-9">
+          <button type="submit" disabled={inviting} className={BUTTON_PRIMARY}>
             {inviting ? "Sending…" : "Send Invite"}
-          </Button>
+          </button>
         </div>
         {inviteError && (
-          <p className="text-[13px] text-destructive">{inviteError}</p>
+          <p className="text-[13px] text-[var(--cruise-coral)]">{inviteError}</p>
         )}
       </form>
 
       {countChips.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-5">
+        <div className="flex flex-wrap gap-2">
           {countChips.map((state) => (
             <span
               key={state}
-              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[12px] font-medium ${RSVP_CHIP_STYLES[state]}`}
+              className={`inline-flex items-center rounded-[var(--cruise-radius-pill)] border px-2.5 py-0.5 text-[12px] font-medium ${RSVP_CHIP_STYLES[state]}`}
             >
               {counts[state]} {RSVP_LABEL[state]}
             </span>
@@ -215,51 +225,51 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
       )}
 
       {error && (
-        <div className="mb-4 rounded-md bg-destructive/10 text-destructive text-[13px] px-4 py-3">
+        <div className="rounded-[var(--cruise-radius-itinerary)] bg-[var(--cruise-surface)] px-4 py-3 text-[13px] text-[var(--cruise-coral)] shadow-[var(--cruise-card-shadow)]">
           {error}
         </div>
       )}
 
       {revokeError && (
-        <div className="mb-4 rounded-md bg-destructive/10 text-destructive text-[13px] px-4 py-3">
+        <div className="rounded-[var(--cruise-radius-itinerary)] bg-[var(--cruise-surface)] px-4 py-3 text-[13px] text-[var(--cruise-coral)] shadow-[var(--cruise-card-shadow)]">
           {revokeError}
         </div>
       )}
 
       {invitations.length === 0 ? (
-        <p className="text-muted-foreground text-[14px]">No invitees yet.</p>
+        <p className="text-sm font-medium text-[var(--cruise-text-muted)]">No invitees yet.</p>
       ) : (
-        <>
+        <div className={CARD}>
           <table className="w-full border-collapse text-[14px]">
             <thead>
-              <tr className="border-b-2 border-border">
-                <th className="text-left px-3 py-2 font-semibold">Name</th>
-                <th className="text-left px-3 py-2 font-semibold">Email</th>
-                <th className="text-left px-3 py-2 font-semibold">RSVP</th>
-                <th className="text-left px-3 py-2 font-semibold">Actions</th>
+              <tr className="border-b-2 border-[var(--cruise-border)]">
+                <th className="px-3 py-2 text-left font-semibold text-[var(--cruise-text)]">Name</th>
+                <th className="px-3 py-2 text-left font-semibold text-[var(--cruise-text)]">Email</th>
+                <th className="px-3 py-2 text-left font-semibold text-[var(--cruise-text)]">RSVP</th>
+                <th className="px-3 py-2 text-left font-semibold text-[var(--cruise-text)]">Actions</th>
               </tr>
             </thead>
             <tbody>
               {activeInvites.map((inv) => (
-                <tr key={inv.id} className="border-b border-border hover:bg-muted/40">
-                  <td className="px-3 py-2">{inv.invitee_name ?? "—"}</td>
-                  <td className="px-3 py-2">{inv.invitee_email}</td>
+                <tr key={inv.id} className="border-b border-[var(--cruise-border)]">
+                  <td className="px-3 py-2 text-[var(--cruise-text)]">{inv.invitee_name ?? "—"}</td>
+                  <td className="px-3 py-2 text-[var(--cruise-text)]">{inv.invitee_email}</td>
                   <td className="px-3 py-2">
                     <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[12px] font-medium ${RSVP_CHIP_STYLES[inv.rsvp_state]}`}
+                      className={`inline-flex items-center rounded-[var(--cruise-radius-pill)] border px-2 py-0.5 text-[12px] font-medium ${RSVP_CHIP_STYLES[inv.rsvp_state]}`}
                     >
                       {RSVP_LABEL[inv.rsvp_state]}
                     </span>
                   </td>
                   <td className="px-3 py-2">
-                    <Button
-                      variant="outline"
+                    <button
+                      type="button"
                       onClick={() => revoke(inv.id)}
                       disabled={revoking === inv.id}
-                      className="h-7 text-[12px] text-destructive border-destructive/40 hover:bg-destructive/10"
+                      className={BUTTON_DANGER}
                     >
                       {revoking === inv.id ? "Removing…" : "Remove"}
-                    </Button>
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -268,16 +278,16 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
 
           {revokedInvites.length > 0 && (
             <details className="mt-4">
-              <summary className="text-[13px] text-muted-foreground cursor-pointer select-none">
+              <summary className="cursor-pointer select-none text-[13px] text-[var(--cruise-text-muted)]">
                 {revokedInvites.length} removed
               </summary>
-              <table className="w-full border-collapse text-[13px] mt-2 opacity-60">
+              <table className="mt-2 w-full border-collapse text-[13px] opacity-60">
                 <tbody>
                   {revokedInvites.map((inv) => (
-                    <tr key={inv.id} className="border-b border-border">
-                      <td className="px-3 py-2">{inv.invitee_name ?? "—"}</td>
-                      <td className="px-3 py-2">{inv.invitee_email}</td>
-                      <td className="px-3 py-2 text-muted-foreground">
+                    <tr key={inv.id} className="border-b border-[var(--cruise-border)]">
+                      <td className="px-3 py-2 text-[var(--cruise-text)]">{inv.invitee_name ?? "—"}</td>
+                      <td className="px-3 py-2 text-[var(--cruise-text)]">{inv.invitee_email}</td>
+                      <td className="px-3 py-2 text-[var(--cruise-text-muted)]">
                         {inv.token_revoked_reason ?? "removed"}
                       </td>
                     </tr>
@@ -286,7 +296,7 @@ export function InviteesTabClient({ groupId }: { groupId: string }) {
               </table>
             </details>
           )}
-        </>
+        </div>
       )}
     </section>
   );
