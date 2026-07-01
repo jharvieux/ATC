@@ -115,10 +115,9 @@ export async function insertAndModerateForumMessage(
     return { body: { error: "content_required" }, status: 400 };
   }
 
-  // callHaikuModeration only scores the first 2000 chars, so unbounded
-  // content lets padded abusive/PII text past the gate. Cap well above that
-  // so real messages are unaffected.
-  if (content.length > 10_000) {
+  // callHaikuModeration only scores the first 2000 chars — cap content at
+  // exactly that window so nothing inserted can fall outside what's scored.
+  if (content.length > 2_000) {
     return { body: { error: "content_too_long" }, status: 400 };
   }
 

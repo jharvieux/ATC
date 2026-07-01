@@ -149,6 +149,17 @@ describe("POST /api/groups/invite/[token]/forum/threads", () => {
     expect(mocks.threadInsert).not.toHaveBeenCalled();
   });
 
+  it("429s once the guest write-limit RPC reports the invitation over cap, before any insert", async () => {
+    mocks.rpc.mockResolvedValue({ data: 21, error: null });
+    const { POST } = await import("@/app/api/groups/invite/[token]/forum/threads/route");
+
+    const res = await POST(postReq(), PARAMS);
+
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toBe("rate_limited");
+    expect(mocks.threadInsert).not.toHaveBeenCalled();
+  });
+
   it("403s when the forum is locked", async () => {
     mocks.forumLookup.mockResolvedValue({ data: { id: "forum-1", is_locked: true }, error: null });
     const { POST } = await import("@/app/api/groups/invite/[token]/forum/threads/route");
