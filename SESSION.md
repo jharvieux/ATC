@@ -1,26 +1,28 @@
-# Session state — last updated 2026-07-01 16:45 UTC
+# Session state — last updated 2026-07-02 00:30 UTC
 
 ## Just completed
-Group cruise invite landing page + coordinator redesign, per `specs/design_handoff_group_landing/`. Decisions locked in with user: roster shows "First L." or "Anonymous" (still counted in aggregates); ship stats/itinerary sourced from RAG via regex backfill (signature_feature stays manual, issue #1565); customer group chat gets its own anonymous token-based posting scheme (not session-auth/viewer-grants); declined invitees get a quiet 4th stat column (diverges from the design file); coordinator page gets a fuller relayout, not just a token swap.
-
-Merged so far:
-- **PR #1564**: `cruise_ships` gains nullable `guest_capacity`/`decks`/`built_year`/`signature_feature` columns. Issue #1565 tracks `signature_feature`'s missing curation path.
-- **PR #1566**: `scripts/backfill-ship-stats-from-rag.sql` — one-shot idempotent regex backfill from RAG's `knowledge_chunks` (ship_intel category), same shape as D-303's sailing backfill. Not yet run against any DB — dry-run is a manual follow-up.
-- **PR #1567**: Fixed a real bug (`buildCabinGrid` was skipping anonymous invitees from aggregate RSVP counts entirely, not just the named list). Extended `GET /api/groups/invite/[token]` with `roster`/`itinerary`/`ship_stats`/`chat_preview`. Went through 3 rounds of d091-reviewer findings (dead param, missing tenant_id filter on forum reads, chat-preview author name bypassing anonymity truncation) — all fixed and confirmed. First-ever request-level test coverage added for this route.
+- **Full-codebase principal-architecture review** (6 parallel agent lenses: idempotency, performance@scale, duplication, reinvented-wheels, complexity, data-layer) over apps/main + apps/rag.
+- **39 issues filed, #1575–#1613**, each labeled with the model to fix it (`sonnet` default, `opus` ×5 architectural, new `haiku` label for mechanical fixes). Tiering:
+  - Tier 1 money/email (fix before go-live): #1575 UNIQUE constraints (double-payout), #1576 import-promote CAS, #1577 booking-submit host rollback (opus), #1578 platform_revenue loss, #1579 payout re-transfer >24h, #1580 Resend idempotency + stale sender fork, #1581 reminder claim-before-send, #1582 pre-cruise silent loss, #1583 Stripe event ordering, #1584 invite reminder stamp (haiku).
+  - Tier 2 scale: #1585 auth tax (opus), #1586 chat hot path (opus), #1587 history limit (haiku), #1588 pagination sweep, #1589 RAG indexes/HNSW, #1590 retention crons.
+  - Tier 3 drifted copies/latent bugs: #1591–#1600 (consent cluster, transfer races, HelpAI SSE bug, error-egress sweep, RAG plumbing, quote PDFs, fetchGuarded, escapeHtml, AI batch, groups hardening).
+  - Tier 4 maintainability: #1601 proxy manifest (opus), #1602 chat refactor (opus), #1603 docs, #1604 jose tokens, #1605 TTL caches, #1606 money display, #1607 audit-log helper, #1608 template preview, #1609 rag-sync→Inngest (QUESTION), #1610 small cleanups, #1611 soft-bounce semantics (QUESTION).
+  - Prevention: #1612 D-091 anti-patterns #21–#26, #1613 shift-left guard batch (incl. jscpd ratchet).
+- **Commented on #1527** (audit-service epic) proposing an M10 Reliability/idempotency module + detector candidates for scan-extras.txt, each evidenced by an escaped finding on our own repo.
+- MEMORY.md D-312 added; this PR also carries the prior session's uncommitted D-311 entry + SESSION update that never got PR'd.
 
 ## In flight
-- Nothing in flight — clean checkpoint. Branch `feature/group-landing-redesign` (PR1's original branch) is gone; all subsequent work branches were rebased off `dev` directly and merged.
+- This docs PR (branch `docs/arch-review-2026-07-01`): MEMORY.md (D-311 + D-312), MEMORY-INDEX.md, SESSION.md. Doc-only → audit-agent exempt.
 
 ## Next step
-Continue the remaining phased plan (see task list, still tracked in this conversation):
-- **PR3**: Scoped "Bright & Vacation-y" theme tokens — `[data-cruise-theme]` light/dark CSS var blocks in `globals.css` (mirror the `[data-ta-theme]` precedent), Quicksand via `next/font/google`, independent `CruiseThemeToggle` (own localStorage key, not next-themes), drop unscoped `<TenantTheme/>` color/font usage on the two target route trees (keep only display_name/logo/favicon).
-- **PR4**: Customer invite-landing page rewrite (`apps/main/src/app/group/invite/[token]/page.tsx` + new `components/group-invite/` tree) — match design option 1b, quiet 4th "Can't make it" stat column, optimistic RSVP via the existing PATCH endpoint, anonymous-RSVP toggle wired to `visibility_choice`.
-- **PR5**: Coordinator page fuller relayout (`groups/[id]/coordinate/[tab]/page.tsx` + tab clients) to the cruise theme.
-- **PR6**: Anonymous token-based forum posting — nullable `invitation_id` FK + CHECK on `forum_threads`/`forum_messages`, new public HMAC-token-scoped routes mirroring the RSVP route's auth pattern (not session/viewer-grants), `ForumTabClient.tsx` author-resolution update for guest-authored messages.
+- Merge the docs PR once CI is green.
+- Then, when the user gives the go: execute Tier 1 issues (#1575 first — the two UNIQUE-index migrations cap the blast radius of #1576/#1577). Migration PRs must follow docs/runbooks/migrations.md.
 
 ## Blocked on user
-- Nothing right now — proceeding autonomously per the "do it" go-ahead already given for this whole redesign.
+- #1609 — spec §8.3 decision: is the rag-sync 1s/5s/30s in-request retry schedule a hard spec requirement, or can Inngest-backed delivery replace it?
+- #1611 — product decision: is email-soft-bounce suppress-without-resend the intended §23 behavior?
+- Whether/when to start executing the review backlog (user said "create the issues"; fixing was not yet requested).
 
 ## Open questions
-- The RAG ship-stats backfill script (PR #1566) hasn't actually been run/dry-run yet — needs an operator pass against the test DB once convenient, per its own PR description's unchecked test-plan item.
-- `signature_feature` curation path (issue #1565) is unresolved — no admin UI built yet, deliberately deferred.
+- Carried from last session: RAG ship-stats backfill script (PR #1566) still never dry-run against any DB; `signature_feature` curation path (#1565) deferred.
+- Review agents flagged but review deliberately did NOT re-report: vendor-health per-instance gate is documented-intentional (scale consequence noted inside #1586's scope).

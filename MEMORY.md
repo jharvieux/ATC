@@ -4,6 +4,34 @@ Newest entries on top.
 
 ---
 
+## D-312 — 2026-07-01 — Full-codebase principal-architecture review: 39 issues (#1575–#1613), model-labeled; M10 reliability module proposed on #1527
+
+**Decision.** Ran a 6-lens parallel-agent review (idempotency/retry-safety, performance@1000+users, duplication, reinvented-wheels, complexity, data-layer) over apps/main + apps/rag. All findings filed as GitHub issues #1575–#1613 with model labels per the user's directive: `sonnet` is the default (Sonnet 5 capability uplift shifts former opus work down), `opus` reserved for 5 genuinely architectural items (booking-submit state machine #1577, auth-tax trust boundary #1585, chat hot-path #1586, proxy route manifest #1601, chat residual refactor #1602), new `haiku` label created for trivial/mechanical fixes. Two `question`-labeled issues need operator decisions (#1609 rag-sync §8.3 retry schedule, #1611 soft-bounce suppress-without-resend semantics).
+
+**Top severity (fix-before-go-live tier).** Two independent double-payout paths (import promotion not idempotent #1576 + missing UNIQUE on commissions.booking_id #1575); booking submit can roll back a host-accepted cruise-line booking to draft → duplicate live booking (#1577, interacts with BOOKING_CRONS_DISABLED/#895); platform_revenue silently lost on commission-split retry (#1578); email duplication/loss cluster (#1580–#1582: no Resend Idempotency-Key anywhere + stale send-tenant-email.ts fork live on the abuse notifier); stale Stripe subscription events can gate a paying tenant (#1583).
+
+**Prevention.** #1612 adds anti-pattern classes #21–#26 to the D-091 catalog (claim-before-send, collectively-atomic multi-writes, external-send idempotency keys, DB-enforced uniqueness, bounded queries on growing tables, webhook ordering). #1613 is the shift-left guard batch (error-egress String(err) gap, audit_log lint, escapeHtml single-source, apps/rag guard parity, money-display lint, unbounded-select heuristic, jscpd ratchet). Cross-cutting lesson: per-mutation guards don't compose into sequence safety — nothing verified that "send + stamp" or "insert A + insert B" survive a retry as a unit.
+
+**Audit service.** Commented on #1527 proposing an M10 "Reliability/idempotency" module + M1/M7/data-layer detector candidates, each evidenced by an escaped finding on our own guarded repo — the calibration pitch being that G1–G6 + two audit agents still missed 4 HIGHs in this class.
+
+**Rejected.** Fixing findings inline this session (user directed issues-first, model-labeled for later execution); re-reporting known/accepted items (D-287 pricing cache, D-306 indexes, #735 OTP won't-do, #1346 TIER_CODE dup — all excluded from agent briefs up front).
+
+---
+
+## D-311 — 2026-07-01 — Anonymous invite-token forum read/post: rate limiter built inline, moderation cap aligned to scored window (PR #1573)
+
+**Decision.** Guest (invite-token) forum threads/messages routes ship with: (1) a fail-closed hourly write-rate-limiter (`enforceGuestForumWriteLimit` / `forum_guest_write_counters` table + `increment_forum_guest_write_counter` atomic RPC, cap 20/hr via `FORUM_GUEST_WRITE_LIMIT_PER_HOUR`), mirroring `lib/chat/anonymous-limit.ts`; (2) the message-length cap in `insertAndModerateForumMessage` set to exactly 2,000 chars — matching `callHaikuModeration`'s scored window precisely, not "well above" it.
+
+**Why.** d091-reviewer's first audit found 3 issues on the base feature: no rate limit on anonymous forum writes (a leaked invite link could drive unbounded paid Haiku moderation calls), a moderation-length bypass (cap was 10,000 but only the first 2,000 chars are scored — content in between could carry abuse/PII past the gate undetected), and a test gap on the staff GET route's guest-anonymity derivation. User chose to build the rate limiter in this PR rather than defer it. The length cap was first narrowed to 10,000 (still leaving an 8,000-char blind window) — a re-audit caught that a "well above" cap only shrinks the bypass, it doesn't close it; the fix is cap == scored window exactly.
+
+**Rejected.** Deferring the rate limiter to a follow-up issue (user explicitly chose "build it now"). Setting the length cap to any value above 2,000 (still leaves unscored content reachable).
+
+**Also fixed inline (same PR, per re-audit):** added route-level 429-path tests for both guest routes — asserts `enforceGuestForumWriteLimit`'s real (un-mocked) RPC-backed logic returns 429 before any insert, not just the isolated limiter-function unit tests that already existed.
+
+**Local dev lesson (non-decision, worth recording):** this repo's local Postgres test DB setup does NOT use the Supabase CLI's migration ledger (`supabase migration repair` / `supabase db reset` will corrupt it, as happened mid-session). The actual local workflow is `scripts/local-pg-bootstrap.sql` (auth schema stub) + `ALLOW_DB_RESET=true pnpm db:reset` (`scripts/db-reset.ts`, raw psql replay of every migration file) — documented in `docs/testing/e2e-local-setup.md` Tier 2 setup.
+
+---
+
 ## D-310 — 2026-06-28 — Platform-domain SaaS staff auto-redirect to tenant subdomain (PR #1541)
 
 **Decision.** Authenticated non-internal-tenant staff who land on the platform domain are redirected (302) to their tenant subdomain (e.g. `atcapp.com/` → `booking.atcapp.com/`). Custom-domain tenants redirect to `custom_domain` instead of slug-based subdomain. Implemented in `proxy.ts` before the `isConsolePath` fallback block.

@@ -18,6 +18,8 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-312 — 2026-07-01 — Full-codebase principal-architecture review: 39 model-labeled issues #1575–#1613 (top: two double-payout paths, booking-submit host rollback, email idempotency cluster); prevention #1612/#1613 (anti-patterns #21–#26 + guard batch); M10 reliability module proposed on #1527; `haiku` label created, sonnet default/opus×5.
+- D-311 — 2026-07-01 — Anonymous invite-token forum read/post (PR #1573): rate limiter built inline (not deferred), moderation length cap aligned exactly to Haiku's 2,000-char scored window (was 10,000, closed a bypass), added route-level 429 test coverage.
 - D-310 — 2026-06-28 — Platform-domain SaaS staff auto-redirect to tenant subdomain; is_platform_internal guard for platform admins (PR #1541)
 - D-309 — 2026-06-27 — Slim CLAUDE.md ~8.5k→4.8k tokens (PR #1537): task-specific detail → on-demand runbooks (triage.md, pr-workflow.md, migrations.md), no rule removed. Triage is now MANUAL (`/triage`, was auto every session); session-start 6→5 steps. D-091 collapsed to 20 titles inline, detail in anti-patterns.md (items 15–20/#1393 G1–G6 added there — previously lived only in CLAUDE.md). Follow-up #1536 = fail-loud migration hook.
 - D-308 — 2026-06-26 — Post-merge drift→issue (PR #1496, #1492 CLOSED): deploy.yml dev-push step opens/reuses a single `snapshot-drift` issue on rls/grants drift instead of warn-only; skip-if-open (not comment) because dev pushes are frequent — differs deliberately from prod-drift-check.yml's nightly comment pattern. Guard stack complete: check:policy-snapshot → rls-snapshot-diff/grants → post-merge backstop.
