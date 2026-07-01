@@ -9,7 +9,6 @@
 // which the API routes already enforce server-side).
 
 import type { ReactElement } from "react";
-import { quicksand } from "@/lib/fonts/quicksand";
 import { GroupChatClient } from "@/components/group-invite/GroupChatClient";
 
 type PageProps = { params: Promise<{ token: string }> };
@@ -38,32 +37,14 @@ async function fetchForum(token: string, origin: string): Promise<{ data?: Forum
 
 export default async function GroupChatPage(props: PageProps): Promise<ReactElement> {
   const params = await props.params;
-  // Mirrors the origin resolution in ../page.tsx (InvitePage) for consistency.
-  const origin = process.env.NEXT_PUBLIC_SUPABASE_URL
-    ? (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000")
-    : "http://localhost:3000";
+  const origin = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
   const { data, error } = await fetchForum(params.token, origin);
 
-  return (
-    <main
-      data-cruise-theme="light"
-      className={`${quicksand.variable} min-h-screen bg-[var(--cruise-bg)] text-[var(--cruise-text)]`}
-    >
-      <div className="max-w-[680px] mx-auto px-4 py-8">
-        <h1 className="text-[22px] font-semibold mb-6" style={{ fontFamily: "var(--font-quicksand)" }}>
-          Group Chat
-        </h1>
-        {error || !data ? (
-          <p className="text-sm text-[var(--cruise-text-muted)]">
-            {error === "forum_not_found"
-              ? "This group doesn't have a chat yet."
-              : "This chat isn't available right now."}
-          </p>
-        ) : (
-          <GroupChatClient token={params.token} initialForum={data} />
-        )}
-      </div>
-    </main>
-  );
+  // GroupChatClient owns the data-cruise-theme wrapper (dynamic, synced via
+  // useCruiseTheme) rather than this server component hardcoding a static
+  // value — a hardcoded attribute here would sit closer to the content than
+  // document.documentElement and win the CSS custom-property cascade,
+  // silently defeating the live theme sync for every visitor in dark mode.
+  return <GroupChatClient token={params.token} initialForum={data ?? null} error={error ?? null} />;
 }
