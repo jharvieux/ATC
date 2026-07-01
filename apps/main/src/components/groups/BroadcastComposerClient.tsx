@@ -3,12 +3,13 @@
 // §18.6 — Coordinator broadcast composer. Subject + message + RSVP-state
 // recipient checkboxes → POST /api/groups/[id]/broadcast.
 // Default states: interested + booked (mirrors the backend default).
+//
+// Restyled to the group-landing "Bright & Vacation-y" cruise identity
+// (specs/design_handoff_group_landing/) — raw elements + --cruise-* tokens
+// instead of shadcn Button/Input/Label/Textarea (which hardcode the app-wide
+// indigo/Geist theme).
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 
 type RsvpState = "pending" | "interested" | "not_going" | "booked";
 
@@ -22,6 +23,13 @@ const RSVP_OPTIONS: { value: RsvpState; label: string }[] = [
 type BroadcastResult =
   | { sent: number; suppressed: number; failed: number; reason?: never }
   | { sent: 0; suppressed: 0; failed: 0; reason: "no_recipients" };
+
+const HEADING = "font-[family-name:var(--font-quicksand)] text-xl font-bold text-[var(--cruise-text)]";
+const LABEL = "text-sm font-semibold text-[var(--cruise-text)]";
+const INPUT =
+  "w-full rounded-[var(--cruise-radius-itinerary)] border border-[var(--cruise-border)] bg-[var(--cruise-bg)] px-3 py-2 text-sm text-[var(--cruise-text)] placeholder:text-[var(--cruise-text-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cruise-accent)]";
+const BUTTON_PRIMARY =
+  "rounded-[var(--cruise-radius-pill)] bg-[var(--cruise-accent)] px-5 py-2.5 font-[family-name:var(--font-quicksand)] text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60";
 
 export function BroadcastComposerClient({ groupId }: { groupId: string }) {
   const [subject, setSubject] = useState("");
@@ -78,28 +86,31 @@ export function BroadcastComposerClient({ groupId }: { groupId: string }) {
     !sending && subject.trim().length > 0 && message.trim().length > 0 && selectedStates.size > 0;
 
   return (
-    <section>
-      <h2 className="text-[18px] font-bold mb-4">Send Broadcast</h2>
-      <p className="text-muted-foreground mb-6 text-[14px]">
-        Compose and send a message to selected invitees.
-      </p>
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className={HEADING}>Send Broadcast</h2>
+        <p className="mt-1 text-sm font-medium text-[var(--cruise-text-muted)]">
+          Compose and send a message to selected invitees.
+        </p>
+      </div>
 
-      <div className="flex flex-col gap-5 max-w-xl">
+      <div className="flex max-w-xl flex-col gap-5 rounded-[var(--cruise-radius-card)] bg-[var(--cruise-surface)] p-6 shadow-[var(--cruise-card-shadow)]">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="broadcast-subject">Subject</Label>
-          <Input
+          <label htmlFor="broadcast-subject" className={LABEL}>Subject</label>
+          <input
             id="broadcast-subject"
             value={subject}
             onChange={(e) => { setSubject(e.target.value); setResult(null); setError(null); }}
             placeholder="Trip update from your coordinator"
             maxLength={200}
             disabled={sending}
+            className={INPUT}
           />
         </div>
 
         <div className="flex flex-col gap-1">
-          <Label htmlFor="broadcast-message">Message</Label>
-          <Textarea
+          <label htmlFor="broadcast-message" className={LABEL}>Message</label>
+          <textarea
             id="broadcast-message"
             value={message}
             onChange={(e) => { setMessage(e.target.value); setResult(null); setError(null); }}
@@ -107,61 +118,57 @@ export function BroadcastComposerClient({ groupId }: { groupId: string }) {
             rows={6}
             maxLength={20000}
             disabled={sending}
+            className={`${INPUT} resize-none`}
           />
         </div>
 
         <fieldset className="flex flex-col gap-2">
-          <legend className="text-[14px] font-medium mb-1">Send to</legend>
+          <legend className="mb-1 text-sm font-semibold text-[var(--cruise-text)]">Send to</legend>
           {RSVP_OPTIONS.map(({ value, label }) => (
-            <label key={value} className="flex items-center gap-2 text-[14px] cursor-pointer">
+            <label key={value} className="flex cursor-pointer items-center gap-2 text-sm text-[var(--cruise-text)]">
               <input
                 type="checkbox"
                 checked={selectedStates.has(value)}
                 onChange={() => toggleState(value)}
                 disabled={sending}
-                className="h-4 w-4"
+                className="h-4 w-4 accent-[var(--cruise-accent)]"
               />
               {label}
             </label>
           ))}
           {selectedStates.size === 0 && (
-            <p className="text-[13px] text-destructive mt-1">Select at least one recipient group.</p>
+            <p className="mt-1 text-[13px] text-[var(--cruise-coral)]">Select at least one recipient group.</p>
           )}
         </fieldset>
 
         <div>
-          <Button
-            onClick={send}
-            disabled={!canSubmit}
-          >
+          <button type="button" onClick={send} disabled={!canSubmit} className={BUTTON_PRIMARY}>
             {sending ? "Sending…" : "Send broadcast"}
-          </Button>
+          </button>
         </div>
 
         {error && (
-          <div className="rounded-md bg-destructive/10 text-destructive text-[13px] px-4 py-3">
+          <div className="rounded-[var(--cruise-radius-itinerary)] bg-[var(--cruise-bg)] px-4 py-3 text-[13px] text-[var(--cruise-coral)]">
             {error}
           </div>
         )}
 
         {result && (
-          <div className="rounded-md bg-muted px-4 py-3 text-[14px] flex flex-col gap-1">
+          <div className="flex flex-col gap-1 rounded-[var(--cruise-radius-itinerary)] bg-[var(--cruise-bg)] px-4 py-3 text-sm text-[var(--cruise-text)]">
             {result.reason === "no_recipients" ? (
-              <p className="text-muted-foreground">
+              <p className="text-[var(--cruise-text-muted)]">
                 No invitees match the selected RSVP states — broadcast not sent.
               </p>
             ) : (
-              <>
-                <p>
-                  <span className="font-medium text-emerald-600">{result.sent} sent</span>
-                  {result.suppressed > 0 && (
-                    <span className="ml-3 text-muted-foreground">{result.suppressed} suppressed</span>
-                  )}
-                  {result.failed > 0 && (
-                    <span className="ml-3 text-destructive">{result.failed} failed</span>
-                  )}
-                </p>
-              </>
+              <p>
+                <span className="font-medium text-[var(--cruise-success)]">{result.sent} sent</span>
+                {result.suppressed > 0 && (
+                  <span className="ml-3 text-[var(--cruise-text-muted)]">{result.suppressed} suppressed</span>
+                )}
+                {result.failed > 0 && (
+                  <span className="ml-3 text-[var(--cruise-coral)]">{result.failed} failed</span>
+                )}
+              </p>
             )}
           </div>
         )}
