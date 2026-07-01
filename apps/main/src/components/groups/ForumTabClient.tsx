@@ -3,12 +3,10 @@
 // §19.7 — Coordinator forum view: all thread + message statuses visible.
 //
 // Restyled to the group-landing "Bright & Vacation-y" cruise identity
-// (specs/design_handoff_group_landing/) — visual/layout only. The author
-// name span below (`{msg.user_id.slice(0, 8)}…`) is deliberately left
-// byte-for-byte untouched, className included: a sibling PR is changing how
-// a message's author is resolved/displayed (guest/invitation_id-authored
-// messages) and will replace this exact line. Restyle only wraps/surrounds
-// it — see CLAUDE.md session note on the coordinator-relayout PR.
+// (specs/design_handoff_group_landing/). The author-name span shows the
+// server-computed author_name for guest/invitation_id-authored messages
+// (roster-style display name, anonymity-aware) and falls back to the raw
+// user_id prefix for staff-authored ones — same visual treatment either way.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -33,7 +31,13 @@ interface Message {
   id: string;
   content: string;
   status: string;
-  user_id: string;
+  user_id: string | null;
+  // Guest-authored messages (anonymous invitee forum access) carry
+  // invitation_id instead of user_id — forum_messages_author_xor.
+  // author_name is server-computed for those (roster-style display name /
+  // "Anonymous"); null for user-authored messages, which keep today's raw id.
+  invitation_id: string | null;
+  author_name: string | null;
   parent_message_id: string | null;
   created_at: string;
 }
@@ -181,7 +185,9 @@ export function ForumTabClient({ groupId }: { groupId: string }) {
                 className={`${CARD} text-sm ${msg.parent_message_id ? "ml-6 border-l-2 border-l-[var(--cruise-accent)]" : ""}`}
               >
                 <div className="mb-1 flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">{msg.user_id.slice(0, 8)}…</span>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {msg.invitation_id ? msg.author_name : `${msg.user_id?.slice(0, 8)}…`}
+                  </span>
                   <span className={`${BADGE} border ${STATUS_CHIP[msg.status] ?? "border-[var(--cruise-border)] text-[var(--cruise-text-muted)]"}`}>
                     {msg.status}
                   </span>
