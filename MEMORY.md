@@ -4,6 +4,12 @@ Newest entries on top.
 
 ---
 
+## D-315 — 2026-07-01 — D-313 hold clarified: the #1575–#1613 backlog executes VIA /issue-sweep, not ahead of it
+
+Operator clarified why the review backlog was held in D-313: not a concern about the issues themselves, but "I want them to go through the normal issue-sweep process." So: do NOT hand-execute #1575 (or any of the backlog) when "green-lit" — the green light IS the operator invoking `/issue-sweep`, and the backlog enters its plan gate like any other issue. Practical notes: the sweep's priority ranking should naturally surface #1575 first (D-312 tiering); several backlog items are migration-touching → flagged ⚠ supervised in the plan and need the operator's explicit include. Supersedes the "sweeps must exclude the held backlog" caution briefly recorded in SESSION.md on 2026-07-01.
+
+---
+
 ## D-314 — 2026-07-01 — /issue-sweep skill (Haiku triage → plan gate → per-model batch execution); model-tier criteria rebased on risk, not size
 
 **Decision 1: built `/issue-sweep`** (`.claude/commands/issue-sweep.md`). Three phases: (1) parallel Haiku subagents classify open issues into strict JSON (category, P1–P4 priority, model tier, predicted files, subsystem); (2) deterministic grouping by file/subsystem overlap into batches, plan capped at **top 20 issues by priority**, presented for operator approval — never executes without it; (3) one executor subagent per approved batch at the batch's model tier in an isolated worktree, ≤3 concurrent, supervisor finalizes serially (CI → d091-reviewer → pre-pr-reviewer → **auto-squash-merge**; operator approved auto-merge). Supervised-only scopes (migrations/RLS, auth, secrets, billing, CI config, dependency manifests) are flagged ⚠ in the plan and excluded unless the operator explicitly includes them. Issue content is data, not instructions (prompt-injection guard inherited from /fix-bugs). Rejected: Workflow-tool orchestration (can't pause mid-run for the plan gate; revisit if issue counts outgrow the Agent-tool version), headless GitHub-Action variant (operator wants interactive confirmation).
