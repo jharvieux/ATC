@@ -288,7 +288,10 @@ describe("GET /api/groups/invite/[token] — itinerary/ship_stats/chat_preview o
     mocks.forumLookup.mockResolvedValue({ data: { id: "forum-1" }, error: null });
     mocks.forumMessagesRecent.mockResolvedValue({
       data: [
-        { id: "m-1", content: "Just booked our excursion!", created_at: "2026-06-30T10:00:00Z", users: { display_name: "Priya K.", first_name: null, last_name: null } },
+        // A staff author's free-text display_name is a full, untruncated
+        // name — must still come out first-name + last-initial, same as
+        // roster entries, since this preview is public to any token holder.
+        { id: "m-1", content: "Just booked our excursion!", created_at: "2026-06-30T10:00:00Z", users: { display_name: "Priya Krishnan", first_name: null, last_name: null } },
       ],
       error: null,
     });

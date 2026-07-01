@@ -427,7 +427,12 @@ async function fetchChatPreview(svc: SupabaseClient, groupId: string, tenantId: 
   const messages: ChatMessagePreview[] = ((recent ?? []) as MessageRow[]).map((row) => {
     const rel = row.users;
     const user = Array.isArray(rel) ? rel[0] : rel;
-    const authorName = user?.display_name ?? deriveDisplayName([user?.first_name, user?.last_name].filter(Boolean).join(" ") || null);
+    // Always truncate to first-name + last-initial, matching the roster's
+    // anonymity posture — this preview is visible to anyone holding the
+    // invite token, unauthenticated, and users.display_name is a free-text
+    // profile field that isn't guaranteed to already be truncated.
+    const fullName = user?.display_name || [user?.first_name, user?.last_name].filter(Boolean).join(" ") || null;
+    const authorName = deriveDisplayName(fullName);
     return { id: row.id, authorName, text: row.content, timestamp: row.created_at };
   });
 
