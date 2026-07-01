@@ -116,7 +116,7 @@ Steps, in order:
 1. Push to the remote.
 1. Update SESSION.md with the current state.
 1. Add any MEMORY.md entries for decisions made this session.
-1. If you switched to Opus or Haiku at any point, switch back to Sonnet: `/model claude-sonnet-4-6`.
+1. If you switched to Opus or Haiku at any point, switch back to Sonnet: `/model claude-sonnet-5`.
 1. State briefly what was done and what's next.
 
 -----
