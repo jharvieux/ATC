@@ -48,6 +48,7 @@
 -- public.escalation_topics (rls_enabled)
 -- public.feature_requests (rls_enabled)
 -- public.forensics_log (rls_enabled)
+-- public.forum_guest_write_counters (rls_enabled)
 -- public.forum_messages (rls_enabled)
 -- public.forum_reactions (rls_enabled)
 -- public.forum_strikes (rls_enabled)
@@ -646,6 +647,20 @@ CREATE POLICY "forensics_log_select_service" ON public.forensics_log
   FOR SELECT TO PUBLIC
   USING (false);
 CREATE POLICY "forensics_log_update_service" ON public.forensics_log
+  FOR UPDATE TO PUBLIC
+  USING (false);
+
+-- TABLE: public.forum_guest_write_counters
+CREATE POLICY "forum_guest_write_counters_delete_service" ON public.forum_guest_write_counters
+  FOR DELETE TO PUBLIC
+  USING (false);
+CREATE POLICY "forum_guest_write_counters_insert_service" ON public.forum_guest_write_counters
+  FOR INSERT TO PUBLIC
+  WITH CHECK (false);
+CREATE POLICY "forum_guest_write_counters_select_service" ON public.forum_guest_write_counters
+  FOR SELECT TO PUBLIC
+  USING (false);
+CREATE POLICY "forum_guest_write_counters_update_service" ON public.forum_guest_write_counters
   FOR UPDATE TO PUBLIC
   USING (false);
 

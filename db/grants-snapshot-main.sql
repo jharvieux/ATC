@@ -164,6 +164,9 @@ GRANT INSERT, SELECT, UPDATE ON public.feature_requests TO service_role;
 -- TABLE: public.forensics_log
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.forensics_log TO service_role;
 
+-- TABLE: public.forum_guest_write_counters
+GRANT DELETE, INSERT, SELECT, UPDATE ON public.forum_guest_write_counters TO service_role;
+
 -- TABLE: public.forum_messages
 GRANT INSERT, SELECT, UPDATE ON public.forum_messages TO authenticated;
 GRANT DELETE, INSERT, SELECT, UPDATE ON public.forum_messages TO service_role;

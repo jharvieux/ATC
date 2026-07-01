@@ -304,4 +304,12 @@ describe("POST /api/forums/:forumId/threads/:threadId/messages — gate checks (
     expect(mocks.messageInsertSingle).toHaveBeenCalledOnce();
     expect(mocks.safeAwait).toHaveBeenCalledOnce();
   });
+
+  it("content over 2,000 chars → 400 before any write (matches the Haiku-scored window exactly)", async () => {
+    const res = await POST(postReq({ content: "a".repeat(2_001) }), PARAMS);
+
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toBe("content_too_long");
+    expect(mocks.messageInsertSingle).not.toHaveBeenCalled();
+  });
 });

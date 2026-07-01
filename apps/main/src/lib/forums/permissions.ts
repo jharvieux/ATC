@@ -9,7 +9,11 @@ export interface ForumPermissionUser {
 
 export interface ForumPermissionForum {
   is_locked: boolean;
-  coordinator_user_id: string;
+  // Unused by canPost/canModerate's own logic (coordinator status is decided
+  // by the caller via forumCoordinatorId + user.is_coordinator) — optional so
+  // callers that only have a partial forum row (e.g. the guest/invitee
+  // routes, which never resolve a coordinator) don't need to fabricate one.
+  coordinator_user_id?: string;
 }
 
 export interface ForumPermissionThread {
