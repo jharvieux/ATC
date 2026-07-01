@@ -101,3 +101,43 @@
   --ta-user-border: rgba(46, 146, 214, 0.35);
   --ta-accent-soft: rgba(46, 146, 214, 0.12);
 }
+
+/* ─── Group-landing "Bright & Vacation-y" design tokens ────────────────────
+   specs/design_handoff_group_landing/. Applied when a [data-cruise-theme]
+   attribute is set on an ancestor element (the invite landing page and the
+   coordinator portal). CruiseThemeToggle writes this attribute; it never
+   bleeds into the rest of the app (indigo/Geist shadcn theme) because no
+   other element carries the attr — same isolation pattern as [data-ta-theme]
+   above, deliberately not reusing the app-wide next-themes ThemeProvider so
+   a customer's landing-page preference can't leak into/from the rest of the
+   app's theme.
+   ───────────────────────────────────────────────────────────────────────── */
+[data-cruise-theme] {
+  --cruise-sun: #ffcc4d;
+  --cruise-coral: #ff8a65;
+  --cruise-radius-card: 16px;
+  --cruise-radius-itinerary: 14px;
+  --cruise-radius-pill: 999px;
+}
+[data-cruise-theme="light"] {
+  --cruise-bg: #f4faff;
+  --cruise-surface: #ffffff;
+  --cruise-text: #0b3a52;
+  --cruise-text-muted: #5c7f91;
+  --cruise-accent: #0f7fa8;
+  --cruise-success: #1fa876;
+  --cruise-border: #e4f1f8;
+  --cruise-card-shadow: 0 4px 16px rgba(15, 127, 168, 0.08);
+  --cruise-hero-gradient: linear-gradient(180deg, #bfe6f7 0%, #8ed0ec 45%, #4fa8d8 100%);
+}
+[data-cruise-theme="dark"] {
+  --cruise-bg: #0a1622;
+  --cruise-surface: #11212f;
+  --cruise-text: #eaf4fa;
+  --cruise-text-muted: #8fadbc;
+  --cruise-accent: #38b6e8;
+  --cruise-success: #34d399;
+  --cruise-border: rgba(255, 255, 255, 0.08);
+  --cruise-card-shadow: none;
+  --cruise-hero-gradient: linear-gradient(180deg, #16324a 0%, #0d2233 55%, #081722 100%);
+}
