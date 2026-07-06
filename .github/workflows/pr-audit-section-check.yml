@@ -18,12 +18,11 @@
 # unforgeable — any collaborator could paste the marker manually — but it
 # raises the bar well above editing prose.)
 #
-# The PR-body `## Audit` block is NO LONGER ENFORCED here (was "Layer 1").
-# It was only a human-readable summary and a frequent source of
-# non-substantive failures (missing Status: line, <50 chars, TBD), and it
-# added no real assurance — it could be fabricated without running the
-# agents. The pre-pr-reviewer now writes that summary into the body itself;
-# it is advisory, not gated.
+# The PR-body `## Audit` block is RETIRED entirely (was "Layer 1", then a
+# body block written by pre-pr-reviewer). Nothing writes or checks it now.
+# Each agent posts a summary comment (scope + finding one-liners + Status)
+# via scripts/post-audit-comment.sh, whose diff-hash recipe must stay
+# byte-identical to the one computed below.
 #
 # Exemptions:
 #   - dependabot[bot] — version-only PRs, no code logic to review
@@ -118,13 +117,12 @@ jobs:
             echo "is_doc_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # NOTE (D-270): the PR-body "## Audit" section is no longer enforced here.
+      # NOTE (D-270/D-316): the PR-body "## Audit" section is retired entirely.
       # The load-bearing guarantee — both subagents ran on the EXACT current diff —
       # lives entirely in the hash-bound marker comments checked by the step below.
-      # The body block was only a human-readable summary and a frequent source of
-      # non-substantive failures (missing Status: line, <50 chars, TBD). The
-      # pre-pr-reviewer now writes that summary into the body itself; it's advisory,
-      # not gated. See CLAUDE.md "Pull requests".
+      # Agents post summary comments via scripts/post-audit-comment.sh; the hash
+      # recipe there must stay byte-identical to this step's. See CLAUDE.md
+      # "Pull requests" and docs/runbooks/pr-workflow.md.
       - name: Verify both subagent comments are bound to the current diff (hash-first, timestamp fallback)
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:

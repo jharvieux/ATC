@@ -9,24 +9,29 @@ The `pr-audit-section-check` gate passes only when each agent has posted a marke
 - `<!-- d091-audit:v1 diff:<hash> -->`
 - `<!-- prepr-audit:v1 diff:<hash> -->`
 
-Timestamps are irrelevant — only the hash match. The agents post these themselves; **never post them manually.**
+Timestamps are irrelevant — only the hash match. The agents post these themselves via `scripts/post-audit-comment.sh` (which owns PR resolution, hash computation, and posting); **never post markers manually, and never hand-roll the hash.** The hash recipe lives in exactly two places — the script and the workflow — and they must stay byte-identical; if one changes, change the other in the same PR.
 
-The PR-body `## Audit` block is **not** gated — `pre-pr-reviewer` writes it from both agents' findings, for the user to read. Don't hand-craft it; a missing/short/"TBD" body never blocks.
+The comments are **summaries** (scope, finding one-liners, standalone `Status` line) — proof-of-run plus an at-a-glance digest. Full findings (snippets, fixes) are returned by each agent to the invoking session, which acts on them. There is **no PR-body `## Audit` block anymore** — nothing writes one, and nothing gates on it.
 
 ## What stales an audit (and what doesn't)
 
 - **`update-branch` (or any merge that doesn't change the effective diff) never stales an audit** — same hash, existing comments stay valid. Don't re-run agents after update-branching a queued PR.
-- **A diff-changing commit** (fix-commit, conflict-resolving merge) changes the hash → re-run the agents for fresh comments.
-- **Editing the PR body re-triggers the check** (it listens for `edited`) — never push a no-op or empty commit to refresh it.
+- **A diff-changing commit** (fix-commit, conflict-resolving merge) changes the hash and stales **both** markers → re-run both agents for fresh comments.
 
-## Running the agents (order matters — run them LAST, after required CI is green)
+## Running the agents (in parallel, concurrent with CI)
 
-1. `d091-reviewer` FIRST — D-091 anti-pattern coverage.
-2. `pre-pr-reviewer` SECOND — slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091. It reads d091's comment to build the combined `## Audit` body, so order matters.
+The two agents are independent — neither reads the other's output. Launch **both in a single message (two Agent calls)** immediately after `gh pr create`, so they run concurrently with each other **and** with CI. Rationale: `pnpm verify` is required before every push and is a superset of most required CI jobs, so a post-push CI failure is rare (mostly infra/e2e flake); overlapping agent time with CI time saves the wall-clock of a full serial pass on every PR, and the worst case (CI forces a fix-commit → re-run agents) is no worse than the old flow.
 
-Both agents resolve the PR number from the branch and self-post their hash-bound marker comments.
+- `d091-reviewer` — D-091 anti-pattern coverage (correctness/security patterns).
+- `pre-pr-reviewer` — slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
 
-If either agent reports findings: fix them, push, **let CI go green again**, then re-run that agent. Its fresh comment embeds the new diff hash; the old comment's stale hash no longer matches and is ignored by the check. You do NOT touch the `## Audit` body by hand — the agent rewrites it.
+Each agent self-posts its hash-bound marker comment and returns its full report to you.
+
+If either agent reports findings, or CI fails: fix, push, let CI go green, then **re-run both agents in parallel** — the diff changed, so both markers are stale. Fresh comments embed the new hash; stale ones are ignored by the check.
+
+### Local mode (optional shift-left)
+
+Both agents support a **local (pre-PR) review**: they produce and return the full report without posting anything. Use it on high-risk diffs (the Opus-trigger list below) to catch BLOCKERs before the push/CI/PR cycle. A PR-mode run is still required once the PR exists — local mode never satisfies the gate.
 
 ## Model selection
 
@@ -49,7 +54,7 @@ The check is required to merge. **You cannot bypass it.** Two exemptions:
 
 ## Hard rules
 
-- Don't run the audit agents before the PR exists — they abort with an error when `gh pr view` returns empty, which is correct.
-- Don't manually post the `<!-- d091-audit:v1 -->` / `<!-- prepr-audit:v1 -->` marker comments — let the agents do it.
+- Don't run the audit agents in PR mode before the PR exists — the posting script aborts with an error when `gh pr view` returns empty, which is correct. (Local mode is the sanctioned pre-PR path; it posts nothing.)
+- Don't manually post the `<!-- d091-audit:v1 -->` / `<!-- prepr-audit:v1 -->` marker comments — let the agents do it via the script.
 - Don't merge a PR with failing or pending checks.
 - Don't bypass branch protection, force-push to `dev`/`main`/`release/*`, merge into `main`, or open/merge `release/*` PRs.

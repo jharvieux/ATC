@@ -293,11 +293,10 @@ Every PR needs **hash-bound audit marker comments** posted by the audit agents (
 
 1. `pnpm verify` passes — clean typecheck, lint, tests, slop-check.
 2. Push the branch.
-3. **Open the PR** (`gh pr create`). No `## Audit` block needed — `pre-pr-reviewer` writes it.
-4. **Wait for required CI to go green** (`Typecheck`, `Lint`, `Test`, `Guards & Build`, security/contract jobs). Get CI clean BEFORE running the agents — this stops an unrelated fix from re-staling the audit.
-5. **Then run both audit agents, LAST** — `d091-reviewer` FIRST, then `pre-pr-reviewer` (it reads d091's comment to build the combined `## Audit` body). They self-post their marker comments — never post markers manually.
-6. If either reports findings: fix, push, let CI go green again, re-run that agent.
-7. Once all checks pass, squash-merge and delete the branch.
+3. **Open the PR** (`gh pr create`). No `## Audit` body block exists anymore — the agents' summary comments are the record.
+4. **Immediately launch BOTH audit agents in parallel** (single message, two Agent calls) — they run concurrently with each other AND with CI. Each self-posts its hash-bound marker comment via `scripts/post-audit-comment.sh` and returns its full findings to you — never post markers manually.
+5. If either agent reports findings, or CI fails: fix, push, let CI go green, then **re-run both agents in parallel** — any diff-changing commit stales both markers.
+6. Once required CI is green and both marker comments match the current diff, squash-merge and delete the branch.
 
 **Model selection for the FIRST audit run:** default Sonnet; override to Opus (`model: "opus"`) when the diff is ≥10 files / ≥500 net-added lines, includes a SQL migration, adds a net-new API route / Inngest fn / cron, touches webhook signatures / idempotency / state-machine transitions, or adds a service-role code path. Re-runs after fix-commits use Sonnet. Full criteria in `pr-workflow.md`.
 
@@ -305,7 +304,7 @@ Every PR needs **hash-bound audit marker comments** posted by the audit agents (
 
 **You may NOT:**
 
-- Run the audit agents before the PR exists (they abort when `gh pr view` is empty — correct).
+- Run the audit agents in PR mode before the PR exists (posting aborts when `gh pr view` is empty — correct). Local mode (report-only, no comment) is allowed pre-PR but never satisfies the gate.
 - Manually post the `<!-- d091-audit:v1 -->` / `<!-- prepr-audit:v1 -->` marker comments.
 - Merge a PR with failing or pending checks.
 - Bypass branch protection rules.

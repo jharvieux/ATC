@@ -81,8 +81,8 @@ For each approved batch, spawn one executor via the Agent tool with the batch's 
 
 For each executor PR, in plan-priority order:
 
-1. Wait for required CI (`gh pr checks <n> --watch`). Vercel rate-limited deploys are not a blocker (standing rule).
-2. If not doc-only exempt: run `d091-reviewer` FIRST, then `pre-pr-reviewer` (audit model per `docs/runbooks/pr-workflow.md`). Findings → dispatch a fix agent (same model as the batch) on the branch, re-verify, let CI go green, re-run that auditor.
+1. If not doc-only exempt: launch `d091-reviewer` and `pre-pr-reviewer` **in parallel** (single message, two Agent calls; audit model per `docs/runbooks/pr-workflow.md`) — they run concurrently with CI. Meanwhile wait for required CI (`gh pr checks <n> --watch`). Vercel rate-limited deploys are not a blocker (standing rule).
+2. Findings → dispatch a fix agent (same model as the batch) on the branch, re-verify, let CI go green, re-run **both** auditors in parallel (a diff-changing commit stales both markers).
 3. Squash-merge, delete the branch. If the merge conflicts because an earlier sweep PR landed, rebase the branch on `dev`, re-run `pnpm verify`, wait for CI, then merge.
 4. Confirm the `Closes #n` links closed the issues; close any stragglers with a comment linking the PR.
 
