@@ -232,7 +232,7 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 
 **Implementation:** Defined as a Claude Code agent type (`d091-reviewer`) in `.claude/agents/`. Invoked manually before every PR is merged.
 
-**New project notes:** The patterns themselves are worth encoding even without the automated agent. For a new travel agency app using the same stack (Next.js + Supabase + Vercel + Inngest), copy the d091-reviewer agent definition verbatim — all 14 patterns apply. For a different stack, adapt patterns 1 and 2 to the ORM in use.
+**New project notes:** The patterns themselves are worth encoding even without the automated agent. For a new travel agency app using the same stack (Next.js + Supabase + Vercel + Inngest), copy the d091-reviewer agent definition verbatim — all 19 patterns apply. For a different stack, adapt patterns 1 and 2 to the ORM in use.
 
 ---
 
@@ -246,7 +246,9 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 - Surgical changes discipline: diffs should only touch what the task requires
 - Honesty-about-uncertainty: no guessed facts presented as certain
 - Codebase convention drift: new code should match existing patterns
-- Stub-shaped code (same as D-091 pattern 11, from a different angle)
+- Fail-loud + MEMORY-decision consistency
+
+(Stub-shaped code moved to d091-reviewer only in D-316 — each check has exactly one owner; the two agents run independently, in parallel.)
 
 **Universality:** **Universal** — these quality checks apply to any codebase, any stack.
 
@@ -258,16 +260,14 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 
 ### 13. pr-audit-section-check (GitHub Actions)
 
-**What it does:** Enforces that BOTH subagent marker comments exist in the PR AND were posted after the current head commit. Exempts bot PRs (Dependabot) and doc-only PRs (`*.md`, `docs/**`, `specs/**`).
+**What it does:** Enforces that BOTH subagent marker comments exist in the PR AND embed a sha256 of the PR's current effective diff (hash-bound, not timestamp-bound). Exempts bot PRs (Dependabot) and doc-only PRs (`*.md`, `docs/**`, `specs/**`).
 
-**Why two layers:**
-1. **PR body `## Audit` section** — human-readable summary (could be faked)
-2. **PR comment with marker** — timestamped, compared against head commit date (harder to fake without consciously lying)
+**Single layer of evidence (since D-270/D-316):** the hash-bound marker comment. The PR-body `## Audit` section is retired entirely — it was fakeable and added no assurance. Agents post summary comments via `scripts/post-audit-comment.sh` (which owns the hash recipe; a drift guard in the workflow asserts the script's recipe matches the workflow's).
 
 **Implementation:** `.github/workflows/pr-audit-section-check.yml`. Set as a required status check on the `dev` branch.
 
 **Key design decisions:**
-- Triggers on `edited` event so fixing the PR body re-runs the check (without this, you'd need a no-op commit to re-trigger)
+- Hash binding means update-branch merge commits never stale an audit; any diff-changing commit stales both markers (re-run both agents, in parallel)
 - Bot exemption is done inside the job (not as a job-level `if:`) so the job always reports a status — necessary for Dependabot automerge to work
 - Doc-only detection fetches the file list via GitHub REST API, not from the diff — handles renames/deletes correctly
 

@@ -29,6 +29,17 @@ Each agent self-posts its hash-bound marker comment and returns its full report 
 
 If either agent reports findings, or CI fails: fix, push, let CI go green, then **re-run both agents in parallel** — the diff changed, so both markers are stale. Fresh comments embed the new hash; stale ones are ignored by the check.
 
+### Re-triggering the gate after the agents post
+
+Comments do **not** fire `pull_request` events, so the gate run that failed at PR-open (before any marker existed) stays red until re-run. After **both** agents report success, re-run it once:
+
+```bash
+gh run rerun "$(gh run list --workflow pr-audit-section-check.yml \
+  --branch "$(git branch --show-current)" --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+(In the old flow, pre-pr-reviewer's PR-body edit re-triggered the check via the `edited` event; both the body edit and the `edited` trigger are retired.)
+
 ### Local mode (optional shift-left)
 
 Both agents support a **local (pre-PR) review**: they produce and return the full report without posting anything. Use it on high-risk diffs (the Opus-trigger list below) to catch BLOCKERs before the push/CI/PR cycle. A PR-mode run is still required once the PR exists — local mode never satisfies the gate.

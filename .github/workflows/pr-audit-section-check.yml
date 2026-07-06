@@ -32,15 +32,11 @@
 #     The audit agents review application behavior; running them on a doc
 #     edit just burns Sonnet tokens to learn there's nothing to review.
 #
-# Listener events include `edited` so that updating the PR body re-runs
-# the check (without `edited`, you can't fix a failed run by editing
-# the description — you'd have to push a no-op commit).
-
 name: pr-audit-section-check
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -117,12 +113,43 @@ jobs:
             echo "is_doc_only=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The diff-hash recipe below is duplicated in scripts/post-audit-comment.sh
+      # (the agents' posting path). If the copies drift, every legitimately-posted
+      # audit comment stops matching and this gate fails opaquely on every PR.
+      # This guard extracts the jq filter line from both files and asserts they
+      # are identical, so a one-sided edit fails HERE with a clear message.
+      - name: Checkout (hash-recipe drift guard)
+        if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
+        uses: actions/checkout@v4
+      - name: Hash-recipe drift guard
+        if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
+        run: |
+          set -euo pipefail
+          # Match the jq continuation line by its leading "| jq -r"; strip
+          # whitespace + trailing backslash before comparing. The guard's own
+          # lines start with assignments, so they never self-match.
+          SCRIPT_RECIPE=$(grep -E '^[[:space:]]*\| jq -r' scripts/post-audit-comment.sh | tr -d '[:space:]\\')
+          WORKFLOW_RECIPE=$(grep -E '^[[:space:]]*\| jq -r' .github/workflows/pr-audit-section-check.yml | tr -d '[:space:]\\')
+          if [ -z "$SCRIPT_RECIPE" ] || [ -z "$WORKFLOW_RECIPE" ]; then
+            echo "::error::Hash-recipe drift guard could not locate the jq recipe line in one of the files — the grep anchor changed. Fix the guard alongside the recipe."
+            exit 1
+          fi
+          if [ "$SCRIPT_RECIPE" != "$WORKFLOW_RECIPE" ]; then
+            echo "::error::Diff-hash recipe drift: scripts/post-audit-comment.sh and pr-audit-section-check.yml compute different hashes. They must stay byte-identical or every audit comment will fail the gate."
+            exit 1
+          fi
+          echo "✓ Hash recipe identical in script and workflow"
+
       # NOTE (D-270/D-316): the PR-body "## Audit" section is retired entirely.
       # The load-bearing guarantee — both subagents ran on the EXACT current diff —
       # lives entirely in the hash-bound marker comments checked by the step below.
-      # Agents post summary comments via scripts/post-audit-comment.sh; the hash
-      # recipe there must stay byte-identical to this step's. See CLAUDE.md
-      # "Pull requests" and docs/runbooks/pr-workflow.md.
+      # Agents post summary comments via scripts/post-audit-comment.sh.
+      #
+      # Re-trigger note: comments do NOT fire pull_request events, so after both
+      # agents post, the run that failed at PR-open must be re-run explicitly
+      # (`gh run rerun <run-id>` — see docs/runbooks/pr-workflow.md). A new
+      # commit (synchronize) also re-runs it, but then both markers are stale
+      # anyway and the agents must run again first.
       - name: Verify both subagent comments are bound to the current diff (hash-first, timestamp fallback)
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         env:

@@ -296,7 +296,7 @@ Every PR needs **hash-bound audit marker comments** posted by the audit agents (
 3. **Open the PR** (`gh pr create`). No `## Audit` body block exists anymore — the agents' summary comments are the record.
 4. **Immediately launch BOTH audit agents in parallel** (single message, two Agent calls) — they run concurrently with each other AND with CI. Each self-posts its hash-bound marker comment via `scripts/post-audit-comment.sh` and returns its full findings to you — never post markers manually.
 5. If either agent reports findings, or CI fails: fix, push, let CI go green, then **re-run both agents in parallel** — any diff-changing commit stales both markers.
-6. Once required CI is green and both marker comments match the current diff, squash-merge and delete the branch.
+6. After both agents post, **re-run the audit gate once** (comments don't trigger it — `gh run rerun`; command in `pr-workflow.md`). Once required CI is green and the gate passes, squash-merge and delete the branch.
 
 **Model selection for the FIRST audit run:** default Sonnet; override to Opus (`model: "opus"`) when the diff is ≥10 files / ≥500 net-added lines, includes a SQL migration, adds a net-new API route / Inngest fn / cron, touches webhook signatures / idempotency / state-machine transitions, or adds a service-role code path. Re-runs after fix-commits use Sonnet. Full criteria in `pr-workflow.md`.
 
