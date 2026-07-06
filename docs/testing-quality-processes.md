@@ -204,31 +204,11 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 
 ### 11. d091-reviewer Subagent
 
-**What it does:** Claude Code subagent that reviews every PR diff for 14 specific anti-patterns derived from production incidents in this codebase. Posts a marker comment (`<!-- d091-audit:v1 -->`) to the PR.
+**What it does:** Claude Code subagent that reviews every PR diff for the D-091 anti-patterns (19 as of D-316) derived from production incidents in this codebase. Posts a hash-bound marker comment (`<!-- d091-audit:v1 diff:<hash> -->`) to the PR.
 
-**Anti-patterns reviewed:**
-1. Unchecked Supabase mutations (`.update()`, `.insert()` etc. without error checking)
-2. Zero-row CAS guard missing (`.update().eq().eq()` without row count verification)
-3. Fail-open enforcement (returning `allowed: true` on error)
-4. Single-layer tenant isolation
-5. External credentials in URLs (should be in headers)
-6. Unjustified `void` on async in serverless
-7. Multi-action permission gates (one `assertPermission` for two different operations)
-8. Idempotency rows written before dispatch
-9. State-machine boundary validation missing
-10. Webhook signature encoding mismatch
-11. Stub-shaped code (parameters that don't affect output)
-12. Quota gates not re-read between consuming operations
-13. Destructive migrations bundled with expand/contract steps
-14. Slop
+**Anti-patterns reviewed:** the canonical numbered list lives in `.claude/agents/d091-reviewer.md`, with full symptom/example/rationale per pattern in `docs/runbooks/anti-patterns.md`. This doc deliberately does NOT duplicate the list — a second hand-maintained copy here drifted out of date twice before being replaced with this pointer. Coverage spans unchecked Supabase mutations, zero-row CAS, fail-open enforcement, tenant isolation, credentials in URLs, void-async in serverless, multi-action permission gates, idempotency ordering, webhook signature encoding, state-machine boundaries, stub-shaped code, quota re-reads, shared-constant blast radius, Inngest `step.run` side effects, module-level serverless state, date-only handling, PII in logs, index coverage for new query shapes, and grant-widening deltas.
 
-**Universality:**
-- Patterns 1–4, 11–14: **Universal** for any app using Supabase JS v2 and multi-tenant data
-- Pattern 3 (fail-open): **Universal** — applies to any enforcement layer
-- Pattern 5 (credentials in URLs): **Universal**
-- Pattern 6 (`void` async in serverless): **Universal** for Vercel/Lambda
-- Patterns 7–10: Universal for any app with webhooks, state machines, or idempotent operations
-- The Supabase-specific patterns (1, 2, 4) need adaptation for other ORMs
+**Universality:** mostly **universal**. The Supabase-specific patterns (unchecked mutations, CAS row-count, tenant isolation) need adaptation for other ORMs; the serverless-state and void-async patterns assume Vercel/Lambda-style compute; the rest are stack-agnostic.
 
 **Implementation:** Defined as a Claude Code agent type (`d091-reviewer`) in `.claude/agents/`. Invoked manually before every PR is merged.
 

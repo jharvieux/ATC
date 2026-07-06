@@ -9,7 +9,7 @@ The `pr-audit-section-check` gate passes only when each agent has posted a marke
 - `<!-- d091-audit:v1 diff:<hash> -->`
 - `<!-- prepr-audit:v1 diff:<hash> -->`
 
-Timestamps are irrelevant — only the hash match. The agents post these themselves via `scripts/post-audit-comment.sh` (which owns PR resolution, hash computation, and posting); **never post markers manually, and never hand-roll the hash.** The hash recipe lives in exactly two places — the script and the workflow — and they must stay byte-identical; if one changes, change the other in the same PR.
+Timestamps are irrelevant — only the hash match. The agents post these themselves via `scripts/post-audit-comment.sh` (which owns PR resolution, hash computation, and posting); **never post markers manually, and never hand-roll the hash.** The recipe's jq filter lives in exactly two places — the script and the workflow — and must stay byte-identical (a drift-guard step in the workflow enforces it); if one changes, change the other in the same PR. The hash-extraction tail after jq differs cosmetically between the two (Linux vs macOS tooling) but must keep producing the same hex.
 
 The comments are **summaries** (scope, finding one-liners, standalone `Status` line) — proof-of-run plus an at-a-glance digest. Full findings (snippets, fixes) are returned by each agent to the invoking session, which acts on them. There is **no PR-body `## Audit` block anymore** — nothing writes one, and nothing gates on it.
 

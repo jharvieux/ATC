@@ -5,9 +5,12 @@
 #   marker-prefix : d091-audit:v1 | prepr-audit:v1
 #   report-file   : file with the comment body (the marker line is prepended)
 #
-# The diff-hash recipe below MUST stay byte-identical to the one in
+# The jq filter line below MUST stay byte-identical to the one in
 # .github/workflows/pr-audit-section-check.yml — the gate recomputes the hash
 # from the PR files API and passes iff a comment embeds the matching value.
+# A drift guard in that workflow enforces the jq-line match. The hash-
+# extraction tail differs in form (macOS shasum fallback here) but must keep
+# producing the same hex digest.
 set -euo pipefail
 
 MARKER_PREFIX="${1:?usage: post-audit-comment.sh <marker-prefix> <report-file>}"

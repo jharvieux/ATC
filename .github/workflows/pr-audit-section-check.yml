@@ -113,11 +113,15 @@ jobs:
             echo "is_doc_only=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # The diff-hash recipe below is duplicated in scripts/post-audit-comment.sh
-      # (the agents' posting path). If the copies drift, every legitimately-posted
-      # audit comment stops matching and this gate fails opaquely on every PR.
-      # This guard extracts the jq filter line from both files and asserts they
-      # are identical, so a one-sided edit fails HERE with a clear message.
+      # The jq filter of the diff-hash recipe below is duplicated in
+      # scripts/post-audit-comment.sh (the agents' posting path). If the two
+      # jq lines drift, every legitimately-posted audit comment stops matching
+      # and this gate fails opaquely on every PR. This guard extracts the jq
+      # filter line from both files and asserts they are identical, so a
+      # one-sided edit fails HERE with a clear message. (The hash-extraction
+      # tail after jq differs cosmetically — sha256sum|cut here, a macOS
+      # shasum fallback + awk in the script — but yields the same hex; only
+      # the jq line is guarded.)
       - name: Checkout (hash-recipe drift guard)
         if: steps.bot-check.outputs.is_bot != 'true' && steps.doc-only-check.outputs.is_doc_only != 'true'
         uses: actions/checkout@v4
