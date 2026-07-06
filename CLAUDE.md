@@ -298,7 +298,7 @@ Every PR needs **hash-bound audit marker comments** posted by the audit agents (
 5. If either agent reports findings, or CI fails: fix, push, let CI go green, then **re-run both agents in parallel** — any diff-changing commit stales both markers.
 6. After both agents post, **re-run the audit gate once** (comments don't trigger it — `gh run rerun`; command in `pr-workflow.md`). Once required CI is green and the gate passes, squash-merge and delete the branch.
 
-**Model selection for the FIRST audit run:** default Sonnet; override to Opus (`model: "opus"`) when the diff is ≥10 files / ≥500 net-added lines, includes a SQL migration, adds a net-new API route / Inngest fn / cron, touches webhook signatures / idempotency / state-machine transitions, or adds a service-role code path. Re-runs after fix-commits use Sonnet. Full criteria in `pr-workflow.md`.
+**Model selection for the FIRST audit run (D-317):** default Sonnet. Risk triggers (SQL migration, net-new API route / Inngest fn / cron, webhook signatures / idempotency / state-machine transitions, new service-role path) → Opus for **both** agents. Size alone (≥20 files / ≥1000 net-added lines, no risk trigger) → Opus for **d091-reviewer only**. Re-runs after fix-commits use Sonnet. Full criteria in `pr-workflow.md`.
 
 **Exemptions** (no audit agents): Dependabot PRs, and doc-only PRs (every changed file matches `*.md`/`docs/**`/`specs/**` — a single non-doc file disqualifies it).
 
