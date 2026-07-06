@@ -204,35 +204,15 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 
 ### 11. d091-reviewer Subagent
 
-**What it does:** Claude Code subagent that reviews every PR diff for 14 specific anti-patterns derived from production incidents in this codebase. Posts a marker comment (`<!-- d091-audit:v1 -->`) to the PR.
+**What it does:** Claude Code subagent that reviews every PR diff for the D-091 anti-patterns (19 as of D-316) derived from production incidents in this codebase. Posts a hash-bound marker comment (`<!-- d091-audit:v1 diff:<hash> -->`) to the PR.
 
-**Anti-patterns reviewed:**
-1. Unchecked Supabase mutations (`.update()`, `.insert()` etc. without error checking)
-2. Zero-row CAS guard missing (`.update().eq().eq()` without row count verification)
-3. Fail-open enforcement (returning `allowed: true` on error)
-4. Single-layer tenant isolation
-5. External credentials in URLs (should be in headers)
-6. Unjustified `void` on async in serverless
-7. Multi-action permission gates (one `assertPermission` for two different operations)
-8. Idempotency rows written before dispatch
-9. State-machine boundary validation missing
-10. Webhook signature encoding mismatch
-11. Stub-shaped code (parameters that don't affect output)
-12. Quota gates not re-read between consuming operations
-13. Destructive migrations bundled with expand/contract steps
-14. Slop
+**Anti-patterns reviewed:** the canonical numbered list lives in `.claude/agents/d091-reviewer.md`, with full symptom/example/rationale per pattern in `docs/runbooks/anti-patterns.md`. This doc deliberately does NOT duplicate the list — a second hand-maintained copy here drifted out of date twice before being replaced with this pointer. Coverage spans unchecked Supabase mutations, zero-row CAS, fail-open enforcement, tenant isolation, credentials in URLs, void-async in serverless, multi-action permission gates, idempotency ordering, webhook signature encoding, state-machine boundaries, stub-shaped code, quota re-reads, shared-constant blast radius, Inngest `step.run` side effects, module-level serverless state, date-only handling, PII in logs, index coverage for new query shapes, and grant-widening deltas.
 
-**Universality:**
-- Patterns 1–4, 11–14: **Universal** for any app using Supabase JS v2 and multi-tenant data
-- Pattern 3 (fail-open): **Universal** — applies to any enforcement layer
-- Pattern 5 (credentials in URLs): **Universal**
-- Pattern 6 (`void` async in serverless): **Universal** for Vercel/Lambda
-- Patterns 7–10: Universal for any app with webhooks, state machines, or idempotent operations
-- The Supabase-specific patterns (1, 2, 4) need adaptation for other ORMs
+**Universality:** mostly **universal**. The Supabase-specific patterns (unchecked mutations, CAS row-count, tenant isolation) need adaptation for other ORMs; the serverless-state and void-async patterns assume Vercel/Lambda-style compute; the rest are stack-agnostic.
 
 **Implementation:** Defined as a Claude Code agent type (`d091-reviewer`) in `.claude/agents/`. Invoked manually before every PR is merged.
 
-**New project notes:** The patterns themselves are worth encoding even without the automated agent. For a new travel agency app using the same stack (Next.js + Supabase + Vercel + Inngest), copy the d091-reviewer agent definition verbatim — all 14 patterns apply. For a different stack, adapt patterns 1 and 2 to the ORM in use.
+**New project notes:** The patterns themselves are worth encoding even without the automated agent. For a new travel agency app using the same stack (Next.js + Supabase + Vercel + Inngest), copy the d091-reviewer agent definition verbatim — all 19 patterns apply. For a different stack, adapt patterns 1 and 2 to the ORM in use.
 
 ---
 
@@ -246,7 +226,9 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 - Surgical changes discipline: diffs should only touch what the task requires
 - Honesty-about-uncertainty: no guessed facts presented as certain
 - Codebase convention drift: new code should match existing patterns
-- Stub-shaped code (same as D-091 pattern 11, from a different angle)
+- Fail-loud + MEMORY-decision consistency
+
+(Stub-shaped code moved to d091-reviewer only in D-316 — each check has exactly one owner; the two agents run independently, in parallel.)
 
 **Universality:** **Universal** — these quality checks apply to any codebase, any stack.
 
@@ -258,16 +240,14 @@ Two-tier: critical CVEs block the PR; high CVEs produce a warning (annotated in 
 
 ### 13. pr-audit-section-check (GitHub Actions)
 
-**What it does:** Enforces that BOTH subagent marker comments exist in the PR AND were posted after the current head commit. Exempts bot PRs (Dependabot) and doc-only PRs (`*.md`, `docs/**`, `specs/**`).
+**What it does:** Enforces that BOTH subagent marker comments exist in the PR AND embed a sha256 of the PR's current effective diff (hash-bound, not timestamp-bound). Exempts bot PRs (Dependabot) and doc-only PRs (`*.md`, `docs/**`, `specs/**`).
 
-**Why two layers:**
-1. **PR body `## Audit` section** — human-readable summary (could be faked)
-2. **PR comment with marker** — timestamped, compared against head commit date (harder to fake without consciously lying)
+**Single layer of evidence (since D-270/D-316):** the hash-bound marker comment. The PR-body `## Audit` section is retired entirely — it was fakeable and added no assurance. Agents post summary comments via `scripts/post-audit-comment.sh` (which owns the hash recipe; a drift guard in the workflow asserts the script's recipe matches the workflow's).
 
 **Implementation:** `.github/workflows/pr-audit-section-check.yml`. Set as a required status check on the `dev` branch.
 
 **Key design decisions:**
-- Triggers on `edited` event so fixing the PR body re-runs the check (without this, you'd need a no-op commit to re-trigger)
+- Hash binding means update-branch merge commits never stale an audit; any diff-changing commit stales both markers (re-run both agents, in parallel)
 - Bot exemption is done inside the job (not as a job-level `if:`) so the job always reports a status — necessary for Dependabot automerge to work
 - Doc-only detection fetches the file list via GitHub REST API, not from the diff — handles renames/deletes correctly
 
