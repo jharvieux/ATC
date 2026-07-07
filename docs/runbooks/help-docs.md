@@ -20,21 +20,27 @@ re-cropping images by hand.
 ## Capture environment — beta demo tenant
 
 Screenshots are captured against the **beta deployment logged into the
-dedicated demo tenant** (decision 2026-07-08): real product rendering, zero
-customer PII possible because the tenant contains only fabricated data.
+dedicated demo tenant** (operator decision, MEMORY D-324): real product
+rendering, zero customer PII possible because the tenant contains only
+fabricated data. The demo tenant is `demo.ai-travelconcierge.com`
+("Harbor Light Travel", owner Dana Whitfield — fictional).
 
-Required env (put in your shell, never commit; values live with the operator):
+Required env (put in your shell, never commit; values live in the
+operator's local `.env.local`):
 
 ```bash
-HELP_SHOTS_BASE_URL=https://<demo-slug>.ai-travelconcierge.com
+HELP_SHOTS_BASE_URL=https://demo.ai-travelconcierge.com
 HELP_SHOTS_EMAIL=<demo tenant owner email>
-HELP_SHOTS_PASSWORD=<demo tenant owner password>
 NEXT_PUBLIC_SUPABASE_URL=<beta Supabase URL>
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<beta anon key>
+SUPABASE_SERVICE_ROLE_KEY=<beta service-role key>
 ```
 
-Auth is GoTrue password-grant + cookie injection (same pattern as
-`tests/e2e/global-setup.ts`) because the UI is OAuth-only.
+Auth mints a session via the GoTrue **admin magic-link** API
+(`generate_link` → `/verify`) and injects it as the session cookie —
+email/password logins are disabled on the beta Supabase project, and the
+UI is OAuth-only so there is no login form to drive. `HELP_SHOTS_PASSWORD`
+works as a fallback mint in environments where email auth is enabled.
 
 ## Adding a screenshot to a doc
 

@@ -11,13 +11,20 @@
 // Env (required unless --no-auth):
 //   HELP_SHOTS_BASE_URL   tenant origin to capture against
 //                         (the demo tenant subdomain — see runbook)
-//   HELP_SHOTS_EMAIL / HELP_SHOTS_PASSWORD   demo-tenant owner login
+//   HELP_SHOTS_EMAIL      demo-tenant owner login
 //   NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+//   SUPABASE_SERVICE_ROLE_KEY   preferred session mint (see below)
+//   HELP_SHOTS_PASSWORD         fallback mint via password grant
 //
-// Auth is the same GoTrue password-grant + cookie injection used by
-// tests/e2e/global-setup.ts (the app's UI is OAuth-only, so there is no
-// login form to drive). Duplicated rather than imported: this script must
-// not depend on Playwright test fixtures or test env conventions.
+// Session mint: the beta Supabase project has email/password logins
+// DISABLED (the product is OAuth-only), so the primary path mints a session
+// via the GoTrue admin API (generate_link type=magiclink → /verify), which
+// works regardless of the email-provider toggle but needs the service-role
+// key. Password grant is kept as a fallback for environments where email
+// auth is enabled (e.g. local). The resulting session JSON is injected as
+// the sb-<ref>-auth-token cookie — same pattern as tests/e2e/global-setup.ts
+// (duplicated rather than imported: this script must not depend on Playwright
+// test fixtures or test env conventions).
 
 import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import * as fs from "node:fs";
@@ -36,16 +43,45 @@ function parseArgs(): { doc?: string; id?: string; noAuth: boolean } {
   return { doc: val("--doc"), id: val("--id"), noAuth: args.includes("--no-auth") };
 }
 
-async function signIn(context: BrowserContext, baseUrl: string): Promise<void> {
+async function mintSession(): Promise<unknown> {
   const email = process.env["HELP_SHOTS_EMAIL"];
-  const password = process.env["HELP_SHOTS_PASSWORD"];
   const supabaseUrl = process.env["NEXT_PUBLIC_SUPABASE_URL"];
   const anonKey = process.env["NEXT_PUBLIC_SUPABASE_ANON_KEY"];
-  if (!email || !password || !supabaseUrl || !anonKey) {
+  const serviceRoleKey = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+  const password = process.env["HELP_SHOTS_PASSWORD"];
+  if (!email || !supabaseUrl || !anonKey || (!serviceRoleKey && !password)) {
     throw new Error(
-      "help-screenshots: set HELP_SHOTS_EMAIL, HELP_SHOTS_PASSWORD, " +
-        "NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY (or pass --no-auth).",
+      "help-screenshots: set HELP_SHOTS_EMAIL, NEXT_PUBLIC_SUPABASE_URL, " +
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY or " +
+        "HELP_SHOTS_PASSWORD (or pass --no-auth).",
     );
+  }
+
+  if (serviceRoleKey) {
+    const linkResp = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+      method: "POST",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ type: "magiclink", email }),
+    });
+    if (!linkResp.ok) {
+      throw new Error(`help-screenshots: generate_link failed (${linkResp.status}): ${await linkResp.text()}`);
+    }
+    const { hashed_token } = (await linkResp.json()) as { hashed_token?: string };
+    if (!hashed_token) throw new Error("help-screenshots: generate_link returned no hashed_token");
+
+    const verifyResp = await fetch(`${supabaseUrl}/auth/v1/verify`, {
+      method: "POST",
+      headers: { apikey: anonKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "magiclink", token_hash: hashed_token }),
+    });
+    if (!verifyResp.ok) {
+      throw new Error(`help-screenshots: verify failed (${verifyResp.status}): ${await verifyResp.text()}`);
+    }
+    return verifyResp.json();
   }
 
   const resp = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
@@ -56,7 +92,12 @@ async function signIn(context: BrowserContext, baseUrl: string): Promise<void> {
   if (!resp.ok) {
     throw new Error(`help-screenshots: GoTrue sign-in failed (${resp.status}): ${await resp.text()}`);
   }
-  const session: unknown = await resp.json();
+  return resp.json();
+}
+
+async function signIn(context: BrowserContext, baseUrl: string): Promise<void> {
+  const supabaseUrl = process.env["NEXT_PUBLIC_SUPABASE_URL"]!;
+  const session = await mintSession();
 
   const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
   const parsed = new URL(baseUrl);
@@ -137,6 +178,14 @@ async function capture(browser: Browser, shot: Shot, baseUrl: string, auth: bool
     if (auth) await signIn(context, baseUrl);
     const page = await context.newPage();
     await page.goto(new URL(shot.path, baseUrl).toString(), { waitUntil: "networkidle" });
+
+    // A silently-rejected session redirects to an auth page — without this
+    // guard the tool would happily screenshot the login screen and that
+    // wrong-state image could ship to customers.
+    const landedPath = new URL(page.url()).pathname;
+    if (auth && (landedPath.startsWith("/auth/") || landedPath.startsWith("/login"))) {
+      throw new Error(`session was not accepted — redirected to ${landedPath}`);
+    }
 
     // The cookie-consent banner (/consent flow) overlays the lower third of
     // every first visit — screenshots must never ship with it. Dismiss with
