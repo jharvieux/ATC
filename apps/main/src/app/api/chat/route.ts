@@ -59,7 +59,7 @@ import { resolveCustomerContext, type CustomerContextRef } from "@/lib/chat/cust
 import { loadTenantSnapshot, type CachedTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementChatMessages } from "@/lib/abuse/counters";
 // #1586 — request-scoped config consolidation + cached platform settings.
-import { loadChatTenantSettings } from "@/lib/chat/chat-tenant-settings";
+import { loadChatTenantSettings, deriveChatTenantFlags } from "@/lib/chat/chat-tenant-settings";
 import { getCachedPlatformSetting } from "@/lib/platform/platform-setting-cache";
 import { runGenerationLoop } from "@/lib/chat/run-generation-loop";
 import type { TenantContext } from "@/lib/db/tenant-context";
@@ -414,13 +414,11 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     // defaults — is_test=true (over-tag), not paused, base tier.
     console.warn("[chat] tenant snapshot load failed (non-fatal):", sanitizeForLog(err));
   }
-  const tenantTier = snapshot?.tenant.tier_code ?? "byo_research";
-  // Fail CLOSED on snapshot failure: stamp is_test=true (over-tagging a real
-  // conversation under-counts metrics — recoverable; mislabeling a sandbox
-  // conversation as real corrupts the firewall — not). Mirrors the prior @446.
-  const tenantIsSandbox = snapshot ? snapshot.is_sandbox : true;
-  // Fail OPEN on snapshot failure: a read blip must not pause a healthy tenant.
-  const tenantAiPaused = snapshot ? snapshot.ai_paused_by_platform : false;
+  // Fail-closed (is_sandbox → is_test) / fail-open (pause) derivation lives in a
+  // pure, unit-tested helper so the security-critical defaults can't silently
+  // invert. See deriveChatTenantFlags.
+  const { tenantTier, isSandbox: tenantIsSandbox, aiPausedByPlatform: tenantAiPaused } =
+    deriveChatTenantFlags(snapshot);
 
   const { personaToneMaxLevel: tenantMaxTone, allowProfanity: tenantAllowProfanity } =
     await loadChatTenantSettings(svc, tenantId, bumpConfigReads);
