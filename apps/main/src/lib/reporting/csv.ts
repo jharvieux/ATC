@@ -41,7 +41,7 @@ function expandMoneyFields(row: Csvable): Csvable {
   for (const [k, v] of Object.entries(row)) {
     if (k.endsWith(CENT_FIELD_SUFFIX)) {
       const dollarKey = k.slice(0, -CENT_FIELD_SUFFIX.length);
-      out[dollarKey] = typeof v === "number" ? fromCents(v as any as Cents) : v;
+      out[dollarKey] = typeof v === "number" ? fromCents(BigInt(Math.round(v)) as Cents) : v;
       if (!Object.prototype.hasOwnProperty.call(out, "currency")) {
         out.currency = currency;
       }

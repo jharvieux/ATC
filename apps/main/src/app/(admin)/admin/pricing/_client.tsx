@@ -44,7 +44,7 @@ const OPEN_SENTINEL = 2147483647;
 // Plain decimal string for <input type="number"> values — NOT formatCents,
 // which returns a currency string ("$12.34") that number inputs reject.
 const dollars = (cents: number | null | undefined) =>
-  cents == null ? "" : fromCents(cents as any as Cents);
+  cents == null ? "" : fromCents(BigInt(Math.round(cents)) as Cents);
 const toCents = (d: string): number | null => {
   const n = Number.parseFloat(d);
   if (!Number.isFinite(n) || n < 0) return null;
