@@ -17,6 +17,7 @@
 
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { escapeHtml } from "@/lib/utils";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
@@ -33,10 +34,6 @@ const RescreenBatchResultPayloadSchema = z.object({
     persona_slug: z.string(),
   }).nullable(),
 });
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 // ── Producer ─────────────────────────────────────────────────────────────────
 
