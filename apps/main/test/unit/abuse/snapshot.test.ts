@@ -89,6 +89,27 @@ describe("loadTenantSnapshot — fail-closed on read error (#393)", () => {
     expect(snap.tenant.seat_count).toBe(2);
   });
 
+  it("surfaces is_sandbox + ai_paused_by_platform from the tenants row (#1586)", async () => {
+    // WHY: the chat hot path now derives the is_test stamp and the per-tenant
+    // AI kill switch from this one cached read instead of two extra tenants
+    // reads. If these stop flowing through, sandbox tagging and the tenant
+    // pause lever silently break.
+    const db = snapshotDb({
+      tenants: { data: { id: "tn-1", tier_id: "tier-1", seat_count: 1, billing_period: "monthly", is_sandbox: true, ai_paused_by_platform: true }, error: null },
+      tier_definitions: { data: { code: "sub_pro" }, error: null },
+      tenant_usage_metrics: { data: { ai_cost_limit_state: "ok" }, error: null },
+    });
+    const snap = await loadTenantSnapshot(db, "tn-1");
+    expect(snap.is_sandbox).toBe(true);
+    expect(snap.ai_paused_by_platform).toBe(true);
+  });
+
+  it("defaults is_sandbox + ai_paused_by_platform to false when absent (stub + missing columns)", async () => {
+    const stub = await loadTenantSnapshot(snapshotDb({ tenants: { data: null, error: null } }), "tn-x");
+    expect(stub.is_sandbox).toBe(false);
+    expect(stub.ai_paused_by_platform).toBe(false);
+  });
+
   it("is_platform_internal=false → normal cost-state path runs (regression guard)", async () => {
     const db = snapshotDb({
       tenants: { data: { id: "tn-1", tier_id: "tier-1", seat_count: 1, billing_period: "monthly", is_platform_internal: false }, error: null },

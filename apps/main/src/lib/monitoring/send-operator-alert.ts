@@ -14,6 +14,7 @@
 //
 // Severity levels mirror the §26.7 incident priority matrix.
 
+import { escapeHtml } from "@/lib/utils";
 import { writeAuditLog } from "@/lib/audit/write";
 
 export type OperatorAlertSeverity = "low" | "medium" | "high" | "critical";
@@ -57,14 +58,6 @@ function renderHtml(input: OperatorAlertInput): string {
 
 function severityColor(s: OperatorAlertSeverity): string {
   return s === "critical" ? "#7f1d1d" : s === "high" ? "#b45309" : s === "medium" ? "#ca8a04" : "#4b5563";
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 export async function sendOperatorAlert(input: OperatorAlertInput): Promise<void> {
