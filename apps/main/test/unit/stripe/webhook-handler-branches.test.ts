@@ -26,11 +26,14 @@ let updateEqCalls: Array<{ table: string; col: string; val: unknown }>;
 
 let insertResult: { error: { code?: string; message: string } | null } = { error: null };
 let updateResult: { data: unknown; error: { message: string } | null } = { data: null, error: null };
-// Result of an `.update(...).select("id")` chain (CAS row-count assert). null =
-// fall back to the pre-SELECTed rows, which is the consistent happy-path value
-// (the update affects exactly the rows just selected). Set explicitly to script
-// a short-count TOCTOU race.
-let updateSelectResult: { data: unknown[]; error: { message: string } | null } | null = null;
+// Result of an `.update(...).or(...).select("id")` chain (#1583 CAS guard).
+// Defaults to 1 row matched (the non-racing happy path). Set to an empty
+// array to script a concurrent-newer-event race (the CAS WHERE clause
+// matched 0 rows because a later event already won).
+let updateSelectResult: { data: unknown[]; error: { message: string } | null } | null = {
+  data: [{ id: "t-1" }],
+  error: null,
+};
 let selectMaybeSingle: { data: unknown; error: null } = { data: null, error: null };
 let selectArray: { data: unknown[]; error: null } = { data: [], error: null };
 // Return value for db.rpc() calls. Default data=1 so transfer.reversed sees 1 row processed.
@@ -66,6 +69,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const u: Record<string, unknown> = {
             eq(col: string, val: unknown) { updateEqCalls.push({ table, col, val }); return u; },
             in() { return u; },
+            or() { return u; },
             select(_cols: string) {
               void _cols;
               return {
@@ -117,6 +121,7 @@ vi.mock("stripe", () => ({
         return {
           id: `evt_test_${mockEventType}`,
           type: mockEventType,
+          created: Math.floor(Date.now() / 1000),
           data: {
             object: mockEventData,
             ...(mockEventPreviousAttributes ? { previous_attributes: mockEventPreviousAttributes } : {}),
@@ -145,7 +150,7 @@ beforeEach(() => {
   updateEqCalls = [];
   insertResult = { error: null };
   updateResult = { data: null, error: null };
-  updateSelectResult = null;
+  updateSelectResult = { data: [{ id: "t-1" }], error: null };
   selectMaybeSingle = { data: null, error: null };
   selectArray = { data: [], error: null };
   mockRpcResult = { data: 1, error: null };
@@ -567,6 +572,58 @@ describe("Stripe webhook — invoice.payment_failed", () => {
     const res = await handleStripeWebhook(makeReq(), "platform");
     expect(res.status).toBe(200);
     expect(dbCalls.some((c) => c.table === "tenants" && c.op === "update")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1583 — CAS guard on the subscription-status UPDATE itself
+//
+// The JS staleness check (isStaleSubscriptionEvent) is a cheap early-out;
+// two concurrent deliveries can both pass it before either writes. The
+// `.or(subscription_status_event_at.is.null,...lt.<created>)` WHERE clause
+// makes the check atomic in the DB — a 0-row result means a concurrent
+// newer event already won, and this event's write must be silently
+// dropped (not treated as an error, not overwriting the newer state).
+// ---------------------------------------------------------------------------
+
+describe("Stripe webhook — #1583 CAS guard (concurrent newer event wins the race)", () => {
+  it("customer.subscription.updated: 0-row CAS result leaves outcome='unhandled', not 'success'", async () => {
+    mockEventType = "customer.subscription.updated";
+    mockEventData = { id: "sub_1", status: "active" };
+    selectMaybeSingle = { data: { id: "t-1", non_paying_since: null }, error: null };
+    updateSelectResult = { data: [], error: null };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    const outcome = dbCalls.find(
+      (c) => c.table === "stripe_webhook_events" && c.op === "update",
+    )?.payload as Record<string, unknown> | undefined;
+    expect(outcome!.processing_outcome).toBe("unhandled");
+  });
+
+  it("invoice.payment_succeeded: 0-row CAS result leaves outcome='unhandled', not 'success'", async () => {
+    mockEventType = "invoice.payment_succeeded";
+    mockEventData = { parent: { subscription_details: { subscription: "sub_1" } } };
+    selectMaybeSingle = { data: { id: "t-1", subscription_status: "past_due" }, error: null };
+    updateSelectResult = { data: [], error: null };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    const outcome = dbCalls.find(
+      (c) => c.table === "stripe_webhook_events" && c.op === "update",
+    )?.payload as Record<string, unknown> | undefined;
+    expect(outcome!.processing_outcome).toBe("unhandled");
+  });
+
+  it("invoice.payment_failed: 0-row CAS result leaves outcome='unhandled', not 'success'", async () => {
+    mockEventType = "invoice.payment_failed";
+    mockEventData = { parent: { subscription_details: { subscription: "sub_1" } } };
+    selectMaybeSingle = { data: { id: "t-1", non_paying_since: null }, error: null };
+    updateSelectResult = { data: [], error: null };
+    const res = await handleStripeWebhook(makeReq(), "platform");
+    expect(res.status).toBe(200);
+    const outcome = dbCalls.find(
+      (c) => c.table === "stripe_webhook_events" && c.op === "update",
+    )?.payload as Record<string, unknown> | undefined;
+    expect(outcome!.processing_outcome).toBe("unhandled");
   });
 });
 
