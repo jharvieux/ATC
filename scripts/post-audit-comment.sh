@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
-# Post an audit agent's hash-bound marker comment to the current branch's PR.
+# Post an audit agent's hash-bound marker comment to an explicit PR.
 #
-# Usage: scripts/post-audit-comment.sh <marker-prefix> <report-file>
+# Usage: scripts/post-audit-comment.sh <pr-number> <marker-prefix> <report-file>
+#   pr-number     : the target PR's number — REQUIRED, no ambient/cwd resolution
 #   marker-prefix : d091-audit:v1 | prepr-audit:v1
 #   report-file   : file with the comment body (the marker line is prepended)
+#
+# The PR number is always caller-supplied — never inferred from `gh pr view`
+# on the cwd's checked-out branch. That ambient resolution used to let a
+# shell running in the wrong git worktree silently post to the wrong PR,
+# where it would still validly satisfy that PR's diff-hash gate (see #1665).
+# To catch a wrong-PR-number typo AND a wrong-worktree cwd in one check, we
+# cross-verify the resolved PR's headRefName against the actual checked-out
+# branch and refuse to post on any mismatch.
 #
 # The jq filter line below MUST stay byte-identical to the one in
 # .github/workflows/pr-audit-section-check.yml — the gate recomputes the hash
@@ -13,12 +22,31 @@
 # producing the same hex digest.
 set -euo pipefail
 
-MARKER_PREFIX="${1:?usage: post-audit-comment.sh <marker-prefix> <report-file>}"
-REPORT_FILE="${2:?usage: post-audit-comment.sh <marker-prefix> <report-file>}"
+PR="${1:?usage: post-audit-comment.sh <pr-number> <marker-prefix> <report-file>}"
+MARKER_PREFIX="${2:?usage: post-audit-comment.sh <pr-number> <marker-prefix> <report-file>}"
+REPORT_FILE="${3:?usage: post-audit-comment.sh <pr-number> <marker-prefix> <report-file>}"
 
-PR=$(gh pr view --json number --jq .number 2>/dev/null || true)
-if [ -z "$PR" ]; then
-  echo "post-audit-comment: no PR for the current branch — open the PR first, or run the agent in local (report-only) mode." >&2
+case "$PR" in
+  ''|*[!0-9]*)
+    echo "post-audit-comment: PR number must be numeric, got '$PR'" >&2
+    exit 1
+    ;;
+esac
+
+CUR_BRANCH=$(git branch --show-current)
+if [ -z "$CUR_BRANCH" ]; then
+  echo "post-audit-comment: refusing to post — cwd is in detached HEAD (no current branch), can't verify PR #$PR belongs here." >&2
+  exit 1
+fi
+
+HEAD_REF=$(gh pr view "$PR" --json headRefName --jq .headRefName 2>/dev/null || true)
+if [ -z "$HEAD_REF" ]; then
+  echo "post-audit-comment: could not resolve PR #$PR (not found, no access, or gh auth issue) — open the PR first, or run the agent in local (report-only) mode." >&2
+  exit 1
+fi
+
+if [ "$HEAD_REF" != "$CUR_BRANCH" ]; then
+  echo "post-audit-comment: refusing to post — PR #$PR head is '$HEAD_REF' but cwd branch is '$CUR_BRANCH' (wrong PR number, or wrong worktree?)" >&2
   exit 1
 fi
 
