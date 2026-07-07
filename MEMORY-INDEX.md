@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-318 — 2026-07-06 — Groups hardening (#1600): compensating delete over RPC/transaction for orphaned-group defect; partial unique index (group_id, lower(invitee_email)) WHERE token_revoked_at IS NULL for single-invite dedup, cap, and counter parity with the create path.
 - D-317 — 2026-07-06 — Audit-model criteria rebased for Sonnet 5: risk triggers → Opus for BOTH agents; size-only trigger → Opus for d091 only, bar raised to ≥20 files/≥1000 net lines (supersedes D-147 audit half + D-314's "audit unchanged" note).
 - D-316 — 2026-07-06 — Audit-agent flow simplified: agents run in parallel concurrent with CI (supersedes D-270 ordering); PR-body ## Audit block retired (markers-only gate); posting mechanics → scripts/post-audit-comment.sh; check ownership de-duplicated; d091 gains 6 patterns (Inngest step.run, module state, dates, log PII, index coverage, grant-widening); local mode for pre-PR reviews; vitals plugin Stop hook removed.
 - D-315 — 2026-07-01 — D-313 hold clarified: backlog #1575–#1613 executes VIA /issue-sweep (operator invoking the sweep IS the green light); don't hand-execute #1575; migration items need explicit operator include at the plan gate.
