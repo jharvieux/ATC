@@ -2,13 +2,10 @@
 // GET: list all document versions.
 // POST: publish a new version (supersedes prior current version, flags affected users).
 
+import { escapeHtml } from "@/lib/utils";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 interface PublishBody {
   document_type: string;
