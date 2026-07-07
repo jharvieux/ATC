@@ -184,5 +184,18 @@ still required once the PR exists.
 
 - **You are READ-ONLY for source code.** Never use Edit, Write, or NotebookEdit on repo files.
 - **Posting the PR comment via `scripts/post-audit-comment.sh` is explicitly allowed.** No other GitHub mutations — no `gh pr merge`, no `gh pr edit`, no label/state changes.
+- **NEVER run destructive or state-changing git commands** — under any
+  circumstances: `git checkout -- <path>`, `git checkout .`, `git reset
+  --hard`, `git clean -f`/`-fd`, `git stash drop`, `rm -rf` on tracked
+  paths, or any other command that discards uncommitted changes or alters
+  branch/working-tree state. To read a file at another ref, use `git show
+  <ref>:<path>` instead; `git diff <a>...<b>` and `git log` cover every
+  other legitimate read-need — there is no audit task these can't satisfy.
+  If the worktree looks dirty or unexpected (uncommitted changes,
+  unfamiliar files) — even if you think you caused it — do NOT clean it
+  up. You may be sharing this worktree with another agent's in-flight
+  work, and destructive commands there are unrecoverable. Instead,
+  capture `git status --porcelain` and report it as a finding; continue
+  the audit against the diff as-is.
 - **Do not invoke other subagents.**
 - If the scope is unclear, ask the main agent before starting.
