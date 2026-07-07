@@ -7,6 +7,8 @@
 // any→healthy) are computed against the DURABLE prior state, not the
 // per-instance cache, so only one instance fires the alert per event.
 
+import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
+
 export type VendorName = "anthropic" | "openai" | "stripe" | "resend" | "supabase" | "inngest" | "upstash" | "rag" | "supabase_rag";
 
 export type VendorHealthStatus = "healthy" | "degraded" | "down";
@@ -24,12 +26,7 @@ export const DOWN_AFTER_FAILURES = 5;
 
 const CACHE_TTL_MS = 30_000;
 
-interface CacheEntry {
-  state: VendorHealthState;
-  expires_at: number;
-}
-
-const cache = new Map<VendorName, CacheEntry>();
+const cache = new BoundedTtlCache<VendorName, VendorHealthState>({ defaultTtlMs: CACHE_TTL_MS });
 
 export function computeStatus(consecutive_failures: number): VendorHealthStatus {
   if (consecutive_failures >= DOWN_AFTER_FAILURES) return "down";
@@ -42,13 +39,11 @@ export function computeStatus(consecutive_failures: number): VendorHealthStatus 
 // ---------------------------------------------------------------------------
 
 function cacheGet(name: VendorName): VendorHealthState | null {
-  const entry = cache.get(name);
-  if (!entry || Date.now() > entry.expires_at) return null;
-  return entry.state;
+  return cache.get(name) ?? null;
 }
 
 function cacheSet(name: VendorName, state: VendorHealthState): void {
-  cache.set(name, { state, expires_at: Date.now() + CACHE_TTL_MS });
+  cache.set(name, state);
 }
 
 export function vendorHealthStatus(name: VendorName): VendorHealthStatus {

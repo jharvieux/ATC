@@ -5,6 +5,7 @@
 // no-direct-service-role-import allowlist.
 
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,35 +35,12 @@ export type Tenant = {
 // best-effort"). The cache is keyed by the lookup value (slug or hostname).
 // ---------------------------------------------------------------------------
 
-type CacheEntry = { tenant: Tenant | null; expiresAt: number };
-
-const slugCache = new Map<string, CacheEntry>();
-const domainCache = new Map<string, CacheEntry>();
-const userTenantCache = new Map<string, CacheEntry>();
-const idCache = new Map<string, CacheEntry>();
-
 const TTL_MS = 60_000;
 
-function cacheGet(
-  map: Map<string, CacheEntry>,
-  key: string,
-): Tenant | null | undefined {
-  const entry = map.get(key);
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
-    map.delete(key);
-    return undefined;
-  }
-  return entry.tenant;
-}
-
-function cacheSet(
-  map: Map<string, CacheEntry>,
-  key: string,
-  tenant: Tenant | null,
-): void {
-  map.set(key, { tenant, expiresAt: Date.now() + TTL_MS });
-}
+const slugCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
+const domainCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
+const userTenantCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
+const idCache = new BoundedTtlCache<string, Tenant | null>({ defaultTtlMs: TTL_MS });
 
 // ---------------------------------------------------------------------------
 // Lookups
@@ -75,7 +53,7 @@ const TENANT_COLUMNS = "id, slug, tenant_type, status, custom_domain, subscripti
  * Returns null for unknown slugs or terminated tenants.
  */
 export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
-  const cached = cacheGet(slugCache, slug);
+  const cached = slugCache.get(slug);
   if (cached !== undefined) return cached;
 
   const db = createServiceRoleClient();
@@ -91,7 +69,7 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
   }
 
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
-  cacheSet(slugCache, slug, tenant);
+  slugCache.set(slug, tenant);
   return tenant;
 }
 
@@ -101,7 +79,7 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
  * Returns null for unknown ids or terminated tenants.
  */
 export async function getTenantById(id: string): Promise<Tenant | null> {
-  const cached = cacheGet(idCache, id);
+  const cached = idCache.get(id);
   if (cached !== undefined) return cached;
 
   const db = createServiceRoleClient();
@@ -116,7 +94,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
   }
 
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
-  cacheSet(idCache, id, tenant);
+  idCache.set(id, tenant);
   return tenant;
 }
 
@@ -124,7 +102,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
 export async function getTenantByAuthUserId(
   authUserId: string,
 ): Promise<Tenant | null> {
-  const cached = cacheGet(userTenantCache, authUserId);
+  const cached = userTenantCache.get(authUserId);
   if (cached !== undefined) return cached;
 
   const db = createServiceRoleClient();
@@ -140,7 +118,7 @@ export async function getTenantByAuthUserId(
   if (userError) throw new Error(`getTenantByAuthUserId users lookup: ${userError.message}`);
 
   if (!userRow) {
-    cacheSet(userTenantCache, authUserId, null);
+    userTenantCache.set(authUserId, null);
     return null;
   }
 
@@ -153,7 +131,7 @@ export async function getTenantByAuthUserId(
   if (error) throw new Error(`getTenantByAuthUserId: ${error.message}`);
 
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
-  cacheSet(userTenantCache, authUserId, tenant);
+  userTenantCache.set(authUserId, tenant);
   return tenant;
 }
 
@@ -164,7 +142,7 @@ export async function getTenantByAuthUserId(
 export async function getTenantByCustomDomain(
   hostname: string,
 ): Promise<Tenant | null> {
-  const cached = cacheGet(domainCache, hostname);
+  const cached = domainCache.get(hostname);
   if (cached !== undefined) return cached;
 
   const db = createServiceRoleClient();
@@ -179,6 +157,6 @@ export async function getTenantByCustomDomain(
   }
 
   const tenant = data?.status === "terminated" ? null : (data as Tenant | null);
-  cacheSet(domainCache, hostname, tenant);
+  domainCache.set(hostname, tenant);
   return tenant;
 }

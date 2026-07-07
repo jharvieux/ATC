@@ -10,6 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
+import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 
 export type EntityIntent = "research" | "compare" | "book" | "support";
 
@@ -91,12 +92,8 @@ function currentIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-interface CacheEntry {
-  expires: number;
-  value: EntitySet;
-}
-const CACHE: Map<string, CacheEntry> = new Map();
 const CACHE_TTL_MS = 60 * 60 * 1000;
+const CACHE = new BoundedTtlCache<string, EntitySet>({ defaultTtlMs: CACHE_TTL_MS });
 
 function hash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -134,7 +131,7 @@ export async function extractEntities(args: ExtractEntitiesArgs | string): Promi
   // tenant_id prevents cross-tenant EntitySet collisions on the same warm instance.
   const key = hash(input.tenant_id + input.message + contextKey + today);
   const cached = CACHE.get(key);
-  if (cached && cached.expires > Date.now()) return cached.value;
+  if (cached !== undefined) return cached;
 
   if (!process.env.ANTHROPIC_API_KEY) {
     // #851 — loud, not silent. Empty entities disable #826's itinerary lookup
@@ -166,7 +163,7 @@ export async function extractEntities(args: ExtractEntitiesArgs | string): Promi
       messages: [{ role: "user", content: `${contextBlock}<message>\n${input.message}\n</message>` }],
     });
     const parsed = parseEntities(result.text);
-    CACHE.set(key, { expires: Date.now() + CACHE_TTL_MS, value: parsed });
+    CACHE.set(key, parsed);
     return parsed;
   } catch (err) {
     // #851 — never silent. A model/provider failure here was invisible (the old
