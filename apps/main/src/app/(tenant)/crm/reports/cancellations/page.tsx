@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
+import { formatCents } from "@/lib/money";
 
 type Item = {
   category: string;
@@ -12,10 +13,6 @@ type Item = {
   clawback_cents: number;
   net_impact_cents: number;
 };
-
-function dollars(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 export default function CancellationsPage(): JSX.Element {
   return (
@@ -106,9 +103,9 @@ function CancellationsContent(): JSX.Element {
                   <td className="px-4 py-3">{it.category}</td>
                   <td className="px-4 py-3 text-gray-600">{it.secondary ?? "—"}</td>
                   <td className="px-4 py-3 text-right">{it.cancelled_count}</td>
-                  <td className="px-4 py-3 text-right">{dollars(it.lost_expected_cents)}</td>
-                  <td className="px-4 py-3 text-right">{dollars(it.clawback_cents)}</td>
-                  <td className="px-4 py-3 text-right font-medium">{dollars(it.net_impact_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.lost_expected_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.clawback_cents)}</td>
+                  <td className="px-4 py-3 text-right font-medium">{formatCents(it.net_impact_cents)}</td>
                 </tr>
               ))}
               {items.length === 0 && (
