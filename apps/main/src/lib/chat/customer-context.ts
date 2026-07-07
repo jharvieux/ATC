@@ -12,6 +12,7 @@
 // never read a booking belonging to tenant B.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { formatCents } from "@/lib/money";
 import { selectRepresentativeOption } from "@/lib/quotes/representative-option";
 
 export type CustomerContextRef =
@@ -69,10 +70,8 @@ interface ItineraryContextRow {
 }
 
 function fmtMoney(amount: number | bigint | null | undefined, currency: string | null | undefined): string {
-  if (amount === null || amount === undefined) return "—";
   const cents = typeof amount === "bigint" ? Number(amount) : amount;
-  const cur = currency ?? "USD";
-  return `${cur} ${(cents / 100).toFixed(2)}`;
+  return formatCents(cents, currency ?? "USD");
 }
 
 function fmtNumberOrDash(n: number | null | undefined): string {

@@ -197,7 +197,7 @@ Conformance > taste inside the codebase. If you genuinely think a convention is 
 
 ## D-091 anti-patterns (authoring checklist)
 
-Scan these 20 titles before writing app code. **Full catalog — symptom, example, codebase instances, the `pnpm check:*` gate, and the why — lives in `docs/runbooks/anti-patterns.md`.** Open that runbook the moment a title is relevant to what you're writing. The `d091-reviewer` agent enforces all of these at PR time.
+Scan these 26 titles before writing app code. **Full catalog — symptom, example, codebase instances, the `pnpm check:*` gate, and the why — lives in `docs/runbooks/anti-patterns.md`.** Open that runbook the moment a title is relevant to what you're writing. The `d091-reviewer` agent enforces all of these at PR time.
 
 1. **No stub-shaped code** — every param affects output; every variant reachable; no dead branches.
 2. **Fail-closed** — when an enforcement layer can't run (Redis/DB/secret/signature absent), deny, don't permit.
@@ -219,6 +219,12 @@ Scan these 20 titles before writing app code. **Full catalog — symptom, exampl
 18. **Counter/financial mutations must be atomic, not read-modify-write** (#1393/G3) — DB-side increment or CAS reserve-row.
 19. **Public/anon rate limits must be backed by a shared store, not a module-level `Map`/`Set`** (#1393/G4) — Redis/DB, fail closed.
 20. **Webhooks need replay protection, not just a signature** (#1393/G6) — timestamp window / dedup row / nonce / version guard + replay fixture test.
+21. **Claim-before-send in batch jobs** — CAS-claim the row FIRST (`.update(...).is('sent_at', null)`), skip if zero rows claimed.
+22. **Collectively-atomic multi-writes** — 2+ dependent writes must be atomic (RPC) or individually idempotent + retriable without state breakage.
+23. **Deterministic idempotency keys on external sends** — Resend/Stripe/Apify calls pass `Idempotency-Key` header from stable identifiers.
+24. **DB uniqueness wherever app code assumes it** — SELECT-then-INSERT dedup must have `UNIQUE(a,b)` constraint + 23505 handler.
+25. **Bounded queries on user-growing tables** — `.select()` on messages/bookings/logs carries `.limit()` or `.range()` — no silent truncation.
+26. **Webhook state-application needs ordering protection** — compare `event.created_at` against last-applied or re-fetch live state before overwriting.
 
 -----
 
