@@ -1,30 +1,28 @@
-# Session state — last updated 2026-07-07 05:50 UTC
+# Session state — last updated 2026-07-08 12:47 CT
 
 ## Just completed
-- Fixed issue #1638 (money-formatter consolidation), which had been cancelled after audit found its single commit didn't actually contain the claimed call-site migrations. Cut a fresh branch off `dev`, redid the consolidation for real:
-  - 14 files migrated off local `dollars()`/`formatPrice()`/`formatMoneyCents()`/inline `cents/100` patterns onto the canonical `formatCents(cents, currency?)` in `lib/money.ts`.
-  - Fixed the admin/pricing `<input type="number">` bug the audit had found: those specific call sites use `fromCents()` (plain decimal), not `formatCents()` (currency string, which blanks number inputs).
-  - PR #1638 closed as superseded; new PR **#1657 merged** into `dev` (627b7c25).
-- Went through 3 rounds of the parallel d091-reviewer/pre-pr-reviewer audit loop before merge — all real findings, all fixed:
-  - Round 1: `fromCents` had been widened to accept plain `number` (brand-type erosion), `formatCents` had no test coverage, a 13th divergent formatter (`formatDollars` in admin/resources) was walked past.
-  - Round 2 fix (casting `cents as any as Cents`) was itself flagged — an `any`-escape is worse than the widening it replaced.
-  - Round 3: fixed properly with `BigInt(Math.round(cents)) as Cents` (real runtime conversion, no `any`). Both agents came back clean (0 blockers/warnings).
-- Filed **#1658**: `formatCents` always divides by 100 regardless of currency, so zero-decimal currencies (JPY, KRW) render 100x too small. Pre-existing bug inherited from all 12 original formatters, not introduced by #1657 — deferred rather than fixed in-PR since a real fix needs a product decision on how non-2-decimal-currency cents are stored. A regression test documents the current (buggy) behavior.
-- D-319 logged in MEMORY.md with full detail on the 3-round audit loop and what was rejected at each round.
+- Executed `/issue-sweep` against the held 2026-07-01 principal architecture review backlog (#1575–#1621 range): triaged, planned, and merged 20 PRs (schema constraints, email idempotency/dedup, cron double-send, Stripe webhook CAS fix, auth-transfer defects, error-sanitization sweep, escapeHtml/money/HMAC/cache consolidations, chat perf, groups hardening, email-route dedup, audit-gap triage, D-091 catalog additions, 2 new runbooks).
+- Found and fixed real bugs mid-merge: a Stripe webhook CAS race (#1583), two genuine multi-file merge conflicts requiring manual reconciliation (HMAC-vs-groups-hardening in #1650, BoundedTtlCache-vs-snapshot-fields in #1643), four migration-version collisions, two MEMORY.md D-number collisions.
+- Closed 3 issues that were merged-but-never-auto-closed (#1594, #1605, #1663).
+- Ran a dedicated sweep of every merged PR's audit-agent WARNING/NIT comments and filed 9 follow-up issues for genuinely untracked gaps (#1673–#1682).
+- Investigated and fixed 3 process bugs surfaced during the sweep, each shipped as its own merged PR: migration/MEMORY-D-number collision prevention (#1660/#1661 → #1667), post-audit-comment.sh wrong-PR misfire (#1665 → #1666), destructive-git-command prohibition in audit agents (#1669 → #1670), merge-train discipline + `--check` mode (#1671 → #1672).
+- Resolved issue #1668 (7 unwired kill-switch/feature-flag env vars) — removed 2 dead flags (`AI_GLOBAL_KILL_SWITCH`, `MAINTENANCE_MODE`), wired 5 real ones (OAuth ×3 provider gating, RAG ingestion pause, signup toggle, Stripe Connect onboarding toggle), each with a both-directions test. Caught and fixed a real build regression along the way (signup page's eager `env()` read broke static prerender in CI).
+- Cleaned up: fast-forwarded local `dev` to match remote, removed 8 unlocked stale agent worktrees, deleted 16 confirmed-merged remote branches that `--delete-branch` had missed.
+- Added MEMORY.md D-323 (session summary) — D-322 (#1668) was already in place, added by a collaborating session mid-sweep. MEMORY-INDEX.md updated for both.
 
 ## In flight
-- Nothing in flight on `apps/**` — the only open item is this SESSION.md + MEMORY.md update itself, on branch `docs/d319-money-consolidation-memory` (off `dev`), not yet pushed/PR'd.
+- Nothing in flight — clean checkpoint. 0 open PRs, working tree clean, `dev` at `2b584496`.
+- 13 agent worktrees under `.claude/worktrees/` remain, lock-protected by this session's harness. Their branches are already deleted from origin (safe to remove once unlocked). The harness should release these on session teardown; if they persist next session, `git worktree remove --force <path>` each, or `git worktree remove -f -f` to override a stale lock if the harness didn't release it.
 
 ## Next step
-- Push `docs/d319-money-consolidation-memory`, open a doc-only PR into `dev` (exempt from audit agents per the doc-only exemption), and merge once CI is green.
-- Run `/issue-sweep` when the operator invokes it (unchanged; D-315: backlog #1575–#1613 goes THROUGH the sweep, not ahead of it).
+- No specific next step queued. If resuming, check whether any of the 9 newly-filed follow-up issues (#1673–#1682) should be prioritized into a future sweep, or left in general backlog.
 
 ## Blocked on user
-- Operator invoking `/issue-sweep` (their chosen route for the #1575–#1613 backlog, per D-315).
-- `feature/sweep-money-1606` branch still exists, holding unrelated doc changes from the original cancelled batch (CLAUDE.md anti-patterns 21–26, `.claude/agents/d091-reviewer.md`, `docs/runbooks/anti-patterns.md` additions) that were NOT carried into #1657. Left in place per "never delete branches without permission" — operator should decide whether to salvage that doc work into its own PR or let the branch go stale.
+- Nothing.
+- Carried from before this session, still unresolved: `feature/sweep-money-1606` branch still exists on the remote, holding unrelated doc changes from the original cancelled #1638 batch (CLAUDE.md anti-patterns 21–26, `.claude/agents/d091-reviewer.md`, `docs/runbooks/anti-patterns.md` additions) that were never carried into the redo (#1657, merged in a prior session). Left in place per "never delete branches without permission" — operator should decide whether to salvage that doc work into its own PR or let the branch go stale.
 
 ## Open questions
-- #1658 (JPY/zero-decimal-currency formatCents bug) needs a product decision before it can be fixed: does the platform store non-2-decimal-currency amounts as true minor-unit cents, or would a currency-aware divisor be introduced? Not urgent unless a non-USD/EUR/GBP tenant is onboarded.
-- Carried: RAG ship-stats backfill script (PR #1566) never dry-run against any DB; `signature_feature` curation path (#1565) deferred.
-- Carried: Resend's exact pre-bounce retry window is unpublished — if the number ever matters, ask Resend support (noted in #1611).
+- Whether to prioritize any of the 9 newly-filed follow-up issues (#1673–#1682) in a future sweep, or leave them in the general backlog.
+- Whether the 13 still-locked stale worktrees need manual cleanup next session if the harness didn't release them on teardown.
+- Carried: #1658 (JPY/zero-decimal-currency formatCents bug) needs a product decision before it can be fixed — does the platform store non-2-decimal-currency amounts as true minor-unit cents, or would a currency-aware divisor be introduced? Not urgent unless a non-USD/EUR/GBP tenant is onboarded.
 - Untracked in repo (pre-existing, untouched): `specs/GroupLandingPage.zip`, `specs/design_handoff_group_landing/`.
