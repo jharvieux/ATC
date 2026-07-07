@@ -11,6 +11,7 @@ import {
   toCents,
   dollarsToCents,
   fromCents,
+  formatCents,
   multiplyRate,
   subtractFee,
   assertSameCurrency,
@@ -83,6 +84,49 @@ describe("fromCents (display only)", () => {
   it("preserves two decimal places", () => {
     expect(fromCents(1n)).toBe("0.01");
     expect(fromCents(10n)).toBe("0.10");
+  });
+});
+
+// ── formatCents ──────────────────────────────────────────────────────────────
+
+describe("formatCents (canonical display formatter with currency)", () => {
+  it("formats cents with default USD currency symbol", () => {
+    expect(formatCents(0)).toBe("$0.00");
+    expect(formatCents(100)).toBe("$1.00");
+    expect(formatCents(72500)).toBe("$725.00");
+    expect(formatCents(2500000)).toBe("$25,000.00");
+  });
+
+  it("formats with thousands separators", () => {
+    expect(formatCents(1234567)).toBe("$12,345.67");
+  });
+
+  it("handles null and undefined as em-dash", () => {
+    expect(formatCents(null)).toBe("—");
+    expect(formatCents(undefined)).toBe("—");
+  });
+
+  it("formats with non-USD currency codes", () => {
+    expect(formatCents(100, "EUR")).toBe("€1.00");
+    expect(formatCents(100, "GBP")).toBe("£1.00");
+  });
+
+  it("known limitation: always divides by 100, which is wrong for zero-decimal currencies (issue #TBD)", () => {
+    // formatCents assumes a 2-decimal minor unit (cents), so JPY/KRW/etc. — which
+    // have no minor unit — render 100x too small. Pre-existing behavior inherited
+    // from the formatters this PR consolidates; not introduced here. Tracked as
+    // a follow-up rather than fixed in this PR (see PR body).
+    expect(formatCents(100, "JPY")).toBe("¥1");
+  });
+
+  it("falls back to 'CODE amount' for invalid currency codes", () => {
+    expect(formatCents(100, "FAKE")).toBe("FAKE 1.00");
+    expect(formatCents(100, "INVALID")).toBe("INVALID 1.00");
+  });
+
+  it("is case-insensitive on currency code input", () => {
+    expect(formatCents(100, "eur")).toBe("€1.00");
+    expect(formatCents(100, "usd")).toBe("$1.00");
   });
 });
 

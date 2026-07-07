@@ -6,6 +6,7 @@
 // fields. Uses /api/bookings/:id/line-items.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatCents } from "@/lib/money";
 
 type ItemType = "flight" | "hotel" | "transfer" | "excursion" | "insurance" | "other";
 
@@ -25,11 +26,6 @@ type LineItem = {
   status: string;
   include_in_itinerary: boolean;
 };
-
-function dollars(cents: number | null): string {
-  if (cents === null) return "—";
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 const TYPE_LABELS: Record<ItemType, string> = {
   flight: "Flight",
@@ -106,10 +102,10 @@ export function LineItemsPanel(props: { booking_id: string }): JSX.Element {
                 <div className="text-xs text-gray-500">{it.description}</div>
               </div>
               <div className="text-xs text-gray-600 whitespace-nowrap">
-                {dollars(it.customer_cost_cents)}
+                {formatCents(it.customer_cost_cents)}
                 {it.commissionable && it.expected_commission_cents !== null && (
                   <span className="text-green-700 ml-2">
-                    +{dollars(it.expected_commission_cents)} comm.
+                    +{formatCents(it.expected_commission_cents)} comm.
                   </span>
                 )}
               </div>

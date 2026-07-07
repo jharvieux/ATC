@@ -13,6 +13,7 @@
 
 import { useState, useEffect, use } from "react";
 import { COMMISSIONABLE_LINE_ITEMS } from "@/lib/commissions/commissionable-line-items";
+import { formatCents } from "@/lib/money";
 import { QuoteCopilotPanel } from "@/components/quote/QuoteCopilotPanel";
 
 interface QuoteOption {
@@ -39,14 +40,6 @@ interface QuoteDetail {
   created_at: string;
   option: QuoteOption | null;
   option_count: number;
-}
-
-function formatMoneyCents(cents: number | null): string {
-  if (cents == null) return "—";
-  return `$${(cents / 100).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
 }
 
 export default function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -124,8 +117,8 @@ export default function QuoteDetailPage({ params }: { params: Promise<{ id: stri
         <div><span className="text-gray-500">Duration</span><p>{option?.duration_nights ? `${option.duration_nights} nights` : "—"}</p></div>
         <div><span className="text-gray-500">Cabin</span><p>{option?.cabin_category ?? "—"}</p></div>
         <div><span className="text-gray-500">Passengers</span><p>{option?.passenger_count ?? "—"}</p></div>
-        <div><span className="text-gray-500">Commissionable fare</span><p>{formatMoneyCents(option?.commissionable_fare_cents ?? null)}</p></div>
-        <div><span className="text-gray-500">Total</span><p>{formatMoneyCents(option?.total_amount_cents ?? null)}</p></div>
+        <div><span className="text-gray-500">Commissionable fare</span><p>{formatCents(option?.commissionable_fare_cents ?? null)}</p></div>
+        <div><span className="text-gray-500">Total</span><p>{formatCents(option?.total_amount_cents ?? null)}</p></div>
       </div>
 
       <div className="mb-6">

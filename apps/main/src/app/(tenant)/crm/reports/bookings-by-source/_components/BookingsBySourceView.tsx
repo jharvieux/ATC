@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
+import { formatCents } from "@/lib/money";
 
 type Item = {
   channel: string | null;
@@ -12,10 +13,6 @@ type Item = {
   gross_commission_cents: number;
   net_commission_cents: number;
 };
-
-function dollars(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 export function BookingsBySourceView(): JSX.Element {
   return (
@@ -84,8 +81,8 @@ function BookingsBySourceContent(): JSX.Element {
                   <td className="px-4 py-3 text-gray-600">{it.utm_source ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-600">{it.utm_campaign ?? "—"}</td>
                   <td className="px-4 py-3 text-right font-medium">{it.bookings}</td>
-                  <td className="px-4 py-3 text-right">{dollars(it.gross_commission_cents)}</td>
-                  <td className="px-4 py-3 text-right">{dollars(it.net_commission_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.gross_commission_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.net_commission_cents)}</td>
                 </tr>
               ))}
               {items.length === 0 && (
