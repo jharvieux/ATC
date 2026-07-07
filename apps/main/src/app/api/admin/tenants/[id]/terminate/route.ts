@@ -12,6 +12,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface TerminateBody {
   kind: "voluntary" | "involuntary_content" | "involuntary_other";
@@ -175,7 +176,6 @@ export async function POST(
 
     return Response.json({ ok: true, kind: body.kind });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

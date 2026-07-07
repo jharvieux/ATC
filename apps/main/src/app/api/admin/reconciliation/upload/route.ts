@@ -22,6 +22,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const AUTO_ACCEPT_THRESHOLD_CENTS = 500n;
 const REVIEW_HOLD_THRESHOLD_CENTS = 5000n;
@@ -186,8 +187,7 @@ If amounts appear to be in dollars, multiply by 100 to convert to cents.`;
       results: { total: parsed.line_items.length, auto_accepted, queued, orphans, errors },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error";
-    return Response.json({ error: message }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 

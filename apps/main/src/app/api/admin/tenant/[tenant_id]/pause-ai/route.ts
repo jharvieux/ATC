@@ -21,6 +21,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request, props: { params: Promise<{ tenant_id: string }> }): Promise<Response> {
   const params = await props.params;
@@ -69,7 +70,6 @@ export async function POST(req: Request, props: { params: Promise<{ tenant_id: s
 
     return Response.json({ ok: true, tenant_id, ai_paused_by_platform: nextValue });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "internal_error";
-    return Response.json({ error: message }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

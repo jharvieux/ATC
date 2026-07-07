@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { evictPlatformSetting } from "@/lib/platform/platform-setting-cache";
 
 function hashTerm(term: string): string {
@@ -49,7 +50,7 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -98,7 +99,7 @@ export async function POST(req: Request): Promise<Response> {
     );
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -137,6 +138,6 @@ export async function DELETE(req: Request): Promise<Response> {
     );
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

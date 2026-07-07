@@ -15,6 +15,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import type { PlatformAdminReason } from "@/lib/db/platform-admin-reasons";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function POST(req: Request): Promise<Response> {
   let adminUserId: string;
@@ -77,7 +78,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, state: result });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "internal_error";
-    return Response.json({ error: message }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
