@@ -27,6 +27,10 @@ const mocks = vi.hoisted(() => ({
   signUnsubscribeToken: vi.fn(),
   generateToken: vi.fn(),
   invitationInsert: vi.fn(),
+  invitationInsertResult: vi.fn(),
+  inviteCountQuery: vi.fn(),
+  loadTenantSnapshot: vi.fn(),
+  incrementGroupInvitees: vi.fn(),
   fetch: vi.fn(),
 }));
 
@@ -47,6 +51,14 @@ vi.mock("@/lib/db/safe-mutation", async () => {
 
 vi.mock("@/lib/groups/invitation-token", () => ({
   generateToken: mocks.generateToken,
+}));
+
+vi.mock("@/lib/abuse/snapshot", () => ({
+  loadTenantSnapshot: mocks.loadTenantSnapshot,
+}));
+
+vi.mock("@/lib/abuse/counters", () => ({
+  incrementGroupInvitees: mocks.incrementGroupInvitees,
 }));
 
 vi.mock("@/lib/email/template-resolve", () => ({
@@ -81,21 +93,21 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       if (table === "invitations") {
         return {
-          select: () => ({
-            eq: () => ({
-              single: mocks.invitationSingle,
-              is: () => ({ then: (r: (v: unknown) => unknown) => mocks.allInvitations().then(r) }),
-            }),
-          }),
-          insert: (payload: unknown) => {
-            mocks.invitationInsert(payload);
+          select: (_cols: string, opts?: { count?: string; head?: boolean }) => {
+            if (opts?.count === "exact" && opts?.head) {
+              // #1600 cap-check count query — ends with .eq().is()
+              return { eq: () => ({ is: () => mocks.inviteCountQuery() }) };
+            }
             return {
-              select: () => ({
-                then: (r: (v: unknown) => unknown) =>
-                  // safeAwait intercepts this — return the raw builder thenable
-                  ({ then: r }),
+              eq: () => ({
+                single: mocks.invitationSingle,
+                is: () => ({ then: (r: (v: unknown) => unknown) => mocks.allInvitations().then(r) }),
               }),
             };
+          },
+          insert: (payload: unknown) => {
+            mocks.invitationInsert(payload);
+            return { select: () => mocks.invitationInsertResult() };
           },
         };
       }
@@ -153,8 +165,13 @@ beforeEach(() => {
     },
     error: null,
   });
-  // safeAwait resolves to a non-empty array (row inserted)
+  // safeAwait resolves to a non-empty array (row inserted) — still used by
+  // the reissue_all path, not the single-invite insert under test here.
   mocks.safeAwait.mockResolvedValue([{ id: "inv-new" }]);
+  mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
+  mocks.invitationInsertResult.mockResolvedValue({ data: [{ id: "inv-new" }], error: null });
+  mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
+  mocks.incrementGroupInvitees.mockResolvedValue(undefined);
   // Email helper dependencies — provide enough data for a successful send
   mocks.invitationSingle.mockResolvedValue({
     data: { id: "inv-new", invitee_email: "guest@example.com", invitee_name: "Sam" },
@@ -176,17 +193,16 @@ beforeEach(() => {
 });
 
 describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
-  it("valid invite → calls safeAwait for insert, returns ok + invitation_id", async () => {
+  it("valid invite → inserts the invitation row, returns ok + invitation_id", async () => {
     const res = await POST(postReq({ action: "invite", invitee_email: "Guest@Example.com" }), PARAMS);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; invitation_id: string };
     expect(body.ok).toBe(true);
     expect(typeof body.invitation_id).toBe("string");
-    // safeAwait must have been called with the insert query
-    expect(mocks.safeAwait).toHaveBeenCalledOnce();
+    expect(mocks.invitationInsert).toHaveBeenCalledOnce();
     // Email is normalized to lowercase
-    const safeCall = mocks.safeAwait.mock.calls[0]!;
-    expect(safeCall[1]).toBe("invitations.insert");
+    const payload = mocks.invitationInsert.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.invitee_email).toBe("guest@example.com");
   });
 
   it("includes the NOT NULL token in the insert (regression: missing token 500'd every add)", async () => {
@@ -202,7 +218,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("invitee_email");
-    expect(mocks.safeAwait).not.toHaveBeenCalled();
+    expect(mocks.invitationInsert).not.toHaveBeenCalled();
   });
 
   // #84: the email regex is the ReDoS guard. A >254-char address matches the
@@ -214,7 +230,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("invitee_email");
-    expect(mocks.safeAwait).not.toHaveBeenCalled();
+    expect(mocks.invitationInsert).not.toHaveBeenCalled();
   });
 
   it("invalid visibility_choice → 400, no DB write", async () => {
@@ -225,7 +241,7 @@ describe("POST /api/groups/[id]/invitations — invite action (#970)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("visibility_choice");
-    expect(mocks.safeAwait).not.toHaveBeenCalled();
+    expect(mocks.invitationInsert).not.toHaveBeenCalled();
   });
 
   it("email send failure is silenced — invitation_id still returned", async () => {
