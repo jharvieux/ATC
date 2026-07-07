@@ -273,8 +273,8 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 **Symptom**: A batch job that sends (email/webhook/external call) then stamps the row has sent twice on overlap or retry. A late sender can flip the sent flag while an early retry of the same job is mid-send.
 
 **Codebase instances (2 found)**:
-- `apps/main/src/inngest/task-reminders.ts` (Greptile-flagged — #1581)
-- `apps/main/src/inngest/pre-cruise-checklist.ts` (Greptile-flagged — #1582)
+- `apps/main/src/lib/cron/task-reminders-fire.ts` (Greptile-flagged — #1581)
+- `apps/main/src/inngest/precruise-generate-and-send.ts`, `apps/main/src/inngest/pre-cruise-email-scheduler.ts` (Greptile-flagged — #1582)
 
 **Why slips through**: single-run tests pass. Catching requires concurrent job overlap or a strict retry within the send window — both invisible in normal testing.
 
@@ -287,9 +287,9 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 **Symptom**: Two or more dependent writes where a mid-sequence failure + retry duplicates or drops one side. A process crashes after row A commits but before row B, so the retry succeeds for row B but row A was already written — a state invariant is broken (split credits/debits, half-created relationships, orphaned records).
 
 **Codebase instances (4 found)**:
-- `apps/main/src/inngest/import-promote.ts` (Greptile-flagged — #1576)
-- `apps/main/src/inngest/platform-revenue-record.ts` (Greptile-flagged — #1578)
-- `apps/main/src/inngest/batch-platform-pipeline.ts` (Greptile-flagged — #1599)
+- `apps/main/src/lib/import/promote.ts`, `apps/main/src/inngest/import-pipeline.ts` (Greptile-flagged — #1576)
+- `apps/main/src/inngest/commission-split-on-received.ts` (Greptile-flagged — #1578)
+- `apps/main/src/lib/ai/batch/reconcile.ts`, `apps/main/src/lib/ai/batch/flush.ts` (Greptile-flagged — #1599)
 - `apps/main/src/app/api/groups/route.ts` (Greptile-flagged — #1600)
 
 **Why slips through**: happy-path tests write both rows successfully; the crash-in-between race is invisible without chaos injection.
@@ -316,10 +316,8 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 
 **Symptom**: Code deduplicates with SELECT-then-INSERT (query for existing, insert if missing) but the schema has no UNIQUE index. A race: between the SELECT and INSERT, another request writes the same row — first request's INSERT succeeds with a duplicate, then `.maybeSingle()` on a later read fails.
 
-**Codebase instances (3 found)**:
-- `apps/main/src/inngest/import-sync-commissions.ts` (Greptile-flagged — #1575)
-- `apps/main/src/app/api/contacts/route.ts` (Greptile-flagged — #1575)
-- `apps/main/src/inngest/import-create.ts` (Greptile-flagged — #1575)
+**Codebase instances (1 found, 3 dedup sites)**:
+- `apps/main/src/lib/import/promote.ts` (Greptile-flagged — #1575; commissions/bookings/contacts dedup all route through this file)
 
 **Why slips through**: the race is low-probability; tests run serially.
 
@@ -332,8 +330,8 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 **Symptom**: A `.select()` on a table that grows unbounded (messages, bookings, email_log, ai_call_log, notifications, forum_posts) has no `.limit()` or pagination. PostgREST silently truncates to `max-rows` (hard default 1000 on Supabase), and with `.order('id')` ascending the truncation **drops the newest rows** — data loss by default.
 
 **Codebase instances (2 found)**:
-- `apps/main/src/inngest/aggregate-metrics.ts` (Greptile-flagged — #1587)
-- `apps/main/src/app/api/admin/logs/route.ts` (Greptile-flagged — #1588)
+- `apps/main/src/lib/chat/conversation-history.ts` (Greptile-flagged — #1587)
+- `apps/main/src/app/api/quotes/route.ts`, `apps/main/src/app/api/groups/route.ts`, `apps/main/src/app/api/admin/resource-utilization/route.ts`, `apps/main/src/app/api/admin/legal-docs/route.ts` (Greptile-flagged — #1588)
 
 **Why slips through**: the limit is silent (no error, just fewer rows). Tests with small datasets fit under the cap.
 
@@ -345,8 +343,8 @@ A valid HMAC proves the body was signed, not that it's *fresh*; a captured-then-
 
 **Symptom**: At-least-once delivery + unordered delivery means a stale re-delivery or an out-of-order newer message can overwrite fresh state. Replay dedup alone (signature + nonce) prevents the same request firing twice, but not a replayed *old* request overwriting a *new* one from the same provider.
 
-**Codebase instance (1 found)**:
-- `apps/main/src/app/api/webhooks/gmail/route.ts` (Greptile-flagged — #1583)
+**Codebase instance (1 found, fixed)**:
+- `apps/main/src/lib/stripe/webhook-handler.ts` (Greptile-flagged — #1583; fixed in PR #1642 via `subscription_status_event_at` ordering guard)
 
 **Why slips through**: the ordering hazard is orthogonal to signature validation; signature tests pass because they test the same event replayed, not different events arriving out of order.
 
