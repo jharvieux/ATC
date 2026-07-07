@@ -69,7 +69,7 @@ describe("resolveCustomerContext", () => {
     expect(ctx).toContain("Royal Caribbean");
     expect(ctx).toContain("Wonder of the Seas");
     expect(ctx).toContain("7 nights");
-    expect(ctx).toContain("USD 2450.00");
+    expect(ctx).toContain("$2,450.00");
     expect(ctx).toContain("Do NOT promise prices");
   });
 
@@ -125,7 +125,7 @@ describe("resolveCustomerContext", () => {
     });
     const ctx = await resolveCustomerContext({ ref: { type: "quote", id: "q1" }, tenant_id: "t1", db });
     expect(ctx).toContain("Eurodam");
-    expect(ctx).toContain("USD 3125.00"); // container estimate wins over option total
+    expect(ctx).toContain("$3,125.00"); // container estimate wins over option total
     expect(ctx).toContain("Quote expires: 2026-06-15");
     expect(ctx).toContain("Quote status: sent");
   });
@@ -145,7 +145,7 @@ describe("resolveCustomerContext", () => {
     });
     const ctx = await resolveCustomerContext({ ref: { type: "quote", id: "q1" }, tenant_id: "t1", db });
     expect(ctx).toContain("Celebrity");
-    expect(ctx).toContain("USD 2500.00"); // selected option's total, since container price is null
+    expect(ctx).toContain("$2,500.00"); // selected option's total, since container price is null
   });
 
   it("merges itinerary + booking lookups for trip_itinerary", async () => {

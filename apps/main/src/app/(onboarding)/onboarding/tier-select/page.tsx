@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { formatCents } from "@/lib/money";
 
 type Tier = "starter" | "pro" | "agency";
 type Period = "monthly" | "annual";
@@ -59,8 +60,6 @@ export default function OnboardingTierSelectPage() {
     router.push("/onboarding/subscription");
   }
 
-  const formatPrice = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-
   return (
     <div className="max-w-xl mx-auto py-10 px-4">
       <h1 className="text-2xl font-semibold mb-2">Choose Your Plan</h1>
@@ -110,10 +109,10 @@ export default function OnboardingTierSelectPage() {
         {preview && (
           <div className="border rounded p-4 bg-gray-50">
             <p className="text-sm font-medium">Estimated {period === "annual" ? "annual" : "monthly"} price:</p>
-            <p className="text-2xl font-bold mt-1">{formatPrice(preview.total_cents)}</p>
+            <p className="text-2xl font-bold mt-1">{formatCents(preview.total_cents)}</p>
             {tier === "agency" && seats > 1 && (
               <p className="text-xs text-gray-500 mt-1">
-                Base: {formatPrice(preview.base_cents)} + {seats - 1} additional seat{seats > 2 ? "s" : ""}: {formatPrice(preview.additional_seat_cents)}
+                Base: {formatCents(preview.base_cents)} + {seats - 1} additional seat{seats > 2 ? "s" : ""}: {formatCents(preview.additional_seat_cents)}
               </p>
             )}
           </div>

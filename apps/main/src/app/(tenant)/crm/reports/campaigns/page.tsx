@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportShell } from "@/components/reports/ReportShell";
+import { formatCents } from "@/lib/money";
 
 type Item = {
   utm_campaign: string;
@@ -15,11 +16,6 @@ type Item = {
   net_commission_cents: number;
   cost_per_lead_cents: number | null;
 };
-
-function dollars(cents: number | null): string {
-  if (cents === null) return "—";
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 export default function CampaignsPage(): JSX.Element {
   return (
@@ -90,15 +86,15 @@ function CampaignsContent(): JSX.Element {
                       <div className="text-xs text-gray-500">{it.utm_campaign}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">{dollars(it.campaign_cost_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.campaign_cost_cents)}</td>
                   <td className="px-4 py-3 text-right">{it.leads}</td>
                   <td className="px-4 py-3 text-right font-medium">{it.bookings}</td>
-                  <td className="px-4 py-3 text-right">{dollars(it.gross_commission_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.gross_commission_cents)}</td>
                   <td className="px-4 py-3 text-right text-gray-600">
                     {it.cost_per_lead_cents === null ? (
                       <span className="text-xs text-amber-700">Set cost to see CPL</span>
                     ) : (
-                      dollars(it.cost_per_lead_cents)
+                      formatCents(it.cost_per_lead_cents)
                     )}
                   </td>
                 </tr>
