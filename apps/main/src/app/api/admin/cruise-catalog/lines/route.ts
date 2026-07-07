@@ -6,6 +6,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError, type PlatformAdminContext } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 const LINE_COLS = "id, slug, canonical_name, display_name, tier, is_active, cruisemapper_slug, website_url, created_at";
 
@@ -30,7 +31,9 @@ export async function GET(req: Request): Promise<Response> {
       },
     );
     return Response.json({ lines });
-  } catch (err) { return Response.json({ error: String(err) }, { status: 500 }); }
+  } catch (err) {
+    return dbErrorResponse(err);
+  }
 }
 
 interface CreateLineBody {
@@ -92,6 +95,6 @@ export async function POST(req: Request): Promise<Response> {
     if (msg.includes("unique") || msg.includes("duplicate")) {
       return Response.json({ error: "duplicate_slug_or_cruisemapper_slug" }, { status: 409 });
     }
-    return Response.json({ error: msg }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

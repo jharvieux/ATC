@@ -7,6 +7,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { PLATFORM_SENTINEL_TENANT_ID } from "@/lib/rag-auth/platform-sentinel";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface ReviewActionBody {
   chunk_id: string;
@@ -65,7 +66,7 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -133,6 +134,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

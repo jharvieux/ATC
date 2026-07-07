@@ -8,6 +8,7 @@
 // them here. All access is audited via withPlatformAdminAudit.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import {
   assertPlatformAdminArea,
   PlatformAdminError,
@@ -39,6 +40,6 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json({ personas });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
