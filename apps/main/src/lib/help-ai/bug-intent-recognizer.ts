@@ -22,6 +22,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
+import { getCachedPlatformSetting } from "@/lib/platform/platform-setting-cache";
 
 /** Built-in phrase patterns. The operator can extend via DB. */
 const SEED_PHRASES = [
@@ -49,17 +50,10 @@ export interface RecognizerOpts {
 export const OFFER_MESSAGE =
   "It sounds like something might not be working right. Would you like me to file a bug report? I'll ask you a few quick questions and our engineering team will take a look.";
 
-interface SettingsRow {
-  value?: unknown;
-}
-
 async function loadExtraPhrases(db: SupabaseClient): Promise<string[]> {
-  const { data } = await db
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "bug_intent_phrases")
-    .maybeSingle();
-  const value = (data as SettingsRow | null)?.value;
+  // #1586 — served from the shared 60s platform_settings cache. Error ignored
+  // (best-effort phrase list); the seed phrases still apply.
+  const { value } = await getCachedPlatformSetting(db, "bug_intent_phrases");
   if (Array.isArray(value)) {
     return value.filter((v): v is string => typeof v === "string");
   }

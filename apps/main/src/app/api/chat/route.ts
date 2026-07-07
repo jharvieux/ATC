@@ -56,8 +56,11 @@ import { runAssetIdValidationLayer } from "@/lib/ai/hallucination-defense/asset-
 import { detectBugIntent } from "@/lib/help-ai/bug-intent-recognizer";
 import { resolveCustomerContext, type CustomerContextRef } from "@/lib/chat/customer-context";
 // BP27 §27.4 — chat-message counter + state-machine wire-up.
-import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { loadTenantSnapshot, type CachedTenantSnapshot } from "@/lib/abuse/snapshot";
 import { incrementChatMessages } from "@/lib/abuse/counters";
+// #1586 — request-scoped config consolidation + cached platform settings.
+import { loadChatTenantSettings } from "@/lib/chat/chat-tenant-settings";
+import { getCachedPlatformSetting } from "@/lib/platform/platform-setting-cache";
 import { runGenerationLoop } from "@/lib/chat/run-generation-loop";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -389,23 +392,49 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   }
   const { personaAugmentation, customerCurrentCount } = quota;
 
+  // ── #1586 — Request-scoped tenant config. Load ONCE here and thread the
+  // values through the turn instead of re-reading `tenants` (×3) /
+  // `tenant_settings` (×2) / `tier_definitions` (×1) at each use site.
+  //   • loadTenantSnapshot is 30s-cached and shared with the §27 counters; it
+  //     now also surfaces is_sandbox + ai_paused_by_platform, so the sandbox
+  //     stamp and the per-tenant AI kill switch come from this one read.
+  //   • loadChatTenantSettings reads tenant_settings once (tone cap + profanity).
+  // `configDbReads` counts the config-phase round-trips actually issued (cache
+  // hits cost 0) for the [chat:perf] log below — the #1586 acceptance signal.
+  let configDbReads = 0;
+  const bumpConfigReads = (): void => {
+    configDbReads += 1;
+  };
+
+  let snapshot: CachedTenantSnapshot | null = null;
+  try {
+    snapshot = await loadTenantSnapshot(svc, tenantId, bumpConfigReads);
+  } catch (err) {
+    // Non-fatal (matches the prior inline reads): degrade to fail-closed
+    // defaults — is_test=true (over-tag), not paused, base tier.
+    console.warn("[chat] tenant snapshot load failed (non-fatal):", sanitizeForLog(err));
+  }
+  const tenantTier = snapshot?.tenant.tier_code ?? "byo_research";
+  // Fail CLOSED on snapshot failure: stamp is_test=true (over-tagging a real
+  // conversation under-counts metrics — recoverable; mislabeling a sandbox
+  // conversation as real corrupts the firewall — not). Mirrors the prior @446.
+  const tenantIsSandbox = snapshot ? snapshot.is_sandbox : true;
+  // Fail OPEN on snapshot failure: a read blip must not pause a healthy tenant.
+  const tenantAiPaused = snapshot ? snapshot.ai_paused_by_platform : false;
+
+  const { personaToneMaxLevel: tenantMaxTone, allowProfanity: tenantAllowProfanity } =
+    await loadChatTenantSettings(svc, tenantId, bumpConfigReads);
+
   // ── 3. Detect customer tone-change (authenticated only — anon has no memory).
   // #902: customer audience only — TA mode pins tone and has no rapport memory.
   if (userId && audience === "customer") {
     const override = detectToneOverride(userMessage);
     if (override) {
-      // Load tenant max tone to clamp the override.
-      const { data: ts } = await svc
-        .from("tenant_settings")
-        .select("persona_tone_max_level")
-        .eq("tenant_id", tenantId)
-        .maybeSingle();
-      const tenantMax = (ts as { persona_tone_max_level?: number } | null)?.persona_tone_max_level ?? 3;
       await applyToneOverride(svc, {
         tenant_id: tenantId,
         user_id: userId,
         action: override,
-        tenant_max_level: tenantMax,
+        tenant_max_level: tenantMaxTone,
       });
     }
   }
@@ -435,22 +464,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   } else {
     // §15.12 sandbox: stamp is_test on the conversation row at creation time.
     // Snapshot semantics — a tenant who toggles is_sandbox later does NOT
-    // retroactively flip existing rows.
-    //
-    // Fail CLOSED on read error: if we can't confirm the tenant is non-sandbox,
-    // stamp is_test=true. The flag is immutable after insert, and the audit
-    // surface (analytics dashboards, supervisor sampling) is meant to exclude
-    // test traffic — mislabeling a real conversation as test under-counts real
-    // metrics (recoverable), but mislabeling a sandbox conversation as real
-    // corrupts the firewall (not recoverable). Bias toward over-tagging.
-    const { data: sandboxRow, error: sandboxErr } = await svc
-      .from("tenants")
-      .select("is_sandbox")
-      .eq("id", tenantId)
-      .maybeSingle();
-    const isTest = sandboxErr
-      ? true
-      : Boolean((sandboxRow as { is_sandbox?: boolean } | null)?.is_sandbox);
+    // retroactively flip existing rows. #1586: is_sandbox now comes from the
+    // request-scoped tenant snapshot (fail-closed to true on snapshot failure).
+    const isTest = tenantIsSandbox;
 
     const { data: created, error: createErr } = await svc
       .from("conversations")
@@ -499,12 +515,14 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
 
   // BP27 §27.4 — bump chat-messages counter. Non-fatal: the message
   // already persisted; we don't want to surface a 500 over usage
-  // attribution failure.
-  try {
-    const snapshot = await loadTenantSnapshot(svc, tenantId);
-    await incrementChatMessages({ db: svc, tenant: snapshot.tenant });
-  } catch (err) {
-    console.warn(`[chat] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  // attribution failure. #1586: reuses the request-scoped snapshot loaded above
+  // (no second `tenants` read). Skipped when the snapshot load failed.
+  if (snapshot) {
+    try {
+      await incrementChatMessages({ db: svc, tenant: snapshot.tenant });
+    } catch (err) {
+      console.warn(`[chat] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // BP32 §32.10.1 — pre-LLM bug-intent check. Surfaces an offer for the
@@ -541,28 +559,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     requestedSlug: args.personaSlugInput,
   });
 
-  const { data: tenantRow } = await svc
-    .from("tenants")
-    .select("tier_id")
-    .eq("id", tenantId)
-    .maybeSingle();
-  let tenantTier = "byo_research";
-  if (tenantRow && (tenantRow as { tier_id?: string }).tier_id) {
-    const { data: tierRow } = await svc
-      .from("tier_definitions")
-      .select("code")
-      .eq("id", (tenantRow as { tier_id: string }).tier_id)
-      .maybeSingle();
-    tenantTier = (tierRow as { code?: string } | null)?.code ?? "byo_research";
-  }
-
-  const { data: settings } = await svc
-    .from("tenant_settings")
-    .select("persona_tone_max_level, allow_profanity")
-    .eq("tenant_id", tenantId)
-    .maybeSingle();
-  const tenantMaxTone = (settings as { persona_tone_max_level?: number } | null)?.persona_tone_max_level ?? 3;
-  const tenantAllowProfanity = (settings as { allow_profanity?: boolean } | null)?.allow_profanity ?? false;
+  // #1586 — tenantTier / tenantMaxTone / tenantAllowProfanity are resolved once
+  // in the request-scoped config block above (from the cached snapshot +
+  // single tenant_settings read); no per-use re-reads here.
 
   let customerRapportLevel: number | null = null;
   let customerRapportDirective: "direct" | null = null;
@@ -691,15 +690,15 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // tokens to the customer or burn a vendor call. The help-AI route has
   // had this check from day one; the customer chat path was missing it,
   // which the audit flagged as a kill-switch escape in streaming mode.
-  const { data: killRow } = await svc
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "ai_kill_switch_engaged")
-    .maybeSingle();
-  const killEngaged = killRow
-    ? (killRow as { value?: unknown }).value === true ||
-      (killRow as { value?: unknown }).value === "true"
-    : false;
+  // #1586 — served from the shared 60s platform_settings cache. A ≤60s
+  // propagation delay is acceptable (it already races in-flight streams).
+  // Fail-open preserved: a read error → value null → not engaged.
+  const { value: killValue } = await getCachedPlatformSetting(
+    svc,
+    "ai_kill_switch_engaged",
+    bumpConfigReads,
+  );
+  const killEngaged = killValue === true || killValue === "true";
   if (killEngaged) {
     const fallbackBody =
       "Our AI is paused right now. Please leave a message and we'll be in touch.";
@@ -713,16 +712,9 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
   // §10.6 per-tenant AI kill switch. Same fallback as the global one but
   // scoped to the resolved tenant — the platform-admin's lever for "this
   // one tenant's persona is misbehaving" without taking the whole platform
-  // down. Read alongside the global check; either tripped → fallback.
-  const { data: tenantKillRow } = await svc
-    .from("tenants")
-    .select("ai_paused_by_platform")
-    .eq("id", tenantId)
-    .maybeSingle();
-  const tenantPaused = Boolean(
-    (tenantKillRow as { ai_paused_by_platform?: boolean } | null)?.ai_paused_by_platform,
-  );
-  if (tenantPaused) {
+  // down. #1586: read from the request-scoped snapshot (≤30s propagation,
+  // acceptable per the issue) instead of a third `tenants` read.
+  if (tenantAiPaused) {
     const fallbackBody =
       "Our AI is taking a brief break. A human will be in touch shortly.";
     await send({ type: "delta", text: fallbackBody });
@@ -745,6 +737,16 @@ async function handleChat(args: HandleChatArgs): Promise<void> {
     await close();
     return;
   }
+
+  // #1586 — config-phase DB round-trips actually issued before first token
+  // (cache hits cost 0). Pre-fix this path re-read tenants ×3 / tenant_settings
+  // ×2 / tier_definitions ×1 / platform_settings ×1-2; now it is ≤3 cold, 0-1
+  // warm. Scoped to the consolidated config reads, NOT the whole turn.
+  console.info(
+    "[chat:perf] config_db_reads=%d conversation_id=%s",
+    configDbReads,
+    conversationId,
+  );
 
   const generationModel = process.env.CHAT_HAIKU_MODEL ?? "claude-haiku-4-5-20251001";
   // #902 — separate cost attribution for TA turns (and TA accepts the

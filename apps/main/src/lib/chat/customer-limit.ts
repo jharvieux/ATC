@@ -16,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeAuditLog } from "@/lib/audit/write";
 import { instrumentedClaudeCall } from "@/lib/ai/call-wrapper";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { getCachedPlatformSetting } from "@/lib/platform/platform-setting-cache";
 
 export type CustomerLimitDecision =
   | { tier: "below"; resolved: ResolvedCaps; current_count: number }
@@ -35,12 +36,10 @@ async function loadPlatformSetting(
   key: string,
   fallback: unknown,
 ): Promise<unknown> {
-  const { data } = await db
-    .from("platform_settings")
-    .select("value")
-    .eq("key", key)
-    .maybeSingle();
-  return (data as { value?: unknown } | null)?.value ?? fallback;
+  // #1586 — soft-tier persona prompts change weekly-to-never; served from the
+  // shared 60s platform_settings cache. Error → fallback (unchanged behavior).
+  const { value } = await getCachedPlatformSetting(db, key);
+  return value ?? fallback;
 }
 
 export async function resolveCaps(
