@@ -8,6 +8,7 @@
 // All non-submitBooking operations return Err({ code: 'unsupported' }).
 
 import { env } from "@/lib/env";
+import { formatCents } from "@/lib/money";
 import { Ok, Err } from "@atc/shared-types";
 import type {
   HostAgencyClient,
@@ -87,8 +88,8 @@ export default class FallbackEmailAdapter implements HostAgencyClient {
       `Duration: ${req.duration_nights} nights`,
       `Cabin Category: ${req.cabin_category}`,
       `Passengers: ${req.passengers.length}`,
-      `Total Amount: ${(req.total_amount_cents / 100).toFixed(2)} ${req.currency}`,
-      `Commissionable Fare: ${(req.commissionable_fare_cents / 100).toFixed(2)} ${req.currency}`,
+      `Total Amount: ${formatCents(req.total_amount_cents, req.currency)}`,
+      `Commissionable Fare: ${formatCents(req.commissionable_fare_cents, req.currency)}`,
       req.special_requests ? `Special Requests: ${req.special_requests}` : null,
       ``,
       `Correlation ID: ${ctx.correlation_id}`,

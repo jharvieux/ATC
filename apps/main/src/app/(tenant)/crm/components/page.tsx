@@ -3,6 +3,7 @@
 // BP40 §40.5.3 — Components bulk view across all bookings.
 
 import { useCallback, useEffect, useState } from "react";
+import { formatCents } from "@/lib/money";
 
 type Item = {
   id: string;
@@ -16,11 +17,6 @@ type Item = {
   expected_commission_cents: number | null;
   commissionable: boolean;
 };
-
-function dollars(cents: number | null): string {
-  if (cents === null) return "—";
-  return `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 export default function ComponentsBulkPage(): JSX.Element {
   const [items, setItems] = useState<Item[]>([]);
@@ -117,9 +113,9 @@ export default function ComponentsBulkPage(): JSX.Element {
                   <td className="px-4 py-3 text-gray-600">{it.supplier_name ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-600">{it.start_date ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-600">{it.status}</td>
-                  <td className="px-4 py-3 text-right">{dollars(it.customer_cost_cents)}</td>
+                  <td className="px-4 py-3 text-right">{formatCents(it.customer_cost_cents)}</td>
                   <td className="px-4 py-3 text-right text-green-700">
-                    {it.commissionable ? dollars(it.expected_commission_cents) : "—"}
+                    {it.commissionable ? formatCents(it.expected_commission_cents) : "—"}
                   </td>
                 </tr>
               ))}
