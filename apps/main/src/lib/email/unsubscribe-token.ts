@@ -1,4 +1,5 @@
-// §23.3 — HMAC-signed tokens for unsubscribe links and companion pages.
+// §23.3 — Tokens for unsubscribe links and companion pages, consolidated
+// onto jose HS256 compact JWS (#1604).
 //
 // Token payload: { email, tenant_id, category }       for unsubscribe.
 //                { booking_id, phase, exp? }          for companion pages.
@@ -7,28 +8,19 @@
 // with a purpose prefix to scope tokens. Companion pages use COMPANION_TOKEN_HMAC_KEY
 // when set, falling back to INVITATION_TOKEN_HMAC_KEY. See MEMORY D-056.
 //
-// 2026-05-25 audit pass 2 hardenings:
-//   - Finding 3 (Med): the prior `?? ""` fallback in hmacKey() meant a
-//     deployment with a missing env var silently signed tokens with an
-//     empty key — an attacker who noticed could forge tokens. Now throws.
-//   - Finding 2 (Med): companion tokens had no expiration. A leaked link
-//     was viewable for the life of the platform. Now carries `exp` (90d
-//     by default) and verify rejects past-expiry tokens.
-//   - Finding 12 (Low): no version field meant a future v2 schema couldn't
-//     selectively invalidate v1 cohorts. New tokens carry `v: 1`. verify
-//     accepts unversioned tokens (backward compat with anything issued
-//     before this change) and any token whose `v` matches CURRENT_TOKEN_VERSION;
-//     rejects unknown future versions.
-
-const CURRENT_TOKEN_VERSION = 1;
+// Legacy (pre-jose) tokens verify indefinitely — see legacyVerify(). Companion
+// links live for 90 days and unsubscribe links sit in already-sent emails with
+// no separate revocation, so there is no cutoff date that's safe to pick;
+// legacy verification stays until the old format is naturally unreachable.
 
 import { createHmac, timingSafeEqual } from "crypto";
+import { isCompactJws, signHmacJwt, verifyHmacJwt } from "@/lib/auth/hmac-jwt";
 
-// `v` is the token-schema version. Tokens signed before the field was
-// added simply lack it — verify() accepts them for backward compat.
+const LEGACY_TOKEN_VERSION = 1;
+
 type Versioned = { v?: number };
-type UnsubscribePayload = Versioned & { email: string; tenant_id: string; category: string };
-type CompanionPayload = Versioned & { booking_id: string; phase: string; exp?: number };
+type UnsubscribePayload = { email: string; tenant_id: string; category: string };
+type CompanionPayload = { booking_id: string; phase: string; exp?: number };
 
 // Default companion-token lifetime: 90 days from sign time. Most cruises
 // reference T-30/T-7/T+7 phases relative to sailing; 90d covers the
@@ -36,7 +28,7 @@ type CompanionPayload = Versioned & { booking_id: string; phase: string; exp?: n
 // post-trip if they want to.
 const COMPANION_TOKEN_TTL_SECONDS = 90 * 24 * 60 * 60;
 
-function hmacKey(purpose: "unsubscribe" | "companion"): string {
+function hmacKeyString(purpose: "unsubscribe" | "companion"): string {
   const candidate =
     purpose === "companion"
       ? process.env.COMPANION_TOKEN_HMAC_KEY ?? process.env.INVITATION_TOKEN_HMAC_KEY
@@ -51,24 +43,19 @@ function hmacKey(purpose: "unsubscribe" | "companion"): string {
   return candidate;
 }
 
-function sign(payload: object, purpose: "unsubscribe" | "companion"): string {
-  const key = hmacKey(purpose);
-  // Always stamp the current schema version. Verify() accepts the missing
-  // case for backward compat with anything signed before this field existed.
-  const versioned = { v: CURRENT_TOKEN_VERSION, ...payload };
-  const data = JSON.stringify(versioned);
-  const mac = createHmac("sha256", key).update(`${purpose}:${data}`).digest("hex");
-  const token = Buffer.from(JSON.stringify({ payload: data, mac })).toString("base64url");
-  return token;
+function hmacKeyBytes(purpose: "unsubscribe" | "companion"): Uint8Array {
+  return new TextEncoder().encode(hmacKeyString(purpose));
 }
 
-function verify<T extends Versioned>(token: string, purpose: "unsubscribe" | "companion"): T | null {
+// Old JSON+HMAC+base64url envelope. Kept verify-only — nothing signs this
+// format anymore.
+function legacyVerify<T extends Versioned>(token: string, purpose: "unsubscribe" | "companion"): T | null {
   try {
     const raw = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as {
       payload: string;
       mac: string;
     };
-    const key = hmacKey(purpose);
+    const key = hmacKeyString(purpose);
     const expected = createHmac("sha256", key).update(`${purpose}:${raw.payload}`).digest("hex");
     const expectedBuf = Buffer.from(expected, "hex");
     const actualBuf = Buffer.from(raw.mac, "hex");
@@ -76,10 +63,9 @@ function verify<T extends Versioned>(token: string, purpose: "unsubscribe" | "co
       return null;
     }
     const decoded = JSON.parse(raw.payload) as T;
-    // Reject unknown future versions. Missing `v` is treated as v0
-    // (pre-versioning) and accepted for backward compat — those tokens
-    // naturally roll off as new ones are issued.
-    if (decoded.v !== undefined && decoded.v !== CURRENT_TOKEN_VERSION) {
+    // Missing `v` predates the version field and is accepted for backward
+    // compat; only an unknown *future* version is rejected.
+    if (decoded.v !== undefined && decoded.v !== LEGACY_TOKEN_VERSION) {
       return null;
     }
     return decoded;
@@ -88,27 +74,38 @@ function verify<T extends Versioned>(token: string, purpose: "unsubscribe" | "co
   }
 }
 
-export function signUnsubscribeToken(payload: UnsubscribePayload): string {
+async function sign(payload: Record<string, unknown>, purpose: "unsubscribe" | "companion", exp?: number): Promise<string> {
+  return signHmacJwt(payload, hmacKeyBytes(purpose), purpose, exp);
+}
+
+async function verify<T extends Record<string, unknown> & Versioned>(
+  token: string,
+  purpose: "unsubscribe" | "companion",
+): Promise<T | null> {
+  if (!isCompactJws(token)) return legacyVerify<T>(token, purpose);
+  return verifyHmacJwt<T>(token, hmacKeyBytes(purpose), purpose);
+}
+
+export async function signUnsubscribeToken(payload: UnsubscribePayload): Promise<string> {
   return sign(payload, "unsubscribe");
 }
 
-export function verifyUnsubscribeToken(token: string): UnsubscribePayload | null {
-  return verify<UnsubscribePayload>(token, "unsubscribe");
+export async function verifyUnsubscribeToken(token: string): Promise<UnsubscribePayload | null> {
+  return verify<UnsubscribePayload & Versioned>(token, "unsubscribe");
 }
 
-export function signCompanionToken(payload: CompanionPayload): string {
-  // Always stamp an exp if the caller didn't provide one. Existing callers
-  // pass { booking_id, phase } and get a 90d window automatically.
-  const exp = payload.exp ?? Math.floor(Date.now() / 1000) + COMPANION_TOKEN_TTL_SECONDS;
-  return sign({ ...payload, exp }, "companion");
+export async function signCompanionToken(payload: CompanionPayload): Promise<string> {
+  const { exp, ...rest } = payload;
+  const finalExp = exp ?? Math.floor(Date.now() / 1000) + COMPANION_TOKEN_TTL_SECONDS;
+  return sign(rest, "companion", finalExp);
 }
 
-export function verifyCompanionToken(token: string): CompanionPayload | null {
-  const decoded = verify<CompanionPayload>(token, "companion");
+export async function verifyCompanionToken(token: string): Promise<CompanionPayload | null> {
+  const decoded = await verify<CompanionPayload & Versioned>(token, "companion");
   if (!decoded) return null;
-  // Reject expired tokens. Tokens issued before this fix don't have `exp`;
-  // treat them as still valid for backward compat (they'll naturally roll
-  // off as new tokens replace them).
+  // jose's jwtVerify already rejects expired new-format tokens; this catches
+  // legacy-format tokens, which carry `exp` as a plain payload field jose
+  // never sees.
   if (typeof decoded.exp === "number" && decoded.exp < Math.floor(Date.now() / 1000)) {
     return null;
   }

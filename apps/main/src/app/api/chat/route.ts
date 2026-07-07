@@ -181,11 +181,11 @@ export async function POST(req: Request): Promise<Response> {
   let anonCookieHeader: string | null = null;
   {
     const rawAnon = cookies[ANON_SESSION_COOKIE] ?? null;
-    const verifiedId = rawAnon ? verifyAnonSession(rawAnon) : null;
+    const verifiedId = rawAnon ? await verifyAnonSession(rawAnon) : null;
     if (verifiedId) {
       resolvedAnonSessionId = verifiedId;
     } else {
-      const fresh = freshAnonSession();
+      const fresh = await freshAnonSession();
       resolvedAnonSessionId = fresh.id;
       if (!hasCredential) anonCookieHeader = buildAnonCookieHeader(fresh.cookieValue);
     }

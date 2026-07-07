@@ -80,8 +80,8 @@ const ANON_SESSION_ID = "anon-sess-00000000-0000-0000-0000-000000000000";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(verifyAnonSession).mockReturnValue(null);
-  vi.mocked(freshAnonSession).mockReturnValue({ id: ANON_SESSION_ID, cookieValue: "cv" });
+  vi.mocked(verifyAnonSession).mockResolvedValue(null);
+  vi.mocked(freshAnonSession).mockResolvedValue({ id: ANON_SESSION_ID, cookieValue: "cv" });
   vi.mocked(buildAnonCookieHeader).mockReturnValue("_atc_anon=cv");
   vi.mocked(enforceAnonLimit).mockResolvedValue({ allowed: true });
   vi.mocked(detectBugIntent).mockResolvedValue({ triggered: false } as never);

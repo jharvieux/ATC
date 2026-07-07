@@ -121,18 +121,20 @@ export async function POST(req: Request): Promise<Response> {
 
     // Generate HMAC tokens and insert invitations.
     if (invitees.length > 0) {
-      const rows = invitees.map((inv) => {
-        const id = crypto.randomUUID();
-        const token = generateToken(id);
-        return {
-          id,
-          group_id: group.id,
-          invitee_email: inv.email,
-          invitee_name: inv.name ?? null,
-          personal_note: inv.personal_note ?? null,
-          token,
-        };
-      });
+      const rows = await Promise.all(
+        invitees.map(async (inv) => {
+          const id = crypto.randomUUID();
+          const token = await generateToken(id);
+          return {
+            id,
+            group_id: group.id,
+            invitee_email: inv.email,
+            invitee_name: inv.name ?? null,
+            personal_note: inv.personal_note ?? null,
+            token,
+          };
+        }),
+      );
 
       const { error: invErr } = await svc.from("invitations").insert(rows);
       if (invErr) {

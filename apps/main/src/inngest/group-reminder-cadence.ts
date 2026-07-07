@@ -153,7 +153,7 @@ export const groupReminderCadence = inngest.createFunction(
       // carries the tenant branding and the CAN-SPAM footer.
       const tenant = tenantMap.get(group.tenant_id);
       const branding = brandingMap.get(group.tenant_id);
-      const unsubToken = signUnsubscribeToken({
+      const unsubToken = await signUnsubscribeToken({
         email: inv.invitee_email,
         tenant_id: group.tenant_id,
         category: "group_invitation",
@@ -174,7 +174,7 @@ export const groupReminderCadence = inngest.createFunction(
       let subject: string;
       let html: string;
       try {
-        const inviteUrl = `${baseUrl}/group/invite/${generateToken(inv.id)}`;
+        const inviteUrl = `${baseUrl}/group/invite/${await generateToken(inv.id)}`;
         const resolved = await resolveEmailContent({
           db: svc,
           tenant_id: group.tenant_id,

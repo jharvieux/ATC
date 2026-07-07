@@ -46,10 +46,10 @@ export async function sendGroupInvitationEmail(args: {
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
   const { generateToken: genToken } = await import("@/lib/groups/invitation-token");
-  const inviteUrl = `${baseUrl}/group/invite/${genToken(args.invitationId)}`;
+  const inviteUrl = `${baseUrl}/group/invite/${await genToken(args.invitationId)}`;
 
   const { signUnsubscribeToken } = await import("@/lib/email/unsubscribe-token");
-  const unsubToken = signUnsubscribeToken({ email: inv.invitee_email, tenant_id: args.tenantId, category: "group_invitation" });
+  const unsubToken = await signUnsubscribeToken({ email: inv.invitee_email, tenant_id: args.tenantId, category: "group_invitation" });
 
   const layoutProps = {
     branding: {

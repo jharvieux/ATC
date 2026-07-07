@@ -1,12 +1,14 @@
-// #979 — Verifies the token → URL wiring used by the group reminder cadence.
+// #979 / #1604 — Verifies the token → URL wiring used by the group reminder
+// cadence.
 //
-// Intent: the cadence computes `${baseUrl}/group/invite/${generateToken(inv.id)}`
-// and embeds it in the reminder email. This test confirms the token format
-// (invitation_id + "." + base64url HMAC) so a route-path refactor or token
-// format change would break this test before breaking real emails.
+// Intent: the cadence computes `${baseUrl}/group/invite/${await generateToken(inv.id)}`
+// and embeds it in the reminder email. This test confirms the token is a
+// single URL-safe path segment that a route handler can extract and verify
+// back to the same invitation_id — format-agnostic, so a future re-encoding
+// of the token itself doesn't require touching this test.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { generateToken } from "@/lib/groups/invitation-token";
+import { generateToken, parseAndVerifyHmac } from "@/lib/groups/invitation-token";
 
 const TEST_KEY = Buffer.from("testtesttesttesttesttesttesttest").toString("base64"); // 32 bytes
 
@@ -21,26 +23,21 @@ describe("invitation token URL wiring (#979)", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it("generateToken returns a string containing a '.' separator", () => {
-    // The cadence splits on '.' to embed the token in a URL path segment.
-    // If the format ever changes to not include '.', the URL-construction
-    // logic and the landing-page handler both need updating.
+  it("generateToken produces a URL-safe path segment (no slashes)", async () => {
     const id = crypto.randomUUID();
-    const token = generateToken(id);
-    expect(token).toContain(".");
+    const token = await generateToken(id);
+    expect(token).not.toContain("/");
   });
 
-  it("token embeds the invitation_id before the first dot", () => {
+  it("cadence-style URL round-trips back to the invitation_id", async () => {
     const id = crypto.randomUUID();
-    const token = generateToken(id);
-    expect(token.split(".")[0]).toBe(id);
-  });
-
-  it("cadence-style URL contains the full token as the path segment", () => {
-    const id = crypto.randomUUID();
-    const token = generateToken(id);
+    const token = await generateToken(id);
     const baseUrl = "https://example.ai-travelconcierge.com";
     const url = `${baseUrl}/group/invite/${token}`;
-    expect(url).toContain(`/group/invite/${id}.`);
+    const extracted = url.split("/group/invite/")[1]!;
+
+    const { invitation_id, ok } = await parseAndVerifyHmac(extracted);
+    expect(ok).toBe(true);
+    expect(invitation_id).toBe(id);
   });
 });

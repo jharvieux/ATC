@@ -1,41 +1,53 @@
-// §18.5 — HMAC-signed invitation token.
+// §18.5 — HMAC-signed invitation token, consolidated onto jose (#1604).
 //
-// Token format: `${invitation_id}.${base64url(HMAC-SHA256(key, invitation_id))}`
-// The invitation_id (UUID) is embedded so the handler can look it up in one
-// DB round-trip; the HMAC binds it to platform-issued tokens. An attacker who
-// knows a valid invitation_id cannot forge a token without the HMAC key.
+// New tokens: jose HS256 compact JWS with `aud: "invitation"` carrying the
+// invitation_id as a claim, so the handler still gets the id from one decode
+// without a DB round-trip.
+//
+// Legacy tokens (`${invitation_id}.${base64url(hmac)}`) verify indefinitely:
+// validity is governed entirely by the DB's `token_revoked_at` /
+// natural-expiry sweep (§18.9), not by anything encoded in the token itself,
+// so there is no cutoff date that's safe to stop accepting the old format.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isCompactJws, signHmacJwt, verifyHmacJwt } from "@/lib/auth/hmac-jwt";
 
-function toBase64Url(buf: Buffer): string {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+const PURPOSE = "invitation";
+
+function keyBytes(key: string): Uint8Array {
+  return Buffer.from(key, "base64");
 }
 
-function fromBase64Url(s: string): Buffer {
-  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
-  return Buffer.from(b64, "base64");
+function legacyComputeHmac(key: string, invitation_id: string): Buffer {
+  return createHmac("sha256", keyBytes(key)).update(invitation_id).digest();
 }
 
-function computeHmac(key: string, invitation_id: string): Buffer {
-  return createHmac("sha256", Buffer.from(key, "base64")).update(invitation_id).digest();
-}
-
-export function generateToken(invitation_id: string): string {
-  const key = process.env.INVITATION_TOKEN_HMAC_KEY;
-  if (!key) throw new Error("INVITATION_TOKEN_HMAC_KEY not configured");
-  const hmac = computeHmac(key, invitation_id);
-  return `${invitation_id}.${toBase64Url(hmac)}`;
-}
-
-export function parseAndVerifyHmac(token: string): { invitation_id: string; ok: boolean } {
-  const key = process.env.INVITATION_TOKEN_HMAC_KEY;
-  if (!key) throw new Error("INVITATION_TOKEN_HMAC_KEY not configured");
+function legacyVerify(token: string, key: string): { invitation_id: string; ok: boolean } {
   const dot = token.indexOf(".");
   if (dot === -1) return { invitation_id: "", ok: false };
   const invitation_id = token.slice(0, dot);
-  const providedHmac = fromBase64Url(token.slice(dot + 1));
-  const expected = computeHmac(key, invitation_id);
+  const providedHmac = Buffer.from(token.slice(dot + 1), "base64url");
+  const expected = legacyComputeHmac(key, invitation_id);
   if (providedHmac.length !== expected.length) return { invitation_id, ok: false };
-  const ok = timingSafeEqual(providedHmac, expected);
-  return { invitation_id, ok };
+  return { invitation_id, ok: timingSafeEqual(providedHmac, expected) };
+}
+
+function requireKey(): string {
+  const key = process.env.INVITATION_TOKEN_HMAC_KEY;
+  if (!key) throw new Error("INVITATION_TOKEN_HMAC_KEY not configured");
+  return key;
+}
+
+export async function generateToken(invitation_id: string): Promise<string> {
+  const key = requireKey();
+  return signHmacJwt({ invitation_id }, keyBytes(key), PURPOSE);
+}
+
+export async function parseAndVerifyHmac(token: string): Promise<{ invitation_id: string; ok: boolean }> {
+  const key = requireKey();
+  if (!isCompactJws(token)) return legacyVerify(token, key);
+
+  const decoded = await verifyHmacJwt<{ invitation_id: string }>(token, keyBytes(key), PURPOSE);
+  if (!decoded || typeof decoded.invitation_id !== "string") return { invitation_id: "", ok: false };
+  return { invitation_id: decoded.invitation_id, ok: true };
 }

@@ -103,6 +103,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
       }
 
       const invId = crypto.randomUUID();
+      const token = await generateToken(invId);
       const insertedRows = await safeAwait(
         svc.from("invitations").insert({
           id: invId,
@@ -113,7 +114,7 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
           visibility_choice: vis,
           // invitations.token is NOT NULL UNIQUE — omitting it 500'd every
           // single-invitee add (the create + reissue_all paths set it too).
-          token: generateToken(invId),
+          token,
         }).select("id"),
         "invitations.insert",
       );
@@ -173,18 +174,20 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
 
       // Insert fresh rows with new tokens.
       if (active && active.length > 0) {
-        const newRows = active.map((inv) => {
-          const newId = crypto.randomUUID();
-          return {
-            id: newId,
-            group_id: params.id,
-            invitee_email: inv.invitee_email,
-            invitee_name: inv.invitee_name,
-            personal_note: inv.personal_note,
-            visibility_choice: inv.visibility_choice,
-            token: generateToken(newId),
-          };
-        });
+        const newRows = await Promise.all(
+          active.map(async (inv) => {
+            const newId = crypto.randomUUID();
+            return {
+              id: newId,
+              group_id: params.id,
+              invitee_email: inv.invitee_email,
+              invitee_name: inv.invitee_name,
+              personal_note: inv.personal_note,
+              visibility_choice: inv.visibility_choice,
+              token: await generateToken(newId),
+            };
+          }),
+        );
         const { error: insertErr } = await svc.from("invitations").insert(newRows);
         if (insertErr) return dbErrorResponse(insertErr);
       }
