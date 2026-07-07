@@ -22,6 +22,11 @@ vi.mock("@/inngest/client", () => ({
 vi.mock("@/lib/ai/batch/enqueue", () => ({ enqueueBatchRequest: enqueueMock }));
 vi.mock("@/lib/billing/exclude-non-paying", () => ({ assertTenantStillPayingById: payMock }));
 
+// §28.15 / issue #1668 — RAG_INGESTION_PAUSED gate. Defaults to false
+// (matches env.ts schema default); the dedicated describe block flips it.
+const envFlags = vi.hoisted(() => ({ RAG_INGESTION_PAUSED: false }));
+vi.mock("@/lib/env", () => ({ env: () => envFlags }));
+
 import { redactSubmission } from "@/inngest/rag-pii-redact";
 
 const TENANT = "11111111-2222-3333-4444-555555555555";
@@ -76,6 +81,7 @@ function makeDb(extractedContent: string | null) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "info").mockImplementation(() => {});
+  envFlags.RAG_INGESTION_PAUSED = false;
   payMock.mockResolvedValue({ ok: true });
   enqueueMock.mockResolvedValue({ request_id: "req-1" });
 });
@@ -134,5 +140,25 @@ describe("redactSubmission — zero-tolerance quarantine gate (#1217)", () => {
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     // Clean content is left pending for the consumer — not quarantined here.
     expect(submissionUpdates).toHaveLength(0);
+  });
+});
+
+describe("redactSubmission — RAG_INGESTION_PAUSED gate (#1668)", () => {
+  it("skips without reading the DB or enqueuing when the flag is true", async () => {
+    envFlags.RAG_INGESTION_PAUSED = true;
+    const { db, submissionUpdates } = makeDb("Hello from Alice");
+    const res = await redactSubmission({ db, tenant_id: TENANT, submission_id: SUBMISSION });
+    expect(res).toMatchObject({ skipped: true, reason: "rag_ingestion_paused" });
+    expect(payMock).not.toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(submissionUpdates).toHaveLength(0);
+  });
+
+  it("proceeds normally when the flag is false (default)", async () => {
+    envFlags.RAG_INGESTION_PAUSED = false;
+    const { db } = makeDb("Norwegian Bliss sails from Seattle to Alaska in July.");
+    const res = await redactSubmission({ db, tenant_id: TENANT, submission_id: SUBMISSION });
+    expect(res).toMatchObject({ ok: true, enqueued: true });
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
 });

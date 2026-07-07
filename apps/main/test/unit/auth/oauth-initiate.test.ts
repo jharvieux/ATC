@@ -25,10 +25,23 @@ vi.mock("@/lib/auth/ssr-client", () => ({
   }),
 }));
 
+// §28.9 / issue #1668 — ALLOWED_PROVIDERS is derived from these flags at
+// request time. Default all three on (matches env.ts schema defaults); the
+// dedicated describe block below flips them individually.
+const envFlags = vi.hoisted(() => ({
+  OAUTH_GOOGLE_ENABLED: true,
+  OAUTH_MICROSOFT_ENABLED: true,
+  OAUTH_FACEBOOK_ENABLED: true,
+}));
+vi.mock("@/lib/env", () => ({ env: () => envFlags }));
+
 import { GET } from "@/app/api/auth/oauth-initiate/route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  envFlags.OAUTH_GOOGLE_ENABLED = true;
+  envFlags.OAUTH_MICROSOFT_ENABLED = true;
+  envFlags.OAUTH_FACEBOOK_ENABLED = true;
   mockSignInWithOAuth.mockResolvedValue({
     data: {
       url: "https://test.supabase.co/auth/v1/authorize?provider=google&state=server-issued",
@@ -139,6 +152,56 @@ describe("GET /api/auth/oauth-initiate", () => {
     mockSignInWithOAuth.mockResolvedValue({ data: { url: "https://example.com" }, error: null });
     await get("?provider=facebook");
     expect(oauthArg().options?.scopes).toBeUndefined();
+  });
+});
+
+// §28.9 / issue #1668 — ALLOWED_PROVIDERS is now derived from the
+// OAUTH_*_ENABLED flags at request time instead of being hardcoded.
+describe("GET /api/auth/oauth-initiate — provider gated by OAUTH_*_ENABLED (#1668)", () => {
+  it("OAUTH_GOOGLE_ENABLED=false rejects provider=google with 400", async () => {
+    envFlags.OAUTH_GOOGLE_ENABLED = false;
+    const res = await get("?provider=google");
+    expect(res.status).toBe(400);
+    expect(mockSignInWithOAuth).not.toHaveBeenCalled();
+  });
+
+  it("OAUTH_GOOGLE_ENABLED=true (default) allows provider=google", async () => {
+    envFlags.OAUTH_GOOGLE_ENABLED = true;
+    const res = await get("?provider=google");
+    expect(res.status).toBe(302);
+    expect(mockSignInWithOAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("OAUTH_FACEBOOK_ENABLED=false rejects provider=facebook with 400", async () => {
+    envFlags.OAUTH_FACEBOOK_ENABLED = false;
+    const res = await get("?provider=facebook");
+    expect(res.status).toBe(400);
+    expect(mockSignInWithOAuth).not.toHaveBeenCalled();
+  });
+
+  it("OAUTH_FACEBOOK_ENABLED=true (default) allows provider=facebook", async () => {
+    envFlags.OAUTH_FACEBOOK_ENABLED = true;
+    const res = await get("?provider=facebook");
+    expect(res.status).toBe(302);
+    expect(mockSignInWithOAuth).toHaveBeenCalledTimes(1);
+  });
+
+  // Microsoft's dangerous half-wired state (#1668): OAUTH_MICROSOFT_ENABLED
+  // already gates MS Graph creds via superRefine at boot but did NOT gate
+  // this route — disabling it left the login button live with no creds
+  // underneath. Both must now agree.
+  it("OAUTH_MICROSOFT_ENABLED=false rejects provider=azure with 400", async () => {
+    envFlags.OAUTH_MICROSOFT_ENABLED = false;
+    const res = await get("?provider=azure");
+    expect(res.status).toBe(400);
+    expect(mockSignInWithOAuth).not.toHaveBeenCalled();
+  });
+
+  it("OAUTH_MICROSOFT_ENABLED=true (default) allows provider=azure", async () => {
+    envFlags.OAUTH_MICROSOFT_ENABLED = true;
+    const res = await get("?provider=azure");
+    expect(res.status).toBe(302);
+    expect(mockSignInWithOAuth).toHaveBeenCalledTimes(1);
   });
 });
 

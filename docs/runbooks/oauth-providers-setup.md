@@ -19,12 +19,24 @@ Each provider you enable is configured in **two places**:
 
 ### Provider support — read this first
 
-The initiation route hardcodes the providers it will accept
-(`apps/main/src/app/api/auth/oauth-initiate/route.ts`):
+The initiation route (`apps/main/src/app/api/auth/oauth-initiate/route.ts`)
+derives its allowed-providers set from the three `OAUTH_*_ENABLED` flags at
+request time (issue #1668 — previously hardcoded regardless of the flags):
 
 ```
-const ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"]);
+function allowedProviders(): Set<string> {
+  const e = env();
+  const providers = new Set<string>();
+  if (e.OAUTH_GOOGLE_ENABLED) providers.add("google");
+  if (e.OAUTH_MICROSOFT_ENABLED) providers.add("azure");
+  if (e.OAUTH_FACEBOOK_ENABLED) providers.add("facebook");
+  return providers;
+}
 ```
+
+The signup page (`apps/main/src/app/signup/page.tsx`) reads the same three
+flags and only renders a provider's button when its flag is `true` — so a
+disabled provider is blocked at both the button and the route.
 
 - **Microsoft is `azure`** in Supabase's provider naming (and in this set) — not
   `microsoft`.

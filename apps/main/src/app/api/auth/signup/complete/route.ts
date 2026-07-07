@@ -27,6 +27,7 @@ import {
 } from "@/lib/attribution/read-pending-cookie";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { RESOLVED_TENANT_ID_HEADER } from "@/lib/tenancy/header-names";
+import { env } from "@/lib/env";
 
 const VALID_TENANT_TYPES = new Set(["byo_host", "sub_host"]);
 
@@ -44,6 +45,11 @@ export async function POST(req: NextRequest): Promise<Response> {
   // Tenant subdomains resolve to a UUID, not "platform".
   if (req.headers.get(RESOLVED_TENANT_ID_HEADER) !== "platform") {
     return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  // §28.15 / issue #1668 — SIGNUP_ENABLED gates new tenant provisioning.
+  if (!env().SIGNUP_ENABLED) {
+    return Response.json({ error: "signup_disabled" }, { status: 403 });
   }
 
   const supabase = createRequestScopedClient(req);

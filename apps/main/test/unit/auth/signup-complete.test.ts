@@ -34,6 +34,11 @@ const mocks = vi.hoisted(() => ({
   progressTo:                   vi.fn(),
 }));
 
+// §28.15 / issue #1668 — SIGNUP_ENABLED gate. Defaults to true (matches
+// env.ts schema default); the dedicated describe block flips it to false.
+const envFlags = vi.hoisted(() => ({ SIGNUP_ENABLED: true }));
+vi.mock("@/lib/env", () => ({ env: () => envFlags }));
+
 vi.mock("@/lib/auth/ssr-client", () => ({
   createRequestScopedClient: () => ({
     auth: { getUser: mocks.getUser },
@@ -110,6 +115,7 @@ const VALID_BODY = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  envFlags.SIGNUP_ENABLED = true;
   // Default: authenticated user with email, no existing users row
   mocks.getUser.mockResolvedValue({ data: { user: { id: AUTH_ID, email: EMAIL } }, error: null });
   mocks.usersIdempotencyQuery.mockResolvedValue({ data: null, error: null });
@@ -146,6 +152,23 @@ describe("POST /api/auth/signup/complete", () => {
       });
       const res = await POST(req);
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe("SIGNUP_ENABLED gate (#1668)", () => {
+    it("returns 403 signup_disabled when SIGNUP_ENABLED=false, before touching the DB", async () => {
+      envFlags.SIGNUP_ENABLED = false;
+      const res = await POST(platformReq(VALID_BODY));
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ error: "signup_disabled" });
+      expect(mocks.usersIdempotencyQuery).not.toHaveBeenCalled();
+      expect(mocks.tenantsInsertSingle).not.toHaveBeenCalled();
+    });
+
+    it("proceeds normally when SIGNUP_ENABLED=true (default)", async () => {
+      envFlags.SIGNUP_ENABLED = true;
+      const res = await POST(platformReq(VALID_BODY));
+      expect(res.status).toBe(201);
     });
   });
 

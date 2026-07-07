@@ -13,14 +13,25 @@ import { NextResponse, type NextRequest } from "next/server";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { createRouteHandlerClient } from "@/lib/auth/ssr-client";
 import { safeNextFor } from "@/lib/auth/safe-redirect";
+import { env } from "@/lib/env";
 
-const ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"]);
+// §28.9 — derived per-request from the OAUTH_*_ENABLED flags so a disabled
+// provider is rejected here even if a stale button still links to it
+// (issue #1668 — previously hardcoded regardless of the flags).
+function allowedProviders(): Set<string> {
+  const e = env();
+  const providers = new Set<string>();
+  if (e.OAUTH_GOOGLE_ENABLED) providers.add("google");
+  if (e.OAUTH_MICROSOFT_ENABLED) providers.add("azure");
+  if (e.OAUTH_FACEBOOK_ENABLED) providers.add("facebook");
+  return providers;
+}
 
 export async function GET(req: NextRequest): Promise<Response> {
   const url = new URL(req.url);
   const provider = url.searchParams.get("provider");
 
-  if (!provider || !ALLOWED_PROVIDERS.has(provider)) {
+  if (!provider || !allowedProviders().has(provider)) {
     return NextResponse.json(
       { error: "Invalid or unsupported OAuth provider" },
       { status: 400 },
