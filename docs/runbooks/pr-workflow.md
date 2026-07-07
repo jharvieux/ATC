@@ -9,7 +9,7 @@ The `pr-audit-section-check` gate passes only when each agent has posted a marke
 - `<!-- d091-audit:v1 diff:<hash> -->`
 - `<!-- prepr-audit:v1 diff:<hash> -->`
 
-Timestamps are irrelevant — only the hash match. The agents post these themselves via `scripts/post-audit-comment.sh` (which owns PR resolution, hash computation, and posting); **never post markers manually, and never hand-roll the hash.** The recipe's jq filter lives in exactly two places — the script and the workflow — and must stay byte-identical (a drift-guard step in the workflow enforces it); if one changes, change the other in the same PR. The hash-extraction tail after jq differs cosmetically between the two (Linux vs macOS tooling) but must keep producing the same hex.
+Timestamps are irrelevant — only the hash match. The agents post these themselves via `scripts/post-audit-comment.sh <pr-number> <marker-prefix> <report-file>` (which takes an **explicit PR number** — no ambient `gh pr view` / cwd-branch resolution — and cross-checks that PR's `headRefName` against the checked-out branch, refusing to post on any mismatch); **never post markers manually, and never hand-roll the hash.** The recipe's jq filter lives in exactly two places — the script and the workflow — and must stay byte-identical (a drift-guard step in the workflow enforces it); if one changes, change the other in the same PR. The hash-extraction tail after jq differs cosmetically between the two (Linux vs macOS tooling) but must keep producing the same hex.
 
 The comments are **summaries** (scope, finding one-liners, standalone `Status` line) — proof-of-run plus an at-a-glance digest. Full findings (snippets, fixes) are returned by each agent to the invoking session, which acts on them. There is **no PR-body `## Audit` block anymore** — nothing writes one, and nothing gates on it.
 
@@ -24,6 +24,8 @@ The two agents are independent — neither reads the other's output. Launch **bo
 
 - `d091-reviewer` — D-091 anti-pattern coverage (correctness/security patterns).
 - `pre-pr-reviewer` — slop sweep, tests-for-intent, surgical-changes discipline, and the other CLAUDE.md rules outside D-091.
+
+**Pass the PR number into each agent's prompt.** The invoking agent always knows it (it just ran `gh pr create`) — include it explicitly so the agent can pass it to `post-audit-comment.sh`. This matters most when running from a git worktree: the script no longer infers the PR from cwd branch state, so an explicit, correct PR number is the only thing that prevents a marker landing on the wrong PR.
 
 Each agent self-posts its hash-bound marker comment and returns its full report to you.
 
