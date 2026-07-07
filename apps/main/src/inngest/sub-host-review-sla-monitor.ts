@@ -14,6 +14,7 @@
 // terminate.
 
 import Stripe from "stripe";
+import { escapeHtml } from "@/lib/utils";
 import { inngest } from "./client";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
@@ -24,10 +25,6 @@ const AUTO_DECLINE_DAYS = 30;
 
 function daysAgo(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // Mirrors reviewEmailShell in admin/tenants/[id]/review/route.ts.
@@ -110,7 +107,7 @@ export const subHostReviewSlaMonitor = inngest.createFunction(
           const listHtml = toWarn
             .map(
               (r) =>
-                `<li>${esc(r.legal_name ?? r.id)} (slug: ${esc(r.slug ?? "—")}, submitted: ${esc(r.review_submitted_at ?? "—")})</li>`,
+                `<li>${escapeHtml(r.legal_name ?? r.id)} (slug: ${escapeHtml(r.slug ?? "—")}, submitted: ${escapeHtml(r.review_submitted_at ?? "—")})</li>`,
             )
             .join("");
           await sendOperatorNotification({
@@ -181,7 +178,7 @@ export const subHostReviewSlaMonitor = inngest.createFunction(
                 subject: "Update on your AI Travel Concierge application",
                 html: reviewEmailShell({
                   heading: "Your application was not approved",
-                  bodyHtml: `<p>Unfortunately we were unable to complete the review of <strong>${esc(tenant.legal_name ?? "your agency")}</strong> within our standard timeframe.</p>
+                  bodyHtml: `<p>Unfortunately we were unable to complete the review of <strong>${escapeHtml(tenant.legal_name ?? "your agency")}</strong> within our standard timeframe.</p>
                     <p style="padding:12px 16px;background-color:#fef2f2;border-left:4px solid #ef4444;border-radius:4px;"><strong>Reason:</strong> Application not reviewed within 30 days &#8212; auto-declined by system.</p>
                     <p>If you believe this is an error, please contact us at support@ai-travelconcierge.com and we will re-open your application.</p>`,
                 }),

@@ -8,20 +8,24 @@
 // lowercase value.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getCachedPlatformSetting } from "@/lib/platform/platform-setting-cache";
 
 export async function loadUnionSlurDenyList(
   db: SupabaseClient,
   tenant_id: string,
 ): Promise<string[]> {
-  const { data: slurSetting, error: platformErr } = await db
-    .from("platform_settings")
-    .select("value")
-    .eq("key", "supervisor_slur_deny_list")
-    .maybeSingle();
+  // #1586 — the platform slur list changes weekly-to-never; served from the
+  // shared 60s cache. Fail-closed preserved: a read error still throws (the
+  // cache surfaces the error rather than caching it), so the supervisor never
+  // silently checks against an empty platform list.
+  const { value: slurValue, error: platformErr } = await getCachedPlatformSetting(
+    db,
+    "supervisor_slur_deny_list",
+  );
   if (platformErr) throw new Error(`supervisor_slur_deny_list.read failed: ${platformErr.message}`);
 
-  const platformDenyList: string[] = Array.isArray(slurSetting?.value)
-    ? (slurSetting.value as string[])
+  const platformDenyList: string[] = Array.isArray(slurValue)
+    ? (slurValue as string[])
     : [];
 
   const { data: tenantSupplemental, error: tenantErr } = await db
