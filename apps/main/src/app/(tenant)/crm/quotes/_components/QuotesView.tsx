@@ -6,6 +6,7 @@
 
 import Link from "next/link";
 import { useState, useEffect } from "react";
+import { formatCents } from "@/lib/money";
 
 interface QuoteListItem {
   id: string;
@@ -15,14 +16,6 @@ interface QuoteListItem {
   total_amount_cents: number | null;
   status: string;
   created_at: string;
-}
-
-function formatMoneyCents(cents: number | null): string {
-  if (cents == null) return "—";
-  return `$${(cents / 100).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
 }
 
 export function QuotesView() {
@@ -85,7 +78,7 @@ export function QuotesView() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-gray-700">{q.sailing_date ?? "—"}</td>
-                    <td className="px-4 py-3 text-gray-700">{formatMoneyCents(q.total_amount_cents)}</td>
+                    <td className="px-4 py-3 text-gray-700">{formatCents(q.total_amount_cents)}</td>
                     <td className="px-4 py-3 text-gray-700 capitalize">{q.status}</td>
                     <td className="px-4 py-3 text-gray-500">
                       {new Date(q.created_at).toLocaleDateString("en-US")}
