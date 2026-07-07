@@ -75,7 +75,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           delete: () => ({
             eq: (_col: string, id: string) => {
               groupDelete(id);
-              return { eq: () => Promise.resolve({ error: groupDeleteError }) };
+              return Promise.resolve({ error: groupDeleteError });
             },
           }),
         };
