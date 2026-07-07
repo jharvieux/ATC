@@ -420,7 +420,21 @@ push/CI cycle on high-risk diffs.
   `git diff`, `git log`, `git show`, `grep`, `rg`, file reads,
   `gh pr view`, `bash scripts/post-audit-comment.sh <pr-number> ...`. Not
   acceptable: `pnpm test` (writes coverage/cache), `pnpm lint --fix`,
-  migrations, deploys, `gh pr merge`.
+  migrations, deploys, `gh pr merge`, `git checkout -- .` / `git checkout
+  <path>`, `git reset --hard`, `git clean -f`/`-fd`, `git stash drop`.
+- **NEVER run destructive or state-changing git commands** — under any
+  circumstances: `git checkout -- <path>`, `git checkout .`, `git reset
+  --hard`, `git clean -f`/`-fd`, `git stash drop`, `rm -rf` on tracked
+  paths, or any other command that discards uncommitted changes or alters
+  branch/working-tree state. To read a file at another ref, use `git show
+  <ref>:<path>` instead; `git diff <a>...<b>` and `git log` cover every
+  other legitimate read-need — there is no audit task these can't satisfy.
+  If the worktree looks dirty or unexpected (uncommitted changes,
+  unfamiliar files) — even if you think you caused it — do NOT clean it
+  up. You may be sharing this worktree with another agent's in-flight
+  work, and destructive commands there are unrecoverable. Instead,
+  capture `git status --porcelain` and report it as a finding; continue
+  the audit against the diff as-is.
 - **Do not invoke other subagents.**
 - **Report findings; do not fix them.** The main agent decides what to do
   with your report.
