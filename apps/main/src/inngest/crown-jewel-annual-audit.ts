@@ -2,6 +2,7 @@
 // Runs January 1 each year at 09:00 UTC. Emits a structured warning the
 // operator must acknowledge per docs/runbooks/crown-jewel-annual-audit.md.
 
+import { escapeHtml } from "@/lib/utils";
 import { inngest } from "./client";
 
 export const crownJewelAnnualAudit = inngest.createFunction(
@@ -43,10 +44,3 @@ export const crownJewelAnnualAudit = inngest.createFunction(
     return { reservedDomain, projectId, platformEnv, audited_at: new Date().toISOString() };
   },
 );
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}

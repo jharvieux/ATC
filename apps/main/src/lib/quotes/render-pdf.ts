@@ -12,6 +12,7 @@
 // The estimate-vs-confirmed copy below is the source of truth for the §21.10.1
 // disclosure language. The renderer choice is documented in MEMORY (D-053).
 
+import { escapeHtml } from "@/lib/utils";
 import { formatCents } from "@/lib/money";
 
 export interface QuoteLineItem {
@@ -137,15 +138,6 @@ function formatTs(ts: string | null): string {
   } catch {
     return ts;
   }
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function hashString(s: string): string {

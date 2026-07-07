@@ -9,6 +9,7 @@
 // the additional latency from batching is invisible to the user.
 
 import { z } from "zod";
+import { escapeHtml } from "@/lib/utils";
 import { inngest } from "./client";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { writeAuditLog } from "@/lib/audit/write";
@@ -163,10 +164,6 @@ function parseScreenResult(text: string): HaikuScreenResult {
       findings: [{ category: "parse_error", evidence: err instanceof Error ? err.message : "JSON.parse threw" }],
     };
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export const personaAddendumScreenFromBatchResult = inngest.createFunction(

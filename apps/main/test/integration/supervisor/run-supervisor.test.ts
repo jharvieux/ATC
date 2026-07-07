@@ -13,6 +13,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runSupervisor } from "@/lib/supervisor/run-supervisor";
 import type { TenantContext } from "@/lib/db/tenant-context";
+import { _resetPlatformSettingCacheForTests } from "@/lib/platform/platform-setting-cache";
+
+// #1586 — the supervisor's slur deny list is now served from a shared 60s
+// platform_settings cache. Reset it between specs so each test's mocked
+// slurDenyList (not a prior test's cached list) drives the escalation logic.
+beforeEach(() => {
+  _resetPlatformSettingCacheForTests();
+});
 
 const TENANT_ID = "tenant-test-uuid";
 const CONVERSATION_ID = "conv-test-uuid";
