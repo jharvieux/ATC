@@ -32,7 +32,7 @@ import { PreCruiseT30, type PreCruiseT30Props } from "@/emails/PreCruiseT30";
 import { PreCruiseT7,  type PreCruiseT7Props  } from "@/emails/PreCruiseT7";
 import { PreCruiseT1,  type PreCruiseT1Props, type PortInfo } from "@/emails/PreCruiseT1";
 import type { BrandedLayoutProps } from "@/emails/BrandedLayout";
-import { safeAwait } from "@/lib/db/safe-mutation";
+import { safeAwait, SupabaseMutationError } from "@/lib/db/safe-mutation";
 import { getSailingItinerary } from "@/lib/sailings/sailing-itinerary";
 import { resolveDestinationRegion } from "@/lib/cruise-regions/classify";
 import { getDestinationImage, type DestinationImage } from "@/lib/cruise-regions/destination-images";
@@ -88,7 +88,9 @@ async function haikuGenerate(
 }
 
 export const precruiseGenerateAndSend = inngest.createFunction(
-  { id: "precruise-generate-and-send", triggers: [{ event: "precruise/email.due" }] },
+  // retries: 3 — #1582: buildAndSend throws on a transient send failure so
+  // Inngest retries the whole run with backoff instead of silently losing it.
+  { id: "precruise-generate-and-send", retries: 3, triggers: [{ event: "precruise/email.due" }] },
   async ({ event }) => {
     const parsed = PrecruiseEmailDuePayloadSchema.safeParse(event.data);
     if (!parsed.success) {
@@ -162,7 +164,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
       contentId = existing.id;
     } else {
       generatedContent = await generateContent(phase, emailCtx);
-      const { data: inserted } = await svc
+      const { data: inserted, error: insertError } = await svc
         .from("pre_cruise_email_content")
         .insert({
           tenant_id,
@@ -174,6 +176,13 @@ export const precruiseGenerateAndSend = inngest.createFunction(
         })
         .select("id")
         .single();
+      if (insertError?.code === "23505") {
+        // #1582: duplicate-event race — another run already claimed
+        // (booking_id, email_phase). Let that run own the send.
+        console.info(`[precruise] duplicate insert race, skipping send: booking=${booking_id} phase=${phase}`);
+        return;
+      }
+      if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
       contentId = (inserted as { id: string } | null)?.id;
     }
 
@@ -194,6 +203,7 @@ export const precruiseGenerateAndSend = inngest.createFunction(
 export const precruiseSendFromBatchResult = inngest.createFunction(
   {
     id: "precruise-send-from-batch-result",
+    retries: 3,
     triggers: [{ event: "ai.batch_request.completed.precruise_generation" }],
   },
   async ({ event }) => {
@@ -236,7 +246,7 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
     // a partial prior run).
     let contentId: string | undefined = existing?.id;
     if (!contentId) {
-      const { data: inserted } = await svc
+      const { data: inserted, error: insertError } = await svc
         .from("pre_cruise_email_content")
         .insert({
           tenant_id,
@@ -248,6 +258,13 @@ export const precruiseSendFromBatchResult = inngest.createFunction(
         })
         .select("id")
         .single();
+      if (insertError?.code === "23505") {
+        // #1582: duplicate-event race — another run already claimed
+        // (booking_id, email_phase). Let that run own the send.
+        console.info(`[precruise:batch-result] duplicate insert race, skipping send: booking=${booking_id} phase=${phase}`);
+        return;
+      }
+      if (insertError) throw new SupabaseMutationError("pre_cruise_email_content.insert", insertError);
       contentId = (inserted as { id: string } | null)?.id;
     } else {
       await safeAwait(
@@ -561,6 +578,17 @@ async function buildAndSend(args: {
   console.info(
     `[precruise] booking=${emailCtx.booking.id} phase=${phase} status=${result.status}`,
   );
+
+  // #1582: "failed" (Resend 5xx/timeout/misconfigured key) must fail loud so
+  // Inngest retries the run — the row stays with sent_at null and the
+  // scheduler's sent_at-based dedup will pick this booking back up rather
+  // than skipping it forever. "suppressed" and "rate_limited" are terminal
+  // policy decisions, not transient errors, and must not retry.
+  if (result.status === "failed") {
+    throw new Error(
+      `[precruise] send failed booking=${emailCtx.booking.id} phase=${phase} reason=${result.reason ?? "unknown"}`,
+    );
+  }
 }
 
 function buildBatchedPrompt(
@@ -860,5 +888,5 @@ async function buildEmail(
   }
 }
 
-// Re-export parseStructuredJson and buildEmail for tests.
-export { parseStructuredJson, buildEmail };
+// Re-export parseStructuredJson, buildEmail, and buildAndSend for tests.
+export { parseStructuredJson, buildEmail, buildAndSend };
