@@ -6,6 +6,7 @@ import { escapeHtml } from "@/lib/utils";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface PublishBody {
   document_type: string;
@@ -42,7 +43,7 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json({ documents: result });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -178,6 +179,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, ...result });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
