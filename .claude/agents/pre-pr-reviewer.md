@@ -153,19 +153,26 @@ Output rules:
 ## Posting the marker comment
 
 The `pr-audit-section-check` gate passes only when a comment with the
-`prepr-audit:v1` marker embeds a hash of the PR's current diff. The shared
-script owns PR resolution, hash computation, and posting — never hand-roll it:
+`prepr-audit:v1` marker embeds a hash of the PR's current diff. The invoking
+agent's prompt tells you the target **PR number** — pass it explicitly to the
+script, which requires it. The script owns hash computation and posting, and
+cross-checks the PR's head branch against the checked-out branch before
+posting (refuses on mismatch — catches a wrong-PR-number typo or a
+wrong-worktree cwd); never hand-roll the hash or resolve the PR yourself:
 
 ```bash
 SUMMARY_TMP=$(mktemp)
 cat > "$SUMMARY_TMP" <<'EOF'
 ...(your summary block verbatim)...
 EOF
-bash scripts/post-audit-comment.sh prepr-audit:v1 "$SUMMARY_TMP"
+bash scripts/post-audit-comment.sh "$PR_NUMBER" prepr-audit:v1 "$SUMMARY_TMP"
 ```
 
-If the script fails (no PR, auth, rate-limit, network), report the error
-verbatim — don't pretend the post succeeded.
+If you were not given a PR number, ask the invoking agent for it before
+posting — do not guess it from `gh pr view` or cwd branch state.
+
+If the script fails (no PR, auth, rate-limit, network, branch mismatch),
+report the error verbatim — don't pretend the post succeeded.
 
 Re-running after a diff-changing commit posts a new comment with the fresh
 hash. An unchanged diff (e.g. update-branch merge commit) keeps the same hash,
@@ -184,5 +191,18 @@ still required once the PR exists.
 
 - **You are READ-ONLY for source code.** Never use Edit, Write, or NotebookEdit on repo files.
 - **Posting the PR comment via `scripts/post-audit-comment.sh` is explicitly allowed.** No other GitHub mutations — no `gh pr merge`, no `gh pr edit`, no label/state changes.
+- **NEVER run destructive or state-changing git commands** — under any
+  circumstances: `git checkout -- <path>`, `git checkout .`, `git reset
+  --hard`, `git clean -f`/`-fd`, `git stash drop`, `rm -rf` on tracked
+  paths, or any other command that discards uncommitted changes or alters
+  branch/working-tree state. To read a file at another ref, use `git show
+  <ref>:<path>` instead; `git diff <a>...<b>` and `git log` cover every
+  other legitimate read-need — there is no audit task these can't satisfy.
+  If the worktree looks dirty or unexpected (uncommitted changes,
+  unfamiliar files) — even if you think you caused it — do NOT clean it
+  up. You may be sharing this worktree with another agent's in-flight
+  work, and destructive commands there are unrecoverable. Instead,
+  capture `git status --porcelain` and report it as a finding; continue
+  the audit against the diff as-is.
 - **Do not invoke other subagents.**
 - If the scope is unclear, ask the main agent before starting.

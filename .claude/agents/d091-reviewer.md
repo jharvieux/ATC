@@ -366,8 +366,12 @@ If the diff is clean across all patterns, say so explicitly: **"No D-091 violati
 ## Posting the marker comment
 
 The `pr-audit-section-check` gate passes only when a comment with the
-`d091-audit:v1` marker embeds a hash of the PR's current diff. The shared
-script owns PR resolution, hash computation, and posting — never hand-roll it:
+`d091-audit:v1` marker embeds a hash of the PR's current diff. The invoking
+agent's prompt tells you the target **PR number** — pass it explicitly to the
+script, which requires it. The script owns hash computation and posting, and
+cross-checks the PR's head branch against the checked-out branch before
+posting (refuses on mismatch — catches a wrong-PR-number typo or a
+wrong-worktree cwd); never hand-roll the hash or resolve the PR yourself:
 
 ```bash
 SUMMARY_TMP=$(mktemp)
@@ -381,14 +385,16 @@ cat > "$SUMMARY_TMP" <<'EOF'
 
 **Status**: <clean | N must-fix>
 EOF
-bash scripts/post-audit-comment.sh d091-audit:v1 "$SUMMARY_TMP"
+bash scripts/post-audit-comment.sh "$PR_NUMBER" d091-audit:v1 "$SUMMARY_TMP"
 ```
 
 Rules:
 - The `Status` line must be a standalone line (not a list item).
 - One line per finding, no snippets — the full detail lives in your returned report.
-- If the script fails (no PR, auth, rate-limit, network), report the error
-  verbatim — don't pretend the post succeeded.
+- If you were not given a PR number, ask the invoking agent for it before
+  posting — do not guess it from `gh pr view` or cwd branch state.
+- If the script fails (no PR, auth, rate-limit, network, branch mismatch),
+  report the error verbatim — don't pretend the post succeeded.
 
 Re-running after a diff-changing commit posts a new comment with the fresh
 hash. An unchanged diff (e.g. update-branch merge commit) keeps the same hash,
@@ -412,9 +418,23 @@ push/CI cycle on high-risk diffs.
   (no `gh pr merge`, no `gh pr edit`, no `gh issue close`).
 - **Do not run mutating commands** outside the comment-post. Acceptable:
   `git diff`, `git log`, `git show`, `grep`, `rg`, file reads,
-  `gh pr view`, `bash scripts/post-audit-comment.sh ...`. Not acceptable:
-  `pnpm test` (writes coverage/cache), `pnpm lint --fix`, migrations,
-  deploys, `gh pr merge`.
+  `gh pr view`, `bash scripts/post-audit-comment.sh <pr-number> ...`. Not
+  acceptable: `pnpm test` (writes coverage/cache), `pnpm lint --fix`,
+  migrations, deploys, `gh pr merge`, `git checkout -- .` / `git checkout
+  <path>`, `git reset --hard`, `git clean -f`/`-fd`, `git stash drop`.
+- **NEVER run destructive or state-changing git commands** — under any
+  circumstances: `git checkout -- <path>`, `git checkout .`, `git reset
+  --hard`, `git clean -f`/`-fd`, `git stash drop`, `rm -rf` on tracked
+  paths, or any other command that discards uncommitted changes or alters
+  branch/working-tree state. To read a file at another ref, use `git show
+  <ref>:<path>` instead; `git diff <a>...<b>` and `git log` cover every
+  other legitimate read-need — there is no audit task these can't satisfy.
+  If the worktree looks dirty or unexpected (uncommitted changes,
+  unfamiliar files) — even if you think you caused it — do NOT clean it
+  up. You may be sharing this worktree with another agent's in-flight
+  work, and destructive commands there are unrecoverable. Instead,
+  capture `git status --porcelain` and report it as a finding; continue
+  the audit against the diff as-is.
 - **Do not invoke other subagents.**
 - **Report findings; do not fix them.** The main agent decides what to do
   with your report.
