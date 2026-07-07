@@ -153,19 +153,26 @@ Output rules:
 ## Posting the marker comment
 
 The `pr-audit-section-check` gate passes only when a comment with the
-`prepr-audit:v1` marker embeds a hash of the PR's current diff. The shared
-script owns PR resolution, hash computation, and posting — never hand-roll it:
+`prepr-audit:v1` marker embeds a hash of the PR's current diff. The invoking
+agent's prompt tells you the target **PR number** — pass it explicitly to the
+script, which requires it. The script owns hash computation and posting, and
+cross-checks the PR's head branch against the checked-out branch before
+posting (refuses on mismatch — catches a wrong-PR-number typo or a
+wrong-worktree cwd); never hand-roll the hash or resolve the PR yourself:
 
 ```bash
 SUMMARY_TMP=$(mktemp)
 cat > "$SUMMARY_TMP" <<'EOF'
 ...(your summary block verbatim)...
 EOF
-bash scripts/post-audit-comment.sh prepr-audit:v1 "$SUMMARY_TMP"
+bash scripts/post-audit-comment.sh "$PR_NUMBER" prepr-audit:v1 "$SUMMARY_TMP"
 ```
 
-If the script fails (no PR, auth, rate-limit, network), report the error
-verbatim — don't pretend the post succeeded.
+If you were not given a PR number, ask the invoking agent for it before
+posting — do not guess it from `gh pr view` or cwd branch state.
+
+If the script fails (no PR, auth, rate-limit, network, branch mismatch),
+report the error verbatim — don't pretend the post succeeded.
 
 Re-running after a diff-changing commit posts a new comment with the fresh
 hash. An unchanged diff (e.g. update-branch merge commit) keeps the same hash,
