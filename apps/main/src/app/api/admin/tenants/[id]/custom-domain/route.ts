@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface InitBody {
   custom_domain: string;
@@ -141,14 +142,16 @@ export async function POST(
 
     return Response.json({ ok: true, ...result });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const status = msg === "tier_not_eligible_for_custom_domain"
-      ? 403
-      : msg === "domain_already_claimed"
-      ? 409
-      : msg === "tenant_not_found"
-      ? 404
-      : 500;
-    return Response.json({ error: msg }, { status });
+    const msg = err instanceof Error ? err.message : "";
+    if (msg === "tier_not_eligible_for_custom_domain") {
+      return Response.json({ error: msg }, { status: 403 });
+    }
+    if (msg === "domain_already_claimed") {
+      return Response.json({ error: msg }, { status: 409 });
+    }
+    if (msg === "tenant_not_found") {
+      return Response.json({ error: msg }, { status: 404 });
+    }
+    return dbErrorResponse(err);
   }
 }

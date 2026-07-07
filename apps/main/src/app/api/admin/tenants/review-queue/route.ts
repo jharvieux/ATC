@@ -4,6 +4,7 @@
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 export async function GET(req: Request): Promise<Response> {
   let adminUserId: string;
@@ -45,7 +46,6 @@ export async function GET(req: Request): Promise<Response> {
 
     return Response.json({ ...result, page, page_size: pageSize });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

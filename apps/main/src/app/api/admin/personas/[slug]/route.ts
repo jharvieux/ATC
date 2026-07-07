@@ -12,6 +12,7 @@
 // write clears the hot-path repository cache so the next chat turn rebuilds.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import {
   assertPlatformAdminArea,
   PlatformAdminError,
@@ -52,7 +53,7 @@ export async function GET(
     if (!persona) return Response.json({ error: "persona_not_found" }, { status: 404 });
     return Response.json({ persona });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -97,6 +98,6 @@ export async function PUT(
     clearPersonaRepositoryCaches();
     return Response.json({ ok: true, slug, version: result.version });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
