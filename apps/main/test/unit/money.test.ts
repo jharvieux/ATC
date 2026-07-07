@@ -111,11 +111,11 @@ describe("formatCents (canonical display formatter with currency)", () => {
     expect(formatCents(100, "GBP")).toBe("£1.00");
   });
 
-  it("known limitation: always divides by 100, which is wrong for zero-decimal currencies (issue #TBD)", () => {
+  it("known limitation: always divides by 100, which is wrong for zero-decimal currencies (issue #1658)", () => {
     // formatCents assumes a 2-decimal minor unit (cents), so JPY/KRW/etc. — which
     // have no minor unit — render 100x too small. Pre-existing behavior inherited
-    // from the formatters this PR consolidates; not introduced here. Tracked as
-    // a follow-up rather than fixed in this PR (see PR body).
+    // from the formatters PR #1657 consolidated; not introduced there. Tracked
+    // as #1658 rather than fixed inline (needs a product decision first).
     expect(formatCents(100, "JPY")).toBe("¥1");
   });
 
