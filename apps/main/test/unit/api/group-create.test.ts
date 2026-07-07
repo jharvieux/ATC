@@ -13,6 +13,9 @@ const SAILING_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
 const groupInsert = vi.fn();
 const forumInsert = vi.fn();
+const groupDelete = vi.fn();
+let invitationsInsertError: { message: string; code?: string } | null = null;
+let groupDeleteError: { message: string } | null = null;
 
 const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
@@ -69,6 +72,12 @@ vi.mock("@/lib/db/service-role-client", () => ({
               }),
             };
           },
+          delete: () => ({
+            eq: (_col: string, id: string) => {
+              groupDelete(id);
+              return Promise.resolve({ error: groupDeleteError });
+            },
+          }),
         };
       }
       if (table === "forums") {
@@ -79,8 +88,22 @@ vi.mock("@/lib/db/service-role-client", () => ({
           },
         };
       }
+      if (table === "email_log") {
+        return {
+          update: () => ({
+            eq: () => Promise.resolve({ error: null }),
+          }),
+        };
+      }
+      if (table === "group_invite_pending_approval") {
+        return {
+          delete: () => ({
+            eq: () => Promise.resolve({ error: null }),
+          }),
+        };
+      }
       // invitations table
-      return { insert: () => Promise.resolve({ error: null }) };
+      return { insert: () => Promise.resolve({ error: invitationsInsertError }) };
     },
   }),
 }));
@@ -105,6 +128,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   groupInsert.mockClear();
   forumInsert.mockClear();
+  groupDelete.mockClear();
+  invitationsInsertError = null;
+  groupDeleteError = null;
   mocks.assertPermission.mockResolvedValue({
     ctx: { tenant_id: TENANT_ID },
     user: { id: "u-1" },
@@ -186,5 +212,39 @@ describe("POST /api/groups — forum lifecycle", () => {
     const row = forumInsert.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(row.tenant_id).toBe(TENANT_ID);
     expect(row.group_id).toBeDefined();
+  });
+});
+
+describe("POST /api/groups — invitations-insert failure cleanup (#1600)", () => {
+  // A failed invitations insert previously left the group row `status:'active'`
+  // with zero invitees — an orphan a coordinator's retry would duplicate.
+  it("deletes the just-created group when the invitations insert fails", async () => {
+    invitationsInsertError = { message: "insert failed", code: "23502" };
+
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({ ...BASE_BODY, invitees: [{ email: "a@example.com" }] }));
+
+    expect(res.status).toBe(500);
+    expect(groupDelete).toHaveBeenCalledWith(GROUP_ID);
+  });
+
+  it("still returns the db-error response if the compensating delete itself fails", async () => {
+    invitationsInsertError = { message: "insert failed", code: "23502" };
+    groupDeleteError = { message: "delete failed" };
+
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq({ ...BASE_BODY, invitees: [{ email: "a@example.com" }] }));
+
+    expect(res.status).toBe(500);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("db_error");
+  });
+
+  it("does not attempt a compensating delete when there are no invitees to insert", async () => {
+    const { POST } = await import("@/app/api/groups/route");
+    const res = await POST(postReq(BASE_BODY));
+
+    expect(res.status).toBe(201);
+    expect(groupDelete).not.toHaveBeenCalled();
   });
 });
