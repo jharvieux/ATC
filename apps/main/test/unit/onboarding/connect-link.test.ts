@@ -19,6 +19,11 @@ const h = vi.hoisted(() => ({
   state: { connectAccountId: "acct_1" as string | null },
 }));
 
+// §28.15 / issue #1668 — STRIPE_CONNECT_ONBOARDING_ENABLED gate. Defaults to
+// true (matches env.ts schema default); the dedicated describe block flips it.
+const envFlags = vi.hoisted(() => ({ STRIPE_CONNECT_ONBOARDING_ENABLED: true }));
+vi.mock("@/lib/env", () => ({ env: () => envFlags }));
+
 vi.mock("@/lib/auth/assert-permission", () => ({
   assertPermission: vi.fn(async () => ({ ctx: { tenant_id: "t1" } })),
 }));
@@ -66,6 +71,7 @@ describe("POST /api/onboarding/connect/link §15.9", () => {
     vi.clearAllMocks();
     h.state.connectAccountId = "acct_1";
     process.env.STRIPE_SECRET_KEY = "sk_test_key";
+    envFlags.STRIPE_CONNECT_ONBOARDING_ENABLED = true;
   });
 
   it("refresh_url/return_url use the tenant request origin (subdomain)", async () => {
@@ -105,5 +111,31 @@ describe("POST /api/onboarding/connect/link §15.9", () => {
         return_url: "https://book.lisatravel.com/onboarding/branding",
       }),
     );
+  });
+});
+
+describe("POST /api/onboarding/connect/link — STRIPE_CONNECT_ONBOARDING_ENABLED gate (#1668)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.state.connectAccountId = "acct_1";
+    process.env.STRIPE_SECRET_KEY = "sk_test_key";
+  });
+
+  it("returns 403 connect_onboarding_disabled when the flag is false, before any Stripe call", async () => {
+    envFlags.STRIPE_CONNECT_ONBOARDING_ENABLED = false;
+    const { POST } = await import("@/app/api/onboarding/connect/link/route");
+    const res = await POST(postRequest("https://lisa-travel.ai-travelconcierge.com"));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "connect_onboarding_disabled" });
+    expect(h.accountsCreate).not.toHaveBeenCalled();
+    expect(h.accountLinksCreate).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally when the flag is true (default)", async () => {
+    envFlags.STRIPE_CONNECT_ONBOARDING_ENABLED = true;
+    const { POST } = await import("@/app/api/onboarding/connect/link/route");
+    const res = await POST(postRequest("https://lisa-travel.ai-travelconcierge.com"));
+    expect(res.status).toBe(200);
+    expect(h.accountLinksCreate).toHaveBeenCalledOnce();
   });
 });

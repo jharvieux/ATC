@@ -57,6 +57,11 @@ vi.mock("@/lib/rag-ingest/extract-content", () => ({
   extractContent: vi.fn(),
 }));
 
+// §28.15 / issue #1668 — RAG_INGESTION_PAUSED gate. Defaults to false
+// (matches env.ts schema default); the dedicated describe block flips it.
+const envFlags = vi.hoisted(() => ({ RAG_INGESTION_PAUSED: false }));
+vi.mock("@/lib/env", () => ({ env: () => envFlags }));
+
 import { ragExtractContent } from "@/inngest/rag-extract-content";
 import { extractContent } from "@/lib/rag-ingest/extract-content";
 
@@ -74,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   sentEvents.length = 0;
   updates.length = 0;
+  envFlags.RAG_INGESTION_PAUSED = false;
 });
 
 describe("ragExtractContent — 1 MB decompression-bomb cap (#742)", () => {
@@ -110,5 +116,23 @@ describe("ragExtractContent — 1 MB decompression-bomb cap (#742)", () => {
     expect(sentEvents).toContainEqual(
       expect.objectContaining({ name: "rag.submission_ready_for_pii_redaction" }),
     );
+  });
+});
+
+describe("ragExtractContent — RAG_INGESTION_PAUSED gate (#1668)", () => {
+  it("skips without reading the DB when the flag is true", async () => {
+    envFlags.RAG_INGESTION_PAUSED = true;
+    const result = await runHandler();
+    expect(result).toMatchObject({ skipped: true, reason: "rag_ingestion_paused" });
+    expect(extractContent).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("proceeds normally when the flag is false (default)", async () => {
+    envFlags.RAG_INGESTION_PAUSED = false;
+    vi.mocked(extractContent).mockResolvedValueOnce({ status: "extracted", content: "hello" });
+    const result = await runHandler();
+    expect(result).toMatchObject({ ok: true });
+    expect(extractContent).toHaveBeenCalled();
   });
 });

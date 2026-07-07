@@ -62,39 +62,41 @@ afterEach(() => {
   process.env = originalEnv;
 });
 
-// Pick MAINTENANCE_MODE as the canary: it defaults to false, so 'false'
+// Pick RAG_INGESTION_PAUSED as the canary: it defaults to false, so 'false'
 // vs default(false) is observably distinct from 'true'. SIGNUP_ENABLED is
 // the inverse canary: defaults to true.
+// (AI_GLOBAL_KILL_SWITCH and MAINTENANCE_MODE were removed — issue #1668 —
+// so RAG_INGESTION_PAUSED replaces MAINTENANCE_MODE as the false-default canary.)
 
 describe("envBoolean() — false-spellings produce false", () => {
   it.each(["false", "FALSE", "False", " false ", "0", "no", "NO", "off", "OFF", ""])(
-    "MAINTENANCE_MODE=%j is false",
+    "RAG_INGESTION_PAUSED=%j is false",
     async (val) => {
-      process.env = baseEnv({ MAINTENANCE_MODE: val });
+      process.env = baseEnv({ RAG_INGESTION_PAUSED: val });
       const { verifyEnvAtBoot } = await import("@/lib/env");
-      expect(verifyEnvAtBoot().MAINTENANCE_MODE).toBe(false);
+      expect(verifyEnvAtBoot().RAG_INGESTION_PAUSED).toBe(false);
     }
   );
 });
 
 describe("envBoolean() — true-spellings produce true", () => {
   it.each(["true", "TRUE", "True", " true ", "1", "yes", "YES", "on", "ON"])(
-    "MAINTENANCE_MODE=%j is true",
+    "RAG_INGESTION_PAUSED=%j is true",
     async (val) => {
-      process.env = baseEnv({ MAINTENANCE_MODE: val });
+      process.env = baseEnv({ RAG_INGESTION_PAUSED: val });
       const { verifyEnvAtBoot } = await import("@/lib/env");
-      expect(verifyEnvAtBoot().MAINTENANCE_MODE).toBe(true);
+      expect(verifyEnvAtBoot().RAG_INGESTION_PAUSED).toBe(true);
     }
   );
 });
 
 describe("envBoolean() — defaults apply when unset", () => {
-  it("MAINTENANCE_MODE unset → false (default)", async () => {
+  it("RAG_INGESTION_PAUSED unset → false (default)", async () => {
     const env = baseEnv();
-    delete env.MAINTENANCE_MODE;
+    delete env.RAG_INGESTION_PAUSED;
     process.env = env;
     const { verifyEnvAtBoot } = await import("@/lib/env");
-    expect(verifyEnvAtBoot().MAINTENANCE_MODE).toBe(false);
+    expect(verifyEnvAtBoot().RAG_INGESTION_PAUSED).toBe(false);
   });
 
   it("SIGNUP_ENABLED unset → true (default)", async () => {
@@ -107,10 +109,10 @@ describe("envBoolean() — defaults apply when unset", () => {
 });
 
 describe("envBoolean() — unrecognized strings fail validation", () => {
-  it("MAINTENANCE_MODE='maybe' throws at boot", async () => {
-    process.env = baseEnv({ MAINTENANCE_MODE: "maybe" });
+  it("RAG_INGESTION_PAUSED='maybe' throws at boot", async () => {
+    process.env = baseEnv({ RAG_INGESTION_PAUSED: "maybe" });
     const { verifyEnvAtBoot } = await import("@/lib/env");
-    expect(() => verifyEnvAtBoot()).toThrow(/MAINTENANCE_MODE/);
+    expect(() => verifyEnvAtBoot()).toThrow(/RAG_INGESTION_PAUSED/);
   });
 });
 
@@ -123,19 +125,5 @@ describe("envBoolean() — OAUTH_MICROSOFT_ENABLED disables Graph requirement", 
     const { verifyEnvAtBoot } = await import("@/lib/env");
     expect(() => verifyEnvAtBoot()).not.toThrow();
     expect(verifyEnvAtBoot().OAUTH_MICROSOFT_ENABLED).toBe(false);
-  });
-});
-
-describe("envBoolean() — AI_GLOBAL_KILL_SWITCH (most safety-critical flag)", () => {
-  it("AI_GLOBAL_KILL_SWITCH='false' is false (kill switch OFF)", async () => {
-    process.env = baseEnv({ AI_GLOBAL_KILL_SWITCH: "false" });
-    const { verifyEnvAtBoot } = await import("@/lib/env");
-    expect(verifyEnvAtBoot().AI_GLOBAL_KILL_SWITCH).toBe(false);
-  });
-
-  it("AI_GLOBAL_KILL_SWITCH='true' is true (kill switch ON)", async () => {
-    process.env = baseEnv({ AI_GLOBAL_KILL_SWITCH: "true" });
-    const { verifyEnvAtBoot } = await import("@/lib/env");
-    expect(verifyEnvAtBoot().AI_GLOBAL_KILL_SWITCH).toBe(true);
   });
 });

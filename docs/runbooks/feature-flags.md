@@ -15,10 +15,8 @@ requires a Vercel env-var update **and** a redeploy.
 
 | Env var | Default | Effect when changed | Spec |
 |---|---|---|---|
-| `AI_GLOBAL_KILL_SWITCH` | `false` | Refuse every Anthropic call platform-wide. Returns the §10.6 fallback message. **Emergency stop.** | §10.6 / §28.15 |
-| `RAG_INGESTION_PAUSED` | `false` | Reject new RAG submissions; the ingest cron sleeps. | §28.15 |
-| `MAINTENANCE_MODE` | `false` | Routing middleware serves the maintenance banner page instead of the app. | §28.15 |
-| `SIGNUP_ENABLED` | `true` | Hides public sign-up routes. Existing tenants unaffected. | §28.15 |
+| `RAG_INGESTION_PAUSED` | `false` | Skips the extract/PII-redact/normalize RAG ingest stages (each logs and no-ops). | §28.15 |
+| `SIGNUP_ENABLED` | `true` | Blocks new sign-ups (`/signup` shows a closed message; `POST /api/auth/signup/complete` returns 403). Existing tenants unaffected. | §28.15 |
 | `STRIPE_CONNECT_ONBOARDING_ENABLED` | `true` | Pauses new Connect onboarding; existing Sub-Host tenants unaffected. | §28.15 |
 | `OAUTH_GOOGLE_ENABLED` | `true` | Removes the Google sign-in button. | §28.9 |
 | `OAUTH_MICROSOFT_ENABLED` | `true` | Removes the Microsoft sign-in button. Disabling **also** removes the MS-Graph creds requirement (superRefine). | §28.9 / §17.2 |

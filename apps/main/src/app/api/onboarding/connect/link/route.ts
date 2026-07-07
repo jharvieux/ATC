@@ -8,10 +8,17 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { tenantOriginFromRequest } from "@/lib/platform-url";
+import { env } from "@/lib/env";
 
 export async function POST(req: Request): Promise<Response> {
   try {
     const { ctx } = await assertPermission(req, { resource: "onboarding", action: "connect:setup" });
+
+    // §28.15 / issue #1668 — pauses new Connect onboarding; existing Connect
+    // accounts are unaffected (this route only creates/links, never revokes).
+    if (!env().STRIPE_CONNECT_ONBOARDING_ENABLED) {
+      return Response.json({ error: "connect_onboarding_disabled" }, { status: 403 });
+    }
 
     const stripeKey = process.env.STRIPE_SECRET_KEY;
     if (!stripeKey) return Response.json({ error: "stripe_not_configured" }, { status: 500 });

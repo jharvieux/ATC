@@ -12,6 +12,7 @@ import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { extractContent } from "@/lib/rag-ingest/extract-content";
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { env } from "@/lib/env";
 
 export const ragExtractContent = inngest.createFunction(
   {
@@ -21,6 +22,13 @@ export const ragExtractContent = inngest.createFunction(
   async ({ event }) => {
     const submission_id = event.data.submission_id as string;
     const tenant_id = event.data.tenant_id as string;
+
+    // §28.15 / issue #1668 — operator pause switch for the RAG ingest pipeline.
+    if (env().RAG_INGESTION_PAUSED) {
+      console.info("[rag-extract-content] skipping: RAG_INGESTION_PAUSED=true", { tenant_id, submission_id });
+      return { skipped: true, reason: "rag_ingestion_paused" };
+    }
+
     const db = createServiceRoleClient();
 
     // §15.16 — Skip past-grace tenants. Extract is the first step of the

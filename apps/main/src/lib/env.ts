@@ -377,9 +377,11 @@ const envSchema = z.object({
   // alongside the rest of the Resend block above).
   // §28.15 — operational toggles. Env-based so they can flip without a DB
   // round-trip; spec rationale at §28.15.
-  AI_GLOBAL_KILL_SWITCH:                envBoolean().optional().default(false),
+  // AI_GLOBAL_KILL_SWITCH and MAINTENANCE_MODE were removed here (issue
+  // #1668) — see MEMORY.md for why. The real AI kill switch is the DB-backed
+  // ai_kill_switch_state.global_paused row (run-supervisor.ts); no
+  // maintenance-mode feature exists.
   RAG_INGESTION_PAUSED:                 envBoolean().optional().default(false),
-  MAINTENANCE_MODE:                     envBoolean().optional().default(false),
   SIGNUP_ENABLED:                       envBoolean().optional().default(true),
   STRIPE_CONNECT_ONBOARDING_ENABLED:    envBoolean().optional().default(true),
   // §28.16 — tone & persona defaults.

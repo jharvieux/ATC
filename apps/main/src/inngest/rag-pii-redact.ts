@@ -24,6 +24,7 @@ import { computeAggregation, type AggregationState } from "@/lib/rag-ingest/pii-
 import { assertTenantStillPayingById } from "@/lib/billing/exclude-non-paying";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { enqueueBatchRequest } from "@/lib/ai/batch/enqueue";
+import { env } from "@/lib/env";
 
 const RagPiiCallerMetadataSchema = z.object({
   tenant_id: z.string(),
@@ -77,6 +78,12 @@ export async function redactSubmission({
   tenant_id,
   submission_id,
 }: RedactSubmissionInput): Promise<RedactSubmissionResult> {
+  // §28.15 / issue #1668 — operator pause switch for the RAG ingest pipeline.
+  if (env().RAG_INGESTION_PAUSED) {
+    console.info("[rag-pii-redact] skipping: RAG_INGESTION_PAUSED=true", { tenant_id, submission_id });
+    return { skipped: true, reason: "rag_ingestion_paused" };
+  }
+
   // §15.16 — Skip past-grace tenants.
   const paymentCheck = await assertTenantStillPayingById(db, tenant_id);
   if (!paymentCheck.ok) {
