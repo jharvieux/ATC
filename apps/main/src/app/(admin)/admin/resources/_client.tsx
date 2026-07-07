@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
+import { formatCents } from "@/lib/money";
 import type { ModelPricing } from "@/lib/ai/pricing";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -697,8 +698,8 @@ export default function ResourceUtilizationPage(): JSX.Element {
                     <td className={tdCls}><code className="text-[12px]">{model}</code></td>
                     <td className={`${tdCls} text-right`}>{p.input_per_million_cents.toLocaleString()}</td>
                     <td className={`${tdCls} text-right`}>{p.output_per_million_cents.toLocaleString()}</td>
-                    <td className={`${tdCls} text-right`}>{(p.input_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className={`${tdCls} text-right`}>{(p.output_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className={`${tdCls} text-right`}>{formatCents(p.input_per_million_cents)}</td>
+                    <td className={`${tdCls} text-right`}>{formatCents(p.output_per_million_cents)}</td>
                   </tr>
                 ))}
               </tbody>

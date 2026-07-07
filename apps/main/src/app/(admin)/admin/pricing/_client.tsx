@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
+import { fromCents } from "@/lib/money";
 import { TIER_CODE_MAP } from "@/lib/stripe/tier-code-map";
 
 interface TierRow {
@@ -40,8 +41,10 @@ const TENANT_LABEL: Record<string, string> = { sub_host: "Subscription Host", by
 const LINE_LABEL: Record<string, string> = { base: "Base", additional_seats: "Additional seat" };
 const OPEN_SENTINEL = 2147483647;
 
+// Plain decimal string for <input type="number"> values — NOT formatCents,
+// which returns a currency string ("$12.34") that number inputs reject.
 const dollars = (cents: number | null | undefined) =>
-  cents == null ? "" : (cents / 100).toFixed(2);
+  cents == null ? "" : fromCents(cents);
 const toCents = (d: string): number | null => {
   const n = Number.parseFloat(d);
   if (!Number.isFinite(n) || n < 0) return null;
