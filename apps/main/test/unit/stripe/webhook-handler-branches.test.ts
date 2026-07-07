@@ -117,6 +117,7 @@ vi.mock("stripe", () => ({
         return {
           id: `evt_test_${mockEventType}`,
           type: mockEventType,
+          created: Math.floor(Date.now() / 1000),
           data: {
             object: mockEventData,
             ...(mockEventPreviousAttributes ? { previous_attributes: mockEventPreviousAttributes } : {}),

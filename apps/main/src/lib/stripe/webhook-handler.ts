@@ -22,12 +22,42 @@
 //   4. Update row with processing_completed_at + outcome
 //   5. Return 200
 // Any uncaught exception: update row to outcome='error', return 500 (Stripe retries)
+//
+// Ordering protection (#1583): the subscription-status handlers below
+// (customer.subscription.*, invoice.payment_succeeded/failed) are
+// at-least-once and unordered, and the error path above clears the dedup
+// row, so a stale event CAN be re-delivered after newer events already
+// advanced the tenant's state. Each handler compares the event's `created`
+// envelope timestamp against `tenants.subscription_status_event_at` (the
+// last-applied event's timestamp) via isStaleSubscriptionEvent() and
+// discards events that aren't newer.
 
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
 import { STALE_WEBHOOK_PROCESSING_MS } from "./webhook-constants";
 
 export type WebhookEndpoint = "platform" | "connect";
+
+function isStaleSubscriptionEvent(
+  eventType: string,
+  eventId: string,
+  eventCreatedIso: string,
+  tenantId: string,
+  lastEventAt: string | null,
+): boolean {
+  if (lastEventAt && eventCreatedIso <= lastEventAt) {
+    console.warn(
+      "[stripe-webhook] %s: stale event %s (created %s) not newer than last-applied %s for tenant %s — discarding",
+      eventType,
+      eventId,
+      eventCreatedIso,
+      lastEventAt,
+      tenantId,
+    );
+    return true;
+  }
+  return false;
+}
 
 async function clearStripeWebhookEventRow(
   db: ReturnType<typeof createServiceRoleClient>,
@@ -293,11 +323,24 @@ export async function handleStripeWebhook(
         const sub = event.data.object as Stripe.Subscription;
         const { data: tenantRow, error: subTenantErr } = await db
           .from("tenants")
-          .select("id, non_paying_since")
+          .select("id, non_paying_since, subscription_status_event_at")
           .eq("stripe_subscription_id", sub.id)
           .maybeSingle();
         if (subTenantErr) throw new Error(`${event.type} tenant select failed: ${subTenantErr.message}`);
         if (!tenantRow) {
+          break;
+        }
+
+        const eventCreatedIso = new Date(event.created * 1000).toISOString();
+        if (
+          isStaleSubscriptionEvent(
+            event.type,
+            event.id,
+            eventCreatedIso,
+            tenantRow.id,
+            (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
+          )
+        ) {
           break;
         }
 
@@ -306,7 +349,10 @@ export async function handleStripeWebhook(
           : (sub.status as string);
         const isPaying = status === "active" || status === "trialing";
 
-        const updates: Record<string, unknown> = { subscription_status: status };
+        const updates: Record<string, unknown> = {
+          subscription_status: status,
+          subscription_status_event_at: eventCreatedIso,
+        };
         if (isPaying) {
           updates.non_paying_since = null;
         } else if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
@@ -337,15 +383,30 @@ export async function handleStripeWebhook(
         }
         const { data: tenantRow, error: paySuccessTenantErr } = await db
           .from("tenants")
-          .select("id, subscription_status")
+          .select("id, subscription_status, subscription_status_event_at")
           .eq("stripe_subscription_id", subId)
           .maybeSingle();
         if (paySuccessTenantErr) throw new Error(`invoice.payment_succeeded tenant select failed: ${paySuccessTenantErr.message}`);
         if (!tenantRow) {
           break;
         }
+        const eventCreatedIso = new Date(event.created * 1000).toISOString();
+        if (
+          isStaleSubscriptionEvent(
+            event.type,
+            event.id,
+            eventCreatedIso,
+            tenantRow.id,
+            (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
+          )
+        ) {
+          break;
+        }
         const cur = (tenantRow as { subscription_status: string | null }).subscription_status;
-        const updates: Record<string, unknown> = { non_paying_since: null };
+        const updates: Record<string, unknown> = {
+          non_paying_since: null,
+          subscription_status_event_at: eventCreatedIso,
+        };
         if (cur !== "active" && cur !== "trialing") {
           updates.subscription_status = "active";
         }
@@ -373,14 +434,29 @@ export async function handleStripeWebhook(
         }
         const { data: tenantRow, error: payFailedTenantErr } = await db
           .from("tenants")
-          .select("id, non_paying_since")
+          .select("id, non_paying_since, subscription_status_event_at")
           .eq("stripe_subscription_id", subId)
           .maybeSingle();
         if (payFailedTenantErr) throw new Error(`invoice.payment_failed tenant select failed: ${payFailedTenantErr.message}`);
         if (!tenantRow) {
           break;
         }
-        const updates: Record<string, unknown> = { subscription_status: "past_due" };
+        const eventCreatedIso = new Date(event.created * 1000).toISOString();
+        if (
+          isStaleSubscriptionEvent(
+            event.type,
+            event.id,
+            eventCreatedIso,
+            tenantRow.id,
+            (tenantRow as { subscription_status_event_at: string | null }).subscription_status_event_at,
+          )
+        ) {
+          break;
+        }
+        const updates: Record<string, unknown> = {
+          subscription_status: "past_due",
+          subscription_status_event_at: eventCreatedIso,
+        };
         if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }

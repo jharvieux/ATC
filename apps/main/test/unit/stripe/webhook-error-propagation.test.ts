@@ -100,6 +100,7 @@ vi.mock("stripe", () => {
         constructEvent: (_body: string, _sig: string, _secret: string) => ({
           id: `evt_test_${mockEventType}`,
           type: mockEventType,
+          created: Math.floor(Date.now() / 1000),
           data: {
             object: mockEventData,
           },
