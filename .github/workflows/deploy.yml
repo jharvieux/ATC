@@ -260,6 +260,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history so the migration-ledger pre-check below can diff
+          # origin/<base>...HEAD to find this branch's added migrations.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -271,6 +275,28 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Migration-ledger collision pre-check (#1660)
+        # Before pushing, confirm none of this branch's ADDED migrations has a
+        # version that's already in the shared test DB ledger under a
+        # DIFFERENT migration — the #1660 incident (N parallel agents deriving
+        # the same "next" version; the first PR's push wins the ledger row,
+        # every sibling PR's push then corrupts it further / fails). DB-free
+        # scripts/check-migration-collision.ts (Guards & Build) catches the
+        # same-machine and branch-vs-committed-dev-tree cases; this is the
+        # authoritative backstop for the residual race between two branches
+        # that were never diffed against each other. Runs for both apps —
+        # main and rag both use the shared supabase_migrations.schema_migrations
+        # ledger convention. Each target skips gracefully if its DB URL secret
+        # is absent (Dependabot / missing secret) — same posture as the
+        # RLS/grants checks below. SUPABASE_DB_URL / SUPABASE_RAG_DB_URL come
+        # from the job-level env above.
+        env:
+          MIGRATION_LEDGER_BASE_REF: origin/${{ github.base_ref || 'dev' }}
+        run: |
+          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          pnpm tsx scripts/check-migration-ledger.ts --target=main
+          pnpm tsx scripts/check-migration-ledger.ts --target=rag
 
       - name: Apply main app migrations to test DB
         # Brings TEST DB to HEAD before the snapshot check so that a PR which

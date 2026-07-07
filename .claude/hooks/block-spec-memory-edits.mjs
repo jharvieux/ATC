@@ -9,12 +9,26 @@
 // "Edit|Write|NotebookEdit". Fails closed: any parse/read error blocks
 // the tool call.
 //
+// Carve-out (#1661): an Edit that does nothing but renumber a `## D-NNN`
+// header — and every other `D-NNN` mention inside the same edit — is allowed
+// IF that number does not exist in MEMORY.md on origin/dev (i.e. the entry is
+// branch-local, not merged history). This exists because two concurrent
+// branches can independently compute the same "next" D-number (the #1652 vs
+// #1643 D-318 collision); the CI guard (check:memory-decision-collision)
+// catches it, but the append-only rule as written left no way for an agent to
+// fix its OWN not-yet-merged entry — Edit is rejected because a renumber
+// isn't a pure prepend. This does NOT weaken the rule for any entry that
+// exists on origin/dev: that check requires a `git show` against the remote
+// ref, and any failure to resolve it (git error, no network, ref not fetched)
+// falls through to the original block — ambiguity still fails closed.
+//
 // Exit codes:
 //   0 — allow
 //   2 — block (stderr surfaced back to the main agent)
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, relative } from "node:path";
+import { execFileSync } from "node:child_process";
 
 const REPO_ROOT = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
@@ -52,6 +66,41 @@ if (rel === "specs" || rel.startsWith("specs/")) {
   );
 }
 
+// Returns true only for an Edit that (a) changes exactly one D-number,
+// consistently, everywhere it appears in old_string, to exactly one other
+// D-number, with NOTHING else different between old_string and new_string,
+// and (b) that old D-number does not exist in MEMORY.md on origin/dev. Any
+// ambiguity (git failure, more than one distinct number touched, a
+// non-numeric diff) returns false — the original prepend-only block still
+// applies.
+function isAllowedBranchLocalRenumber(oldString, newString) {
+  const oldNums = [...new Set([...oldString.matchAll(/D-(\d+)/g)].map((m) => m[1]))];
+  const newNums = [...new Set([...newString.matchAll(/D-(\d+)/g)].map((m) => m[1]))];
+  if (oldNums.length !== 1 || newNums.length !== 1) return false;
+
+  const [oldNum] = oldNums;
+  const [newNum] = newNums;
+  if (oldNum === newNum) return false;
+
+  const expected = oldString.replaceAll(`D-${oldNum}`, `D-${newNum}`);
+  if (expected !== newString) return false;
+
+  let baseMemory;
+  try {
+    baseMemory = execFileSync("git", ["show", "origin/dev:MEMORY.md"], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    return false; // can't confirm the entry is branch-local — fail closed
+  }
+  const headerRe = (n) => new RegExp(`^## D-${n}\\b`, "m");
+  if (headerRe(oldNum).test(baseMemory)) return false; // merged history — stays blocked
+
+  return true;
+}
+
 const MEMORY_PATH = resolve(REPO_ROOT, "MEMORY.md");
 if (abs === MEMORY_PATH) {
   if (!existsSync(MEMORY_PATH)) process.exit(0);
@@ -66,7 +115,7 @@ if (abs === MEMORY_PATH) {
   if (tool_name === "Edit") {
     const oldString = tool_input?.old_string || "";
     const newString = tool_input?.new_string || "";
-    if (!newString.endsWith(oldString)) {
+    if (!newString.endsWith(oldString) && !isAllowedBranchLocalRenumber(oldString, newString)) {
       block(
         `BLOCKED: Edit on MEMORY.md modifies a prior entry.\n` +
           `Per CLAUDE.md, prior MEMORY.md entries are read-only history — only prepends allowed.\n` +
