@@ -5,9 +5,17 @@
 // supervisor fails loudly rather than passing content through without
 // checking the deny list.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadUnionSlurDenyList } from "@/lib/supervisor/load-deny-list";
+import { _resetPlatformSettingCacheForTests } from "@/lib/platform/platform-setting-cache";
+
+// #1586 — the platform slur list is now served from a shared 60s cache. Reset
+// it between specs so each test's mock data (not a prior test's cached value)
+// drives the result.
+beforeEach(() => {
+  _resetPlatformSettingCacheForTests();
+});
 
 type FakeRow = Record<string, unknown> | null;
 
