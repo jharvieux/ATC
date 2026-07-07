@@ -26,7 +26,8 @@
 // (duplicated rather than imported: this script must not depend on Playwright
 // test fixtures or test env conventions).
 
-import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { chromium, errors as playwrightErrors, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { rejectWrongStateRender, LOGIN_CTA_NAME, INACTIVE_SITE_TEXT } from "./render-guard";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SHOTS, VIEWPORT, DEVICE_SCALE_FACTOR, type Shot, type ShotAnnotation } from "./manifest";
@@ -179,28 +180,33 @@ async function capture(browser: Browser, shot: Shot, baseUrl: string, auth: bool
     const page = await context.newPage();
     await page.goto(new URL(shot.path, baseUrl).toString(), { waitUntil: "networkidle" });
 
-    // A rejected session or blocked path must never produce a screenshot.
-    // There is no single positive "authed" marker across the app's three
-    // shells (site header / console / workspace sidebar), so detect every
-    // wrong-state render this app actually produces — each verified live:
-    //  1. assertPermissionPage redirects failures to "/" (never /login);
-    //  2. an unauthenticated "/" renders the marketing page in place,
-    //     recognizable by its "Log in" CTA, which no authed render shows;
-    //  3. the proxy answers platform paths on tenant hosts (and inactive
-    //     tenants) with an in-place "This site is not currently active."
+    // Wrong-state renders (rejected session, blocked path) must never be
+    // screenshotted — see render-guard.ts for the signal catalog. waitFor
+    // (not isVisible, whose timeout option Playwright ignores) gives
+    // late-hydrating content a bounded window to appear; only its expected
+    // absence-timeout is absorbed — any other failure fails the shot.
     if (auth) {
-      const landedPath = new URL(page.url()).pathname;
-      const wantedPath = new URL(shot.path, baseUrl).pathname;
-      if (landedPath !== wantedPath) {
-        throw new Error(`session was not accepted — ${wantedPath} redirected to ${landedPath}`);
-      }
-      const loginCta = page.getByRole("link", { name: "Log in" }).or(page.getByRole("button", { name: "Log in" }));
-      if (await loginCta.first().isVisible({ timeout: 1_000 }).catch(() => false)) {
-        throw new Error(`session was not accepted — ${wantedPath} rendered the unauthenticated page`);
-      }
-      if (await page.getByText("This site is not currently active").isVisible({ timeout: 500 }).catch(() => false)) {
-        throw new Error(`${wantedPath} is not served on this host — proxy returned the inactive-site page`);
-      }
+      const becameVisible = (locator: Locator, timeout: number): Promise<boolean> =>
+        locator
+          .waitFor({ state: "visible", timeout })
+          .then(() => true)
+          .catch((e: unknown) => {
+            if (e instanceof playwrightErrors.TimeoutError) return false;
+            throw e;
+          });
+      const loginCta = page
+        .getByRole("link", { name: LOGIN_CTA_NAME })
+        .or(page.getByRole("button", { name: LOGIN_CTA_NAME }))
+        .first();
+      const rejection = rejectWrongStateRender(
+        {
+          landedPath: new URL(page.url()).pathname,
+          loginCtaVisible: await becameVisible(loginCta, 1_000),
+          inactiveSitePageVisible: await becameVisible(page.getByText(INACTIVE_SITE_TEXT), 500),
+        },
+        new URL(shot.path, baseUrl).pathname,
+      );
+      if (rejection) throw new Error(rejection);
     }
 
     // The cookie-consent banner (/consent flow) overlays the lower third of
