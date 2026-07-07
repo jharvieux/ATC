@@ -22,6 +22,7 @@ import type {
   HostAdapterError,
   Result,
 } from "@atc/shared-types";
+import { formatCents } from "@/lib/money";
 
 const UNSUPPORTED: Result<never, HostAdapterError> = Err({
   code: "unsupported",
