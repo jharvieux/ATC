@@ -7,6 +7,7 @@
 // version-CAS path as PUT. The legal kernel is never touched (code-side).
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import {
   assertPlatformAdminArea,
   PlatformAdminError,
@@ -38,6 +39,6 @@ export async function POST(req: Request): Promise<Response> {
     clearPersonaRepositoryCaches();
     return Response.json({ ok: true, version: result.version, restored: true });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
