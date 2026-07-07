@@ -93,13 +93,13 @@ export async function POST(req: Request): Promise<Response> {
           .single();
 
         if (fetchError || !existing) {
-          throw Object.assign(new Error("Queue item not found"), { status: 404 });
+          throw Object.assign(new Error("Queue item not found"), { status: 404, publicMessage: "Queue item not found" });
         }
 
         const row = existing as { id: string; status: string; commission_id: string | null; notes: string | null };
 
         if (row.status !== "pending" && row.status !== "orphan") {
-          throw Object.assign(new Error("Item has already been reviewed"), { status: 422 });
+          throw Object.assign(new Error("Item has already been reviewed"), { status: 422, publicMessage: "Item has already been reviewed" });
         }
 
         await safeAwaitRowCount(
@@ -126,9 +126,9 @@ export async function POST(req: Request): Promise<Response> {
     if (err instanceof SupabaseMutationError && err.code === "ROW_COUNT_MISMATCH") {
       return Response.json({ error: "already_actioned" }, { status: 409 });
     }
-    const status = (err as { status?: number }).status;
-    if (status === 404 || status === 422) {
-      return Response.json({ error: (err as Error).message }, { status });
+    const { status, publicMessage } = err as { status?: number; publicMessage?: string };
+    if ((status === 404 || status === 422) && publicMessage) {
+      return Response.json({ error: publicMessage }, { status });
     }
     return dbErrorResponse(err);
   }
