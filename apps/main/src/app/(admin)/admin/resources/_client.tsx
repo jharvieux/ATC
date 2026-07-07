@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
+import { formatCents } from "@/lib/money";
 import type { ModelPricing } from "@/lib/ai/pricing";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -72,6 +73,9 @@ interface DashboardData {
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
+// NOT a candidate for lib/money.ts formatCents consolidation — intentionally
+// distinct display rules: sub-cent "<$0.01" convention + magnitude-based
+// precision (2 decimals for <$100, 0 for ≥$100). Used for cost/spend summaries.
 function formatDollars(cents: number): string {
   const dollars = cents / 100;
   if (dollars < 0.01 && dollars > 0) return "<$0.01";
@@ -697,8 +701,8 @@ export default function ResourceUtilizationPage(): JSX.Element {
                     <td className={tdCls}><code className="text-[12px]">{model}</code></td>
                     <td className={`${tdCls} text-right`}>{p.input_per_million_cents.toLocaleString()}</td>
                     <td className={`${tdCls} text-right`}>{p.output_per_million_cents.toLocaleString()}</td>
-                    <td className={`${tdCls} text-right`}>{(p.input_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className={`${tdCls} text-right`}>{(p.output_per_million_cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className={`${tdCls} text-right`}>{formatCents(p.input_per_million_cents)}</td>
+                    <td className={`${tdCls} text-right`}>{formatCents(p.output_per_million_cents)}</td>
                   </tr>
                 ))}
               </tbody>
