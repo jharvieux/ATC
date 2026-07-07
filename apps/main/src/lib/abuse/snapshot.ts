@@ -26,7 +26,6 @@ export type AiCostState = "ok" | "soft1" | "soft2" | "hard";
 export interface CachedTenantSnapshot {
   tenant: TenantRevenueSnapshot & { tenant_id: string };
   ai_cost_state: AiCostState;
-  fetched_at: number;
 }
 
 const TTL_MS = 30_000;
@@ -48,7 +47,6 @@ export async function loadTenantSnapshot(
     const fresh: CachedTenantSnapshot = {
       tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
       ai_cost_state: "ok",
-      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -70,7 +68,6 @@ export async function loadTenantSnapshot(
     return {
       tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
       ai_cost_state: "ok",
-      fetched_at: Date.now(),
     };
   }
   const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual"; is_platform_internal?: boolean };
@@ -94,7 +91,6 @@ export async function loadTenantSnapshot(
     const fresh: CachedTenantSnapshot = {
       tenant: { tenant_id, tier_code, seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
       ai_cost_state: "ok",
-      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -115,7 +111,6 @@ export async function loadTenantSnapshot(
   const fresh: CachedTenantSnapshot = {
     tenant: { tenant_id, tier_code, seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
     ai_cost_state,
-    fetched_at: Date.now(),
   };
   cache.set(tenant_id, fresh);
   return fresh;
