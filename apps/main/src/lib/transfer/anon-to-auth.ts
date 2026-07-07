@@ -1,18 +1,25 @@
 // §11.6 — Anonymous→authenticated session transfer.
 //
+// Ownership is carried by conversations.user_id; messages have no user_id
+// or anonymous_session_id column (see 20260521150000_conversations_messages.sql)
+// — they belong to a user transitively through their conversation. So the
+// transfer re-keys conversations only; messages follow automatically.
+//
 // softCommitTransfer: starts the 24-hour reversible window.
-//   - Re-keys conversations and messages to the authenticated user_id.
+//   - Re-keys conversations to the authenticated user_id.
 //   - Schedules the finalize Inngest event with a 24h delay.
 //   - Undo is safe during the window: no derived data has been produced yet
 //     (every derived-data producer gates on assertNotInDeferredWindow).
 //
 // undoTransfer: reverses the transfer within the 24-hour window.
-//   - Reverts conversation/message re-keying back to the anonymous session.
+//   - CAS-clears the soft-commit state (loses to a finalize that already
+//     committed → 409), then reverts conversation re-keying.
 //   - Cancels the pending finalize event via a no-op flag on re-read.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { inngest } from "@/inngest/client";
 import { writeAuditLog } from "@/lib/audit/write";
+import { safeAwaitRowCount, SupabaseMutationError } from "@/lib/db/safe-mutation";
 
 const TRANSFER_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -72,21 +79,10 @@ export async function softCommitTransfer({
     throw new Error(`softCommitTransfer: conversation re-key failed — ${convErr.message}`);
   }
 
-  // 3. Re-key all messages in those conversations.
-  //    Messages lack a direct anonymous_session_id; re-key via the already-updated
-  //    conversations (user_id now points to the authenticated user).
-  const { error: msgErr } = await db
-    .from("messages")
-    .update({ user_id })
-    .eq("anonymous_session_id", anonymous_session_id)
-    .eq("tenant_id", tenant_id);
+  // Messages carry no user_id — ownership follows the conversation, so
+  // re-keying conversations (step 2) is sufficient.
 
-  // Messages may not have anonymous_session_id — tolerate if the column is absent.
-  if (msgErr && !msgErr.message.includes("column")) {
-    throw new Error(`softCommitTransfer: message re-key failed — ${msgErr.message}`);
-  }
-
-  // 4. Emit the finalize event with a 24-hour delay via Inngest.
+  // 3. Emit the finalize event with a 24-hour delay via Inngest.
   //    The finalize function re-checks transfer_committed_at on arrival —
   //    if the transfer was undone by then, it no-ops.
   await inngest.send({
@@ -110,10 +106,11 @@ export async function softCommitTransfer({
 
 /**
  * Reverses a soft-committed transfer within the 24-hour window.
- * Reverts conversation/message re-keying and cancels the pending finalization
- * by relying on the finalize function's re-check of transfer_committed_at.
+ * Reverts conversation re-keying and cancels the pending finalization by
+ * relying on the finalize function's re-check of transfer_committed_at.
  *
- * Returns 409 payload if the transfer was already finalized.
+ * Returns 409 payload if the transfer was already finalized — including the
+ * race where finalize commits between our pre-check and the CAS clear.
  *
  * @param db - tenantClient(ctx) — must be scoped to the correct tenant.
  */
@@ -155,23 +152,40 @@ export async function undoTransfer({
     return { error: "transfer_already_finalized", status: 409 };
   }
 
-  // 2. Clear the soft-commit state and increment undo count.
-  const { error: clearErr } = await db
-    .from("anonymous_sessions")
-    .update({
-      transfer_soft_commit_at: null,
-      transferred_to_user_id: null,
-      transfer_undo_count: (session.transfer_undo_count ?? 0) + 1,
-    })
-    .eq("id", anonymous_session_id)
-    .eq("tenant_id", tenant_id);
-
-  if (clearErr) {
-    throw new Error(`undoTransfer: session clear failed — ${clearErr.message}`);
+  // 2. CAS-clear the soft-commit state and increment undo count. The pre-check
+  //    above is a fast 409, but finalize can commit between that read and this
+  //    write. Guarding on transfer_committed_at IS NULL (and soft_commit still
+  //    set) makes the clear lose that race cleanly: zero rows → finalize won →
+  //    409, rather than blindly reverting a committed transfer.
+  try {
+    await safeAwaitRowCount(
+      db
+        .from("anonymous_sessions")
+        .update({
+          transfer_soft_commit_at: null,
+          transferred_to_user_id: null,
+          transfer_undo_count: (session.transfer_undo_count ?? 0) + 1,
+        })
+        .eq("id", anonymous_session_id)
+        .eq("tenant_id", tenant_id)
+        .eq("transferred_to_user_id", user_id)
+        .is("transfer_committed_at", null)
+        .not("transfer_soft_commit_at", "is", null)
+        .select("id"),
+      "anonymous_sessions.undo_transfer",
+      1,
+    );
+  } catch (casErr) {
+    if (casErr instanceof SupabaseMutationError && casErr.code === "ROW_COUNT_MISMATCH") {
+      return { error: "transfer_already_finalized", status: 409 };
+    }
+    throw casErr;
   }
 
-  // 3. Revert conversations back to null user_id (anonymous).
-  //    The finalize event will no-op when it fires because transfer_soft_commit_at is now NULL.
+  // 3. Revert conversations back to null user_id (anonymous). Messages carry no
+  //    user_id — ownership follows the conversation, so this is the only revert
+  //    needed. The finalize event no-ops when it fires because
+  //    transfer_soft_commit_at is now NULL.
   const { error: convErr } = await db
     .from("conversations")
     .update({ user_id: null })
@@ -182,27 +196,35 @@ export async function undoTransfer({
     throw new Error(`undoTransfer: conversation revert failed — ${convErr.message}`);
   }
 
-  // 4. Revert messages back to null user_id.
-  const { error: msgErr } = await db
-    .from("messages")
-    .update({ user_id: null })
+  // 4. Audit-log snapshot per §11.6 — message count + time range. Messages are
+  //    reached via their conversations (no direct anonymous_session_id column).
+  const { data: convRows, error: convSnapErr } = await db
+    .from("conversations")
+    .select("id")
     .eq("anonymous_session_id", anonymous_session_id)
     .eq("tenant_id", tenant_id);
 
-  if (msgErr && !msgErr.message.includes("column")) {
-    throw new Error(`undoTransfer: message revert failed — ${msgErr.message}`);
+  if (convSnapErr) {
+    throw new Error(`undoTransfer: conversation snapshot failed — ${convSnapErr.message}`);
   }
 
-  // 5. Audit-log snapshot per §11.6 — message count + time range.
-  const { data: msgSnapshot } = await db
-    .from("messages")
-    .select("created_at")
-    .eq("anonymous_session_id", anonymous_session_id)
-    .eq("tenant_id", tenant_id)
-    .order("created_at", { ascending: true });
+  const convIds = (convRows ?? []).map((c: { id: string }) => c.id);
+  let msgSnapshot: { created_at: string }[] = [];
+  if (convIds.length > 0) {
+    const { data: msgRows, error: msgSnapErr } = await db
+      .from("messages")
+      .select("created_at")
+      .in("conversation_id", convIds)
+      .eq("tenant_id", tenant_id)
+      .order("created_at", { ascending: true });
+    if (msgSnapErr) {
+      throw new Error(`undoTransfer: message snapshot failed — ${msgSnapErr.message}`);
+    }
+    msgSnapshot = (msgRows ?? []) as { created_at: string }[];
+  }
 
-  const messageCount = msgSnapshot?.length ?? 0;
-  const timeRange = msgSnapshot && msgSnapshot.length > 0
+  const messageCount = msgSnapshot.length;
+  const timeRange = msgSnapshot.length > 0
     ? { from: msgSnapshot[0]?.created_at, to: msgSnapshot[msgSnapshot.length - 1]?.created_at }
     : null;
 

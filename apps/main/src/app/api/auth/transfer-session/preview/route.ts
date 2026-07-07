@@ -64,24 +64,44 @@ export async function GET(req: Request): Promise<Response> {
       return Response.json({ error: "session_not_found" }, { status: 404 });
     }
 
+    // Messages have no anonymous_session_id column — they belong to a session
+    // transitively through their conversation. Resolve the session's
+    // conversations first, then pull their messages.
+    const { data: convs, error: convsErr } = await svc
+      .from("conversations")
+      .select("id")
+      .eq("anonymous_session_id", anonymous_session_id)
+      .eq("tenant_id", ctx.tenant_id);
+    if (convsErr) {
+      return Response.json(
+        { error: "conversations_lookup_failed" },
+        { status: 500 },
+      );
+    }
+    const convIds = (convs ?? []).map((c) => (c as { id: string }).id);
+
     // Pull user-authored messages only — assistant responses make poor
     // previews and pad the count with non-content. Ordered ascending so
     // the first three previews are the start of the conversation, with
     // the time_span computed from the full window.
-    const { data: msgs, error: msgsErr } = await svc
-      .from("messages")
-      .select("content, role, created_at")
-      .eq("anonymous_session_id", anonymous_session_id)
-      .eq("role", "user")
-      .order("created_at", { ascending: true });
-    if (msgsErr) {
-      return Response.json(
-        { error: "messages_lookup_failed" },
-        { status: 500 },
-      );
+    let rows: MessageRow[] = [];
+    if (convIds.length > 0) {
+      const { data: msgs, error: msgsErr } = await svc
+        .from("messages")
+        .select("content, role, created_at")
+        .in("conversation_id", convIds)
+        .eq("tenant_id", ctx.tenant_id)
+        .eq("role", "user")
+        .order("created_at", { ascending: true });
+      if (msgsErr) {
+        return Response.json(
+          { error: "messages_lookup_failed" },
+          { status: 500 },
+        );
+      }
+      rows = (msgs ?? []) as MessageRow[];
     }
 
-    const rows = (msgs ?? []) as MessageRow[];
     const message_count = rows.length;
     const time_span =
       rows.length > 0
