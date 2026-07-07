@@ -237,6 +237,10 @@ export const groupReminderCadence = inngest.createFunction(
         category: "group_invitation",
         html,
         related_group_id: group.id,
+        // #1580 — keyed on the invitation + calendar day so an Inngest
+        // retry of this same cadence run doesn't double-send; a *new* day's
+        // cadence run gets a fresh key and is expected to send again.
+        idempotencyKey: `group_reminder:${inv.id}:${now.toISOString().slice(0, 10)}`,
       });
 
       if (result.status === "sent") {

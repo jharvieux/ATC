@@ -179,6 +179,7 @@ export async function sendTaskReminderEmail(args: {
     category: "transactional",
     html,
     user_id: user.id,
+    idempotencyKey: `task_reminder:${task.id}`,
   });
 
   if (result.status === "sent") return { status: "sent" };

@@ -171,6 +171,39 @@ describe("sendEmail — §23", () => {
     warn.mockRestore();
   });
 
+  it("forwards idempotencyKey as the Resend Idempotency-Key header when provided (#1580)", async () => {
+    const db = makeDb();
+    await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+      idempotencyKey: "pre_cruise:booking-1:t_7",
+    });
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    const headers = calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBe("pre_cruise:booking-1:t_7");
+  });
+
+  it("omits the Idempotency-Key header when no idempotencyKey is given", async () => {
+    const db = makeDb();
+    await sendEmail({
+      db,
+      tenant: baseTenant,
+      to: "customer@example.com",
+      subject: "Test Subject",
+      template_id: "test_template",
+      category: "transactional",
+      html: testHtml,
+    });
+    const calls = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls;
+    const headers = calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBeUndefined();
+  });
+
   it("returns failed when RESEND_API_KEY is not set", async () => {
     delete process.env.RESEND_API_KEY;
     const db = makeDb();

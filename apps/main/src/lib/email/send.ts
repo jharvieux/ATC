@@ -54,6 +54,15 @@ export interface SendEmailInput {
   user_id?: string;
   contact_id?: string;
   reply_to?: string;
+  // §23/#1580 — deterministic dedup key forwarded to Resend as the
+  // Idempotency-Key header. Resend dedupes retries of the same key within
+  // its retention window, so an Inngest step retry or a network-timeout
+  // retry that already delivered the first attempt won't double-send.
+  // Callers should pass something stable across retries of the same logical
+  // send, e.g. `pre_cruise:${booking_id}:${phase}` — NOT a fresh UUID per
+  // call, which would defeat the dedup. Optional: sends without one behave
+  // exactly as before (no header sent).
+  idempotencyKey?: string;
 }
 
 export interface EmailSendResult {
@@ -179,7 +188,11 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult>
   try {
     const res = await fetch(RESEND_API_URL, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        ...(input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {}),
+      },
       body: JSON.stringify({
         from,
         to: effectiveTo,
