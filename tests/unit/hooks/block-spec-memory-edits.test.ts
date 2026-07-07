@@ -76,16 +76,23 @@ describe("block-spec-memory-edits.mjs — branch-local renumber carve-out (#1661
     expect(code).toBe(2);
   });
 
-  it("blocks a D-number substitution whose old_string is verbatim text from a MERGED entry's BODY (not its header)", () => {
-    // This exact sentence (an inline "D-304" mention inside D-305's body, not
-    // a "## D-NNN" header) is present in MEMORY.md on origin/dev. Renumbering
-    // it must stay blocked even though old_string contains no "## D-NNN"
-    // header at all — the header-only check alone would miss this, since it
-    // only ever inspects `oldNum` against origin/dev's HEADER lines.
+  it("blocks a D-number substitution whose old_string is verbatim text from a MERGED entry's BODY, when that number has NO header of its own", () => {
+    // D-088 is a real inline mention inside another entry's body on
+    // origin/dev's MEMORY.md ("...DIY CruiseMapper scraper (D-088 Apify-2)
+    // into `general_pricing_ranges`...") — but D-088 has NO "## D-088" header
+    // anywhere in the file (it's an old reference-only mention, not its own
+    // entry). This is the case that actually distinguishes the body-overlap
+    // check from the pre-existing header check: the header check alone
+    // (`headerRe(oldNum).test(baseMemory)`) would NOT catch this, because
+    // there is no "## D-088" header to match against — only the new
+    // `baseMemory.includes(oldString)` check blocks it. (A D-304 substitution
+    // was tried first here but D-304 has its own merged header, so the
+    // pre-existing header check alone already blocked it — that didn't
+    // actually exercise the new line. This case does.)
     const { code } = runHook({
       file_path: "MEMORY.md",
-      old_string: "Supersedes the D-304 \"create-time invitees only via cron\" note.",
-      new_string: "Supersedes the D-999995 \"create-time invitees only via cron\" note.",
+      old_string: "the DIY CruiseMapper scraper (D-088 Apify-2) into `general_pricing_ranges`",
+      new_string: "the DIY CruiseMapper scraper (D-999995 Apify-2) into `general_pricing_ranges`",
     });
     expect(code).toBe(2);
   });
