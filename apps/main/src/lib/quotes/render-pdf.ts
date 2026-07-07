@@ -13,6 +13,7 @@
 // disclosure language. The renderer choice is documented in MEMORY (D-053).
 
 import { escapeHtml } from "@/lib/utils";
+import { formatCents } from "@/lib/money";
 
 export interface QuoteLineItem {
   label: string;
@@ -120,16 +121,6 @@ ${itemRows}
     html,
     content_hash: hashString(html),
   };
-}
-
-function formatCents(cents: number, currency: string): string {
-  const amount = cents / 100;
-  const code = currency.toUpperCase();
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(amount);
-  } catch {
-    return `${code} ${amount.toFixed(2)}`;
-  }
 }
 
 function formatDate(ts: string): string {
