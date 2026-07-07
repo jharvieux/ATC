@@ -1,30 +1,30 @@
-# Session state — last updated 2026-07-06 23:25 UTC
+# Session state — last updated 2026-07-07 05:50 UTC
 
 ## Just completed
-- Process review of the audit-agent workflow → implemented as PR #1628 (merged, D-316 + D-317):
-  - `d091-reviewer` + `pre-pr-reviewer` now run **in parallel, concurrent with CI**, launched immediately after `gh pr create` (supersedes D-270 ordering). Any diff-changing commit stales BOTH markers → re-run both.
-  - PR-body `## Audit` block retired; hash-bound marker comments are the only gate. Agents post summary comments via new `scripts/post-audit-comment.sh` and return full findings to the invoking session.
-  - Gate re-trigger is now explicit: comments don't fire `pull_request` events, so after both agents post, run `gh run rerun <run-id>` (command in `pr-workflow.md`). The dead `edited` trigger was removed.
-  - Hash-recipe drift guard added inside `pr-audit-section-check.yml` (asserts the jq filter line in script and workflow match; fail-closed).
-  - Check ownership de-duplicated (slop/TODO → pre-pr + lint; stub-shaped → d091) and agents skip gate-owned greppable forms, auditing indirection + new escape hatches instead.
-  - d091-reviewer gained 6 patterns (now 19): Inngest side effects outside `step.run`, module-level serverless state, date-only handling, PII in logs, index coverage for new query shapes, grant-widening deltas.
-  - Both agents support **local mode** (pre-PR report-only) for shift-left on high-risk diffs.
-  - **D-317 model criteria** (operator ruling): risk triggers → Opus for BOTH agents; size-only → Opus for d091 only, bar raised to ≥20 files/≥1000 net lines. Re-runs Sonnet.
-- Dogfooded the new flow on PR #1628 itself: three parallel audit rounds, all findings fixed in-branch, gate re-run, squash-merged as a4863ce9.
-- Posted coordination comment on #1612: when the sweep executes it, fold the 6 new prompt patterns into the catalog/CLAUDE.md numbering alongside its #21–#26, and consider `check:*` gates for #21 (claim-before-send) and #25 (bounded queries).
-- Removed the third-party vitals plugin's prompt-type Stop hook from its cached hooks.json (fired uselessly on every no-change turn; no supported per-hook disable exists). **A vitals plugin update will restore it — re-delete the Stop entry from `~/.claude/plugins/cache/vitals/vitals/<version>/hooks/hooks.json` if the noise returns.** Takes effect next session (hooks load at session start).
+- Fixed issue #1638 (money-formatter consolidation), which had been cancelled after audit found its single commit didn't actually contain the claimed call-site migrations. Cut a fresh branch off `dev`, redid the consolidation for real:
+  - 14 files migrated off local `dollars()`/`formatPrice()`/`formatMoneyCents()`/inline `cents/100` patterns onto the canonical `formatCents(cents, currency?)` in `lib/money.ts`.
+  - Fixed the admin/pricing `<input type="number">` bug the audit had found: those specific call sites use `fromCents()` (plain decimal), not `formatCents()` (currency string, which blanks number inputs).
+  - PR #1638 closed as superseded; new PR **#1657 merged** into `dev` (627b7c25).
+- Went through 3 rounds of the parallel d091-reviewer/pre-pr-reviewer audit loop before merge — all real findings, all fixed:
+  - Round 1: `fromCents` had been widened to accept plain `number` (brand-type erosion), `formatCents` had no test coverage, a 13th divergent formatter (`formatDollars` in admin/resources) was walked past.
+  - Round 2 fix (casting `cents as any as Cents`) was itself flagged — an `any`-escape is worse than the widening it replaced.
+  - Round 3: fixed properly with `BigInt(Math.round(cents)) as Cents` (real runtime conversion, no `any`). Both agents came back clean (0 blockers/warnings).
+- Filed **#1658**: `formatCents` always divides by 100 regardless of currency, so zero-decimal currencies (JPY, KRW) render 100x too small. Pre-existing bug inherited from all 12 original formatters, not introduced by #1657 — deferred rather than fixed in-PR since a real fix needs a product decision on how non-2-decimal-currency cents are stored. A regression test documents the current (buggy) behavior.
+- D-319 logged in MEMORY.md with full detail on the 3-round audit loop and what was rejected at each round.
 
 ## In flight
-- Nothing in flight — clean checkpoint. (This SESSION.md update is the only open PR.)
+- Nothing in flight on `apps/**` — the only open item is this SESSION.md + MEMORY.md update itself, on branch `docs/d319-money-consolidation-memory` (off `dev`), not yet pushed/PR'd.
 
 ## Next step
-- Run `/issue-sweep` when the operator invokes it (unchanged from prior session; D-315: the #1575–#1613 backlog goes THROUGH the sweep). Note for the sweep: #1612 now carries the coordination comment above, and the sweep's own finalization step was updated to the parallel-audit flow.
+- Push `docs/d319-money-consolidation-memory`, open a doc-only PR into `dev` (exempt from audit agents per the doc-only exemption), and merge once CI is green.
+- Run `/issue-sweep` when the operator invokes it (unchanged; D-315: backlog #1575–#1613 goes THROUGH the sweep, not ahead of it).
 
 ## Blocked on user
 - Operator invoking `/issue-sweep` (their chosen route for the #1575–#1613 backlog, per D-315).
+- `feature/sweep-money-1606` branch still exists, holding unrelated doc changes from the original cancelled batch (CLAUDE.md anti-patterns 21–26, `.claude/agents/d091-reviewer.md`, `docs/runbooks/anti-patterns.md` additions) that were NOT carried into #1657. Left in place per "never delete branches without permission" — operator should decide whether to salvage that doc work into its own PR or let the branch go stale.
 
 ## Open questions
-- First post-#1628 PRs will shake out the new audit flow on real application diffs (the dogfood PR had no `apps/**` surface); watch that the gate-rerun step isn't forgotten — it's the one manual-ish step left.
+- #1658 (JPY/zero-decimal-currency formatCents bug) needs a product decision before it can be fixed: does the platform store non-2-decimal-currency amounts as true minor-unit cents, or would a currency-aware divisor be introduced? Not urgent unless a non-USD/EUR/GBP tenant is onboarded.
 - Carried: RAG ship-stats backfill script (PR #1566) never dry-run against any DB; `signature_feature` curation path (#1565) deferred.
 - Carried: Resend's exact pre-bounce retry window is unpublished — if the number ever matters, ask Resend support (noted in #1611).
-- Untracked in repo (pre-existing, untouched): `specs/GroupLandingPage.zip`, `specs/design_handoff_group_landing/` (briefly swept into a commit by a `git add -A`, reverted next commit — nets to zero in dev).
+- Untracked in repo (pre-existing, untouched): `specs/GroupLandingPage.zip`, `specs/design_handoff_group_landing/`.

@@ -34,8 +34,9 @@ function buildSignedEvent(
   eventId: string,
   dataObject: Record<string, unknown> = {},
   previousAttributes?: Record<string, unknown>,
+  createdOverride?: number,
 ): { body: string; signature: string } {
-  const timestamp = Math.floor(Date.now() / 1000);
+  const timestamp = createdOverride ?? Math.floor(Date.now() / 1000);
   const event = {
     id: eventId,
     object: "event",
@@ -706,6 +707,97 @@ describeIf("Stripe webhook handler", () => {
 
     await admin.from("payout_records").delete().eq("stripe_transfer_id", transferId);
     await admin.from("payout_balances").delete().eq("tenant_id", tenantId);
+    await admin.from("tenants").delete().eq("id", tenantId);
+  });
+
+  it("[#1583] stale past_due redelivered after a newer active leaves the tenant active", async () => {
+    // Simulates the exact incident: a past_due event errors and its dedup row
+    // is cleared, then re-delivered hours later — after a newer active event
+    // already cleared the tenant. The stale event (older `created`) must be
+    // discarded, not applied.
+    const slug = `tw-${randomUUID().slice(0, 8)}`;
+    const subId = `sub_ordering_${randomUUID().slice(0, 8)}`;
+    const eventIdActive = `evt_active_${randomUUID().slice(0, 8)}`;
+    const eventIdStalePastDue = `evt_stale_pd_${randomUUID().slice(0, 8)}`;
+    insertedEventIds.push(eventIdActive, eventIdStalePastDue);
+
+    const { data: tenant } = await admin
+      .from("tenants")
+      .insert({
+        slug,
+        display_name: "Ordering Test",
+        legal_name: "Ordering Test LLC",
+        tenant_type: "sub_host",
+        stripe_subscription_id: subId,
+      })
+      .select("id")
+      .single();
+    const tenantId = tenant!.id as string;
+
+    const now = Math.floor(Date.now() / 1000);
+    const anHourAgo = now - 3600;
+
+    // Newer event arrives first: subscription is active as of `now`.
+    const { body: activeBody, signature: activeSig } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "customer.subscription.updated",
+      eventIdActive,
+      { id: subId, status: "active" },
+      undefined,
+      now,
+    );
+    const resActive = await handleStripeWebhook(
+      new Request("http://localhost/api/webhooks/stripe/platform", {
+        method: "POST", body: activeBody, headers: { "stripe-signature": activeSig },
+      }),
+      "platform",
+    );
+    expect(resActive.status).toBe(200);
+
+    const { data: afterActive } = await admin
+      .from("tenants")
+      .select("subscription_status, non_paying_since")
+      .eq("id", tenantId)
+      .single();
+    expect(afterActive?.subscription_status).toBe("active");
+    expect(afterActive?.non_paying_since).toBeNull();
+
+    // Stale past_due event (created an hour BEFORE the active event) is
+    // re-delivered late — must be discarded, leaving the tenant active.
+    const { body: staleBody, signature: staleSig } = buildSignedEvent(
+      stripe,
+      STRIPE_WEBHOOK_SECRET!,
+      "customer.subscription.updated",
+      eventIdStalePastDue,
+      { id: subId, status: "past_due" },
+      undefined,
+      anHourAgo,
+    );
+    const resStale = await handleStripeWebhook(
+      new Request("http://localhost/api/webhooks/stripe/platform", {
+        method: "POST", body: staleBody, headers: { "stripe-signature": staleSig },
+      }),
+      "platform",
+    );
+    expect(resStale.status).toBe(200);
+
+    const { data: afterStale } = await admin
+      .from("tenants")
+      .select("subscription_status, non_paying_since")
+      .eq("id", tenantId)
+      .single();
+    expect(afterStale?.subscription_status).toBe("active");
+    expect(afterStale?.non_paying_since).toBeNull();
+
+    // The stale event is recorded as discarded (not applied), not 'success'.
+    const { data: staleEvt } = await admin
+      .from("stripe_webhook_events")
+      .select("processing_outcome")
+      .eq("stripe_event_id", eventIdStalePastDue)
+      .single();
+    expect(staleEvt?.processing_outcome).toBe("unhandled");
+
     await admin.from("tenants").delete().eq("id", tenantId);
   });
 });

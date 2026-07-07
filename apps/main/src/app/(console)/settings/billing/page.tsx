@@ -4,6 +4,7 @@
 // Visible to tenant_billing_admin role. Read-only if pending_review or suspended.
 
 import { useState, useEffect } from "react";
+import { formatCents } from "@/lib/money";
 
 type BillingData = {
   tenant: {
@@ -160,7 +161,7 @@ export default function BillingPage() {
                   <p className="text-xs text-gray-500 capitalize">{inv.status}</p>
                 </div>
                 <div className="text-right">
-                  <p>${(inv.amount_due / 100).toFixed(2)}</p>
+                  <p>{formatCents(inv.amount_due)}</p>
                   {inv.hosted_invoice_url && (
                     <a href={inv.hosted_invoice_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 underline">View</a>
                   )}
