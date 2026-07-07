@@ -99,10 +99,7 @@ export async function runTaskRemindersFire() {
       // #1581 — claim before send. 0 rows means a concurrent (still-fresh)
       // run already holds this row; skip it rather than double-sending.
       const claimed = await tryClaimReminderRow(svc, r.id, new Date().toISOString());
-      if (!claimed) {
-        processed++; // count skipped rows so processed = rows.length always (no contention metric)
-        continue;
-      }
+      if (!claimed) continue;
 
       const t = Array.isArray(r.tasks) ? r.tasks[0] ?? null : r.tasks;
       // §37.3.3 — suppress reminders that fall inside a snooze window.
