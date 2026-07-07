@@ -12,6 +12,7 @@ import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { sendEmail } from "@/lib/email/send";
 import { PLATFORM_TENANT_SHIM, PLATFORM_BRANDING } from "@/lib/email/platform-tenant";
 import { getDestinationImage, type DestinationRegion } from "@/lib/cruise-regions/destination-images";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 import type { PreCruiseT90Props } from "@/emails/PreCruiseT90";
 import type { PreCruiseT30Props } from "@/emails/PreCruiseT30";
@@ -230,7 +231,7 @@ export async function GET(req: Request): Promise<Response> {
       async () => buildHtml(parsed),
     );
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 
   return new Response(html, {
@@ -295,6 +296,6 @@ export async function POST(req: Request): Promise<Response> {
 
     return Response.json({ ok: true, resend_message_id: result.resend_message_id ?? null });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

@@ -13,6 +13,7 @@
 // by migration. Writes are version-CAS and clear the hot-path cache.
 
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 import {
   assertPlatformAdminArea,
   PlatformAdminError,
@@ -51,7 +52,7 @@ export async function GET(req: Request): Promise<Response> {
     );
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
 
@@ -89,6 +90,6 @@ export async function PUT(req: Request): Promise<Response> {
     clearPersonaRepositoryCaches();
     return Response.json({ ok: true, version: result.version });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }

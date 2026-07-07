@@ -11,6 +11,7 @@
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { signServiceJwt } from "@/lib/rag-auth/sign-service-jwt";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 interface Body {
   notes?: string;
@@ -133,6 +134,6 @@ export async function POST(
 
     return Response.json(result);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
