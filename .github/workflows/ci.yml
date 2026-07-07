@@ -215,6 +215,14 @@ jobs:
       - name: Auth-error adoption guard (#556)
         run: pnpm check:auth-error
 
+      - name: Help-screenshot drift gate
+        # Keeps the screenshot manifest (scripts/help-screenshots/manifest.ts),
+        # the generated PNGs (apps/main/public/help/**), and the help docs that
+        # reference them in lockstep — fails on broken image refs, orphans,
+        # hand-placed (non-regenerable) images, and empty alt text.
+        # See docs/runbooks/help-docs.md.
+        run: pnpm check:help-screenshots
+
       - name: Error-injection probe (D-091 follow-up)
         # Forces handlers into DB-fail / resource-down / concurrent failure
         # modes that don't fire under happy-path testing. See
