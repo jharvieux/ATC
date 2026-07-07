@@ -136,6 +136,13 @@ export async function POST(req: Request): Promise<Response> {
 
       const { error: invErr } = await svc.from("invitations").insert(rows);
       if (invErr) {
+        // #1600 — an invitations-insert failure must not leave the group
+        // active and orphaned (empty, un-retryable without duplicating).
+        // Best-effort cleanup; ON DELETE CASCADE also removes the forum row.
+        const { error: cleanupErr } = await svc.from("groups").delete().eq("id", group.id).eq("tenant_id", ctx.tenant_id);
+        if (cleanupErr) {
+          console.error(`[groups] compensating delete failed for group=${group.id} after invitations insert failure`, cleanupErr);
+        }
         return dbErrorResponse(invErr);
       }
 

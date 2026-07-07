@@ -9,8 +9,12 @@ import { generateToken } from "@/lib/groups/invitation-token";
 import { safeAwait } from "@/lib/db/safe-mutation";
 import { sendGroupInvitationEmail, type GroupInvitationGroup } from "@/lib/groups/send-invitation-email";
 import { assertGroupNotSailed, GroupSailedError } from "@/lib/groups/sailed-gate";
+import { loadTenantSnapshot } from "@/lib/abuse/snapshot";
+import { incrementGroupInvitees } from "@/lib/abuse/counters";
 import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
+
+const MAX_INVITEES_PER_GROUP = 50;
 
 type RouteProps = { params: Promise<{ id: string }> };
 
@@ -102,9 +106,24 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
         return Response.json({ error: "Invalid visibility_choice" }, { status: 400 });
       }
 
+      // #1600 — the create path caps at 50 active invitees per group
+      // (groups/route.ts); the single-invite path must enforce the same cap.
+      const { count: activeCount, error: countErr } = await svc
+        // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
+        .from("invitations")
+        .select("id", { count: "exact", head: true })
+        .eq("group_id", params.id)
+        .is("token_revoked_at", null);
+      if (countErr) return dbErrorResponse(countErr);
+      if ((activeCount ?? 0) >= MAX_INVITEES_PER_GROUP) {
+        return Response.json({ error: `Maximum ${MAX_INVITEES_PER_GROUP} invitees per group` }, { status: 400 });
+      }
+
       const invId = crypto.randomUUID();
-      const insertedRows = await safeAwait(
-        svc.from("invitations").insert({
+      const { data: insertedRows, error: insertErr } = await svc
+        // d091-allow:service-role-tenant — invitations has no tenant_id column; group_id is already verified against ctx.tenant_id above.
+        .from("invitations")
+        .insert({
           id: invId,
           group_id: params.id,
           invitee_email: email,
@@ -114,11 +133,28 @@ export async function POST(req: Request, props: RouteProps): Promise<Response> {
           // invitations.token is NOT NULL UNIQUE — omitting it 500'd every
           // single-invitee add (the create + reissue_all paths set it too).
           token: generateToken(invId),
-        }).select("id"),
-        "invitations.insert",
-      );
-      if (!insertedRows || (insertedRows as Array<unknown>).length === 0) {
+        })
+        .select("id");
+
+      if (insertErr) {
+        // #1600 — invitations_group_active_email_uniq_idx (partial, active rows
+        // only) rejects a repeat invite to an already-invited address.
+        if (insertErr.code === "23505") {
+          return Response.json({ error: "invitee_already_invited" }, { status: 409 });
+        }
+        return dbErrorResponse(insertErr);
+      }
+      if (!insertedRows || insertedRows.length === 0) {
         return Response.json({ error: "Failed to create invitation" }, { status: 500 });
+      }
+
+      // BP27 §27.4 — bump the group-invitees counter, matching the create
+      // path (groups/route.ts). Non-fatal: the invitation row already exists.
+      try {
+        const snapshot = await loadTenantSnapshot(svc, ctx.tenant_id);
+        await incrementGroupInvitees({ db: svc, tenant: snapshot.tenant }, 1);
+      } catch (err) {
+        console.warn(`[groups] counter increment failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // fail-silent — sendGroupInvitationEmail never throws; errors are logged inside.
