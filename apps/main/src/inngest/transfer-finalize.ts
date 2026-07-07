@@ -125,10 +125,34 @@ export const transferFinalize = inngest.createFunction(
         );
         return { committed: true as const };
       } catch (commitErr) {
-        if (commitErr instanceof SupabaseMutationError && commitErr.code === "ROW_COUNT_MISMATCH") {
-          return { committed: false as const };
+        if (!(commitErr instanceof SupabaseMutationError && commitErr.code === "ROW_COUNT_MISMATCH")) {
+          throw commitErr;
         }
-        throw commitErr;
+        // Zero rows has two causes: (a) undo cleared transfer_soft_commit_at
+        // (true no-op), or (b) a PRIOR execution of this same step already
+        // committed but Inngest died before acking it, so the retry re-ran the
+        // body against an already-committed row. Case (b) MUST still proceed to
+        // the side effects — returning no-op there would drop memory extraction
+        // + contact bind, the exact defect this fix closes. Disambiguate by
+        // re-reading: a self-recommit still has soft_commit set and our user;
+        // a true undo has soft_commit cleared.
+        const { data, error } = await db
+          .from("anonymous_sessions")
+          .select("transfer_committed_at, transfer_soft_commit_at, transferred_to_user_id")
+          .eq("id", anonymous_session_id)
+          .eq("tenant_id", tenant_id)
+          .maybeSingle();
+        if (error) throw new Error(`transfer-finalize: commit re-read error — ${error.message}`);
+        const row = data as {
+          transfer_committed_at: string | null;
+          transfer_soft_commit_at: string | null;
+          transferred_to_user_id: string | null;
+        } | null;
+        const selfRecommitted =
+          !!row?.transfer_committed_at &&
+          !!row?.transfer_soft_commit_at &&
+          row.transferred_to_user_id === user_id;
+        return { committed: selfRecommitted };
       }
     });
 

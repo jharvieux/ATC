@@ -69,8 +69,16 @@ function buildFinalizeDb(opts: {
   sessionRow: Record<string, unknown> | null;
   commitRows: { id: string }[];
   convRows: { id: string }[];
+  // Returned by the commit-step re-read (the 2nd+ maybeSingle on
+  // anonymous_sessions), modeling the row's state after a raced undo or a
+  // crash-window self-recommit. Falls back to sessionRow.
+  reReadRow?: Record<string, unknown> | null;
+  // If set, the commit UPDATE resolves this error → safeAwaitRowCount throws a
+  // non-ROW_COUNT_MISMATCH SupabaseMutationError → handler must re-throw.
+  commitError?: { message: string; code?: string };
   onCommitUpdate?: () => void;
 }): unknown {
+  let sessionSelectCalls = 0;
   return {
     from: (table: string) => {
       if (table === "anonymous_sessions") {
@@ -78,11 +86,20 @@ function buildFinalizeDb(opts: {
           select: () =>
             chain(
               () => ({ data: opts.sessionRow ? [opts.sessionRow] : [], error: null }),
-              () => ({ data: opts.sessionRow, error: null }),
+              () => {
+                sessionSelectCalls += 1;
+                const row =
+                  sessionSelectCalls === 1 ? opts.sessionRow : opts.reReadRow ?? opts.sessionRow;
+                return { data: row, error: null };
+              },
             ),
           update: () => {
             opts.onCommitUpdate?.();
-            return chain(() => ({ data: opts.commitRows, error: null }));
+            return chain(() =>
+              opts.commitError
+                ? { data: null, error: opts.commitError }
+                : { data: opts.commitRows, error: null },
+            );
           },
         };
       }
@@ -172,12 +189,18 @@ describe("transferFinalize — happy path", () => {
 });
 
 describe("transferFinalize — CAS race with undo (defect 2)", () => {
-  it("no-ops without side effects when the commit CAS matches zero rows", async () => {
+  it("no-ops without side effects when undo cleared the soft-commit (CAS zero rows)", async () => {
     // Read step saw a soft-committed session, but undo cleared
-    // transfer_soft_commit_at before the commit step ran → CAS zero rows.
+    // transfer_soft_commit_at before the commit step ran → CAS zero rows, and
+    // the disambiguating re-read sees soft_commit now null → true undo.
     mocks.db.current = buildFinalizeDb({
       sessionRow: softCommittedSession(),
-      commitRows: [], // undo won the race
+      commitRows: [], // CAS matched nothing
+      reReadRow: {
+        transfer_committed_at: null,
+        transfer_soft_commit_at: null, // undo cleared it
+        transferred_to_user_id: null,
+      },
       convRows: [{ id: CONV_ID }],
     });
 
@@ -185,6 +208,46 @@ describe("transferFinalize — CAS race with undo (defect 2)", () => {
     const result = await runHandler(step);
 
     expect(result).toEqual({ status: "undone_noop" });
+    expect(emitted).toHaveLength(0);
+    expect(mocks.bind).not.toHaveBeenCalled();
+  });
+
+  it("PROCEEDS to side effects when the CAS zero-row is a crash-window self-recommit", async () => {
+    // Intra-step crash: a prior execution of commit-transfer set
+    // transfer_committed_at but Inngest died before acking the step, so the
+    // retry re-ran the body → CAS zero rows. The re-read shows the row is
+    // committed to OUR user with soft_commit still set → self-recommit, NOT an
+    // undo. Side effects must still run (defect 3 through the crash window).
+    mocks.db.current = buildFinalizeDb({
+      sessionRow: softCommittedSession(),
+      commitRows: [], // already committed by the prior partial run → 0 rows now
+      reReadRow: {
+        transfer_committed_at: new Date().toISOString(),
+        transfer_soft_commit_at: new Date().toISOString(),
+        transferred_to_user_id: USER_ID,
+      },
+      convRows: [{ id: CONV_ID }],
+    });
+    mocks.bind.mockResolvedValue({ ok: true, contact_id: "c1", was_new_contact: false });
+
+    const { step, emitted } = makeStep();
+    const result = await runHandler(step);
+
+    expect(result).toMatchObject({ status: "committed", contact_id: "c1" });
+    expect(emitted.filter((e) => e.id === "emit-memory-extractions")).toHaveLength(1);
+    expect(mocks.bind).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-throws a non-ROW_COUNT_MISMATCH commit error so Inngest retries (no silent skip)", async () => {
+    mocks.db.current = buildFinalizeDb({
+      sessionRow: softCommittedSession(),
+      commitRows: [],
+      commitError: { message: "connection reset", code: "57P01" },
+      convRows: [{ id: CONV_ID }],
+    });
+
+    const { step, emitted } = makeStep();
+    await expect(runHandler(step)).rejects.toThrow(/connection reset/);
     expect(emitted).toHaveLength(0);
     expect(mocks.bind).not.toHaveBeenCalled();
   });

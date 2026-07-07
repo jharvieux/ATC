@@ -56,8 +56,17 @@ function buildTransferMockDb(opts: {
   // Rows returned by the undo CAS `.select("id")`; `[]` models "finalize won
   // the race" between the pre-check read and the CAS clear.
   sessionCasRows?: { id: string }[];
+  // If set, the CAS UPDATE resolves this error (non-ROW_COUNT_MISMATCH) so we
+  // can assert undoTransfer re-throws genuine DB failures.
+  sessionCasError?: { message: string; code?: string };
+  // Rows the conversations audit-snapshot query returns; `[]` means the
+  // session has no conversations, so messages must never be queried.
+  convIdRows?: { id: string }[];
   // created_at rows the audit-snapshot message query returns.
   messageRows?: { created_at: string }[];
+  // Invoked whenever the messages table is SELECTed (to assert it is skipped
+  // when there are no conversations).
+  onMessagesSelect?: () => void;
 }): SupabaseClient {
   const {
     session,
@@ -65,7 +74,10 @@ function buildTransferMockDb(opts: {
     conversationUpdates,
     convAnonSessionId = ANON_SESSION_ID,
     sessionCasRows,
+    sessionCasError,
+    convIdRows = [{ id: CONV_ID }],
     messageRows = [],
+    onMessagesSelect,
   } = opts;
   const currentSession = { ...session };
 
@@ -99,7 +111,11 @@ function buildTransferMockDb(opts: {
             sessionUpdates?.(patch);
             // The undo/finalize CAS chains `.select("id")`; awaiting returns
             // the affected rows so safeAwaitRowCount can assert the count.
-            return chain(() => ({ data: sessionCasRows ?? [{ id: currentSession.id }], error: null }));
+            return chain(() =>
+              sessionCasError
+                ? { data: null, error: sessionCasError }
+                : { data: sessionCasRows ?? [{ id: currentSession.id }], error: null },
+            );
           },
         };
       }
@@ -107,7 +123,7 @@ function buildTransferMockDb(opts: {
         return {
           select: () =>
             chain(
-              () => ({ data: [{ id: CONV_ID }], error: null }),
+              () => ({ data: convIdRows, error: null }),
               () => ({ data: { anonymous_session_id: convAnonSessionId }, error: null }),
             ),
           update: (patch: Record<string, unknown>) => {
@@ -118,7 +134,10 @@ function buildTransferMockDb(opts: {
       }
       if (table === "messages") {
         return {
-          select: () => chain(() => ({ data: messageRows, error: null })),
+          select: () => {
+            onMessagesSelect?.();
+            return chain(() => ({ data: messageRows, error: null }));
+          },
         };
       }
       return {
@@ -278,6 +297,28 @@ describe("undoTransfer — CAS race with finalize (§11.6)", () => {
 
     expect(result).toEqual({ error: "transfer_already_finalized", status: 409 });
   });
+
+  it("re-throws a genuine DB error from the CAS clear (does not mask it as 409)", async () => {
+    const db = buildTransferMockDb({
+      session: {
+        id: ANON_SESSION_ID,
+        transferred_to_user_id: USER_ID,
+        transfer_soft_commit_at: new Date().toISOString(),
+        transfer_committed_at: null,
+        transfer_undo_count: 0,
+      },
+      sessionCasError: { message: "connection reset", code: "57P01" },
+    });
+
+    await expect(
+      undoTransfer({
+        db,
+        anonymous_session_id: ANON_SESSION_ID,
+        user_id: USER_ID,
+        tenant_id: TENANT_ID,
+      }),
+    ).rejects.toThrow(/connection reset/);
+  });
 });
 
 // ── Undo audit snapshot derives via conversations, not a messages column ──────
@@ -317,6 +358,38 @@ describe("undoTransfer — audit snapshot (defect 1)", () => {
       from: "2026-05-28T10:00:00Z",
       to: "2026-05-28T10:10:00Z",
     });
+  });
+
+  it("skips the messages query entirely when the session has no conversations", async () => {
+    // Regression pin for the dead `messages.anonymous_session_id` filter: with
+    // zero conversations there is nothing to reach messages through, so the
+    // messages table must never be queried and the count is 0.
+    hoisted.auditCalls.length = 0;
+    const onMessagesSelect = vi.fn();
+    const db = buildTransferMockDb({
+      session: {
+        id: ANON_SESSION_ID,
+        transferred_to_user_id: USER_ID,
+        transfer_soft_commit_at: new Date().toISOString(),
+        transfer_committed_at: null,
+        transfer_undo_count: 0,
+      },
+      convIdRows: [], // no conversations
+      onMessagesSelect,
+    });
+
+    await undoTransfer({
+      db,
+      anonymous_session_id: ANON_SESSION_ID,
+      user_id: USER_ID,
+      tenant_id: TENANT_ID,
+    });
+
+    expect(onMessagesSelect).not.toHaveBeenCalled();
+    const undoAudit = hoisted.auditCalls.find((c) => c.action === "session_transfer.undone");
+    const changes = undoAudit?.changes as { message_count: number; time_range: unknown };
+    expect(changes.message_count).toBe(0);
+    expect(changes.time_range).toBeNull();
   });
 });
 
