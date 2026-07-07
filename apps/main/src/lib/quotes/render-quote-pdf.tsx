@@ -11,6 +11,7 @@
 
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
+import { formatCents } from "@/lib/money";
 import type { QuoteRenderInput } from "./render-pdf";
 
 const styles = StyleSheet.create({
@@ -60,16 +61,6 @@ const styles = StyleSheet.create({
     lineHeight: 1.4,
   },
 });
-
-function formatCents(cents: number, currency: string): string {
-  const amount = cents / 100;
-  const code = currency.toUpperCase();
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(amount);
-  } catch {
-    return `${code} ${amount.toFixed(2)}`;
-  }
-}
 
 function formatTs(ts: string | null): string {
   if (!ts) return "—";

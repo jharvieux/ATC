@@ -12,6 +12,8 @@
 // The estimate-vs-confirmed copy below is the source of truth for the §21.10.1
 // disclosure language. The renderer choice is documented in MEMORY (D-053).
 
+import { formatCents } from "@/lib/money";
+
 export interface QuoteLineItem {
   label: string;
   amount_cents: number;
@@ -118,16 +120,6 @@ ${itemRows}
     html,
     content_hash: hashString(html),
   };
-}
-
-function formatCents(cents: number, currency: string): string {
-  const amount = cents / 100;
-  const code = currency.toUpperCase();
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(amount);
-  } catch {
-    return `${code} ${amount.toFixed(2)}`;
-  }
 }
 
 function formatDate(ts: string): string {
