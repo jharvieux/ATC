@@ -13,6 +13,7 @@ import { activateTenant } from "@/lib/tenants/activate-tenant";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
+import { dbErrorResponse } from "@/lib/api/db-error-response";
 
 // #975 — structured shell for the three review-decision emails. Table-based
 // with inline styles (email-client-safe, same approach as BrandedLayout).
@@ -283,7 +284,6 @@ export async function POST(
 
     return Response.json({ ok: true, action: body.action });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    return dbErrorResponse(err);
   }
 }
