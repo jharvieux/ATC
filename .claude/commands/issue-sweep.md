@@ -89,6 +89,8 @@ For each executor PR, in plan-priority order:
 4. Confirm the `Closes #n` links closed the issues; close any stragglers with a comment linking the PR.
 5. If the executor returned a non-null `memory_entry`, prepend it to `MEMORY.md`/`MEMORY-INDEX.md` yourself (per `/memory-entry`'s format and prepend mechanics) **right after this PR merges, before starting the next PR's finalization** — assigning the `D-NNN` number at that moment is what keeps numbering collision-proof across the batch. Reference the PR in "Related artifacts".
 
+**Merge-train discipline (#1671):** with several batch PRs queued, don't `gh api .../update-branch` all of them after every merge — that's the waste #1671 found (one PR got 7 merge commits for 1 real commit). Process the queue in strict sequence: merge PR A, THEN update-branch PR B, THEN merge B, THEN update-branch PR C, etc. — never update-branch a PR before it's actually next in line. A queued PR sitting `BEHIND` costs nothing; its diff hash (and its posted markers) stay pinned until you update-branch it. After you do update-branch a PR, run `scripts/post-audit-comment.sh --check <pr>` before re-dispatching the audit agents — only re-run them if it reports a marker as stale. Full mechanics in `docs/runbooks/pr-workflow.md` ("Merge trains").
+
 Failures don't block the sweep: a batch that can't complete is reported in the final checkpoint with its state (branch pushed? PR open?) — never leave a broken branch as `dev`'s problem.
 
 ## Wrap-up (single checkpoint — no per-PR check-ins)
