@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   assertPermission: vi.fn(),
   softCommitTransfer: vi.fn(),
   sessionMaybeSingle: vi.fn(),
+  conversationsQuery: vi.fn(),
   messagesQuery: vi.fn(),
 }));
 
@@ -40,24 +41,32 @@ vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
     from: (table: string) => {
       if (table === "anonymous_sessions") {
-        return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({ maybeSingle: mocks.sessionMaybeSingle }),
-            }),
-          }),
-        };
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        chain.maybeSingle = (...args: unknown[]) => mocks.sessionMaybeSingle(...args);
+        return chain;
       }
-      // messages
-      return {
-        select: () => ({
-          eq: () => ({
-            eq: () => ({
-              order: (...args: unknown[]) => mocks.messagesQuery(...args),
-            }),
-          }),
-        }),
-      };
+      if (table === "conversations") {
+        // preview resolves the session's conversations first, then their
+        // messages (messages have no anonymous_session_id column). Terminal
+        // is an awaited `.eq()`, so the chain itself is thenable.
+        const chain: Record<string, unknown> = {};
+        chain.select = () => chain;
+        chain.eq = () => chain;
+        const settle = () => Promise.resolve(mocks.conversationsQuery());
+        chain.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
+          settle().then(res, rej);
+        chain.catch = (rej: (e: unknown) => unknown) => settle().catch(rej);
+        return chain;
+      }
+      // messages — terminal is `.order()`.
+      const chain: Record<string, unknown> = {};
+      chain.select = () => chain;
+      chain.in = () => chain;
+      chain.eq = () => chain;
+      chain.order = (...args: unknown[]) => mocks.messagesQuery(...args);
+      return chain;
     },
   }),
 }));
@@ -79,6 +88,9 @@ beforeEach(() => {
     status: "soft_committed",
     expires_at: "2026-05-30T00:00:00.000Z",
   });
+  // Default: the anon session has one conversation, so preview proceeds to
+  // the messages query. Individual tests override messagesQuery.
+  mocks.conversationsQuery.mockResolvedValue({ data: [{ id: "conv-1" }], error: null });
 });
 
 function postReq(body: unknown): NextRequest {
@@ -282,5 +294,22 @@ describe("GET /api/auth/transfer-session/preview", () => {
     expect(body.message_count).toBe(0);
     expect(body.time_span).toBeNull();
     expect(body.message_previews).toEqual([]);
+  });
+
+  it("derives messages via conversations — a session with no conversations skips the messages query entirely", async () => {
+    // Regression guard for the dead `messages.anonymous_session_id` filter:
+    // messages are reached through conversations, so zero conversations means
+    // zero messages without ever querying the messages table.
+    mocks.sessionMaybeSingle.mockResolvedValue({
+      data: { id: SESSION_ID, tenant_id: TENANT_ID },
+      error: null,
+    });
+    mocks.conversationsQuery.mockResolvedValue({ data: [], error: null });
+    const res = await PREVIEW_GET(getReq(`?session=${SESSION_ID}`));
+    const body = (await res.json()) as { message_count: number; message_previews: unknown[] };
+    expect(res.status).toBe(200);
+    expect(body.message_count).toBe(0);
+    expect(body.message_previews).toEqual([]);
+    expect(mocks.messagesQuery).not.toHaveBeenCalled();
   });
 });
