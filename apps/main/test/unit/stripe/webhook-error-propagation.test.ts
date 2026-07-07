@@ -53,6 +53,7 @@ vi.mock("@/lib/db/service-role-client", () => ({
           const chain = {
             eq() { return chain; },
             in() { return chain; },
+            or() { return chain; },
             // transfer.reversed settles via .update().eq().eq().select("id");
             // tenant updates resolve the chain directly via .then().
             select(_cols: string) {

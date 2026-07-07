@@ -30,10 +30,16 @@
 // advanced the tenant's state. Each handler compares the event's `created`
 // envelope timestamp against `tenants.subscription_status_event_at` (the
 // last-applied event's timestamp) via isStaleSubscriptionEvent() and
-// discards events that aren't newer.
+// discards events that aren't newer. That JS check is a cheap early-out —
+// two concurrent deliveries can both pass it before either writes. The
+// actual correctness layer is the `.or(subscription_status_event_at.is.null,
+// ...lt.<event created>)` WHERE clause on the UPDATE itself, which makes the
+// staleness check atomic in the DB; a 0-row result means a concurrent newer
+// event already won and this write is silently dropped.
 
 import Stripe from "stripe";
 import { createServiceRoleClient } from "@/lib/db/service-role-client";
+import { safeAwait } from "@/lib/db/safe-mutation";
 import { STALE_WEBHOOK_PROCESSING_MS } from "./webhook-constants";
 
 export type WebhookEndpoint = "platform" | "connect";
@@ -358,9 +364,23 @@ export async function handleStripeWebhook(
         } else if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }
-        const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
-        if (updateErr) {
-          throw new Error(`${event.type} update failed: ${updateErr.message}`);
+        const casRows = await safeAwait(
+          db
+            .from("tenants")
+            .update(updates)
+            .eq("id", tenantRow.id)
+            .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
+            .select("id"),
+          `tenants.update.${event.type}`,
+        );
+        if (!casRows || casRows.length === 0) {
+          console.warn(
+            "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
+            event.type,
+            tenantRow.id,
+            event.id,
+          );
+          break;
         }
         processingOutcome = "success";
         break;
@@ -410,9 +430,23 @@ export async function handleStripeWebhook(
         if (cur !== "active" && cur !== "trialing") {
           updates.subscription_status = "active";
         }
-        const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
-        if (updateErr) {
-          throw new Error(`invoice.payment_succeeded update failed: ${updateErr.message}`);
+        const casRows = await safeAwait(
+          db
+            .from("tenants")
+            .update(updates)
+            .eq("id", tenantRow.id)
+            .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
+            .select("id"),
+          `tenants.update.${event.type}`,
+        );
+        if (!casRows || casRows.length === 0) {
+          console.warn(
+            "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
+            event.type,
+            tenantRow.id,
+            event.id,
+          );
+          break;
         }
         processingOutcome = "success";
         break;
@@ -460,9 +494,23 @@ export async function handleStripeWebhook(
         if (!(tenantRow as { non_paying_since: string | null }).non_paying_since) {
           updates.non_paying_since = new Date().toISOString();
         }
-        const { error: updateErr } = await db.from("tenants").update(updates).eq("id", tenantRow.id);
-        if (updateErr) {
-          throw new Error(`invoice.payment_failed update failed: ${updateErr.message}`);
+        const casRows = await safeAwait(
+          db
+            .from("tenants")
+            .update(updates)
+            .eq("id", tenantRow.id)
+            .or(`subscription_status_event_at.is.null,subscription_status_event_at.lt.${eventCreatedIso}`)
+            .select("id"),
+          `tenants.update.${event.type}`,
+        );
+        if (!casRows || casRows.length === 0) {
+          console.warn(
+            "[stripe-webhook] %s: CAS guard rejected update for tenant %s (event %s) — a newer event won the race",
+            event.type,
+            tenantRow.id,
+            event.id,
+          );
+          break;
         }
         processingOutcome = "success";
         break;
