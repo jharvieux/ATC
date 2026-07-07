@@ -85,7 +85,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
   const { token } = params;
 
   // Check 1 — HMAC signature valid.
-  const { invitation_id, ok } = parseAndVerifyHmac(token);
+  const { invitation_id, ok } = await parseAndVerifyHmac(token);
   if (!ok) {
     return Response.json({ error: "invalid_token", message: "This invitation link is invalid. Please contact the trip coordinator for a new one." }, { status: 400 });
   }
@@ -242,7 +242,7 @@ export async function GET(req: Request, props: RouteProps): Promise<Response> {
 export async function PATCH(req: Request, props: RouteProps): Promise<Response> {
   const params = await props.params;
   const { token } = params;
-  const { invitation_id, ok } = parseAndVerifyHmac(token);
+  const { invitation_id, ok } = await parseAndVerifyHmac(token);
   if (!ok) return Response.json({ error: "invalid_token" }, { status: 400 });
 
   const body = await req.json() as { rsvp_state?: string; visibility_choice?: string };

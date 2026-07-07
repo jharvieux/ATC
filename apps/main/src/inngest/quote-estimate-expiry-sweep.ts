@@ -183,7 +183,7 @@ export const quoteEstimateExpirySweep = inngest.createFunction(
         ? `${baseUrl}/q/${r.customer_access_token}`
         : null;
 
-      const unsubToken = signUnsubscribeToken({
+      const unsubToken = await signUnsubscribeToken({
         email: contact.email,
         tenant_id: r.tenant_id,
         category: "transactional",

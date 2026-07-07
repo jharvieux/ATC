@@ -46,7 +46,7 @@ export async function POST(req: Request, props: { params: Promise<{ token: strin
     return Response.json({ error: "Invalid rsvp_state" }, { status: 400 });
   }
 
-  const { invitation_id, ok } = parseAndVerifyHmac(params.token);
+  const { invitation_id, ok } = await parseAndVerifyHmac(params.token);
   if (!ok) return Response.json({ error: "invalid_token" }, { status: 400 });
 
   const svc = createServiceRoleClient();
