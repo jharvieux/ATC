@@ -179,12 +179,28 @@ async function capture(browser: Browser, shot: Shot, baseUrl: string, auth: bool
     const page = await context.newPage();
     await page.goto(new URL(shot.path, baseUrl).toString(), { waitUntil: "networkidle" });
 
-    // A silently-rejected session redirects to an auth page — without this
-    // guard the tool would happily screenshot the login screen and that
-    // wrong-state image could ship to customers.
-    const landedPath = new URL(page.url()).pathname;
-    if (auth && (landedPath.startsWith("/auth/") || landedPath.startsWith("/login"))) {
-      throw new Error(`session was not accepted — redirected to ${landedPath}`);
+    // A rejected session or blocked path must never produce a screenshot.
+    // There is no single positive "authed" marker across the app's three
+    // shells (site header / console / workspace sidebar), so detect every
+    // wrong-state render this app actually produces — each verified live:
+    //  1. assertPermissionPage redirects failures to "/" (never /login);
+    //  2. an unauthenticated "/" renders the marketing page in place,
+    //     recognizable by its "Log in" CTA, which no authed render shows;
+    //  3. the proxy answers platform paths on tenant hosts (and inactive
+    //     tenants) with an in-place "This site is not currently active."
+    if (auth) {
+      const landedPath = new URL(page.url()).pathname;
+      const wantedPath = new URL(shot.path, baseUrl).pathname;
+      if (landedPath !== wantedPath) {
+        throw new Error(`session was not accepted — ${wantedPath} redirected to ${landedPath}`);
+      }
+      const loginCta = page.getByRole("link", { name: "Log in" }).or(page.getByRole("button", { name: "Log in" }));
+      if (await loginCta.first().isVisible({ timeout: 1_000 }).catch(() => false)) {
+        throw new Error(`session was not accepted — ${wantedPath} rendered the unauthenticated page`);
+      }
+      if (await page.getByText("This site is not currently active").isVisible({ timeout: 500 }).catch(() => false)) {
+        throw new Error(`${wantedPath} is not served on this host — proxy returned the inactive-site page`);
+      }
     }
 
     // The cookie-consent banner (/consent flow) overlays the lower third of
