@@ -131,28 +131,27 @@ Use these to disable a single actor's dispatch (e.g., if one actor is rate-limit
 
 ## AI & LLM Flows
 
-### `AI_GLOBAL_KILL_SWITCH` (default: false)
+### `AI_GLOBAL_KILL_SWITCH` (env var, default: false) — ⚠️ NOT WIRED, see real mechanism below
 
-**When true:** Disables ALL AI-powered features platform-wide.
+**Verified 2026-07-07 (pre-pr-reviewer audit, PR #1644):** this env var is declared in `apps/main/src/lib/env.ts:380` and referenced only there and in one unit test (`env-boolean-coercion.test.ts`) — **no application code reads it.** It does not gate chat, price-watch, persona screening, RAG ingestion, memory extraction, or image generation. Treat any claim that this flag disables AI features as false until it is actually wired to a call site.
 
-**Affected flows:**
-1. Chat endpoints — all chat requests return a fail-closed error.
-2. Price-watch AI summary generation — price watches show raw prices, no AI summary.
-3. Persona addendum screening (Haiku contract) — tenants lose AI personality verification.
-4. RAG ingestion pipelines — document processing stalls (no extraction, no normalization, no embedding).
-5. Memory extraction — user memory stays static.
-6. AI image generation — group hero images fall back to solid color or default.
+**The real AI kill switch is a DB row, not an env var:**
 
-**Blast radius:**
-- **Critical:** This is the nuclear option. Everything that depends on Claude or OpenAI stops.
-- **User experience:** App still functions but becomes a "dumb" data store — no personalization, no summaries, no recommendations.
-- **Recovery:** Re-enabling immediately resumes all pipelines.
+- **Mechanism:** `ai_kill_switch_state.global_paused` (Postgres table, single row, `id = 1`).
+- **Enforced at:** `apps/main/src/lib/supervisor/run-supervisor.ts:122-152` (§10.6) — `runSupervisor()` reads this row on every AI turn and fails closed (escalates) if the read errors, or if `global_paused = true`.
+- **Called from:** `apps/main/src/app/api/chat/route.ts`, `apps/main/src/app/api/public/chat/[token]/route.ts`, and `apps/main/src/lib/chat/run-generation-loop.ts` — i.e. **chat endpoints only**. It does NOT cover price-watch AI summaries, persona addendum screening, RAG ingestion, memory extraction, or AI image generation — those flows have no kill switch of any kind today (env or DB).
+- **Managed via:** `POST /api/admin/ai-kill-switch` (`apps/main/src/app/api/admin/ai-kill-switch/route.ts`), platform-admin only, audited via `withPlatformAdminAudit`.
+
+**Blast radius (of the real DB switch):**
+- **Critical, but scoped to chat.** Flipping `global_paused = true` makes chat endpoints escalate every turn (user-facing: "Our AI is taking a brief break. A human will be in touch shortly.").
+- Price-watch summaries, persona screening, RAG ingestion, memory extraction, and image generation are unaffected — they keep calling Anthropic/OpenAI even while chat is paused.
+- **Recovery:** Flip `global_paused` back to `false` via the admin route; the supervisor picks it up on the next chat turn (cache TTL ≤ 30s per the route's own comment).
 
 **When to use:**
-- Anthropic API is down or quota exhausted.
-- Emergency response to a widespread AI bug affecting all tenants.
+- A widespread AI bug is affecting chat responses specifically.
+- Anthropic API instability where you want a clean, controlled fallback message for customers rather than raw provider errors surfacing in chat.
 
-**Recovery:** Set to false and restart the app.
+**If you need to stop the OTHER five flows** (price-watch summaries, persona screening, RAG ingestion, memory extraction, image gen), there is currently no kill switch — see the follow-up issue filed for this gap.
 
 ---
 
@@ -167,69 +166,49 @@ These are not yet wired into code, but the structure is planned. **When implemen
 
 ---
 
-### `RAG_INGESTION_PAUSED` (default: false)
+### `RAG_INGESTION_PAUSED` (env var, default: false) — ⚠️ NOT WIRED
 
-**When true:** Pauses RAG content extraction, normalization, and embedding pipelines.
+**Verified 2026-07-07 (pre-pr-reviewer audit, PR #1644):** declared in `apps/main/src/lib/env.ts:381` and never read anywhere else. Checked the full bodies of `apps/main/src/inngest/rag-extract-content.ts`, `rag-pii-redact.ts`, and `rag-normalize.ts` — none references this flag (or `RAG_INGESTION_PAUSED` under any name). There is currently **no way to pause RAG ingestion via env var** — flipping this in Vercel does nothing.
 
-**Affected Inngest functions:**
-1. `ragExtractContent` — stops extracting text/structured data from uploaded documents.
-2. `ragPiiRedact` — pauses PII redaction checks.
-3. `ragNormalize` — stops semantic normalization of chunks.
-4. RAG embedding tasks — documents don't get embedded, can't be retrieved via RAG.
+**If RAG ingestion needs to be paused today**, the only lever is disabling the individual Inngest functions in the Inngest dashboard (or removing them from the registration list in `apps/main/src/app/api/inngest/route.ts`) — there is no single flag. See the follow-up issue filed for wiring this properly.
 
-**Blast radius:**
-- **Data loss risk:** None — documents are stored but not indexed. Re-enabling resumes processing from where it left off.
-- **User experience:** Uploaded documents don't appear in RAG search results until re-enabled.
-- **Recovery:** Low. Re-enabling queues all backlogged documents for processing.
-
-**When to use:**
-- RAG extraction is buggy or consuming too many API tokens.
-- Temporary pause while investigating PII redaction failures.
-- Cost control: disable to avoid embedding costs while diagnosing a surge.
-
-**Related:** `RAG_INGEST_OCR_PROVIDER` controls whether OCR is available (tesseract, gcv, none). Unlike a kill switch, this is a feature flag that disables OCR entirely, not a pause.
+**Related:** `RAG_INGEST_OCR_PROVIDER` controls whether OCR is available (tesseract, gcv, none) — this one IS read at the OCR call site; it's a genuine feature flag, not a pause switch, and is unaffected by the `RAG_INGESTION_PAUSED` gap above.
 
 ---
 
 ## OAuth & Authentication
 
-### `OAUTH_GOOGLE_ENABLED` (default: true)
+### `OAUTH_GOOGLE_ENABLED` (default: true) — ⚠️ NOT WIRED
 
-**When false:** Users cannot log in via Google OAuth.
+**Verified 2026-07-07 (pre-pr-reviewer audit follow-up, PR #1644):** same pattern as `OAUTH_MICROSOFT_ENABLED` above — declared in `env.ts` only. `apps/main/src/app/api/auth/oauth-initiate/route.ts:17` hardcodes `ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"])` regardless of this flag, and the signup page always renders the Google button. Setting this to `false` today does **not** remove Google login. Tracked in issue #428 (`OAuth sign-in providers` setup checklist references the flags but the code-side gating isn't built yet).
+
+**What it's intended to do once wired:** disable Google OAuth login for users who only have that method configured.
+
+---
+
+### `OAUTH_MICROSOFT_ENABLED` (default: true) — ⚠️ PARTIALLY WIRED
+
+**Verified 2026-07-07 (pre-pr-reviewer audit, PR #1644):**
+
+- **What it DOES actually gate:** `apps/main/src/lib/env.ts:391` — a `superRefine` that requires `MICROSOFT_GRAPH_CLIENT_ID` + `MICROSOFT_GRAPH_CLIENT_SECRET` to be set at boot whenever this flag is `true`. This is a real, enforced boot-time check.
+- **What it does NOT gate:** the actual Microsoft sign-in button/route. `apps/main/src/app/api/auth/oauth-initiate/route.ts:17` hardcodes `ALLOWED_PROVIDERS = new Set(["google", "azure", "facebook"])` — flipping `OAUTH_MICROSOFT_ENABLED=false` does not remove `"azure"` from that set, and the signup page (`apps/main/src/app/signup/page.tsx`) always renders the "Continue with Microsoft" button unconditionally. Setting the flag to `false` today would leave the login button live while pulling the required Graph credentials out from under it — worth confirming before relying on this flag operationally. Tracked in issue #428.
+- **Calendar sync claim removed:** there is no Microsoft Calendar integration anywhere in this codebase. The only Microsoft Graph usage is `apps/main/src/lib/auth/microsoft-email-recovery.ts`, which recovers a login email address from Graph when Azure's OAuth claims omit one (§17.2) — unrelated to calendars. Per `specs/BuildPrompts/prompt-section-37.md:78`, calendar integration ("iCal feed, Google Calendar sync") is schema-ready but has no v1 implementation, and that's Google Calendar, not Microsoft — there's no Microsoft Calendar feature to break.
 
 **Blast radius:**
-- **User login:** Users with only Google OAuth configured lose access (unless they use another method or reset password).
-- **No revenue impact:** Authentication-only; doesn't affect features.
-
-**When to use:**
-- Google OAuth discovery attack or abuse spike.
-- Operator is rotating credentials.
+- **Boot-time:** Setting `OAUTH_MICROSOFT_ENABLED=true` without the Graph creds set will fail deploy (safe, loud failure).
+- **Login:** Setting `OAUTH_MICROSOFT_ENABLED=false` does NOT currently remove the Microsoft button or block the provider at `oauth-initiate` — see above.
 
 ---
 
-### `OAUTH_MICROSOFT_ENABLED` (default: true)
+### `OAUTH_FACEBOOK_ENABLED` (default: true) — ⚠️ NOT WIRED
 
-**When false:** Users cannot log in via Microsoft OAuth. Also blocks Microsoft Graph integration (if enabled).
-
-**Dependency:** When true, `MICROSOFT_GRAPH_CLIENT_ID` and `MICROSOFT_GRAPH_CLIENT_SECRET` must be set (enforced at boot).
-
-**Blast radius:**
-- **User login:** Users with only Microsoft OAuth lose access.
-- **Calendar sync:** If any tenant uses Microsoft Calendar integration, it breaks.
+Same pattern as `OAUTH_GOOGLE_ENABLED` above: `oauth-initiate`'s hardcoded `ALLOWED_PROVIDERS` set includes `"facebook"` unconditionally. Flipping this flag does not currently remove Facebook login.
 
 ---
 
-### `OAUTH_FACEBOOK_ENABLED` (default: true)
+### `OAUTH_APPLE_ENABLED` (default: false) — hedge: verify before relying on this
 
-**When false:** Users cannot log in via Facebook.
-
----
-
-### `OAUTH_APPLE_ENABLED` (default: false)
-
-**When true:** Users can log in via Apple OAuth.
-
-**Blast radius:** Low. Only affects new sign-ups and existing users who haven't enrolled Apple auth.
+Unlike the other three OAuth flags, this one has a code-level guard worth noting: `oauth-initiate`'s `ALLOWED_PROVIDERS` set does NOT include `"apple"` at all today, so Apple sign-in is unreachable regardless of this flag's value — flipping it to `true` alone will not enable Apple login; the route needs a code change first (confirmed via `apps/main/test/unit/env/bp29-schema-discipline.test.ts`, which asserts no Apple-specific creds are declared, and issue #428, which lists Apple as needing a code change before dashboard setup). Per §17.1 this is intentionally deferred.
 
 ---
 
@@ -264,40 +243,27 @@ These are not yet wired into code, but the structure is planned. **When implemen
 
 ---
 
-### `SIGNUP_ENABLED` (default: true)
+### `SIGNUP_ENABLED` (default: true) — ⚠️ NOT WIRED
 
-**When false:** New sign-ups are blocked. Existing users can still log in.
+**Verified 2026-07-07 (pre-pr-reviewer audit follow-up, PR #1644):** declared in `apps/main/src/lib/env.ts:383`, referenced only there and in `env-boolean-coercion.test.ts`. `apps/main/src/app/api/auth/signup/complete/route.ts` and the `/signup` page do not check it. Flipping this to `false` today does not block new sign-ups.
 
-**Blast radius:**
-- **Acquisition:** No new customers can register.
-- **No impact on existing tenants.**
-
-**When to use:**
-- Onboarding system is under maintenance.
-- Platform is at capacity (rare).
+**What it's intended to do once wired:** block new sign-ups while leaving existing users able to log in.
 
 ---
 
-### `STRIPE_CONNECT_ONBOARDING_ENABLED` (default: true)
+### `STRIPE_CONNECT_ONBOARDING_ENABLED` (default: true) — ⚠️ NOT WIRED
 
-**When false:** Subbosts cannot initiate Stripe Connect onboarding.
+**Verified 2026-07-07:** declared in `env.ts:384` only. `apps/main/src/app/api/onboarding/connect/link/route.ts` (the Connect account-link creation route) has no reference to this flag. Flipping it to `false` today does not stop new Stripe Connect onboarding.
 
-**Blast radius:**
-- **Revenue split:** New subbosts cannot receive payouts. Existing subbosts with active Stripe accounts still receive transfers.
+**What it's intended to do once wired:** pause new Sub-Host Connect onboarding while leaving existing Connect accounts unaffected.
 
 ---
 
-### `MAINTENANCE_MODE` (default: false)
+### `MAINTENANCE_MODE` (default: false) — ⚠️ NOT WIRED
 
-**When true:** App returns 503 Service Unavailable to all requests except platform staff.
+**Verified 2026-07-07:** declared in `env.ts:382` only, referenced in `env-boolean-coercion.test.ts` but nowhere in `apps/main/src/proxy.ts` (the routing middleware) or any route handler. There is no 503 maintenance page wired to this flag today — setting it to `true` has no effect on production traffic.
 
-**Blast radius:**
-- **Complete outage for customers.**
-- **Immediate and obvious to users.**
-
-**When to use:**
-- Database migration in flight.
-- Major infrastructure incident.
+**What it's intended to do once wired:** return 503 to all non-staff requests during a migration or incident.
 
 ---
 
@@ -309,6 +275,8 @@ Some env vars documented in `lib/env.ts` have call-site references that are NOT 
 - `ABUSE_OVERRIDE_*` — header in `lib/env.ts` notes: "spec'd vars are ignored at call sites". These need cleanup or documentation update: either wire them up or remove them.
 
 **Action item (if not already filed):** Run a codebase audit to find all `process.env.ABUSE_OVERRIDE_*` references and document which are actually used vs. which are vestigial.
+
+**Confirmed unwired as of 2026-07-07** (pre-pr-reviewer audit on PR #1644 + follow-up sweep — grepped every non-test, non-`env.ts` reference for each name): `AI_GLOBAL_KILL_SWITCH`, `RAG_INGESTION_PAUSED`, `OAUTH_GOOGLE_ENABLED`, `OAUTH_FACEBOOK_ENABLED`, `SIGNUP_ENABLED`, `STRIPE_CONNECT_ONBOARDING_ENABLED`, `MAINTENANCE_MODE`. Each is declared in `env.ts` with a schema default and covered by a boolean-coercion unit test, but has zero application-code call sites. `OAUTH_MICROSOFT_ENABLED` is a partial case — it gates a real boot-time credential check but not the login route. `OAUTH_APPLE_ENABLED` is moot — the login route doesn't recognize `"apple"` as a provider at all yet, wired or not. See each flag's own entry above for detail; this note exists so the next reader doesn't have to re-derive the same grep. **Filed as issue #1668** — wire these flags to real call sites or remove them from the schema; do not assume any of the above seven do anything until #1668 closes.
 
 ---
 
@@ -328,4 +296,4 @@ Some env vars documented in `lib/env.ts` have call-site references that are NOT 
 - **Env configuration:** `lib/env.ts` (the source of truth for all kill switches)
 - **Inngest registry:** `app/api/inngest/route.ts` (where all crons are registered)
 - **Cron source files:** `lib/cron/` and `inngest/` (individual cron implementations)
-- **Issue references:** #895 (booking stuck-submitting), #894 (custom domain deferral)
+- **Issue references:** #895 (booking stuck-submitting), #894 (custom domain deferral), #1668 (7 unwired kill-switch/feature-flag env vars — see "Reference: env.ts Scan" above), #428 (OAuth provider dashboard setup, incl. the Apple code gap)
