@@ -83,7 +83,7 @@ export function dollarsToCents(dollars: number | string): Cents {
  * FOR DISPLAY ONLY — do NOT chain arithmetic on the result.
  * @see §14.0.4 "fromCents is forbidden for arithmetic chaining"
  */
-export function fromCents(cents: Cents | bigint | number): string {
+export function fromCents(cents: Cents | bigint): string {
   return new Big(cents.toString()).div(100).toFixed(2);
 }
 

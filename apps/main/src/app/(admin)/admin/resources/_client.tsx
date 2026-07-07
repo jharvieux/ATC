@@ -73,6 +73,9 @@ interface DashboardData {
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
+// NOT a candidate for lib/money.ts formatCents consolidation — intentionally
+// distinct display rules: sub-cent "<$0.01" convention + magnitude-based
+// precision (2 decimals for <$100, 0 for ≥$100). Used for cost/spend summaries.
 function formatDollars(cents: number): string {
   const dollars = cents / 100;
   if (dollars < 0.01 && dollars > 0) return "<$0.01";

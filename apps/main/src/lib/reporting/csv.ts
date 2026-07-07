@@ -3,7 +3,7 @@
 // Money columns rendered as plain decimal dollars with a separate
 // currency column (not cents) per §36.8. Other columns pass through as-is.
 
-import { fromCents } from "@/lib/money";
+import { fromCents, type Cents } from "@/lib/money";
 
 const CENT_FIELD_SUFFIX = "_cents";
 
@@ -41,7 +41,7 @@ function expandMoneyFields(row: Csvable): Csvable {
   for (const [k, v] of Object.entries(row)) {
     if (k.endsWith(CENT_FIELD_SUFFIX)) {
       const dollarKey = k.slice(0, -CENT_FIELD_SUFFIX.length);
-      out[dollarKey] = typeof v === "number" ? fromCents(v) : v;
+      out[dollarKey] = typeof v === "number" ? fromCents(v as any as Cents) : v;
       if (!Object.prototype.hasOwnProperty.call(out, "currency")) {
         out.currency = currency;
       }
