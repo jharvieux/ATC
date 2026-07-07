@@ -21,12 +21,15 @@ const mocks = vi.hoisted(() => ({
   groupQuery: vi.fn(),
   invitationsQuery: vi.fn(),
   updateQuery: vi.fn(),
+  inviteCountQuery: vi.fn(),
   inviteInsertQuery: vi.fn(),
   inviteEmailSingleQuery: vi.fn(),
   inviteRsvpSelectQuery: vi.fn(),
   tenantQuery: vi.fn(),
   brandingQuery: vi.fn(),
   sendEmail: vi.fn(),
+  loadTenantSnapshot: vi.fn(),
+  incrementGroupInvitees: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/assert-permission", async () => {
@@ -47,6 +50,14 @@ vi.mock("@/lib/groups/invitation-token", () => ({
   generateToken: (id: string) => `tok-${id.slice(0, 8)}`,
 }));
 
+vi.mock("@/lib/abuse/snapshot", () => ({
+  loadTenantSnapshot: mocks.loadTenantSnapshot,
+}));
+
+vi.mock("@/lib/abuse/counters", () => ({
+  incrementGroupInvitees: mocks.incrementGroupInvitees,
+}));
+
 // Service-role client drives the invitations route (coordinator-owned).
 vi.mock("@/lib/db/service-role-client", () => ({
   createServiceRoleClient: () => ({
@@ -62,7 +73,11 @@ vi.mock("@/lib/db/service-role-client", () => ({
       }
       if (table === "invitations") {
         return {
-          select: (cols: string) => {
+          select: (cols: string, opts?: { count?: string; head?: boolean }) => {
+            if (opts?.count === "exact" && opts?.head) {
+              // #1600 cap-check count query — ends with .eq().is()
+              return { eq: () => ({ is: () => mocks.inviteCountQuery() }) };
+            }
             if (cols.includes("token_revoked_at")) {
               // GET list query — ends with .eq().order()
               return { eq: () => ({ order: () => mocks.invitationsQuery() }) };
@@ -254,7 +269,10 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
       user: { id: COORDINATOR_ID },
     });
     mocks.groupQuery.mockResolvedValue({ data: FULL_GROUP, error: null });
+    mocks.inviteCountQuery.mockResolvedValue({ count: 0, error: null });
     mocks.inviteInsertQuery.mockResolvedValue({ data: [{ id: "new-inv-id" }], error: null });
+    mocks.loadTenantSnapshot.mockResolvedValue({ tenant: { id: TENANT_ID } });
+    mocks.incrementGroupInvitees.mockResolvedValue(undefined);
     mocks.inviteEmailSingleQuery.mockResolvedValue({
       data: { id: "new-inv-id", invitee_email: "bob@example.com", invitee_name: "Bob" },
       error: null,
@@ -338,5 +356,51 @@ describe("POST /api/groups/[id]/invitations — invite action (#979)", () => {
     expect(res.status).toBe(200);
     const body: { ok: boolean; invitation_id: string } = await res.json();
     expect(body.ok).toBe(true);
+  });
+
+  it("increments the group-invitees counter on a successful invite (#1600)", async () => {
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(mocks.incrementGroupInvitees).toHaveBeenCalledWith(
+      expect.objectContaining({ tenant: { id: TENANT_ID } }),
+      1,
+    );
+  });
+
+  it("returns 400 without inserting when the group is already at the 50-invitee cap (#1600)", async () => {
+    mocks.inviteCountQuery.mockResolvedValue({ count: 50, error: null });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(400);
+    expect(mocks.inviteInsertQuery).not.toHaveBeenCalled();
+    expect(mocks.incrementGroupInvitees).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when the invitee_email already has an active invitation (dedup, #1600)", async () => {
+    mocks.inviteInsertQuery.mockResolvedValue({
+      data: null,
+      error: { code: "23505", message: "duplicate key value violates unique constraint" },
+    });
+
+    const { POST } = await import("@/app/api/groups/[id]/invitations/route");
+    const res = await POST(
+      postReq(GROUP_ID, { action: "invite", invitee_email: "bob@example.com" }),
+      { params: Promise.resolve({ id: GROUP_ID }) },
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("invitee_already_invited");
+    expect(mocks.incrementGroupInvitees).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 });
