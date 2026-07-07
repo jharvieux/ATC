@@ -7,16 +7,13 @@
 
 import Stripe from "stripe";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { escapeHtml } from "@/lib/utils";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { activateTenant } from "@/lib/tenants/activate-tenant";
 import { revertTo, type OnboardingStage } from "@/lib/onboarding/state-machine";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
-
-function escapeReviewHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 // #975 — structured shell for the three review-decision emails. Table-based
 // with inline styles (email-client-safe, same approach as BrandedLayout).
@@ -179,7 +176,7 @@ export async function POST(
           }
 
           // Slug goes into an href unescaped — restrict to subdomain-safe chars
-          // (escapeReviewHtml doesn't cover quotes/attribute contexts).
+          // (escapeHtml doesn't cover quotes/attribute contexts).
           const portalUrl =
             process.env.PLATFORM_PRIMARY_DOMAIN && /^[a-z0-9-]+$/.test(tenant.slug ?? "")
               ? `https://${tenant.slug}.${process.env.PLATFORM_PRIMARY_DOMAIN}/`
@@ -188,7 +185,7 @@ export async function POST(
             subject: "Your AI Travel Concierge account is approved",
             html: reviewEmailShell({
               heading: "Your account has been approved 🎉",
-              bodyHtml: `<p><strong>${escapeReviewHtml(tenant.legal_name ?? "Your agency")}</strong> has passed platform review and is now active.</p>
+              bodyHtml: `<p><strong>${escapeHtml(tenant.legal_name ?? "Your agency")}</strong> has passed platform review and is now active.</p>
                 <p>Your <strong>30-day trial starts today</strong>. ${
                   portalUrl
                     ? "Sign in to your agency portal to get started."
@@ -234,8 +231,8 @@ export async function POST(
             subject: "Update on your AI Travel Concierge application",
             html: reviewEmailShell({
               heading: "Your application was not approved",
-              bodyHtml: `<p>After review, we are unable to approve <strong>${escapeReviewHtml(tenant.legal_name ?? "your agency")}</strong> at this time.</p>
-                <p style="padding:12px 16px;background-color:#fef2f2;border-left:4px solid #ef4444;border-radius:4px;"><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the review team.")}</p>
+              bodyHtml: `<p>After review, we are unable to approve <strong>${escapeHtml(tenant.legal_name ?? "your agency")}</strong> at this time.</p>
+                <p style="padding:12px 16px;background-color:#fef2f2;border-left:4px solid #ef4444;border-radius:4px;"><strong>Reason:</strong> ${escapeHtml(body.reason ?? "See notes from the review team.")}</p>
                 <p>If you believe this decision is in error, contact us at support@ai-travelconcierge.com.</p>`,
             }),
             template_id: "tenant_review_rejected",
@@ -275,7 +272,7 @@ export async function POST(
             html: reviewEmailShell({
               heading: "More information needed for your application",
               bodyHtml: `<p>Our review team needs more information before approving your account.</p>
-                <p style="padding:12px 16px;background-color:#fffbeb;border-left:4px solid #f59e0b;border-radius:4px;"><strong>Reason:</strong> ${escapeReviewHtml(body.reason ?? "See notes from the reviewer.")}</p>
+                <p style="padding:12px 16px;background-color:#fffbeb;border-left:4px solid #f59e0b;border-radius:4px;"><strong>Reason:</strong> ${escapeHtml(body.reason ?? "See notes from the reviewer.")}</p>
                 <p>Please sign in and update the requested information in your onboarding flow.</p>`,
             }),
             template_id: "tenant_review_more_info",

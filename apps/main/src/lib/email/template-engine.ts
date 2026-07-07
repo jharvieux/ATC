@@ -10,6 +10,8 @@
 //
 // Client-safe: pure string functions, shared by the settings-page preview.
 
+import { escapeHtml } from "@/lib/utils";
+
 const VAR_TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
 export function extractVariableNames(template: string): string[] {
@@ -66,14 +68,6 @@ export function renderTemplate(template: string, variables: Record<string, strin
     if (value === undefined) throw new TemplateRenderError(name);
     return value;
   });
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /**
