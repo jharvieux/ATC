@@ -15,6 +15,7 @@
 // of role.
 
 import { createHash } from "node:crypto";
+import { decodeJwt } from "jose";
 import { tenantContextFromRequest } from "@/lib/db/factories";
 import type { TenantContext } from "@/lib/db/tenant-context";
 import {
@@ -380,12 +381,8 @@ async function assertPermissionWithPAT(
  * We do NOT verify the signature — Supabase auth already did in getUser().
  */
 export function readAuthTime(jwt: string): number | null {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) return null;
   try {
-    const payload = JSON.parse(
-      Buffer.from(parts[1]!, "base64").toString("utf8"),
-    ) as Record<string, unknown>;
+    const payload = decodeJwt(jwt) as Record<string, unknown>;
 
     const auth_time = payload.auth_time;
     if (typeof auth_time === "number" && Number.isFinite(auth_time)) {

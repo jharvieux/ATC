@@ -44,7 +44,7 @@ const REVOKED_MESSAGES: Record<string, string> = {
 
 export async function validateInviteTokenChecks1to4(token: string): Promise<TokenCheckResult> {
   // Check 1 — HMAC signature valid.
-  const { invitation_id, ok } = parseAndVerifyHmac(token);
+  const { invitation_id, ok } = await parseAndVerifyHmac(token);
   if (!ok) {
     return {
       ok: false,

@@ -16,7 +16,7 @@ export async function GET(req: Request): Promise<Response> {
     return new Response("Missing token", { status: 400 });
   }
 
-  const payload = verifyUnsubscribeToken(token);
+  const payload = await verifyUnsubscribeToken(token);
   if (!payload) {
     return new Response("Invalid or expired token", { status: 400 });
   }

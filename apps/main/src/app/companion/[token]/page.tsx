@@ -34,7 +34,7 @@ const PHASE_LABELS: Record<string, string> = {
 
 export default async function CompanionPage(props: PageProps) {
   const params = await props.params;
-  const payload = verifyCompanionToken(params.token);
+  const payload = await verifyCompanionToken(params.token);
   if (!payload) notFound();
 
   const { booking_id, phase } = payload;

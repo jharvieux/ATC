@@ -75,17 +75,19 @@ export async function POST(
       throw err;
     }
 
-    const rows = invitees.map((inv) => {
-      const invitationId = randomUUID();
-      return {
-        id: invitationId,
-        group_id: id,
-        invitee_email: inv.email,
-        invitee_name: inv.name ?? null,
-        personal_note: inv.personal_note ?? null,
-        token: generateToken(invitationId),
-      };
-    });
+    const rows = await Promise.all(
+      invitees.map(async (inv) => {
+        const invitationId = randomUUID();
+        return {
+          id: invitationId,
+          group_id: id,
+          invitee_email: inv.email,
+          invitee_name: inv.name ?? null,
+          personal_note: inv.personal_note ?? null,
+          token: await generateToken(invitationId),
+        };
+      }),
+    );
 
     // invitations has no tenant_id column (PLATFORM_READABLE, #1054) — the
     // proxy injects no tenant filter. Isolation holds via group_id: id, which
