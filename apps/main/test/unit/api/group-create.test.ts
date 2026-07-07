@@ -88,6 +88,20 @@ vi.mock("@/lib/db/service-role-client", () => ({
           },
         };
       }
+      if (table === "email_log") {
+        return {
+          update: () => ({
+            eq: () => Promise.resolve({ error: null }),
+          }),
+        };
+      }
+      if (table === "group_invite_pending_approval") {
+        return {
+          delete: () => ({
+            eq: () => Promise.resolve({ error: null }),
+          }),
+        };
+      }
       // invitations table
       return { insert: () => Promise.resolve({ error: invitationsInsertError }) };
     },
