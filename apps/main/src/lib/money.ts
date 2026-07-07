@@ -87,6 +87,28 @@ export function fromCents(cents: Cents | bigint): string {
   return new Big(cents.toString()).div(100).toFixed(2);
 }
 
+/**
+ * Format cents for display with currency symbol using Intl.NumberFormat.
+ * The canonical display formatter — all /100 patterns must use this.
+ * Handles currency codes (USD, EUR, etc.) and falls back to "CODE amount" if unknown.
+ * Returns "—" for null/undefined input.
+ *
+ * @param cents - the amount in cents
+ * @param currency - ISO 4217 code (e.g., "USD"), defaults to "USD"
+ * @returns formatted string with currency symbol (e.g., "$123.45")
+ */
+export function formatCents(cents: number | null | undefined, currency: string = "USD"): string {
+  if (cents == null) return "—";
+  const amount = cents / 100;
+  const code = currency.toUpperCase();
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code }).format(amount);
+  } catch {
+    // Fallback for invalid currency codes
+    return `${code} ${amount.toFixed(2)}`;
+  }
+}
+
 // ── Arithmetic ───────────────────────────────────────────────────────────────
 
 /**
