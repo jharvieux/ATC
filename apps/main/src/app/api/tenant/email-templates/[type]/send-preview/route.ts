@@ -20,11 +20,10 @@ import { isEmailTemplateType, EMAIL_TEMPLATE_REGISTRY } from "@/lib/email/templa
 import { resolveEmailContent, renderOverrideBodyInLayout } from "@/lib/email/template-resolve";
 import { buildPreviewHtml } from "@/lib/email/preview-builder";
 import { sendEmail } from "@/lib/email/send";
+import { buildPreviewVars, layoutFromRows, type PreviewTenantRow } from "@/lib/email/preview-vars";
 
-interface TenantRow {
+interface TenantRow extends PreviewTenantRow {
   id: string;
-  legal_name: string | null;
-  mailing_address: string | null;
 }
 
 interface BrandingRow {
@@ -40,21 +39,6 @@ interface BrandingRow {
   email_from_domain: string | null;
   email_from_domain_verified_at: string | null;
 }
-
-interface SailingWithShip {
-  departure_date: string;
-  departure_port: string;
-  cruise_ships: { canonical_name: string; cruise_lines: { display_name: string } | null } | null;
-}
-
-interface BookingWithContact {
-  ship_name: string | null;
-  cruise_line: string | null;
-  sailing_date: string | null;
-  contacts: { first_name: string | null; last_name: string | null } | null;
-}
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.ai-travelconcierge.com";
 
 export async function POST(
   req: Request,
@@ -108,67 +92,12 @@ export async function POST(
   const tenant = tenantRes.data as TenantRow;
   const branding = brandingRes.data as BrandingRow | null;
 
-  const layout = {
-    branding: {
-      logo_url: branding?.logo_url ?? null,
-      primary_color: branding?.primary_color ?? null,
-      secondary_color: branding?.secondary_color ?? null,
-      accent_color: branding?.accent_color ?? null,
-      slogan: branding?.slogan ?? null,
-    },
-    tenant_legal_name: tenant.legal_name ?? "Your Agency",
-    tenant_business_address: formatMailingAddress(tenant.mailing_address),
-    unsubscribe_url: `${APP_URL}/email/unsubscribe?token=preview`,
-  };
+  const layout = layoutFromRows(tenant, branding);
 
   // ── Build variables ──────────────────────────────────────────────────────
-  const vars: Record<string, string> = {};
-  for (const v of spec.variables) {
-    vars[v.name] = v.sample;
-  }
-
-  if (sailingId) {
-    const { data, error } = await db
-      // d091-allow:service-role-tenant db = tenantClient (RLS-scoped), not svc; RLS provides isolation
-      .from("cruise_sailings")
-      .select(
-        "departure_date, departure_port, cruise_ships(canonical_name, cruise_lines(display_name))",
-      )
-      .eq("id", sailingId)
-      .single();
-
-    if (error) return dbErrorResponse(error);
-    const row = data as unknown as SailingWithShip;
-    if (row.departure_date) vars.sailing_date = row.departure_date;
-    if (row.departure_port) vars.departure_port = row.departure_port;
-    if (row.cruise_ships?.canonical_name) vars.ship_name = row.cruise_ships.canonical_name;
-    if (row.cruise_ships?.cruise_lines?.display_name)
-      vars.cruise_line = row.cruise_ships.cruise_lines.display_name;
-  } else if (bookingId) {
-    const { data, error } = await db
-      // d091-allow:service-role-tenant db = tenantClient (RLS-scoped), not svc; RLS provides isolation
-      .from("bookings")
-      .select(
-        "ship_name, cruise_line, sailing_date, contacts!primary_contact_id(first_name, last_name)",
-      )
-      .eq("id", bookingId)
-      .single();
-
-    if (error) return dbErrorResponse(error);
-    const row = data as unknown as BookingWithContact;
-    if (row.ship_name) vars.ship_name = row.ship_name;
-    if (row.cruise_line) vars.cruise_line = row.cruise_line;
-    if (row.sailing_date) vars.sailing_date = row.sailing_date;
-    const contact = row.contacts;
-    if (contact) {
-      const name = [contact.first_name, contact.last_name].filter(Boolean).join(" ");
-      if (name) {
-        vars.customer_name = name;
-        vars.recipient_name = name;
-        vars.invitee_name = name;
-      }
-    }
-  }
+  const varsResult = await buildPreviewVars(db, spec, sailingId, bookingId);
+  if (!varsResult.ok) return varsResult.response;
+  const vars = varsResult.vars;
 
   // ── Resolve + render ─────────────────────────────────────────────────────
   const resolved = await resolveEmailContent({

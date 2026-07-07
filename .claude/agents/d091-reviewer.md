@@ -1,6 +1,6 @@
 ---
 name: d091-reviewer
-description: Read-only auditor for D-091 anti-patterns documented in CLAUDE.md (unchecked Supabase mutations, fail-open enforcement, single-layer tenant isolation, zero-row CAS, unjustified void-async, idempotency ordering, multi-action permission gates, credentials in URLs, state-machine boundary validation, stub-shaped code, changed-shared-constant blast-radius, Inngest retry-safety, module-level mutable state, date/timezone handling, PII in logs, index coverage for new query shapes, and grant-widening deltas). Runs independently of pre-pr-reviewer — launch both in parallel. Use proactively before committing or opening a PR, or when explicitly asked to "review", "audit", or "check D-091". The user of this repo does not review code themselves — this agent is the human-review substitute.
+description: Read-only auditor for D-091 anti-patterns documented in CLAUDE.md (26 patterns: unchecked Supabase mutations, fail-open enforcement, single-layer tenant isolation, zero-row CAS, unjustified void-async, idempotency ordering, multi-action permission gates, credentials in URLs, state-machine boundary validation, stub-shaped code, changed-shared-constant blast-radius, Inngest retry-safety, module-level mutable state, date/timezone handling, PII in logs, index coverage for new query shapes, grant-widening deltas, claim-before-send in batch jobs, collectively-atomic multi-writes, deterministic idempotency keys on external sends, DB uniqueness for dedup patterns, bounded queries on user-growing tables, and webhook state-application ordering). Runs independently of pre-pr-reviewer — launch both in parallel. Use proactively before committing or opening a PR, or when explicitly asked to "review", "audit", or "check D-091". The user of this repo does not review code themselves — this agent is the human-review substitute.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -249,6 +249,74 @@ opposite direction. If the diff touches
 report MUST include a plain-English delta: which (resource, action) pairs
 changed, and which roles **gained** access. Flag as WARNING any widening not
 explained by the PR's stated purpose.
+
+### Pattern 20 — Claim-before-send in batch jobs (BLOCKER)
+
+Any loop that sends (email, webhook, external call) then stamps a row (sent_at, delivered_at) must CAS-claim the row FIRST. A `.update({ sent_at: now }).is('sent_at', null).select('id')` before the send ensures only one process sends, and the return row count confirms the claim succeeded — skip the send if zero rows claimed.
+
+Search:
+```bash
+git diff dev...HEAD -- 'apps/**/inngest/**' 'apps/**/batch/**' | grep -nE "(send|dispatch|email|webhook)"
+```
+
+For each send/dispatch in a loop, verify a prior CAS-claim without a null-check.
+
+### Pattern 21 — Collectively-atomic multi-writes (BLOCKER)
+
+When a handler writes two or more dependent rows (a transfer record + a revenue record; a contact + a commission), a crash between row 1 and row 2 followed by retry will re-write row 1 while skipping row 2 — breaking a state invariant.
+
+Either (1) wrap both in a Postgres RPC, or (2) ensure both rows are individually idempotent (unique key + 23505 catch) AND the idempotency short-circuit **does not skip subsequent writes**.
+
+Search:
+```bash
+git diff dev...HEAD | grep -nE "\\.insert|\\.update" | head -20
+```
+
+For handlers with 2+ `.insert()` or `.update()` calls, confirm atomic wrapping or per-row idempotency.
+
+### Pattern 22 — Deterministic idempotency keys on external sends (WARNING)
+
+Resend, Stripe, and Apify APIs support deduplication via `Idempotency-Key` header. From a retryable context (Inngest, webhook, cron), every send must pass a deterministic key derived from immutable identifiers (`sha256(tenant_id|message_id|version)`, etc.).
+
+Search:
+```bash
+git diff dev...HEAD -- 'apps/**/inngest/**' 'apps/**/lib/**mail**' | grep -nE "(fetch|post|resend|stripe)" | head -20
+```
+
+For each external send, confirm an `Idempotency-Key` header is present. WARNING if missing.
+
+### Pattern 23 — DB uniqueness wherever app code assumes it (BLOCKER)
+
+Any SELECT-then-INSERT dedup pattern where code queries for existing, then inserts if missing, must have a `UNIQUE(col_a, col_b, ...)` constraint on the schema + a handler for error 23505 (unique violation). Without the constraint, a race between SELECT and INSERT creates a duplicate — downstream `.maybeSingle()` fails or `.first()` silently uses the wrong row.
+
+Search:
+```bash
+git diff dev...HEAD | grep -nE "(INSERT|from.*insert)" 
+```
+
+For new INSERT patterns, verify schema has a matching UNIQUE constraint.
+
+### Pattern 24 — Bounded queries on user-growing tables (BLOCKER)
+
+A `.select()` on messages, bookings, email_log, ai_call_log, notifications, forum_posts, or similar user-growing tables without `.limit()` or pagination will silently truncate at PostgREST's max-rows (1000 on Supabase). With `.order('id')` ascending, truncation **drops the newest rows** — data loss.
+
+Search:
+```bash
+git diff dev...HEAD -- 'apps/**' | grep -nE "\\.from\\((messages|bookings|email_log|ai_call_log|notifications|forum).*select"
+```
+
+For each, confirm `.limit(N)` or `.range(from, to)` is chained. BLOCKER if missing.
+
+### Pattern 25 — Webhook state-application ordering (WARNING)
+
+A webhook handler that applies state from the event payload (e.g., `.update({ status: event.new_status })`) without checking order can be clobbered by a stale re-delivery or out-of-order event. Compare `event.created_at >= row.last_event_at`, or re-fetch the canonical state before applying.
+
+Search:
+```bash
+git diff dev...HEAD -- 'apps/**/webhooks/**'
+```
+
+For each webhook handler that mutates state, confirm either (1) `event.created_at` or similar ordering check, or (2) re-fetch-before-apply pattern.
 
 ## Output
 
