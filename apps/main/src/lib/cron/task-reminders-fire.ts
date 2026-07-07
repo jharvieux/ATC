@@ -99,18 +99,27 @@ export async function runTaskRemindersFire() {
       // #1581 — claim before send. 0 rows means a concurrent (still-fresh)
       // run already holds this row; skip it rather than double-sending.
       const claimed = await tryClaimReminderRow(svc, r.id, new Date().toISOString());
-      if (!claimed) continue;
+      if (!claimed) {
+        processed++; // count skipped rows so processed = rows.length always (no contention metric)
+        continue;
+      }
 
       const t = Array.isArray(r.tasks) ? r.tasks[0] ?? null : r.tasks;
       // §37.3.3 — suppress reminders that fall inside a snooze window.
       const snoozed = t?.snoozed_until && Date.parse(r.remind_at) < Date.parse(t.snoozed_until);
 
+      let status: "delivered" | "suppressed" | "failed";
       try {
-        let status: "delivered" | "suppressed" | "failed";
+        // Determine status *without* external dispatch or DB writes — if any error
+        // here, it's safe to release the claim immediately for quick retry.
         if (snoozed) {
           status = "suppressed";
         } else if (r.channel === "email") {
-          // §37.3.2 — send through BP23 email infrastructure.
+          // §37.3.2 — send through BP23 email infrastructure. sendTaskReminderEmail
+          // never throws; every failure (suppressed, rate-limited, vendor error) is
+          // structured in the {status} return. Once this call returns, the email may
+          // have been dispatched, so transient DB errors on the finalize stamp should
+          // NOT cause an immediate release (they'd cause a real duplicate email on retry).
           const emailResult = await sendTaskReminderEmail({
             svc,
             task_id: r.task_id,
@@ -124,9 +133,27 @@ export async function runTaskRemindersFire() {
           // task_reminders WHERE fired_status='delivered' AND task is open.
           status = "delivered";
         }
-
+      } catch (err) {
+        // Error before any external dispatch — safe to release immediately.
+        failed++;
+        console.error("[task-reminders-fire] pre-dispatch error:", err);
         await safeAwait(svc
-          // d091-allow:service-role-tenant — single-row update by PK, r.id came from the tenant-scoped select above.
+          // d091-allow:service-role-tenant — single-row update by PK (r.id from select above).
+          .from("task_reminders")
+          .update({ sending_at: null })
+          .eq("id", r.id), "task_reminders.release_claim")
+          .catch((e) => {
+            console.error(`[task-reminders-fire] claim release failed for ${r.id}:`, e);
+          });
+        continue;
+      }
+
+      // Finalize: stamp the status. If this fails after a real send, leave the claim
+      // alone — stale-claim reclaim will handle it once CLAIM_STALE_MS elapses, rather
+      // than causing a near-certain duplicate on the very next batch.
+      try {
+        await safeAwait(svc
+          // d091-allow:service-role-tenant — single-row update by globally-unique PK (r.id).
           .from("task_reminders")
           .update({ fired_at: new Date().toISOString(), fired_status: status, sending_at: null })
           .eq("id", r.id), "task_reminders.update");
@@ -135,17 +162,11 @@ export async function runTaskRemindersFire() {
         else failed++;
       } catch (err) {
         failed++;
-        console.error("[task-reminders-fire] send/mark failed:", err);
-        // #1581 — release the claim so the next run retries this row
-        // immediately instead of waiting out CLAIM_STALE_MS. Best-effort:
-        // if this write also fails, the stale-claim check in
-        // tryClaimReminderRow reclaims it once CLAIM_STALE_MS elapses.
-        await safeAwait(svc
-          // d091-allow:service-role-tenant — single-row update by PK, see above.
-          .from("task_reminders")
-          .update({ sending_at: null })
-          .eq("id", r.id), "task_reminders.release_claim")
-          .catch(() => {});
+        console.error("[task-reminders-fire] finalize stamp failed:", err);
+        // #1581 — DO NOT release sending_at here. A failure after sendTaskReminderEmail
+        // has returned (successfully or otherwise) means the email may be in flight.
+        // Releasing would allow immediate retry, causing a real duplicate email.
+        // The stale-claim timeout will handle this row after CLAIM_STALE_MS.
       }
     }
 

@@ -18,7 +18,16 @@ vi.mock("@/lib/tasks/send-reminder-email", () => ({
 
 vi.mock("@/lib/db/safe-mutation", async () => {
   const actual = await vi.importActual<typeof import("@/lib/db/safe-mutation")>("@/lib/db/safe-mutation");
-  return { ...actual, safeAwait: vi.fn(async (p: Promise<unknown>) => p) };
+  return {
+    ...actual,
+    safeAwait: vi.fn(async (p: Promise<unknown>) => {
+      try {
+        return await p;
+      } catch (e) {
+        throw e;
+      }
+    }),
+  };
 });
 
 // The DB mock models task_reminders as an in-memory table so the CAS claim
@@ -167,10 +176,36 @@ describe("task-reminders-fire — drain loop (#900)", () => {
     expect(table.every((r) => r.fired_at !== null)).toBe(true);
   });
 
+  it("exactly BATCH_LIMIT rows: exits after 2 fetches (second returns empty)", async () => {
+    for (let i = 0; i < BATCH_LIMIT; i++) table.push(makeRow(`r-${i}`));
+    const result = await run();
+    expect(result.processed).toBe(BATCH_LIMIT);
+    // First batch full (200) → re-queries; second batch empty (0) → breaks.
+    expect(result.batches).toBe(2);
+  });
+
   it("empty pool: processes 0 rows in 1 batch", async () => {
     const result = await run();
     expect(result.processed).toBe(0);
     expect(result.batches).toBe(1);
+  });
+
+  it("time-budget: loop exits when TIME_BUDGET_MS is elapsed even if backlog remains", async () => {
+    // Seed 2 full batches; without the budget guard both would be fetched.
+    for (let i = 0; i < BATCH_LIMIT * 2; i++) table.push(makeRow(`r-${i}`));
+    // Simulate elapsed time via Date.now(): start=0, first loop check (0ms),
+    // second check (after first batch processes) sees 60s elapsed → exits.
+    let nowCalls = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      nowCalls++;
+      return nowCalls <= 2 ? 0 : 60_000; // call 1=start, call 2=first check, call 3+=budget exceeded
+    });
+    const result = await run();
+    nowSpy.mockRestore();
+    expect(result.processed).toBe(BATCH_LIMIT);
+    expect(result.batches).toBe(1);
+    // Second batch never fetched — only the first BATCH_LIMIT rows were claimed/processed
+    expect(table.filter((r) => r.fired_at !== null)).toHaveLength(BATCH_LIMIT);
   });
 });
 
@@ -196,15 +231,6 @@ describe("task-reminders-fire — per-row behaviors", () => {
     expect(result.failed).toBe(0);
   });
 
-  it("#1581: per-row send/stamp failure → failed=1, claim released (sending_at cleared) for retry", async () => {
-    table.push(makeRow("bad"));
-    vi.mocked(safeAwait).mockRejectedValueOnce(new Error("DB write error"));
-    const result = await run();
-    expect(result.failed).toBe(1);
-    const row = table.find((r) => r.id === "bad")!;
-    expect(row.fired_at).toBeNull();
-    expect(row.sending_at).toBeNull();
-  });
 });
 
 describe("task-reminders-fire — #1581 CAS claim", () => {
@@ -238,11 +264,15 @@ describe("task-reminders-fire — #1581 CAS claim", () => {
     expect(claimed).toBe(false);
   });
 
-  it("two overlapping simulated runs over the same rows produce exactly one send per row", async () => {
+  it("#1581 acceptance: two overlapping simulated runs over the same rows produce exactly one send per row", async () => {
     for (let i = 0; i < 20; i++) table.push(makeRow(`r-${i}`, { channel: "email" }));
 
     // Simulate overlap: kick off both runs before either finishes, by
     // running them concurrently against the same shared `table`.
+    // NOTE: this exercises the app-level CAS logic (check+write is
+    // synchronous per-row), but a single-thread JS mock cannot test
+    // true Postgres row-locking under real concurrency. The DB-level
+    // guarantee is trusted, not proven, by this test.
     const [resultA, resultB] = await Promise.all([run(), run()]);
 
     const totalDelivered = resultA.delivered + resultB.delivered;
