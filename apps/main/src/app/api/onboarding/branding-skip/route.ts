@@ -7,6 +7,7 @@
 //
 // Sub-hosts still advance to review_submitted to await platform-admin approval.
 
+import { escapeHtml } from "@/lib/utils";
 import { assertPermission } from "@/lib/auth/assert-permission";
 import { progressTo } from "@/lib/onboarding/state-machine";
 import { tenantClient } from "@/lib/db/tenant-client";
@@ -14,10 +15,6 @@ import { respondToAuthError } from "@/lib/auth/respond";
 import { dbErrorResponse } from "@/lib/api/db-error-response";
 import { activateTenant } from "@/lib/tenants/activate-tenant";
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 function byoWelcomeEmailHtml(legalName: string, dashboardUrl: string, helpUrl: string): string {
   const safeUrl = /^https:\/\/[a-z0-9.-]+/.test(dashboardUrl) ? dashboardUrl : "#";
@@ -29,7 +26,7 @@ function byoWelcomeEmailHtml(legalName: string, dashboardUrl: string, helpUrl: s
     </td></tr>
     <tr><td style="padding:24px 32px;line-height:1.6;font-size:15px;color:#222222;">
       <h2 style="margin:0 0 16px 0;color:#1f2937;font-size:22px;">Your agency is live — welcome aboard!</h2>
-      <p>Thank you for choosing AI Travel Concierge. <strong>${esc(legalName)}</strong> is now active and your AI concierge is ready to greet customers.</p>
+      <p>Thank you for choosing AI Travel Concierge. <strong>${escapeHtml(legalName)}</strong> is now active and your AI concierge is ready to greet customers.</p>
       <p style="margin:20px 0 8px 0;font-weight:700;color:#1f2937;">Here's what you get out of the box:</p>
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tbody>
         <tr><td style="padding:10px 0;border-bottom:1px solid #f0f0f0;vertical-align:top;width:28px;font-size:18px;">&#9992;&#65039;</td>

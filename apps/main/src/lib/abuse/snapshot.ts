@@ -26,6 +26,12 @@ export type AiCostState = "ok" | "soft1" | "soft2" | "hard";
 export interface CachedTenantSnapshot {
   tenant: TenantRevenueSnapshot & { tenant_id: string };
   ai_cost_state: AiCostState;
+  // #1586 — surfaced so the chat hot path derives is_test + the per-tenant AI
+  // kill switch from this one (cached) tenants read instead of two extra reads.
+  // Both default false for the stub / platform-tenant / not-found cases.
+  is_sandbox: boolean;
+  ai_paused_by_platform: boolean;
+  fetched_at: number;
 }
 
 const TTL_MS = 30_000;
@@ -39,6 +45,9 @@ const VALID_TIER_CODES = new Set<TenantRevenueSnapshot["tier_code"]>([
 export async function loadTenantSnapshot(
   db: SupabaseClient,
   tenant_id: string,
+  // #1586 — fires once per COLD load (cache miss that hits the DB) so the chat
+  // route can count real config round-trips for its perf log. No-op on a hit.
+  onDbRead?: () => void,
 ): Promise<CachedTenantSnapshot> {
   const cached = cache.get(tenant_id);
   if (cached) return cached;
@@ -47,10 +56,15 @@ export async function loadTenantSnapshot(
     const fresh: CachedTenantSnapshot = {
       tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
       ai_cost_state: "ok",
+      is_sandbox: false,
+      ai_paused_by_platform: false,
+      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
   }
+
+  onDbRead?.();
 
   // safeAwait so a read FAILURE throws (fail-closed) rather than being swallowed
   // as `null` and conflated with "tenant not found" → which returns the healthy
@@ -59,7 +73,7 @@ export async function loadTenantSnapshot(
   const tenantRow = await safeAwait(
     db
       .from("tenants")
-      .select("id, tier_id, seat_count, billing_period, is_platform_internal")
+      .select("id, tier_id, seat_count, billing_period, is_platform_internal, is_sandbox, ai_paused_by_platform")
       .eq("id", tenant_id)
       .maybeSingle(),
     "tenants.load-snapshot",
@@ -68,9 +82,14 @@ export async function loadTenantSnapshot(
     return {
       tenant: { tenant_id, tier_code: "byo_research", seat_count: 1, billing_period: "monthly" },
       ai_cost_state: "ok",
+      is_sandbox: false,
+      ai_paused_by_platform: false,
+      fetched_at: Date.now(),
     };
   }
-  const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual"; is_platform_internal?: boolean };
+  const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual"; is_platform_internal?: boolean; is_sandbox?: boolean; ai_paused_by_platform?: boolean };
+  const is_sandbox = Boolean(tr.is_sandbox);
+  const ai_paused_by_platform = Boolean(tr.ai_paused_by_platform);
 
   let tier_code: TenantRevenueSnapshot["tier_code"] = "byo_research";
   if (tr.tier_id) {
@@ -91,6 +110,9 @@ export async function loadTenantSnapshot(
     const fresh: CachedTenantSnapshot = {
       tenant: { tenant_id, tier_code, seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
       ai_cost_state: "ok",
+      is_sandbox,
+      ai_paused_by_platform,
+      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -111,6 +133,9 @@ export async function loadTenantSnapshot(
   const fresh: CachedTenantSnapshot = {
     tenant: { tenant_id, tier_code, seat_count: tr.seat_count ?? 1, billing_period: tr.billing_period ?? "monthly" },
     ai_cost_state,
+    is_sandbox,
+    ai_paused_by_platform,
+    fetched_at: Date.now(),
   };
   cache.set(tenant_id, fresh);
   return fresh;

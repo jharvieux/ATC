@@ -22,6 +22,7 @@ import { remark } from "remark";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 
+import { escapeHtml } from "@/lib/utils";
 import { loadAllDocs, type HelpDoc } from "./docs-loader";
 
 const renderer = remark()
@@ -57,12 +58,4 @@ export async function renderAllDocsConcatenated(): Promise<string> {
 /** Render a single doc to HTML. Helper for /api/help/docs/[slug]. */
 export async function renderDocHtml(doc: HelpDoc): Promise<string> {
   return renderMarkdown(doc.body_markdown);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
