@@ -111,6 +111,32 @@ jobs:
           git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
           pnpm check:policy-snapshot
 
+      - name: Migration-collision guard (#1660/#1661)
+        # DB-free early-catch for parallel-agent version collisions: two
+        # migration files sharing a version in the same app's migrations dir,
+        # or a branch-added migration whose version already exists on dev
+        # under a different filename. The rls-snapshot-diff job's DB-based
+        # ledger pre-check (deploy.yml) is the authoritative backstop for the
+        # residual cross-machine race this can't see.
+        env:
+          MIGRATION_COLLISION_BASE_REF: origin/${{ github.base_ref || 'dev' }}
+        run: |
+          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          pnpm check:migration-collision
+
+      - name: Memory-decision collision guard (#1661)
+        # Fails a PR that adds a `## D-NNN` header to MEMORY.md already
+        # claimed by a sibling PR merged to dev (the D-318 double-claim
+        # incident, #1652 vs #1643), and checks MEMORY.md/MEMORY-INDEX.md
+        # header-set consistency. This is the only layer that observes a raw
+        # merge-conflict resolution — the append-only PreToolUse hook only
+        # covers Edit/Write tool calls, not a rebase's filesystem writes.
+        env:
+          MEMORY_COLLISION_BASE_REF: origin/${{ github.base_ref || 'dev' }}
+        run: |
+          git fetch --no-tags --quiet origin "${{ github.base_ref || 'dev' }}"
+          pnpm check:memory-decision-collision
+
       - name: Dropped-column reader guard (BP38/#137)
         run: pnpm check:dropped-columns
 

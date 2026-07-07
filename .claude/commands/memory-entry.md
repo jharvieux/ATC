@@ -22,6 +22,8 @@ If `$ARGUMENTS` is non-empty, treat it as a one-line summary and use it to seed 
 
 Read the top of `/MEMORY.md` and find the highest existing `## D-NNN` header. The new entry gets `D-(NNN+1)`. The newest entry always sits at the top.
 
+**Concurrency note (#1661):** this only reads the *local* snapshot of MEMORY.md. If another agent/session is concurrently prepending an entry on a different branch, both of you will compute the same "next" number — that's how #1652 and #1643 both claimed D-318 in one sweep. `scripts/check-memory-decision-collision.ts` (CI) catches the resulting duplicate at PR time; if it fires, re-run this command after rebasing on `dev` to pick up the now-current highest number.
+
 ## Date
 
 Use today's date in `YYYY-MM-DD` form. If `${currentDate}` is available from auto-memory, use that. Otherwise read it from the system or ask the user. Do not invent a date.
