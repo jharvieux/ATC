@@ -8,6 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Logo } from "@/components/branding/Logo";
 import { env } from "@/lib/env";
 
+// Reading env() at render time makes this page eligible for static
+// prerendering at build time, which fails in CI (build doesn't populate the
+// full env schema — see verifyEnvAtBoot). Force dynamic (per-request) render
+// so env() resolves against the running server's actual environment instead.
+export const dynamic = "force-dynamic";
+
 export default function SignupPage(): React.ReactElement {
   const e = env();
 
