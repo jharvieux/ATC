@@ -102,7 +102,7 @@ describe("sendTaskReminderEmail — resolveEmailContent wiring (#970)", () => {
   it("calls resolveEmailContent with email_type:'task_reminder' and the correct variables", async () => {
     mocks.resolveEmailContent.mockResolvedValue({ subject: "Task reminder: Follow up", overrideBodyText: null });
 
-    await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1" });
+    await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1", reminder_id: "r-1" });
 
     expect(mocks.resolveEmailContent).toHaveBeenCalledOnce();
     const call = mocks.resolveEmailContent.mock.calls[0]![0];
@@ -116,7 +116,7 @@ describe("sendTaskReminderEmail — resolveEmailContent wiring (#970)", () => {
   it("default path (no override): renders TaskReminder JSX, does NOT call renderOverrideBodyInLayout", async () => {
     mocks.resolveEmailContent.mockResolvedValue({ subject: "Task reminder: Follow up", overrideBodyText: null });
 
-    const result = await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1" });
+    const result = await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1", reminder_id: "r-1" });
 
     expect(result.status).toBe("sent");
     expect(mocks.renderOverrideBodyInLayout).not.toHaveBeenCalled();
@@ -129,7 +129,7 @@ describe("sendTaskReminderEmail — resolveEmailContent wiring (#970)", () => {
   it("override path (overrideBodyText set): calls renderOverrideBodyInLayout, does NOT render TaskReminder JSX", async () => {
     mocks.resolveEmailContent.mockResolvedValue({ subject: "Custom subject", overrideBodyText: "Custom body text." });
 
-    const result = await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1" });
+    const result = await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1", reminder_id: "r-1" });
 
     expect(result.status).toBe("sent");
     expect(mocks.renderOverrideBodyInLayout).toHaveBeenCalledOnce();
@@ -142,7 +142,7 @@ describe("sendTaskReminderEmail — resolveEmailContent wiring (#970)", () => {
   it("resolveEmailContent throw → { status: 'failed', reason: 'template_resolution_failed' }", async () => {
     mocks.resolveEmailContent.mockRejectedValue(new Error("tenant_email_templates read failed (task_reminder): connection refused"));
 
-    const result = await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1" });
+    const result = await sendTaskReminderEmail({ svc: makeDb(), task_id: "task-1", tenant_id: "t-1", reminder_id: "r-1" });
 
     expect(result).toEqual({ status: "failed", reason: "template_resolution_failed" });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
