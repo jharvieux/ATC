@@ -31,7 +31,6 @@ export interface CachedTenantSnapshot {
   // Both default false for the stub / platform-tenant / not-found cases.
   is_sandbox: boolean;
   ai_paused_by_platform: boolean;
-  fetched_at: number;
 }
 
 const TTL_MS = 30_000;
@@ -58,7 +57,6 @@ export async function loadTenantSnapshot(
       ai_cost_state: "ok",
       is_sandbox: false,
       ai_paused_by_platform: false,
-      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -84,7 +82,6 @@ export async function loadTenantSnapshot(
       ai_cost_state: "ok",
       is_sandbox: false,
       ai_paused_by_platform: false,
-      fetched_at: Date.now(),
     };
   }
   const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual"; is_platform_internal?: boolean; is_sandbox?: boolean; ai_paused_by_platform?: boolean };
@@ -112,7 +109,6 @@ export async function loadTenantSnapshot(
       ai_cost_state: "ok",
       is_sandbox,
       ai_paused_by_platform,
-      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -135,7 +131,6 @@ export async function loadTenantSnapshot(
     ai_cost_state,
     is_sandbox,
     ai_paused_by_platform,
-    fetched_at: Date.now(),
   };
   cache.set(tenant_id, fresh);
   return fresh;
