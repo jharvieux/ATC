@@ -47,6 +47,7 @@ export async function tryClaimReminderRow(
   nowIso: string,
 ): Promise<boolean> {
   const staleCutoffIso = new Date(Date.parse(nowIso) - CLAIM_STALE_MS).toISOString();
+  // d091-allow:service-role-tenant — single-row update by globally-unique PK (id).
   const { data, error } = await svc
     .from("task_reminders")
     .update({ sending_at: nowIso })
