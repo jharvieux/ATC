@@ -9,6 +9,8 @@
 //     and the claim is released so the next run retries.
 //   - #1581: two overlapping runs over the same rows produce exactly one
 //     send per row.
+//   - #1581 split try/catch: a pre-dispatch failure releases the claim
+//     (safe retry); a post-dispatch/finalize failure does NOT (would double-send).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -20,13 +22,10 @@ vi.mock("@/lib/db/safe-mutation", async () => {
   const actual = await vi.importActual<typeof import("@/lib/db/safe-mutation")>("@/lib/db/safe-mutation");
   return {
     ...actual,
-    safeAwait: vi.fn(async (p: Promise<unknown>) => {
-      try {
-        return await p;
-      } catch (e) {
-        throw e;
-      }
-    }),
+    // Wraps the real unwrap-and-throw behavior (not a no-op passthrough) so
+    // mock DB results carrying `{data:null, error:{...}}` actually throw,
+    // same as production — needed for the #1581 finalize-failure tests below.
+    safeAwait: vi.fn(actual.safeAwait),
   };
 });
 
@@ -47,6 +46,11 @@ type StoredRow = {
   tasks: { snoozed_until: string | null; assigned_to_user_id: null; status: "open"; title: string };
 };
 let table: StoredRow[] = [];
+// #1581 regression tests: row ids in this set fail their NEXT finalize-stamp
+// update (the `.update({fired_at, fired_status, sending_at:null})` call) with
+// a synthetic DB error, then self-clear — lets a test inject exactly one
+// post-dispatch failure to prove the claim is retained (not released).
+let finalizeFailIds = new Set<string>();
 
 function makeDb() {
   return {
@@ -116,7 +120,15 @@ function makeDb() {
               const row = applyIfMatch((r) => chain._guards.every((g) => g(r)));
               return Promise.resolve({ data: row ? [{ id: row.id }] : [], error: null });
             },
-            then(resolve: (v: { data: null; error: null }) => unknown) {
+            then(resolve: (v: { data: null; error: { message: string } | null }) => unknown) {
+              // The finalize stamp (`.update({fired_at, fired_status, sending_at:null})`)
+              // is the only update() call carrying `fired_at`; the release-claim call
+              // (`.update({sending_at:null})`) does not. Use that to target injected
+              // failures at finalize specifically, without touching the release path.
+              if ("fired_at" in payload && targetId !== undefined && finalizeFailIds.has(targetId)) {
+                finalizeFailIds.delete(targetId);
+                return Promise.resolve(resolve({ data: null, error: { message: "synthetic finalize failure" } }));
+              }
               applyIfMatch(() => true);
               return Promise.resolve(resolve({ data: null, error: null }));
             },
@@ -157,6 +169,7 @@ const run = runTaskRemindersFire as unknown as () => Promise<FireResult>;
 
 beforeEach(() => {
   table = [];
+  finalizeFailIds = new Set();
   vi.clearAllMocks();
 });
 
@@ -231,28 +244,42 @@ describe("task-reminders-fire — per-row behaviors", () => {
     expect(result.failed).toBe(0);
   });
 
-  it("#1581: split try/catch structure prevents finalize-failure double-send", async () => {
-    // The fix (#1581) adds a critical split: pre-dispatch errors (lines 136-149)
-    // release the claim for immediate retry, while post-dispatch/finalize errors
-    // (lines 163-170) leave the claim held for stale-reclaim recovery.
-    // This prevents: send succeeds → finalize stamp fails → next batch immediately
-    // resends → customer gets duplicate email.
-    //
-    // Test strategy: the existing tests verify the claim mechanism works
-    // end-to-end (concurrent-run test ensures claim prevents double-send),
-    // and the drain-loop tests verify the cron doesn't reprocess rows. The split
-    // itself is enforced by code inspection at audit time (PR #1649 explicitly
-    // verified the two catch blocks at different scopes). This test documents
-    // the split and asserts that the cron completes without error.
-    table.push(makeRow("test-row", { channel: "in_app" }));
+  it("#1581 pre-dispatch failure: release the claim so the row is immediately retryable", async () => {
+    // Inject a throw from inside the pre-dispatch try (lines 110-133 of the
+    // source) — sendTaskReminderEmail is documented to "never throw", so an
+    // unexpected throw here exercises the same catch a real bug (e.g. a
+    // thrown error while resolving snooze/task state) would hit. No send has
+    // happened, so the claim must be released for a safe, immediate retry.
+    vi.mocked(sendTaskReminderEmail).mockRejectedValueOnce(new Error("synthetic pre-dispatch failure"));
+    table.push(makeRow("pre-fail-row", { channel: "email" }));
     const result = await run();
-    expect(result.processed).toBe(1);
-    expect(result.delivered).toBe(1);
-    const row = table.find((r) => r.id === "test-row")!;
-    expect(row.fired_at).not.toBeNull(); // successfully finalized
-    expect(row.fired_status).toBe("delivered");
+
+    expect(result.failed).toBe(1);
+    expect(result.delivered).toBe(0);
+    const row = table.find((r) => r.id === "pre-fail-row")!;
+    expect(row.sending_at).toBeNull(); // claim released — safe, no send occurred
+    expect(row.fired_at).toBeNull(); // never finalized this pass
   });
 
+  it("#1581 post-dispatch/finalize failure: claim is NOT released, preventing a duplicate send", async () => {
+    // This is the regression #1581 exists to prevent: the send succeeds, but
+    // the finalize `.update({fired_at, fired_status, sending_at:null})` call
+    // (lines 152-157 of the source) throws. If the claim were released here,
+    // the very next batch would re-claim the row and send a real duplicate
+    // email. The fix leaves `sending_at` held so only the stale-claim timeout
+    // (CLAIM_STALE_MS) can free it.
+    table.push(makeRow("finalize-fail-row", { channel: "email" }));
+    finalizeFailIds.add("finalize-fail-row");
+    const result = await run();
+
+    expect(vi.mocked(sendTaskReminderEmail)).toHaveBeenCalledTimes(1); // the send DID go out
+    expect(result.failed).toBe(1);
+    expect(result.delivered).toBe(0); // finalize threw before delivered++ ran
+    const row = table.find((r) => r.id === "finalize-fail-row")!;
+    expect(row.sending_at).not.toBeNull(); // claim retained — NOT released
+    expect(row.fired_at).toBeNull(); // finalize stamp never landed
+    expect(row.fired_status).toBeNull();
+  });
 });
 
 describe("task-reminders-fire — #1581 CAS claim", () => {
