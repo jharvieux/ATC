@@ -7,19 +7,11 @@
 // Both paths write to audit_log and emit tenant.terminated event at final transition.
 
 import Stripe from "stripe";
+import { escapeHtml } from "@/lib/utils";
 import { withPlatformAdminAudit } from "@/lib/db/platform-admin-client";
 import { inngest } from "@/inngest/client";
 import { assertPlatformAdminArea, PlatformAdminError } from "@/lib/auth/assert-platform-admin";
 import { publishTenantShadowEvent } from "@/lib/rag-sync/publish-tenant-shadow-event";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 interface TerminateBody {
   kind: "voluntary" | "involuntary_content" | "involuntary_other";
