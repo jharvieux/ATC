@@ -87,13 +87,18 @@ async function scanAndEmit(args: {
       const diff = Math.abs(hoursBefore - targetHours);
       if (diff > windowHours) continue;
 
-      const { data: existing } = await svc
+      // #1582: dedup on sent_at, not row existence. A row can exist with
+      // sent_at null after a send that failed all its Inngest retries (e.g.
+      // a sustained Resend outage or a misconfigured tenant key) — skipping
+      // on existence alone would silently drop that booking's email forever.
+      const { data: existingRaw } = await svc
         .from("pre_cruise_email_content")
-        .select("id")
+        .select("id, sent_at")
         .eq("booking_id", booking.id)
         .eq("email_phase", phase)
         .maybeSingle();
-      if (existing) continue;
+      const existing = existingRaw as { id: string; sent_at?: string | null } | null;
+      if (existing?.sent_at) continue;
 
       await inngest.send({
         name: "precruise/email.due",
