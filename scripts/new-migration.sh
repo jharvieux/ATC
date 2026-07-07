@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# Generate a new migration file with a real-clock, collision-resistant version.
+#
+# Usage: scripts/new-migration.sh <app: main|rag> <slug>
+#   scripts/new-migration.sh main invitations_active_email_dedup
+#   scripts/new-migration.sh rag  region_itinerary_origin_filter
+#
+# Why (#1660/#1661): the old convention derived a version deterministically
+# ("day after the last migration" for main; "next sequential integer" for rag).
+# N parallel agents reading the same dev snapshot all compute the SAME "next"
+# value, so their migrations collide in the shared test DB's
+# supabase_migrations.schema_migrations ledger — the first PR's CI run wins the
+# ledger row, every sibling PR's `supabase db push` then fails. Real-clock
+# second-resolution timestamps make same-machine collisions require the two
+# agents to write within the same second; the atomic mkdir lock below closes
+# even that window for agents sharing this machine's git-common-dir. Agents on
+# different machines still have a small residual window — that's what
+# scripts/check-migration-collision.ts (CI) backstops.
+#
+# Version format:
+#   main: YYYYMMDDHHMMSS (14 digits, matches `supabase migration new`'s own
+#         format, so it also sorts/compares correctly against existing
+#         20260719000000-style versions).
+#   rag:  YYYYMMDDHHMMSS_slug.sql too (folds RAG off its old bare `00NN_slug.sql`
+#         sequential-integer convention, which has the identical collision
+#         structure with no date component at all — see #1661).
+#
+# Locking: the reservation directory lives under the shared git-common-dir
+# (`.git/migration-locks/<app>/<version>/`), NOT the worktree — every worktree
+# and clone that shares this machine's .git sees the same lock directory, so
+# concurrent agents in separate `git worktree` checkouts (as issue-sweep
+# executors run) still serialize against each other. `mkdir` is atomic on a
+# POSIX filesystem: exactly one concurrent caller wins the race for a given
+# path. On EEXIST, sleep 1s and retry with a fresh timestamp (this also
+# advances the clock past the collision).
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: scripts/new-migration.sh <app: main|rag> <slug>" >&2
+  exit 1
+}
+
+APP="${1:-}"
+SLUG="${2:-}"
+
+if [[ "$APP" != "main" && "$APP" != "rag" ]]; then
+  usage
+fi
+if [[ -z "$SLUG" ]]; then
+  usage
+fi
+if ! [[ "$SLUG" =~ ^[a-z0-9_]+$ ]]; then
+  echo "Slug must be lowercase alphanumeric + underscores (got: $SLUG)" >&2
+  exit 1
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+LOCK_ROOT="$GIT_COMMON_DIR/migration-locks/$APP"
+mkdir -p "$LOCK_ROOT"
+
+MIGRATIONS_DIR="$REPO_ROOT/apps/$APP/supabase/migrations"
+if [[ ! -d "$MIGRATIONS_DIR" ]]; then
+  echo "Migrations dir not found: $MIGRATIONS_DIR" >&2
+  exit 1
+fi
+
+BRANCH="$(git branch --show-current 2>/dev/null || echo "(detached)")"
+WORKTREE="$(basename "$REPO_ROOT")"
+
+MAX_ATTEMPTS=30
+ATTEMPT=0
+VERSION=""
+LOCK_DIR=""
+
+while (( ATTEMPT < MAX_ATTEMPTS )); do
+  ATTEMPT=$((ATTEMPT + 1))
+  CANDIDATE="$(TZ=UTC date +%Y%m%d%H%M%S)"
+  CANDIDATE_LOCK="$LOCK_ROOT/$CANDIDATE"
+  if mkdir "$CANDIDATE_LOCK" 2>/dev/null; then
+    VERSION="$CANDIDATE"
+    LOCK_DIR="$CANDIDATE_LOCK"
+    break
+  fi
+  echo "Version $CANDIDATE already reserved on this machine — retrying in 1s (attempt $ATTEMPT/$MAX_ATTEMPTS)" >&2
+  sleep 1
+done
+
+if [[ -z "$VERSION" ]]; then
+  echo "Could not reserve a unique version after $MAX_ATTEMPTS attempts. Another process may be stuck holding a lock under $LOCK_ROOT." >&2
+  exit 1
+fi
+
+ISO_TIMESTAMP="$(TZ=UTC date -u +%Y-%m-%dT%H:%M:%SZ)"
+FILE="$MIGRATIONS_DIR/${VERSION}_${SLUG}.sql"
+
+cat > "$FILE" <<SQL
+-- Migration: ${SLUG}
+-- Version:   ${VERSION}
+-- Generated: ${ISO_TIMESTAMP} by scripts/new-migration.sh
+-- Branch:    ${BRANCH}
+-- Worktree:  ${WORKTREE}
+--
+-- Replace this header comment's body below with the actual migration intent
+-- (what changed, why, and any rollback notes) per docs/runbooks/migrations.md.
+
+SQL
+
+echo "Created $FILE"
+echo "Version: $VERSION"
+echo "(Reservation lock left at $LOCK_DIR — harmless, never cleaned up automatically; it just prevents a future run on this machine from picking the same second.)"

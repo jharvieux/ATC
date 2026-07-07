@@ -11,8 +11,8 @@
 
 import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-fetch";
-import { formatCents } from "@/lib/money";
 import type { ModelPricing } from "@/lib/ai/pricing";
+import { formatCents } from "@/lib/money";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

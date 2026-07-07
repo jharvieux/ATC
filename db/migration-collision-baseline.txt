@@ -1,0 +1,12 @@
+# Migration-collision baseline — pre-existing debt accepted as tracked, not
+# re-flagged by scripts/check-migration-collision.ts.
+#
+# Format: <app>:<version>:<sorted,comma,joined,filenames> # reason (issue link required)
+# The filename list is part of the key, so a NEW third file landing at an
+# already-baselined version is still flagged — this only suppresses the exact
+# pre-existing pair/set.
+#
+# The gate fails on any NEW same-app duplicate or branch-vs-dev collision.
+# Fix the underlying migration instead of growing this file.
+
+rag:0014:0014_composite_weights.sql,0014_platform_settings_sync.sql # PRs #105/#108, predates the gate — see #1664
