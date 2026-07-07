@@ -34,9 +34,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS commissions_booking_id_uidx
 -- ── 2. imported bookings dedup key ─────────────────────────────────────────
 -- bookings_provider_ref_idx (20260616000000) is a plain partial index — it
 -- does not stop a re-promotion from double-inserting the same imported booking.
--- Scope the UNIQUE guard to imported rows only: platform-originated bookings do
--- not carry a host reference we control and must not be constrained here. The
--- existing non-unique index stays for §14.8 statement-matching lookups.
+-- Scope the UNIQUE guard to imported rows only: platform-originated refs come
+-- from a different adapter/namespace and aren't guaranteed collision-free
+-- against imported refs, so constraining across both origins would be unsafe.
+-- The existing non-unique index stays for §14.8 statement-matching lookups.
 CREATE UNIQUE INDEX IF NOT EXISTS bookings_imported_provider_ref_uidx
   ON public.bookings (tenant_id, provider_booking_ref)
   WHERE provider_booking_ref IS NOT NULL AND origin = 'imported';
