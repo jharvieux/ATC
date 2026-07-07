@@ -11,12 +11,24 @@ The `pr-audit-section-check` gate passes only when each agent has posted a marke
 
 Timestamps are irrelevant — only the hash match. The agents post these themselves via `scripts/post-audit-comment.sh <pr-number> <marker-prefix> <report-file>` (which takes an **explicit PR number** — no ambient `gh pr view` / cwd-branch resolution — and cross-checks that PR's `headRefName` against the checked-out branch, refusing to post on any mismatch); **never post markers manually, and never hand-roll the hash.** The recipe's jq filter lives in exactly two places — the script and the workflow — and must stay byte-identical (a drift-guard step in the workflow enforces it); if one changes, change the other in the same PR. The hash-extraction tail after jq differs cosmetically between the two (Linux vs macOS tooling) but must keep producing the same hex.
 
+The same script also has a **check-only mode**, `scripts/post-audit-comment.sh --check <pr-number>` — it computes the current hash and reports whether each posted marker prefix (`d091-audit:v1`, `prepr-audit:v1`) is current or stale, without posting anything. Use it before deciding whether to re-dispatch the audit agents (see "Merge trains" below) instead of eyeballing hashes.
+
 The comments are **summaries** (scope, finding one-liners, standalone `Status` line) — proof-of-run plus an at-a-glance digest. Full findings (snippets, fixes) are returned by each agent to the invoking session, which acts on them. There is **no PR-body `## Audit` block anymore** — nothing writes one, and nothing gates on it.
 
 ## What stales an audit (and what doesn't)
 
 - **`update-branch` (or any merge that doesn't change the effective diff) never stales an audit** — same hash, existing comments stay valid. Don't re-run agents after update-branching a queued PR.
 - **A diff-changing commit** (fix-commit, conflict-resolving merge) changes the hash and stales **both** markers → re-run both agents for fresh comments.
+- **`BEHIND` is harmless on its own.** A queued PR's effective diff (files API) is pinned to its existing merge-base until you actually update-branch it — dev moving underneath it does not touch the hash or stale its markers. There is nothing to do while a PR just sits `BEHIND`.
+- **Same-file sibling overlap legitimately re-hashes.** If a merging sibling PR touches a file this PR also touches, update-branching genuinely changes this PR's diff content (not just line offsets) — that's a real re-audit, not waste (#1671 finding 2: a dev-merge once reintroduced a bug into a queued PR, and only the forced re-audit caught it).
+
+## Merge trains (multiple PRs queued to merge in sequence)
+
+Investigated in #1671 after a 20-PR sweep burned 2–5 audit-agent pairs per PR on avoidable re-audits. The gate's hash recipe was not the problem (verified stable across no-op merges) — the waste was purely orchestration behavior. Two rules:
+
+1. **Update-branch a PR exactly once: immediately before merging it.** Never update-branch a queued PR proactively after every sibling merge — per the rule above, `BEHIND` isn't costing you anything, and each extra update-branch is a full required-CI re-run for no reason (`strict: true` on `dev` means every one is expensive).
+2. **Process the queue strictly in sequence:** merge PR A → update-branch PR B (now picks up A's merge) → merge B → update-branch PR C → merge C → ... Don't update-branch all queued PRs upfront in a batch.
+3. **After any branch update, check before you re-dispatch.** Don't reflexively re-run the audit agents just because a branch update happened. Run `scripts/post-audit-comment.sh --check <pr-number>` first — it recomputes the current diff hash (same recipe below) and reports whether each posted marker is still current. Only dispatch fresh agents on a reported "stale"; a "current" result means the update-branch didn't change the effective diff and the existing markers still satisfy the gate.
 
 ## Running the agents (in parallel, concurrent with CI)
 
