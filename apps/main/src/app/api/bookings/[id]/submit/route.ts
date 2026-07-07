@@ -143,8 +143,9 @@ async function submitBooking(
     // submit holds the lock. Returns 409 so the client can retry later.
     // On host-call success the lock transitions to 'submitted' below; on
     // host-call failure we revert to 'draft' so a retry can pick it up.
-    // A future reconciliation cron will sweep stuck 'submitting' rows
-    // older than N minutes back to draft.
+    // The bookings-stuck-submitting-reconcile cron (Vercel, runs every 5min)
+    // sweeps stuck 'submitting' rows older than STUCK_THRESHOLD_MINUTES back
+    // to draft if the process dies mid-flight (see lib/cron/bookings-stuck-submitting-reconcile.ts).
     const { data: lockRows } = await db
       .from("bookings")
       .update({ status: "submitting", updated_at: new Date().toISOString() })
