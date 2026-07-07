@@ -20,28 +20,23 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { type PersonaRecord } from "./assemble-persona-prompt";
 import { getPersonaDefault } from "./persona-defaults";
 import { SAFETY_EDITABLE_DEFAULT } from "./platform-constraints";
+import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 
 export type LoadedPersona = { persona: PersonaRecord; version: number };
 export type LoadedSafety = { editable_block: string; version: number };
 
 const TTL_MS = 60_000;
 
-type Entry<T> = { value: T; expiresAt: number };
-
-const personaCache = new Map<string, Entry<LoadedPersona>>();
-let safetyEntry: Entry<LoadedSafety> | null = null;
-
-function fresh<T>(entry: Entry<T> | null | undefined): T | undefined {
-  if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) return undefined;
-  return entry.value;
-}
+const personaCache = new BoundedTtlCache<string, LoadedPersona>({ defaultTtlMs: TTL_MS });
+// Singleton value — stored under one fixed key so it shares the same bounded-cache implementation.
+const SAFETY_KEY = "default";
+const safetyCache = new BoundedTtlCache<string, LoadedSafety>({ defaultTtlMs: TTL_MS, maxEntries: 1 });
 
 /** Clears both caches. Best-effort same-instance freshness for the admin write
  *  path + a clean slate for tests. Cross-instance invalidation is TTL-bounded. */
 export function clearPersonaRepositoryCaches(): void {
   personaCache.clear();
-  safetyEntry = null;
+  safetyCache.clear();
 }
 
 const PERSONA_COLUMNS =
@@ -107,7 +102,7 @@ export async function getPersonaForPrompt(
   slug: string,
   db: SupabaseClient,
 ): Promise<LoadedPersona> {
-  const cached = fresh(personaCache.get(slug));
+  const cached = personaCache.get(slug);
   if (cached !== undefined) return cached;
 
   const { data, error } = await db
@@ -124,7 +119,7 @@ export async function getPersonaForPrompt(
     persona: rowToPersona(row),
     version: Number(row.version),
   };
-  personaCache.set(slug, { value: loaded, expiresAt: Date.now() + TTL_MS });
+  personaCache.set(slug, loaded);
   return loaded;
 }
 
@@ -134,7 +129,7 @@ export async function getPersonaForPrompt(
  * prepends the code-side LEGAL_KERNEL via assemblePlatformConstraints().
  */
 export async function getSafetyConfig(db: SupabaseClient): Promise<LoadedSafety> {
-  const cached = fresh(safetyEntry);
+  const cached = safetyCache.get(SAFETY_KEY);
   if (cached !== undefined) return cached;
 
   const { data, error } = await db
@@ -154,6 +149,6 @@ export async function getSafetyConfig(db: SupabaseClient): Promise<LoadedSafety>
     editable_block: data.editable_block as string,
     version: Number(data.version),
   };
-  safetyEntry = { value: loaded, expiresAt: Date.now() + TTL_MS };
+  safetyCache.set(SAFETY_KEY, loaded);
   return loaded;
 }

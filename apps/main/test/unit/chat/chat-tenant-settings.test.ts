@@ -16,7 +16,6 @@ function snap(over: Partial<CachedTenantSnapshot>): CachedTenantSnapshot {
     ai_cost_state: "ok",
     is_sandbox: false,
     ai_paused_by_platform: false,
-    fetched_at: Date.now(),
     ...over,
   };
 }
