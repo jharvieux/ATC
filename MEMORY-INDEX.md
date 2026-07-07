@@ -18,6 +18,7 @@ When you prepend a new entry to MEMORY.md, also prepend its one-liner under
 
 ## Entries
 
+- D-320 — 2026-07-07 — Bounded TTL-cache utility added (lib/cache/bounded-ttl-cache.ts): 1000 entries default, 5min default TTL, LRU eviction; issue #1605 closes via migration of 5 unbounded maps (resolve-tenant ×4, registry, snapshot, personas ×2, entity-extraction); vendor-health memRegistry left unmigrated (not a TTL cache, bounded by enum); pricing-table.ts + price-ids.ts deferred; no runtime dependency added (vs rejected lru-cache npm).
 - D-319 — 2026-07-07 — Money-formatter consolidation redone clean (#1638→#1657, 3 audit rounds): fromCents brand-type kept narrow (Cents|bigint, no number widening), any-cast fixed to BigInt(Math.round()), pre-existing JPY formatCents bug filed as #1658 rather than fixed in-PR.
 - D-318 — 2026-07-06 — Groups hardening (#1600): compensating delete over RPC/transaction for orphaned-group defect; partial unique index (group_id, lower(invitee_email)) WHERE token_revoked_at IS NULL for single-invite dedup, cap, and counter parity with the create path.
 - D-317 — 2026-07-06 — Audit-model criteria rebased for Sonnet 5: risk triggers → Opus for BOTH agents; size-only trigger → Opus for d091 only, bar raised to ≥20 files/≥1000 net lines (supersedes D-147 audit half + D-314's "audit unchanged" note).

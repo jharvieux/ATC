@@ -16,6 +16,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantRevenueSnapshot } from "./revenue";
 import { safeAwait } from "@/lib/db/safe-mutation";
+import { BoundedTtlCache } from "@/lib/cache/bounded-ttl-cache";
 
 // All-zero UUID — must match lib/ai/call-wrapper.ts PLATFORM_TENANT_ID.
 export const PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000000";
@@ -30,11 +31,10 @@ export interface CachedTenantSnapshot {
   // Both default false for the stub / platform-tenant / not-found cases.
   is_sandbox: boolean;
   ai_paused_by_platform: boolean;
-  fetched_at: number;
 }
 
 const TTL_MS = 30_000;
-const cache = new Map<string, CachedTenantSnapshot>();
+const cache = new BoundedTtlCache<string, CachedTenantSnapshot>({ defaultTtlMs: TTL_MS });
 
 const VALID_TIER_CODES = new Set<TenantRevenueSnapshot["tier_code"]>([
   "byo_research", "byo_professional", "byo_agency",
@@ -49,7 +49,7 @@ export async function loadTenantSnapshot(
   onDbRead?: () => void,
 ): Promise<CachedTenantSnapshot> {
   const cached = cache.get(tenant_id);
-  if (cached && Date.now() - cached.fetched_at < TTL_MS) return cached;
+  if (cached) return cached;
 
   if (tenant_id === PLATFORM_TENANT_ID) {
     const fresh: CachedTenantSnapshot = {
@@ -57,7 +57,6 @@ export async function loadTenantSnapshot(
       ai_cost_state: "ok",
       is_sandbox: false,
       ai_paused_by_platform: false,
-      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -83,7 +82,6 @@ export async function loadTenantSnapshot(
       ai_cost_state: "ok",
       is_sandbox: false,
       ai_paused_by_platform: false,
-      fetched_at: Date.now(),
     };
   }
   const tr = tenantRow as { tier_id: string; seat_count: number; billing_period: "monthly" | "annual"; is_platform_internal?: boolean; is_sandbox?: boolean; ai_paused_by_platform?: boolean };
@@ -111,7 +109,6 @@ export async function loadTenantSnapshot(
       ai_cost_state: "ok",
       is_sandbox,
       ai_paused_by_platform,
-      fetched_at: Date.now(),
     };
     cache.set(tenant_id, fresh);
     return fresh;
@@ -134,7 +131,6 @@ export async function loadTenantSnapshot(
     ai_cost_state,
     is_sandbox,
     ai_paused_by_platform,
-    fetched_at: Date.now(),
   };
   cache.set(tenant_id, fresh);
   return fresh;
