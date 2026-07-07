@@ -71,6 +71,7 @@ export async function runTaskRemindersFire() {
           svc,
           task_id: r.task_id,
           tenant_id: r.tenant_id,
+          reminder_id: r.id,
         });
         if (emailResult.status === "sent") status = "delivered";
         else if (emailResult.status === "suppressed") status = "suppressed";
